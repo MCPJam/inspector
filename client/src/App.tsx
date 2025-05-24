@@ -26,12 +26,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Bell,
   Files,
-  FolderTree,
   Hammer,
   Hash,
   Key,
   MessageSquare,
   Activity,
+  MessageSquareText,
 } from "lucide-react";
 
 import { z } from "zod";
@@ -45,6 +45,7 @@ import ResourcesTab from "./components/ResourcesTab";
 import RootsTab from "./components/RootsTab";
 import SamplingTab, { PendingRequest } from "./components/SamplingTab";
 import ToolsTab from "./components/ToolsTab";
+import ChatTab from "./components/ChatTab";
 import { InspectorConfig } from "./lib/configurationTypes";
 import {
   getMCPProxyAddress,
@@ -529,14 +530,14 @@ const App = () => {
             value="ping"
             className="flex items-center gap-2 px-4 py-3 rounded-lg transition-all duration-200 data-[state=active]:bg-background data-[state=active]:shadow-sm data-[state=active]:border data-[state=active]:border-border/50"
           >
-            <Bell className="w-4 h-4" />
+            <Hash className="w-4 h-4" />
             <span className="hidden sm:inline">Ping</span>
           </TabsTrigger>
           <TabsTrigger
             value="sampling"
             className="flex items-center gap-2 px-4 py-3 rounded-lg transition-all duration-200 data-[state=active]:bg-background data-[state=active]:shadow-sm data-[state=active]:border data-[state=active]:border-border/50 relative"
           >
-            <Hash className="w-4 h-4" />
+            <Activity className="w-4 h-4" />
             <span className="hidden sm:inline">Sampling</span>
             {pendingSampleRequests.length > 0 && (
               <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center animate-pulse">
@@ -545,10 +546,17 @@ const App = () => {
             )}
           </TabsTrigger>
           <TabsTrigger
+            value="chat"
+            className="flex items-center gap-2 px-4 py-3 rounded-lg transition-all duration-200 data-[state=active]:bg-background data-[state=active]:shadow-sm data-[state=active]:border data-[state=active]:border-border/50"
+          >
+            <MessageSquareText className="w-4 h-4" />
+            <span className="hidden sm:inline">Chat</span>
+          </TabsTrigger>
+          <TabsTrigger
             value="roots"
             className="flex items-center gap-2 px-4 py-3 rounded-lg transition-all duration-200 data-[state=active]:bg-background data-[state=active]:shadow-sm data-[state=active]:border data-[state=active]:border-border/50"
           >
-            <FolderTree className="w-4 h-4" />
+            <Bell className="w-4 h-4" />
             <span className="hidden sm:inline">Roots</span>
           </TabsTrigger>
           <TabsTrigger
@@ -733,6 +741,12 @@ const App = () => {
               pendingRequests={pendingSampleRequests}
               onApprove={handleApproveSamplingWrapper}
               onReject={handleRejectSamplingWrapper}
+            />
+          </TabsContent>
+          <TabsContent value="chat" className="mt-0">
+            <ChatTab 
+              tools={tools}
+              callTool={callToolWrapper}
             />
           </TabsContent>
           <TabsContent value="roots" className="mt-0">

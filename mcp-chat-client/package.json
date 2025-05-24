@@ -1,0 +1,17 @@
+{
+  "name": "mcp-chat-client",
+  "version": "0.1.0",
+  "description": "MCP chat client with LLM capabilities",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.19.0",
+    "@modelcontextprotocol/sdk": "^1.11.5",
+    "dotenv": "^16.4.5",
+    "readline-sync": "^1.4.10"
+  }
+} 

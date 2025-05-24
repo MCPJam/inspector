@@ -42,7 +42,13 @@ const { values } = parseArgs({
 });
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: true, // Allow all origins
+  credentials: true, // Allow credentials
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], // Allow all methods
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key', 'anthropic-version'] // Allow these headers
+}));
+
 app.use((req, res, next) => {
   res.header("Access-Control-Expose-Headers", "mcp-session-id");
   next();
@@ -356,6 +362,45 @@ app.get("/config", (req, res) => {
   } catch (error) {
     console.error("Error in /config route:", error);
     res.status(500).json(error);
+  }
+});
+
+// Proxy endpoint for Anthropic API
+app.post("/api/proxy/anthropic", express.json(), async (req, res) => {
+  try {
+    console.log("Received request to Anthropic proxy");
+    const { url, apiKey, method, data } = req.body;
+    
+    if (!url || !apiKey) {
+      console.error("Missing required parameters in proxy request", { url: !!url, apiKey: !!apiKey });
+      return res.status(400).json({ error: "Missing required parameters" });
+    }
+
+    console.log(`Forwarding request to ${url}`);
+    
+    const response = await fetch(url, {
+      method: method || "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: data ? JSON.stringify(data) : undefined,
+    });
+
+    console.log(`Received response from Anthropic: ${response.status}`);
+    
+    const responseData = await response.json();
+    console.log("Response data keys:", Object.keys(responseData));
+    
+    res.status(response.status).json(responseData);
+  } catch (error) {
+    console.error("Detailed error in Anthropic proxy:", error);
+    if (error instanceof Error) {
+      res.status(500).json({ error: error.message, stack: error.stack });
+    } else {
+      res.status(500).json({ error: "An unknown error occurred" });
+    }
   }
 });
 

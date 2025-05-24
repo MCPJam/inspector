@@ -7,6 +7,12 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: true,
+    proxy: {
+      '/api/proxy/anthropic': {
+        target: 'http://localhost:6277',
+        changeOrigin: true,
+      }
+    }
   },
   resolve: {
     alias: {
