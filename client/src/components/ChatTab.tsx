@@ -170,28 +170,52 @@ const ChatTab: React.FC<ChatTabProps> = ({ tools, callTool }) => {
 
   // Add this utility function to format tool results for Claude
   const formatToolResult = (result: unknown): string => {
-    if (!result) return "No result returned";
+    if (!result) return "Tool execution completed but returned no data";
     
-    // If result is a string, return it directly
-    if (typeof result === 'string') return result;
+    // If result is a string, check if it looks like an error or empty result
+    if (typeof result === 'string') {
+      if (result.trim() === '') return "Tool execution completed but returned empty string";
+      return `Tool execution successful. Result: ${result}`;
+    }
     
     // If result has a content property, use that
     if (typeof result === 'object' && result !== null) {
       if ('content' in result && typeof result.content === 'string') {
-        return result.content;
+        const content = result.content;
+        if (content.trim() === '') return "Tool execution completed but returned empty content";
+        return `Tool execution successful. Content: ${content}`;
+      }
+      
+      // Check if it's an array with data
+      if (Array.isArray(result)) {
+        if (result.length === 0) return "Tool execution successful but returned empty array";
+        return `Tool execution successful. Found ${result.length} items: ${JSON.stringify(result, null, 2)}`;
+      }
+      
+      // Check if it's an object with data properties
+      const resultObj = result as Record<string, unknown>;
+      if ('data' in resultObj) {
+        const data = resultObj.data;
+        if (Array.isArray(data)) {
+          if (data.length === 0) return "Tool execution successful but data array is empty";
+          return `Tool execution successful. Found ${data.length} items in data: ${JSON.stringify(result, null, 2)}`;
+        }
       }
       
       // Try to stringify the result
       try {
-        return JSON.stringify(result, null, 2);
+        const jsonResult = JSON.stringify(result, null, 2);
+        // Check if the object has meaningful content
+        if (jsonResult === '{}') return "Tool execution successful but returned empty object";
+        return `Tool execution successful. Result data: ${jsonResult}`;
       } catch {
         // Stringify failed, use a simpler approach
-        return `Result could not be formatted: ${String(result)}`;
+        return `Tool execution successful but result could not be formatted: ${String(result)}`;
       }
     }
     
     // Fallback for other types
-    return String(result);
+    return `Tool execution successful. Result: ${String(result)}`;
   };
 
   const handleSendMessage = async () => {
@@ -307,7 +331,7 @@ const ChatTab: React.FC<ChatTabProps> = ({ tools, callTool }) => {
             const result = await callTool(content.name, content.input);
             console.log("Tool result:", result);
             
-            // Format the result
+            // Format the result with better success indication
             const formattedResult = formatToolResult(result);
             
             // Add to our UI message
@@ -319,6 +343,12 @@ const ChatTab: React.FC<ChatTabProps> = ({ tools, callTool }) => {
                 result: formattedResult,
               },
             ];
+            
+            // Create a more informative tool result for Claude
+            const toolResultForClaude = `TOOL_CALL_SUCCESS: ${content.name}
+${formattedResult}
+
+This tool call was executed successfully. The above contains the actual returned data.`;
             
             // Create a new sequence with:
             // 1. All previous messages
@@ -340,7 +370,7 @@ const ChatTab: React.FC<ChatTabProps> = ({ tools, callTool }) => {
                 content: [{ 
                   type: "tool_result", 
                   tool_use_id: content.id, 
-                  content: formattedResult 
+                  content: toolResultForClaude 
                 }]
               }
             ];
@@ -384,6 +414,17 @@ const ChatTab: React.FC<ChatTabProps> = ({ tools, callTool }) => {
           catch (toolError: unknown) {
             console.error("Tool error:", toolError);
             const errorMessage = toolError instanceof Error ? toolError.message : "Unknown error";
+            
+            // Add error info to UI message
+            assistantMessage.toolCalls = [
+              ...(assistantMessage.toolCalls || []),
+              {
+                name: content.name,
+                args: content.input,
+                result: `TOOL_CALL_FAILED: ${errorMessage}`,
+              },
+            ];
+            
             assistantMessage.content += `\n\nError executing tool ${content.name}: ${errorMessage}`;
           }
         }
