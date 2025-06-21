@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, forwardRef, useImperativeHandle } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import JsonEditor from "./JsonEditor";
@@ -13,6 +13,10 @@ interface DynamicJsonFormProps {
   maxDepth?: number;
 }
 
+export interface DynamicJsonFormRef {
+  validateJson: () => { isValid: boolean; error: string | null };
+}
+
 const isSimpleObject = (schema: JsonSchemaType): boolean => {
   const supportedTypes = ["string", "number", "integer", "boolean", "null"];
   if (supportedTypes.includes(schema.type)) return true;
@@ -22,12 +26,12 @@ const isSimpleObject = (schema: JsonSchemaType): boolean => {
   );
 };
 
-const DynamicJsonForm = ({
+const DynamicJsonForm = forwardRef<DynamicJsonFormRef, DynamicJsonFormProps>(({
   schema,
   value,
   onChange,
   maxDepth = 3,
-}: DynamicJsonFormProps) => {
+}, ref) => {
   const isOnlyJSON = !isSimpleObject(schema);
   const [isJsonMode, setIsJsonMode] = useState(isOnlyJSON);
   const [jsonError, setJsonError] = useState<string>();
@@ -361,6 +365,22 @@ const DynamicJsonForm = ({
     }
   }, [shouldUseJsonMode, isJsonMode]);
 
+  const validateJson = () => {
+    if (!isJsonMode) return { isValid: true, error: null };
+    try {
+      JSON.parse(rawJsonValue);
+      return { isValid: true, error: null };
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "Invalid JSON";
+      setJsonError(errorMessage);
+      return { isValid: false, error: errorMessage };
+    }
+  };
+
+  useImperativeHandle(ref, () => ({
+    validateJson,
+  }));
+
   return (
     <div className="space-y-4">
       <div className="flex justify-end space-x-2">
@@ -418,6 +438,6 @@ const DynamicJsonForm = ({
       )}
     </div>
   );
-};
+});
 
 export default DynamicJsonForm;

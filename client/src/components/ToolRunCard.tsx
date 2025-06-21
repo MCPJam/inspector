@@ -2,12 +2,12 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import DynamicJsonForm from "./DynamicJsonForm";
+import DynamicJsonForm, { DynamicJsonFormRef } from "./DynamicJsonForm";
 import type { JsonValue, JsonSchemaType } from "@/utils/jsonUtils";
 import { generateDefaultValue } from "@/utils/schemaUtils";
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { Loader2, Send, Code2, Save, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import {
   createMcpJamRequest,
   generateDefaultRequestName,
@@ -80,6 +80,7 @@ interface ParameterInputProps {
   prop: JsonSchemaType;
   value: unknown;
   onChange: (key: string, value: unknown) => void;
+  formRefs?: React.MutableRefObject<Record<string, DynamicJsonFormRef | null>>;
 }
 
 const ParameterInput = ({
@@ -87,6 +88,7 @@ const ParameterInput = ({
   prop,
   value,
   onChange,
+  formRefs,
 }: ParameterInputProps) => {
   const renderInput = () => {
     switch (prop.type) {
@@ -150,6 +152,7 @@ const ParameterInput = ({
         return (
           <div className={INPUT_STYLES.container + " p-2.5"}>
             <DynamicJsonForm
+              ref={(ref) => formRefs && (formRefs.current[paramKey] = ref)}
               schema={{
                 type: prop.type,
                 properties: prop.properties,
@@ -193,35 +196,37 @@ const ParametersSection = ({
   tool,
   params,
   onParamChange,
+  formRefs,
 }: {
   tool: Tool;
   params: Record<string, unknown>;
   onParamChange: (key: string, value: unknown) => void;
+  formRefs?: React.MutableRefObject<Record<string, DynamicJsonFormRef | null>>;
 }) => {
-  const properties = tool.inputSchema.properties ?? {};
+  const properties = tool.inputSchema?.properties || {};
 
-  if (Object.keys(properties).length === 0) return null;
+  if (Object.keys(properties).length === 0) {
+    return (
+      <div className="bg-gradient-to-br from-muted/20 via-muted/10 to-muted/20 backdrop-blur-sm rounded-lg p-4 border border-border/30">
+        <p className="text-xs text-muted-foreground text-center italic">
+          This tool doesn't require any parameters
+        </p>
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-2">
-      <div className="flex items-center space-x-1.5 pb-1.5 border-b border-border/20">
-        <Code2 className="w-3 h-3 text-muted-foreground" />
-        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-          Parameters
-        </span>
-      </div>
-
-      <div className="space-y-2.5">
-        {Object.entries(properties).map(([key, value]) => (
-          <ParameterInput
-            key={key}
-            paramKey={key}
-            prop={value as JsonSchemaType}
-            value={params[key]}
-            onChange={onParamChange}
-          />
-        ))}
-      </div>
+    <div className="space-y-3">
+      {Object.entries(properties).map(([key, prop]) => (
+        <ParameterInput
+          key={key}
+          paramKey={key}
+          prop={prop as JsonSchemaType}
+          value={params[key]}
+          onChange={onParamChange}
+          formRefs={formRefs}
+        />
+      ))}
     </div>
   );
 };
@@ -401,6 +406,7 @@ const ToolRunCard = ({
   const [isSaving, setIsSaving] = useState(false);
   const [paramsInitialized, setParamsInitialized] = useState(false);
   const [currentRequestId, setCurrentRequestId] = useState<string | null>(null);
+  const formRefs = useRef<Record<string, DynamicJsonFormRef | null>>({});
 
   // Effects
   useEffect(() => {
@@ -504,6 +510,12 @@ const ToolRunCard = ({
   const handleRunTool = async () => {
     if (!selectedTool) return;
 
+    // Validate JSON inputs before calling tool
+    const hasValidationErrors = Object.values(formRefs.current).some(
+      (ref) => ref && !ref.validateJson().isValid
+    );
+    if (hasValidationErrors) return;
+
     try {
       setIsToolRunning(true);
       await callTool(selectedTool.name, params);
@@ -526,6 +538,7 @@ const ToolRunCard = ({
                 tool={selectedTool}
                 params={params}
                 onParamChange={handleParamChange}
+                formRefs={formRefs}
               />
 
               <SaveDialog
