@@ -63,6 +63,7 @@ import {
   HttpServerDefinition,
 } from "./lib/serverTypes";
 import { ConnectionStatus } from "./lib/constants";
+import { SupportedProvider } from "@/lib/providers";
 
 const App = () => {
   const serverState = useServerState();
@@ -212,7 +213,8 @@ const App = () => {
             configState.config,
             configState.bearerToken,
             configState.headerName,
-            configState.claudeApiKey,
+            configState.getCurrentApiKey(),
+            configState.selectedProvider,
             onStdErrNotification,
             onPendingRequest,
             getRootsCallback,
@@ -433,7 +435,14 @@ const App = () => {
   );
 
   const handleApiKeyChange = (newApiKey: string) => {
-    configState.updateClaudeApiKey(newApiKey);
+    configState.updateCurrentApiKey(newApiKey);
+    updateApiKey(newApiKey);
+  };
+
+  const handleProviderChange = (newProvider: SupportedProvider) => {
+    configState.updateProvider(newProvider);
+    // Update the API key for the new provider
+    const newApiKey = configState.getCurrentApiKey();
     updateApiKey(newApiKey);
   };
 
@@ -536,7 +545,8 @@ const App = () => {
             configState.config,
             configState.bearerToken,
             configState.headerName,
-            configState.claudeApiKey,
+            configState.getCurrentApiKey(),
+            configState.selectedProvider,
             onStdErrNotification,
             onPendingRequest,
             getRootsCallback,
@@ -558,7 +568,8 @@ const App = () => {
     configState.config,
     configState.bearerToken,
     configState.headerName,
-    configState.claudeApiKey,
+    configState.getCurrentApiKey,
+    configState.selectedProvider,
     onStdErrNotification,
     onPendingRequest,
     onElicitationRequest,
@@ -1038,7 +1049,7 @@ const App = () => {
             />
           );
         case "settings":
-          return <SettingsTab onApiKeyChange={handleApiKeyChange} />;
+          return <SettingsTab onApiKeyChange={handleApiKeyChange} onProviderChange={handleProviderChange} />;
         default:
           return null;
       }

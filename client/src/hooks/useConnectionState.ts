@@ -12,6 +12,7 @@ import { StdErrNotification } from "@/lib/notificationTypes";
 import { ConnectionStatus } from "@/lib/constants";
 import { ClientLogLevels } from "@/hooks/helpers/types";
 import { ElicitationResponse } from "@/components/ElicitationModal";
+import { SupportedProvider } from "@/lib/providers";
 
 export const useConnectionState = (
   addRequestHistory: (request: object, response?: object) => void,
@@ -29,7 +30,8 @@ export const useConnectionState = (
       config: InspectorConfig,
       bearerToken: string,
       headerName: string,
-      claudeApiKey: string,
+      apiKey: string,
+      providerType: SupportedProvider,
       onStdErrNotification: (notification: StdErrNotification) => void,
       onPendingRequest: (
         request: CreateMessageRequest,
@@ -52,7 +54,7 @@ export const useConnectionState = (
         inspectorConfig: config,
         bearerToken,
         headerName,
-        claudeApiKey,
+        claudeApiKey: apiKey,
         onStdErrNotification,
         onPendingRequest,
         onElicitationRequest,
@@ -82,7 +84,8 @@ export const useConnectionState = (
       config: InspectorConfig,
       bearerToken: string,
       headerName: string,
-      claudeApiKey: string,
+      apiKey: string,
+      providerType: SupportedProvider,
       onStdErrNotification: (notification: StdErrNotification) => void,
       onPendingRequest: (
         request: CreateMessageRequest,
@@ -100,7 +103,7 @@ export const useConnectionState = (
         inspectorConfig: config,
         bearerToken,
         headerName,
-        claudeApiKey,
+        claudeApiKey: apiKey,
         onStdErrNotification,
         onPendingRequest,
         onElicitationRequest,
@@ -123,7 +126,8 @@ export const useConnectionState = (
       config: InspectorConfig,
       bearerToken: string,
       headerName: string,
-      claudeApiKey: string,
+      apiKey: string,
+      providerType: SupportedProvider,
       onStdErrNotification: (notification: StdErrNotification) => void,
       onPendingRequest: (
         request: CreateMessageRequest,
@@ -145,7 +149,7 @@ export const useConnectionState = (
           inspectorConfig: config,
           bearerToken,
           headerName,
-          claudeApiKey,
+          claudeApiKey: apiKey,
           onStdErrNotification,
           onPendingRequest,
           onElicitationRequest,

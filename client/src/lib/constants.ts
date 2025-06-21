@@ -61,6 +61,19 @@ interface ClaudeModel {
   description: string;
 }
 
+interface OpenAIModel {
+  id: string;
+  name: string;
+  description: string;
+}
+
+interface ModelDefinition {
+  id: string;
+  name: string;
+  description: string;
+  provider: "anthropic" | "openai" | "deepseek";
+}
+
 export const CLAUDE_MODELS: ClaudeModel[] = [
   {
     id: "claude-opus-4-0",
@@ -93,3 +106,52 @@ export const CLAUDE_MODELS: ClaudeModel[] = [
     description: "Top-level intelligence, fluency, and understanding",
   },
 ];
+
+export const OPENAI_MODELS: OpenAIModel[] = [
+  {
+    id: "gpt-4o",
+    name: "GPT-4o",
+    description: "Most advanced GPT-4 model with multimodal capabilities",
+  },
+  {
+    id: "gpt-4o-mini",
+    name: "GPT-4o mini",
+    description: "Faster and more affordable GPT-4o model",
+  },
+  {
+    id: "gpt-4-turbo",
+    name: "GPT-4 Turbo",
+    description: "Latest GPT-4 model with improved instruction following",
+  },
+  {
+    id: "gpt-4",
+    name: "GPT-4",
+    description: "Large multimodal model with broad general knowledge",
+  },
+  {
+    id: "gpt-3.5-turbo",
+    name: "GPT-3.5 Turbo",
+    description: "Fast and cost-effective model for simpler tasks",
+  },
+  {
+    id: "o1-preview",
+    name: "o1-preview",
+    description: "Advanced reasoning model for complex problem solving",
+  },
+  {
+    id: "o1-mini",
+    name: "o1-mini",
+    description: "Faster reasoning model for coding and math",
+  },
+];
+
+export const ALL_MODELS: ModelDefinition[] = [
+  // Anthropic models
+  ...CLAUDE_MODELS.map(model => ({ ...model, provider: "anthropic" as const })),
+  // OpenAI models
+  ...OPENAI_MODELS.map(model => ({ ...model, provider: "openai" as const })),
+];
+
+export const getModelsByProvider = (provider: "anthropic" | "openai" | "deepseek") => {
+  return ALL_MODELS.filter(model => model.provider === provider);
+};

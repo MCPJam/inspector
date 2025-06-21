@@ -1000,7 +1000,6 @@ export class MCPJamClient extends Client<Request, Notification, Result> {
     const response = await this.aiProvider.createMessage({
       model: context.model,
       max_tokens: 1000,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       messages: context.messages as any,
       tools: context.sanitizedTools.map(tool => ({
         name: tool.name,
@@ -1011,7 +1010,6 @@ export class MCPJamClient extends Client<Request, Notification, Result> {
 
     // Convert provider response back to Anthropic Message format
     // This is a temporary adapter - for now we'll assume Anthropic format
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return response as any;
   }
 

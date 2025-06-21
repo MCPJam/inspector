@@ -4,10 +4,11 @@ import { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { Anthropic } from "@anthropic-ai/sdk";
 import { Send, User, Loader2, Key, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { CLAUDE_MODELS } from "@/lib/constants";
+import { ALL_MODELS, getModelsByProvider } from "@/lib/constants";
 import { ToolCallMessage } from "./ToolCallMessage";
 import { parseToolCallContent } from "@/utils/toolCallHelpers";
 import { ClaudeLogo } from "./ClaudeLogo";
+import { SupportedProvider } from "@/lib/providers";
 
 interface Message {
   role: "user" | "assistant";
@@ -50,6 +51,25 @@ const getClaudeApiKey = (mcpClient: unknown): string => {
   }
   
   return "";
+};
+
+const getCurrentProvider = (mcpClient: unknown): SupportedProvider => {
+  // Check if we have an aiProvider and try to determine the provider
+  if (
+    mcpClient &&
+    typeof mcpClient === "object" &&
+    mcpClient !== null &&
+    "aiProvider" in mcpClient &&
+    mcpClient.aiProvider &&
+    typeof mcpClient.aiProvider === "object" &&
+    "getProviderName" in mcpClient.aiProvider &&
+    typeof mcpClient.aiProvider.getProviderName === "function"
+  ) {
+    return mcpClient.aiProvider.getProviderName() as SupportedProvider;
+  }
+  
+  // Default to anthropic for backward compatibility
+  return "anthropic";
 };
 
 const validateSendConditions = (
@@ -169,6 +189,7 @@ const ModelSelector: React.FC<{
   selectedModel: string;
   showModelSelector: boolean;
   loading: boolean;
+  availableModels: typeof ALL_MODELS;
   onToggle: () => void;
   onModelSelect: (modelId: string) => void;
   modelSelectorRef: React.RefObject<HTMLDivElement>;
@@ -176,6 +197,7 @@ const ModelSelector: React.FC<{
   selectedModel,
   showModelSelector,
   loading,
+  availableModels,
   onToggle,
   onModelSelect,
   modelSelectorRef,
@@ -187,7 +209,7 @@ const ModelSelector: React.FC<{
       disabled={loading}
     >
       <span className="text-slate-700 dark:text-slate-200 font-medium">
-        {CLAUDE_MODELS.find((m) => m.id === selectedModel)?.name ||
+        {availableModels.find((m) => m.id === selectedModel)?.name ||
           selectedModel}
       </span>
       <ChevronDown className="w-3 h-3 text-slate-400" />
@@ -196,7 +218,7 @@ const ModelSelector: React.FC<{
     {showModelSelector && (
       <div className="absolute right-0 top-full mt-2 w-72 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-lg z-50">
         <div className="py-2">
-          {CLAUDE_MODELS.map((model) => (
+          {availableModels.map((model) => (
             <button
               key={model.id}
               onClick={() => onModelSelect(model.id)}
@@ -288,9 +310,11 @@ const ChatTab: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tools, setTools] = useState<Tool[]>([]);
-  const [selectedModel, setSelectedModel] = useState<string>(
-    "claude-3-5-sonnet-latest",
-  );
+  const [selectedModel, setSelectedModel] = useState<string>(() => {
+    // Set default model based on provider
+    const provider = getCurrentProvider(mcpClient);
+    return provider === "openai" ? "gpt-4o" : "claude-3-5-sonnet-latest";
+  });
   const [showModelSelector, setShowModelSelector] = useState(false);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -298,6 +322,9 @@ const ChatTab: React.FC = () => {
   const modelSelectorRef = useRef<HTMLDivElement>(null);
 
   const claudeApiKey = getClaudeApiKey(mcpClient);
+  const currentProvider = getCurrentProvider(mcpClient);
+  const availableModels = getModelsByProvider(currentProvider);
+  
   const { isDisabled, isSendDisabled, canSend } = validateSendConditions(
     input,
     mcpClient,
@@ -415,6 +442,22 @@ const ChatTab: React.FC = () => {
     };
   }, [mcpClient]);
 
+  // Update selected model when provider changes
+  useEffect(() => {
+    const provider = getCurrentProvider(mcpClient);
+    const models = getModelsByProvider(provider);
+    
+    // Check if current model is still valid for the new provider
+    const currentModelValid = models.some(model => model.id === selectedModel);
+    
+    if (!currentModelValid && models.length > 0) {
+      // Set to the default model for the provider
+      const defaultModel = provider === "openai" ? "gpt-4o" : "claude-3-5-sonnet-latest";
+      const modelExists = models.some(model => model.id === defaultModel);
+      setSelectedModel(modelExists ? defaultModel : models[0].id);
+    }
+  }, [mcpClient, selectedModel]);
+
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chat]);
@@ -472,6 +515,7 @@ const ChatTab: React.FC = () => {
                 selectedModel={selectedModel}
                 showModelSelector={showModelSelector}
                 loading={loading}
+                availableModels={availableModels}
                 onToggle={toggleModelSelector}
                 onModelSelect={handleModelSelect}
                 modelSelectorRef={modelSelectorRef}
