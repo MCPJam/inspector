@@ -578,6 +578,19 @@ export class MCPJamClient extends Client<Request, Notification, Result> {
     }
   };
 
+  updateProvider = (providerType: SupportedProvider, apiKey: string) => {
+    try {
+      this.aiProvider = providerFactory.createProvider(providerType, {
+        apiKey,
+        dangerouslyAllowBrowser: true,
+      });
+      this.addClientLog(`AI provider updated to: ${providerType}`, "info");
+    } catch (error) {
+      this.addClientLog(`Failed to update AI provider: ${error}`, "error");
+      this.aiProvider = undefined;
+    }
+  };
+
   async makeRequest<T extends z.ZodType>(
     request: ClientRequest,
     schema: T,
@@ -775,7 +788,7 @@ export class MCPJamClient extends Client<Request, Notification, Result> {
     }
     
     this.addClientLog("Making initial API call to AI provider", "debug");
-    const response = await this.aiProvider.createMessage({
+    const providerResponse = await this.aiProvider.createMessage({
       model: context.model,
       max_tokens: 1000,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -787,10 +800,70 @@ export class MCPJamClient extends Client<Request, Notification, Result> {
       }))
     });
 
-    // Convert provider response back to Anthropic Message format
-    // This is a temporary adapter - for now we'll assume Anthropic format
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return response as any;
+    // Convert provider response to Anthropic Message format
+    return this.convertProviderResponseToMessage(providerResponse);
+  }
+
+  private async makeFollowUpApiCall(
+    context: ReturnType<typeof this.initializeQueryContext>,
+  ): Promise<Message> {
+    if (!this.aiProvider) {
+      throw new Error("AI provider not initialized");
+    }
+    
+    this.addClientLog("Making follow-up API call to AI provider", "debug");
+    const providerResponse = await this.aiProvider.createMessage({
+      model: context.model,
+      max_tokens: 1000,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      messages: context.messages as any,
+      tools: context.sanitizedTools.map(tool => ({
+        name: tool.name,
+        description: tool.description,
+        input_schema: tool.input_schema
+      }))
+    });
+
+    // Convert provider response to Anthropic Message format
+    return this.convertProviderResponseToMessage(providerResponse);
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private convertProviderResponseToMessage(providerResponse: any): Message {
+    const content: ContentBlock[] = [];
+    
+    for (const item of providerResponse.content) {
+      if (item.type === 'text') {
+        content.push({
+          type: 'text',
+          text: item.text || '',
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any);
+      } else if (item.type === 'tool_use') {
+        content.push({
+          type: 'tool_use',
+          id: item.id || '',
+          name: item.name || '',
+          input: item.input || {}
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any);
+      }
+    }
+
+    return {
+      id: providerResponse.id || 'msg_' + Date.now(),
+      type: 'message',
+      role: 'assistant',
+      content,
+      model: providerResponse.model || 'unknown',
+      stop_reason: 'end_turn',
+      stop_sequence: null,
+      usage: {
+        input_tokens: providerResponse.usage?.input_tokens || 0,
+        output_tokens: providerResponse.usage?.output_tokens || 0
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
   }
 
   private async processIterations(
@@ -987,30 +1060,6 @@ export class MCPJamClient extends Client<Request, Notification, Result> {
         },
       ],
     });
-  }
-
-  private async makeFollowUpApiCall(
-    context: ReturnType<typeof this.initializeQueryContext>,
-  ): Promise<Message> {
-    if (!this.aiProvider) {
-      throw new Error("AI provider not initialized");
-    }
-    
-    this.addClientLog("Making follow-up API call to AI provider", "debug");
-    const response = await this.aiProvider.createMessage({
-      model: context.model,
-      max_tokens: 1000,
-      messages: context.messages as any,
-      tools: context.sanitizedTools.map(tool => ({
-        name: tool.name,
-        description: tool.description,
-        input_schema: tool.input_schema
-      }))
-    });
-
-    // Convert provider response back to Anthropic Message format
-    // This is a temporary adapter - for now we'll assume Anthropic format
-    return response as any;
   }
 
   private sendIterationUpdate(

@@ -443,7 +443,28 @@ const App = () => {
     configState.updateProvider(newProvider);
     // Update the API key for the new provider
     const newApiKey = configState.getCurrentApiKey();
-    updateApiKey(newApiKey);
+    
+    // Recreate the agent with the new provider type
+    if (connectionState.mcpAgent && Object.keys(serverState.serverConfigs).length > 0) {
+      // Recreate the agent with the new provider type
+      connectionState.createAgentWithoutConnecting(
+        serverState.serverConfigs,
+        configState.config,
+        configState.bearerToken,
+        configState.headerName,
+        newApiKey,
+        newProvider,
+        onStdErrNotification,
+        onPendingRequest,
+        getRootsCallback,
+        onElicitationRequest,
+      ).catch((error) => {
+        addClientLog(
+          `❌ Failed to recreate agent with new provider: ${error instanceof Error ? error.message : String(error)}`,
+          "error",
+        );
+      });
+    }
   };
 
   const handleConnectServer = useCallback(

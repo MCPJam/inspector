@@ -17,6 +17,7 @@ import {
 import { ConnectionStatus } from "./lib/constants";
 import { ClientLogLevels } from "./hooks/helpers/types";
 import { ElicitationResponse } from "./components/ElicitationModal";
+import { SupportedProvider } from "@/lib/providers";
 
 export interface MCPClientOptions {
   id?: string;
@@ -26,6 +27,7 @@ export interface MCPClientOptions {
   bearerToken?: string;
   headerName?: string;
   claudeApiKey?: string;
+  providerType?: SupportedProvider;
   onStdErrNotification?: (notification: StdErrNotification) => void;
   onPendingRequest?: (
     request: CreateMessageRequest,
@@ -56,6 +58,7 @@ export class MCPJamAgent {
   private bearerToken?: string;
   private headerName?: string;
   private claudeApiKey?: string;
+  private providerType: SupportedProvider;
   private onStdErrNotification?: (notification: StdErrNotification) => void;
   private onPendingRequest?: (
     request: CreateMessageRequest,
@@ -77,6 +80,7 @@ export class MCPJamAgent {
     this.bearerToken = options.bearerToken;
     this.headerName = options.headerName;
     this.claudeApiKey = options.claudeApiKey;
+    this.providerType = options.providerType || "anthropic";
     this.onStdErrNotification = options.onStdErrNotification;
     this.onPendingRequest = options.onPendingRequest;
     this.onElicitationRequest = options.onElicitationRequest;
@@ -207,7 +211,7 @@ export class MCPJamAgent {
       this.headerName, // headerName
       this.onStdErrNotification, // onStdErrNotification
       this.claudeApiKey, // apiKey
-      "anthropic", // providerType
+      this.providerType, // providerType
       this.onPendingRequest, // onPendingRequest
       this.onElicitationRequest, // onElicitationRequest
       this.getRoots, // getRoots
@@ -341,15 +345,26 @@ export class MCPJamAgent {
     bearerToken?: string,
     headerName?: string,
     claudeApiKey?: string,
+    providerType?: SupportedProvider,
   ) {
     this.bearerToken = bearerToken;
     this.headerName = headerName;
     this.claudeApiKey = claudeApiKey;
+    
+    if (providerType) {
+      this.providerType = providerType;
+    }
 
     // Update existing clients
     this.mcpClientsById.forEach((client) => {
-      if (claudeApiKey && client.updateApiKey) {
-        client.updateApiKey(claudeApiKey);
+      if (claudeApiKey) {
+        if (providerType && client.updateProvider) {
+          // If provider type changed, update the entire provider
+          client.updateProvider(providerType, claudeApiKey);
+        } else if (client.updateApiKey) {
+          // Otherwise just update the API key
+          client.updateApiKey(claudeApiKey);
+        }
       }
     });
   }
