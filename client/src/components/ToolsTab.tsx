@@ -10,6 +10,7 @@ import ToolRunCard from "./ToolRunCard";
 import { McpJamRequest } from "@/lib/requestTypes";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Bookmark,
   Trash2,
@@ -17,6 +18,7 @@ import {
   Star,
   Edit2,
   CopyPlus,
+  AlertCircle,
 } from "lucide-react";
 import { RequestStorage } from "@/utils/requestStorage";
 import {
@@ -35,6 +37,7 @@ const ToolsTab = ({
   nextCursor,
   connectionStatus,
   selectedServerName,
+  error,
 }: {
   tools: Tool[];
   listTools: () => void;
@@ -346,12 +349,22 @@ const ToolsTab = ({
       />
 
       {/* Tool Runner */}
-      <ToolRunCard
-        selectedTool={selectedTool}
-        callTool={callTool}
-        loadedRequest={loadedRequest}
-        selectedServerName={selectedServerName}
-      />
+      <div className="p-4">
+        {error ? (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Error</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        ) : (
+          <ToolRunCard
+            selectedTool={selectedTool}
+            callTool={callTool}
+            loadedRequest={loadedRequest}
+            selectedServerName={selectedServerName}
+          />
+        )}
+      </div>
     </div>
   );
 };
