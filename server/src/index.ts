@@ -115,6 +115,17 @@ const createTransport = async (req: express.Request): Promise<Transport> => {
       headers[key] = Array.isArray(value) ? value[value.length - 1] : value;
     }
 
+    // Log authorization headers for debugging (without exposing tokens)
+    if (headers.authorization || headers.Authorization) {
+      console.log(
+        "🔐 Authorization headers configured for StreamableHTTP transport",
+      );
+    } else {
+      console.log(
+        "⚠️ No authorization headers configured for StreamableHTTP transport",
+      );
+    }
+
     const transport = new StreamableHTTPClientTransport(
       new URL(query.url as string),
       {
@@ -123,8 +134,30 @@ const createTransport = async (req: express.Request): Promise<Transport> => {
         },
       },
     );
-    await transport.start();
-    return transport;
+
+    try {
+      await transport.start();
+      return transport;
+    } catch (error) {
+      // Enhanced error handling for authorization issues
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      if (
+        errorMessage.includes("401") ||
+        errorMessage.includes("Unauthorized") ||
+        errorMessage.includes("authentication required") ||
+        errorMessage.includes("HTTP 401")
+      ) {
+        console.error(
+          "🔒 Authorization required for StreamableHTTP transport:",
+          errorMessage,
+        );
+        const authError = new Error("Authorization required");
+        (authError as any).code = 401;
+        throw authError;
+      }
+      throw error;
+    }
   } else {
     console.error(`❌ Invalid transport type: ${transportType}`);
     throw new Error("Invalid transport type specified");
@@ -353,6 +386,18 @@ app.post("/message", async (req, res) => {
 app.get("/health", (req, res) => {
   res.json({
     status: "ok",
+    timestamp: new Date().toISOString(),
+    authorization: {
+      supported: true,
+      oauth2_1: true,
+      metadata_discovery: true,
+      dynamic_client_registration: true,
+    },
+    transports: {
+      stdio: true,
+      sse: true,
+      streamable_http: true,
+    },
   });
 });
 

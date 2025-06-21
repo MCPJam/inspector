@@ -214,10 +214,24 @@ const ConnectionSection = ({
     if (connectionStatus === "connected") {
       return null;
     }
+
+    // Check if auth is needed (especially for StreamableHTTP)
+    const needsAuth =
+      transportType !== "stdio" && (!bearerToken || bearerToken.trim() === "");
+    const isStreamableHttp = transportType === "streamable-http";
+
     return (
       <div className="flex border-b border-slate-200 dark:border-slate-700 px-4">
         {[
-          { key: "auth", label: "Auth" },
+          {
+            key: "auth",
+            label: "Auth",
+            needsAttention: needsAuth && isStreamableHttp,
+            description:
+              isStreamableHttp && needsAuth
+                ? "Required for StreamableHTTP"
+                : undefined,
+          },
           ...(transportType === "stdio"
             ? [{ key: "env", label: "Environment" }]
             : []),
@@ -227,14 +241,24 @@ const ConnectionSection = ({
         ].map((tab) => (
           <button
             key={tab.key}
-            className={`px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
+            className={`px-3 py-2 text-sm font-medium border-b-2 transition-colors relative ${
               activeTab === tab.key
                 ? "border-blue-500 text-blue-600 dark:text-blue-400"
                 : "border-transparent text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200"
             }`}
             onClick={() => setActiveTab(tab.key)}
           >
-            {tab.label}
+            <div className="flex items-center gap-1">
+              {tab.label}
+              {tab.needsAttention && (
+                <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+              )}
+            </div>
+            {tab.description && (
+              <div className="absolute -bottom-6 left-0 right-0 text-xs text-red-600 dark:text-red-400 text-center">
+                {tab.description}
+              </div>
+            )}
           </button>
         ))}
       </div>
@@ -254,6 +278,21 @@ const ConnectionSection = ({
             </h3>
             {transportType !== "stdio" ? (
               <div className="space-y-3">
+                <div className="p-3 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-md">
+                  <p className="text-xs text-blue-700 dark:text-blue-300 mb-2">
+                    <strong>Authorization Required:</strong>{" "}
+                    {transportType === "streamable-http"
+                      ? "StreamableHTTP connections require proper authorization headers. Add your bearer token below."
+                      : "HTTP-based connections may require authorization. Add your bearer token below."}
+                  </p>
+                  <p className="text-xs text-blue-600 dark:text-blue-400">
+                    Format:{" "}
+                    <code className="bg-blue-100 dark:bg-blue-900 px-1 rounded">
+                      Authorization: Bearer your-token-here
+                    </code>
+                  </p>
+                </div>
+
                 <div>
                   <label className="text-xs text-slate-600 dark:text-slate-400 mb-1 block">
                     Header Name
@@ -264,26 +303,59 @@ const ConnectionSection = ({
                       setHeaderName && setHeaderName(e.target.value)
                     }
                     className="h-8 text-sm"
-                    value={headerName}
+                    value={headerName || "Authorization"}
                   />
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                    Usually "Authorization" for bearer tokens
+                  </p>
                 </div>
+
                 <div>
                   <label className="text-xs text-slate-600 dark:text-slate-400 mb-1 block">
                     Bearer Token
                   </label>
                   <Input
-                    placeholder="Bearer Token"
+                    placeholder="Enter your bearer token here"
                     value={bearerToken}
                     onChange={(e) => setBearerToken(e.target.value)}
                     className="h-8 text-sm"
                     type="password"
                   />
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                    Your OAuth access token or API key
+                  </p>
+                </div>
+
+                {bearerToken && (
+                  <div className="p-2 bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800 rounded-md">
+                    <p className="text-xs text-green-700 dark:text-green-300">
+                      ✓ Authorization headers will be sent with your requests
+                    </p>
+                  </div>
+                )}
+
+                <div className="p-2 bg-slate-50 dark:bg-slate-900/20 border border-slate-200 dark:border-slate-700 rounded-md">
+                  <p className="text-xs text-slate-600 dark:text-slate-400">
+                    💡 Need help? Check the{" "}
+                    <a
+                      href="https://modelcontextprotocol.io/specification/draft/basic/authorization"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-600 dark:text-blue-400 hover:underline"
+                    >
+                      MCP Authorization Spec
+                    </a>{" "}
+                    for details on OAuth 2.1 and bearer token authentication.
+                  </p>
                 </div>
               </div>
             ) : (
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                Authentication is not available for STDIO connections.
-              </p>
+              <div className="p-3 bg-yellow-50 dark:bg-yellow-950/20 border border-yellow-200 dark:border-yellow-800 rounded-md">
+                <p className="text-xs text-yellow-700 dark:text-yellow-300">
+                  Authentication is not available for STDIO connections. Use
+                  environment variables in the Environment tab instead.
+                </p>
+              </div>
             )}
           </div>
         )}
@@ -568,16 +640,25 @@ const ConnectionSection = ({
                 />
               </div>
             ) : (
-              <Input
-                placeholder={
-                  transportType === "sse"
-                    ? "https://mcp.asana.com/sse"
-                    : "Enter URL"
-                }
-                value={sseUrl}
-                onChange={(e) => setSseUrl(e.target.value)}
-                className="h-8 text-sm"
-              />
+              <div className="space-y-1">
+                <Input
+                  placeholder={
+                    transportType === "sse"
+                      ? "https://mcp.asana.com/sse"
+                      : "Enter URL"
+                  }
+                  value={sseUrl}
+                  onChange={(e) => setSseUrl(e.target.value)}
+                  className="h-8 text-sm"
+                />
+                {transportType === "streamable-http" &&
+                  (!bearerToken || bearerToken.trim() === "") && (
+                    <p className="text-xs text-amber-600 dark:text-amber-400">
+                      ⚠️ Authorization required. Go to the <strong>Auth</strong>{" "}
+                      tab to add your bearer token.
+                    </p>
+                  )}
+              </div>
             )}
           </div>
 
@@ -665,6 +746,14 @@ const ConnectionSection = ({
                 }
               })()}
             </span>
+
+            {/* Show auth warning for StreamableHTTP without token */}
+            {transportType === "streamable-http" &&
+              (!bearerToken || bearerToken.trim() === "") && (
+                <span className="text-amber-600 dark:text-amber-400 text-xs">
+                  • Auth required
+                </span>
+              )}
           </div>
 
           <div className="flex gap-2">

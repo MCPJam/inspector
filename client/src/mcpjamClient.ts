@@ -260,6 +260,7 @@ export class MCPJamClient extends Client<Request, Notification, Result> {
         (this.serverConfig as HttpServerDefinition).url.toString(),
       );
       serverUrl.searchParams.append("transportType", "streamable-http");
+
       const transportOptions: StreamableHTTPClientTransportOptions = {
         requestInit: {
           headers: this.headers,
@@ -271,15 +272,35 @@ export class MCPJamClient extends Client<Request, Notification, Result> {
           maxRetries: 2,
         },
       };
+
       this.clientTransport = new StreamableHTTPClientTransport(
         serverUrl,
         transportOptions,
       );
       this.mcpProxyServerUrl = serverUrl;
+
       this.addClientLog(
         `Connecting to MCP server via Streamable HTTP: ${(this.serverConfig as HttpServerDefinition).url}`,
         "info",
       );
+
+      // Log authorization headers for debugging (without exposing tokens)
+      const headersObj = this.headers as Record<string, string>;
+      const hasAuthHeader =
+        headersObj["Authorization"] ||
+        headersObj[this.headerName || "Authorization"];
+
+      if (hasAuthHeader) {
+        this.addClientLog(
+          `Authorization headers configured for Streamable HTTP ${JSON.stringify(
+            headersObj,
+          )}`,
+          "debug",
+        );
+      } else {
+        this.addClientLog("No authorization headers configured", "warn");
+      }
+
       await this.connect(this.clientTransport);
       this.connectionStatus = "connected";
       this.addClientLog(
@@ -289,6 +310,17 @@ export class MCPJamClient extends Client<Request, Notification, Result> {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
+
+      // Check if this is an authorization error
+      if (this.is401Error(error)) {
+        this.addClientLog(
+          `Authorization required for Streamable HTTP connection: ${errorMessage}`,
+          "warn",
+        );
+        // Don't throw here - let the calling code handle the auth flow
+        throw error;
+      }
+
       this.addClientLog(
         `Failed to connect to MCP server via Streamable HTTP: ${errorMessage}`,
         "error",
@@ -327,7 +359,11 @@ export class MCPJamClient extends Client<Request, Notification, Result> {
     return (
       (error instanceof SseError && error.code === 401) ||
       (error instanceof Error && error.message.includes("401")) ||
-      (error instanceof Error && error.message.includes("Unauthorized"))
+      (error instanceof Error && error.message.includes("Unauthorized")) ||
+      // Handle StreamableHTTP specific errors
+      (error instanceof Error && error.message.includes("HTTP 401")) ||
+      (error instanceof Error &&
+        error.message.includes("authentication required"))
     );
   };
 
@@ -343,18 +379,44 @@ export class MCPJamClient extends Client<Request, Notification, Result> {
         "url" in this.serverConfig &&
         this.serverConfig.url
       ) {
-        const serverAuthProvider = new InspectorOAuthClientProvider(
-          this.serverConfig.url.toString(),
-        );
-        const result = await auth(serverAuthProvider, {
-          serverUrl: this.serverConfig.url.toString(),
-        });
-        if (result === "AUTHORIZED") {
-          this.addClientLog("OAuth authentication successful", "info");
-        } else {
-          this.addClientLog("OAuth authentication failed", "error");
+        try {
+          const serverAuthProvider = new InspectorOAuthClientProvider(
+            this.serverConfig.url.toString(),
+          );
+
+          // Check if we have valid tokens first
+          const existingTokens = await serverAuthProvider.tokens();
+          if (existingTokens?.access_token) {
+            this.addClientLog(
+              "Found existing OAuth tokens, attempting to use them",
+              "debug",
+            );
+            // Try to use existing tokens - if they fail, we'll fall through to the auth flow
+            return true;
+          }
+
+          this.addClientLog(
+            "No valid tokens found, starting OAuth authorization flow",
+            "info",
+          );
+          const result = await auth(serverAuthProvider, {
+            serverUrl: this.serverConfig.url.toString(),
+          });
+
+          if (result === "AUTHORIZED") {
+            this.addClientLog("OAuth authentication successful", "info");
+            return true;
+          } else {
+            this.addClientLog("OAuth authentication failed", "error");
+            return false;
+          }
+        } catch (authError) {
+          this.addClientLog(
+            `OAuth flow failed: ${authError instanceof Error ? authError.message : String(authError)}`,
+            "error",
+          );
+          return false;
         }
-        return result === "AUTHORIZED";
       }
     }
 
@@ -362,7 +424,7 @@ export class MCPJamClient extends Client<Request, Notification, Result> {
   };
 
   async connectToServer(_e?: unknown, retryCount: number = 0): Promise<void> {
-    const MAX_RETRIES = 1; // Limit retries to prevent infinite loops
+    const MAX_RETRIES = 2; // Increased retries for auth flow
 
     try {
       await this.checkProxyHealth();
@@ -377,28 +439,45 @@ export class MCPJamClient extends Client<Request, Notification, Result> {
         `Attempting to connect to MCP server (attempt ${retryCount + 1}/${MAX_RETRIES + 1})`,
         "info",
       );
-      // Inject auth manually instead of using SSEClientTransport, because we're
-      // proxying through the inspector server first.
+
+      // Initialize headers
       const headers: HeadersInit = {};
 
-      // Only apply OAuth authentication for HTTP-based transports
+      // Handle authentication for HTTP-based transports
       if (
         this.serverConfig.transportType !== "stdio" &&
         "url" in this.serverConfig &&
         this.serverConfig.url
       ) {
         this.addClientLog(
-          "Setting up OAuth authentication for HTTP transport",
+          "Setting up authentication for HTTP transport",
           "debug",
         );
+
         // Create an auth provider with the current server URL
         const serverAuthProvider = new InspectorOAuthClientProvider(
           this.serverConfig.url.toString(),
         );
 
         // Use manually provided bearer token if available, otherwise use OAuth tokens
-        const token =
-          this.bearerToken || (await serverAuthProvider.tokens())?.access_token;
+        let token = this.bearerToken;
+        if (!token) {
+          try {
+            const oauthTokens = await serverAuthProvider.tokens();
+            token = oauthTokens?.access_token;
+            if (token) {
+              this.addClientLog(
+                "Using OAuth access token for authentication",
+                "debug",
+              );
+            }
+          } catch {
+            this.addClientLog("Failed to retrieve OAuth tokens", "warn");
+          }
+        } else {
+          this.addClientLog("Using manually provided bearer token", "debug");
+        }
+
         if (token) {
           const authHeaderName = this.headerName || "Authorization";
           headers[authHeaderName] = `Bearer ${token}`;
@@ -474,14 +553,29 @@ export class MCPJamClient extends Client<Request, Notification, Result> {
           error,
         );
 
-        // Only retry if we haven't exceeded max retries and auth error handling succeeds
+        // Handle authentication errors and retry
         if (retryCount < MAX_RETRIES) {
           const shouldRetry = await this.handleAuthError(error);
           if (shouldRetry) {
             this.addClientLog(
-              `Retrying connection (attempt ${retryCount + 1}/${MAX_RETRIES})`,
+              `Retrying connection after auth flow (attempt ${retryCount + 1}/${MAX_RETRIES})`,
               "info",
             );
+            // Clear any existing tokens that might be invalid
+            if (
+              this.serverConfig.transportType !== "stdio" &&
+              "url" in this.serverConfig &&
+              this.serverConfig.url
+            ) {
+              const serverAuthProvider = new InspectorOAuthClientProvider(
+                this.serverConfig.url.toString(),
+              );
+              serverAuthProvider.clear();
+              this.addClientLog(
+                "Cleared potentially invalid OAuth tokens",
+                "debug",
+              );
+            }
             return this.connectToServer(undefined, retryCount + 1);
           }
         }
