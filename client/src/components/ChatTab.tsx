@@ -2,13 +2,14 @@ import React, { useState, useEffect, useRef } from "react";
 import { useMcpClient } from "@/context/McpClientContext";
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { Anthropic } from "@anthropic-ai/sdk";
-import { Send, User, Loader2, Key, ChevronDown } from "lucide-react";
+import { Send, User, Loader2, Key, ChevronDown, Bot } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ALL_MODELS, getModelsByProvider } from "@/lib/constants";
 import { ToolCallMessage } from "./ToolCallMessage";
 import { parseToolCallContent } from "@/utils/toolCallHelpers";
 import { ClaudeLogo } from "./ClaudeLogo";
 import { SupportedProvider } from "@/lib/providers";
+import { useConfigState } from "@/hooks/useConfigState";
 
 interface Message {
   role: "user" | "assistant";
@@ -51,25 +52,6 @@ const getClaudeApiKey = (mcpClient: unknown): string => {
   }
   
   return "";
-};
-
-const getCurrentProvider = (mcpClient: unknown): SupportedProvider => {
-  // Check if we have an aiProvider and try to determine the provider
-  if (
-    mcpClient &&
-    typeof mcpClient === "object" &&
-    mcpClient !== null &&
-    "aiProvider" in mcpClient &&
-    mcpClient.aiProvider &&
-    typeof mcpClient.aiProvider === "object" &&
-    "getProviderName" in mcpClient.aiProvider &&
-    typeof mcpClient.aiProvider.getProviderName === "function"
-  ) {
-    return mcpClient.aiProvider.getProviderName() as SupportedProvider;
-  }
-  
-  // Default to anthropic for backward compatibility
-  return "anthropic";
 };
 
 const validateSendConditions = (
@@ -116,9 +98,10 @@ const LoadingDots: React.FC = () => (
 );
 
 // Message bubble component
-const MessageBubble: React.FC<{ message: Message }> = ({ message }) => {
+const MessageBubble: React.FC<{ message: Message; provider: SupportedProvider }> = ({ message, provider }) => {
   const isUser = message.role === "user";
   const parsedContent = parseToolCallContent(message.content);
+  const branding = getProviderBranding(provider);
 
   return (
     <div
@@ -129,10 +112,7 @@ const MessageBubble: React.FC<{ message: Message }> = ({ message }) => {
     >
       {!isUser && (
         <div className="flex-shrink-0 w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
-          <ClaudeLogo
-            className="text-slate-600 dark:text-slate-300"
-            size={20}
-          />
+          {branding.logo}
         </div>
       )}
 
@@ -241,6 +221,33 @@ const ModelSelector: React.FC<{
   </div>
 );
 
+// Provider branding helper
+const getProviderBranding = (provider: SupportedProvider) => {
+  switch (provider) {
+    case "openai":
+      return {
+        name: "ChatGPT",
+        shortName: "GPT",
+        readyText: "Ready to assist",
+        thinkingText: "GPT is thinking...",
+        messagePlaceholder: "Message ChatGPT...",
+        startChatText: "Start chatting with ChatGPT",
+        logo: <Bot className="text-slate-600 dark:text-slate-300" size={20} />
+      };
+    case "anthropic":
+    default:
+      return {
+        name: "Claude",
+        shortName: "Claude", 
+        readyText: "Ready to help",
+        thinkingText: "Claude is thinking...",
+        messagePlaceholder: "Message Claude...",
+        startChatText: "Start chatting with Claude",
+        logo: <ClaudeLogo className="text-slate-600 dark:text-slate-300" size={20} />
+      };
+  }
+};
+
 // Empty state components
 const ApiKeyRequiredState: React.FC = () => (
   <div className="flex items-center justify-center h-full p-8">
@@ -253,7 +260,7 @@ const ApiKeyRequiredState: React.FC = () => (
           API Key Required
         </h3>
         <p className="text-sm text-slate-500 dark:text-slate-400">
-          Configure your Claude API key to start chatting
+          Configure your AI provider API key to start chatting
         </p>
       </div>
     </div>
@@ -262,7 +269,10 @@ const ApiKeyRequiredState: React.FC = () => (
 
 const EmptyChatsState: React.FC<{
   onSuggestionClick: (suggestion: string) => void;
-}> = ({ onSuggestionClick }) => {
+  provider: SupportedProvider;
+}> = ({ onSuggestionClick, provider }) => {
+  const branding = getProviderBranding(provider);
+  
   const suggestions = [
     "Hello! How can you help me?",
     "Help me write some code",
@@ -274,14 +284,11 @@ const EmptyChatsState: React.FC<{
     <div className="flex items-center justify-center h-full p-8">
       <div className="text-center max-w-md space-y-6">
         <div className="w-12 h-12 mx-auto rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
-          <ClaudeLogo
-            className="text-slate-600 dark:text-slate-300"
-            size={20}
-          />
+          {branding.logo}
         </div>
         <div className="space-y-2">
           <h3 className="text-lg font-medium text-slate-900 dark:text-slate-100">
-            Start chatting with Claude
+            {branding.startChatText}
           </h3>
           <p className="text-sm text-slate-500 dark:text-slate-400">
             Ask me anything - I'm here to help!
@@ -305,6 +312,7 @@ const EmptyChatsState: React.FC<{
 
 const ChatTab: React.FC = () => {
   const mcpClient = useMcpClient();
+  const configState = useConfigState();
   const [input, setInput] = useState("");
   const [chat, setChat] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
@@ -312,7 +320,7 @@ const ChatTab: React.FC = () => {
   const [tools, setTools] = useState<Tool[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>(() => {
     // Set default model based on provider
-    const provider = getCurrentProvider(mcpClient);
+    const provider = configState.selectedProvider;
     return provider === "openai" ? "gpt-4o" : "claude-3-5-sonnet-latest";
   });
   const [showModelSelector, setShowModelSelector] = useState(false);
@@ -322,8 +330,9 @@ const ChatTab: React.FC = () => {
   const modelSelectorRef = useRef<HTMLDivElement>(null);
 
   const claudeApiKey = getClaudeApiKey(mcpClient);
-  const currentProvider = getCurrentProvider(mcpClient);
+  const currentProvider = configState.selectedProvider; // Use provider from config state
   const availableModels = getModelsByProvider(currentProvider);
+  const branding = getProviderBranding(currentProvider);
   
   const { isDisabled, isSendDisabled, canSend } = validateSendConditions(
     input,
@@ -444,7 +453,7 @@ const ChatTab: React.FC = () => {
 
   // Update selected model when provider changes
   useEffect(() => {
-    const provider = getCurrentProvider(mcpClient);
+    const provider = configState.selectedProvider;
     const models = getModelsByProvider(provider);
     
     // Check if current model is still valid for the new provider
@@ -456,7 +465,7 @@ const ChatTab: React.FC = () => {
       const modelExists = models.some(model => model.id === defaultModel);
       setSelectedModel(modelExists ? defaultModel : models[0].id);
     }
-  }, [mcpClient, selectedModel]);
+  }, [configState.selectedProvider, selectedModel]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -495,17 +504,14 @@ const ChatTab: React.FC = () => {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
-                <ClaudeLogo
-                  className="text-slate-600 dark:text-slate-300"
-                  size={20}
-                />
+                {branding.logo}
               </div>
               <div>
                 <h1 className="text-base font-semibold text-slate-900 dark:text-slate-100">
-                  Claude
+                  {branding.name}
                 </h1>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  {claudeApiKey ? "Ready to help" : "API key required"}
+                  {claudeApiKey ? branding.readyText : "API key required"}
                 </p>
               </div>
             </div>
@@ -530,19 +536,16 @@ const ChatTab: React.FC = () => {
         {!claudeApiKey ? (
           <ApiKeyRequiredState />
         ) : chat.length === 0 ? (
-          <EmptyChatsState onSuggestionClick={setInput} />
+          <EmptyChatsState onSuggestionClick={setInput} provider={currentProvider} />
         ) : (
           <div className="py-2">
             {chat.map((message, idx) => (
-              <MessageBubble key={idx} message={message} />
+              <MessageBubble key={idx} message={message} provider={currentProvider} />
             ))}
             {loading && (
               <div className="flex gap-3 px-6 py-4">
                 <div className="flex-shrink-0 w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
-                  <ClaudeLogo
-                    className="text-slate-600 dark:text-slate-300"
-                    size={20}
-                  />
+                  {branding.logo}
                 </div>
                 <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl px-4 py-3">
                   <LoadingDots />
@@ -578,8 +581,8 @@ const ChatTab: React.FC = () => {
                   !claudeApiKey
                     ? "API key required..."
                     : loading
-                      ? "Claude is thinking..."
-                      : "Message Claude..."
+                      ? branding.thinkingText
+                      : branding.messagePlaceholder
                 }
                 disabled={isDisabled}
                 rows={1}
