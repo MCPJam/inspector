@@ -6,6 +6,7 @@ import {
   CreateMessageRequest,
   CreateMessageResult,
   ElicitRequest,
+  Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import React, {
   Suspense,
@@ -29,6 +30,7 @@ import ResourcesTab from "./components/ResourcesTab";
 import RootsTab from "./components/RootsTab";
 import SamplingTab from "./components/SamplingTab";
 import ToolsTab from "./components/ToolsTab";
+import EnhancedToolsTab from "./components/EnhancedToolsTab";
 import ChatTab from "./components/ChatTab";
 import Sidebar from "./components/Sidebar";
 import Tabs from "./components/Tabs";
@@ -84,6 +86,9 @@ const App = () => {
   });
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(true);
   const [showStarModal, setShowStarModal] = useState(false);
+  const [useEnhancedTools, setUseEnhancedTools] = useState(() => {
+    return localStorage.getItem("useEnhancedTools") === "true";
+  });
   const { addClientLog } = mcpOperations;
   // Handle hash changes for navigation
   useEffect(() => {
@@ -943,50 +948,86 @@ const App = () => {
               selectedServerName={serverState.selectedServerName}
             />
           );
-        case "tools":
+        case "tools": {
+          const toolsProps = {
+            tools: mcpOperations.tools,
+            listTools: () => {
+              mcpOperations.clearError("tools");
+              mcpOperations.listTools(
+                connectionState.mcpAgent,
+                serverState.selectedServerName,
+              );
+            },
+            clearTools: () => {
+              mcpOperations.setTools([]);
+              mcpOperations.setNextToolCursor(undefined);
+            },
+            callTool: async (name: string, params: Record<string, unknown>) => {
+              mcpOperations.clearError("tools");
+              mcpOperations.setToolResult(null);
+              await mcpOperations.callTool(
+                connectionState.mcpAgent,
+                serverState.selectedServerName,
+                name,
+                params,
+              );
+            },
+            selectedTool: mcpOperations.selectedTool,
+            setSelectedTool: (tool: Tool | null) => {
+              mcpOperations.clearError("tools");
+              mcpOperations.setSelectedTool(tool);
+              mcpOperations.setToolResult(null);
+            },
+            toolResult: mcpOperations.toolResult,
+            nextCursor: mcpOperations.nextToolCursor,
+            error: mcpOperations.errors.tools,
+            connectionStatus: connectionStatus as
+              | "connected"
+              | "disconnected"
+              | "error"
+              | "error-connecting-to-proxy",
+            selectedServerName: serverState.selectedServerName,
+          };
+
+          const toggleEnhancedTools = () => {
+            const newValue = !useEnhancedTools;
+            setUseEnhancedTools(newValue);
+            localStorage.setItem("useEnhancedTools", newValue.toString());
+          };
+
           return (
-            <ToolsTab
-              tools={mcpOperations.tools}
-              listTools={() => {
-                mcpOperations.clearError("tools");
-                mcpOperations.listTools(
-                  connectionState.mcpAgent,
-                  serverState.selectedServerName,
-                );
-              }}
-              clearTools={() => {
-                mcpOperations.setTools([]);
-                mcpOperations.setNextToolCursor(undefined);
-              }}
-              callTool={async (name, params) => {
-                mcpOperations.clearError("tools");
-                mcpOperations.setToolResult(null);
-                await mcpOperations.callTool(
-                  connectionState.mcpAgent,
-                  serverState.selectedServerName,
-                  name,
-                  params,
-                );
-              }}
-              selectedTool={mcpOperations.selectedTool}
-              setSelectedTool={(tool) => {
-                mcpOperations.clearError("tools");
-                mcpOperations.setSelectedTool(tool);
-                mcpOperations.setToolResult(null);
-              }}
-              toolResult={mcpOperations.toolResult}
-              nextCursor={mcpOperations.nextToolCursor}
-              error={mcpOperations.errors.tools}
-              connectionStatus={
-                connectionStatus as
-                  | "connected"
-                  | "disconnected"
-                  | "error"
-                  | "error-connecting-to-proxy"
-              }
-              selectedServerName={serverState.selectedServerName}
-            />
+            <div className="flex flex-col h-full">
+              {/* Toggle header */}
+              <div className="flex items-center justify-between p-4 border-b border-border bg-muted/30">
+                <div className="flex items-center space-x-3">
+                  <h2 className="text-lg font-semibold">Tools</h2>
+                  <span className="text-sm text-muted-foreground">
+                    {useEnhancedTools ? "Enhanced View" : "Classic View"}
+                  </span>
+                </div>
+                <button
+                  onClick={toggleEnhancedTools}
+                  className={`px-3 py-1 rounded border text-sm font-medium transition-colors ${
+                    useEnhancedTools
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "bg-background border-border hover:bg-muted"
+                  }`}
+                >
+                  {useEnhancedTools ? "✨ Enhanced" : "📋 Classic"}
+                </button>
+              </div>
+
+              {/* Tools content */}
+              <div className="flex-1 overflow-hidden">
+                {useEnhancedTools ? (
+                  <EnhancedToolsTab {...toolsProps} />
+                ) : (
+                  <ToolsTab {...toolsProps} />
+                )}
+              </div>
+            </div>
           );
+        }
         case "chat":
           return <ChatTab />;
         case "console":
