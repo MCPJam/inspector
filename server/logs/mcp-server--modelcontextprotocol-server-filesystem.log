@@ -1,0 +1,26 @@
+2025-06-23T05:12:35.913Z [test] [info] Direct endpoint logger test { metadata: undefined }
+2025-06-23T05:12:39.509Z [stdio-stderr] [error] Error accessing directory E:/: [Error: ENOENT: no such file or directory, stat 'E:\'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'stat',
+  path: 'E:\\'
+}
+ { metadata: {} }
+2025-06-23T05:12:43.419Z [test] [info] Direct endpoint logger test { metadata: undefined }
+2025-06-23T05:12:46.649Z [stdio-stderr] [error] Error accessing directory E:/: [Error: ENOENT: no such file or directory, stat 'E:\'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'stat',
+  path: 'E:\\'
+}
+ { metadata: {} }
+2025-06-23T05:12:50.426Z [test] [info] Direct endpoint logger test { metadata: undefined }
+2025-06-23T05:12:53.333Z [stdio-stderr] [error] Error accessing directory E:/: [Error: ENOENT: no such file or directory, stat 'E:\'] {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'stat',
+  path: 'E:\\'
+}
+ { metadata: {} }
+2025-06-23T05:12:56.426Z [test] [info] Direct endpoint logger test { metadata: undefined }
+2025-06-23T05:12:57.041Z [stdio-stderr] [error] ^C { metadata: {} }

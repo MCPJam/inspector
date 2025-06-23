@@ -1,28 +1,52 @@
 import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { isJSONRPCRequest } from "@modelcontextprotocol/sdk/types.js";
+import { logToFile } from "./logger.js";
 
-function onClientError(error: Error) {
+function onClientError(error: Error, logFileName?: string) {
   console.error("Error from inspector client:", error);
+  logToFile(
+    "error",
+    "client",
+    error.message,
+    { stack: error.stack },
+    logFileName
+  );
 }
 
-function onServerError(error: Error) {
+function onServerError(error: Error, logFileName?: string) {
   if (
     (error?.message &&
       error.message.includes("Error POSTing to endpoint (HTTP 404)")) ||
     (error?.cause && JSON.stringify(error.cause).includes("ECONNREFUSED"))
   ) {
     console.error("Connection refused. Is the MCP server running?");
+    logToFile(
+      "error",
+      "server",
+      "Connection refused. Is the MCP server running?",
+      { message: error.message, stack: error.stack },
+      logFileName
+    );
   } else {
     console.error("Error from MCP server:", error);
+    logToFile(
+      "error",
+      "server",
+      error.message,
+      { stack: error.stack },
+      logFileName
+    );
   }
 }
 
 export default function mcpProxy({
   transportToClient,
   transportToServer,
+  logFileName,
 }: {
   transportToClient: Transport;
   transportToServer: Transport;
+  logFileName?: string;
 }) {
   let transportToClientClosed = false;
   let transportToServerClosed = false;
@@ -40,13 +64,13 @@ export default function mcpProxy({
             data: error,
           },
         };
-        transportToClient.send(errorResponse).catch(onClientError);
+        transportToClient.send(errorResponse).catch((err) => onClientError(err, logFileName));
       }
     });
   };
 
   transportToServer.onmessage = (message) => {
-    transportToClient.send(message).catch(onClientError);
+    transportToClient.send(message).catch((err) => onClientError(err, logFileName));
   };
 
   transportToClient.onclose = () => {
@@ -55,7 +79,7 @@ export default function mcpProxy({
     }
 
     transportToClientClosed = true;
-    transportToServer.close().catch(onServerError);
+    transportToServer.close().catch((err) => onServerError(err, logFileName));
   };
 
   transportToServer.onclose = () => {
@@ -63,9 +87,9 @@ export default function mcpProxy({
       return;
     }
     transportToServerClosed = true;
-    transportToClient.close().catch(onClientError);
+    transportToClient.close().catch((err) => onClientError(err, logFileName));
   };
 
-  transportToClient.onerror = onClientError;
-  transportToServer.onerror = onServerError;
+  transportToClient.onerror = (err) => onClientError(err, logFileName);
+  transportToServer.onerror = (err) => onServerError(err, logFileName);
 }

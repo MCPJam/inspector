@@ -21,6 +21,54 @@ import express from "express";
 import { findActualExecutable } from "spawn-rx";
 import mcpProxy from "./mcpProxy.js";
 import { randomUUID } from "node:crypto";
+import { logToFile } from "./logger.js";
+
+console.log('Backend running in:', process.cwd());
+
+let lastLogFileName = 'inspector.log';
+
+function getMcpServerLogFileName(req) {
+  const query = req.query;
+  const transportType = query.transportType;
+  if (transportType === "stdio") {
+    const command = query.command || "unknown";
+    const args = (query.args || "").toString();
+    // Try to extract the actual MCP server name from the args
+    let mcpName = command.split(/[\\/]/).pop()?.replace(/\W+/g, "-") || "unknown";
+    // If using npx, look for the first non-flag arg that looks like a package name
+    if (mcpName === "npx" && args) {
+      const firstArg = args
+        .split(/\s+/)
+        .find(a => !a.startsWith("-") && (a.startsWith("@") || /^[a-zA-Z0-9_-]+$/.test(a)));
+      if (firstArg) {
+        mcpName = firstArg.replace(/\W+/g, "-");
+      }
+    }
+    return `mcp-server-${mcpName}.log`;
+  } else if (transportType === "sse" || transportType === "streamable-http") {
+    const url = query.url || "unknown";
+    try {
+      const host = new URL(url).hostname.replace(/\W+/g, "-");
+      return `mcp-server-${host}.log`;
+    } catch {
+      return "mcp-server-unknown.log";
+    }
+  }
+  return "mcp-server-unknown.log";
+}
+
+// Global error handlers
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err);
+  console.log('[LOGGER] uncaughtException handler triggered');
+  logToFile('error', 'uncaughtException', err.message, { stack: err.stack }, lastLogFileName);
+});
+process.on('unhandledRejection', (reason) => {
+  const err = reason instanceof Error ? reason : new Error(String(reason));
+  console.error('[unhandledRejection]', err);
+  console.log('[LOGGER] unhandledRejection handler triggered');
+  logToFile('error', 'unhandledRejection', err.message, { stack: err.stack }, lastLogFileName);
+});
 
 const SSE_HEADERS_PASSTHROUGH = ["authorization"];
 const STREAMABLE_HTTP_HEADERS_PASSTHROUGH = [
@@ -54,8 +102,8 @@ const backingServerTransports = new Map<string, Transport>();
 
 const createTransport = async (req: express.Request): Promise<Transport> => {
   const query = req.query;
-
   const transportType = query.transportType as string;
+  const logFileName = getMcpServerLogFileName(req);
 
   if (transportType === "stdio") {
     const command = query.command as string;
@@ -73,6 +121,18 @@ const createTransport = async (req: express.Request): Promise<Transport> => {
       env,
       stderr: "pipe",
     });
+
+    // Add error listener for async errors
+    if (transport.stderr && typeof transport.stderr.on === 'function') {
+      transport.stderr.on('data', (chunk) => {
+        logToFile('error', 'stdio-stderr', chunk.toString(), {}, logFileName);
+      });
+    }
+    if (typeof transport.on === 'function') {
+      transport.on('error', (error) => {
+        logToFile('error', 'stdio-transport', error.message, { stack: error.stack }, logFileName);
+      });
+    }
 
     await transport.start();
     return transport;
@@ -99,6 +159,14 @@ const createTransport = async (req: express.Request): Promise<Transport> => {
         headers,
       },
     });
+
+    // Add error listener for async errors
+    if (typeof transport.on === 'function') {
+      transport.on('error', (error) => {
+        logToFile('error', 'sse-transport', error.message, { stack: error.stack }, logFileName);
+      });
+    }
+
     await transport.start();
     return transport;
   } else if (transportType === "streamable-http") {
@@ -123,18 +191,28 @@ const createTransport = async (req: express.Request): Promise<Transport> => {
         },
       },
     );
+
+    // Add error listener for async errors
+    if (typeof transport.on === 'function') {
+      transport.on('error', (error) => {
+        logToFile('error', 'streamable-http-transport', error.message, { stack: error.stack }, logFileName);
+      });
+    }
+
     await transport.start();
     return transport;
   } else {
     console.error(`❌ Invalid transport type: ${transportType}`);
+    logToFile('error', 'transport', `Invalid transport type: ${transportType}`, {}, logFileName);
     throw new Error("Invalid transport type specified");
   }
 };
 
 app.get("/mcp", async (req, res) => {
-  const sessionId = req.headers["mcp-session-id"] as string;
-  console.log(`📥 Received GET message for sessionId ${sessionId}`);
+  const logFileName = getMcpServerLogFileName(req);
   try {
+    const sessionId = req.headers["mcp-session-id"] as string;
+    console.log(`📥 Received GET message for sessionId ${sessionId}`);
     const transport = webAppTransports.get(
       sessionId,
     ) as StreamableHTTPServerTransport;
@@ -145,12 +223,15 @@ app.get("/mcp", async (req, res) => {
       await transport.handleRequest(req, res);
     }
   } catch (error) {
-    console.error("❌ Error in /mcp route:", error);
-    res.status(500).json(error);
+    const err = error instanceof Error ? error : new Error(String(error));
+    console.log('[LOGGER] CATCH BLOCK REACHED', logFileName, err.message);
+    logToFile("error", "/mcp route", err.message, { stack: err.stack }, logFileName);
+    res.status(500).json({ error: err.message });
   }
 });
 
 app.post("/mcp", async (req, res) => {
+  const logFileName = getMcpServerLogFileName(req);
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
   console.log(`📥 Received POST message for sessionId ${sessionId}`);
   if (!sessionId) {
@@ -161,12 +242,15 @@ app.post("/mcp", async (req, res) => {
       try {
         backingServerTransport = await createTransport(req);
       } catch (error) {
+        const err = error instanceof Error ? error : new Error(String(error));
+        console.log('[LOGGER] CATCH BLOCK REACHED', logFileName, err.message);
+        logToFile("error", "connection", err.message, { stack: err.stack }, logFileName);
         if (error instanceof SseError && error.code === 401) {
           console.error(
             "🔒 Received 401 Unauthorized from MCP server:",
-            error.message,
+            err.message,
           );
-          res.status(401).json(error);
+          res.status(401).json(err);
           return;
         }
         throw error;
@@ -187,6 +271,7 @@ app.post("/mcp", async (req, res) => {
           mcpProxy({
             transportToClient: webAppTransport,
             transportToServer: backingServerTransport,
+            logFileName: getMcpServerLogFileName(req),
           });
 
           webAppTransport.onclose = () => {
@@ -207,8 +292,10 @@ app.post("/mcp", async (req, res) => {
         req.body,
       );
     } catch (error) {
-      console.error("❌ Error in /mcp POST route:", error);
-      res.status(500).json(error);
+      const err = error instanceof Error ? error : new Error(String(error));
+      console.log('[LOGGER] CATCH BLOCK REACHED', logFileName, err.message);
+      logToFile("error", "/mcp POST route", err.message, { stack: err.stack }, logFileName);
+      res.status(500).json({ error: err.message });
     }
   } else {
     try {
@@ -224,13 +311,19 @@ app.post("/mcp", async (req, res) => {
         );
       }
     } catch (error) {
-      console.error("❌ Error in /mcp route:", error);
-      res.status(500).json(error);
+      const err = error instanceof Error ? error : new Error(String(error));
+      console.log('[LOGGER] CATCH BLOCK REACHED', logFileName, err.message);
+      logToFile("error", "/mcp route", err.message, { stack: err.stack }, logFileName);
+      res.status(500).json({ error: err.message });
     }
   }
 });
 
 app.get("/stdio", async (req, res) => {
+  const logFileName = getMcpServerLogFileName(req);
+  lastLogFileName = logFileName;
+  console.log('[LOGGER] /stdio endpoint hit', logFileName);
+  logToFile('info', 'test', 'Direct endpoint logger test', undefined, logFileName);
   try {
     console.log("🔄 New stdio/sse connection");
     const webAppTransport = new SSEServerTransport("/message", res);
@@ -263,30 +356,35 @@ app.get("/stdio", async (req, res) => {
       mcpProxy({
         transportToClient: webAppTransport,
         transportToServer: backingServerTransport,
+        logFileName: getMcpServerLogFileName(req),
       });
 
       console.log(
         `✨ Connected MCP client to backing server transport for session ${sessionId}`,
       );
     } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      console.log('[LOGGER] CATCH BLOCK REACHED', logFileName, err.message);
+      logToFile("error", "/stdio route", err.message, { stack: err.stack }, logFileName);
       if (error instanceof SseError && error.code === 401) {
         console.error(
           "🔒 Received 401 Unauthorized from MCP server:",
-          error.message,
+          err.message,
         );
-        res.status(401).json(error);
+        res.status(401).json(err);
         return;
       }
-
       throw error;
     }
   } catch (error) {
-    console.error("❌ Error in /stdio route:", error);
+    const err = error instanceof Error ? error : new Error(String(error));
+    console.log('[LOGGER] CATCH BLOCK REACHED', logFileName, err.message);
     // Can't send a 500 response if headers already sent (which they are for SSE)
   }
 });
 
 app.get("/sse", async (req, res) => {
+  const logFileName = getMcpServerLogFileName(req);
   try {
     console.log("🔄 New sse connection");
     const webAppTransport = new SSEServerTransport("/message", res);
@@ -308,25 +406,29 @@ app.get("/sse", async (req, res) => {
       mcpProxy({
         transportToClient: webAppTransport,
         transportToServer: backingServerTransport,
+        logFileName: getMcpServerLogFileName(req),
       });
 
       console.log(
         `✨ Connected MCP client to backing server transport for session ${sessionId}`,
       );
     } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      console.log('[LOGGER] CATCH BLOCK REACHED', logFileName, err.message);
+      logToFile("error", "/sse route", err.message, { stack: err.stack }, logFileName);
       if (error instanceof SseError && error.code === 401) {
         console.error(
           "🔒 Received 401 Unauthorized from MCP server:",
-          error.message,
+          err.message,
         );
-        res.status(401).json(error);
+        res.status(401).json(err);
         return;
       }
-
       throw error;
     }
   } catch (error) {
-    console.error("❌ Error in /sse route:", error);
+    const err = error instanceof Error ? error : new Error(String(error));
+    console.log('[LOGGER] CATCH BLOCK REACHED', logFileName, err.message);
     // Can't send a 500 response if headers already sent (which they are for SSE)
   }
 });
@@ -345,8 +447,12 @@ app.post("/message", async (req, res) => {
     }
     await transport.handlePostMessage(req, res);
   } catch (error) {
-    console.error("❌ Error in /message route:", error);
-    res.status(500).json(error);
+    const err = error instanceof Error ? error : new Error(String(error));
+    const logFileName = getMcpServerLogFileName(req);
+    console.log('[LOGGER] CATCH BLOCK REACHED', logFileName, err.message);
+    logToFile("error", "/message route", err.message, { stack: err.stack }, logFileName);
+    res.status(500).json(err);
+    throw error;
   }
 });
 
@@ -364,8 +470,12 @@ app.get("/config", (req, res) => {
       defaultArgs: values.args,
     });
   } catch (error) {
-    console.error("❌ Error in /config route:", error);
-    res.status(500).json(error);
+    const err = error instanceof Error ? error : new Error(String(error));
+    const logFileName = getMcpServerLogFileName(req);
+    console.log('[LOGGER] CATCH BLOCK REACHED', logFileName, err.message);
+    logToFile("error", "/config route", err.message, { stack: err.stack }, logFileName);
+    res.status(500).json(err);
+    throw error;
   }
 });
 
@@ -426,11 +536,19 @@ const startServer = async () => {
       );
     });
     server.on("error", (err) => {
-      console.error(`❌ Server error: ${err.message}`);
+      const errorObj = err instanceof Error ? err : new Error(String(err));
+      const logFileName = getMcpServerLogFileName(req);
+      console.log('[LOGGER] CATCH BLOCK REACHED', logFileName, errorObj.message);
+      logToFile("error", "server", errorObj.message, { stack: errorObj.stack }, logFileName);
+      console.error(`❌ Server error: ${errorObj.message}`);
       process.exit(1);
     });
   } catch (error) {
-    console.error(`❌ Failed to start server: ${error}`);
+    const err = error instanceof Error ? error : new Error(String(error));
+    const logFileName = getMcpServerLogFileName(req);
+    console.log('[LOGGER] CATCH BLOCK REACHED', logFileName, err.message);
+    logToFile("error", "server", err.message, { stack: err.stack }, logFileName);
+    console.error(`❌ Failed to start server: ${err.message}`);
     process.exit(1);
   }
 };
