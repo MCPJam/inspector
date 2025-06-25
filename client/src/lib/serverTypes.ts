@@ -19,6 +19,7 @@ export type StdioServerDefinition = BaseServerOptions & {
   eventSourceInit?: never; // Exclude HTTP options for Stdio
   reconnectionOptions?: never; // Exclude Streamable HTTP specific options
   sessionId?: never; // Exclude Streamable HTTP specific options
+  logFileName?: string;
 };
 
 // HTTP Server Definition (Streamable HTTP or SSE fallback)
@@ -30,6 +31,7 @@ export type HttpServerDefinition = BaseServerOptions & {
   eventSourceInit?: SSEClientTransportOptions["eventSourceInit"];
   reconnectionOptions?: StreamableHTTPClientTransportOptions["reconnectionOptions"];
   sessionId?: StreamableHTTPClientTransportOptions["sessionId"];
+  logFileName?: string;
 };
 
 export type MCPJamServerConfig = StdioServerDefinition | HttpServerDefinition;

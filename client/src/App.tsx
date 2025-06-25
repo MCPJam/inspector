@@ -44,6 +44,7 @@ import { useServerState } from "./hooks/useServerState";
 import { useConnectionState } from "./hooks/useConnectionState";
 import { useMCPOperations } from "./hooks/useMCPOperations";
 import { useConfigState } from "./hooks/useConfigState";
+import { useServerLogs } from "./hooks/useServerLogs";
 
 // Services
 import { loadOAuthTokens, handleOAuthDebugConnect } from "./services/oauth";
@@ -186,8 +187,37 @@ const App = () => {
       const shouldSelectNewServer =
         Object.keys(serverState.serverConfigs).length === 0;
 
-      // Just add the server config without connecting
-      serverState.updateServerConfig(name, serverConfig);
+      // --- Fetch logFileName from backend ---
+      let logFileName: string | undefined = undefined;
+      try {
+        let url = "";
+        if (serverConfig.transportType === "stdio") {
+          const params = new URLSearchParams();
+          params.set("transportType", "stdio");
+          params.set("command", (serverConfig as any).command || "");
+          if ((serverConfig as any).args) {
+            params.set("args", Array.isArray((serverConfig as any).args) ? (serverConfig as any).args.join(" ") : (serverConfig as any).args);
+          }
+          url = `/logfile-name?${params.toString()}`;
+        } else if (serverConfig.transportType === "sse" || serverConfig.transportType === "streamable-http") {
+          const params = new URLSearchParams();
+          params.set("transportType", serverConfig.transportType);
+          params.set("url", (serverConfig as any).url?.toString() || "");
+          url = `/logfile-name?${params.toString()}`;
+        }
+        if (url) {
+          const resp = await fetch(url);
+          if (resp.ok) {
+            const data = await resp.json();
+            logFileName = data.logFileName;
+          }
+        }
+      } catch (e) {
+        logFileName = undefined;
+      }
+      // Add logFileName to config
+      const configWithLog = { ...serverConfig, logFileName };
+      serverState.updateServerConfig(name, configWithLog);
 
       // Switch to the new server if there were no other servers
       if (shouldSelectNewServer) {
@@ -198,14 +228,14 @@ const App = () => {
       if (!connectionState.mcpAgent) {
         console.log("🆕 Creating agent with server config...");
         addClientLog(
-          `🆕 Creating agent with server config (no auto-connect) ${name} ${JSON.stringify(serverConfig)}`,
+          `🆕 Creating agent with server config (no auto-connect) ${name} ${JSON.stringify(configWithLog)}`,
           "info",
         );
         try {
           // Include ALL server configs (existing + new) when creating the agent
           const allServerConfigs = {
             ...serverState.serverConfigs,
-            [name]: serverConfig,
+            [name]: configWithLog,
           };
 
           const agent = await connectionState.createAgentWithoutConnecting(
@@ -231,7 +261,7 @@ const App = () => {
         }
       } else {
         // Add server to existing agent without connecting
-        connectionState.mcpAgent.addServer(name, serverConfig);
+        connectionState.mcpAgent.addServer(name, configWithLog);
         connectionState.forceUpdateSidebar();
 
         // Auto-connect if requested
@@ -1035,6 +1065,37 @@ const App = () => {
     );
   };
 
+  const selectedServerName = serverState.selectedServerName;
+  const selectedServerConfig = serverState.serverConfigs[selectedServerName];
+  const logFileName = selectedServerConfig?.logFileName ||
+    (selectedServerConfig?.transportType === "stdio"
+      ? (() => {
+          const command = (selectedServerConfig as any).command || "unknown";
+          const args = Array.isArray((selectedServerConfig as any).args) ? (selectedServerConfig as any).args.join(" ") : (selectedServerConfig as any).args || "";
+          let mcpName = command.split(/[\\/]/).pop()?.replace(/\W+/g, "-") || "unknown";
+          if (mcpName === "npx" && args) {
+            const firstArg = args
+              .split(/\s+/)
+              .find((a: string) => !a.startsWith("-") && (a.startsWith("@") || /^[a-zA-Z0-9_-]+$/.test(a)));
+            if (firstArg) {
+              mcpName = firstArg.replace(/\W+/g, "-");
+            }
+          }
+          return `mcp-server-${mcpName}.log`;
+        })()
+      : selectedServerConfig?.transportType === "sse" || selectedServerConfig?.transportType === "streamable-http"
+      ? (() => {
+          const urlStr = (selectedServerConfig as any).url?.toString() || "unknown";
+          try {
+            const host = new URL(urlStr).hostname.replace(/\W+/g, "-");
+            return `mcp-server-${host}.log`;
+          } catch {
+            return "mcp-server-unknown.log";
+          }
+        })()
+      : "mcp-server-unknown.log");
+  const { logs: serverLogs } = useServerLogs(logFileName);
+
   return (
     <McpClientContext.Provider value={currentClient}>
       <div className="h-screen bg-gradient-to-br from-slate-50/50 to-slate-100/50 dark:from-slate-900/50 dark:to-slate-800/50 flex overflow-hidden app-container">
@@ -1073,7 +1134,7 @@ const App = () => {
           <HistoryAndNotifications
             requestHistory={requestHistory}
             toolResult={mcpOperations.toolResult}
-            clientLogs={mcpOperations.getClientLogs()}
+            clientLogs={serverLogs}
             onClearHistory={mcpOperations.clearRequestHistory}
             onClearLogs={mcpOperations.clearClientLogs}
           />
