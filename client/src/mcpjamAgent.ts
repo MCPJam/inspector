@@ -25,7 +25,6 @@ export interface MCPClientOptions {
   inspectorConfig?: InspectorConfig; // Add optional config
   bearerToken?: string;
   headerName?: string;
-  claudeApiKey?: string;
   onStdErrNotification?: (notification: StdErrNotification) => void;
   onPendingRequest?: (
     request: CreateMessageRequest,
@@ -55,7 +54,6 @@ export class MCPJamAgent {
   private inspectorConfig: InspectorConfig;
   private bearerToken?: string;
   private headerName?: string;
-  private claudeApiKey?: string;
   private onStdErrNotification?: (notification: StdErrNotification) => void;
   private onPendingRequest?: (
     request: CreateMessageRequest,
@@ -76,7 +74,6 @@ export class MCPJamAgent {
     this.inspectorConfig = options.inspectorConfig || createDefaultConfig();
     this.bearerToken = options.bearerToken;
     this.headerName = options.headerName;
-    this.claudeApiKey = options.claudeApiKey;
     this.onStdErrNotification = options.onStdErrNotification;
     this.onPendingRequest = options.onPendingRequest;
     this.onElicitationRequest = options.onElicitationRequest;
@@ -206,8 +203,6 @@ export class MCPJamAgent {
       this.bearerToken, // bearerToken
       this.headerName, // headerName
       this.onStdErrNotification, // onStdErrNotification
-      this.claudeApiKey, // apiKey
-      "anthropic", // providerType
       this.onPendingRequest, // onPendingRequest
       this.onElicitationRequest, // onElicitationRequest
       this.getRoots, // getRoots
@@ -340,18 +335,9 @@ export class MCPJamAgent {
   updateCredentials(
     bearerToken?: string,
     headerName?: string,
-    claudeApiKey?: string,
   ) {
     this.bearerToken = bearerToken;
     this.headerName = headerName;
-    this.claudeApiKey = claudeApiKey;
-
-    // Update existing clients
-    this.mcpClientsById.forEach((client) => {
-      if (claudeApiKey && client.updateApiKey) {
-        client.updateApiKey(claudeApiKey);
-      }
-    });
   }
 
   // Get aggregated connection status

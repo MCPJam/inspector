@@ -2,7 +2,10 @@
 export * from "./types";
 
 // Export provider implementations
-export { AnthropicProvider } from "./anthropicProvider";
+export * from "./anthropicProvider";
 
 // Export factory
-export { DefaultProviderFactory, providerFactory } from "./providerFactory"; 
+export * from "./providerFactory";
+
+// Export ProviderManager
+export * from "./providerManager"; 

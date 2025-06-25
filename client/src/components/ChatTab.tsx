@@ -1,13 +1,17 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useMcpClient } from "@/context/McpClientContext";
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
-import { Anthropic } from "@anthropic-ai/sdk";
-import { Send, User, Loader2, Key, ChevronDown } from "lucide-react";
+import {
+  Tool as MessageTool,
+} from "@anthropic-ai/sdk/resources/messages/messages.mjs";
+import { Send, User, Key, ChevronDown, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { CLAUDE_MODELS } from "@/lib/constants";
 import { ToolCallMessage } from "./ToolCallMessage";
 import { parseToolCallContent } from "@/utils/toolCallHelpers";
-import { ClaudeLogo } from "./ClaudeLogo";
+import { ProviderLogo } from "./ProviderLogo";
+import { providerManager, SupportedProvider } from "@/lib/providers";
+import { ProviderModel } from "@/lib/providers/types";
+import { MCPJamClient } from "@/mcpjamClient";
 
 interface Message {
   role: "user" | "assistant";
@@ -25,43 +29,50 @@ const createMessage = (
   timestamp: new Date(),
 });
 
-const getClaudeApiKey = (mcpClient: unknown): string => {
-  // Check if we have a valid aiProvider (this means API key was provided and provider was initialized)
-  if (
-    mcpClient &&
-    typeof mcpClient === "object" &&
-    mcpClient !== null &&
-    "aiProvider" in mcpClient &&
-    mcpClient.aiProvider
-  ) {
-    // If aiProvider exists, it means the API key was provided during initialization
-    return "valid"; // Return a non-empty string to indicate API key is available
+const getAnyApiKey = (): boolean => {
+  const providers: SupportedProvider[] = ["anthropic", "openai", "deepseek"];
+  return providers.some(provider => providerManager.isProviderReady(provider));
+};
+
+const getAvailableProviders = (): SupportedProvider[] => {
+  const providers: SupportedProvider[] = [];
+  if (providerManager.isProviderReady("anthropic")) providers.push("anthropic");
+  if (providerManager.isProviderReady("openai")) providers.push("openai");
+  if (providerManager.isProviderReady("deepseek")) providers.push("deepseek");
+  return providers;
+};
+
+const getProviderDisplayName = (provider: SupportedProvider): string => {
+  switch (provider) {
+    case "anthropic": return "Claude";
+    case "openai": return "OpenAI";
+    case "deepseek": return "DeepSeek";
+    default: return provider;
   }
-  
-  // Fallback: check for old anthropic property (for backward compatibility)
-  if (
-    mcpClient &&
-    typeof mcpClient === "object" &&
-    mcpClient !== null &&
-    "anthropic" in mcpClient &&
-    (mcpClient as { anthropic?: Anthropic }).anthropic
-  ) {
-    return (mcpClient as { anthropic: Anthropic }).anthropic.apiKey || "";
+};
+
+const getModelsForProvider = (provider: SupportedProvider): ProviderModel[] => {
+  try {
+    const providerInstance = providerManager.getProvider(provider);
+    if (providerInstance) {
+      return providerInstance.getSupportedModels();
+    }
+  } catch (error) {
+    console.warn(`Failed to get models for provider ${provider}:`, error);
   }
-  
-  return "";
+  return [];
 };
 
 const validateSendConditions = (
   input: string,
   mcpClient: unknown,
-  claudeApiKey: string,
+  hasAnyApiKey: boolean,
   loading: boolean,
 ) => {
   return {
-    isDisabled: loading || !claudeApiKey,
-    isSendDisabled: loading || !claudeApiKey || !input.trim(),
-    canSend: input.trim() && mcpClient && claudeApiKey && !loading,
+    isDisabled: loading || !hasAnyApiKey,
+    isSendDisabled: loading || !hasAnyApiKey || !input.trim(),
+    canSend: input.trim() && mcpClient && hasAnyApiKey && !loading,
   };
 };
 
@@ -96,7 +107,10 @@ const LoadingDots: React.FC = () => (
 );
 
 // Message bubble component
-const MessageBubble: React.FC<{ message: Message }> = ({ message }) => {
+const MessageBubble: React.FC<{ 
+  message: Message; 
+  selectedProvider: SupportedProvider;
+}> = ({ message, selectedProvider }) => {
   const isUser = message.role === "user";
   const parsedContent = parseToolCallContent(message.content);
 
@@ -109,9 +123,10 @@ const MessageBubble: React.FC<{ message: Message }> = ({ message }) => {
     >
       {!isUser && (
         <div className="flex-shrink-0 w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
-          <ClaudeLogo
+          <ProviderLogo
             className="text-slate-600 dark:text-slate-300"
             size={20}
+            provider={selectedProvider}
           />
         </div>
       )}
@@ -164,61 +179,6 @@ const MessageBubble: React.FC<{ message: Message }> = ({ message }) => {
   );
 };
 
-// Model selector component
-const ModelSelector: React.FC<{
-  selectedModel: string;
-  showModelSelector: boolean;
-  loading: boolean;
-  onToggle: () => void;
-  onModelSelect: (modelId: string) => void;
-  modelSelectorRef: React.RefObject<HTMLDivElement>;
-}> = ({
-  selectedModel,
-  showModelSelector,
-  loading,
-  onToggle,
-  onModelSelect,
-  modelSelectorRef,
-}) => (
-  <div className="relative" ref={modelSelectorRef}>
-    <button
-      onClick={onToggle}
-      className="flex items-center gap-2 px-3 py-1.5 text-sm bg-slate-50 dark:bg-slate-800/50 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors border border-slate-200 dark:border-slate-700"
-      disabled={loading}
-    >
-      <span className="text-slate-700 dark:text-slate-200 font-medium">
-        {CLAUDE_MODELS.find((m) => m.id === selectedModel)?.name ||
-          selectedModel}
-      </span>
-      <ChevronDown className="w-3 h-3 text-slate-400" />
-    </button>
-
-    {showModelSelector && (
-      <div className="absolute right-0 top-full mt-2 w-72 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-lg z-50">
-        <div className="py-2">
-          {CLAUDE_MODELS.map((model) => (
-            <button
-              key={model.id}
-              onClick={() => onModelSelect(model.id)}
-              className={cn(
-                "w-full px-4 py-3 text-left hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors",
-                selectedModel === model.id && "bg-slate-50 dark:bg-slate-800",
-              )}
-            >
-              <div className="text-sm font-medium text-slate-900 dark:text-slate-100">
-                {model.name}
-              </div>
-              <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                {model.description}
-              </div>
-            </button>
-          ))}
-        </div>
-      </div>
-    )}
-  </div>
-);
-
 // Empty state components
 const ApiKeyRequiredState: React.FC = () => (
   <div className="flex items-center justify-center h-full p-8">
@@ -231,7 +191,7 @@ const ApiKeyRequiredState: React.FC = () => (
           API Key Required
         </h3>
         <p className="text-sm text-slate-500 dark:text-slate-400">
-          Configure your Claude API key to start chatting
+          Configure your API key to start chatting
         </p>
       </div>
     </div>
@@ -240,7 +200,8 @@ const ApiKeyRequiredState: React.FC = () => (
 
 const EmptyChatsState: React.FC<{
   onSuggestionClick: (suggestion: string) => void;
-}> = ({ onSuggestionClick }) => {
+  selectedProvider: SupportedProvider;
+}> = ({ onSuggestionClick, selectedProvider }) => {
   const suggestions = [
     "Hello! How can you help me?",
     "Help me write some code",
@@ -252,14 +213,15 @@ const EmptyChatsState: React.FC<{
     <div className="flex items-center justify-center h-full p-8">
       <div className="text-center max-w-md space-y-6">
         <div className="w-12 h-12 mx-auto rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
-          <ClaudeLogo
+          <ProviderLogo
             className="text-slate-600 dark:text-slate-300"
             size={20}
+            provider={selectedProvider}
           />
         </div>
         <div className="space-y-2">
           <h3 className="text-lg font-medium text-slate-900 dark:text-slate-100">
-            Start chatting with Claude
+            Start chatting with {getProviderDisplayName(selectedProvider)}
           </h3>
           <p className="text-sm text-slate-500 dark:text-slate-400">
             Ask me anything - I'm here to help!
@@ -288,20 +250,24 @@ const ChatTab: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tools, setTools] = useState<Tool[]>([]);
-  const [selectedModel, setSelectedModel] = useState<string>(
-    "claude-3-5-sonnet-latest",
-  );
+  const [selectedProvider, setSelectedProvider] = useState<SupportedProvider>("anthropic");
+  const [selectedModel, setSelectedModel] = useState<string>("claude-3-5-sonnet-latest");
+  const [showProviderSelector, setShowProviderSelector] = useState(false);
   const [showModelSelector, setShowModelSelector] = useState(false);
+  const [abortController, setAbortController] = useState<AbortController | null>(null);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const providerSelectorRef = useRef<HTMLDivElement>(null);
   const modelSelectorRef = useRef<HTMLDivElement>(null);
 
-  const claudeApiKey = getClaudeApiKey(mcpClient);
+  const hasAnyApiKey = getAnyApiKey();
+  const availableProviders = getAvailableProviders();
+  const availableModels = getModelsForProvider(selectedProvider);
   const { isDisabled, isSendDisabled, canSend } = validateSendConditions(
     input,
     mcpClient,
-    claudeApiKey,
+    hasAnyApiKey,
     loading,
   );
 
@@ -322,11 +288,9 @@ const ChatTab: React.FC = () => {
     setChat((prev) => [...prev, message]);
   };
 
-  const processUserQuery = async (userMessage: string) => {
+  const processUserQuery = async (userMessage: string, signal?: AbortSignal) => {
     if (
-      !mcpClient ||
-      !("processQuery" in mcpClient) ||
-      typeof mcpClient.processQuery !== "function"
+      !mcpClient || !(mcpClient instanceof MCPJamClient)
     ) {
       throw new Error(
         "Chat functionality is not available. Please ensure you have a valid API key and the server is connected.",
@@ -340,16 +304,20 @@ const ChatTab: React.FC = () => {
           tools: Tool[],
           onUpdate?: (content: string) => void,
           model?: string,
+          provider?: string,
+          signal?: AbortSignal,
         ) => Promise<string>;
       }
     ).processQuery(
       userMessage,
-      tools,
+      tools as unknown as MessageTool[],
       (content: string) => {
         const assistantMessage = createMessage("assistant", content);
         addMessageToChat(assistantMessage);
       },
       selectedModel,
+      selectedProvider,
+      signal,
     );
   };
 
@@ -366,13 +334,29 @@ const ChatTab: React.FC = () => {
     setInput("");
     setLoading(true);
 
+    // Create new AbortController for this request
+    const controller = new AbortController();
+    setAbortController(controller);
+
     try {
-      await processUserQuery(userMessage);
+      await processUserQuery(userMessage, controller.signal);
     } catch (e: unknown) {
       const errorMessage =
         e instanceof Error ? e.message : "Error sending message";
-      setError(errorMessage);
+      // Don't show error message if the request was cancelled
+      if (errorMessage !== "Chat was cancelled") {
+        setError(errorMessage);
+      }
     } finally {
+      setLoading(false);
+      setAbortController(null);
+    }
+  };
+
+  const handleStop = () => {
+    if (abortController) {
+      abortController.abort();
+      setAbortController(null);
       setLoading(false);
     }
   };
@@ -392,14 +376,42 @@ const ChatTab: React.FC = () => {
     handleTextareaResize(e.target);
   };
 
+  const handleProviderSelect = (provider: SupportedProvider) => {
+    setSelectedProvider(provider);
+    setShowProviderSelector(false);
+    
+    // Update model to first available model for this provider
+    const models = getModelsForProvider(provider);
+    if (models.length > 0) {
+      setSelectedModel(models[0].id);
+    }
+  };
+
   const handleModelSelect = (modelId: string) => {
     setSelectedModel(modelId);
     setShowModelSelector(false);
   };
 
+  const toggleProviderSelector = () => {
+    setShowProviderSelector(!showProviderSelector);
+  };
+
   const toggleModelSelector = () => {
     setShowModelSelector(!showModelSelector);
   };
+
+  // Initialize with first available provider and model
+  useEffect(() => {
+    if (availableProviders.length > 0) {
+      const firstProvider = availableProviders[0];
+      setSelectedProvider(firstProvider);
+      
+      const models = getModelsForProvider(firstProvider);
+      if (models.length > 0) {
+        setSelectedModel(models[0].id);
+      }
+    }
+  }, []);
 
   // Effects
   useEffect(() => {
@@ -420,13 +432,19 @@ const ChatTab: React.FC = () => {
   }, [chat]);
 
   useEffect(() => {
-    if (claudeApiKey && inputRef.current) {
+    if (hasAnyApiKey && inputRef.current) {
       inputRef.current.focus();
     }
-  }, [claudeApiKey]);
+  }, [hasAnyApiKey]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
+      if (
+        providerSelectorRef.current &&
+        !providerSelectorRef.current.contains(event.target as Node)
+      ) {
+        setShowProviderSelector(false);
+      }
       if (
         modelSelectorRef.current &&
         !modelSelectorRef.current.contains(event.target as Node)
@@ -435,14 +453,23 @@ const ChatTab: React.FC = () => {
       }
     };
 
-    if (showModelSelector) {
+    if (showProviderSelector || showModelSelector) {
       document.addEventListener("mousedown", handleClickOutside);
     }
 
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
     };
-  }, [showModelSelector]);
+  }, [showProviderSelector, showModelSelector]);
+
+  // Cleanup effect to abort any ongoing requests when component unmounts
+  useEffect(() => {
+    return () => {
+      if (abortController) {
+        abortController.abort();
+      }
+    };
+  }, [abortController]);
 
   return (
     <div className="flex flex-col h-full bg-white dark:bg-slate-950">
@@ -452,30 +479,97 @@ const ChatTab: React.FC = () => {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
-                <ClaudeLogo
+                <ProviderLogo
                   className="text-slate-600 dark:text-slate-300"
                   size={20}
+                  provider={selectedProvider}
                 />
               </div>
               <div>
                 <h1 className="text-base font-semibold text-slate-900 dark:text-slate-100">
-                  Claude
+                  {getProviderDisplayName(selectedProvider)}
                 </h1>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  {claudeApiKey ? "Ready to help" : "API key required"}
+                  {hasAnyApiKey ? "Ready to help" : "API key required"}
                 </p>
               </div>
             </div>
 
-            {claudeApiKey && (
-              <ModelSelector
-                selectedModel={selectedModel}
-                showModelSelector={showModelSelector}
-                loading={loading}
-                onToggle={toggleModelSelector}
-                onModelSelect={handleModelSelect}
-                modelSelectorRef={modelSelectorRef}
-              />
+            {hasAnyApiKey && (
+              <div className="flex items-center gap-2">
+                {/* Provider Selector */}
+                <div className="relative" ref={providerSelectorRef}>
+                  <button
+                    onClick={toggleProviderSelector}
+                    className="flex items-center gap-2 px-3 py-1.5 text-sm bg-slate-50 dark:bg-slate-800/50 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors border border-slate-200 dark:border-slate-700"
+                    disabled={loading}
+                  >
+                    <span className="text-slate-700 dark:text-slate-200 font-medium">
+                      {getProviderDisplayName(selectedProvider)}
+                    </span>
+                    <ChevronDown className="w-3 h-3 text-slate-400" />
+                  </button>
+
+                  {showProviderSelector && (
+                    <div className="absolute right-0 top-full mt-2 w-48 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-lg z-50">
+                      <div className="py-2">
+                        {availableProviders.map((provider) => (
+                          <button
+                            key={provider}
+                            onClick={() => handleProviderSelect(provider)}
+                            className={cn(
+                              "w-full px-4 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors",
+                              selectedProvider === provider && "bg-slate-50 dark:bg-slate-800",
+                            )}
+                          >
+                            <div className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                              {getProviderDisplayName(provider)}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Model Selector */}
+                <div className="relative" ref={modelSelectorRef}>
+                  <button
+                    onClick={toggleModelSelector}
+                    className="flex items-center gap-2 px-3 py-1.5 text-sm bg-slate-50 dark:bg-slate-800/50 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors border border-slate-200 dark:border-slate-700"
+                    disabled={loading}
+                  >
+                    <span className="text-slate-700 dark:text-slate-200 font-medium">
+                      {availableModels.find(m => m.id === selectedModel)?.name || selectedModel}
+                    </span>
+                    <ChevronDown className="w-3 h-3 text-slate-400" />
+                  </button>
+
+                  {showModelSelector && (
+                    <div className="absolute right-0 top-full mt-2 w-72 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-lg z-50">
+                      <div className="py-2">
+                        {availableModels.map((model) => (
+                          <button
+                            key={model.id}
+                            onClick={() => handleModelSelect(model.id)}
+                            className={cn(
+                              "w-full px-4 py-3 text-left hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors",
+                              selectedModel === model.id && "bg-slate-50 dark:bg-slate-800",
+                            )}
+                          >
+                            <div className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                              {model.name}
+                            </div>
+                            <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                              {model.description}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
             )}
           </div>
         </div>
@@ -483,21 +577,22 @@ const ChatTab: React.FC = () => {
 
       {/* Chat Messages */}
       <div className="flex-1 overflow-y-auto">
-        {!claudeApiKey ? (
+        {!hasAnyApiKey ? (
           <ApiKeyRequiredState />
         ) : chat.length === 0 ? (
-          <EmptyChatsState onSuggestionClick={setInput} />
+          <EmptyChatsState onSuggestionClick={setInput} selectedProvider={selectedProvider} />
         ) : (
           <div className="py-2">
             {chat.map((message, idx) => (
-              <MessageBubble key={idx} message={message} />
+              <MessageBubble key={idx} message={message} selectedProvider={selectedProvider} />
             ))}
             {loading && (
               <div className="flex gap-3 px-6 py-4">
                 <div className="flex-shrink-0 w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
-                  <ClaudeLogo
+                  <ProviderLogo
                     className="text-slate-600 dark:text-slate-300"
                     size={20}
+                    provider={selectedProvider}
                   />
                 </div>
                 <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl px-4 py-3">
@@ -531,11 +626,11 @@ const ChatTab: React.FC = () => {
                 onChange={handleInputChange}
                 onKeyDown={handleKeyDown}
                 placeholder={
-                  !claudeApiKey
+                  !hasAnyApiKey
                     ? "API key required..."
                     : loading
-                      ? "Claude is thinking..."
-                      : "Message Claude..."
+                      ? `${getProviderDisplayName(selectedProvider)} is thinking...`
+                      : `Message ${getProviderDisplayName(selectedProvider)}...`
                 }
                 disabled={isDisabled}
                 rows={1}
@@ -544,7 +639,7 @@ const ChatTab: React.FC = () => {
                   "focus:outline-none focus:ring-2 focus:ring-slate-400 dark:focus:ring-slate-500 focus:border-transparent",
                   "placeholder:text-slate-400 dark:placeholder:text-slate-500 text-sm",
                   "min-h-[48px] max-h-32 overflow-y-auto",
-                  !claudeApiKey && "opacity-50 cursor-not-allowed",
+                  !hasAnyApiKey && "opacity-50 cursor-not-allowed",
                 )}
                 style={{
                   height: "auto",
@@ -552,26 +647,35 @@ const ChatTab: React.FC = () => {
                   maxHeight: "128px",
                 }}
               />
-              <button
-                type="submit"
-                disabled={isSendDisabled}
-                className={cn(
-                  "flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center transition-colors",
-                  isSendDisabled
-                    ? "bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed"
-                    : "bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-slate-200",
-                )}
-              >
-                {loading ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
+              {loading ? (
+                <button
+                  type="button"
+                  onClick={handleStop}
+                  className={cn(
+                    "flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center transition-colors",
+                    "bg-red-600 hover:bg-red-700 text-white",
+                  )}
+                >
+                  <Square className="w-4 h-4" />
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={isSendDisabled}
+                  className={cn(
+                    "flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center transition-colors",
+                    isSendDisabled
+                      ? "bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed"
+                      : "bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-slate-200",
+                  )}
+                >
                   <Send className="w-4 h-4" />
-                )}
-              </button>
+                </button>
+              )}
             </div>
 
             {/* Tips */}
-            {claudeApiKey && !loading && (
+            {hasAnyApiKey && !loading && (
               <div className="text-xs text-slate-400 dark:text-slate-500 mt-3 px-1">
                 <span className="hidden sm:inline">
                   Press Enter to send • Shift+Enter for new line

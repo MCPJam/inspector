@@ -15,6 +15,7 @@ import {
   ProviderMessage,
   ProviderTool,
   ProviderResponseContent,
+  ProviderModel,
 } from "./types";
 
 export class AnthropicProvider extends AIProvider {
@@ -48,16 +49,43 @@ export class AnthropicProvider extends AIProvider {
     return "claude-3-5-sonnet-latest";
   }
 
-  getSupportedModels(): string[] {
+  getSupportedModels(): ProviderModel[] {
     return [
-      "claude-3-5-sonnet-latest",
-      "claude-3-5-sonnet-20241022",
-      "claude-3-5-haiku-latest",
-      "claude-3-5-haiku-20241022",
-      "claude-3-opus-latest",
-      "claude-3-opus-20240229",
-      "claude-3-sonnet-20240229",
-      "claude-3-haiku-20240307",
+      {
+        id: "claude-3-5-sonnet-latest",
+        name: "Claude Sonnet 3.5",
+        description: "High level of intelligence and capability"
+      },
+      {
+        id: "claude-3-5-sonnet-20241022",
+        name: "Claude Sonnet 3.5 (Oct 2024)",
+        description: "Specific version with enhanced capabilities"
+      },
+      {
+        id: "claude-3-5-haiku-latest",
+        name: "Claude Haiku 3.5",
+        description: "Fastest model - intelligence at blazing speeds"
+      },
+      {
+        id: "claude-3-5-haiku-20241022",
+        name: "Claude Haiku 3.5 (Oct 2024)",
+        description: "Latest fast model with enhanced speed"
+      },
+      {
+        id: "claude-3-opus-latest",
+        name: "Claude Opus 3",
+        description: "Top-level intelligence, fluency, and understanding"
+      },
+      {
+        id: "claude-3-opus-20240229",
+        name: "Claude Opus 3 (Feb 2024)",
+        description: "Powerful model for complex reasoning tasks"
+      },
+      {
+        id: "claude-3-sonnet-20240229",
+        name: "Claude Sonnet 3 (Feb 2024)",
+        description: "Balanced performance and speed"
+      }
     ];
   }
 

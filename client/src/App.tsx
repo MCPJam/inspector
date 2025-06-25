@@ -85,6 +85,7 @@ const App = () => {
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(true);
   const [showStarModal, setShowStarModal] = useState(false);
   const { addClientLog } = mcpOperations;
+
   // Handle hash changes for navigation
   useEffect(() => {
     const handleHashChange = () => {
@@ -212,7 +213,6 @@ const App = () => {
             configState.config,
             configState.bearerToken,
             configState.headerName,
-            configState.claudeApiKey,
             onStdErrNotification,
             onPendingRequest,
             getRootsCallback,
@@ -418,25 +418,6 @@ const App = () => {
     [connectionState.mcpAgent, serverState],
   );
 
-  // Update API key in agent when it changes
-  const updateApiKey = useCallback(
-    (newApiKey: string) => {
-      if (connectionState.mcpAgent) {
-        connectionState.mcpAgent.updateCredentials(
-          undefined,
-          undefined,
-          newApiKey,
-        );
-      }
-    },
-    [connectionState.mcpAgent],
-  );
-
-  const handleApiKeyChange = (newApiKey: string) => {
-    configState.updateClaudeApiKey(newApiKey);
-    updateApiKey(newApiKey);
-  };
-
   const handleConnectServer = useCallback(
     async (serverName: string) => {
       await connectionState.connectServer(serverName);
@@ -536,7 +517,6 @@ const App = () => {
             configState.config,
             configState.bearerToken,
             configState.headerName,
-            configState.claudeApiKey,
             onStdErrNotification,
             onPendingRequest,
             getRootsCallback,
@@ -558,7 +538,6 @@ const App = () => {
     configState.config,
     configState.bearerToken,
     configState.headerName,
-    configState.claudeApiKey,
     onStdErrNotification,
     onPendingRequest,
     onElicitationRequest,
@@ -1038,7 +1017,7 @@ const App = () => {
             />
           );
         case "settings":
-          return <SettingsTab onApiKeyChange={handleApiKeyChange} />;
+          return <SettingsTab />;
         default:
           return null;
       }

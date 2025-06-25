@@ -4,13 +4,6 @@ import { AuthDebuggerState } from "@/lib/auth-types";
 import { initializeInspectorConfig } from "@/utils/configUtils";
 
 const CONFIG_LOCAL_STORAGE_KEY = "inspectorConfig_v1";
-const CLAUDE_API_KEY_STORAGE_KEY = "claude-api-key";
-
-// Validate Claude API key format
-const validateClaudeApiKey = (key: string): boolean => {
-  const claudeApiKeyPattern = /^sk-ant-api03-[A-Za-z0-9_-]+$/;
-  return claudeApiKeyPattern.test(key) && key.length > 20;
-};
 
 export const useConfigState = () => {
   const [config, setConfig] = useState<InspectorConfig>(() =>
@@ -23,19 +16,6 @@ export const useConfigState = () => {
 
   const [headerName, setHeaderName] = useState<string>(() => {
     return localStorage.getItem("lastHeaderName") || "";
-  });
-
-  const [claudeApiKey, setClaudeApiKey] = useState<string>(() => {
-    try {
-      const storedApiKey =
-        localStorage.getItem(CLAUDE_API_KEY_STORAGE_KEY) || "";
-      if (storedApiKey && validateClaudeApiKey(storedApiKey)) {
-        return storedApiKey;
-      }
-    } catch (error) {
-      console.warn("Failed to load Claude API key from localStorage:", error);
-    }
-    return "";
   });
 
   // Auth debugger state
@@ -59,21 +39,6 @@ export const useConfigState = () => {
   // Helper function to update specific auth state properties
   const updateAuthState = useCallback((updates: Partial<AuthDebuggerState>) => {
     setAuthState((prev) => ({ ...prev, ...updates }));
-  }, []);
-
-  // Update Claude API key with validation and storage
-  const updateClaudeApiKey = useCallback((newApiKey: string) => {
-    setClaudeApiKey(newApiKey);
-
-    try {
-      if (newApiKey && validateClaudeApiKey(newApiKey)) {
-        localStorage.setItem(CLAUDE_API_KEY_STORAGE_KEY, newApiKey);
-      } else if (!newApiKey) {
-        localStorage.removeItem(CLAUDE_API_KEY_STORAGE_KEY);
-      }
-    } catch (error) {
-      console.warn("Failed to save Claude API key to localStorage:", error);
-    }
   }, []);
 
   // Persist config to localStorage whenever it changes
@@ -105,10 +70,7 @@ export const useConfigState = () => {
     setBearerToken,
     headerName,
     setHeaderName,
-    claudeApiKey,
-    updateClaudeApiKey,
     authState,
     updateAuthState,
-    validateClaudeApiKey,
   };
 };

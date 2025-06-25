@@ -1,5 +1,6 @@
 import { AIProvider, ProviderConfig, SupportedProvider, ProviderFactory } from "./types";
 import { AnthropicProvider } from "./anthropicProvider";
+import { OpenAIProvider } from "./openaiProvider";
 
 export class DefaultProviderFactory implements ProviderFactory {
   createProvider(type: SupportedProvider, config: ProviderConfig): AIProvider {
@@ -7,11 +8,7 @@ export class DefaultProviderFactory implements ProviderFactory {
       case "anthropic":
         return new AnthropicProvider(config);
       case "openai":
-        // TODO: Implement OpenAI provider
-        throw new Error("OpenAI provider not yet implemented");
-      case "deepseek":
-        // TODO: Implement DeepSeek provider
-        throw new Error("DeepSeek provider not yet implemented");
+        return new OpenAIProvider(config);
       default:
         throw new Error(`Unsupported provider type: ${type}`);
     }

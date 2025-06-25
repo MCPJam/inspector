@@ -50,6 +50,7 @@
     "concurrently": "^9.0.1",
     "dotenv": "^16.5.0",
     "open": "^10.1.0",
+    "openai": "^5.7.0",
     "shell-quote": "^1.8.2",
     "spawn-rx": "^5.1.2",
     "ts-node": "^10.9.2",

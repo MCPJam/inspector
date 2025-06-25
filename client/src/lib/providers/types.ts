@@ -53,6 +53,12 @@ export interface ProviderConfig {
   dangerouslyAllowBrowser?: boolean;
 }
 
+export interface ProviderModel {
+  id: string;
+  name: string;
+  description: string;
+}
+
 export abstract class AIProvider {
   protected config: ProviderConfig;
 
@@ -65,7 +71,7 @@ export abstract class AIProvider {
   abstract validateConfig(): boolean;
   abstract getProviderName(): string;
   abstract getDefaultModel(): string;
-  abstract getSupportedModels(): string[];
+  abstract getSupportedModels(): ProviderModel[];
 }
 
 export type SupportedProvider = "anthropic" | "openai" | "deepseek";
