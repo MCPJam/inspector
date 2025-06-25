@@ -4,6 +4,8 @@ import cors from "cors";
 import { parseArgs } from "node:util";
 import { parse as shellParseArgs } from "shell-quote";
 import { createServer } from "node:net";
+import fs from 'fs';
+import path from 'path';
 
 import {
   SSEClientTransport,
@@ -23,23 +25,32 @@ import mcpProxy from "./mcpProxy.js";
 import { randomUUID } from "node:crypto";
 import { logToFile } from "./logger.js";
 
+// Clear the logs directory on startup
+const logsDir = path.join(process.cwd(), 'logs');
+if (fs.existsSync(logsDir)) {
+  fs.rmSync(logsDir, { recursive: true, force: true });
+}
+fs.mkdirSync(logsDir);
+
 console.log('Backend running in:', process.cwd());
 
 let lastLogFileName = 'inspector.log';
 
-function getMcpServerLogFileName(req) {
+function getMcpServerLogFileName(req: express.Request) {
   const query = req.query;
   const transportType = query.transportType;
   if (transportType === "stdio") {
-    const command = query.command || "unknown";
-    const args = (query.args || "").toString();
+    const commandRaw = query.command || "unknown";
+    const command = typeof commandRaw === 'string' ? commandRaw : Array.isArray(commandRaw) ? commandRaw.join(' ') : String(commandRaw);
+    const argsRaw = query.args || "";
+    const args = typeof argsRaw === 'string' ? argsRaw : Array.isArray(argsRaw) ? argsRaw.join(' ') : String(argsRaw);
     // Try to extract the actual MCP server name from the args
     let mcpName = command.split(/[\\/]/).pop()?.replace(/\W+/g, "-") || "unknown";
     // If using npx, look for the first non-flag arg that looks like a package name
     if (mcpName === "npx" && args) {
       const firstArg = args
         .split(/\s+/)
-        .find(a => !a.startsWith("-") && (a.startsWith("@") || /^[a-zA-Z0-9_-]+$/.test(a)));
+        .find((a: string) => !a.startsWith("-") && (a.startsWith("@") || /^[a-zA-Z0-9_-]+$/.test(a)));
       if (firstArg) {
         mcpName = firstArg.replace(/\W+/g, "-");
       }
@@ -48,7 +59,7 @@ function getMcpServerLogFileName(req) {
   } else if (transportType === "sse" || transportType === "streamable-http") {
     const url = query.url || "unknown";
     try {
-      const host = new URL(url).hostname.replace(/\W+/g, "-");
+      const host = new URL(url as string).hostname.replace(/\W+/g, "-");
       return `mcp-server-${host}.log`;
     } catch {
       return "mcp-server-unknown.log";
@@ -97,6 +108,37 @@ app.use((req, res, next) => {
   next();
 });
 
+// Move log endpoints here to ensure they are not shadowed by static file serving
+app.get('/logs/:logFile', (req, res) => {
+  const logFile = req.params.logFile;
+  const logsDir = path.join(process.cwd(), 'logs');
+  const filePath = path.join(logsDir, logFile);
+
+  // Debug print
+  console.log('[LOG ENDPOINT] filePath:', filePath, 'exists:', fs.existsSync(filePath), 'headers:', req.headers);
+
+  // Security: prevent path traversal
+  if (!filePath.startsWith(logsDir)) {
+    return res.status(400).send('Invalid log file');
+  }
+
+  // Disable caching
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Surrogate-Control', 'no-store');
+
+  fs.readFile(filePath, 'utf8', (err, data) => {
+    if (err) return res.status(200).type('text/plain').send(''); // Return empty string if not found
+    res.type('text/plain').send(data);
+  });
+});
+
+app.get('/logfile-name', (req, res) => {
+  const logFileName = getMcpServerLogFileName(req);
+  res.json({ logFileName });
+});
+
 const webAppTransports: Map<string, Transport> = new Map<string, Transport>(); // Transports by sessionId
 const backingServerTransports = new Map<string, Transport>();
 
@@ -106,7 +148,8 @@ const createTransport = async (req: express.Request): Promise<Transport> => {
   const logFileName = getMcpServerLogFileName(req);
 
   if (transportType === "stdio") {
-    const command = query.command as string;
+    const commandRaw = query.command || "unknown";
+    const command = typeof commandRaw === 'string' ? commandRaw : Array.isArray(commandRaw) ? commandRaw.join(' ') : String(commandRaw);
     const origArgs = shellParseArgs(query.args as string) as string[];
     const queryEnv = query.env ? JSON.parse(query.env as string) : {};
     const env = { ...process.env, ...defaultEnvironment, ...queryEnv };
@@ -123,13 +166,13 @@ const createTransport = async (req: express.Request): Promise<Transport> => {
     });
 
     // Add error listener for async errors
-    if (transport.stderr && typeof transport.stderr.on === 'function') {
-      transport.stderr.on('data', (chunk) => {
+    if (transport.stderr && typeof (transport.stderr as any).on === 'function') {
+      (transport.stderr as any).on('data', (chunk: any) => {
         logToFile('error', 'stdio-stderr', chunk.toString(), {}, logFileName);
       });
     }
-    if (typeof transport.on === 'function') {
-      transport.on('error', (error) => {
+    if (typeof (transport as any).on === 'function') {
+      (transport as any).on('error', (error: any) => {
         logToFile('error', 'stdio-transport', error.message, { stack: error.stack }, logFileName);
       });
     }
@@ -161,8 +204,8 @@ const createTransport = async (req: express.Request): Promise<Transport> => {
     });
 
     // Add error listener for async errors
-    if (typeof transport.on === 'function') {
-      transport.on('error', (error) => {
+    if (typeof (transport as any).on === 'function') {
+      (transport as any).on('error', (error: any) => {
         logToFile('error', 'sse-transport', error.message, { stack: error.stack }, logFileName);
       });
     }
@@ -193,8 +236,8 @@ const createTransport = async (req: express.Request): Promise<Transport> => {
     );
 
     // Add error listener for async errors
-    if (typeof transport.on === 'function') {
-      transport.on('error', (error) => {
+    if (typeof (transport as any).on === 'function') {
+      (transport as any).on('error', (error: any) => {
         logToFile('error', 'streamable-http-transport', error.message, { stack: error.stack }, logFileName);
       });
     }
@@ -285,12 +328,6 @@ app.post("/mcp", async (req, res) => {
       });
 
       await webAppTransport.start();
-
-      await (webAppTransport as StreamableHTTPServerTransport).handleRequest(
-        req,
-        res,
-        req.body,
-      );
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       console.log('[LOGGER] CATCH BLOCK REACHED', logFileName, err.message);
@@ -537,7 +574,7 @@ const startServer = async () => {
     });
     server.on("error", (err) => {
       const errorObj = err instanceof Error ? err : new Error(String(err));
-      const logFileName = getMcpServerLogFileName(req);
+      const logFileName = 'inspector.log';
       console.log('[LOGGER] CATCH BLOCK REACHED', logFileName, errorObj.message);
       logToFile("error", "server", errorObj.message, { stack: errorObj.stack }, logFileName);
       console.error(`❌ Server error: ${errorObj.message}`);
@@ -545,7 +582,7 @@ const startServer = async () => {
     });
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));
-    const logFileName = getMcpServerLogFileName(req);
+    const logFileName = 'inspector.log';
     console.log('[LOGGER] CATCH BLOCK REACHED', logFileName, err.message);
     logToFile("error", "server", err.message, { stack: err.stack }, logFileName);
     console.error(`❌ Failed to start server: ${err.message}`);

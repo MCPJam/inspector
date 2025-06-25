@@ -7,6 +7,10 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: true,
+    proxy: {
+      '/logs': 'http://localhost:6277',
+      '/logfile-name': 'http://localhost:6277',
+    },
   },
   resolve: {
     alias: {
