@@ -52,6 +52,7 @@ import { loadOAuthTokens, handleOAuthDebugConnect } from "./services/oauth";
 // Utils
 import { getMCPProxyAddressAsync } from "./utils/configUtils";
 import { handleRootsChange, MCPHelperDependencies } from "./utils/mcpHelpers";
+import { parseConfigFile } from "./utils/configImportUtils";
 
 import ElicitationModal, {
   ElicitationResponse,
@@ -677,6 +678,34 @@ const App = () => {
         const proxyAddress = await getMCPProxyAddressAsync(configState.config);
         const response = await fetch(`${proxyAddress}/config`);
         const data = await response.json();
+        
+        // Check for auto-import config and import servers automatically
+        if (data.autoImportConfig) {
+          console.log("🔧 Auto-importing servers from CLI config...");
+          try {
+            const configJson = JSON.stringify(data.autoImportConfig);
+            const parseResult = parseConfigFile(configJson);
+            
+            if (parseResult.success && parseResult.servers.length > 0) {
+              console.log(`✅ Successfully parsed ${parseResult.servers.length} servers from config`);
+              
+              // Auto-import all servers
+              for (const server of parseResult.servers) {
+                await handleAddServer(server.name, server.config, { autoConnect: true });
+              }
+              
+              console.log(`🎉 Auto-imported and connected to ${parseResult.servers.length} servers`);
+              
+              // Force a re-render to show the imported servers in the UI
+              connectionState.forceUpdateSidebar();
+            } else {
+              console.error("❌ Failed to parse auto-import config:", parseResult.errors);
+            }
+          } catch (error) {
+            console.error("❌ Error auto-importing servers:", error);
+          }
+        }
+        
         const currentConfig =
           serverState.serverConfigs[serverState.selectedServerName];
         if (currentConfig?.transportType === "stdio") {
