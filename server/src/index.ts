@@ -358,11 +358,22 @@ app.get("/health", (req, res) => {
 
 app.get("/config", (req, res) => {
   try {
-    res.json({
+    const response: any = {
       defaultEnvironment,
       defaultCommand: values.env,
       defaultArgs: values.args,
-    });
+    };
+
+    // Check if auto-import config is available and include it
+    if (defaultEnvironment.MCP_AUTO_IMPORT_CONFIG) {
+      try {
+        response.autoImportConfig = JSON.parse(defaultEnvironment.MCP_AUTO_IMPORT_CONFIG);
+      } catch (error) {
+        console.error("❌ Error parsing MCP_AUTO_IMPORT_CONFIG:", error);
+      }
+    }
+
+    res.json(response);
   } catch (error) {
     console.error("❌ Error in /config route:", error);
     res.status(500).json(error);
