@@ -29,6 +29,17 @@ const STREAMABLE_HTTP_HEADERS_PASSTHROUGH = [
   "last-event-id",
 ];
 
+const expandEnvVars = (
+  str: string,
+  env: Record<string, string | undefined>,
+): string => {
+  // Regex to find $VAR or ${VAR}
+  return str.replace(/\$(\w+)|\${(\w+)}/g, (match, varName1, varName2) => {
+    const varName = varName1 || varName2;
+    return env[varName] ?? match;
+  });
+};
+
 const defaultEnvironment = {
   ...getDefaultEnvironment(),
   ...(process.env.MCP_ENV_VARS ? JSON.parse(process.env.MCP_ENV_VARS) : {}),
@@ -62,8 +73,9 @@ const createTransport = async (req: express.Request): Promise<Transport> => {
     const origArgs = shellParseArgs(query.args as string) as string[];
     const queryEnv = query.env ? JSON.parse(query.env as string) : {};
     const env = { ...process.env, ...defaultEnvironment, ...queryEnv };
+    const expandedArgs = origArgs.map((arg) => expandEnvVars(arg, env));
 
-    const { cmd, args } = findActualExecutable(command, origArgs);
+    const { cmd, args } = findActualExecutable(command, expandedArgs);
 
     console.log(`🚀 Stdio transport: command=${cmd}, args=${args}`);
 
