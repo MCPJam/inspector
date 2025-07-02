@@ -39,7 +39,10 @@ const useTheme = (): [Theme, (mode: Theme) => void] => {
   const setThemeWithSideEffect = useCallback((newTheme: Theme) => {
     setTheme(newTheme);
     localStorage.setItem("theme", newTheme);
-    if (newTheme !== "system") {
+    if (newTheme === "system") {
+      const isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      document.documentElement.classList.toggle("dark", isDark);
+    } else {
       document.documentElement.classList.toggle("dark", newTheme === "dark");
     }
   }, []);
