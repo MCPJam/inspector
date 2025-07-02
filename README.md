@@ -8,7 +8,7 @@
 
 <br/>
 
-# MCPJam Inspector
+# MCPJam Inspectors test
 
 **The developer tool for testing and debugging MCP servers**
 
