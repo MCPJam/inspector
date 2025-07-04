@@ -36,11 +36,37 @@ export class LibSQLBrowserDatabase {
     if (this.initialized) return;
 
     try {
-      // Create client - for browser, we'll use in-memory SQLite via WebAssembly
-      this.client = createClient({
-        url: this.config.url || ':memory:',
-        authToken: this.config.authToken,
-      });
+      console.log('🔍 LibSQL client import check:', { createClient: typeof createClient });
+      console.log('🔍 Original database config:', { originalUrl: this.config.url, fullConfig: this.config });
+      
+      // Try multiple approaches to create an in-memory database client
+      console.log('🔍 Attempting to create LibSQL client with :memory:');
+      
+      // Approach 1: Try with just the URL string
+      try {
+        console.log('🔍 Trying createClient(":memory:")');
+        this.client = createClient(':memory:');
+        console.log('✅ Successfully created client with string URL');
+      } catch (error1) {
+        console.log('❌ String URL failed:', error1);
+        
+        // Approach 2: Try with minimal config object
+        try {
+          console.log('🔍 Trying createClient({ url: ":memory:" })');
+          this.client = createClient({ url: ':memory:' });
+          console.log('✅ Successfully created client with config object');
+        } catch (error2) {
+          console.log('❌ Config object failed:', error2);
+          
+          // Approach 3: Try completely different approach - throw error with detailed info
+          throw new Error(`Failed to create LibSQL client. Both approaches failed:
+            1. String URL: ${error1.message}
+            2. Config object: ${error2.message}
+            LibSQL version: @libsql/client ^0.5.6
+            Environment: Browser
+            Original config: ${JSON.stringify(this.config)}`);
+        }
+      }
 
       // Create tables
       await this.createTables();
@@ -468,5 +494,28 @@ export class LibSQLBrowserDatabase {
   }
 }
 
-// Create singleton instance
-export const libsqlBrowserDatabase = new LibSQLBrowserDatabase(); 
+// Create database instance with environment-specific configuration
+function createBrowserDatabaseConfig(): DatabaseConfig {
+  // Check for environment variables or configuration
+  const dbUrl = import.meta.env.VITE_DATABASE_URL;
+  const dbToken = import.meta.env.VITE_DATABASE_TOKEN;
+  
+  if (dbUrl) {
+    console.log('🔗 Using configured database URL:', dbUrl);
+    return {
+      url: dbUrl,
+      authToken: dbToken,
+    };
+  }
+  
+  // For development, you can set up a local HTTP server or use Turso
+  // For now, fallback to :memory: but log a warning
+  console.warn('⚠️ No database URL configured. Using :memory: database.');
+  console.warn('Set VITE_DATABASE_URL environment variable to share database between UI and CLI.');
+  console.warn('Example: VITE_DATABASE_URL=https://your-db.turso.io or http://localhost:8080');
+  
+  return {};
+}
+
+// Create singleton instance with configuration
+export const libsqlBrowserDatabase = new LibSQLBrowserDatabase(createBrowserDatabaseConfig()); 

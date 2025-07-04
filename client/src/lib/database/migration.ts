@@ -2,7 +2,9 @@
  * Migration utility to move data from localStorage to the shared database
  */
 
-import { libsqlBrowserDatabase as browserDatabase } from './browser-database-libsql';
+// Switch to HTTP-based database client for browser compatibility and shared database access
+// import { libsqlBrowserDatabase as browserDatabase } from './browser-database-libsql';
+import { httpBrowserDatabase as browserDatabase } from './browser-database-http';
 import { MCPJamServerConfig } from '@/lib/types/serverTypes';
 import { McpJamRequest } from '@/lib/types/requestTypes';
 

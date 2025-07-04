@@ -38,7 +38,8 @@ export function useUserPreferencesDatabase() {
       setState(prev => ({ ...prev, isLoading: true, error: null }));
       
       // Load from the actual database
-      const { libsqlBrowserDatabase: browserDatabase } = await import('../lib/database/browser-database-libsql');
+      // Switch to HTTP-based database client for browser compatibility and shared database access
+      const { httpBrowserDatabase: browserDatabase } = await import('../lib/database/browser-database-http');
       const preferences = await browserDatabase.getUserPreferences();
 
       setState(prev => ({
@@ -56,7 +57,8 @@ export function useUserPreferencesDatabase() {
   // Save preferences to database
   const savePreferences = useCallback(async (preferences: UserPreferences) => {
     try {
-      const { libsqlBrowserDatabase: browserDatabase } = await import('../lib/database/browser-database-libsql');
+      // Switch to HTTP-based database client for browser compatibility and shared database access
+      const { httpBrowserDatabase: browserDatabase } = await import('../lib/database/browser-database-http');
       await browserDatabase.updateUserPreferences(preferences);
       setState(prev => ({ ...prev, preferences }));
     } catch (error) {

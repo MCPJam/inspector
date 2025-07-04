@@ -26,7 +26,8 @@ export function useServerConfigDatabase() {
       setState(prev => ({ ...prev, isLoading: true, error: null }));
       
       // Load from the actual database
-      const { libsqlBrowserDatabase: browserDatabase } = await import('../lib/database/browser-database-libsql');
+      // Switch to HTTP-based database client for browser compatibility and shared database access
+      const { httpBrowserDatabase: browserDatabase } = await import('../lib/database/browser-database-http');
       
       const serverConfigs = await browserDatabase.getAllServerConfigs();
       const selectedServerName = await browserDatabase.getSelectedServer();
@@ -54,7 +55,8 @@ export function useServerConfigDatabase() {
     // Save selected server to database
   const saveSelectedServer = useCallback(async (serverName: string) => {
     try {
-      const { libsqlBrowserDatabase: browserDatabase } = await import('../lib/database/browser-database-libsql');
+      // Switch to HTTP-based database client for browser compatibility and shared database access
+      const { httpBrowserDatabase: browserDatabase } = await import('../lib/database/browser-database-http');
       await browserDatabase.setSelectedServer(serverName);
       setState(prev => ({ ...prev, selectedServerName: serverName }));
     } catch (error) {
@@ -65,7 +67,8 @@ export function useServerConfigDatabase() {
   // Update a server configuration
   const updateServerConfig = useCallback(async (serverName: string, config: MCPJamServerConfig) => {
     try {
-      const { libsqlBrowserDatabase: browserDatabase } = await import('../lib/database/browser-database-libsql');
+      // Switch to HTTP-based database client for browser compatibility and shared database access
+      const { httpBrowserDatabase: browserDatabase } = await import('../lib/database/browser-database-http');
       await browserDatabase.updateServerConfig(serverName, config);
       
       // Update local state
@@ -81,7 +84,8 @@ export function useServerConfigDatabase() {
   // Remove a server configuration
   const removeServerConfig = useCallback(async (serverName: string) => {
     try {
-      const { libsqlBrowserDatabase: browserDatabase } = await import('../lib/database/browser-database-libsql');
+      // Switch to HTTP-based database client for browser compatibility and shared database access
+      const { httpBrowserDatabase: browserDatabase } = await import('../lib/database/browser-database-http');
       await browserDatabase.deleteServerConfig(serverName);
       
       // Update local state

@@ -865,8 +865,26 @@ export class MCPJamDatabase {
   }
 }
 
-// Export singleton instance
-export const database = new MCPJamDatabase();
+// Create database instance with environment-specific configuration
+function createDatabaseConfig(): DatabaseConfig {
+  // Check for environment variables
+  const dbUrl = process.env.DATABASE_URL;
+  const dbToken = process.env.DATABASE_TOKEN;
+  
+  if (dbUrl) {
+    console.log('🔗 Using configured database URL:', dbUrl);
+    return {
+      url: dbUrl,
+      authToken: dbToken,
+    };
+  }
+  
+  // Default for CLI: use local file database
+  return {};
+}
+
+// Export singleton instance with configuration
+export const database = new MCPJamDatabase(createDatabaseConfig());
 
 // Export convenience functions
 export const initializeDatabase = () => database.initialize();

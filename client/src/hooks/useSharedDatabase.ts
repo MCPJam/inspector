@@ -3,7 +3,9 @@
  */
 
 import { useEffect, useState, useCallback } from 'react';
-import { libsqlBrowserDatabase as browserDatabase } from '../lib/database/browser-database-libsql';
+// Switch to HTTP-based database client for browser compatibility and shared database access
+// import { libsqlBrowserDatabase as browserDatabase } from '../lib/database/browser-database-libsql';
+import { httpBrowserDatabase as browserDatabase } from '../lib/database/browser-database-http';
 import { migrator } from '../lib/database/migration';
 
 export interface DatabaseState {

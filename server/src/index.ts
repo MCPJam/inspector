@@ -21,6 +21,7 @@ import express from "express";
 import { findActualExecutable } from "spawn-rx";
 import mcpProxy from "./mcpProxy.js";
 import { randomUUID } from "node:crypto";
+import { database } from "../../shared/database/database.js";
 
 const SSE_HEADERS_PASSTHROUGH = ["authorization"];
 const STREAMABLE_HTTP_HEADERS_PASSTHROUGH = [
@@ -44,9 +45,123 @@ const { values } = parseArgs({
 
 const app = express();
 app.use(cors());
+app.use(express.json());
 app.use((req, res, next) => {
   res.header("Access-Control-Expose-Headers", "mcp-session-id");
   next();
+});
+
+// Database API endpoints for shared database access
+// Initialize database on server start (will be called in startServer function)
+
+// Server configurations
+app.get('/api/database/server-configs', async (req, res) => {
+  try {
+    const configs = await database.getAllServerConfigs();
+    res.json(configs);
+  } catch (error) {
+    console.error('Failed to get server configs:', error);
+    res.status(500).json({ error: 'Failed to get server configs' });
+  }
+});
+
+app.post('/api/database/server-configs', async (req, res) => {
+  try {
+    const config = await database.createServerConfig(req.body);
+    res.json(config);
+  } catch (error) {
+    console.error('Failed to create server config:', error);
+    res.status(500).json({ error: 'Failed to create server config' });
+  }
+});
+
+app.put('/api/database/server-configs/:id', async (req, res) => {
+  try {
+    const config = await database.updateServerConfig(req.params.id, req.body);
+    res.json(config);
+  } catch (error) {
+    console.error('Failed to update server config:', error);
+    res.status(500).json({ error: 'Failed to update server config' });
+  }
+});
+
+app.delete('/api/database/server-configs/:id', async (req, res) => {
+  try {
+    await database.deleteServerConfig(req.params.id);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Failed to delete server config:', error);
+    res.status(500).json({ error: 'Failed to delete server config' });
+  }
+});
+
+// User preferences
+app.get('/api/database/user-preferences', async (req, res) => {
+  try {
+    const preferences = await database.getUserPreferences();
+    res.json(preferences);
+  } catch (error) {
+    console.error('Failed to get user preferences:', error);
+    res.status(500).json({ error: 'Failed to get user preferences' });
+  }
+});
+
+app.put('/api/database/user-preferences', async (req, res) => {
+  try {
+    const preferences = await database.updateUserPreferences(req.body);
+    res.json(preferences);
+  } catch (error) {
+    console.error('Failed to update user preferences:', error);
+    res.status(500).json({ error: 'Failed to update user preferences' });
+  }
+});
+
+// Request history
+app.get('/api/database/request-history', async (req, res) => {
+  try {
+    const { page = 1, limit = 50, ...filter } = req.query;
+    const result = await database.getAllRequestHistory(
+      filter as any,
+      { 
+        limit: Number(limit), 
+        offset: (Number(page) - 1) * Number(limit) 
+      }
+    );
+    res.json(result);
+  } catch (error) {
+    console.error('Failed to get request history:', error);
+    res.status(500).json({ error: 'Failed to get request history' });
+  }
+});
+
+app.post('/api/database/request-history', async (req, res) => {
+  try {
+    const request = await database.createRequestHistory(req.body);
+    res.json(request);
+  } catch (error) {
+    console.error('Failed to create request history:', error);
+    res.status(500).json({ error: 'Failed to create request history' });
+  }
+});
+
+app.put('/api/database/request-history/:id', async (req, res) => {
+  try {
+    const request = await database.updateRequestHistory(req.params.id, req.body);
+    res.json(request);
+  } catch (error) {
+    console.error('Failed to update request history:', error);
+    res.status(500).json({ error: 'Failed to update request history' });
+  }
+});
+
+app.delete('/api/database/request-history/:id', async (req, res) => {
+  try {
+    await database.deleteRequestHistory(req.params.id);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Failed to delete request history:', error);
+    res.status(500).json({ error: 'Failed to delete request history' });
+  }
 });
 
 const webAppTransports: Map<string, Transport> = new Map<string, Transport>(); // Transports by sessionId
@@ -409,6 +524,11 @@ app.get("/port", (req, res) => {
 // Start server with dynamic port finding
 const startServer = async () => {
   try {
+    // Initialize shared database
+    console.log('🔄 Initializing shared database...');
+    await database.initialize();
+    console.log('✅ Shared database initialized');
+    
     const availablePort = await findAvailablePort(Number(PORT));
     actualPort = availablePort;
 
