@@ -125,13 +125,10 @@ export const useAppEffects = (
         const currentConfig =
           serverState.serverConfigs[serverState.selectedServerName];
         if (currentConfig?.transportType === "stdio") {
-          serverState.setServerConfigs((prev) => ({
-            ...prev,
-            [serverState.selectedServerName]: {
-              ...prev[serverState.selectedServerName],
-              env: data.defaultEnvironment || {},
-            } as StdioServerDefinition,
-          }));
+          void serverState.updateServerConfig(serverState.selectedServerName, {
+            ...currentConfig,
+            env: data.defaultEnvironment || {},
+          } as StdioServerDefinition);
         }
       } catch (error) {
         console.error("Error fetching default environment:", error);

@@ -1,0 +1,41 @@
+{
+  "name": "@mcpjam/shared-database",
+  "version": "1.0.0",
+  "description": "Shared database layer for MCP Jam Inspector supporting CLI, SDK, and UI",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.5.6",
+    "@modelcontextprotocol/sdk": "^0.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "files": [
+    "dist",
+    "schema.sql"
+  ],
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./schema.sql": "./schema.sql"
+  },
+  "keywords": [
+    "mcp",
+    "database",
+    "libsql",
+    "sqlite",
+    "shared"
+  ],
+  "author": "MCP Jam Team",
+  "license": "MIT"
+} 

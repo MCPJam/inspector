@@ -1,12 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo } from "react";
+import { useUserPreferencesDatabase } from "../../hooks/useUserPreferencesDatabase";
 
 type Theme = "light" | "dark" | "system";
 
 const useTheme = (): [Theme, (mode: Theme) => void] => {
-  const [theme, setTheme] = useState<Theme>(() => {
-    const savedTheme = localStorage.getItem("theme") as Theme;
-    return savedTheme || "system";
-  });
+  const { preferences, setTheme: setThemeInDb } = useUserPreferencesDatabase();
+  const theme = preferences.theme;
 
   useEffect(() => {
     const darkModeMediaQuery = window.matchMedia(
@@ -37,15 +36,14 @@ const useTheme = (): [Theme, (mode: Theme) => void] => {
   }, [theme]);
 
   const setThemeWithSideEffect = useCallback((newTheme: Theme) => {
-    setTheme(newTheme);
-    localStorage.setItem("theme", newTheme);
+    void setThemeInDb(newTheme);
     if (newTheme === "system") {
       const isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
       document.documentElement.classList.toggle("dark", isDark);
     } else {
       document.documentElement.classList.toggle("dark", newTheme === "dark");
     }
-  }, []);
+  }, [setThemeInDb]);
   return useMemo(
     () => [theme, setThemeWithSideEffect],
     [theme, setThemeWithSideEffect],
