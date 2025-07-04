@@ -17,6 +17,7 @@ import {
   Star,
   Edit2,
   CopyPlus,
+  Hammer,
 } from "lucide-react";
 import { RequestStorage } from "@/lib/utils/request/requestStorage";
 import {
@@ -317,7 +318,7 @@ const ToolsTab = ({
                 {/* Tool name with emoji and styling */}
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-2">
-                    <span className="text-lg">🛠️</span>
+                  <Hammer className="w-4 h-4 text-slate-700 dark:text-slate-300" />
                     <span className="font-mono text-xs bg-gradient-to-r from-slate-100 to-gray-100 dark:from-slate-800 dark:to-gray-800 px-2.5 py-1 rounded-md border border-slate-300 dark:border-slate-600 text-slate-800 dark:text-slate-200 font-medium shadow-sm">
                       {tool.name}
                     </span>
