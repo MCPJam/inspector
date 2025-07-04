@@ -12,6 +12,7 @@ export interface UserPreferences {
   paneHeights?: Record<string, number>;
   autoOpenEnabled?: boolean;
   hasSeenStarModal?: boolean;
+  [key: string]: unknown;
 }
 
 export interface UserPreferencesState {
@@ -36,25 +37,9 @@ export function useUserPreferencesDatabase() {
     try {
       setState(prev => ({ ...prev, isLoading: true, error: null }));
       
-      // For now, we'll load from localStorage as a fallback
-      // This will be replaced with actual database operations
-      const preferences: UserPreferences = {
-        theme: (localStorage.getItem('theme') as Theme) || 'system',
-        autoOpenEnabled: localStorage.getItem('MCP_AUTO_OPEN_ENABLED') !== 'false',
-        hasSeenStarModal: localStorage.getItem('hasSeenStarModal') === 'true',
-      };
-
-      // Load pane heights
-      const paneHeights: Record<string, number> = {};
-      for (const key of ['leftPanelHeight', 'rightPanelHeight', 'bottomPanelHeight']) {
-        const stored = localStorage.getItem(key);
-        if (stored) {
-          paneHeights[key] = parseInt(stored, 10);
-        }
-      }
-      if (Object.keys(paneHeights).length > 0) {
-        preferences.paneHeights = paneHeights;
-      }
+      // Load from the actual database
+      const { libsqlBrowserDatabase: browserDatabase } = await import('../lib/database/browser-database-libsql');
+      const preferences = await browserDatabase.getUserPreferences();
 
       setState(prev => ({
         ...prev,
@@ -71,25 +56,8 @@ export function useUserPreferencesDatabase() {
   // Save preferences to database
   const savePreferences = useCallback(async (preferences: UserPreferences) => {
     try {
-      // For now, we'll save to localStorage as a fallback
-      // This will be replaced with actual database operations
-      localStorage.setItem('theme', preferences.theme);
-      
-      if (preferences.autoOpenEnabled !== undefined) {
-        localStorage.setItem('MCP_AUTO_OPEN_ENABLED', preferences.autoOpenEnabled.toString());
-      }
-      
-      if (preferences.hasSeenStarModal !== undefined) {
-        localStorage.setItem('hasSeenStarModal', preferences.hasSeenStarModal.toString());
-      }
-
-      // Save pane heights
-      if (preferences.paneHeights) {
-        for (const [key, value] of Object.entries(preferences.paneHeights)) {
-          localStorage.setItem(key, value.toString());
-        }
-      }
-
+      const { libsqlBrowserDatabase: browserDatabase } = await import('../lib/database/browser-database-libsql');
+      await browserDatabase.updateUserPreferences(preferences);
       setState(prev => ({ ...prev, preferences }));
     } catch (error) {
       console.error('❌ Failed to save user preferences:', error);

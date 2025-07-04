@@ -20,56 +20,28 @@ export function useServerConfigDatabase() {
     error: null,
   });
 
-  // Load server configurations from database
+    // Load server configurations from database
   const loadServerConfigs = useCallback(async () => {
     try {
       setState(prev => ({ ...prev, isLoading: true, error: null }));
       
-      // For now, we'll load from localStorage as a fallback
-      // This will be replaced with actual database operations
-      const loadServerConfigsFromStorage = (): Record<string, MCPJamServerConfig> => {
-        try {
-          const stored = localStorage.getItem('mcpServerConfigs_v1');
-          if (stored) {
-                       const parsed = JSON.parse(stored) as Record<string, unknown>;
-                      return Object.entries(parsed).reduce((acc, [name, config]) => {
-             if (config && typeof config === 'object' && 'url' in config && config.url && typeof config.url === 'string') {
-               acc[name] = {
-                 ...config,
-                 url: new URL(config.url),
-               } as MCPJamServerConfig;
-             } else {
-               acc[name] = config as MCPJamServerConfig;
-             }
-             return acc;
-           }, {} as Record<string, MCPJamServerConfig>);
-          }
-        } catch (error) {
-          console.warn('Failed to load server configs from localStorage:', error);
-        }
-        return {};
-      };
+      // Load from the actual database
+      const { libsqlBrowserDatabase: browserDatabase } = await import('../lib/database/browser-database-libsql');
+      
+      const serverConfigs = await browserDatabase.getAllServerConfigs();
+      const selectedServerName = await browserDatabase.getSelectedServer();
 
-      const loadSelectedServerFromStorage = (serverConfigs: Record<string, MCPJamServerConfig>): string => {
-        try {
-          const stored = localStorage.getItem('selectedServerName_v1');
-          if (stored && serverConfigs[stored]) {
-            return stored;
-          }
-        } catch (error) {
-          console.warn('Failed to load selected server from localStorage:', error);
-        }
-        const serverNames = Object.keys(serverConfigs);
-        return serverNames.length > 0 ? serverNames[0] : '';
-      };
-
-      const serverConfigs = loadServerConfigsFromStorage();
-      const selectedServerName = loadSelectedServerFromStorage(serverConfigs);
+      // Set default selected server if none is set
+      const finalSelectedServer = selectedServerName && serverConfigs[selectedServerName] 
+        ? selectedServerName 
+        : Object.keys(serverConfigs).length > 0 
+          ? Object.keys(serverConfigs)[0] 
+          : '';
 
       setState(prev => ({
         ...prev,
         serverConfigs,
-        selectedServerName,
+        selectedServerName: finalSelectedServer,
         isLoading: false,
       }));
     } catch (error) {
@@ -79,47 +51,11 @@ export function useServerConfigDatabase() {
     }
   }, []);
 
-  // Save server configurations to database
-  const saveServerConfigs = useCallback(async (configs: Record<string, MCPJamServerConfig>) => {
-    try {
-      // For now, we'll save to localStorage as a fallback
-      // This will be replaced with actual database operations
-      const serializeServerConfigs = (configs: Record<string, MCPJamServerConfig>): string => {
-        const serializable = Object.entries(configs).reduce((acc, [name, config]) => {
-          if ('url' in config && config.url) {
-            acc[name] = {
-              ...config,
-              url: config.url.toString(),
-            };
-          } else {
-            acc[name] = config;
-          }
-          return acc;
-                 }, {} as Record<string, unknown>);
-        return JSON.stringify(serializable);
-      };
-
-      if (Object.keys(configs).length > 0) {
-        const serialized = serializeServerConfigs(configs);
-        localStorage.setItem('mcpServerConfigs_v1', serialized);
-      } else {
-        localStorage.removeItem('mcpServerConfigs_v1');
-      }
-
-      setState(prev => ({ ...prev, serverConfigs: configs }));
-    } catch (error) {
-      console.error('❌ Failed to save server configurations:', error);
-    }
-  }, []);
-
-  // Save selected server to database
+    // Save selected server to database
   const saveSelectedServer = useCallback(async (serverName: string) => {
     try {
-      if (serverName) {
-        localStorage.setItem('selectedServerName_v1', serverName);
-      } else {
-        localStorage.removeItem('selectedServerName_v1');
-      }
+      const { libsqlBrowserDatabase: browserDatabase } = await import('../lib/database/browser-database-libsql');
+      await browserDatabase.setSelectedServer(serverName);
       setState(prev => ({ ...prev, selectedServerName: serverName }));
     } catch (error) {
       console.error('❌ Failed to save selected server:', error);
@@ -128,16 +64,36 @@ export function useServerConfigDatabase() {
 
   // Update a server configuration
   const updateServerConfig = useCallback(async (serverName: string, config: MCPJamServerConfig) => {
-    const newConfigs = { ...state.serverConfigs, [serverName]: config };
-    await saveServerConfigs(newConfigs);
-  }, [state.serverConfigs, saveServerConfigs]);
+    try {
+      const { libsqlBrowserDatabase: browserDatabase } = await import('../lib/database/browser-database-libsql');
+      await browserDatabase.updateServerConfig(serverName, config);
+      
+      // Update local state
+      setState(prev => ({
+        ...prev,
+        serverConfigs: { ...prev.serverConfigs, [serverName]: config }
+      }));
+    } catch (error) {
+      console.error('❌ Failed to update server configuration:', error);
+    }
+  }, []);
 
   // Remove a server configuration
   const removeServerConfig = useCallback(async (serverName: string) => {
-    const newConfigs = { ...state.serverConfigs };
-    delete newConfigs[serverName];
-    await saveServerConfigs(newConfigs);
-  }, [state.serverConfigs, saveServerConfigs]);
+    try {
+      const { libsqlBrowserDatabase: browserDatabase } = await import('../lib/database/browser-database-libsql');
+      await browserDatabase.deleteServerConfig(serverName);
+      
+      // Update local state
+      setState(prev => {
+        const newConfigs = { ...prev.serverConfigs };
+        delete newConfigs[serverName];
+        return { ...prev, serverConfigs: newConfigs };
+      });
+    } catch (error) {
+      console.error('❌ Failed to remove server configuration:', error);
+    }
+  }, []);
 
   // Load configurations on mount
   useEffect(() => {

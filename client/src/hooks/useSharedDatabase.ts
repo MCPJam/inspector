@@ -3,6 +3,8 @@
  */
 
 import { useEffect, useState, useCallback } from 'react';
+import { libsqlBrowserDatabase as browserDatabase } from '../lib/database/browser-database-libsql';
+import { migrator } from '../lib/database/migration';
 
 export interface DatabaseState {
   initialized: boolean;
@@ -23,14 +25,32 @@ export function useSharedDatabase() {
     try {
       setState(prev => ({ ...prev, isLoading: true, error: null }));
       
-      // For now, we'll just simulate the database initialization
-      // This will be replaced with actual database operations
-      await new Promise(resolve => setTimeout(resolve, 100));
+      // Initialize the database
+      await browserDatabase.initialize();
+      
+      // Check if migration is needed
+      const needsMigration = await migrator.isMigrationNeeded();
+      
+      if (needsMigration) {
+        console.log('🔄 Migrating data from localStorage to database...');
+        const result = await migrator.performFullMigration();
+        
+        if (result.success) {
+          console.log('✅ Migration completed successfully!');
+          console.log('Migrated items:', result.migratedCounts);
+          
+          // Clear localStorage after successful migration
+          migrator.clearLocalStorage();
+        } else {
+          console.error('❌ Migration failed:', result.errors);
+          // Don't throw here - let the app continue with database
+        }
+      }
       
       setState(prev => ({
         ...prev,
         initialized: true,
-        migrationCompleted: true,
+        migrationCompleted: !needsMigration || true,
         isLoading: false,
       }));
       
