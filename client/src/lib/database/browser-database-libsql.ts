@@ -42,26 +42,28 @@ export class LibSQLBrowserDatabase {
       // Try multiple approaches to create an in-memory database client
       console.log('🔍 Attempting to create LibSQL client with :memory:');
       
-      // Approach 1: Try with just the URL string
+      // Create client with proper config object
       try {
-        console.log('🔍 Trying createClient(":memory:")');
+        console.log('🔍 Trying createClient({ url: ":memory:" })');
         this.client = createClient({ url: ':memory:' });
-        console.log('✅ Successfully created client with string URL');
-      } catch (error1) {
-        console.log('❌ String URL failed:', error1);
+        console.log('✅ Successfully created client');
+      } catch (error: unknown) {
+        console.log('❌ Client creation failed:', error);
         
-        // Approach 2: Try with minimal config object
+        // Try with file URL as fallback
         try {
-          console.log('🔍 Trying createClient({ url: ":memory:" })');
-          this.client = createClient({ url: ':memory:' });
-          console.log('✅ Successfully created client with config object');
-        } catch (error2) {
-          console.log('❌ Config object failed:', error2);
+          console.log('🔍 Trying createClient with file URL');
+          this.client = createClient({ url: 'file::memory:?cache=shared' });
+          console.log('✅ Successfully created client with file URL');
+        } catch (fallbackError: unknown) {
+          console.log('❌ Fallback failed:', fallbackError);
           
-          // Approach 3: Try completely different approach - throw error with detailed info
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          const fallbackErrorMessage = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+          
           throw new Error(`Failed to create LibSQL client. Both approaches failed:
-            1. String URL: ${(error1 as Error).message}
-            2. Config object: ${(error2 as Error).message}
+            1. Memory URL: ${errorMessage}
+            2. File URL: ${fallbackErrorMessage}
             LibSQL version: @libsql/client ^0.5.6
             Environment: Browser
             Original config: ${JSON.stringify(this.config)}`);
