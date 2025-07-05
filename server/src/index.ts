@@ -45,7 +45,6 @@ const { values } = parseArgs({
 
 const app = express();
 app.use(cors());
-app.use(express.json());
 app.use((req, res, next) => {
   res.header("Access-Control-Expose-Headers", "mcp-session-id");
   next();
@@ -53,6 +52,8 @@ app.use((req, res, next) => {
 
 // Database API endpoints for shared database access
 // Initialize database on server start (will be called in startServer function)
+// Apply JSON middleware only to database API routes
+app.use('/api/database', express.json());
 
 // Server configurations
 app.get('/api/database/server-configs', async (req, res) => {
