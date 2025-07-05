@@ -45,7 +45,7 @@ export class LibSQLBrowserDatabase {
       // Approach 1: Try with just the URL string
       try {
         console.log('🔍 Trying createClient(":memory:")');
-        this.client = createClient(':memory:');
+        this.client = createClient({ url: ':memory:' });
         console.log('✅ Successfully created client with string URL');
       } catch (error1) {
         console.log('❌ String URL failed:', error1);
@@ -60,8 +60,8 @@ export class LibSQLBrowserDatabase {
           
           // Approach 3: Try completely different approach - throw error with detailed info
           throw new Error(`Failed to create LibSQL client. Both approaches failed:
-            1. String URL: ${error1.message}
-            2. Config object: ${error2.message}
+            1. String URL: ${(error1 as Error).message}
+            2. Config object: ${(error2 as Error).message}
             LibSQL version: @libsql/client ^0.5.6
             Environment: Browser
             Original config: ${JSON.stringify(this.config)}`);
