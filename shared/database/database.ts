@@ -6,9 +6,14 @@
 import { createClient, Client } from "@libsql/client";
 import { randomUUID } from "crypto";
 import { homedir } from "os";
-import { join } from "path";
+import { join, dirname } from "path";
 import { readFileSync } from "fs";
 import { mkdir } from "fs/promises";
+import { fileURLToPath } from "url";
+
+// ES6 module equivalent of __dirname
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 import {
   ServerConfig,
   RequestHistory,
@@ -43,24 +48,39 @@ export interface DatabaseConfig {
 }
 
 export class MCPJamDatabase {
-  private client: Client;
+  private client: Client | null = null;
   private initialized = false;
+  private config?: DatabaseConfig;
 
   constructor(config?: DatabaseConfig) {
+    this.config = config;
+  }
+
+  private async getClient(): Promise<Client> {
+    if (this.client) {
+      return this.client;
+    }
+
     const defaultLocalPath = join(homedir(), '.mcpjam', 'data.db');
     
-    if (config?.url) {
+    if (this.config?.url) {
       // Remote database (Turso)
       this.client = createClient({
-        url: config.url,
-        authToken: config.authToken,
+        url: this.config.url,
+        authToken: this.config.authToken,
       });
     } else {
+      // Ensure the .mcpjam directory exists before creating local database
+      const dbDir = join(homedir(), '.mcpjam');
+      await mkdir(dbDir, { recursive: true });
+      
       // Local database
       this.client = createClient({
-        url: `file:${config?.localPath || defaultLocalPath}`,
+        url: `file:${this.config?.localPath || defaultLocalPath}`,
       });
     }
+
+    return this.client;
   }
 
   /**
@@ -70,15 +90,16 @@ export class MCPJamDatabase {
     if (this.initialized) return;
 
     try {
-      // Ensure the .mcpjam directory exists
-      const dbDir = join(homedir(), '.mcpjam');
-      await mkdir(dbDir, { recursive: true });
+      // Get the client (this will create it and ensure directory exists)
+      const client = await this.getClient();
 
       // Read and execute schema
       const schemaPath = join(__dirname, 'schema.sql');
       const schema = readFileSync(schemaPath, 'utf8');
       
-      await this.client.execute(schema);
+      // Execute the entire schema using executeMultiple
+      await client.executeMultiple(schema);
+      
       this.initialized = true;
     } catch (error) {
       console.error('Failed to initialize database:', error);
@@ -90,7 +111,10 @@ export class MCPJamDatabase {
    * Close the database connection
    */
   async close(): Promise<void> {
-    await this.client.close();
+    if (this.client) {
+      await this.client.close();
+      this.client = null;
+    }
   }
 
   // SERVER CONFIGS
@@ -100,7 +124,8 @@ export class MCPJamDatabase {
     const id = randomUUID();
     const now = new Date().toISOString();
     
-    await this.client.execute({
+    const client = await this.getClient();
+    await client.execute({
       sql: `INSERT INTO server_configs (
         id, name, transport_type, command, args, env, url, request_init, 
         event_source_init, reconnection_options, session_id, timeout, 

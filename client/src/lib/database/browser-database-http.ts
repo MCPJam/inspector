@@ -18,16 +18,103 @@ export interface DatabaseConfig {
 
 import type { MCPJamServerConfig } from '../types/serverTypes';
 import type { McpJamRequest } from '../types/requestTypes';
+import { DEFAULT_MCP_PROXY_LISTEN_PORT } from '../types/constants';
+
+// Server config with ID (as returned by database)
+interface ServerConfigWithId {
+  id: string;
+  name: string;
+  transportType: 'stdio' | 'sse' | 'streamable-http';
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  requestInit?: Record<string, unknown>;
+  eventSourceInit?: Record<string, unknown>;
+  reconnectionOptions?: Record<string, unknown>;
+  sessionId?: string;
+  timeout?: number;
+  capabilities?: Record<string, unknown>;
+  enableServerLogs?: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
 
 export class HTTPBrowserDatabase {
-  private baseUrl: string;
+  private baseUrl: string | null = null;
   private initialized = false;
+  private configuredBaseUrl: string | null = null;
 
   constructor(config: DatabaseConfig = {}) {
-    // Use environment variable or default to server port 3333
-    this.baseUrl = config.baseUrl || 
-                   import.meta.env.VITE_DATABASE_BASE_URL || 
-                   `${window.location.protocol}//${window.location.hostname}:3333`;
+    // Store the configured base URL if provided
+    this.configuredBaseUrl = config.baseUrl || import.meta.env.VITE_DATABASE_BASE_URL || null;
+  }
+
+  /**
+   * Discover the actual port used by the server
+   */
+  private async discoverActualPort(): Promise<string> {
+    // Try multiple ports starting from the default port
+    const startPort = parseInt(DEFAULT_MCP_PROXY_LISTEN_PORT);
+    const maxAttempts = 5; // Try 5 consecutive ports
+
+    console.log(`🔍 Starting port discovery from port ${startPort}`);
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const tryPort = startPort + attempt;
+
+      try {
+        const testUrl = `${window.location.protocol}//${window.location.hostname}:${tryPort}/port`;
+        console.log(`🔍 Trying port discovery at: ${testUrl}`);
+        
+        const response = await fetch(testUrl);
+
+        if (response.ok) {
+          const data = await response.json();
+          const actualPort = data.port.toString();
+          console.log(`✅ Discovered actual port: ${actualPort}`);
+          return actualPort;
+        } else {
+          console.debug(`Port discovery: port ${tryPort} responded with status ${response.status}`);
+        }
+      } catch (error) {
+        // Continue to next port
+        console.debug(
+          `Port discovery: failed to connect to port ${tryPort}:`,
+          error,
+        );
+      }
+    }
+
+    console.warn(
+      "Failed to discover actual port, using default:",
+      DEFAULT_MCP_PROXY_LISTEN_PORT,
+    );
+    return DEFAULT_MCP_PROXY_LISTEN_PORT;
+  }
+
+  /**
+   * Get the base URL for API calls
+   */
+  private async getBaseUrl(): Promise<string> {
+    if (this.baseUrl) {
+      console.log(`🔄 Using cached base URL: ${this.baseUrl}`);
+      return this.baseUrl;
+    }
+
+    // If a configured base URL is provided, use it
+    if (this.configuredBaseUrl) {
+      console.log(`🔄 Using configured base URL: ${this.configuredBaseUrl}`);
+      this.baseUrl = this.configuredBaseUrl;
+      return this.baseUrl;
+    }
+
+    // Otherwise, discover the actual port
+    console.log(`🔄 No cached or configured URL, starting port discovery...`);
+    const actualPort = await this.discoverActualPort();
+    this.baseUrl = `${window.location.protocol}//${window.location.hostname}:${actualPort}`;
+    console.log(`🔄 Final base URL: ${this.baseUrl}`);
+    return this.baseUrl;
   }
 
   /**
@@ -37,8 +124,11 @@ export class HTTPBrowserDatabase {
     if (this.initialized) return;
     
     try {
+      // Get the base URL (with port discovery)
+      const baseUrl = await this.getBaseUrl();
+      
       // Test connection to the database API
-      const response = await fetch(`${this.baseUrl}/api/database/user-preferences`);
+      const response = await fetch(`${baseUrl}/api/database/user-preferences`);
       if (!response.ok && response.status !== 404) {
         throw new Error(`Database API not available: ${response.status}`);
       }
@@ -63,17 +153,20 @@ export class HTTPBrowserDatabase {
     await this.initialize();
     
     try {
-      const response = await fetch(`${this.baseUrl}/api/database/server-configs`);
+      const baseUrl = await this.getBaseUrl();
+      const response = await fetch(`${baseUrl}/api/database/server-configs`);
       if (!response.ok) {
         throw new Error(`Failed to fetch server configs: ${response.status}`);
       }
       
       const configs = await response.json();
       
-      // Convert array to object keyed by name
+      // Convert array to object keyed by name, removing database-specific fields
       const configsByName: Record<string, MCPJamServerConfig> = {};
       for (const config of configs) {
-        configsByName[config.name] = config;
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { id, createdAt, updatedAt, ...mcpConfig } = config;
+        configsByName[config.name] = mcpConfig;
       }
       
       return configsByName;
@@ -87,24 +180,30 @@ export class HTTPBrowserDatabase {
     await this.initialize();
     
     try {
-      // First, try to find existing config by name
-      const existingConfigs = await this.getAllServerConfigs();
-      const existingConfig = existingConfigs[name];
+      // First, get all server configs to find existing one by name
+      const baseUrl = await this.getBaseUrl();
+      const existingConfigsResponse = await fetch(`${baseUrl}/api/database/server-configs`);
+      if (!existingConfigsResponse.ok) {
+        throw new Error(`Failed to fetch server configs: ${existingConfigsResponse.status}`);
+      }
+      
+      const existingConfigs: ServerConfigWithId[] = await existingConfigsResponse.json();
+      const existingConfig = existingConfigs.find(c => c.name === name);
       
       const configData = {
         name,
         transportType: config.transportType || 'stdio',
-        command: config.command,
-        args: config.args,
-        env: config.env,
-        url: config.url?.toString(),
+        command: 'command' in config ? config.command : undefined,
+        args: 'args' in config ? config.args : undefined,
+        env: 'env' in config ? config.env : undefined,
+        url: 'url' in config ? config.url?.toString() : undefined,
         timeout: config.timeout || 30000,
         enableServerLogs: config.enableServerLogs || false,
       };
       
       if (existingConfig) {
         // Update existing config
-        const response = await fetch(`${this.baseUrl}/api/database/server-configs/${existingConfig.id}`, {
+        const response = await fetch(`${baseUrl}/api/database/server-configs/${existingConfig.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(configData),
@@ -115,7 +214,7 @@ export class HTTPBrowserDatabase {
         }
       } else {
         // Create new config
-        const response = await fetch(`${this.baseUrl}/api/database/server-configs`, {
+        const response = await fetch(`${baseUrl}/api/database/server-configs`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(configData),
@@ -136,15 +235,21 @@ export class HTTPBrowserDatabase {
     
     try {
       // Find config by name first
-      const existingConfigs = await this.getAllServerConfigs();
-      const existingConfig = existingConfigs[name];
+      const baseUrl = await this.getBaseUrl();
+      const existingConfigsResponse = await fetch(`${baseUrl}/api/database/server-configs`);
+      if (!existingConfigsResponse.ok) {
+        throw new Error(`Failed to fetch server configs: ${existingConfigsResponse.status}`);
+      }
+      
+      const existingConfigs: ServerConfigWithId[] = await existingConfigsResponse.json();
+      const existingConfig = existingConfigs.find(c => c.name === name);
       
       if (!existingConfig) {
         console.warn(`Server config ${name} not found`);
         return;
       }
       
-      const response = await fetch(`${this.baseUrl}/api/database/server-configs/${existingConfig.id}`, {
+      const response = await fetch(`${baseUrl}/api/database/server-configs/${existingConfig.id}`, {
         method: 'DELETE',
       });
       
@@ -172,7 +277,8 @@ export class HTTPBrowserDatabase {
     await this.initialize();
     
     try {
-      const response = await fetch(`${this.baseUrl}/api/database/user-preferences`);
+      const baseUrl = await this.getBaseUrl();
+      const response = await fetch(`${baseUrl}/api/database/user-preferences`);
       
       if (response.status === 404) {
         // No preferences exist yet, return defaults
@@ -202,7 +308,8 @@ export class HTTPBrowserDatabase {
     await this.initialize();
     
     try {
-      const response = await fetch(`${this.baseUrl}/api/database/user-preferences`, {
+      const baseUrl = await this.getBaseUrl();
+      const response = await fetch(`${baseUrl}/api/database/user-preferences`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(preferences),
@@ -222,7 +329,8 @@ export class HTTPBrowserDatabase {
     await this.initialize();
     
     try {
-      const response = await fetch(`${this.baseUrl}/api/database/request-history`);
+      const baseUrl = await this.getBaseUrl();
+      const response = await fetch(`${baseUrl}/api/database/request-history`);
       if (!response.ok) {
         throw new Error(`Failed to fetch request history: ${response.status}`);
       }
@@ -242,14 +350,15 @@ export class HTTPBrowserDatabase {
       const requestData = {
         name: request.name || `Request ${Date.now()}`,
         description: request.description,
-        toolName: request.method || 'unknown',
-        toolDefinition: { method: request.method, params: request.params },
-        parameters: request.params || {},
-        clientId: 'browser-client',
-        isFavorite: false,
+        toolName: request.toolName || 'unknown',
+        toolDefinition: request.tool || { name: request.toolName, inputSchema: {} },
+        parameters: request.parameters || {},
+        clientId: request.clientId || 'browser-client',
+        isFavorite: request.isFavorite || false,
       };
       
-      const response = await fetch(`${this.baseUrl}/api/database/request-history`, {
+      const baseUrl = await this.getBaseUrl();
+      const response = await fetch(`${baseUrl}/api/database/request-history`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestData),
@@ -268,7 +377,8 @@ export class HTTPBrowserDatabase {
     await this.initialize();
     
     try {
-      const response = await fetch(`${this.baseUrl}/api/database/request-history/${id}`, {
+      const baseUrl = await this.getBaseUrl();
+      const response = await fetch(`${baseUrl}/api/database/request-history/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates),
@@ -287,7 +397,8 @@ export class HTTPBrowserDatabase {
     await this.initialize();
     
     try {
-      const response = await fetch(`${this.baseUrl}/api/database/request-history/${id}`, {
+      const baseUrl = await this.getBaseUrl();
+      const response = await fetch(`${baseUrl}/api/database/request-history/${id}`, {
         method: 'DELETE',
       });
       
@@ -308,3 +419,9 @@ export class HTTPBrowserDatabase {
 
 // Create singleton instance
 export const httpBrowserDatabase = new HTTPBrowserDatabase();
+
+// Debug: log the initial configuration
+console.log('🔧 HTTPBrowserDatabase singleton created with config:', {
+  configuredBaseUrl: (httpBrowserDatabase as unknown as { configuredBaseUrl: string | null }).configuredBaseUrl,
+  env: import.meta.env.VITE_DATABASE_BASE_URL
+});

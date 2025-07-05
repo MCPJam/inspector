@@ -2,6 +2,7 @@
   "name": "@mcpjam/shared-database",
   "version": "1.0.0",
   "description": "Shared database layer for MCP Jam Inspector supporting CLI, SDK, and UI",
+  "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {

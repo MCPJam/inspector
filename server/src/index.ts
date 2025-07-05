@@ -21,7 +21,7 @@ import express from "express";
 import { findActualExecutable } from "spawn-rx";
 import mcpProxy from "./mcpProxy.js";
 import { randomUUID } from "node:crypto";
-import { database } from "../../shared/database/database.js";
+import { database } from "../../shared/database/dist/database.js";
 
 const SSE_HEADERS_PASSTHROUGH = ["authorization"];
 const STREAMABLE_HTTP_HEADERS_PASSTHROUGH = [

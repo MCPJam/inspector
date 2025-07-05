@@ -4,7 +4,9 @@
  */
 
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
-import { JsonValue } from "../../client/src/lib/utils/json/jsonUtils";
+
+// Local JsonValue type definition (to avoid importing from client)
+export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
 export type TransportType = "stdio" | "sse" | "streamable-http";
 export type Theme = "light" | "dark" | "system";
