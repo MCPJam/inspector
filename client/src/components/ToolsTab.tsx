@@ -25,7 +25,11 @@ import {
   createMcpJamRequest,
   getRequestsForClient,
 } from "@/lib/utils/json/requestUtils";
-import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+} from "@/components/ui/tooltip";
 const ToolsTab = ({
   tools,
   listTools,
@@ -230,7 +234,7 @@ const ToolsTab = ({
                     <div className="flex items-center space-x-1">
                       {request.isFavorite && (
                         <Star className="w-3 h-3 text-yellow-500 fill-current" />
-                      )}            
+                      )}
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Button

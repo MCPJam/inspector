@@ -51,6 +51,7 @@
     "ajv": "^8.17.1",
     "concurrently": "^9.0.1",
     "dotenv": "^16.5.0",
+    "lucide-react": "^0.525.0",
     "open": "^10.1.0",
     "openai": "^5.7.0",
     "shell-quote": "^1.8.2",
