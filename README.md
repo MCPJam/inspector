@@ -51,6 +51,22 @@ docker run --rm -p 6274:6274 -p 6277:6277 mcpjam/mcp-inspector:main
 
 The inspector will be available in your browser at `http://127.0.0.1:6274`.
 
+### Persistent Connections with Docker
+
+To persist your MCP server connections across container restarts, use a volume mount:
+
+```bash
+# With named volume (recommended)
+docker volume create mcp-data
+docker run -d \
+  -p 6274:6274 -p 6277:6277 \
+  -v mcp-data:/app/data \
+  -e MCP_CONNECTIONS_FILE=/app/data/mcp.json \
+  mcpjam/mcp-inspector:main
+```
+
+See [CONNECTION_PERSISTENCE.md](CONNECTION_PERSISTENCE.md) for detailed Docker setup instructions.
+
 ---
 
 ## 📸 Screenshots
@@ -70,6 +86,7 @@ This project is a fork of the [@modelcontextprotocol/inspector](https://github.c
 - **(New) LLM tool interaction** - Test your MCP server against a real LLM.
 - **Debugging tools** - Enhanced logging experience to debug your server.
 - **Quality of life improvements** - Save requests, multi-server connection, saved connections.
+- **(New) Connection persistence** - Save connections to file for Docker volume mounting and easy sharing.
 
 ## 📋 Requirements
 
@@ -214,6 +231,7 @@ We're continuously improving the MCPJam Inspector. Here's what's coming next:
 
 ### Core Features
 
+- ✅ **Connection persistence** - Save connections to file for Docker volume mounting and sharing
 - **AI parameter fill** - Smart parameter completion using AI
 - **Collections** - Organize and group your MCP servers / tools
 - **Multi Provider support** - Support for other LLMs like ChatGPT

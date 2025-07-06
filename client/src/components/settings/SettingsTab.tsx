@@ -7,6 +7,8 @@ import {
   SettingsTabProps,
 } from "@/components/settings/types";
 import ProviderSection from "./ApiKeyManagementSection";
+import { ConnectionPersistence } from "@/components/ConnectionPersistence";
+import { useServerState } from "@/hooks/useServerState";
 
 const PROVIDERS: Record<SupportedProvider, ProviderConfig> = {
   anthropic: {
@@ -41,6 +43,16 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ disabled = false }) => {
     Record<string, boolean>
   >({});
   const { toast } = useToast();
+  const { serverConfigs, setServerConfigs } = useServerState();
+
+  const handleConnectionsImported = (importedConnections: Record<string, any>) => {
+    setServerConfigs(importedConnections);
+    toast({
+      title: "Connections Imported",
+      description: `Successfully imported ${Object.keys(importedConnections).length} connection(s).`,
+      variant: "default",
+    });
+  };
 
   // Load API keys from ProviderManager on mount
   useEffect(() => {
@@ -162,6 +174,20 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ disabled = false }) => {
             onToggleCollapse={toggleCollapse}
           />
         ))}
+      </div>
+
+      {/* Connection Persistence Section */}
+      <div className="border-t border-slate-200 dark:border-slate-700 pt-6">
+        <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-200 mb-6">
+          Connection Persistence
+        </h2>
+        <p className="text-slate-600 dark:text-slate-400 mb-6">
+          Save, export, and import your MCP server connections for backup and sharing across environments.
+        </p>
+        <ConnectionPersistence
+          connections={serverConfigs}
+          onConnectionsImported={handleConnectionsImported}
+        />
       </div>
     </div>
   );

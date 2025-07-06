@@ -4,6 +4,8 @@ import cors from "cors";
 import { parseArgs } from "node:util";
 import { parse as shellParseArgs } from "shell-quote";
 import { createServer } from "node:net";
+import { promises as fs } from "node:fs";
+import { join as pathJoin } from "node:path";
 
 import {
   SSEClientTransport,
@@ -29,6 +31,44 @@ const STREAMABLE_HTTP_HEADERS_PASSTHROUGH = [
   "last-event-id",
 ];
 
+// Add connection persistence constants
+const CONNECTIONS_FILE_PATH = process.env.MCP_CONNECTIONS_FILE || pathJoin(process.cwd(), "mcp.json");
+const CONNECTIONS_DIR = pathJoin(process.cwd(), "data");
+
+// Ensure data directory exists
+const ensureDataDirectory = async () => {
+  try {
+    await fs.mkdir(CONNECTIONS_DIR, { recursive: true });
+  } catch (error) {
+    console.warn("Could not create data directory:", error);
+  }
+};
+
+// Load connections from file
+const loadConnectionsFromFile = async () => {
+  try {
+    const data = await fs.readFile(CONNECTIONS_FILE_PATH, "utf8");
+    return JSON.parse(data);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return null; // File doesn't exist
+    }
+    throw error;
+  }
+};
+
+// Save connections to file
+const saveConnectionsToFile = async (connections: any) => {
+  try {
+    await ensureDataDirectory();
+    await fs.writeFile(CONNECTIONS_FILE_PATH, JSON.stringify(connections, null, 2), "utf8");
+    return true;
+  } catch (error) {
+    console.error("Error saving connections:", error);
+    throw error;
+  }
+};
+
 const defaultEnvironment = {
   ...getDefaultEnvironment(),
   ...(process.env.MCP_ENV_VARS ? JSON.parse(process.env.MCP_ENV_VARS) : {}),
@@ -44,6 +84,7 @@ const { values } = parseArgs({
 
 const app = express();
 app.use(cors());
+app.use(express.json()); // Add JSON parsing middleware
 app.use((req, res, next) => {
   res.header("Access-Control-Expose-Headers", "mcp-session-id");
   next();
@@ -366,6 +407,123 @@ app.get("/config", (req, res) => {
   } catch (error) {
     console.error("❌ Error in /config route:", error);
     res.status(500).json(error);
+  }
+});
+
+// Add new connection persistence endpoints
+app.get("/connections", async (req, res) => {
+  try {
+    const connections = await loadConnectionsFromFile();
+    if (connections) {
+      res.json({
+        success: true,
+        connections,
+        source: "file",
+        filePath: CONNECTIONS_FILE_PATH,
+      });
+    } else {
+      res.json({
+        success: true,
+        connections: null,
+        source: "none",
+        filePath: CONNECTIONS_FILE_PATH,
+      });
+    }
+  } catch (error) {
+    console.error("Error loading connections:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to load connections from file",
+      details: (error as Error).message,
+      filePath: CONNECTIONS_FILE_PATH,
+    });
+  }
+});
+
+app.post("/connections", async (req, res) => {
+  try {
+    const { connections } = req.body;
+    if (!connections || typeof connections !== "object") {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid connections data",
+      });
+    }
+
+    await saveConnectionsToFile(connections);
+    res.json({
+      success: true,
+      message: "Connections saved successfully",
+      filePath: CONNECTIONS_FILE_PATH,
+    });
+  } catch (error) {
+    console.error("Error saving connections:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to save connections to file",
+      details: (error as Error).message,
+      filePath: CONNECTIONS_FILE_PATH,
+    });
+  }
+});
+
+app.get("/connections/export", async (req, res) => {
+  try {
+    const connections = await loadConnectionsFromFile();
+    if (!connections) {
+      return res.status(404).json({
+        success: false,
+        error: "No connections found to export",
+      });
+    }
+
+    const filename = `mcp-connections-${new Date().toISOString().split('T')[0]}.json`;
+    
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(JSON.stringify(connections, null, 2));
+  } catch (error) {
+    console.error("Error exporting connections:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to export connections",
+      details: (error as Error).message,
+    });
+  }
+});
+
+app.post("/connections/import", async (req, res) => {
+  try {
+    const { connections, merge = false } = req.body;
+    if (!connections || typeof connections !== "object") {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid connections data",
+      });
+    }
+
+    let finalConnections = connections;
+    
+    if (merge) {
+      const existingConnections = await loadConnectionsFromFile();
+      if (existingConnections) {
+        finalConnections = { ...existingConnections, ...connections };
+      }
+    }
+
+    await saveConnectionsToFile(finalConnections);
+    res.json({
+      success: true,
+      message: merge ? "Connections merged successfully" : "Connections imported successfully",
+      filePath: CONNECTIONS_FILE_PATH,
+    });
+  } catch (error) {
+    console.error("Error importing connections:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to import connections",
+      details: (error as Error).message,
+    });
   }
 });
 

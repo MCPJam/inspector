@@ -1,0 +1,57 @@
+{
+  "filesystem-server": {
+    "transportType": "stdio",
+    "command": "npx",
+    "args": ["@modelcontextprotocol/server-filesystem", "/Users/example/documents"],
+    "env": {},
+    "timeout": 30000,
+    "enableServerLogs": true
+  },
+  "memory-server": {
+    "transportType": "stdio", 
+    "command": "npx",
+    "args": ["@modelcontextprotocol/server-memory"],
+    "env": {},
+    "timeout": 30000,
+    "enableServerLogs": true
+  },
+  "github-server": {
+    "transportType": "stdio",
+    "command": "npx",
+    "args": ["@modelcontextprotocol/server-github"],
+    "env": {
+      "GITHUB_PERSONAL_ACCESS_TOKEN": "your-github-token-here"
+    },
+    "timeout": 30000,
+    "enableServerLogs": true
+  },
+  "brave-search": {
+    "transportType": "stdio",
+    "command": "npx", 
+    "args": ["@modelcontextprotocol/server-brave-search"],
+    "env": {
+      "BRAVE_API_KEY": "your-brave-api-key-here"
+    },
+    "timeout": 30000,
+    "enableServerLogs": true
+  },
+  "custom-sse-server": {
+    "transportType": "sse",
+    "url": "https://api.example.com/mcp",
+    "timeout": 30000,
+    "enableServerLogs": true
+  },
+  "custom-http-server": {
+    "transportType": "streamable-http",
+    "url": "https://api.example.com/mcp/stream", 
+    "requestInit": {
+      "headers": {
+        "Authorization": "Bearer your-api-token-here",
+        "Content-Type": "application/json"
+      }
+    },
+    "sessionId": "custom-session-id",
+    "timeout": 30000,
+    "enableServerLogs": true
+  }
+}

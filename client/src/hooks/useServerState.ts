@@ -3,6 +3,7 @@ import {
   MCPJamServerConfig,
   StdioServerDefinition,
 } from "@/lib/types/serverTypes";
+import { useFilePersistence } from "./useFilePersistence";
 
 const SERVER_CONFIGS_STORAGE_KEY = "mcpServerConfigs_v1";
 const SELECTED_SERVER_STORAGE_KEY = "selectedServerName_v1";
@@ -92,19 +93,13 @@ const loadSelectedServerFromStorage = (
 };
 
 export const useServerState = () => {
-  const [state] = useState(() => {
-    const configs = loadServerConfigsFromStorage();
-    const selectedServer = loadSelectedServerFromStorage(configs);
-    return { configs, selectedServer };
-  });
-
+  const [isInitialized, setIsInitialized] = useState(false);
   const [serverConfigs, setServerConfigs] = useState<
     Record<string, MCPJamServerConfig>
-  >(state.configs);
+  >({});
+  const [selectedServerName, setSelectedServerName] = useState<string>("");
 
-  const [selectedServerName, setSelectedServerName] = useState<string>(
-    state.selectedServer,
-  );
+  const { loadConnectionsFromFile, saveConnectionsToFile } = useFilePersistence();
 
   // Client form state for creating/editing
   const [isCreatingClient, setIsCreatingClient] = useState(false);
@@ -119,23 +114,65 @@ export const useServerState = () => {
   } as StdioServerDefinition);
   const [clientFormName, setClientFormName] = useState("");
 
-  // Persist server configs to localStorage whenever they change
+  // Initialize state with priority: file > localStorage
   useEffect(() => {
-    try {
-      if (Object.keys(serverConfigs).length > 0) {
-        const serialized = serializeServerConfigs(serverConfigs);
-        localStorage.setItem(SERVER_CONFIGS_STORAGE_KEY, serialized);
-      } else {
-        // Remove from storage if no configs exist
-        localStorage.removeItem(SERVER_CONFIGS_STORAGE_KEY);
+    const initializeState = async () => {
+      try {
+        // First try to load from file
+        const fileConfigs = await loadConnectionsFromFile();
+        
+        if (fileConfigs && Object.keys(fileConfigs).length > 0) {
+          console.log("✅ Loaded connections from file:", Object.keys(fileConfigs));
+          setServerConfigs(fileConfigs);
+          setSelectedServerName(loadSelectedServerFromStorage(fileConfigs));
+        } else {
+          // Fallback to localStorage
+          console.log("📁 No file found, loading from localStorage");
+          const localConfigs = loadServerConfigsFromStorage();
+          setServerConfigs(localConfigs);
+          setSelectedServerName(loadSelectedServerFromStorage(localConfigs));
+        }
+      } catch (error) {
+        console.warn("Failed to load from file, falling back to localStorage:", error);
+        const localConfigs = loadServerConfigsFromStorage();
+        setServerConfigs(localConfigs);
+        setSelectedServerName(loadSelectedServerFromStorage(localConfigs));
+      } finally {
+        setIsInitialized(true);
       }
-    } catch (error) {
-      console.warn("Failed to save server configs to localStorage:", error);
-    }
-  }, [serverConfigs]);
+    };
+
+    initializeState();
+  }, [loadConnectionsFromFile]);
+
+  // Persist server configs to both file and localStorage whenever they change
+  useEffect(() => {
+    if (!isInitialized) return;
+
+    const persistConfigs = async () => {
+      try {
+        // Save to localStorage (immediate)
+        if (Object.keys(serverConfigs).length > 0) {
+          const serialized = serializeServerConfigs(serverConfigs);
+          localStorage.setItem(SERVER_CONFIGS_STORAGE_KEY, serialized);
+        } else {
+          localStorage.removeItem(SERVER_CONFIGS_STORAGE_KEY);
+        }
+
+        // Save to file (persistent across sessions)
+        await saveConnectionsToFile(serverConfigs);
+      } catch (error) {
+        console.warn("Failed to persist server configs:", error);
+      }
+    };
+
+    persistConfigs();
+  }, [serverConfigs, isInitialized, saveConnectionsToFile]);
 
   // Persist selected server name whenever it changes
   useEffect(() => {
+    if (!isInitialized) return;
+
     try {
       if (selectedServerName) {
         localStorage.setItem(SELECTED_SERVER_STORAGE_KEY, selectedServerName);
@@ -145,7 +182,7 @@ export const useServerState = () => {
     } catch (error) {
       console.warn("Failed to save selected server to localStorage:", error);
     }
-  }, [selectedServerName]);
+  }, [selectedServerName, isInitialized]);
 
   const updateServerConfig = useCallback(
     (serverName: string, config: MCPJamServerConfig) => {
@@ -190,6 +227,22 @@ export const useServerState = () => {
     setClientFormName("");
   }, []);
 
+  // Method to manually load connections from file (for UI import)
+  const loadConnectionsFromFileManual = useCallback(async (): Promise<Record<string, MCPJamServerConfig> | null> => {
+    try {
+      const fileConfigs = await loadConnectionsFromFile();
+      if (fileConfigs) {
+        setServerConfigs(fileConfigs);
+        setSelectedServerName(loadSelectedServerFromStorage(fileConfigs));
+        return fileConfigs;
+      }
+      return null;
+    } catch (error) {
+      console.error("Failed to load connections from file:", error);
+      return null;
+    }
+  }, [loadConnectionsFromFile]);
+
   return {
     serverConfigs,
     setServerConfigs,
@@ -206,5 +259,7 @@ export const useServerState = () => {
     handleCreateClient,
     handleEditClient,
     handleCancelClientForm,
+    loadConnectionsFromFileManual,
+    isInitialized,
   };
 };
