@@ -11,6 +11,8 @@ const STORAGE_KEY = "mcpjam_saved_requests";
 
 /**
  * Storage interface for managing saved requests
+ * Note: This class is now deprecated in favor of useRequestHistoryDatabase hook
+ * It's kept for backward compatibility
  */
 export class RequestStorage {
   /**

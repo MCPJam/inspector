@@ -23,6 +23,7 @@
     "test:watch": "jest --config jest.config.cjs --watch"
   },
   "dependencies": {
+    "@libsql/client": "^0.5.6",
     "@modelcontextprotocol/sdk": "^1.13.0",
     "@radix-ui/react-checkbox": "^1.1.4",
     "@radix-ui/react-dialog": "^1.1.3",
