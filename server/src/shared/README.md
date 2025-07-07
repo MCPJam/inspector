@@ -23,10 +23,11 @@ This service extracts and centralizes the transport management logic that was pr
 ## Key Features
 
 ### Connection Management
-- Session-based transport tracking
+- Session-based transport tracking with unique identifiers
 - Maximum connection limits with overflow protection
 - Automatic cleanup on transport close/error
-- Real-time connection status monitoring
+- Real-time connection status monitoring with timestamps and error counts
+- Graceful connection shutdown with `closeAllConnections()`
 
 ### Event-Driven Architecture
 - Emits events for connection lifecycle (connect, disconnect, error)
@@ -45,6 +46,13 @@ This service extracts and centralizes the transport management logic that was pr
 - **Environment Handling**: Smart merging of process and custom environment variables
 - **Lifecycle Management**: Automatic setup of transport event handlers and timeouts
 - **Error Handling**: Comprehensive error catching with detailed logging
+
+### MCPProxyService Features
+- **Connection Orchestration**: High-level API for managing multiple MCP connections
+- **Status Tracking**: Real-time monitoring of connection health and activity
+- **Event Emission**: Lifecycle events for connection, disconnection, and errors
+- **Helper Methods**: Convenience methods for creating SSE and Streamable HTTP connections
+- **Automatic Cleanup**: Proper resource management and connection cleanup
 
 ## Usage Examples
 
@@ -102,6 +110,31 @@ const { sessionId } = await mcpProxyService.createSSEConnection(
   response,
   requestHeaders
 );
+```
+
+### Event Handling
+```typescript
+mcpProxyService.on('connection', (sessionId, serverConfig) => {
+  console.log(`New connection: ${sessionId} for ${serverConfig.name}`);
+});
+
+mcpProxyService.on('disconnection', (sessionId) => {
+  console.log(`Connection closed: ${sessionId}`);
+});
+
+mcpProxyService.on('error', (sessionId, error) => {
+  console.error(`Connection error: ${sessionId}`, error);
+});
+```
+
+### Connection Status Monitoring
+```typescript
+// Get all active connections
+const activeConnections = mcpProxyService.getActiveConnections();
+
+// Check specific connection status
+const status = mcpProxyService.getConnectionStatus(sessionId);
+console.log(`Status: ${status?.status}, Errors: ${status?.errorCount}`);
 ```
 
 ## Configuration
