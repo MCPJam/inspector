@@ -193,6 +193,13 @@ interface TransportFactoryOptions {
 ### Backward Compatibility
 The service maintains full backward compatibility with the existing UI server. All existing routes continue to work without modification while benefiting from the improved architecture.
 
+### Server Integration
+The main server has been refactored to use the MCPProxyService:
+- **Route Simplification**: All transport management moved to service methods
+- **Helper Functions**: Clean request processing with `createServerConfigFromRequest()` and `extractHeaders()`
+- **Graceful Shutdown**: Automatic connection cleanup on server shutdown
+- **Reduced Complexity**: Main server file reduced by ~200 lines while maintaining functionality
+
 ### Error Handling
 - Comprehensive error catching and logging
 - Automatic connection cleanup on failures
@@ -215,4 +222,18 @@ server/src/shared/
 └── MCPProxyService.ts     # Main service class
 ```
 
-This modular design creates a solid foundation for future enhancements while keeping the existing server functionality intact and well-organized.
+## Migration Benefits
+
+### Before Refactoring
+- ~500 lines of mixed transport and route logic in main server
+- Duplicate header handling across routes
+- Manual transport lifecycle management
+- Inline connection cleanup code
+
+### After Refactoring
+- Clean separation of concerns with shared service
+- Centralized transport management
+- Consistent error handling and logging
+- Reusable components for future server implementations
+
+This modular design creates a solid foundation for future enhancements while keeping the existing server functionality intact and well-organized. The extracted service can now be easily reused in other server contexts while maintaining the same reliable transport management capabilities.
