@@ -12,3 +12,4 @@ export { generateSessionId, validateServerConfig, ConsoleLogger } from './utils.
 
 // Export classes
 export { TransportFactory } from './TransportFactory.js';
+export { MCPProxyService } from './MCPProxyService.js';
