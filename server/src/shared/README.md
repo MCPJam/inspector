@@ -1,0 +1,150 @@
+# MCP Proxy Service
+
+The MCP Proxy Service is a modular, reusable system for managing Model Context Protocol (MCP) transport connections within the MCPJam Inspector server architecture.
+
+## Overview
+
+This service extracts and centralizes the transport management logic that was previously embedded throughout the main server file. It provides a clean, event-driven API for creating, managing, and monitoring MCP server connections.
+
+## Architecture
+
+### Core Components
+
+- **MCPProxyService**: Central service class for managing transport connections
+- **TransportFactory**: Factory for creating different types of MCP transports
+- **Types & Utilities**: Shared interfaces and helper functions
+
+### Transport Types Supported
+
+- **STDIO**: Local process spawning with environment management
+- **SSE**: Server-Sent Events for real-time communication
+- **Streamable HTTP**: HTTP-based transport for web applications
+
+## Key Features
+
+### Connection Management
+- Session-based transport tracking
+- Maximum connection limits with overflow protection
+- Automatic cleanup on transport close/error
+- Real-time connection status monitoring
+
+### Event-Driven Architecture
+- Emits events for connection lifecycle (connect, disconnect, error)
+- Integrates seamlessly with existing event handlers
+- Supports custom event listeners for monitoring
+
+### Transport Abstraction
+- Unified API regardless of underlying transport type
+- Automatic header passthrough for authentication
+- Environment variable management for STDIO transports
+- Connection timeout and retry handling
+
+## Usage Examples
+
+### Basic Connection Creation
+```typescript
+const mcpProxyService = new MCPProxyService({
+  maxConnections: 50
+});
+
+const serverConfig: ServerConfig = {
+  id: 'server-123',
+  type: 'stdio',
+  name: 'My MCP Server',
+  command: 'node',
+  args: ['mcp-server.js']
+};
+
+const sessionId = await mcpProxyService.createConnection(serverConfig);
+```
+
+### Streamable HTTP Connection
+```typescript
+const { webAppTransport } = await mcpProxyService.createStreamableHTTPConnection(
+  serverConfig,
+  requestHeaders
+);
+
+await webAppTransport.handleRequest(req, res, body);
+```
+
+### SSE Connection
+```typescript
+const { sessionId } = await mcpProxyService.createSSEConnection(
+  serverConfig,
+  response,
+  requestHeaders
+);
+```
+
+## Configuration
+
+### ServerConfig Interface
+```typescript
+interface ServerConfig {
+  id: string;                          // Unique identifier
+  type: 'stdio' | 'sse' | 'streamable-http';
+  name: string;                        // Human-readable name
+  command?: string;                    // For STDIO: command to execute
+  args?: string[];                     // For STDIO: command arguments
+  env?: Record<string, string>;        // For STDIO: environment variables
+  url?: string;                        // For SSE/HTTP: target URL
+  headers?: Record<string, string>;    // Custom headers
+}
+```
+
+### Service Options
+```typescript
+interface MCPProxyOptions {
+  logger?: Logger;                     // Custom logger instance
+  maxConnections?: number;             // Maximum concurrent connections
+  connectionTimeout?: number;          // Connection timeout in ms
+  retryAttempts?: number;              // Number of retry attempts
+}
+```
+
+## Benefits
+
+### Code Organization
+- Separates transport logic from route handling
+- Enables reuse across different server components
+- Provides consistent error handling and logging
+
+### Maintainability
+- Centralized connection management
+- Type-safe configuration and status tracking
+- Comprehensive event emission for debugging
+
+### Extensibility
+- Easy to add new transport types
+- Pluggable logger interface
+- Event-driven architecture for custom integrations
+
+## Integration Notes
+
+### Backward Compatibility
+The service maintains full backward compatibility with the existing UI server. All existing routes continue to work without modification while benefiting from the improved architecture.
+
+### Error Handling
+- Comprehensive error catching and logging
+- Automatic connection cleanup on failures
+- Status tracking for debugging and monitoring
+
+### Performance
+- Efficient session-based transport lookup
+- Automatic cleanup prevents memory leaks
+- Connection pooling with configurable limits
+
+## File Structure
+
+```
+server/src/shared/
+├── README.md              # This documentation
+├── index.ts               # Public API exports
+├── types.ts               # TypeScript interfaces
+├── utils.ts               # Helper functions and logger
+├── TransportFactory.ts    # Transport creation logic
+└── MCPProxyService.ts     # Main service class
+```
+
+This modular design creates a solid foundation for future enhancements while keeping the existing server functionality intact and well-organized.
