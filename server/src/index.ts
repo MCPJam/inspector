@@ -58,7 +58,7 @@ app.use((req, res, next) => {
 });
 
 // Initialize database
-let databaseManager: DatabaseManager;
+let databaseManager: DatabaseManager | undefined;
 const initializeDatabase = async () => {
   try {
     const dbConfig = getDatabaseConfig();
@@ -401,7 +401,7 @@ app.use('/api/db', (req, res, next) => {
     return;
   }
   next();
-}, createDatabaseRoutes(databaseManager));
+}, createDatabaseRoutes(databaseManager!));
 
 // Function to find an available port
 const findAvailablePort = async (startPort: number): Promise<number> => {
