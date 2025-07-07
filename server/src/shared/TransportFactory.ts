@@ -152,16 +152,11 @@ export class TransportFactory {
   }
   
   private async setupTransportLifecycle(transport: Transport, configId: string): Promise<void> {
-    // Set up connection timeout
-    const timeoutId = setTimeout(() => {
-      this.logger.warn(`Connection timeout for ${configId}`);
-      transport.close();
-    }, this.defaultTimeout);
+    // Set up event handlers without aggressive timeouts
+    // The original server didn't have connection timeouts, so we preserve that behavior
     
-    // Clear timeout on successful connection
     const originalOnClose = transport.onclose;
     transport.onclose = () => {
-      clearTimeout(timeoutId);
       this.logger.info(`Transport closed for ${configId}`);
       if (originalOnClose) {
         originalOnClose();
@@ -170,7 +165,6 @@ export class TransportFactory {
     
     const originalOnError = transport.onerror;
     transport.onerror = (error) => {
-      clearTimeout(timeoutId);
       this.logger.error(`Transport error for ${configId}:`, error);
       if (originalOnError) {
         originalOnError(error);

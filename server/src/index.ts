@@ -122,7 +122,7 @@ app.get("/mcp", async (req, res) => {
   }
 });
 
-app.post("/mcp", async (req, res) => {
+app.post("/mcp", express.json({ limit: '10mb' }), async (req, res) => {
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
   console.log(`📥 Received POST message for sessionId ${sessionId}`);
   if (!sessionId) {
@@ -163,7 +163,7 @@ app.post("/mcp", async (req, res) => {
       if (!transport) {
         res.status(404).end("Transport not found for sessionId " + sessionId);
       } else {
-        await (transport as any).handleRequest(req, res);
+        await (transport as any).handleRequest(req, res, req.body);
       }
     } catch (error) {
       console.error("❌ Error in /mcp route:", error);

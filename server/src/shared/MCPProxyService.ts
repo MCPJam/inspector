@@ -136,7 +136,7 @@ export class MCPProxyService extends EventEmitter {
     const backingTransport = this.getTransport(sessionId)!;
     
     const webAppTransport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => sessionId,
+      sessionIdGenerator: generateSessionId, // Use the generateSessionId function instead of returning the same sessionId
       onsessioninitialized: (newSessionId) => {
         console.log(`✨ Created streamable web app transport ${newSessionId}`);
         this.setWebAppTransport(newSessionId, webAppTransport);
