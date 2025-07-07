@@ -9,3 +9,6 @@ export type {
 
 // Export utilities
 export { generateSessionId, validateServerConfig, ConsoleLogger } from './utils.js';
+
+// Export classes
+export { TransportFactory } from './TransportFactory.js';
