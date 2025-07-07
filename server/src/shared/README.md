@@ -39,6 +39,13 @@ This service extracts and centralizes the transport management logic that was pr
 - Environment variable management for STDIO transports
 - Connection timeout and retry handling
 
+### TransportFactory Features
+- **Centralized Creation**: Single point for creating all transport types
+- **Header Management**: Automatic passthrough of authentication headers
+- **Environment Handling**: Smart merging of process and custom environment variables
+- **Lifecycle Management**: Automatic setup of transport event handlers and timeouts
+- **Error Handling**: Comprehensive error catching with detailed logging
+
 ## Usage Examples
 
 ### Basic Connection Creation
@@ -56,6 +63,26 @@ const serverConfig: ServerConfig = {
 };
 
 const sessionId = await mcpProxyService.createConnection(serverConfig);
+```
+
+### Transport Factory Direct Usage
+```typescript
+const transportFactory = new TransportFactory({
+  logger: new ConsoleLogger(),
+  defaultTimeout: 10000
+});
+
+// Create STDIO transport
+const stdioConfig: ServerConfig = {
+  id: 'stdio-server',
+  type: 'stdio',
+  name: 'Local Server',
+  command: 'node',
+  args: ['server.js'],
+  env: { DEBUG: 'true' }
+};
+
+const transport = await transportFactory.createTransport(stdioConfig);
 ```
 
 ### Streamable HTTP Connection
