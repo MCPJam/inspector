@@ -2,25 +2,21 @@
 
 import cors from "cors";
 import { parseArgs } from "node:util";
-import { parse as shellParseArgs } from "shell-quote";
 import { createServer } from "node:net";
 
 import {
-  SSEClientTransport,
   SseError,
 } from "@modelcontextprotocol/sdk/client/sse.js";
 import {
-  StdioClientTransport,
   getDefaultEnvironment,
 } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import express from "express";
-import { findActualExecutable } from "spawn-rx";
+import express, { Request, Response, NextFunction } from "express";
 import mcpProxy from "./mcpProxy.js";
 import { randomUUID } from "node:crypto";
+import { MCPProxyService, createServerConfigFromQuery } from "./shared/index.js";
 
 const SSE_HEADERS_PASSTHROUGH = ["authorization"];
 const STREAMABLE_HTTP_HEADERS_PASSTHROUGH = [
@@ -48,91 +44,49 @@ const { values } = parseArgs({
 
 const app = express();
 app.use(cors());
-app.use((req, res, next) => {
+app.use((req: Request, res: Response, next: NextFunction) => {
   res.header("Access-Control-Expose-Headers", "mcp-session-id");
   next();
 });
 
+// Initialize the MCP Proxy Service
+const mcpProxyService = new MCPProxyService({
+  logger: {
+    info: (message, ...args) => console.log(`🔄 ${message}`, ...args),
+    error: (message, ...args) => console.error(`❌ ${message}`, ...args),
+    warn: (message, ...args) => console.warn(`⚠️  ${message}`, ...args),
+    debug: (message, ...args) => console.debug(`🔍 ${message}`, ...args)
+  },
+  maxConnections: 100,
+  defaultEnvironment
+});
+
 const webAppTransports: Map<string, Transport> = new Map<string, Transport>(); // Transports by sessionId
-const backingServerTransports = new Map<string, Transport>();
 
 const createTransport = async (req: express.Request): Promise<Transport> => {
   const query = req.query;
 
-  const transportType = query.transportType as string;
-
-  if (transportType === "stdio") {
-    const command = query.command as string;
-    const origArgs = shellParseArgs(query.args as string) as string[];
-    const queryEnv = query.env ? JSON.parse(query.env as string) : {};
-    const env = { ...process.env, ...defaultEnvironment, ...queryEnv };
-
-    const { cmd, args } = findActualExecutable(command, origArgs);
-
-    console.log(`🚀 Stdio transport: command=${cmd}, args=${args}`);
-
-    const transport = new StdioClientTransport({
-      command: cmd,
-      args,
-      env,
-      stderr: "pipe",
-    });
-
-    await transport.start();
-    return transport;
-  } else if (transportType === "sse") {
-    const url = query.url as string;
-    const headers: HeadersInit = {
-      Accept: "text/event-stream",
-    };
-
+  // Extract headers for transport creation
+  const headers: Record<string, string> = {};
+  
+  if (query.transportType === "sse") {
     for (const key of SSE_HEADERS_PASSTHROUGH) {
-      if (req.headers[key] === undefined) {
-        continue;
+      if (req.headers[key] !== undefined) {
+        const value = req.headers[key];
+        headers[key] = Array.isArray(value) ? value[value.length - 1] : value;
       }
-
-      const value = req.headers[key];
-      headers[key] = Array.isArray(value) ? value[value.length - 1] : value;
     }
-
-    const transport = new SSEClientTransport(new URL(url), {
-      eventSourceInit: {
-        fetch: (url, init) => fetch(url, { ...init, headers }),
-      },
-      requestInit: {
-        headers,
-      },
-    });
-    await transport.start();
-    return transport;
-  } else if (transportType === "streamable-http") {
-    const headers: HeadersInit = {
-      Accept: "text/event-stream, application/json",
-    };
-
+  } else if (query.transportType === "streamable-http") {
     for (const key of STREAMABLE_HTTP_HEADERS_PASSTHROUGH) {
-      if (req.headers[key] === undefined) {
-        continue;
+      if (req.headers[key] !== undefined) {
+        const value = req.headers[key];
+        headers[key] = Array.isArray(value) ? value[value.length - 1] : value;
       }
-
-      const value = req.headers[key];
-      headers[key] = Array.isArray(value) ? value[value.length - 1] : value;
     }
-
-    const transport = new StreamableHTTPClientTransport(
-      new URL(query.url as string),
-      {
-        requestInit: {
-          headers,
-        },
-      },
-    );
-    await transport.start();
-    return transport;
-  } else {
-    console.error(`❌ Invalid transport type: ${transportType}`);
-    throw new Error("Invalid transport type specified");
   }
+
+  // Use the proxy service to create transport
+  return mcpProxyService.createTransportFromQuery(query, headers);
 };
 
 app.get("/mcp", async (req, res) => {
@@ -183,7 +137,6 @@ app.post("/mcp", async (req, res) => {
             "✨ Created streamable web app transport " + newSessionId,
           );
           webAppTransports.set(newSessionId, webAppTransport);
-          backingServerTransports.set(newSessionId, backingServerTransport);
           console.log(
             `✨ Connected MCP client to backing server transport for session ${newSessionId}`,
           );
@@ -198,7 +151,6 @@ app.post("/mcp", async (req, res) => {
               `🧹 Cleaning up transports for session ${newSessionId}`,
             );
             webAppTransports.delete(newSessionId);
-            backingServerTransports.delete(newSessionId);
           };
         },
       });
@@ -243,26 +195,13 @@ app.get("/stdio", async (req, res) => {
 
     try {
       const backingServerTransport = await createTransport(req);
-      backingServerTransports.set(sessionId, backingServerTransport);
 
       webAppTransport.onclose = () => {
         console.log(`🧹 Cleaning up transports for session ${sessionId}`);
         webAppTransports.delete(sessionId);
-        backingServerTransports.delete(sessionId);
       };
 
       await webAppTransport.start();
-      if (backingServerTransport instanceof StdioClientTransport) {
-        backingServerTransport.stderr!.on("data", (chunk) => {
-          webAppTransport.send({
-            jsonrpc: "2.0",
-            method: "stderr",
-            params: {
-              data: chunk.toString(),
-            },
-          });
-        });
-      }
 
       mcpProxy({
         transportToClient: webAppTransport,
@@ -299,12 +238,10 @@ app.get("/sse", async (req, res) => {
 
     try {
       const backingServerTransport = await createTransport(req);
-      backingServerTransports.set(sessionId, backingServerTransport);
 
       webAppTransport.onclose = () => {
         console.log(`🧹 Cleaning up transports for session ${sessionId}`);
         webAppTransports.delete(sessionId);
-        backingServerTransports.delete(sessionId);
       };
 
       await webAppTransport.start();
