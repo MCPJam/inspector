@@ -23,10 +23,11 @@ This service extracts and centralizes the transport management logic that was pr
 ## Key Features
 
 ### Connection Management
-- Session-based transport tracking
+- Session-based transport tracking with unique identifiers
 - Maximum connection limits with overflow protection
 - Automatic cleanup on transport close/error
-- Real-time connection status monitoring
+- Real-time connection status monitoring with timestamps and error counts
+- Graceful connection shutdown with `closeAllConnections()`
 
 ### Event-Driven Architecture
 - Emits events for connection lifecycle (connect, disconnect, error)
@@ -102,6 +103,31 @@ const { sessionId } = await mcpProxyService.createSSEConnection(
   response,
   requestHeaders
 );
+```
+
+### Event Handling
+```typescript
+mcpProxyService.on('connection', (sessionId, serverConfig) => {
+  console.log(`New connection: ${sessionId} for ${serverConfig.name}`);
+});
+
+mcpProxyService.on('disconnection', (sessionId) => {
+  console.log(`Connection closed: ${sessionId}`);
+});
+
+mcpProxyService.on('error', (sessionId, error) => {
+  console.error(`Connection error: ${sessionId}`, error);
+});
+```
+
+### Connection Status Monitoring
+```typescript
+// Get all active connections
+const activeConnections = mcpProxyService.getActiveConnections();
+
+// Check specific connection status
+const status = mcpProxyService.getConnectionStatus(sessionId);
+console.log(`Status: ${status?.status}, Errors: ${status?.errorCount}`);
 ```
 
 ## Configuration
