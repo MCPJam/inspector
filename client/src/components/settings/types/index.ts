@@ -21,4 +21,5 @@ export interface ProviderConfig {
   displayName: string;
   placeholder: string;
   description: string;
+  logo: string;
 }
