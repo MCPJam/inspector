@@ -132,14 +132,14 @@ export class MCPProxyService extends EventEmitter {
     webAppTransport: StreamableHTTPServerTransport;
     backingTransport: Transport;
   }> {
-    const sessionId = await this.createConnection(serverConfig, headers);
-    const backingTransport = this.getTransport(sessionId)!;
+    const backingSessionId = await this.createConnection(serverConfig, headers);
+    const backingTransport = this.getTransport(backingSessionId)!;
     
     const webAppTransport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: generateSessionId, // Use the generateSessionId function instead of returning the same sessionId
-      onsessioninitialized: (newSessionId) => {
-        console.log(`✨ Created streamable web app transport ${newSessionId}`);
-        this.setWebAppTransport(newSessionId, webAppTransport);
+      sessionIdGenerator: generateSessionId,
+      onsessioninitialized: (webAppSessionId) => {
+        console.log(`✨ Created streamable web app transport ${webAppSessionId}`);
+        this.setWebAppTransport(webAppSessionId, webAppTransport);
         
         // Set up the proxy connection
         mcpProxy({
@@ -148,8 +148,10 @@ export class MCPProxyService extends EventEmitter {
         });
 
         webAppTransport.onclose = () => {
-          console.log(`🧹 Cleaning up transports for session ${newSessionId}`);
-          this.closeConnection(newSessionId);
+          console.log(`🧹 Cleaning up transports for session ${webAppSessionId}`);
+          // Clean up both the web app transport and the backing transport
+          this.webAppTransports.delete(webAppSessionId);
+          this.closeConnection(backingSessionId);
         };
       },
     });
@@ -157,7 +159,7 @@ export class MCPProxyService extends EventEmitter {
     await webAppTransport.start();
     
     return {
-      sessionId,
+      sessionId: backingSessionId, // Return the backing session ID for consistency with response headers
       webAppTransport,
       backingTransport
     };

@@ -326,7 +326,8 @@ app.get("/port", (req, res) => {
 const startServer = async () => {
   try {
     // Initialize database first
-    await initializeDatabase();
+    // TODO: Re-enable when database functionality is needed
+    // await initializeDatabase();
     
     const availablePort = await findAvailablePort(Number(PORT));
     actualPort = availablePort;
@@ -354,10 +355,11 @@ const startServer = async () => {
       console.log('\n🔄 Shutting down server...');
       server.close();
       await mcpProxyService.closeAllConnections();
-      if (databaseManager) {
-        await databaseManager.close();
-        console.log('✅ Database connection closed');
-      }
+      // TODO: Re-enable when database functionality is needed
+      // if (databaseManager) {
+      //   await databaseManager.close();
+      //   console.log('✅ Database connection closed');
+      // }
       process.exit(0);
     });
   } catch (error) {
