@@ -8,9 +8,9 @@ import {
 } from "@/components/settings/types";
 import ProviderCard from "./ProviderCard";
 
-import ClaudeLogo from "./assets/logos/claude.svg";
-import OpenAILogo from "./assets/logos/openai.svg";
-import OllamaLogo from "./assets/logos/ollama.svg";
+import ClaudeLogo from "./assests/logos/claude.svg";
+import OpenAILogo from "./assests/logos/openai.svg";
+import OllamaLogo from "./assests/logos/ollama.svg";
 
 const PROVIDERS: Record<SupportedProvider, ProviderConfig> = {
   anthropic: {
