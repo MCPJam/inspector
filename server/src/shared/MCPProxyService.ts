@@ -16,18 +16,13 @@ export class MCPProxyService extends EventEmitter {
   private transportFactory: TransportFactory;
   private logger: Logger;
   private maxConnections: number;
-  private connectionTimeout: number;
-  private retryAttempts: number;
   
   constructor(options: MCPProxyOptions = {}) {
     super();
     this.logger = options.logger || new ConsoleLogger();
     this.maxConnections = options.maxConnections || 50;
-    this.connectionTimeout = options.connectionTimeout || 30000;
-    this.retryAttempts = options.retryAttempts || 3;
     this.transportFactory = new TransportFactory({ 
-      logger: this.logger,
-      defaultTimeout: this.connectionTimeout 
+      logger: this.logger
     });
   }
 

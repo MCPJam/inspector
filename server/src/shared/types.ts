@@ -12,8 +12,6 @@ export interface ServerConfig {
 export interface MCPProxyOptions {
   logger?: Logger;
   maxConnections?: number;
-  connectionTimeout?: number;
-  retryAttempts?: number;
 }
 
 export interface ConnectionStatus {
@@ -25,7 +23,6 @@ export interface ConnectionStatus {
 
 export interface TransportFactoryOptions {
   logger?: Logger;
-  defaultTimeout?: number;
 }
 
 export interface Logger {

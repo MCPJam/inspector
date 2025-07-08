@@ -16,12 +16,10 @@ const STREAMABLE_HTTP_HEADERS_PASSTHROUGH = [
 
 export class TransportFactory {
   private logger: Logger;
-  private defaultTimeout: number;
   private defaultEnvironment: Record<string, string>;
   
   constructor(options: TransportFactoryOptions = {}) {
     this.logger = options.logger || new ConsoleLogger();
-    this.defaultTimeout = options.defaultTimeout || 10000;
     this.defaultEnvironment = {
       ...getDefaultEnvironment(),
       ...(process.env.MCP_ENV_VARS ? JSON.parse(process.env.MCP_ENV_VARS) : {}),

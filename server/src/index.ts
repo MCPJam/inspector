@@ -82,8 +82,7 @@ const initializeDatabase = async () => {
 // Initialize MCPProxyService
 const mcpProxyService = new MCPProxyService({
   logger: new ConsoleLogger(),
-  maxConnections: 50,
-  connectionTimeout: 30000
+  maxConnections: 50
 });
 
 // Helper function to convert request query to ServerConfig
