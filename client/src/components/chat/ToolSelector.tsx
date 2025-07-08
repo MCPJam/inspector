@@ -37,7 +37,6 @@ export const ToolSelector: React.FC<ToolSelectorProps> = ({
     .flatMap(server => server.tools);
 
   const totalAvailableTools = availableTools.length;
-  const totalTools = tools.length;
   const enabledToolCount = toolSelection.enabledTools.size;
   const allAvailableToolsEnabled = enabledToolCount === totalAvailableTools && totalAvailableTools > 0;
   const someToolsDisabled = enabledToolCount < totalAvailableTools;
