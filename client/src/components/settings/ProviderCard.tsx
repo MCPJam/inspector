@@ -25,12 +25,14 @@ const ProviderCard: React.FC<Props> = ({
   return (
     <div className="bg-white dark:bg-gray-800 rounded-xl shadow hover:shadow-lg transition p-6 flex flex-col">
       {/* Header */}
-      <div className="w-8 h-8 mr-3 flex items-center justify-center bg-white rounded-md">
-        <img
-          src={config.logo}
-          alt={`${config.displayName} logo`}
-          className="w-5 h-5 mr-3"
-        />
+      <div className="flex items-center mb-4 -ml-1">
+        <div className="w-8 h-8 flex items-center justify-center bg-white rounded-md">
+          <img
+            src={config.logo}
+            alt={`${config.displayName} logo`}
+            className="w-5 h-5"
+          />
+        </div>
         <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
           {config.displayName}
         </h3>
@@ -64,14 +66,14 @@ const ProviderCard: React.FC<Props> = ({
           <button
             onClick={() => onChange(provider, data.key)}
             disabled={disabled || !data.key}
-            className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-sm py-1 rounded transition disabled:opacity-50"
+            className="flex-1 bg-gray-600 hover:bg-gray-700 text-white text-sm py-1 rounded transition disabled:opacity-50"
           >
             Save
           </button>
           <button
             onClick={() => onClear(provider)}
             disabled={disabled || !data.key}
-            className="flex-1 border border-red-400 hover:border-red-500 text-red-400 hover:text-red-600 text-sm py-1 rounded transition disabled:opacity-50"
+            className="flex-1 border border-gray-400 hover:border-gray-500 text-gray-400 hover:text-gray-600 text-sm py-1 rounded transition disabled:opacity-50"
           >
             Clear
           </button>
