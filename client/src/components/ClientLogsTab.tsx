@@ -70,7 +70,7 @@ const ClientLogsTab = ({
 
     return (
       <div
-        className={`flex items-start space-x-3 p-3 rounded-lg border ${config.bgColor} ${config.borderColor} hover:shadow-sm transition-all duration-200`}
+        className={`group flex items-start space-x-3 p-3 rounded-lg border ${config.bgColor} ${config.borderColor} hover:shadow-sm transition-all duration-200`}
       >
         <div className={`flex-shrink-0 mt-0.5 ${config.iconColor}`}>
           <IconComponent className="w-4 h-4" />
@@ -78,14 +78,14 @@ const ClientLogsTab = ({
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center mb-1 space-x-2">
-            <span
-              className={`text-xs font-mono font-semibold px-2 py-0.5 rounded ${config.textColor} ${config.bgColor}`}
-            >
-              {config.label}
-            </span>
+        <span
+          className={`text-xs font-mono font-semibold px-2 py-0.5 rounded ${config.textColor} ${config.bgColor}`}
+        >
+          {config.label}
+        </span>
             <span className="font-mono text-xs text-muted-foreground">
-              {formatTimestamp(log.timestamp)}
-            </span>
+          {formatTimestamp(log.timestamp)}
+        </span>
           </div>
 
           <div className={`text-sm ${config.textColor} font-mono break-words`}>
@@ -93,7 +93,8 @@ const ClientLogsTab = ({
           </div>
         </div>
 
-        <div className={`flex-shrink-0 mt-0.5 ${config.iconColor}`}>
+        {/* Hover-only copy icon */}
+        <div className="flex-shrink-0 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
           <CopyIcon value={log.message} />
         </div>
       </div>
