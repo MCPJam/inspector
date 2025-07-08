@@ -12,6 +12,7 @@ export class MCPProxyService extends EventEmitter {
   private webAppTransports = new Map<string, Transport>();
   private backingServerTransports = new Map<string, Transport>();
   private connectionStatus = new Map<string, ConnectionStatus>();
+  private cleanupInProgress = new Set<string>();
   private transportFactory: TransportFactory;
   private logger: Logger;
   private maxConnections: number;
@@ -117,12 +118,21 @@ export class MCPProxyService extends EventEmitter {
   }
 
   async closeConnection(sessionId: string): Promise<void> {
-    const transport = this.backingServerTransports.get(sessionId);
-    if (transport) {
-      try {
-        await transport.close();
-      } catch (error) {
-        this.logger.error(`Error closing connection ${sessionId}:`, error);
+    // Prevent duplicate cleanup calls
+    if (this.cleanupInProgress.has(sessionId)) {
+      return;
+    }
+    
+    this.cleanupInProgress.add(sessionId);
+    
+    try {
+      const transport = this.backingServerTransports.get(sessionId);
+      if (transport) {
+        try {
+          await transport.close();
+        } catch (error) {
+          this.logger.error(`Error closing connection ${sessionId}:`, error);
+        }
       }
       
       this.backingServerTransports.delete(sessionId);
@@ -130,7 +140,9 @@ export class MCPProxyService extends EventEmitter {
       this.connectionStatus.delete(sessionId);
       
       this.emit('disconnection', sessionId);
-      this.logger.info(`Connection ${sessionId} closed and cleaned up`);
+      this.logger.info(`🧹 Cleaning up transports for session ${sessionId}`);
+    } finally {
+      this.cleanupInProgress.delete(sessionId);
     }
   }
 
@@ -167,12 +179,6 @@ export class MCPProxyService extends EventEmitter {
     transport.onclose = () => {
       this.logger.info(`Transport closed for session ${sessionId}`);
       this.updateConnectionStatus(sessionId, 'disconnected');
-      
-      // Clean up the connection automatically
-      this.backingServerTransports.delete(sessionId);
-      this.webAppTransports.delete(sessionId);
-      this.connectionStatus.delete(sessionId);
-      
       this.emit('disconnection', sessionId);
       
       // Call original handler if it exists
@@ -215,7 +221,6 @@ export class MCPProxyService extends EventEmitter {
 
         // Set up cleanup handler
         webAppTransport.onclose = () => {
-          this.logger.info(`🧹 Cleaning up transports for session ${newSessionId}`);
           this.closeConnection(newSessionId);
         };
       },
@@ -235,7 +240,6 @@ export class MCPProxyService extends EventEmitter {
 
     // Set up cleanup handler
     webAppTransport.onclose = () => {
-      this.logger.info(`🧹 Cleaning up transports for session ${sessionId}`);
       this.closeConnection(connectionId);
     };
 
