@@ -8,9 +8,9 @@ import {
 } from "@/components/settings/types";
 import ProviderCard from "./ProviderCard";
 
-import ClaudeLogo from "./assests/logos/claude.svg";
-import OpenAILogo from "./assests/logos/openai.svg";
-import OllamaLogo from "./assests/logos/ollama.svg";
+import ClaudeLogo from "./assets/logos/claude.svg";
+import OpenAILogo from "./assets/logos/openai.svg";
+import OllamaLogo from "./assets/logos/ollama.svg";
 
 const PROVIDERS: Record<SupportedProvider, ProviderConfig> = {
   anthropic: {
@@ -48,12 +48,11 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ disabled = false }) => {
       return acc;
     }, {} as ProvidersState),
   );
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const { toast } = useToast();
 
   // load saved keys
   useEffect(() => {
-    Object.entries(PROVIDERS).forEach(([prov]) => {
+    Object.keys(PROVIDERS).forEach((prov) => {
       const provider = prov as SupportedProvider;
       const key = providerManager.getApiKey(provider);
       const valid = providerManager.isProviderReady(provider);
@@ -61,9 +60,6 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ disabled = false }) => {
         ...prev,
         [provider]: { key, isValid: valid, showKey: false },
       }));
-      if (valid) {
-        setCollapsed((c) => ({ ...c, [provider]: true }));
-      }
     });
   }, []);
 
@@ -74,7 +70,6 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ disabled = false }) => {
       ...prev,
       [provider]: { ...prev[provider], key: value, isValid: valid },
     }));
-    setCollapsed((c) => ({ ...c, [provider]: valid }));
     toast({
       title: valid
         ? `${cfg.displayName} key saved`
@@ -92,7 +87,6 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ disabled = false }) => {
       ...p,
       [provider]: { ...p[provider], key: "", isValid: false },
     }));
-    setCollapsed((c) => ({ ...c, [provider]: false }));
     toast({ title: `${cfg.displayName} key cleared` });
   };
 
@@ -101,10 +95,6 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ disabled = false }) => {
       ...p,
       [provider]: { ...p[provider], showKey: !p[provider].showKey },
     }));
-  };
-
-  const toggleCollapse = (provider: SupportedProvider) => {
-    setCollapsed((c) => ({ ...c, [provider]: !c[provider] }));
   };
 
   return (
@@ -123,12 +113,10 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ disabled = false }) => {
             provider={prov as SupportedProvider}
             config={cfg}
             data={apiKeys[prov as SupportedProvider]}
-            isCollapsed={collapsed[prov]}
             disabled={disabled}
             onChange={handleApiKeyChange}
             onClear={handleClear}
             onToggleShow={toggleShow}
-            onToggleCollapse={toggleCollapse}
           />
         ))}
       </div>
