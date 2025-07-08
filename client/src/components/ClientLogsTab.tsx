@@ -93,7 +93,6 @@ const ClientLogsTab = ({
           </div>
         </div>
 
-        {/* Hover-only copy icon */}
         <div className="flex-shrink-0 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
           <CopyIcon value={log.message} />
         </div>
