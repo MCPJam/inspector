@@ -553,7 +553,10 @@ const App = () => {
           {/* Horizontal Tabs */}
           <Tabs
             currentPage={currentPage}
-            onPageChange={setCurrentPage}
+            onPageChange={(page) => {
+              setCurrentPage(page);
+              serverState.handleCancelClientForm(); 
+            }}
             serverCapabilities={serverCapabilities}
             pendingSampleRequests={mcpOperations.pendingSampleRequests}
             shouldDisableAll={!connectionState.mcpAgent}
