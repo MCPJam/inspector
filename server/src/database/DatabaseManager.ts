@@ -20,14 +20,16 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 export class DatabaseManager {
   private client: LibSQLClient;
   private initialized = false;
+  private config: DatabaseConfig;
 
-  constructor() {
+  constructor(config?: DatabaseConfig) {
+    this.config = config || { localPath: getResolvedDatabasePath() };
     this.client = this.createClient();
   }
 
   private createClient(): LibSQLClient {
-    // Use the single source of truth for database path
-    const dbPath = getResolvedDatabasePath();
+    // Use the configured database path
+    const dbPath = this.config.localPath;
     return createClient({
       url: `file:${dbPath}`
     });

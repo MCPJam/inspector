@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { TransportFactory } from './TransportFactory.js';
 import { ServerConfig, MCPProxyOptions, ConnectionStatus, Logger } from './types.js';
 import { generateSessionId, ConsoleLogger } from './utils.js';
@@ -243,6 +244,19 @@ export class MCPProxyService extends EventEmitter {
     // Set up proxy between web app transport and backing server transport
     const backingTransport = this.getTransport(connectionId);
     if (backingTransport) {
+      // Special handling for STDIO stderr
+      if (backingTransport instanceof StdioClientTransport) {
+        backingTransport.stderr?.on("data", (chunk) => {
+          webAppTransport.send({
+            jsonrpc: "2.0",
+            method: "stderr",
+            params: {
+              data: chunk.toString(),
+            },
+          });
+        });
+      }
+
       mcpProxy({
         transportToClient: webAppTransport,
         transportToServer: backingTransport,
