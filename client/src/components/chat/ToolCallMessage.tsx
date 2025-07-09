@@ -81,28 +81,18 @@ export const ToolCallMessage: React.FC<{ toolCall: ToolCallInfo }> = ({
         getColors(),
       )}
     >
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
-          {getIcon()}
-          <span className="font-semibold">
-            {type === "tool_call" && `Calling ${toolName}`}
-            {type === "tool_result" && `${toolName} result`}
-            {type === "tool_error" && `${toolName} failed`}
-            {type === "tool_warning" && "Warning"}
-          </span>
-        </div>
-        {/* Toggle button for result collapse */}
-        {type === "tool_result" && shouldBeCollapsible && (
-          <button onClick={toggleCollapse} className="p-1">
-            {isCollapsed ? (
-              <ChevronDown className="w-4 h-4" />
-            ) : (
-              <ChevronUp className="w-4 h-4" />
-            )}
-          </button>
-        )}
+      {/* Header */}
+      <div className="flex items-center gap-2 mb-2">
+        {getIcon()}
+        <span className="font-semibold">
+          {type === "tool_call" && `Calling ${toolName}`}
+          {type === "tool_result" && `${toolName} result`}
+          {type === "tool_error" && `${toolName} failed`}
+          {type === "tool_warning" && "Warning"}
+        </span>
       </div>
 
+      {/* Args */}
       {type === "tool_call" && args && (
         <div className="mt-2">
           <div className="text-xs opacity-75 mb-1">Arguments:</div>
@@ -112,6 +102,7 @@ export const ToolCallMessage: React.FC<{ toolCall: ToolCallInfo }> = ({
         </div>
       )}
 
+      {/* Error */}
       {type === "tool_error" && error && (
         <div className="mt-2">
           <div className="text-xs opacity-75 mb-1">Error:</div>
@@ -121,6 +112,7 @@ export const ToolCallMessage: React.FC<{ toolCall: ToolCallInfo }> = ({
         </div>
       )}
 
+      {/* Warning */}
       {type === "tool_warning" && message && (
         <div className="mt-2">
           <div className="text-xs bg-black/10 dark:bg-white/10 rounded p-2">
@@ -129,14 +121,28 @@ export const ToolCallMessage: React.FC<{ toolCall: ToolCallInfo }> = ({
         </div>
       )}
 
+      {/* Result */}
       {type === "tool_result" && result && (
-        <div className="mt-2">
+        <div className="mt-2 relative">
           <div className="text-xs opacity-75 mb-1">Result:</div>
           <pre className="text-xs bg-black/10 dark:bg-white/10 rounded p-2 overflow-x-auto whitespace-pre-wrap">
             {shouldBeCollapsible && isCollapsed
               ? result.slice(0, 200) + "..."
               : result}
           </pre>
+
+          {/* Centered chevron toggle at bottom */}
+          {shouldBeCollapsible && (
+            <div className="flex justify-center mt-1">
+              <button onClick={toggleCollapse} className="p-1">
+                {isCollapsed ? (
+                  <ChevronDown className="w-4 h-4" />
+                ) : (
+                  <ChevronUp className="w-4 h-4" />
+                )}
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
