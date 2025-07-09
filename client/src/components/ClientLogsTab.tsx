@@ -78,14 +78,14 @@ const ClientLogsTab = ({
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center mb-1 space-x-2">
-        <span
-          className={`text-xs font-mono font-semibold px-2 py-0.5 rounded ${config.textColor} ${config.bgColor}`}
-        >
-          {config.label}
-        </span>
+            <span
+              className={`text-xs font-mono font-semibold px-2 py-0.5 rounded ${config.textColor} ${config.bgColor}`}
+            >
+              {config.label}
+            </span>
             <span className="font-mono text-xs text-muted-foreground">
-          {formatTimestamp(log.timestamp)}
-        </span>
+              {formatTimestamp(log.timestamp)}
+            </span>
           </div>
 
           <div className={`text-sm ${config.textColor} font-mono break-words`}>

@@ -7,12 +7,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import {
-  Plus,
-  Server,
-  ChevronLeft,
-  ChevronRight,
-} from "lucide-react";
+import { Plus, Server, ChevronLeft, ChevronRight } from "lucide-react";
 import useTheme from "../../lib/hooks/useTheme";
 import { version } from "../../../../package.json";
 import { MCPJamAgent } from "@/lib/utils/mcp/mcpjamAgent";
@@ -70,7 +65,6 @@ const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-
   // Helper function to check if connection should be disabled
   const shouldDisableConnection = () => {
     // Keeping this as false for now to allow multiple connections
@@ -86,7 +80,6 @@ const Sidebar: React.FC<SidebarProps> = ({
     }
     return "Connect to this server";
   };
-
 
   // Component: Header with logo and version
   const renderHeader = () => (
@@ -159,9 +152,6 @@ const Sidebar: React.FC<SidebarProps> = ({
       </div>
     </div>
   );
-
-
-
 
   // Component: Theme selector
   const renderThemeSelector = () => (

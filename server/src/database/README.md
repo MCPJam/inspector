@@ -5,6 +5,7 @@ This directory contains a basic libSQL database foundation for the MCPJam Inspec
 ## Overview
 
 The database layer provides:
+
 - **Basic libSQL/SQLite foundation** for local database functionality
 - **Simple app metadata storage** for key-value data
 - **Type-safe operations** with basic TypeScript interfaces
@@ -28,7 +29,7 @@ database/
 ### Basic Usage
 
 ```typescript
-import { DatabaseManager, getDatabaseConfig } from './database/index.js';
+import { DatabaseManager, getDatabaseConfig } from "./database/index.js";
 
 // Initialize database
 const config = getDatabaseConfig();
@@ -36,10 +37,10 @@ const db = new DatabaseManager(config);
 await db.initialize();
 
 // Store metadata
-await db.setMetadata('app_version', '1.0.0');
+await db.setMetadata("app_version", "1.0.0");
 
 // Get metadata
-const version = await db.getMetadata('app_version');
+const version = await db.getMetadata("app_version");
 console.log(version); // '1.0.0'
 
 // Get all metadata
@@ -73,6 +74,7 @@ MCPJAM_DB_PATH=/custom/path/to/data.db
 ### Local Database
 
 The database path is resolved using a **single source of truth**:
+
 1. `MCPJAM_DB_PATH` environment variable (if set)
 2. `~/.mcpjam/data.db` (default fallback)
 
@@ -91,11 +93,11 @@ This eliminates confusion between multiple path resolution methods.
 All database operations are fully typed with TypeScript:
 
 ```typescript
-import { AppMetadata, DatabaseError, QueryError } from './database/types.js';
+import { AppMetadata, DatabaseError, QueryError } from "./database/types.js";
 
 // Type-safe operations
 const metadata: AppMetadata[] = await db.getAllMetadata();
-const value: string | null = await db.getMetadata('some_key');
+const value: string | null = await db.getMetadata("some_key");
 ```
 
 ## Error Handling
@@ -103,13 +105,13 @@ const value: string | null = await db.getMetadata('some_key');
 The database layer provides custom error types:
 
 ```typescript
-import { DatabaseError, QueryError } from './database/types.js';
+import { DatabaseError, QueryError } from "./database/types.js";
 
 try {
-  await db.setMetadata('key', 'value');
+  await db.setMetadata("key", "value");
 } catch (error) {
   if (error instanceof DatabaseError) {
-    console.error('Database error:', error.message, error.code);
+    console.error("Database error:", error.message, error.code);
   }
 }
 ```
@@ -177,6 +179,7 @@ npm test -- database
 ## Future Expansion
 
 This foundation can be easily extended to support:
+
 - Additional tables for specific features
 - More complex data types and relationships
 - Caching layers for performance

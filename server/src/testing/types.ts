@@ -1,5 +1,5 @@
 // server/src/testing/types.ts
-import { ServerConfig } from '../shared/types.js';
+import { ServerConfig } from "../shared/types.js";
 
 export interface TestCase {
   id: string;
@@ -37,7 +37,7 @@ export interface ToolCallRecord {
 }
 
 export interface JudgeConfig {
-  provider: 'openai' | 'anthropic' | 'ollama';
+  provider: "openai" | "anthropic" | "ollama";
   model: string;
   temperature: number;
   maxTokens: number;
@@ -69,7 +69,7 @@ export interface DatabaseConfig {
 }
 
 export interface LoggingConfig {
-  level: 'debug' | 'info' | 'warn' | 'error';
-  format: 'json' | 'text';
+  level: "debug" | "info" | "warn" | "error";
+  format: "json" | "text";
   outputs: string[];
 }

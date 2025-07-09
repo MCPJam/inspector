@@ -1,6 +1,11 @@
 import { Wifi, WifiOff, AlertCircle } from "lucide-react";
 import { ServerConnectionInfo } from "@/lib/utils/mcp/mcpjamAgent";
 
+const truncate = (s: string, maxLen: number = 35): string => {
+  if (s.length <= maxLen) return s;
+  return s.slice(0, maxLen - 3) + "...";
+};
+
 export const getConnectionStatusIcon = (status: string) => {
   switch (status) {
     case "connected":
@@ -30,14 +35,18 @@ export const getConnectionStatusColor = (status: string) => {
 };
 
 export const getConnectionDisplayText = (connection: ServerConnectionInfo) => {
+  let text: string;
+
   if (
     connection.config.transportType === "stdio" &&
     "command" in connection.config
   ) {
-    return `${connection.config.command} ${connection.config.args?.join(" ") || ""}`;
+    text = `${connection.config.command} ${connection.config.args?.join(" ") || ""}`;
+  } else if ("url" in connection.config && connection.config.url) {
+    text = connection.config.url.toString();
+  } else {
+    text = "Unknown configuration";
   }
-  if ("url" in connection.config && connection.config.url) {
-    return connection.config.url.toString();
-  }
-  return "Unknown configuration";
+
+  return truncate(text, 40);
 };

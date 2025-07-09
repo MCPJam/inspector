@@ -132,9 +132,7 @@ const ConnectionItem: React.FC<ConnectionItemProps> = ({
           >
             {connection.connectionStatus}
           </span>
-          <div className="flex space-x-1">
-            {renderConnectionButton()}
-          </div>
+          <div className="flex space-x-1">{renderConnectionButton()}</div>
         </div>
       </div>
     </div>

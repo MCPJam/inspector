@@ -23,22 +23,23 @@ interface ToolSelectorProps {
 }
 
 export const ToolSelector: React.FC<ToolSelectorProps> = ({
-                                                            tools,
-                                                            toolSelection,
-                                                            onSelectionChange,
-                                                            serverInfo,
-                                                            loading = false,
-                                                          }) => {
+  tools,
+  toolSelection,
+  onSelectionChange,
+  serverInfo,
+  loading = false,
+}) => {
   const [showSelector, setShowSelector] = useState(false);
   const selectorRef = useRef<HTMLDivElement>(null);
 
   const availableTools = serverInfo
-    .filter(server => toolSelection.enabledServers.has(server.name))
-    .flatMap(server => server.tools);
+    .filter((server) => toolSelection.enabledServers.has(server.name))
+    .flatMap((server) => server.tools);
 
   const totalAvailableTools = availableTools.length;
   const enabledToolCount = toolSelection.enabledTools.size;
-  const allAvailableToolsEnabled = enabledToolCount === totalAvailableTools && totalAvailableTools > 0;
+  const allAvailableToolsEnabled =
+    enabledToolCount === totalAvailableTools && totalAvailableTools > 0;
   const someToolsDisabled = enabledToolCount < totalAvailableTools;
 
   const toggleServer = (serverName: string, enabled: boolean) => {

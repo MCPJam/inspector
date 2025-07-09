@@ -3,17 +3,17 @@
  * Basic utilities for local SQLite database setup
  */
 
-import { mkdir, access } from 'fs/promises';
-import { dirname } from 'path';
-import { homedir } from 'os';
-import { join } from 'path';
+import { mkdir, access } from "fs/promises";
+import { dirname } from "path";
+import { homedir } from "os";
+import { join } from "path";
 
 /**
  * Ensures the .mcpjam directory exists in the user's home directory
  */
 export async function ensureMCPJamDirectory(): Promise<string> {
-  const mcpjamDir = join(homedir(), '.mcpjam');
-  
+  const mcpjamDir = join(homedir(), ".mcpjam");
+
   try {
     await access(mcpjamDir);
   } catch {
@@ -21,7 +21,7 @@ export async function ensureMCPJamDirectory(): Promise<string> {
     await mkdir(mcpjamDir, { recursive: true });
     console.log(`📁 Created MCPJam directory: ${mcpjamDir}`);
   }
-  
+
   return mcpjamDir;
 }
 
@@ -42,7 +42,7 @@ export async function ensureDirectoryExists(filePath: string): Promise<void> {
  * Priority: MCPJAM_DB_PATH env var > default ~/.mcpjam/data.db
  */
 export function getResolvedDatabasePath(): string {
-  return process.env.MCPJAM_DB_PATH || join(homedir(), '.mcpjam', 'data.db');
+  return process.env.MCPJAM_DB_PATH || join(homedir(), ".mcpjam", "data.db");
 }
 
 /**
@@ -50,7 +50,7 @@ export function getResolvedDatabasePath(): string {
  */
 export function getDatabaseConfig() {
   return {
-    localPath: getResolvedDatabasePath()
+    localPath: getResolvedDatabasePath(),
   };
 }
 
@@ -69,27 +69,29 @@ export async function databaseExists(databasePath: string): Promise<boolean> {
 /**
  * Database connection test
  */
-export async function testDatabaseConnection(config?: any): Promise<{ success: boolean; error?: string }> {
+export async function testDatabaseConnection(
+  config?: any,
+): Promise<{ success: boolean; error?: string }> {
   try {
-    const { createClient } = await import('@libsql/client');
-    
+    const { createClient } = await import("@libsql/client");
+
     // Use the single source of truth for database path
     const dbPath = config?.localPath || getResolvedDatabasePath();
-    
+
     await ensureDirectoryExists(dbPath);
     const client = createClient({
-      url: `file:${dbPath}`
+      url: `file:${dbPath}`,
     });
 
     // Test the connection with a simple query
-    await client.execute('SELECT 1');
+    await client.execute("SELECT 1");
     client.close();
-    
+
     return { success: true };
   } catch (error) {
-    return { 
-      success: false, 
-      error: error instanceof Error ? error.message : 'Unknown error'
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
     };
   }
 }
