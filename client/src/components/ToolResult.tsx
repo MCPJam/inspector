@@ -1,3 +1,4 @@
+import { useState, useMemo } from "react";
 import {
   CallToolResultSchema,
   CompatibilityCallToolResult,
@@ -8,9 +9,41 @@ interface ToolResultProps {
   toolResult: CompatibilityCallToolResult | null;
 }
 
+const COLLAPSE_THRESHOLD = 500; // number of characters
+
 const ToolResult = ({ toolResult }: ToolResultProps) => {
+  const [isCollapsed, setIsCollapsed] = useState(false);
+
+  // Determine if the result should be collapsible based on length
+  const shouldBeCollapsible = useMemo(() => {
+    if (!toolResult) return false;
+    const contentLength = JSON.stringify(toolResult).length;
+    return contentLength > COLLAPSE_THRESHOLD;
+  }, [toolResult]);
+
   if (!toolResult) return null;
 
+  // Toggle handler
+  const toggleCollapse = () => setIsCollapsed((prev) => !prev);
+
+  // If too long and currently collapsed, show a toggle prompt only
+  if (shouldBeCollapsible && isCollapsed) {
+    return (
+      <div className="p-4 bg-gray-50 dark:bg-gray-800 rounded">
+        <p className="text-sm text-gray-500 dark:text-gray-400">
+          Tool result is lengthy & has been collapsed.
+        </p>
+        <button
+          onClick={toggleCollapse}
+          className="mt-2 px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
+        >
+          Show More
+        </button>
+      </div>
+    );
+  }
+
+  // Full rendering when not collapsed
   if ("content" in toolResult) {
     const parsedResult = CallToolResultSchema.safeParse(toolResult);
     if (!parsedResult.success) {
@@ -29,15 +62,26 @@ const ToolResult = ({ toolResult }: ToolResultProps) => {
     const isError = structuredResult.isError ?? false;
 
     return (
-      <>
-        <h4 className="font-semibold mb-2">
-          Tool Result:{" "}
-          {isError ? (
-            <span className="text-red-600 font-semibold">Error</span>
-          ) : (
-            <span className="text-green-600 font-semibold">Success</span>
+      <div>
+        <div className="flex items-center justify-between">
+          <h4 className="font-semibold mb-2">
+            Tool Result:{" "}
+            {isError ? (
+              <span className="text-red-600 font-semibold">Error</span>
+            ) : (
+              <span className="text-green-600 font-semibold">Success</span>
+            )}
+          </h4>
+          {shouldBeCollapsible && (
+            <button
+              onClick={toggleCollapse}
+              className="text-sm text-blue-600 hover:underline ml-4"
+            >
+              {isCollapsed ? "Show More" : "Show Less"}
+            </button>
           )}
-        </h4>
+        </div>
+
         {structuredResult.content.map((item, index) => (
           <div key={index} className="mb-2">
             {item.type === "text" && (
@@ -64,7 +108,7 @@ const ToolResult = ({ toolResult }: ToolResultProps) => {
               ))}
           </div>
         ))}
-      </>
+      </div>
     );
   } else if ("toolResult" in toolResult) {
     return (
