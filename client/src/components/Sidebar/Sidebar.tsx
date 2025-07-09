@@ -31,8 +31,8 @@ interface SidebarProps {
   onRemoveServer: (serverName: string) => Promise<void>;
   onConnectServer: (serverName: string) => Promise<void>;
   onDisconnectServer: (serverName: string) => Promise<void>;
-  onCreateClient: () => void;
-  onEditClient: (serverName: string) => void;
+  onCreateConnection: () => void;
+  onEditConnection: (serverName: string) => void;
   updateTrigger: number;
   isExpanded: boolean;
   onToggleExpanded: () => void;
@@ -45,8 +45,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   onRemoveServer,
   onConnectServer,
   onDisconnectServer,
-  onCreateClient,
-  onEditClient,
+  onCreateConnection,
+  onEditConnection,
   updateTrigger,
   isExpanded,
   onToggleExpanded,
@@ -124,26 +124,26 @@ const Sidebar: React.FC<SidebarProps> = ({
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
-              onClick={onCreateClient}
+              onClick={onCreateConnection}
               size="sm"
               variant="ghost"
               className="h-7 w-7 p-0 hover:bg-primary/20 hover:text-primary"
-              title="Create new client"
+              title="Create new connection"
             >
               <Plus className="w-4 h-4" />
             </Button>
           </TooltipTrigger>
           <TooltipContent>
             {mcpAgent?.hasConnectedRemoteServer()
-              ? "Note: Creating a remote client will disconnect the current remote connection"
-              : "Create new client"}
+              ? "Note: Creating a remote connection will disconnect the current remote connection"
+              : "Create new connection"}
           </TooltipContent>
         </Tooltip>
       </div>
     </div>
   );
 
-  // Component: Empty state when no clients exist
+  // Component: Empty state when no connections exist
   const renderEmptyState = () => (
     <div className="p-4 text-center">
       <div className="py-8">
@@ -152,7 +152,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         <p className="text-xs text-muted-foreground mb-4">
           Create your first MCP connection to get started
         </p>
-        <Button onClick={onCreateClient} size="sm" className="w-full">
+        <Button onClick={onCreateConnection} size="sm" className="w-full">
           <Plus className="w-4 h-4 mr-2" />
           Create Connection
         </Button>
@@ -265,7 +265,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                       connection={connection}
                       selectedServerName={selectedServerName}
                       onServerSelect={onServerSelect}
-                      onEditClient={onEditClient}
+                      onEditConnection={onEditConnection}
                       onRemoveServer={onRemoveServer}
                       onConnectServer={onConnectServer}
                       onDisconnectServer={onDisconnectServer}
@@ -316,7 +316,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
-                onClick={onCreateClient}
+                onClick={onCreateConnection}
                 size="sm"
                 variant="ghost"
                 className="w-8 h-8 p-0 rounded-full"
@@ -324,7 +324,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                 <Plus className="w-4 h-4" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="right">Create new client</TooltipContent>
+            <TooltipContent side="right">Create new connection</TooltipContent>
           </Tooltip>
         </div>
       </div>
