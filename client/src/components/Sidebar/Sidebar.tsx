@@ -9,23 +9,20 @@ import {
 import { Button } from "@/components/ui/button";
 import {
   Plus,
-  Trash2,
   Server,
-  Wifi,
-  WifiOff,
-  AlertCircle,
-  Edit2,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
-import useTheme from "../lib/hooks/useTheme";
-import { version } from "../../../package.json";
-import { MCPJamAgent, ServerConnectionInfo } from "@/lib/utils/mcp/mcpjamAgent";
+import useTheme from "../../lib/hooks/useTheme";
+import { version } from "../../../../package.json";
+import { MCPJamAgent } from "@/lib/utils/mcp/mcpjamAgent";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import ConnectionItem from "./ConnectionItem";
+import { getConnectionStatusIcon } from "./connectionHelpers";
 
 interface SidebarProps {
   mcpAgent: MCPJamAgent | null;
@@ -73,35 +70,6 @@ const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  // Helper function to get connection status icon
-  const getConnectionStatusIcon = (status: string) => {
-    switch (status) {
-      case "connected":
-        return <Wifi className="w-4 h-4 text-green-500" />;
-      case "disconnected":
-        return <WifiOff className="w-4 h-4 text-gray-400" />;
-      case "error":
-      case "error-connecting-to-proxy":
-        return <AlertCircle className="w-4 h-4 text-red-500" />;
-      default:
-        return <WifiOff className="w-4 h-4 text-gray-400" />;
-    }
-  };
-
-  // Helper function to get connection status color
-  const getConnectionStatusColor = (status: string) => {
-    switch (status) {
-      case "connected":
-        return "text-green-600 dark:text-green-400";
-      case "disconnected":
-        return "text-gray-500 dark:text-gray-400";
-      case "error":
-      case "error-connecting-to-proxy":
-        return "text-red-600 dark:text-red-400";
-      default:
-        return "text-gray-500 dark:text-gray-400";
-    }
-  };
 
   // Helper function to check if connection should be disabled
   const shouldDisableConnection = () => {
@@ -119,19 +87,6 @@ const Sidebar: React.FC<SidebarProps> = ({
     return "Connect to this server";
   };
 
-  // Helper function to get connection display text
-  const getConnectionDisplayText = (connection: ServerConnectionInfo) => {
-    if (
-      connection.config.transportType === "stdio" &&
-      "command" in connection.config
-    ) {
-      return `${connection.config.command} ${connection.config.args?.join(" ") || ""}`;
-    }
-    if ("url" in connection.config && connection.config.url) {
-      return connection.config.url.toString();
-    }
-    return "Unknown configuration";
-  };
 
   // Component: Header with logo and version
   const renderHeader = () => (
@@ -205,113 +160,8 @@ const Sidebar: React.FC<SidebarProps> = ({
     </div>
   );
 
-  // Component: Action buttons for each connection
-  const renderConnectionActions = (connection: ServerConnectionInfo) => (
-    <div className="flex space-x-1">
-      <Button
-        onClick={(e) => {
-          e.stopPropagation();
-          onEditClient(connection.name);
-        }}
-        size="sm"
-        variant="ghost"
-        className="h-6 w-6 p-0"
-      >
-        <Edit2 className="w-3 h-3" />
-      </Button>
-      <Button
-        onClick={(e) => {
-          e.stopPropagation();
-          onRemoveServer(connection.name);
-        }}
-        size="sm"
-        variant="ghost"
-        className="h-6 w-6 p-0 text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
-      >
-        <Trash2 className="w-3 h-3" />
-      </Button>
-    </div>
-  );
 
-  // Component: Connection button (Connect/Disconnect)
-  const renderConnectionButton = (connection: ServerConnectionInfo) => {
-    if (connection.connectionStatus === "connected") {
-      return (
-        <Button
-          onClick={(e) => {
-            e.stopPropagation();
-            onDisconnectServer(connection.name);
-          }}
-          size="sm"
-          variant="outline"
-          className="h-6 text-xs px-2"
-        >
-          Disconnect
-        </Button>
-      );
-    }
 
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span className="inline-block">
-            <Button
-              onClick={(e) => {
-                e.stopPropagation();
-                onConnectServer(connection.name);
-                onServerSelect(connection.name);
-              }}
-              size="sm"
-              className="h-6 text-xs px-2"
-              disabled={shouldDisableConnection()}
-            >
-              Connect
-            </Button>
-          </span>
-        </TooltipTrigger>
-        <TooltipContent>{getConnectTooltipMessage()}</TooltipContent>
-      </Tooltip>
-    );
-  };
-
-  // Component: Individual connection item
-  const renderConnectionItem = (connection: ServerConnectionInfo) => (
-    <div
-      key={connection.name}
-      className={`p-3 rounded-lg border cursor-pointer transition-all hover:bg-muted/50 ${
-        selectedServerName === connection.name
-          ? "border-primary bg-primary/10"
-          : "border-border"
-      }`}
-      onClick={() => onServerSelect(connection.name)}
-    >
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            {getConnectionStatusIcon(connection.connectionStatus)}
-            <div>
-              <div className="font-medium text-sm">{connection.name}</div>
-              <div className="text-xs text-muted-foreground">
-                {getConnectionDisplayText(connection)}
-              </div>
-            </div>
-          </div>
-          {renderConnectionActions(connection)}
-        </div>
-
-        <div className="flex items-center justify-between">
-          <span
-            className={`text-xs capitalize ${getConnectionStatusColor(connection.connectionStatus)}`}
-          >
-            {connection.connectionStatus}
-          </span>
-          <div className="flex space-x-1">
-            {renderConnectionButton(connection)}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
 
   // Component: Theme selector
   const renderThemeSelector = () => (
@@ -409,7 +259,20 @@ const Sidebar: React.FC<SidebarProps> = ({
 
               {serverConnections.length > 0 && (
                 <div className="p-3 space-y-2">
-                  {serverConnections.map(renderConnectionItem)}
+                  {serverConnections.map((connection) => (
+                    <ConnectionItem
+                      key={connection.name}
+                      connection={connection}
+                      selectedServerName={selectedServerName}
+                      onServerSelect={onServerSelect}
+                      onEditClient={onEditClient}
+                      onRemoveServer={onRemoveServer}
+                      onConnectServer={onConnectServer}
+                      onDisconnectServer={onDisconnectServer}
+                      shouldDisableConnection={shouldDisableConnection}
+                      getConnectTooltipMessage={getConnectTooltipMessage}
+                    />
+                  ))}
                 </div>
               )}
             </div>

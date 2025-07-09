@@ -23,19 +23,23 @@ interface ToolSelectorProps {
 }
 
 export const ToolSelector: React.FC<ToolSelectorProps> = ({
-  tools,
-  toolSelection,
-  onSelectionChange,
-  serverInfo,
-  loading = false,
-}) => {
+                                                            tools,
+                                                            toolSelection,
+                                                            onSelectionChange,
+                                                            serverInfo,
+                                                            loading = false,
+                                                          }) => {
   const [showSelector, setShowSelector] = useState(false);
   const selectorRef = useRef<HTMLDivElement>(null);
 
-  const totalTools = tools.length;
+  const availableTools = serverInfo
+    .filter(server => toolSelection.enabledServers.has(server.name))
+    .flatMap(server => server.tools);
+
+  const totalAvailableTools = availableTools.length;
   const enabledToolCount = toolSelection.enabledTools.size;
-  const allToolsEnabled = enabledToolCount === totalTools;
-  const someToolsDisabled = enabledToolCount < totalTools;
+  const allAvailableToolsEnabled = enabledToolCount === totalAvailableTools && totalAvailableTools > 0;
+  const someToolsDisabled = enabledToolCount < totalAvailableTools;
 
   const toggleServer = (serverName: string, enabled: boolean) => {
     const newEnabledServers = new Set(toolSelection.enabledServers);
@@ -126,7 +130,7 @@ export const ToolSelector: React.FC<ToolSelectorProps> = ({
         </span>
         {someToolsDisabled && (
           <span className="text-xs px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/50 text-amber-600 dark:text-amber-400 rounded">
-            {enabledToolCount}/{totalTools}
+            {enabledToolCount}/{totalAvailableTools}
           </span>
         )}
         <ChevronDown className="w-3 h-3 text-slate-400" />
@@ -143,7 +147,7 @@ export const ToolSelector: React.FC<ToolSelectorProps> = ({
                 <button
                   onClick={() => toggleAllServers(true)}
                   className="text-xs px-2 py-1 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded text-slate-600 dark:text-slate-300"
-                  disabled={allToolsEnabled}
+                  disabled={allAvailableToolsEnabled}
                 >
                   All
                 </button>
