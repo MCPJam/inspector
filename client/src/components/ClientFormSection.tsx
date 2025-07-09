@@ -211,7 +211,7 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
       if (scrollContainerRef.current) {
         scrollContainerRef.current.scrollTo({
           top: scrollContainerRef.current.scrollHeight,
-          behavior: 'smooth'
+          behavior: "smooth",
         });
       }
     }, 100); // Ensures the DOM is updated before scrolling
@@ -345,7 +345,10 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
 
   if (isMultipleMode) {
     return (
-      <div ref={scrollContainerRef} className="flex-1 flex flex-col overflow-auto bg-gradient-to-br from-background to-muted/20">
+      <div
+        ref={scrollContainerRef}
+        className="flex-1 flex flex-col overflow-auto bg-gradient-to-br from-background to-muted/20"
+      >
         <div className="max-w-7xl mx-auto w-full p-6 space-y-6">
           {/* Header */}
           <div className="flex items-center gap-3">
@@ -592,7 +595,10 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
 
   // Single client mode
   return (
-    <div ref={scrollContainerRef} className="flex-1 flex flex-col overflow-auto bg-gradient-to-br from-background to-muted/20">
+    <div
+      ref={scrollContainerRef}
+      className="flex-1 flex flex-col overflow-auto bg-gradient-to-br from-background to-muted/20"
+    >
       <div className="max-w-5xl mx-auto w-full p-6 space-y-8">
         {/* Import Configuration Card - Only show when creating */}
         {isCreating && (
@@ -697,10 +703,11 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
                         </TooltipTrigger>
                         <TooltipContent
                           side="top"
-                          className="max-w-sm p-2 text-xs leading-relaxed">
+                          className="max-w-sm p-2 text-xs leading-relaxed"
+                        >
                           A client name is required to help you identify and
                           manage your MCP connections.
-                          <br/>
+                          <br />
                           It ensures clarity when debugging or switching between
                           multiple clients. Leaving it blank makes the
                           connection untraceable within the tool.

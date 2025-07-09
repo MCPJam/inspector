@@ -1,6 +1,6 @@
 export interface ServerConfig {
   id: string;
-  type: 'stdio' | 'sse' | 'streamable-http';
+  type: "stdio" | "sse" | "streamable-http";
   name: string;
   command?: string;
   args?: string[];
@@ -16,7 +16,7 @@ export interface MCPProxyOptions {
 
 export interface ConnectionStatus {
   id: string;
-  status: 'connecting' | 'connected' | 'disconnected' | 'error';
+  status: "connecting" | "connected" | "disconnected" | "error";
   lastActivity: Date;
   errorCount: number;
 }

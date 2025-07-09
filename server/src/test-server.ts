@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
-import { TestServer } from './testing/TestServer.js';
-import { MCPProxyService } from './shared/MCPProxyService.js';
-import { DatabaseManager } from './database/DatabaseManager.js';
-import { ConsoleLogger } from './shared/utils.js';
-import { getDatabaseConfig } from './database/utils.js';
+import { TestServer } from "./testing/TestServer.js";
+import { MCPProxyService } from "./shared/MCPProxyService.js";
+import { DatabaseManager } from "./database/DatabaseManager.js";
+import { ConsoleLogger } from "./shared/utils.js";
+import { getDatabaseConfig } from "./database/utils.js";
 import { createServer } from "node:net";
 import { parseArgs } from "node:util";
 
@@ -35,7 +35,7 @@ const findAvailablePort = async (startPort: number): Promise<number> => {
 
 async function startTestServer() {
   const logger = new ConsoleLogger();
-  
+
   // Parse command line arguments
   const { values } = parseArgs({
     args: process.argv.slice(2),
@@ -44,9 +44,9 @@ async function startTestServer() {
       host: { type: "string", short: "h", default: "localhost" },
       env: { type: "string", short: "e", default: "development" },
       config: { type: "string", short: "c" },
-      help: { type: "boolean", default: false }
+      help: { type: "boolean", default: false },
     },
-    allowPositionals: true
+    allowPositionals: true,
   });
 
   if (values.help) {
@@ -76,51 +76,63 @@ Examples:
     `);
     process.exit(0);
   }
-  
+
   try {
     // Initialize core services
-    const mcpProxyService = new MCPProxyService({ 
+    const mcpProxyService = new MCPProxyService({
       logger,
-      maxConnections: 100 // Higher limit for test server
+      maxConnections: 100, // Higher limit for test server
     });
-    
+
     const dbConfig = getDatabaseConfig();
     const database = new DatabaseManager(dbConfig);
     await database.initialize();
-    
+
     // Determine port with fallback logic
-    const preferredPort = process.env.TEST_PORT ? parseInt(process.env.TEST_PORT) : parseInt(values.port!);
+    const preferredPort = process.env.TEST_PORT
+      ? parseInt(process.env.TEST_PORT)
+      : parseInt(values.port!);
     const actualPort = await findAvailablePort(preferredPort);
-    
+
     // Create and start test server
     const testServer = new TestServer({
       port: actualPort,
       host: process.env.TEST_HOST || values.host!,
-      cors: values.env !== 'production',
+      cors: values.env !== "production",
       rateLimiting: true,
       database: {
-        url: process.env.DATABASE_URL || 'sqlite://test.db',
+        url: process.env.DATABASE_URL || "sqlite://test.db",
         maxConnections: 10,
-        timeout: 5000
+        timeout: 5000,
       },
       logging: {
-        level: (process.env.LOG_LEVEL as any) || 'info',
-        format: 'json',
-        outputs: ['console']
-      }
+        level: (process.env.LOG_LEVEL as any) || "info",
+        format: "json",
+        outputs: ["console"],
+      },
     });
-    
+
     await testServer.start(mcpProxyService, database);
-    
+
     if (actualPort !== preferredPort) {
-      logger.info(`⚠️  Port ${preferredPort} was in use, using available port ${actualPort} instead`);
+      logger.info(
+        `⚠️  Port ${preferredPort} was in use, using available port ${actualPort} instead`,
+      );
     }
-    
-    logger.info(`🧪 Test server started on http://${testServer.config.host}:${testServer.config.port}`);
-    logger.info(`📊 Health check available at http://${testServer.config.host}:${testServer.config.port}/api/test/health`);
-    logger.info(`🔍 Status endpoint available at http://${testServer.config.host}:${testServer.config.port}/api/test/status`);
-    logger.info(`🎯 Test execution endpoint available at http://${testServer.config.host}:${testServer.config.port}/api/test/run`);
-    
+
+    logger.info(
+      `🧪 Test server started on http://${testServer.config.host}:${testServer.config.port}`,
+    );
+    logger.info(
+      `📊 Health check available at http://${testServer.config.host}:${testServer.config.port}/api/test/health`,
+    );
+    logger.info(
+      `🔍 Status endpoint available at http://${testServer.config.host}:${testServer.config.port}/api/test/status`,
+    );
+    logger.info(
+      `🎯 Test execution endpoint available at http://${testServer.config.host}:${testServer.config.port}/api/test/run`,
+    );
+
     // Graceful shutdown
     const shutdown = async (signal: string) => {
       logger.info(`🔄 Received ${signal}, shutting down test server...`);
@@ -128,29 +140,28 @@ Examples:
         await testServer.stop();
         await mcpProxyService.closeAllConnections();
         await database.close();
-        logger.info('✅ Test server shutdown complete');
+        logger.info("✅ Test server shutdown complete");
         process.exit(0);
       } catch (error) {
-        logger.error('❌ Error during shutdown:', error);
+        logger.error("❌ Error during shutdown:", error);
         process.exit(1);
       }
     };
-    
-    process.on('SIGINT', () => shutdown('SIGINT'));
-    process.on('SIGTERM', () => shutdown('SIGTERM'));
-    
+
+    process.on("SIGINT", () => shutdown("SIGINT"));
+    process.on("SIGTERM", () => shutdown("SIGTERM"));
+
     // Handle unhandled promise rejections
-    process.on('unhandledRejection', (reason, promise) => {
-      logger.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+    process.on("unhandledRejection", (reason, promise) => {
+      logger.error("❌ Unhandled Rejection at:", promise, "reason:", reason);
     });
-    
-    process.on('uncaughtException', (error) => {
-      logger.error('❌ Uncaught Exception:', error);
+
+    process.on("uncaughtException", (error) => {
+      logger.error("❌ Uncaught Exception:", error);
       process.exit(1);
     });
-    
   } catch (error) {
-    logger.error('❌ Failed to start test server:', error);
+    logger.error("❌ Failed to start test server:", error);
     process.exit(1);
   }
 }

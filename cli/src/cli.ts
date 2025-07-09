@@ -109,7 +109,9 @@ async function runWebClient(args: Args): Promise<void> {
           ...process.env,
           PORT: SERVER_PORT,
           MCP_ENV_VARS: JSON.stringify(args.envArgs),
-          MCP_SERVER_CONFIGS: args.serverConfigs ? JSON.stringify(args.serverConfigs) : undefined,
+          MCP_SERVER_CONFIGS: args.serverConfigs
+            ? JSON.stringify(args.serverConfigs)
+            : undefined,
         },
         signal: abort.signal,
         echoOutput: true,
@@ -202,7 +204,9 @@ function loadConfigFile(configPath: string, serverName: string): ServerConfig {
   }
 }
 
-function loadAllServersFromConfig(configPath: string): Record<string, ServerConfig> {
+function loadAllServersFromConfig(
+  configPath: string,
+): Record<string, ServerConfig> {
   try {
     const resolvedConfigPath = path.isAbsolute(configPath)
       ? configPath
@@ -283,9 +287,7 @@ function parseArgs(): Args {
 
   // Validate server option
   if (!options.config && options.server) {
-    throw new Error(
-      "--server option requires --config to be specified.",
-    );
+    throw new Error("--server option requires --config to be specified.");
   }
 
   // If config file is specified
@@ -303,7 +305,7 @@ function parseArgs(): Args {
     } else {
       // Multiple servers mode: load all servers from config
       const serverConfigs = loadAllServersFromConfig(options.config);
-      
+
       return {
         command: "", // No single command in multi-server mode
         args: finalArgs,

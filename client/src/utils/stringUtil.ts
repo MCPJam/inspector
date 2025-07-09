@@ -8,6 +8,8 @@
 
 export default class StringUtil {
   static shorten(str: string, maxLength: number = 30): string {
-    return str.length > maxLength ? str.substring(0, maxLength - 3) + "..." : str;
+    return str.length > maxLength
+      ? str.substring(0, maxLength - 3) + "..."
+      : str;
   }
 }

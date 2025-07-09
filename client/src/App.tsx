@@ -555,7 +555,7 @@ const App = () => {
             currentPage={currentPage}
             onPageChange={(page) => {
               setCurrentPage(page);
-              serverState.handleCancelClientForm(); 
+              serverState.handleCancelClientForm();
             }}
             serverCapabilities={serverCapabilities}
             pendingSampleRequests={mcpOperations.pendingSampleRequests}
