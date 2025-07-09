@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   MCPJamServerConfig,
   StdioServerDefinition,
@@ -96,6 +96,7 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [nameError, setNameError] = useState<string>("");
   const [isNameTouched, setIsNameTouched] = useState(false);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   // Initialize argsString when clientFormConfig changes
   useEffect(() => {
@@ -198,6 +199,16 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
     if (onImportMultipleServers) {
       onImportMultipleServers(servers);
     }
+
+    // Auto-scroll to bottom after import to show the action buttons
+    setTimeout(() => {
+      if (scrollContainerRef.current) {
+        scrollContainerRef.current.scrollTo({
+          top: scrollContainerRef.current.scrollHeight,
+          behavior: 'smooth'
+        });
+      }
+    }, 100); // Ensures the DOM is updated before scrolling
   };
 
   // Handler for updating individual client in multiple mode
@@ -328,7 +339,7 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
 
   if (isMultipleMode) {
     return (
-      <div className="flex-1 flex flex-col overflow-auto bg-gradient-to-br from-background to-muted/20">
+      <div ref={scrollContainerRef} className="flex-1 flex flex-col overflow-auto bg-gradient-to-br from-background to-muted/20">
         <div className="max-w-7xl mx-auto w-full p-6 space-y-6">
           {/* Header */}
           <div className="flex items-center gap-3">
@@ -575,7 +586,7 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
 
   // Single client mode
   return (
-    <div className="flex-1 flex flex-col overflow-auto bg-gradient-to-br from-background to-muted/20">
+    <div ref={scrollContainerRef} className="flex-1 flex flex-col overflow-auto bg-gradient-to-br from-background to-muted/20">
       <div className="max-w-5xl mx-auto w-full p-6 space-y-8">
         {/* Import Configuration Card - Only show when creating */}
         {isCreating && (
