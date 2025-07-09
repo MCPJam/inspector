@@ -11,7 +11,7 @@ export class TestRunner extends EventEmitter {
   
   constructor(
     private mcpProxyService: MCPProxyService,
-    private database: DatabaseManager,
+    private _database: DatabaseManager,
     private logger: Logger
   ) {
     super();
@@ -90,12 +90,12 @@ export class TestRunner extends EventEmitter {
     return results;
   }
   
-  async getResults(query: any): Promise<TestResult[]> {
+  async getResults(_query: any): Promise<TestResult[]> {
     // Mock implementation - in real version would query database
     return [];
   }
   
-  async getResult(id: string): Promise<TestResult | null> {
+  async getResult(_id: string): Promise<TestResult | null> {
     // Mock implementation - in real version would query database
     return null;
   }
@@ -112,7 +112,7 @@ export class TestRunner extends EventEmitter {
   
   async close(): Promise<void> {
     // Close all active tests
-    for (const [testId, execution] of this.activeTests) {
+    for (const [_testId, execution] of this.activeTests) {
       await execution.cancel();
     }
     this.activeTests.clear();
@@ -169,7 +169,7 @@ export class TestRunner extends EventEmitter {
   
   private async executeTest(testCase: TestCase, connections: string[]): Promise<ToolCallRecord[]> {
     const toolCalls: ToolCallRecord[] = [];
-    const timeout = testCase.timeout || 30000;
+    const _timeout = testCase.timeout || 30000;
     
     // Simple mock execution for now
     // In real implementation, would use LLM to process prompt and make tool calls
@@ -218,7 +218,7 @@ export class TestRunner extends EventEmitter {
 }
 
 class TestExecution {
-  private connections: string[] = [];
+  private _connections: string[] = [];
   private cancelled = false;
   
   constructor(
@@ -228,7 +228,7 @@ class TestExecution {
   ) {}
   
   setConnections(connections: string[]): void {
-    this.connections = connections;
+    this._connections = connections;
   }
   
   async cancel(): Promise<void> {

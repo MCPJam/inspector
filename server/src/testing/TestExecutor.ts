@@ -184,7 +184,7 @@ export class TestExecutor {
     // Simulate tool calls based on expected tools
     if (testCase.expectedTools && testCase.expectedTools.length > 0) {
       for (const expectedTool of testCase.expectedTools) {
-        for (const [serverId, sessionId] of connections.entries()) {
+        for (const [serverId, _sessionId] of connections.entries()) {
           const serverConfig = testCase.serverConfigs.find(s => s.id === serverId);
           if (!serverConfig) continue;
           
@@ -243,16 +243,17 @@ export class TestExecutor {
     } else {
       // If no expected tools, simulate a basic interaction
       const serverId = connections.keys().next().value;
-      const sessionId = connections.get(serverId);
-      const serverConfig = testCase.serverConfigs.find(s => s.id === serverId);
-      
-      if (serverConfig) {
-        const toolCallStartTime = Date.now();
+      if (serverId) {
+        const _sessionId = connections.get(serverId);
+        const serverConfig = testCase.serverConfigs.find(s => s.id === serverId);
         
-        const toolCall: ToolCallRecord = {
-          toolName: 'default_interaction',
-          serverId: serverId,
-          serverName: serverConfig.name,
+        if (serverConfig) {
+          const toolCallStartTime = Date.now();
+          
+          const toolCall: ToolCallRecord = {
+            toolName: 'default_interaction',
+            serverId: serverId,
+            serverName: serverConfig.name,
           parameters: {
             prompt: testCase.prompt,
             timestamp: new Date().toISOString()
@@ -268,6 +269,7 @@ export class TestExecutor {
         };
         
         toolCalls.push(toolCall);
+        }
       }
     }
     
