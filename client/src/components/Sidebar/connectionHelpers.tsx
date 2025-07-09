@@ -1,5 +1,6 @@
 import { Wifi, WifiOff, AlertCircle } from "lucide-react";
 import { ServerConnectionInfo } from "@/lib/utils/mcp/mcpjamAgent";
+import StringUtil from "@/utils/stringUtil";
 
 export const getConnectionStatusIcon = (status: string) => {
   switch (status) {
@@ -37,7 +38,7 @@ export const getConnectionDisplayText = (connection: ServerConnectionInfo) => {
     return `${connection.config.command} ${connection.config.args?.join(" ") || ""}`;
   }
   if ("url" in connection.config && connection.config.url) {
-    return connection.config.url.toString();
+    return StringUtil.shorten(connection.config.url.toString());
   }
   return "Unknown configuration";
 };
