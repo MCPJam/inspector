@@ -34,6 +34,12 @@ import {
   ChevronDown,
   ChevronRight,
 } from "lucide-react";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+  TooltipProvider,
+} from "@/components/ui/tooltip";
 import ConfigImportDialog from "./ConfigImportDialog";
 
 interface ClientConfig {
@@ -673,7 +679,23 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
                 />
                 {nameError && (
                   <p className="text-sm text-red-500 flex items-center gap-1">
-                    <AlertCircle className="h-3 w-3" />
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <AlertCircle className="h-4 w-4 cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent
+                          side="top"
+                          className="max-w-sm p-2 text-xs leading-relaxed">
+                          A client name is required to help you identify and
+                          manage your MCP connections.
+                          <br/>
+                          It ensures clarity when debugging or switching between
+                          multiple clients. Leaving it blank makes the
+                          connection untraceable within the tool.
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
                     {nameError}
                   </p>
                 )}
