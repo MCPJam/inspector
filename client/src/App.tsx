@@ -13,7 +13,7 @@ import "./App.css";
 
 // Components
 import HistoryAndNotifications from "./components/History";
-import Sidebar from "./components/Sidebar";
+import Sidebar from "./components/Sidebar/Sidebar";
 import Tabs from "./components/Tabs";
 import ClientFormSection from "./components/ClientFormSection";
 import StarGitHubModal from "./components/StarGitHubModal";
