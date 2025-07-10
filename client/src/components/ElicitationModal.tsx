@@ -23,13 +23,34 @@ export interface ElicitationRequest {
 
 // TODO: This is a temporary type for the elicitation request. Move this elsewhere.
 export interface ElicitationResponse {
-  action: "accept" | "reject" | "cancel";
+  action: "accept" | "decline" | "cancel";
   content?: Record<string, unknown>;
 }
 
 interface ElicitationModalProps {
   request: ElicitationRequest | null;
   onClose: () => void;
+}
+
+// Helper to recursively remove 'enumNames' from schema
+function stripEnumNames(schema: JsonSchemaType): JsonSchemaType {
+  if (Array.isArray(schema)) {
+    // Should not happen for root, but handle arrays of schemas
+    return schema.map(stripEnumNames) as unknown as JsonSchemaType;
+  }
+  if (typeof schema !== 'object' || schema === null) return schema;
+  const { enumNames, properties, items, ...rest } = schema as any;
+  const cleaned: any = { ...rest };
+  if (properties) {
+    cleaned.properties = {};
+    for (const key in properties) {
+      cleaned.properties[key] = stripEnumNames(properties[key]);
+    }
+  }
+  if (items) {
+    cleaned.items = stripEnumNames(items);
+  }
+  return cleaned;
 }
 
 const ElicitationModal = ({ request, onClose }: ElicitationModalProps) => {
@@ -98,7 +119,8 @@ const ElicitationModal = ({ request, onClose }: ElicitationModalProps) => {
       }
 
       const ajv = new Ajv();
-      const validate = ajv.compile(request.requestedSchema);
+      const cleanedSchema = stripEnumNames(request.requestedSchema);
+      const validate = ajv.compile(cleanedSchema);
       const isValid = validate(formData);
 
       if (!isValid) {
@@ -120,7 +142,7 @@ const ElicitationModal = ({ request, onClose }: ElicitationModalProps) => {
   };
 
   const handleReject = () => {
-    request.resolve({ action: "reject" });
+    request.resolve({ action: "decline" });
     onClose();
   };
 
