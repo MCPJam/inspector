@@ -90,8 +90,9 @@ const HistoryAndNotifications = ({
   }, [clientLogs]);
 
   useEffect(() => {
-    if (requestHistory.length > 0) {
-      setActiveTab("activity");
+    const lastRequest = requestHistory[requestHistory.length - 1].request;
+    const lastRequestMethod = JSON.parse(lastRequest).method;
+    if (lastRequestMethod && lastRequestMethod === "ping") {
       setIsCollapsed(false);
     }
   }, [requestHistory]);
