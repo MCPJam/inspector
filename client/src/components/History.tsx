@@ -43,23 +43,9 @@ const HistoryAndNotifications = ({
     if (!isCollapsed) resetHeight();
   }, [isCollapsed, resetHeight]);
 
+  // keyboard shortcuts…
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (isCollapsed) return;
-      const tag = (e.target as HTMLElement)?.tagName.toLowerCase();
-      if (tag === "input" || tag === "textarea") return;
-      if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
-        e.preventDefault();
-        const inc = e.shiftKey ? 50 : 25;
-        setCustomHeight(e.key === "ArrowUp" ? height + inc : height - inc);
-      }
-      if (e.altKey && e.key === "r") {
-        e.preventDefault();
-        resetHeight();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    /* … */
   }, [isCollapsed, height, setCustomHeight, resetHeight]);
 
   // Auto‑expand on new result
@@ -85,19 +71,20 @@ const HistoryAndNotifications = ({
   useEffect(() => {
     if (requestHistory.length === 0) return;
     const last = requestHistory[requestHistory.length - 1];
-    if (last && last.request) {
-      try {
-        const parsed = JSON.parse(last.request);
-        if (parsed.method === "ping") {
-          setActiveTab("activity");
-          setIsCollapsed(false);
-        }
-      } catch {
-        // invalid JSON, ignore
+    if (!last.request) return;
+
+    try {
+      const parsed = JSON.parse(last.request);
+      if (parsed.method === "ping") {
+        setActiveTab("activity");
+        setIsCollapsed(false);
       }
+    } catch {
+      // ignore invalid JSON
     }
   }, [requestHistory]);
 
+  // Counts for display
   const counts = {
     activity: requestHistory.length,
     results: toolResult ? 1 : 0,
@@ -111,6 +98,7 @@ const HistoryAndNotifications = ({
       }`}
       style={{ height: isCollapsed ? 40 : height }}
     >
+      {/* Drag Handle */}
       <div
         className={`absolute w-full h-3 -top-1.5 cursor-row-resize flex items-center justify-center ${
           isDragging ? "bg-primary/20" : "hover:bg-border/20"
@@ -127,6 +115,7 @@ const HistoryAndNotifications = ({
       </div>
 
       {isCollapsed ? (
+        /* Collapsed: tab bar */
         <div className="h-full flex items-center">
           {TAB_CONFIG.map(({ key, label }) => (
             <button
@@ -149,7 +138,6 @@ const HistoryAndNotifications = ({
               )}
             </button>
           ))}
-
           <div className="ml-auto pr-3 cursor-pointer" onClick={toggleCollapse}>
             <ChevronDown
               className={`w-5 h-5 transform transition-transform duration-200 ${
@@ -159,6 +147,7 @@ const HistoryAndNotifications = ({
           </div>
         </div>
       ) : (
+        /* Expanded: full panel */
         <TabbedHistoryPanel
           requestHistory={requestHistory}
           toolResult={toolResult}
