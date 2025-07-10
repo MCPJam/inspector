@@ -479,7 +479,44 @@ const App = () => {
 
   // Render OAuth callback components
   if (window.location.pathname === "/oauth/callback") {
-    return renderOAuthCallback(onOAuthConnect);
+    // Determine transport type dynamically
+    const serverUrl = sessionStorage.getItem("mcp_server_url");
+    let transportType: "sse" | "streamable-http" = "sse"; // default
+
+    if (serverUrl) {
+      // First, check if transport type was stored during OAuth initiation
+      const storedTransportType = sessionStorage.getItem(
+        "mcp_transport_type",
+      ) as "sse" | "streamable-http" | null;
+      if (
+        storedTransportType &&
+        (storedTransportType === "sse" ||
+          storedTransportType === "streamable-http")
+      ) {
+        transportType = storedTransportType;
+      } else {
+        // Check if there's an existing server config for this URL
+        const existingConfig = Object.values(serverState.serverConfigs).find(
+          (config) => "url" in config && config.url?.toString() === serverUrl,
+        );
+
+        if (existingConfig && "transportType" in existingConfig) {
+          // Use the existing transport type if it's HTTP-based
+          if (
+            existingConfig.transportType === "sse" ||
+            existingConfig.transportType === "streamable-http"
+          ) {
+            transportType = existingConfig.transportType;
+          }
+        } else {
+          // Auto-detect based on URL pattern (similar to configImportUtils.ts logic)
+          const url = serverUrl.toLowerCase();
+          transportType = url.includes("sse") ? "sse" : "streamable-http";
+        }
+      }
+    }
+
+    return renderOAuthCallback(onOAuthConnect, transportType);
   }
 
   if (window.location.pathname === "/oauth/callback/debug") {

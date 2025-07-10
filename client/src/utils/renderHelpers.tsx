@@ -6,7 +6,11 @@ import PingTab from "../components/PingTab";
 
 // OAuth Callback Rendering Helper
 export const renderOAuthCallback = (
-  onOAuthConnect: (serverUrl: string) => Promise<void>,
+  onOAuthConnect: (
+    serverUrl: string,
+    transportType?: "sse" | "streamable-http",
+  ) => Promise<void>,
+  transportType?: "sse" | "streamable-http",
 ) => {
   const OAuthCallback = React.lazy(() => import("../components/OAuthCallback"));
   return (
@@ -19,7 +23,10 @@ export const renderOAuthCallback = (
           </div>
         }
       >
-        <OAuthCallback onConnect={onOAuthConnect} />
+        <OAuthCallback
+          onConnect={onOAuthConnect}
+          transportType={transportType}
+        />
       </Suspense>
     </div>
   );

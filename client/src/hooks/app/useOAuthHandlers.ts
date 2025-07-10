@@ -18,7 +18,10 @@ export const useOAuthHandlers = (
   ) => Promise<string>,
 ) => {
   const onOAuthConnect = useCallback(
-    async (serverUrl: string) => {
+    async (
+      serverUrl: string,
+      transportType: "sse" | "streamable-http" = "sse",
+    ) => {
       const url = new URL(serverUrl);
       const hostname = url.hostname;
       let serverName = hostname.split(".")[1] || hostname.split(".")[0];
@@ -45,7 +48,7 @@ export const useOAuthHandlers = (
 
       const finalServerName = existingServerName || serverName;
       const serverConfig: HttpServerDefinition = {
-        transportType: "sse",
+        transportType,
         url: new URL(serverUrl),
       };
 

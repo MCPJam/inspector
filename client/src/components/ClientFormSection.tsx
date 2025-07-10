@@ -103,7 +103,7 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
   const [nameError, setNameError] = useState<string>("");
   const [isNameTouched, setIsNameTouched] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-
+  console.log("🔧 clientFormConfig", clientFormConfig);
   // Initialize argsString when clientFormConfig changes
   useEffect(() => {
     if (
@@ -146,6 +146,19 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
 
   const handleSseUrlChange = (newSseUrlString: string) => {
     setSseUrlString(newSseUrlString);
+
+    // Update the config immediately
+    if (clientFormConfig.transportType !== "stdio") {
+      try {
+        const url = new URL(newSseUrlString);
+        setClientFormConfig({
+          ...clientFormConfig,
+          url,
+        } as HttpServerDefinition);
+      } catch {
+        // Invalid URL, keep the string but don't update config
+      }
+    }
   };
 
   // Handler for importing multiple servers
@@ -254,15 +267,18 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
   };
 
   const handleSingleSave = () => {
-    let configToSave = { ...clientFormConfig };
-
-    if (configToSave.transportType !== "stdio") {
+    // Validate URL if it's not stdio
+    if (clientFormConfig.transportType !== "stdio") {
+      if (!sseUrlString.trim()) {
+        toast({
+          title: "URL Required",
+          description: "Please enter a URL for the client.",
+          variant: "destructive",
+        });
+        return;
+      }
       try {
-        const url = new URL(sseUrlString);
-        configToSave = {
-          ...configToSave,
-          url,
-        } as HttpServerDefinition;
+        new URL(sseUrlString);
       } catch {
         toast({
           title: "Invalid URL",
@@ -272,7 +288,7 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
         return;
       }
     }
-    onSave(configToSave);
+    onSave(clientFormConfig);
   };
 
   const handleSaveAll = async () => {
@@ -289,15 +305,13 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
     }
 
     const clientsToSave = validClients.map((client) => {
-      let configToSave = { ...client.config };
-
-      if (configToSave.transportType !== "stdio") {
+      // Validate URL if it's not stdio
+      if (client.config.transportType !== "stdio") {
+        if (!client.sseUrlString.trim()) {
+          throw new Error(`URL required for client "${client.name}"`);
+        }
         try {
-          const url = new URL(client.sseUrlString);
-          configToSave = {
-            ...configToSave,
-            url,
-          } as HttpServerDefinition;
+          new URL(client.sseUrlString);
         } catch {
           throw new Error(`Invalid URL for client "${client.name}"`);
         }
@@ -305,7 +319,7 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
 
       return {
         name: client.name,
-        config: configToSave,
+        config: client.config,
       };
     });
 
@@ -503,7 +517,23 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
                         }}
                         sseUrl={client.sseUrlString}
                         setSseUrl={(url) => {
-                          handleUpdateClient(client.id, { sseUrlString: url });
+                          // Update both the string and the config
+                          let updatedConfig = client.config;
+                          if (client.config.transportType !== "stdio") {
+                            try {
+                              const urlObj = new URL(url);
+                              updatedConfig = {
+                                ...client.config,
+                                url: urlObj,
+                              } as HttpServerDefinition;
+                            } catch {
+                              // Invalid URL, keep existing config
+                            }
+                          }
+                          handleUpdateClient(client.id, {
+                            sseUrlString: url,
+                            config: updatedConfig,
+                          });
                         }}
                         env={
                           client.config.transportType === "stdio" &&

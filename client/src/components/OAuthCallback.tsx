@@ -9,10 +9,14 @@ import {
 } from "@/lib/utils/auth/oauthUtils";
 
 interface OAuthCallbackProps {
-  onConnect: (serverUrl: string) => void;
+  onConnect: (
+    serverUrl: string,
+    transportType?: "sse" | "streamable-http",
+  ) => void;
+  transportType?: "sse" | "streamable-http";
 }
 
-const OAuthCallback = ({ onConnect }: OAuthCallbackProps) => {
+const OAuthCallback = ({ onConnect, transportType }: OAuthCallbackProps) => {
   const { toast } = useToast();
   const hasProcessedRef = useRef(false);
 
@@ -44,7 +48,10 @@ const OAuthCallback = ({ onConnect }: OAuthCallbackProps) => {
       let result;
       try {
         // Create an auth provider with the current server URL
-        const serverAuthProvider = new InspectorOAuthClientProvider(serverUrl);
+        const serverAuthProvider = new InspectorOAuthClientProvider(
+          serverUrl,
+          transportType,
+        );
 
         result = await auth(serverAuthProvider, {
           serverUrl,
@@ -67,13 +74,13 @@ const OAuthCallback = ({ onConnect }: OAuthCallbackProps) => {
         description: "Successfully authenticated with OAuth",
         variant: "default",
       });
-      onConnect(serverUrl);
+      onConnect(serverUrl, transportType);
     };
 
     handleCallback().finally(() => {
       window.history.replaceState({}, document.title, "/");
     });
-  }, [toast, onConnect]);
+  }, [toast, onConnect, transportType]);
 
   return (
     <div className="flex items-center justify-center h-screen">
