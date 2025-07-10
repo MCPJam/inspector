@@ -41,7 +41,7 @@ const Tabs = ({
     },
     {
       id: "chat",
-      label: "Chat",
+      label: "Playground",
       icon: Bot,
       disabled: shouldDisableAll,
     },
