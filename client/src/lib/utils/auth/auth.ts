@@ -10,9 +10,17 @@ import {
 import { SESSION_KEYS, getServerSpecificKey } from "../../types/constants";
 
 export class InspectorOAuthClientProvider implements OAuthClientProvider {
-  constructor(public serverUrl: string) {
+  constructor(
+    public serverUrl: string,
+    public transportType?: "sse" | "streamable-http",
+  ) {
     // Save the server URL to session storage
     sessionStorage.setItem(SESSION_KEYS.SERVER_URL, serverUrl);
+
+    // Save the transport type if provided
+    if (transportType) {
+      sessionStorage.setItem(SESSION_KEYS.TRANSPORT_TYPE, transportType);
+    }
   }
 
   get redirectUrl() {
