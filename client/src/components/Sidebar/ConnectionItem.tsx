@@ -17,7 +17,7 @@ interface ConnectionItemProps {
   connection: ServerConnectionInfo;
   selectedServerName: string;
   onServerSelect: (serverName: string) => void;
-  onEditConnection: (serverName: string) => void;
+  onEditClient: (serverName: string) => void;
   onRemoveServer: (serverName: string) => Promise<void>;
   onConnectServer: (serverName: string) => Promise<void>;
   onDisconnectServer: (serverName: string) => Promise<void>;
@@ -29,7 +29,7 @@ const ConnectionItem: React.FC<ConnectionItemProps> = ({
   connection,
   selectedServerName,
   onServerSelect,
-  onEditConnection,
+  onEditClient,
   onRemoveServer,
   onConnectServer,
   onDisconnectServer,
@@ -41,7 +41,7 @@ const ConnectionItem: React.FC<ConnectionItemProps> = ({
       <Button
         onClick={(e) => {
           e.stopPropagation();
-          onEditConnection(connection.name);
+          onEditClient(connection.name);
         }}
         size="sm"
         variant="ghost"

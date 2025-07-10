@@ -31,8 +31,8 @@ interface SidebarProps {
   onRemoveServer: (serverName: string) => Promise<void>;
   onConnectServer: (serverName: string) => Promise<void>;
   onDisconnectServer: (serverName: string) => Promise<void>;
-  onCreateConnection: () => void;
-  onEditConnection: (serverName: string) => void;
+  onCreateClient: () => void;
+  onEditClient: (serverName: string) => void;
   updateTrigger: number;
   isExpanded: boolean;
   onToggleExpanded: () => void;
@@ -45,8 +45,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   onRemoveServer,
   onConnectServer,
   onDisconnectServer,
-  onCreateConnection,
-  onEditConnection,
+  onCreateClient,
+  onEditClient,
   updateTrigger,
   isExpanded,
   onToggleExpanded,
@@ -124,7 +124,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
-              onClick={onCreateConnection}
+              onClick={onCreateClient}
               size="sm"
               variant="ghost"
               className="h-7 w-7 p-0 hover:bg-primary/20 hover:text-primary"
@@ -143,7 +143,7 @@ const Sidebar: React.FC<SidebarProps> = ({
     </div>
   );
 
-  // Component: Empty state when no connections exist
+  // Component: Empty state when no clients exist
   const renderEmptyState = () => (
     <div className="p-4 text-center">
       <div className="py-8">
@@ -152,7 +152,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         <p className="text-xs text-muted-foreground mb-4">
           Create your first MCP connection to get started
         </p>
-        <Button onClick={onCreateConnection} size="sm" className="w-full">
+        <Button onClick={onCreateClient} size="sm" className="w-full">
           <Plus className="w-4 h-4 mr-2" />
           Create Connection
         </Button>
@@ -265,7 +265,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                       connection={connection}
                       selectedServerName={selectedServerName}
                       onServerSelect={onServerSelect}
-                      onEditConnection={onEditConnection}
+                      onEditClient={onEditClient}
                       onRemoveServer={onRemoveServer}
                       onConnectServer={onConnectServer}
                       onDisconnectServer={onDisconnectServer}
@@ -316,7 +316,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
-                onClick={onCreateConnection}
+                onClick={onCreateClient}
                 size="sm"
                 variant="ghost"
                 className="w-8 h-8 p-0 rounded-full"
