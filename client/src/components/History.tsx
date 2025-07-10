@@ -89,6 +89,13 @@ const HistoryAndNotifications = ({
     }
   }, [clientLogs]);
 
+  useEffect(() => {
+    if (requestHistory.length > 0) {
+      setActiveTab("activity");
+      setIsCollapsed(false);
+    }
+  }, [requestHistory]);
+
   // Counts for display
   const counts = {
     activity: requestHistory.length,
