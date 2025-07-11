@@ -174,52 +174,7 @@ export const useServerManagement = (
     [connectionState],
   );
 
-  const handleSaveClient = useCallback(
-    async (config: MCPJamServerConfig) => {
-      if (!serverState.clientFormName.trim()) return;
-
-      try {
-        if (serverState.isCreatingClient) {
-          await handleAddServer(serverState.clientFormName, config, {
-            autoConnect: true,
-          });
-        } else if (serverState.editingClientName) {
-          const oldServerName = serverState.editingClientName;
-          const newServerName = serverState.clientFormName.trim();
-
-          if (oldServerName !== newServerName) {
-            addClientLog(
-              `🔄 Server name changed from "${oldServerName}" to "${newServerName}"`,
-              "info",
-            );
-
-            await handleRemoveServer(oldServerName);
-            await handleAddServer(newServerName, config, {
-              autoConnect: true,
-            });
-
-            if (serverState.selectedServerName === oldServerName) {
-              serverState.setSelectedServerName(newServerName);
-            }
-          } else {
-            await handleUpdateServer(serverState.editingClientName, config);
-          }
-        }
-        serverState.handleCancelClientForm();
-      } catch (error) {
-        console.error("Failed to save client:", error);
-      }
-    },
-    [
-      serverState,
-      handleAddServer,
-      handleUpdateServer,
-      handleRemoveServer,
-      addClientLog,
-    ],
-  );
-
-  const handleSaveMultiple = useCallback(
+  const saveClients = useCallback(
     async (clients: Array<{ name: string; config: MCPJamServerConfig }>) => {
       const results: {
         success: string[];
@@ -231,20 +186,49 @@ export const useServerManagement = (
 
       for (const client of clients) {
         try {
-          console.log(`🔧 Creating client: "${client.name}"`);
-          await handleAddServer(client.name, client.config, {
-            autoConnect: false,
-          });
+          // Handle single client editing case
+          if (serverState.editingClientName && clients.length === 1) {
+            const oldServerName = serverState.editingClientName;
+            const newServerName = client.name.trim();
+
+            if (oldServerName !== newServerName) {
+              addClientLog(
+                `🔄 Server name changed from "${oldServerName}" to "${newServerName}"`,
+                "info",
+              );
+
+              await handleRemoveServer(oldServerName);
+              await handleAddServer(newServerName, client.config, {
+                autoConnect: true,
+              });
+
+              if (serverState.selectedServerName === oldServerName) {
+                serverState.setSelectedServerName(newServerName);
+              }
+            } else {
+              await handleUpdateServer(
+                serverState.editingClientName,
+                client.config,
+              );
+            }
+          } else {
+            // Handle creating new clients (single or multiple)
+            console.log(`🔧 Creating client: "${client.name}"`);
+            await handleAddServer(client.name, client.config, {
+              autoConnect: clients.length === 1, // Auto-connect only for single client
+            });
+          }
+
           results.success.push(client.name);
           addClientLog(
-            `✅ Successfully created client: "${client.name}"`,
+            `✅ Successfully ${serverState.editingClientName ? "updated" : "created"} client: "${client.name}"`,
             "info",
           );
         } catch (error) {
           const errorMessage =
             error instanceof Error ? error.message : String(error);
           addClientLog(
-            `❌ Failed to create client "${client.name}": ${errorMessage}`,
+            `❌ Failed to ${serverState.editingClientName ? "update" : "create"} client "${client.name}": ${errorMessage}`,
             "error",
           );
           results.failed.push({ name: client.name, error: errorMessage });
@@ -255,21 +239,27 @@ export const useServerManagement = (
 
       if (results.success.length > 0) {
         addClientLog(
-          `✅ Successfully created ${results.success.length} client(s): ${results.success.join(", ")}`,
+          `✅ Successfully ${serverState.editingClientName ? "updated" : "created"} ${results.success.length} client(s): ${results.success.join(", ")}`,
           "info",
         );
       }
 
       if (results.failed.length > 0) {
         addClientLog(
-          `❌ Failed to create ${results.failed.length} client(s): ${results.failed.map(({ name, error }) => `${name}: ${error}`).join(", ")}`,
+          `❌ Failed to ${serverState.editingClientName ? "update" : "create"} ${results.failed.length} client(s): ${results.failed.map(({ name, error }) => `${name}: ${error}`).join(", ")}`,
           "error",
         );
       }
 
       return results;
     },
-    [handleAddServer, serverState, addClientLog],
+    [
+      handleAddServer,
+      handleUpdateServer,
+      handleRemoveServer,
+      serverState,
+      addClientLog,
+    ],
   );
 
   return {
@@ -278,7 +268,6 @@ export const useServerManagement = (
     handleUpdateServer,
     handleEditClient,
     handleConnectServer,
-    handleSaveClient,
-    handleSaveMultiple,
+    saveClients,
   };
 };

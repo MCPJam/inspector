@@ -45,7 +45,7 @@ export const useOAuthHandlers = (
 
       const finalServerName = existingServerName || serverName;
       const serverConfig: HttpServerDefinition = {
-        transportType: "sse",
+        transportType: "sse", // TODO: Make this dynamic
         url: new URL(serverUrl),
       };
 

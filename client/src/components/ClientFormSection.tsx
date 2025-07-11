@@ -63,15 +63,14 @@ interface ClientFormSectionProps {
   setBearerToken: (token: string) => void;
   headerName: string;
   setHeaderName: (name: string) => void;
-  onSave: (config: MCPJamServerConfig) => void;
-  onCancel: () => void;
-  onImportMultipleServers?: (servers: ParsedServerConfig[]) => void;
-  onSaveMultiple?: (
+  onSave: (
     clients: Array<{ name: string; config: MCPJamServerConfig }>,
   ) => Promise<{
     success: string[];
     failed: Array<{ name: string; error: string }>;
   }>;
+  onCancel: () => void;
+  onImportMultipleServers?: (servers: ParsedServerConfig[]) => void;
 }
 
 const ClientFormSection: React.FC<ClientFormSectionProps> = ({
@@ -90,7 +89,6 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
   onSave,
   onCancel,
   onImportMultipleServers,
-  onSaveMultiple,
 }) => {
   // Local state to track raw args string while typing
   const [argsString, setArgsString] = useState<string>("");
@@ -103,7 +101,6 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
   const [nameError, setNameError] = useState<string>("");
   const [isNameTouched, setIsNameTouched] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-
   // Initialize argsString when clientFormConfig changes
   useEffect(() => {
     if (
@@ -253,7 +250,7 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
     setMultipleClients((prev) => [...prev, newClient]);
   };
 
-  const handleSingleSave = () => {
+  const handleSingleSave = async () => {
     let configToSave = { ...clientFormConfig };
 
     if (configToSave.transportType !== "stdio") {
@@ -272,12 +269,22 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
         return;
       }
     }
-    onSave(configToSave);
+
+    try {
+      await onSave([{ name: clientFormName, config: configToSave }]);
+    } catch (error) {
+      toast({
+        title: "Error saving client",
+        description:
+          error instanceof Error
+            ? error.message
+            : "An unexpected error occurred.",
+        variant: "destructive",
+      });
+    }
   };
 
   const handleSaveAll = async () => {
-    if (!onSaveMultiple) return;
-
     const validClients = multipleClients.filter((c) => c.name.trim());
     if (validClients.length === 0) {
       toast({
@@ -310,7 +317,7 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
     });
 
     try {
-      const result = await onSaveMultiple(clientsToSave);
+      const result = await onSave(clientsToSave);
 
       if (result.success.length > 0) {
         toast({

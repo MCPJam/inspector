@@ -68,7 +68,7 @@ const App = () => {
     mcpOperations.addClientLog,
   );
   const configState = useConfigState();
-
+  console.log("🔧 serverState", serverState);
   // Refs
   const rootsRef = useRef(mcpOperations.roots);
   const nextRequestId = useRef(0);
@@ -158,8 +158,7 @@ const App = () => {
     handleRemoveServer,
     handleEditClient,
     handleConnectServer,
-    handleSaveClient,
-    handleSaveMultiple,
+    saveClients,
     handleAddServer,
   } = useServerManagement(
     serverState,
@@ -503,8 +502,7 @@ const App = () => {
           setBearerToken={configState.setBearerToken}
           headerName={configState.headerName}
           setHeaderName={configState.setHeaderName}
-          onSave={handleSaveClient}
-          onSaveMultiple={handleSaveMultiple}
+          onSave={saveClients}
           onCancel={serverState.handleCancelClientForm}
         />
       );
