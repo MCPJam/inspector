@@ -38,9 +38,9 @@ function stripEnumNames(schema: JsonSchemaType): JsonSchemaType {
     // Should not happen for root, but handle arrays of schemas
     return schema.map(stripEnumNames) as unknown as JsonSchemaType;
   }
-  if (typeof schema !== 'object' || schema === null) return schema;
-  const { enumNames, properties, items, ...rest } = schema as any;
-  const cleaned: any = { ...rest };
+  if (typeof schema !== "object" || schema === null) return schema;
+  const { properties, items, ...rest } = schema as JsonSchemaType;
+  const cleaned: JsonSchemaType = { ...rest };
   if (properties) {
     cleaned.properties = {};
     for (const key in properties) {
