@@ -154,17 +154,9 @@ export const useServerManagement = (
 
   const handleEditClient = useCallback(
     (serverName: string) => {
-      const serverConnections = connectionState.mcpAgent
-        ? connectionState.mcpAgent.getAllConnectionInfo()
-        : [];
-      const connection = serverConnections.find(
-        (conn) => conn.name === serverName,
-      );
-      if (!connection) return;
-
-      serverState.handleEditClient(serverName, connection.config);
+      serverState.handleEditClient(serverName);
     },
-    [connectionState.mcpAgent, serverState],
+    [serverState],
   );
 
   const handleConnectServer = useCallback(

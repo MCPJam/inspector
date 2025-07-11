@@ -488,14 +488,19 @@ const App = () => {
   const renderTabs = () => {
     // Show ClientFormSection when creating or editing a client
     if (serverState.isCreatingClient || serverState.editingClientName) {
+      // Get initial client data for editing mode
+      const initialClient = serverState.editingClientName
+        ? {
+            name: serverState.editingClientName,
+            config: serverState.serverConfigs[serverState.editingClientName],
+          }
+        : undefined;
+
       return (
         <ClientFormSection
           isCreating={serverState.isCreatingClient}
           editingClientName={serverState.editingClientName}
-          clientFormName={serverState.clientFormName}
-          setClientFormName={serverState.setClientFormName}
-          clientFormConfig={serverState.clientFormConfig}
-          setClientFormConfig={serverState.setClientFormConfig}
+          initialClient={initialClient}
           config={configState.config}
           setConfig={configState.setConfig}
           bearerToken={configState.bearerToken}

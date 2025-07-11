@@ -103,8 +103,10 @@ export function createDefaultStdioConfig(): StdioServerDefinition {
   return createStdioConfig("npx", ["@modelcontextprotocol/server-everything"]);
 }
 
-export function createDefaultHttpConfig(): HttpServerDefinition {
-  return createHttpConfig(new URL("https://example.com"));
+export function createDefaultHttpConfig(
+  transportType: "sse" | "streamable-http" = "sse",
+): HttpServerDefinition {
+  return createHttpConfig(new URL("https://example.com"), transportType);
 }
 
 // Check if config is stdio

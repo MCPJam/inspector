@@ -56,10 +56,7 @@ interface ClientConfig {
 interface ClientFormSectionProps {
   isCreating: boolean;
   editingClientName: string | null;
-  clientFormName: string;
-  setClientFormName: (name: string) => void;
-  clientFormConfig: MCPJamServerConfig;
-  setClientFormConfig: (config: MCPJamServerConfig) => void;
+  initialClient?: { name: string; config: MCPJamServerConfig };
   config: InspectorConfig;
   setConfig: (config: InspectorConfig) => void;
   bearerToken: string;
@@ -79,10 +76,7 @@ interface ClientFormSectionProps {
 const ClientFormSection: React.FC<ClientFormSectionProps> = ({
   isCreating,
   editingClientName,
-  clientFormName,
-  setClientFormName,
-  clientFormConfig,
-  setClientFormConfig,
+  initialClient,
   config,
   setConfig,
   bearerToken,
@@ -93,47 +87,88 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
   onCancel,
   onImportMultipleServers,
 }) => {
-  // Local state to track raw args string while typing
-  const [argsString, setArgsString] = useState<string>("");
-  const [sseUrlString, setSseUrlString] = useState<string>("");
-  const [multipleClients, setMultipleClients] = useState<ClientConfig[]>([]);
-  const [isMultipleMode, setIsMultipleMode] = useState(false);
+  // Initialize multipleClients based on mode
+  const [multipleClients, setMultipleClients] = useState<ClientConfig[]>(() => {
+    if (initialClient) {
+      // Editing mode - initialize with the client being edited
+      return [
+        {
+          id: "editing-client",
+          name: initialClient.name,
+          config: initialClient.config,
+        },
+      ];
+    } else {
+      // Creating mode - initialize with default client
+      return [
+        {
+          id: "new-client",
+          name: "",
+          config: createDefaultStdioConfig(),
+        },
+      ];
+    }
+  });
+
+  console.log("🔧 multipleClients", multipleClients);
+
   const [isManualConfigExpanded, setIsManualConfigExpanded] = useState(true);
   const { toast } = useToast();
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [nameError, setNameError] = useState<string>("");
   const [isNameTouched, setIsNameTouched] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  // Initialize argsString when clientFormConfig changes
-  useEffect(() => {
-    const { argsString: newArgsString, urlString: newUrlString } =
-      configToDisplayStrings(clientFormConfig);
-    setArgsString(newArgsString);
-    setSseUrlString(newUrlString);
-  }, [clientFormConfig]);
+
+  // Determine if we're in multiple mode (more than 1 client)
+  const isMultipleMode = multipleClients.length > 1;
+
+  // Get the current client (first one) for single mode
+  const currentClient = multipleClients[0] || {
+    id: "default",
+    name: "",
+    config: createDefaultStdioConfig(),
+  };
+  // Handler for updating the current client (single mode)
+  const handleUpdateCurrentClient = (updates: Partial<ClientConfig>) => {
+    setMultipleClients((prev) =>
+      prev.map((client) =>
+        client.id === currentClient.id ? { ...client, ...updates } : client,
+      ),
+    );
+  };
 
   useEffect(() => {
     if (!isNameTouched) return;
 
-    if (clientFormName.trim()) {
+    if (currentClient.name.trim()) {
       setNameError("");
     } else {
       setNameError("Client name is required");
     }
-  }, [clientFormName, isNameTouched]);
+  }, [currentClient.name, isNameTouched]);
 
   // Handler for args changes that preserves input while typing
   const handleArgsChange = (newArgsString: string) => {
-    setArgsString(newArgsString);
-    const updatedConfig = updateConfigFromStrings(
-      clientFormConfig,
-      newArgsString,
-    );
-    setClientFormConfig(updatedConfig);
+    if (isStdioConfig(currentClient.config)) {
+      const updatedConfig = updateConfigFromStrings(
+        currentClient.config,
+        newArgsString,
+      );
+      handleUpdateCurrentClient({ config: updatedConfig });
+    }
   };
 
   const handleSseUrlChange = (newSseUrlString: string) => {
-    setSseUrlString(newSseUrlString);
+    if (isHttpConfig(currentClient.config)) {
+      try {
+        const newUrl = new URL(newSseUrlString || "https://example.com");
+        handleUpdateCurrentClient({
+          config: { ...currentClient.config, url: newUrl },
+        });
+      } catch {
+        // Invalid URL, keep current config
+      }
+    }
   };
 
   // Handler for importing multiple servers
@@ -147,19 +182,21 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
       }));
 
       setMultipleClients(clients);
-      setIsMultipleMode(true);
 
       toast({
         title: "Multiple servers imported",
         description: `Imported ${servers.length} server configurations. Configure each client below.`,
       });
     } else if (servers.length === 1) {
-      // Single server - use existing flow
+      // Single server - update current client
       const firstServer = servers[0];
-      setClientFormConfig(firstServer.config);
-      if (!clientFormName.trim()) {
-        setClientFormName(firstServer.name);
-      }
+      const updatedClient = {
+        ...currentClient,
+        name: currentClient.name.trim() || firstServer.name,
+        config: firstServer.config,
+      };
+
+      setMultipleClients([updatedClient]);
 
       toast({
         title: "Configuration imported",
@@ -211,37 +248,7 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
     setMultipleClients((prev) => [...prev, newClient]);
   };
 
-  const handleSingleSave = async () => {
-    const { config: configToSave, error } = validateAndBuildConfig(
-      clientFormConfig,
-      argsString,
-      sseUrlString,
-    );
-
-    if (error) {
-      toast({
-        title: "Invalid configuration",
-        description: error,
-        variant: "destructive",
-      });
-      return;
-    }
-
-    try {
-      await onSave([{ name: clientFormName, config: configToSave }]);
-    } catch (error) {
-      toast({
-        title: "Error saving client",
-        description:
-          error instanceof Error
-            ? error.message
-            : "An unexpected error occurred.",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const handleSaveAll = async () => {
+  const handleSave = async () => {
     const validClients = multipleClients.filter((c) => c.name.trim());
     if (validClients.length === 0) {
       toast({
@@ -287,21 +294,21 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
 
       if (result.success.length > 0) {
         toast({
-          title: "Clients created successfully",
-          description: `Successfully created ${result.success.length} connection(s).`,
+          title: "Clients saved successfully",
+          description: `Successfully saved ${result.success.length} connection(s).`,
         });
       }
 
       if (result.failed.length > 0) {
         toast({
-          title: "Some clients failed to create",
-          description: `${result.failed.length} connection(s) failed to create. Check the console for details.`,
+          title: "Some clients failed to save",
+          description: `${result.failed.length} connection(s) failed to save. Check the console for details.`,
           variant: "destructive",
         });
       }
     } catch (error) {
       toast({
-        title: "Error creating clients",
+        title: "Error saving clients",
         description:
           error instanceof Error
             ? error.message
@@ -312,8 +319,14 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
   };
 
   const handleBackToSingle = () => {
-    setIsMultipleMode(false);
-    setMultipleClients([]);
+    // Reset to single client mode with a default client
+    setMultipleClients([
+      {
+        id: "new-client",
+        name: "",
+        config: createDefaultStdioConfig(),
+      },
+    ]);
   };
 
   if (isMultipleMode) {
@@ -417,7 +430,7 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
                           const newConfig =
                             type === "stdio"
                               ? createDefaultStdioConfig()
-                              : createDefaultHttpConfig();
+                              : createDefaultHttpConfig(type);
 
                           handleUpdateClient(client.id, {
                             config: newConfig,
@@ -536,16 +549,15 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
                   Cancel
                 </Button>
                 <Button
-                  onClick={handleSaveAll}
+                  onClick={handleSave}
                   disabled={
                     multipleClients.filter((c) => c.name.trim()).length === 0
                   }
                   className="min-w-[200px]"
                 >
                   <Save className="h-4 w-4 mr-2" />
-                  Create {
-                    multipleClients.filter((c) => c.name.trim()).length
-                  }{" "}
+                  {isCreating ? "Create" : "Update"}{" "}
+                  {multipleClients.filter((c) => c.name.trim()).length}{" "}
                   Connection(s)
                 </Button>
               </div>
@@ -651,8 +663,10 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
                 </Label>
                 <Input
                   id="client-name"
-                  value={clientFormName}
-                  onChange={(e) => setClientFormName(e.target.value)}
+                  value={currentClient.name}
+                  onChange={(e) =>
+                    handleUpdateCurrentClient({ name: e.target.value })
+                  }
                   onBlur={() => setIsNameTouched(true)}
                   placeholder="Enter client name"
                   className={`max-w-md ${nameError ? "border-red-500 focus:border-red-500 focus:ring-red-500" : ""}`}
@@ -688,41 +702,49 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
                 <div className="border border-border/50 rounded-lg p-4 bg-muted/30">
                   <ConnectionSection
                     connectionStatus="disconnected"
-                    transportType={clientFormConfig.transportType}
+                    transportType={currentClient.config.transportType}
                     setTransportType={(type) => {
                       const newConfig =
                         type === "stdio"
                           ? createDefaultStdioConfig()
-                          : createDefaultHttpConfig();
-                      setClientFormConfig(newConfig);
+                          : createDefaultHttpConfig(type);
+                      handleUpdateCurrentClient({ config: newConfig });
                     }}
                     command={
-                      isStdioConfig(clientFormConfig)
-                        ? clientFormConfig.command || ""
+                      isStdioConfig(currentClient.config)
+                        ? currentClient.config.command || ""
                         : ""
                     }
                     setCommand={(command) => {
-                      if (isStdioConfig(clientFormConfig)) {
-                        setClientFormConfig({
-                          ...clientFormConfig,
-                          command,
+                      if (isStdioConfig(currentClient.config)) {
+                        handleUpdateCurrentClient({
+                          config: {
+                            ...currentClient.config,
+                            command,
+                          },
                         });
                       }
                     }}
-                    args={argsString}
+                    args={
+                      configToDisplayStrings(currentClient.config).argsString
+                    }
                     setArgs={handleArgsChange}
-                    sseUrl={sseUrlString}
+                    sseUrl={
+                      configToDisplayStrings(currentClient.config).urlString
+                    }
                     setSseUrl={handleSseUrlChange}
                     env={
-                      isStdioConfig(clientFormConfig)
-                        ? clientFormConfig.env || {}
+                      isStdioConfig(currentClient.config)
+                        ? currentClient.config.env || {}
                         : {}
                     }
                     setEnv={(env) => {
-                      if (isStdioConfig(clientFormConfig)) {
-                        setClientFormConfig({
-                          ...clientFormConfig,
-                          env,
+                      if (isStdioConfig(currentClient.config)) {
+                        handleUpdateCurrentClient({
+                          config: {
+                            ...currentClient.config,
+                            env,
+                          },
                         });
                       }
                     }}
@@ -750,8 +772,8 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
         {/* Action Bar */}
         <div className="flex flex-col items-center gap-3 pt-4">
           <Button
-            onClick={handleSingleSave}
-            disabled={!clientFormName.trim()}
+            onClick={handleSave}
+            disabled={!currentClient.name.trim()}
             className="min-w-[180px] h-12 text-base font-semibold bg-primary hover:bg-primary/90 shadow-lg hover:shadow-xl transition-all duration-200 border-2 border-primary/20"
           >
             <CheckCircle2 className="h-5 w-5 mr-2" />
