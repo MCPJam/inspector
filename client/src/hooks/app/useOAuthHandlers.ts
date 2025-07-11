@@ -6,6 +6,7 @@ import {
 import { handleOAuthDebugConnect } from "../../services/oauth";
 import { useServerState } from "../useServerState";
 import { useConfigState } from "../useConfigState";
+import { SESSION_KEYS, getServerSpecificKey } from "../../lib/types/constants";
 
 // OAuth Handlers Hook
 export const useOAuthHandlers = (
@@ -44,8 +45,19 @@ export const useOAuthHandlers = (
       }
 
       const finalServerName = existingServerName || serverName;
+
+      // Get transport type from session storage or default to "sse"
+      const transportKey = getServerSpecificKey(
+        SESSION_KEYS.TRANSPORT_TYPE,
+        serverUrl,
+      );
+      const storedTransportType = sessionStorage.getItem(transportKey) as
+        | "sse"
+        | "streamable-http"
+        | null;
+      const transportType = storedTransportType || "sse";
       const serverConfig: HttpServerDefinition = {
-        transportType: "sse", // TODO: Make this dynamic
+        transportType,
         url: new URL(serverUrl),
       };
 

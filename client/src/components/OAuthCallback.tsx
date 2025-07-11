@@ -71,6 +71,8 @@ const OAuthCallback = ({ onConnect }: OAuthCallbackProps) => {
     };
 
     handleCallback().finally(() => {
+      // Clean up session storage
+      sessionStorage.removeItem(SESSION_KEYS.TRANSPORT_TYPE);
       window.history.replaceState({}, document.title, "/");
     });
   }, [toast, onConnect]);

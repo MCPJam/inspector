@@ -4,6 +4,7 @@ import { InspectorConfig } from "./configurationTypes";
 export const SESSION_KEYS = {
   CODE_VERIFIER: "mcp_code_verifier",
   SERVER_URL: "mcp_server_url",
+  TRANSPORT_TYPE: "mcp_transport_type",
   TOKENS: "mcp_tokens",
   CLIENT_INFORMATION: "mcp_client_information",
   SERVER_METADATA: "mcp_server_metadata",
