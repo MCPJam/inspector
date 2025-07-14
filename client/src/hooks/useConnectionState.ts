@@ -229,7 +229,10 @@ export const useConnectionState = (
     async (serverName: string, config: MCPJamServerConfig) => {
       if (!mcpAgent) return;
 
-      await mcpAgent.disconnectFromServer(serverName);
+      // Remove the old server completely (disconnect, remove config, clear caches)
+      await mcpAgent.removeServer(serverName);
+
+      // Add the server back with the new configuration
       mcpAgent.addServer(serverName, config);
 
       try {

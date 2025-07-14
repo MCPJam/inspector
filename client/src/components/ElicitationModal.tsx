@@ -8,6 +8,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { AlertCircle } from "lucide-react";
 import DynamicJsonForm from "./DynamicJsonForm";
 import { JsonSchemaType, JsonValue } from "@/lib/utils/json/jsonUtils";
 import { generateDefaultValue } from "@/lib/utils/json/schemaUtils";
@@ -23,13 +24,34 @@ export interface ElicitationRequest {
 
 // TODO: This is a temporary type for the elicitation request. Move this elsewhere.
 export interface ElicitationResponse {
-  action: "accept" | "reject" | "cancel";
+  action: "accept" | "decline" | "cancel";
   content?: Record<string, unknown>;
 }
 
 interface ElicitationModalProps {
   request: ElicitationRequest | null;
   onClose: () => void;
+}
+
+// Helper to recursively remove 'enumNames' from schema
+function stripEnumNames(schema: JsonSchemaType): JsonSchemaType {
+  if (Array.isArray(schema)) {
+    // Should not happen for root, but handle arrays of schemas
+    return schema.map(stripEnumNames) as unknown as JsonSchemaType;
+  }
+  if (typeof schema !== "object" || schema === null) return schema;
+  const { properties, items, ...rest } = schema as JsonSchemaType;
+  const cleaned: JsonSchemaType = { ...rest };
+  if (properties) {
+    cleaned.properties = {};
+    for (const key in properties) {
+      cleaned.properties[key] = stripEnumNames(properties[key]);
+    }
+  }
+  if (items) {
+    cleaned.items = stripEnumNames(items);
+  }
+  return cleaned;
 }
 
 const ElicitationModal = ({ request, onClose }: ElicitationModalProps) => {
@@ -98,7 +120,8 @@ const ElicitationModal = ({ request, onClose }: ElicitationModalProps) => {
       }
 
       const ajv = new Ajv();
-      const validate = ajv.compile(request.requestedSchema);
+      const cleanedSchema = stripEnumNames(request.requestedSchema);
+      const validate = ajv.compile(cleanedSchema);
       const isValid = validate(formData);
 
       if (!isValid) {
@@ -120,7 +143,7 @@ const ElicitationModal = ({ request, onClose }: ElicitationModalProps) => {
   };
 
   const handleReject = () => {
-    request.resolve({ action: "reject" });
+    request.resolve({ action: "decline" });
     onClose();
   };
 
@@ -136,13 +159,15 @@ const ElicitationModal = ({ request, onClose }: ElicitationModalProps) => {
     <Dialog open={true} onOpenChange={handleCancel}>
       <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{schemaTitle}</DialogTitle>
-          <DialogDescription className="space-y-2">
-            <span className="block">{request.message}</span>
+          <DialogTitle className="text-lg font-semibold">
+            {schemaTitle}
+          </DialogTitle>
+          <DialogDescription className="text-sm">
+            {request.message}
             {schemaDescription && (
-              <span className="block text-sm text-muted-foreground">
+              <div className="mt-2 text-xs text-muted-foreground">
                 {schemaDescription}
-              </span>
+              </div>
             )}
           </DialogDescription>
         </DialogHeader>
@@ -158,9 +183,12 @@ const ElicitationModal = ({ request, onClose }: ElicitationModalProps) => {
           />
 
           {validationError && (
-            <div className="mt-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md">
-              <div className="text-sm text-red-600 dark:text-red-400">
-                <strong>Validation Error:</strong> {validationError}
+            <div className="mt-4 p-3 bg-destructive/10 border border-destructive/20 rounded-md">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="h-4 w-4 text-destructive mt-0.5 flex-shrink-0" />
+                <div className="text-sm text-destructive">
+                  {validationError}
+                </div>
               </div>
             </div>
           )}
@@ -173,7 +201,9 @@ const ElicitationModal = ({ request, onClose }: ElicitationModalProps) => {
           <Button variant="outline" onClick={handleReject}>
             Decline
           </Button>
-          <Button onClick={handleAccept}>Submit</Button>
+          <Button onClick={handleAccept}>
+            Submit
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -118,7 +118,7 @@ const ConnectionItem: React.FC<ConnectionItemProps> = ({
             {getConnectionStatusIcon(connection.connectionStatus)}
             <div>
               <div className="font-medium text-sm">{connection.name}</div>
-              <div className="text-xs text-muted-foreground">
+              <div className={`text-xs text-muted-foreground break-all`}>
                 {getConnectionDisplayText(connection)}
               </div>
             </div>
@@ -132,9 +132,7 @@ const ConnectionItem: React.FC<ConnectionItemProps> = ({
           >
             {connection.connectionStatus}
           </span>
-          <div className="flex space-x-1">
-            {renderConnectionButton()}
-          </div>
+          <div className="flex space-x-1">{renderConnectionButton()}</div>
         </div>
       </div>
     </div>

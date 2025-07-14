@@ -7,12 +7,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import {
-  Plus,
-  Server,
-  ChevronLeft,
-  ChevronRight,
-} from "lucide-react";
+import { Plus, Server, ChevronLeft, ChevronRight } from "lucide-react";
 import useTheme from "../../lib/hooks/useTheme";
 import { version } from "../../../../package.json";
 import { MCPJamAgent } from "@/lib/utils/mcp/mcpjamAgent";
@@ -70,7 +65,6 @@ const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-
   // Helper function to check if connection should be disabled
   const shouldDisableConnection = () => {
     // Keeping this as false for now to allow multiple connections
@@ -86,7 +80,6 @@ const Sidebar: React.FC<SidebarProps> = ({
     }
     return "Connect to this server";
   };
-
 
   // Component: Header with logo and version
   const renderHeader = () => (
@@ -128,15 +121,15 @@ const Sidebar: React.FC<SidebarProps> = ({
               size="sm"
               variant="ghost"
               className="h-7 w-7 p-0 hover:bg-primary/20 hover:text-primary"
-              title="Create new client"
+              title="Create new connection"
             >
               <Plus className="w-4 h-4" />
             </Button>
           </TooltipTrigger>
           <TooltipContent>
             {mcpAgent?.hasConnectedRemoteServer()
-              ? "Note: Creating a remote client will disconnect the current remote connection"
-              : "Create new client"}
+              ? "Note: Creating a remote connection will disconnect the current remote connection"
+              : "Create new connection"}
           </TooltipContent>
         </Tooltip>
       </div>
@@ -159,9 +152,6 @@ const Sidebar: React.FC<SidebarProps> = ({
       </div>
     </div>
   );
-
-
-
 
   // Component: Theme selector
   const renderThemeSelector = () => (
@@ -324,7 +314,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                 <Plus className="w-4 h-4" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="right">Create new client</TooltipContent>
+            <TooltipContent side="right">Create new connection</TooltipContent>
           </Tooltip>
         </div>
       </div>

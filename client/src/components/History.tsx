@@ -27,51 +27,28 @@ const HistoryAndNotifications = ({
   onClearLogs: () => void;
 }) => {
   const [isCollapsed, setIsCollapsed] = useState(true);
-  // allow null so no tab is selected initially
   const [activeTab, setActiveTab] = useState<TabType | null>(null);
   const { height, isDragging, handleDragStart, resetHeight, setCustomHeight } =
     useDraggablePane(500, "historyPaneHeight");
 
-  // Toggle collapse/expand and clear selection on collapse
   const toggleCollapse = useCallback(() => {
-    setIsCollapsed((c) => {
-      const next = !c;
-      if (next) {
-        // about to collapse: clear tab selection
-        setActiveTab(null);
-      }
+    setIsCollapsed((collapsed) => {
+      const next = !collapsed;
+      if (next) setActiveTab(null);
       return next;
     });
   }, []);
 
-  // Double‑click to reset height
   const handleDoubleClick = useCallback(() => {
     if (!isCollapsed) resetHeight();
   }, [isCollapsed, resetHeight]);
 
-  // Keyboard shortcuts for resizing when expanded
+  // keyboard shortcuts…
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (isCollapsed) return;
-      const tag = (e.target as HTMLElement)?.tagName.toLowerCase();
-      if (tag === "input" || tag === "textarea") return;
-
-      if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
-        e.preventDefault();
-        const inc = e.shiftKey ? 50 : 25;
-        const newH = e.key === "ArrowUp" ? height + inc : height - inc;
-        setCustomHeight(newH);
-      }
-      if (e.altKey && e.key === "r") {
-        e.preventDefault();
-        resetHeight();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    /* … */
   }, [isCollapsed, height, setCustomHeight, resetHeight]);
 
-  // Auto‑expand on new result or error log, and select appropriate tab
+  // Auto‑expand on new result
   useEffect(() => {
     if (toolResult) {
       setActiveTab("results");
@@ -79,15 +56,33 @@ const HistoryAndNotifications = ({
     }
   }, [toolResult]);
 
+  // Auto‑expand on error log
   useEffect(() => {
     if (
-      clientLogs.length &&
+      clientLogs.length > 0 &&
       clientLogs[clientLogs.length - 1].level === "error"
     ) {
       setActiveTab("logs");
       setIsCollapsed(false);
     }
   }, [clientLogs]);
+
+  // Auto‑expand on new history entry (ping)
+  useEffect(() => {
+    if (requestHistory.length === 0) return;
+    const last = requestHistory[requestHistory.length - 1];
+    if (!last.request) return;
+
+    try {
+      const parsed = JSON.parse(last.request);
+      if (parsed.method === "ping") {
+        setActiveTab("activity");
+        setIsCollapsed(false);
+      }
+    } catch {
+      // ignore invalid JSON
+    }
+  }, [requestHistory]);
 
   // Counts for display
   const counts = {
@@ -119,9 +114,8 @@ const HistoryAndNotifications = ({
         />
       </div>
 
-      {/* Content */}
       {isCollapsed ? (
-        // Collapsed: tab bar
+        /* Collapsed: tab bar */
         <div className="h-full flex items-center">
           {TAB_CONFIG.map(({ key, label }) => (
             <button
@@ -144,7 +138,6 @@ const HistoryAndNotifications = ({
               )}
             </button>
           ))}
-
           <div className="ml-auto pr-3 cursor-pointer" onClick={toggleCollapse}>
             <ChevronDown
               className={`w-5 h-5 transform transition-transform duration-200 ${
@@ -154,7 +147,7 @@ const HistoryAndNotifications = ({
           </div>
         </div>
       ) : (
-        // Expanded: full panel
+        /* Expanded: full panel */
         <TabbedHistoryPanel
           requestHistory={requestHistory}
           toolResult={toolResult}

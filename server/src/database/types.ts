@@ -30,10 +30,10 @@ export class DatabaseError extends Error {
   constructor(
     message: string,
     public readonly code?: string,
-    public readonly cause?: Error
+    public readonly cause?: Error,
   ) {
     super(message);
-    this.name = 'DatabaseError';
+    this.name = "DatabaseError";
   }
 }
 
@@ -41,9 +41,9 @@ export class QueryError extends Error {
   constructor(
     message: string,
     public readonly query?: string,
-    public readonly cause?: Error
+    public readonly cause?: Error,
   ) {
     super(message);
-    this.name = 'QueryError';
+    this.name = "QueryError";
   }
 }

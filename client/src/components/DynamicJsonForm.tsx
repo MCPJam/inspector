@@ -1,6 +1,15 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import JsonEditor from "./JsonEditor";
 import { updateValueAtPath } from "@/lib/utils/json/jsonUtils";
 import { generateDefaultValue } from "@/lib/utils/json/schemaUtils";
@@ -161,28 +170,23 @@ const DynamicJsonForm = ({
 
               return (
                 <div key={fieldName} className="space-y-2">
-                  <label
-                    htmlFor={fieldName}
-                    className="block text-sm font-medium"
-                  >
+                  <Label htmlFor={fieldName} className="text-sm font-medium">
                     {fieldSchema.title || fieldName}
                     {fieldRequired && (
-                      <span className="text-red-500 ml-1">*</span>
+                      <span className="text-destructive ml-1">*</span>
                     )}
-                  </label>
+                  </Label>
                   {fieldSchema.description && (
-                    <p className="text-xs text-gray-500">
+                    <p className="text-xs text-muted-foreground">
                       {fieldSchema.description}
                     </p>
                   )}
-                  <div>
-                    {renderFieldInput(
-                      fieldSchema,
-                      fieldValue,
-                      fieldPath,
-                      fieldRequired,
-                    )}
-                  </div>
+                  {renderFieldInput(
+                    fieldSchema,
+                    fieldValue,
+                    fieldPath,
+                    fieldRequired,
+                  )}
                 </div>
               );
             },
@@ -205,26 +209,27 @@ const DynamicJsonForm = ({
       case "string": {
         if (propSchema.enum) {
           return (
-            <select
+            <Select
               value={(currentValue as string) ?? ""}
-              onChange={(e) => {
-                const val = e.target.value;
+              onValueChange={(val) => {
                 if (!val && !fieldRequired) {
                   handleFieldChange(path, undefined);
                 } else {
                   handleFieldChange(path, val);
                 }
               }}
-              required={fieldRequired}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-800"
             >
-              <option value="">Select an option...</option>
-              {propSchema.enum.map((option, index) => (
-                <option key={option} value={option}>
-                  {propSchema.enumNames?.[index] || option}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger>
+                <SelectValue placeholder="Select an option..." />
+              </SelectTrigger>
+              <SelectContent>
+                {propSchema.enum.map((option, index) => (
+                  <SelectItem key={option} value={option}>
+                    {propSchema.enumNames?.[index] || option}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           );
         }
 
@@ -318,16 +323,14 @@ const DynamicJsonForm = ({
       case "boolean":
         return (
           <div className="flex items-center space-x-2">
-            <Input
-              type="checkbox"
+            <Checkbox
               checked={(currentValue as boolean) ?? false}
-              onChange={(e) => handleFieldChange(path, e.target.checked)}
-              className="w-4 h-4"
+              onCheckedChange={(checked) => handleFieldChange(path, checked)}
               required={fieldRequired}
             />
-            <span className="text-sm">
+            <Label className="text-sm">
               {propSchema.description || "Enable this option"}
-            </span>
+            </Label>
           </div>
         );
 
@@ -363,7 +366,7 @@ const DynamicJsonForm = ({
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-end space-x-2">
+      <div className="flex justify-end gap-2">
         {isJsonMode && (
           <Button
             type="button"
@@ -385,31 +388,26 @@ const DynamicJsonForm = ({
         <JsonEditor
           value={rawJsonValue}
           onChange={(newValue) => {
-            // Always update local state
             setRawJsonValue(newValue);
-
-            // Use the debounced function to attempt parsing and updating parent
             debouncedUpdateParent(newValue);
           }}
           error={jsonError}
         />
-      ) : // If schema type is object but value is not an object or is empty, and we have actual JSON data,
-      // render a simple representation of the JSON data
-      schema.type === "object" &&
+      ) : schema.type === "object" &&
         (typeof value !== "object" ||
           value === null ||
           Object.keys(value).length === 0) &&
         rawJsonValue &&
         rawJsonValue !== "{}" ? (
-        <div className="space-y-4 border rounded-md p-4">
-          <p className="text-sm text-gray-500">
+        <div className="space-y-3 border rounded-md p-4 bg-muted/50">
+          <p className="text-sm text-muted-foreground">
             Form view not available for this JSON structure. Using simplified
             view:
           </p>
-          <pre className="bg-gray-50 dark:bg-gray-800 dark:text-gray-100 p-4 rounded text-sm overflow-auto">
+          <pre className="bg-background border rounded p-3 text-sm overflow-auto">
             {rawJsonValue}
           </pre>
-          <p className="text-sm text-gray-500">
+          <p className="text-sm text-muted-foreground">
             Use JSON mode for full editing capabilities.
           </p>
         </div>

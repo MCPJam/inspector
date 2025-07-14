@@ -29,8 +29,8 @@ const defaultEnvironment = {
   ...(process.env.MCP_ENV_VARS ? JSON.parse(process.env.MCP_ENV_VARS) : {}),
 };
 
-const serverConfigs = process.env.MCP_SERVER_CONFIGS 
-  ? JSON.parse(process.env.MCP_SERVER_CONFIGS) 
+const serverConfigs = process.env.MCP_SERVER_CONFIGS
+  ? JSON.parse(process.env.MCP_SERVER_CONFIGS)
   : null;
 
 const { values } = parseArgs({
@@ -55,26 +55,27 @@ const initializeDatabase = async () => {
     const dbConfig = getDatabaseConfig();
     databaseManager = new DatabaseManager(dbConfig);
     await databaseManager.initialize();
-    
+
     // Add database routes after successful initialization
-    app.use('/api/db', 
-      express.json({ limit: '10mb' }), // JSON middleware only for database routes
+    app.use(
+      "/api/db",
+      express.json({ limit: "10mb" }), // JSON middleware only for database routes
       (req, res, next) => {
         if (!databaseManager) {
           res.status(503).json({
             success: false,
-            error: 'Database not available'
+            error: "Database not available",
           });
           return;
         }
         next();
-      }, 
-      createDatabaseRoutes(databaseManager)
+      },
+      createDatabaseRoutes(databaseManager),
     );
-    
-    console.log('✅ Database API routes registered');
+
+    console.log("✅ Database API routes registered");
   } catch (error) {
-    console.error('❌ Failed to initialize database:', error);
+    console.error("❌ Failed to initialize database:", error);
     // Don't exit the process - continue without database functionality
   }
 };
@@ -82,63 +83,71 @@ const initializeDatabase = async () => {
 // Initialize MCPProxyService
 const mcpProxyService = new MCPProxyService({
   logger: new ConsoleLogger(),
-  maxConnections: 50
+  maxConnections: 50,
 });
 
 // Helper function to convert request query to ServerConfig
 const createServerConfigFromRequest = (req: express.Request): ServerConfig => {
   const query = req.query;
   const transportType = query.transportType as string;
-  
+
   const config: ServerConfig = {
     id: randomUUID(),
-    type: transportType as 'stdio' | 'sse' | 'streamable-http',
+    type: transportType as "stdio" | "sse" | "streamable-http",
     name: `server-${Date.now()}`,
   };
-  
-  if (transportType === 'stdio') {
+
+  if (transportType === "stdio") {
     config.command = query.command as string;
-    config.args = query.args ? shellParseArgs(query.args as string) as string[] : undefined;
-    
+    config.args = query.args
+      ? (shellParseArgs(query.args as string) as string[])
+      : undefined;
+
     // Safely parse env - only if it's a valid JSON string
     if (query.env) {
       try {
         config.env = JSON.parse(query.env as string);
       } catch (error) {
-        console.warn(`Failed to parse env as JSON: ${query.env}, using empty object`);
+        console.warn(
+          `Failed to parse env as JSON: ${query.env}, using empty object`,
+        );
         config.env = {};
       }
     }
-  } else if (transportType === 'sse' || transportType === 'streamable-http') {
+  } else if (transportType === "sse" || transportType === "streamable-http") {
     config.url = query.url as string;
   }
-  
+
   return config;
 };
 
 // Helper function to extract headers for transport
-const extractRequestHeaders = (req: express.Request): Record<string, string> => {
+const extractRequestHeaders = (
+  req: express.Request,
+): Record<string, string> => {
   const headers: Record<string, string> = {};
-  const headersToPass = req.query.transportType === 'sse' 
-    ? SSE_HEADERS_PASSTHROUGH 
-    : STREAMABLE_HTTP_HEADERS_PASSTHROUGH;
-    
+  const headersToPass =
+    req.query.transportType === "sse"
+      ? SSE_HEADERS_PASSTHROUGH
+      : STREAMABLE_HTTP_HEADERS_PASSTHROUGH;
+
   for (const key of headersToPass) {
     const value = req.headers[key];
     if (value !== undefined) {
       headers[key] = Array.isArray(value) ? value[value.length - 1] : value;
     }
   }
-  
+
   return headers;
 };
-
 
 app.get("/mcp", async (req, res) => {
   const sessionId = req.headers["mcp-session-id"] as string;
   console.log(`📥 Received GET message for sessionId ${sessionId}`);
   try {
-    const transport = mcpProxyService.getWebAppTransport(sessionId) as StreamableHTTPServerTransport;
+    const transport = mcpProxyService.getWebAppTransport(
+      sessionId,
+    ) as StreamableHTTPServerTransport;
     if (!transport) {
       res.status(404).end("Session not found");
       return;
@@ -154,7 +163,7 @@ app.get("/mcp", async (req, res) => {
 app.post("/mcp", async (req, res) => {
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
   console.log(`📥 Received POST message for sessionId ${sessionId}`);
-  
+
   if (!sessionId) {
     try {
       console.log("🔄 New streamable-http connection");
@@ -162,15 +171,18 @@ app.post("/mcp", async (req, res) => {
       // Create server config and headers from request
       const serverConfig = createServerConfigFromRequest(req);
       const requestHeaders = extractRequestHeaders(req);
-      
+
       try {
         // Use MCPProxyService to create the streamable HTTP connection
-        const { sessionId: newSessionId, webAppTransport } = await mcpProxyService.createStreamableHTTPConnection(
-          serverConfig, 
-          requestHeaders
+        const { sessionId: newSessionId, webAppTransport } =
+          await mcpProxyService.createStreamableHTTPConnection(
+            serverConfig,
+            requestHeaders,
+          );
+
+        console.log(
+          `✨ Connected MCP client to backing server transport for session ${newSessionId}`,
         );
-        
-        console.log(`✨ Connected MCP client to backing server transport for session ${newSessionId}`);
 
         await webAppTransport.handleRequest(req, res, req.body);
       } catch (error) {
@@ -190,7 +202,9 @@ app.post("/mcp", async (req, res) => {
     }
   } else {
     try {
-      const transport = mcpProxyService.getWebAppTransport(sessionId) as StreamableHTTPServerTransport;
+      const transport = mcpProxyService.getWebAppTransport(
+        sessionId,
+      ) as StreamableHTTPServerTransport;
       if (!transport) {
         res.status(404).end("Transport not found for sessionId " + sessionId);
       } else {
@@ -210,16 +224,18 @@ app.get("/stdio", async (req, res) => {
     // Create server config and headers from request
     const serverConfig = createServerConfigFromRequest(req);
     const requestHeaders = extractRequestHeaders(req);
-    
+
     try {
       // Use MCPProxyService to create the SSE connection (handles STDIO stderr automatically)
       const { sessionId } = await mcpProxyService.createSSEConnection(
-        serverConfig, 
-        res, 
-        requestHeaders
+        serverConfig,
+        res,
+        requestHeaders,
       );
-      
-      console.log(`✨ Connected MCP client to backing server transport for session ${sessionId}`);
+
+      console.log(
+        `✨ Connected MCP client to backing server transport for session ${sessionId}`,
+      );
     } catch (error) {
       if (error instanceof SseError && error.code === 401) {
         console.error(
@@ -245,16 +261,18 @@ app.get("/sse", async (req, res) => {
     // Create server config and headers from request
     const serverConfig = createServerConfigFromRequest(req);
     const requestHeaders = extractRequestHeaders(req);
-    
+
     try {
       // Use MCPProxyService to create the SSE connection
       const { sessionId } = await mcpProxyService.createSSEConnection(
-        serverConfig, 
-        res, 
-        requestHeaders
+        serverConfig,
+        res,
+        requestHeaders,
       );
-      
-      console.log(`✨ Connected MCP client to backing server transport for session ${sessionId}`);
+
+      console.log(
+        `✨ Connected MCP client to backing server transport for session ${sessionId}`,
+      );
     } catch (error) {
       if (error instanceof SseError && error.code === 401) {
         console.error(
@@ -278,7 +296,9 @@ app.post("/message", async (req, res) => {
     const sessionId = req.query.sessionId;
     console.log(`📥 Received message for sessionId ${sessionId}`);
 
-    const transport = mcpProxyService.getWebAppTransport(sessionId as string) as SSEServerTransport;
+    const transport = mcpProxyService.getWebAppTransport(
+      sessionId as string,
+    ) as SSEServerTransport;
     if (!transport) {
       res.status(404).end("Session not found");
       return;
@@ -354,7 +374,7 @@ const startServer = async () => {
   try {
     // Initialize database first
     await initializeDatabase();
-    
+
     const availablePort = await findAvailablePort(Number(PORT));
     actualPort = availablePort;
 
@@ -377,13 +397,13 @@ const startServer = async () => {
     });
 
     // Graceful shutdown
-    process.on('SIGINT', async () => {
-      console.log('\n🔄 Shutting down server...');
+    process.on("SIGINT", async () => {
+      console.log("\n🔄 Shutting down server...");
       server.close();
       await mcpProxyService.closeAllConnections();
       if (databaseManager) {
         await databaseManager.close();
-        console.log('✅ Database connection closed');
+        console.log("✅ Database connection closed");
       }
       process.exit(0);
     });
