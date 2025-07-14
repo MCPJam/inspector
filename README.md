@@ -57,7 +57,11 @@ The inspector will be available in your browser at `http://127.0.0.1:6274`.
 ## 📸 Screenshots
 
 <div align="center">
-<img width="1511" alt="MCPJam Inspector Interface" src="https://github.com/user-attachments/assets/ade8a46a-f738-4d32-ac85-260a5e22b90f" />
+<img width="1511" alt="MCPJam Inspector Interface" src="client/public/mcpjam1.png" />
+<img width="1511" alt="MCPJam Inspector Interface" src="client/public/mcpjam2.png" />
+<img width="1511" alt="MCPJam Inspector Interface" src="client/public/mcpjam3.png" />
+<img width="1511" alt="MCPJam Inspector Interface" src="client/public/mcpjam4.png" />
+<img width="1511" alt="MCPJam Inspector Interface" src="client/public/mcpjam5.png" />
 </div>
 
 ---
