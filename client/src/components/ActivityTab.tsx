@@ -72,14 +72,11 @@ const ActivityHeader = ({
 // Component for the compact header (when showHeader is false)
 const CompactHeader = ({
   requestHistory,
-  onClearHistory,
 }: {
   requestHistory: RequestHistoryInfo[];
-  onClearHistory: () => void;
 }) => (
   <div className="flex items-center justify-between mb-6">
     <RequestCountBadge count={requestHistory.length} />
-    <ClearHistoryButton onClick={onClearHistory} />
   </div>
 );
 
@@ -140,10 +137,7 @@ const ActivityTab = ({
       ) : (
         <>
           {!showHeader && requestHistory.length > 0 && (
-            <CompactHeader
-              requestHistory={requestHistory}
-              onClearHistory={onClearHistory}
-            />
+            <CompactHeader requestHistory={requestHistory} />
           )}
           <RequestHistoryList requestHistory={requestHistory} />
         </>

@@ -1,13 +1,17 @@
-import React, { useState, useEffect } from "react";
-import {
-  MCPJamServerConfig,
-  StdioServerDefinition,
-  HttpServerDefinition,
-} from "../lib/types/serverTypes";
+import React, { useState, useEffect, useRef } from "react";
+import { MCPJamServerConfig } from "../lib/types/serverTypes";
 import { InspectorConfig } from "../lib/types/configurationTypes";
 import ConnectionSection from "./ConnectionSection";
 import { ParsedServerConfig } from "@/lib/utils/json/configImportUtils";
 import { useToast } from "@/lib/hooks/useToast";
+import {
+  configToDisplayStrings,
+  updateConfigFromStrings,
+  createDefaultStdioConfig,
+  createDefaultHttpConfig,
+  isStdioConfig,
+  isHttpConfig,
+} from "@/lib/utils/config/configHelpers";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -34,47 +38,44 @@ import {
   ChevronDown,
   ChevronRight,
 } from "lucide-react";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+  TooltipProvider,
+} from "@/components/ui/tooltip";
 import ConfigImportDialog from "./ConfigImportDialog";
 
 interface ClientConfig {
   id: string;
   name: string;
   config: MCPJamServerConfig;
-  argsString: string;
-  sseUrlString: string;
 }
 
 interface ClientFormSectionProps {
   isCreating: boolean;
   editingClientName: string | null;
-  clientFormName: string;
-  setClientFormName: (name: string) => void;
-  clientFormConfig: MCPJamServerConfig;
-  setClientFormConfig: (config: MCPJamServerConfig) => void;
+  initialClient?: { name: string; config: MCPJamServerConfig };
   config: InspectorConfig;
   setConfig: (config: InspectorConfig) => void;
   bearerToken: string;
   setBearerToken: (token: string) => void;
   headerName: string;
   setHeaderName: (name: string) => void;
-  onSave: (config: MCPJamServerConfig) => void;
-  onCancel: () => void;
-  onImportMultipleServers?: (servers: ParsedServerConfig[]) => void;
-  onSaveMultiple?: (
+  onSave: (
     clients: Array<{ name: string; config: MCPJamServerConfig }>,
   ) => Promise<{
     success: string[];
     failed: Array<{ name: string; error: string }>;
   }>;
+  onCancel: () => void;
+  onImportMultipleServers?: (servers: ParsedServerConfig[]) => void;
 }
 
 const ClientFormSection: React.FC<ClientFormSectionProps> = ({
   isCreating,
   editingClientName,
-  clientFormName,
-  setClientFormName,
-  clientFormConfig,
-  setClientFormConfig,
+  initialClient,
   config,
   setConfig,
   bearerToken,
@@ -84,58 +85,89 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
   onSave,
   onCancel,
   onImportMultipleServers,
-  onSaveMultiple,
 }) => {
-  // Local state to track raw args string while typing
-  const [argsString, setArgsString] = useState<string>("");
-  const [sseUrlString, setSseUrlString] = useState<string>("");
-  const [multipleClients, setMultipleClients] = useState<ClientConfig[]>([]);
-  const [isMultipleMode, setIsMultipleMode] = useState(false);
-  const [isManualConfigExpanded, setIsManualConfigExpanded] = useState(false);
+  // Initialize multipleClients based on mode
+  const [multipleClients, setMultipleClients] = useState<ClientConfig[]>(() => {
+    if (initialClient) {
+      // Editing mode - initialize with the client being edited
+      return [
+        {
+          id: "editing-client",
+          name: initialClient.name,
+          config: initialClient.config,
+        },
+      ];
+    } else {
+      // Creating mode - initialize with default client
+      return [
+        {
+          id: "new-client",
+          name: "",
+          config: createDefaultStdioConfig(),
+        },
+      ];
+    }
+  });
+
+  console.log("🔧 multipleClients", multipleClients);
+
+  const [isManualConfigExpanded, setIsManualConfigExpanded] = useState(true);
   const { toast } = useToast();
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [nameError, setNameError] = useState<string>("");
+  const [isNameTouched, setIsNameTouched] = useState(false);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  // Initialize argsString when clientFormConfig changes
-  useEffect(() => {
-    if (
-      clientFormConfig.transportType === "stdio" &&
-      "args" in clientFormConfig
-    ) {
-      setArgsString(clientFormConfig.args?.join(" ") || "");
-      setSseUrlString("");
-    } else if (
-      clientFormConfig.transportType !== "stdio" &&
-      "url" in clientFormConfig
-    ) {
-      setArgsString("");
-      setSseUrlString(clientFormConfig.url?.toString() || "");
-    }
-  }, [clientFormConfig]);
+  // Determine if we're in multiple mode (more than 1 client)
+  const isMultipleMode = multipleClients.length > 1;
+
+  // Get the current client (first one) for single mode
+  const currentClient = multipleClients[0] || {
+    id: "default",
+    name: "",
+    config: createDefaultStdioConfig(),
+  };
+  // Handler for updating the current client (single mode)
+  const handleUpdateCurrentClient = (updates: Partial<ClientConfig>) => {
+    setMultipleClients((prev) =>
+      prev.map((client) =>
+        client.id === currentClient.id ? { ...client, ...updates } : client,
+      ),
+    );
+  };
 
   useEffect(() => {
-    if (clientFormName.trim()) {
+    if (!isNameTouched) return;
+
+    if (currentClient.name.trim()) {
       setNameError("");
     } else {
       setNameError("Client name is required");
     }
-  }, [clientFormName]);
+  }, [currentClient.name, isNameTouched]);
 
   // Handler for args changes that preserves input while typing
   const handleArgsChange = (newArgsString: string) => {
-    setArgsString(newArgsString);
-
-    // Update the config with parsed args
-    if (clientFormConfig.transportType === "stdio") {
-      setClientFormConfig({
-        ...clientFormConfig,
-        args: newArgsString.trim() ? newArgsString.split(/\s+/) : [],
-      } as StdioServerDefinition);
+    if (isStdioConfig(currentClient.config)) {
+      const updatedConfig = updateConfigFromStrings(
+        currentClient.config,
+        newArgsString,
+      );
+      handleUpdateCurrentClient({ config: updatedConfig });
     }
   };
 
   const handleSseUrlChange = (newSseUrlString: string) => {
-    setSseUrlString(newSseUrlString);
+    if (isHttpConfig(currentClient.config)) {
+      try {
+        const newUrl = new URL(newSseUrlString || "https://example.com");
+        handleUpdateCurrentClient({
+          config: { ...currentClient.config, url: newUrl },
+        });
+      } catch {
+        // Invalid URL, keep current config
+      }
+    }
   };
 
   // Handler for importing multiple servers
@@ -146,45 +178,24 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
         id: `client-${Date.now()}-${index}`,
         name: server.name,
         config: server.config,
-        argsString:
-          server.config.transportType === "stdio" && "args" in server.config
-            ? server.config.args?.join(" ") || ""
-            : "",
-        sseUrlString:
-          server.config.transportType !== "stdio" && "url" in server.config
-            ? server.config.url?.toString() || ""
-            : "",
       }));
 
       setMultipleClients(clients);
-      setIsMultipleMode(true);
 
       toast({
         title: "Multiple servers imported",
         description: `Imported ${servers.length} server configurations. Configure each client below.`,
       });
     } else if (servers.length === 1) {
-      // Single server - use existing flow
+      // Single server - update current client
       const firstServer = servers[0];
-      setClientFormConfig(firstServer.config);
-      if (!clientFormName.trim()) {
-        setClientFormName(firstServer.name);
-      }
+      const updatedClient = {
+        ...currentClient,
+        name: currentClient.name.trim() || firstServer.name,
+        config: firstServer.config,
+      };
 
-      // Update args string if it's a stdio server
-      if (
-        firstServer.config.transportType === "stdio" &&
-        "args" in firstServer.config
-      ) {
-        setArgsString(firstServer.config.args?.join(" ") || "");
-        setSseUrlString("");
-      } else if (
-        firstServer.config.transportType !== "stdio" &&
-        "url" in firstServer.config
-      ) {
-        setArgsString("");
-        setSseUrlString(firstServer.config.url?.toString() || "");
-      }
+      setMultipleClients([updatedClient]);
 
       toast({
         title: "Configuration imported",
@@ -195,6 +206,16 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
     if (onImportMultipleServers) {
       onImportMultipleServers(servers);
     }
+
+    // Auto-scroll to bottom after import to show the action buttons
+    setTimeout(() => {
+      if (scrollContainerRef.current) {
+        scrollContainerRef.current.scrollTo({
+          top: scrollContainerRef.current.scrollHeight,
+          behavior: "smooth",
+        });
+      }
+    }, 100); // Ensures the DOM is updated before scrolling
   };
 
   // Handler for updating individual client in multiple mode
@@ -221,43 +242,12 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
     const newClient: ClientConfig = {
       id: `client-${Date.now()}`,
       name: "",
-      config: {
-        transportType: "stdio",
-        command: "npx",
-        args: ["@modelcontextprotocol/server-everything"],
-        env: {},
-      } as StdioServerDefinition,
-      argsString: "@modelcontextprotocol/server-everything",
-      sseUrlString: "",
+      config: createDefaultStdioConfig(),
     };
     setMultipleClients((prev) => [...prev, newClient]);
   };
 
-  const handleSingleSave = () => {
-    let configToSave = { ...clientFormConfig };
-
-    if (configToSave.transportType !== "stdio") {
-      try {
-        const url = new URL(sseUrlString);
-        configToSave = {
-          ...configToSave,
-          url,
-        } as HttpServerDefinition;
-      } catch {
-        toast({
-          title: "Invalid URL",
-          description: "Please enter a valid URL for the client.",
-          variant: "destructive",
-        });
-        return;
-      }
-    }
-    onSave(configToSave);
-  };
-
-  const handleSaveAll = async () => {
-    if (!onSaveMultiple) return;
-
+  const handleSave = async () => {
     const validClients = multipleClients.filter((c) => c.name.trim());
     if (validClients.length === 0) {
       toast({
@@ -268,47 +258,73 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
       return;
     }
 
-    const clientsToSave = validClients.map((client) => {
-      let configToSave = { ...client.config };
+    const clientsToSave = [];
+    const configErrors = [];
 
-      if (configToSave.transportType !== "stdio") {
+    for (const client of validClients) {
+      // For HTTP configs, validate URL if it exists
+      if (isHttpConfig(client.config)) {
+        if (!client.config.url) {
+          configErrors.push(
+            `${client.name}: URL is required for HTTP connections`,
+          );
+          continue;
+        }
         try {
-          const url = new URL(client.sseUrlString);
-          configToSave = {
-            ...configToSave,
-            url,
-          } as HttpServerDefinition;
+          // Validate the URL by creating a new URL object
+          new URL(client.config.url.toString());
         } catch {
-          throw new Error(`Invalid URL for client "${client.name}"`);
+          configErrors.push(`${client.name}: Invalid URL format`);
+          continue;
         }
       }
 
-      return {
-        name: client.name,
-        config: configToSave,
-      };
-    });
+      // For stdio configs, validate command
+      if (isStdioConfig(client.config)) {
+        if (!client.config.command?.trim()) {
+          configErrors.push(
+            `${client.name}: Command is required for stdio connections`,
+          );
+          continue;
+        }
+      }
 
+      // Use the client config directly - it already contains all the changes
+      clientsToSave.push({
+        name: client.name,
+        config: client.config,
+      });
+    }
+
+    if (configErrors.length > 0) {
+      toast({
+        title: "Configuration errors",
+        description: `Please fix the following errors: ${configErrors.join(", ")}`,
+        variant: "destructive",
+      });
+      return;
+    }
+    console.log("🔧 clientsToSave", clientsToSave);
     try {
-      const result = await onSaveMultiple(clientsToSave);
+      const result = await onSave(clientsToSave);
 
       if (result.success.length > 0) {
         toast({
-          title: "Clients created successfully",
-          description: `Successfully created ${result.success.length} connection(s).`,
+          title: "Clients saved successfully",
+          description: `Successfully saved ${result.success.length} connection(s).`,
         });
       }
 
       if (result.failed.length > 0) {
         toast({
-          title: "Some clients failed to create",
-          description: `${result.failed.length} connection(s) failed to create. Check the console for details.`,
+          title: "Some clients failed to save",
+          description: `${result.failed.length} connection(s) failed to save. Check the console for details.`,
           variant: "destructive",
         });
       }
     } catch (error) {
       toast({
-        title: "Error creating clients",
+        title: "Error saving clients",
         description:
           error instanceof Error
             ? error.message
@@ -319,13 +335,22 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
   };
 
   const handleBackToSingle = () => {
-    setIsMultipleMode(false);
-    setMultipleClients([]);
+    // Reset to single client mode with a default client
+    setMultipleClients([
+      {
+        id: "new-client",
+        name: "",
+        config: createDefaultStdioConfig(),
+      },
+    ]);
   };
 
   if (isMultipleMode) {
     return (
-      <div className="flex-1 flex flex-col overflow-auto bg-gradient-to-br from-background to-muted/20">
+      <div
+        ref={scrollContainerRef}
+        className="flex-1 flex flex-col overflow-auto bg-gradient-to-br from-background to-muted/20"
+      >
         <div className="max-w-7xl mx-auto w-full p-6 space-y-6">
           {/* Header */}
           <div className="flex items-center gap-3">
@@ -418,83 +443,73 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
                         connectionStatus="disconnected"
                         transportType={client.config.transportType}
                         setTransportType={(type) => {
-                          let newConfig: MCPJamServerConfig;
-                          let newArgsString = "";
-
-                          if (type === "stdio") {
-                            newConfig = {
-                              transportType: type,
-                              command: "npx",
-                              args: ["@modelcontextprotocol/server-everything"],
-                              env: {},
-                            } as StdioServerDefinition;
-                            newArgsString =
-                              "@modelcontextprotocol/server-everything";
-                          } else {
-                            newConfig = {
-                              transportType: type,
-                              url: new URL("https://example.com"),
-                            } as HttpServerDefinition;
-                          }
+                          const newConfig =
+                            type === "stdio"
+                              ? createDefaultStdioConfig()
+                              : createDefaultHttpConfig(type);
 
                           handleUpdateClient(client.id, {
                             config: newConfig,
-                            argsString: newArgsString,
-                            sseUrlString:
-                              newConfig.transportType !== "stdio" &&
-                              "url" in newConfig &&
-                              newConfig.url
-                                ? newConfig.url.toString()
-                                : "",
                           });
                         }}
                         command={
-                          client.config.transportType === "stdio" &&
-                          "command" in client.config
+                          isStdioConfig(client.config)
                             ? client.config.command || ""
                             : ""
                         }
                         setCommand={(command) => {
-                          if (client.config.transportType === "stdio") {
+                          if (isStdioConfig(client.config)) {
                             handleUpdateClient(client.id, {
                               config: {
                                 ...client.config,
                                 command,
-                              } as StdioServerDefinition,
+                              },
                             });
                           }
                         }}
-                        args={client.argsString}
+                        args={configToDisplayStrings(client.config).argsString}
                         setArgs={(newArgsString) => {
-                          if (client.config.transportType === "stdio") {
+                          if (isStdioConfig(client.config)) {
+                            const updatedConfig = updateConfigFromStrings(
+                              client.config,
+                              newArgsString,
+                            );
                             handleUpdateClient(client.id, {
-                              argsString: newArgsString,
-                              config: {
-                                ...client.config,
-                                args: newArgsString.trim()
-                                  ? newArgsString.split(/\s+/)
-                                  : [],
-                              } as StdioServerDefinition,
+                              config: updatedConfig,
                             });
                           }
                         }}
-                        sseUrl={client.sseUrlString}
+                        sseUrl={configToDisplayStrings(client.config).urlString}
                         setSseUrl={(url) => {
-                          handleUpdateClient(client.id, { sseUrlString: url });
+                          // For HTTP configs, we store the URL string and validate during save
+                          if (isHttpConfig(client.config)) {
+                            try {
+                              const newUrl = new URL(
+                                url || "https://example.com",
+                              );
+                              handleUpdateClient(client.id, {
+                                config: {
+                                  ...client.config,
+                                  url: newUrl,
+                                },
+                              });
+                            } catch {
+                              // If URL is invalid, keep the current config
+                            }
+                          }
                         }}
                         env={
-                          client.config.transportType === "stdio" &&
-                          "env" in client.config
+                          isStdioConfig(client.config)
                             ? client.config.env || {}
                             : {}
                         }
                         setEnv={(env) => {
-                          if (client.config.transportType === "stdio") {
+                          if (isStdioConfig(client.config)) {
                             handleUpdateClient(client.id, {
                               config: {
                                 ...client.config,
                                 env,
-                              } as StdioServerDefinition,
+                              },
                             });
                           }
                         }}
@@ -550,16 +565,15 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
                   Cancel
                 </Button>
                 <Button
-                  onClick={handleSaveAll}
+                  onClick={handleSave}
                   disabled={
                     multipleClients.filter((c) => c.name.trim()).length === 0
                   }
                   className="min-w-[200px]"
                 >
                   <Save className="h-4 w-4 mr-2" />
-                  Create {
-                    multipleClients.filter((c) => c.name.trim()).length
-                  }{" "}
+                  {isCreating ? "Create" : "Update"}{" "}
+                  {multipleClients.filter((c) => c.name.trim()).length}{" "}
                   Connection(s)
                 </Button>
               </div>
@@ -572,7 +586,10 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
 
   // Single client mode
   return (
-    <div className="flex-1 flex flex-col overflow-auto bg-gradient-to-br from-background to-muted/20">
+    <div
+      ref={scrollContainerRef}
+      className="flex-1 flex flex-col overflow-auto bg-gradient-to-br from-background to-muted/20"
+    >
       <div className="max-w-5xl mx-auto w-full p-6 space-y-8">
         {/* Import Configuration Card - Only show when creating */}
         {isCreating && (
@@ -658,18 +675,38 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
               {/* Client Name */}
               <div className="space-y-2">
                 <Label htmlFor="client-name" className="text-sm font-medium">
-                  Name
+                  Name*
                 </Label>
                 <Input
                   id="client-name"
-                  value={clientFormName}
-                  onChange={(e) => setClientFormName(e.target.value)}
+                  value={currentClient.name}
+                  onChange={(e) =>
+                    handleUpdateCurrentClient({ name: e.target.value })
+                  }
+                  onBlur={() => setIsNameTouched(true)}
                   placeholder="Enter client name"
                   className={`max-w-md ${nameError ? "border-red-500 focus:border-red-500 focus:ring-red-500" : ""}`}
                 />
                 {nameError && (
                   <p className="text-sm text-red-500 flex items-center gap-1">
-                    <AlertCircle className="h-3 w-3" />
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <AlertCircle className="h-4 w-4 cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent
+                          side="top"
+                          className="max-w-sm p-2 text-xs leading-relaxed"
+                        >
+                          A client name is required to help you identify and
+                          manage your MCP connections.
+                          <br />
+                          It ensures clarity when debugging or switching between
+                          multiple clients. Leaving it blank makes the
+                          connection untraceable within the tool.
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
                     {nameError}
                   </p>
                 )}
@@ -681,57 +718,50 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
                 <div className="border border-border/50 rounded-lg p-4 bg-muted/30">
                   <ConnectionSection
                     connectionStatus="disconnected"
-                    transportType={clientFormConfig.transportType}
+                    transportType={currentClient.config.transportType}
                     setTransportType={(type) => {
-                      if (type === "stdio") {
-                        const newConfig = {
-                          transportType: type,
-                          command: "npx",
-                          args: ["@modelcontextprotocol/server-everything"],
-                          env: {},
-                        } as StdioServerDefinition;
-                        setClientFormConfig(newConfig);
-                        setArgsString(
-                          "@modelcontextprotocol/server-everything",
-                        );
-                      } else {
-                        setClientFormConfig({
-                          transportType: type,
-                          url: new URL("https://example.com"),
-                        } as HttpServerDefinition);
-                        setArgsString("");
-                      }
+                      const newConfig =
+                        type === "stdio"
+                          ? createDefaultStdioConfig()
+                          : createDefaultHttpConfig(type);
+                      handleUpdateCurrentClient({ config: newConfig });
                     }}
                     command={
-                      clientFormConfig.transportType === "stdio" &&
-                      "command" in clientFormConfig
-                        ? clientFormConfig.command || ""
+                      isStdioConfig(currentClient.config)
+                        ? currentClient.config.command || ""
                         : ""
                     }
                     setCommand={(command) => {
-                      if (clientFormConfig.transportType === "stdio") {
-                        setClientFormConfig({
-                          ...clientFormConfig,
-                          command,
-                        } as StdioServerDefinition);
+                      if (isStdioConfig(currentClient.config)) {
+                        handleUpdateCurrentClient({
+                          config: {
+                            ...currentClient.config,
+                            command,
+                          },
+                        });
                       }
                     }}
-                    args={argsString}
+                    args={
+                      configToDisplayStrings(currentClient.config).argsString
+                    }
                     setArgs={handleArgsChange}
-                    sseUrl={sseUrlString}
+                    sseUrl={
+                      configToDisplayStrings(currentClient.config).urlString
+                    }
                     setSseUrl={handleSseUrlChange}
                     env={
-                      clientFormConfig.transportType === "stdio" &&
-                      "env" in clientFormConfig
-                        ? clientFormConfig.env || {}
+                      isStdioConfig(currentClient.config)
+                        ? currentClient.config.env || {}
                         : {}
                     }
                     setEnv={(env) => {
-                      if (clientFormConfig.transportType === "stdio") {
-                        setClientFormConfig({
-                          ...clientFormConfig,
-                          env,
-                        } as StdioServerDefinition);
+                      if (isStdioConfig(currentClient.config)) {
+                        handleUpdateCurrentClient({
+                          config: {
+                            ...currentClient.config,
+                            env,
+                          },
+                        });
                       }
                     }}
                     config={config}
@@ -758,8 +788,8 @@ const ClientFormSection: React.FC<ClientFormSectionProps> = ({
         {/* Action Bar */}
         <div className="flex flex-col items-center gap-3 pt-4">
           <Button
-            onClick={handleSingleSave}
-            disabled={!clientFormName.trim()}
+            onClick={handleSave}
+            disabled={!currentClient.name.trim()}
             className="min-w-[180px] h-12 text-base font-semibold bg-primary hover:bg-primary/90 shadow-lg hover:shadow-xl transition-all duration-200 border-2 border-primary/20"
           >
             <CheckCircle2 className="h-5 w-5 mr-2" />

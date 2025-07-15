@@ -1,15 +1,14 @@
 import { ClientLogInfo } from "@/hooks/helpers/types";
-import { Trash2, AlertCircle, Info, AlertTriangle, Bug } from "lucide-react";
+import { AlertCircle, Info, AlertTriangle, Bug } from "lucide-react";
+import CopyIcon from "./CopyIcon";
 
 interface ClientLogsTabProps {
   clientLogs: ClientLogInfo[];
-  onClearLogs: () => void;
   showHeader?: boolean;
 }
 
 const ClientLogsTab = ({
   clientLogs,
-  onClearLogs,
   showHeader = true,
 }: ClientLogsTabProps) => {
   const reversedClientLogs = [...clientLogs].reverse();
@@ -71,20 +70,20 @@ const ClientLogsTab = ({
 
     return (
       <div
-        className={`flex items-start space-x-3 p-3 rounded-lg border ${config.bgColor} ${config.borderColor} hover:shadow-sm transition-all duration-200`}
+        className={`group flex items-start space-x-3 p-3 rounded-lg border ${config.bgColor} ${config.borderColor} hover:shadow-sm transition-all duration-200`}
       >
         <div className={`flex-shrink-0 mt-0.5 ${config.iconColor}`}>
           <IconComponent className="w-4 h-4" />
         </div>
 
         <div className="flex-1 min-w-0">
-          <div className="flex items-center space-x-2 mb-1">
+          <div className="flex items-center mb-1 space-x-2">
             <span
               className={`text-xs font-mono font-semibold px-2 py-0.5 rounded ${config.textColor} ${config.bgColor}`}
             >
               {config.label}
             </span>
-            <span className="text-xs text-muted-foreground font-mono">
+            <span className="font-mono text-xs text-muted-foreground">
               {formatTimestamp(log.timestamp)}
             </span>
           </div>
@@ -93,42 +92,39 @@ const ClientLogsTab = ({
             {log.message}
           </div>
         </div>
+
+        <div className="flex-shrink-0 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+          <CopyIcon value={log.message} />
+        </div>
       </div>
     );
   };
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="flex flex-col h-full">
       {!showHeader && clientLogs.length > 0 && (
         <div className="flex items-center justify-between mb-6">
-          <span className="text-sm text-muted-foreground bg-muted/50 px-3 py-1 rounded-full">
+          <span className="px-3 py-1 text-sm rounded-full text-muted-foreground bg-muted/50">
             {clientLogs.length} log
             {clientLogs.length !== 1 ? "s" : ""}
           </span>
-          <button
-            onClick={onClearLogs}
-            className="p-2 rounded-lg hover:bg-destructive/10 hover:text-destructive transition-all duration-200 group"
-            title="Clear all activity"
-          >
-            <Trash2 className="w-4 h-4 text-muted-foreground group-hover:text-destructive" />
-          </button>
         </div>
       )}
 
       <div className="flex-1 overflow-hidden">
         {clientLogs.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-center p-8">
-            <Bug className="w-12 h-12 text-muted-foreground/50 mb-4" />
-            <h3 className="text-lg font-medium text-muted-foreground mb-2">
+          <div className="flex flex-col items-center justify-center h-full p-8 text-center">
+            <Bug className="w-12 h-12 mb-4 text-muted-foreground/50" />
+            <h3 className="mb-2 text-lg font-medium text-muted-foreground">
               No logs yet
             </h3>
-            <p className="text-sm text-muted-foreground/70 max-w-sm">
+            <p className="max-w-sm text-sm text-muted-foreground/70">
               Client logs will appear here when you perform operations. Logs
               include info, warnings, errors, and debug messages.
             </p>
           </div>
         ) : (
-          <div className="h-full overflow-y-auto p-4 space-y-2">
+          <div className="h-full p-4 space-y-2 overflow-y-auto">
             {reversedClientLogs.map((log, index) => (
               <LogEntry key={`${log.timestamp}-${index}`} log={log} />
             ))}

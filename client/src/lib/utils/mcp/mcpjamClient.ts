@@ -388,7 +388,10 @@ export class MCPJamClient extends Client<Request, Notification, Result> {
       "url" in this.serverConfig &&
       this.serverConfig.url
     ) {
-      return new InspectorOAuthClientProvider(this.serverConfig.url.toString());
+      return new InspectorOAuthClientProvider(
+        this.serverConfig.url.toString(),
+        this.serverConfig.transportType,
+      );
     }
     return null;
   }
@@ -509,6 +512,7 @@ export class MCPJamClient extends Client<Request, Notification, Result> {
       // Create an auth provider with the current server URL
       const serverAuthProvider = new InspectorOAuthClientProvider(
         this.serverConfig.url.toString(),
+        this.serverConfig.transportType,
       );
 
       // Use manually provided bearer token if available, otherwise use OAuth tokens
@@ -881,6 +885,7 @@ export class MCPJamClient extends Client<Request, Notification, Result> {
     if (this.serverConfig.transportType !== "stdio") {
       const authProvider = new InspectorOAuthClientProvider(
         (this.serverConfig as HttpServerDefinition).url.toString(),
+        this.serverConfig.transportType,
       );
       authProvider.clear();
       this.addClientLog("OAuth tokens cleared", "debug");

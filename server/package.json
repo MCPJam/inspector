@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/inspector-server",
-  "version": "0.3.4",
+  "version": "0.3.9",
   "description": "Server-side application for the MCPJam inspector",
   "license": "Apache-2.0",
   "author": "MCPJam (https://mcpjam.com)",
@@ -17,7 +17,12 @@
     "build": "tsc",
     "start": "node build/index.js",
     "dev": "tsx watch --clear-screen=false src/index.ts",
-    "dev:windows": "tsx watch --clear-screen=false src/index.ts < NUL"
+    "dev:windows": "tsx watch --clear-screen=false src/index.ts < NUL",
+    "test:server": "npm run build && node build/test-server.js",
+    "test:server:dev": "tsx watch --clear-screen=false src/test-server.ts",
+    "test:server:debug": "DEBUG=* npm run test:server",
+    "build-test-server": "tsc -p tsconfig.json",
+    "clean:test": "rm -rf build/testing"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
@@ -27,6 +32,7 @@
     "typescript": "^5.6.2"
   },
   "dependencies": {
+    "@libsql/client": "^0.14.0",
     "@modelcontextprotocol/sdk": "^1.13.0",
     "cors": "^2.8.5",
     "express": "^5.1.0",

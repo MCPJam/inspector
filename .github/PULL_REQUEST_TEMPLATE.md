@@ -1,49 +1,7 @@
----
-name: Pull Request
-about: Create a pull request to help us improve
-title: ""
-labels: ""
-assignees: ""
----
+## What does this PR do?
 
-## Description
+_Brief description of your changes_
 
-Please include a summary of the change and which issue is fixed. Please also include relevant motivation and context. List any dependencies that are required for this change.
+## How to test
 
-Fixes # (issue)
-
-## Motivation and Context
-
-_A brief description of the motivation behind this PR. Link to any related issues._
-
-## Type of change
-
-Please delete options that are not relevant.
-
-- [ ] Bug fix (non-breaking change which fixes an issue)
-- [ ] New feature (non-breaking change which adds functionality)
-- [ ] Breaking change (fix or feature that would cause existing functionality to change)
-- [ ] Documentation update
-
-## How Has This Been Tested?
-
-Please describe the tests that you ran to verify your changes. Provide instructions so we can reproduce. Please also list any relevant details for your test configuration.
-
-- [ ] Test A
-- [ ] Test B
-
-## Breaking Changes
-
-_If your change is a breaking change, please describe the impact and migration path for existing users._
-
-## Checklist:
-
-- [ ] I have read the MCP Documentation
-- [ ] My code follows the repository's style guidelines
-- [ ] New and existing tests pass locally
-- [ ] I have added appropriate error handling
-- [ ] I have added or updated documentation as needed
-
-## Additional context
-
-_Add any other context about the problem here._
+_Steps to test your changes_

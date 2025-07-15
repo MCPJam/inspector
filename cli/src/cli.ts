@@ -23,6 +23,7 @@ type Args = {
   args: string[];
   envArgs: Record<string, string>;
   cli: boolean;
+  serverConfigs?: Record<string, ServerConfig>;
 };
 
 type CliOptions = {
@@ -108,6 +109,9 @@ async function runWebClient(args: Args): Promise<void> {
           ...process.env,
           PORT: SERVER_PORT,
           MCP_ENV_VARS: JSON.stringify(args.envArgs),
+          MCP_SERVER_CONFIGS: args.serverConfigs
+            ? JSON.stringify(args.serverConfigs)
+            : undefined,
         },
         signal: abort.signal,
         echoOutput: true,
@@ -123,21 +127,14 @@ async function runWebClient(args: Args): Promise<void> {
   if (serverOk) {
     try {
       console.log("\x1b[32m%s\x1b[0m", "✅ Server initialized successfully"); // Green color
-      console.log(
-        "\x1b[36m%s\x1b[0m",
-        `🌐 Opening browser at http://127.0.0.1:${CLIENT_PORT}`,
-      );
-
-      if (process.env.MCP_AUTO_OPEN_ENABLED !== "false") {
-        // Note: We need to import 'open' if we want to auto-open browser
-        // import open from "open";
-        // open(`http://127.0.0.1:${CLIENT_PORT}`);
-      }
-
       console.log("\x1b[33m%s\x1b[0m", "🖥️  Starting client interface...");
 
       await spawnPromise("node", [inspectorClientPath], {
-        env: { ...process.env, PORT: CLIENT_PORT },
+        env: {
+          ...process.env,
+          PORT: CLIENT_PORT,
+          MCP_AUTO_OPEN_ENABLED: process.env.MCP_AUTO_OPEN_ENABLED ?? "true",
+        },
         signal: abort.signal,
         echoOutput: true,
       });
@@ -207,6 +204,35 @@ function loadConfigFile(configPath: string, serverName: string): ServerConfig {
   }
 }
 
+function loadAllServersFromConfig(
+  configPath: string,
+): Record<string, ServerConfig> {
+  try {
+    const resolvedConfigPath = path.isAbsolute(configPath)
+      ? configPath
+      : path.resolve(process.cwd(), configPath);
+
+    if (!fs.existsSync(resolvedConfigPath)) {
+      throw new Error(`Config file not found: ${resolvedConfigPath}`);
+    }
+
+    const configContent = fs.readFileSync(resolvedConfigPath, "utf8");
+    const parsedConfig = JSON.parse(configContent);
+
+    if (!parsedConfig.mcpServers) {
+      throw new Error("No 'mcpServers' section found in config file");
+    }
+
+    return parsedConfig.mcpServers;
+  } catch (err: unknown) {
+    if (err instanceof SyntaxError) {
+      throw new Error(`Invalid JSON in config file: ${err.message}`);
+    }
+
+    throw err;
+  }
+}
+
 function parseKeyValuePair(
   value: string,
   previous: Record<string, string> = {},
@@ -259,28 +285,35 @@ function parseArgs(): Args {
   // Add back any arguments that came after --
   const finalArgs = [...remainingArgs, ...postArgs];
 
-  // Validate that config and server are provided together
-  if (
-    (options.config && !options.server) ||
-    (!options.config && options.server)
-  ) {
-    throw new Error(
-      "Both --config and --server must be provided together. If you specify one, you must specify the other.",
-    );
+  // Validate server option
+  if (!options.config && options.server) {
+    throw new Error("--server option requires --config to be specified.");
   }
 
-  // If config file is specified, load and use the options from the file. We must merge the args
-  // from the command line and the file together, or we will miss the method options (--method,
-  // etc.)
-  if (options.config && options.server) {
-    const config = loadConfigFile(options.config, options.server);
+  // If config file is specified
+  if (options.config) {
+    if (options.server) {
+      // Single server mode: load specific server from config
+      const config = loadConfigFile(options.config, options.server);
 
-    return {
-      command: config.command,
-      args: [...(config.args || []), ...finalArgs],
-      envArgs: { ...(config.env || {}), ...(options.e || {}) },
-      cli: options.cli || false,
-    };
+      return {
+        command: config.command,
+        args: [...(config.args || []), ...finalArgs],
+        envArgs: { ...(config.env || {}), ...(options.e || {}) },
+        cli: options.cli || false,
+      };
+    } else {
+      // Multiple servers mode: load all servers from config
+      const serverConfigs = loadAllServersFromConfig(options.config);
+
+      return {
+        command: "", // No single command in multi-server mode
+        args: finalArgs,
+        envArgs: options.e || {},
+        cli: options.cli || false,
+        serverConfigs,
+      };
+    }
   }
 
   // Otherwise use command line arguments

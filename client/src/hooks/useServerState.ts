@@ -1,8 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
-import {
-  MCPJamServerConfig,
-  StdioServerDefinition,
-} from "@/lib/types/serverTypes";
+import { MCPJamServerConfig } from "@/lib/types/serverTypes";
 
 const SERVER_CONFIGS_STORAGE_KEY = "mcpServerConfigs_v1";
 const SELECTED_SERVER_STORAGE_KEY = "selectedServerName_v1";
@@ -111,13 +108,6 @@ export const useServerState = () => {
   const [editingClientName, setEditingClientName] = useState<string | null>(
     null,
   );
-  const [clientFormConfig, setClientFormConfig] = useState<MCPJamServerConfig>({
-    transportType: "stdio",
-    command: "npx",
-    args: ["@modelcontextprotocol/server-everything"],
-    env: {},
-  } as StdioServerDefinition);
-  const [clientFormName, setClientFormName] = useState("");
 
   // Persist server configs to localStorage whenever they change
   useEffect(() => {
@@ -165,29 +155,16 @@ export const useServerState = () => {
   const handleCreateClient = useCallback(() => {
     setIsCreatingClient(true);
     setEditingClientName(null);
-    setClientFormName("");
-    setClientFormConfig({
-      transportType: "stdio",
-      command: "npx",
-      args: ["@modelcontextprotocol/server-everything"],
-      env: {},
-    } as StdioServerDefinition);
   }, []);
 
-  const handleEditClient = useCallback(
-    (serverName: string, config: MCPJamServerConfig) => {
-      setIsCreatingClient(false);
-      setEditingClientName(serverName);
-      setClientFormName(serverName);
-      setClientFormConfig(config);
-    },
-    [],
-  );
+  const handleEditClient = useCallback((serverName: string) => {
+    setIsCreatingClient(false);
+    setEditingClientName(serverName);
+  }, []);
 
   const handleCancelClientForm = useCallback(() => {
     setIsCreatingClient(false);
     setEditingClientName(null);
-    setClientFormName("");
   }, []);
 
   return {
@@ -197,10 +174,6 @@ export const useServerState = () => {
     setSelectedServerName,
     isCreatingClient,
     editingClientName,
-    clientFormConfig,
-    setClientFormConfig,
-    clientFormName,
-    setClientFormName,
     updateServerConfig,
     removeServerConfig,
     handleCreateClient,

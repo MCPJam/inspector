@@ -1,13 +1,9 @@
 import { useState } from "react";
 import JsonView from "./JsonView";
+import { RequestHistoryInfo } from "@/hooks/helpers/types";
 
 interface RequestHistoryItemProps {
-  request: {
-    request: string;
-    response?: string;
-    timestamp: string;
-    latency?: number;
-  };
+  request: RequestHistoryInfo;
   index: number;
   totalRequests: number;
 }

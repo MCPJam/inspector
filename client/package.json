@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/inspector-client",
-  "version": "0.3.4",
+  "version": "0.3.9",
   "description": "Client-side application for the MCPJam inspector",
   "license": "Apache-2.0",
   "author": "MCPJam (https://mcpjam.com)",
@@ -40,6 +40,7 @@
     "lucide-react": "^0.447.0",
     "ollama": "^0.5.16",
     "pkce-challenge": "^4.1.0",
+    "pluralize": "^8.0.0",
     "prismjs": "^1.30.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -55,6 +56,7 @@
     "@testing-library/react": "^16.2.0",
     "@types/jest": "^29.5.14",
     "@types/node": "^22.7.5",
+    "@types/pluralize": "^0.0.33",
     "@types/prismjs": "^1.26.5",
     "@types/react": "^18.3.10",
     "@types/react-dom": "^18.3.0",

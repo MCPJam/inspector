@@ -38,7 +38,7 @@ export function createChatConfig(
   ];
 
   const config: ChatConfig = {
-    title: `Chat`,
+    title: "LLM Playground",
     suggestions: [...baseSuggestions, ...(options.additionalSuggestions || [])],
   };
 

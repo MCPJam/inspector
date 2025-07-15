@@ -95,7 +95,7 @@ const ListPane = <T extends object>({
       )}
 
       <div className="p-4">
-        <div className="space-y-2 overflow-y-auto max-h-96">
+        <div className="space-y-4 overflow-y-auto max-h-[calc(100vh-300px)]">
           {filteredItems.length > 0 ? (
             filteredItems.map((item, index) => (
               <div

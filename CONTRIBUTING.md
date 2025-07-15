@@ -2,6 +2,12 @@
 
 First off, thank you for considering contributing to MCPJam Inspector! It's people like you that make the open source community such a great place.
 
+## Finding an issue to work on
+
+1. You can find things to work on in our [issues tab](https://github.com/MCPJam/inspector/issues).
+2. Look for issues labelled `good first issue` and `very easy`. These are great starter tasks that are low commitment
+3. Once you find an issue you like to work on, comment on the issue and tag @matteo8p. Then assign yourself the issue. This helps avoid multiple contributors working on the same issue.
+
 ## Getting Started
 
 ### Prerequisites

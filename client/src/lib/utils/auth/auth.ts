@@ -10,9 +10,21 @@ import {
 import { SESSION_KEYS, getServerSpecificKey } from "../../types/constants";
 
 export class InspectorOAuthClientProvider implements OAuthClientProvider {
-  constructor(public serverUrl: string) {
+  constructor(
+    public serverUrl: string,
+    public transportType?: "sse" | "streamable-http",
+  ) {
     // Save the server URL to session storage
     sessionStorage.setItem(SESSION_KEYS.SERVER_URL, serverUrl);
+
+    // Save the transport type to session storage if provided
+    if (transportType) {
+      const transportKey = getServerSpecificKey(
+        SESSION_KEYS.TRANSPORT_TYPE,
+        serverUrl,
+      );
+      sessionStorage.setItem(transportKey, transportType);
+    }
   }
 
   get redirectUrl() {
@@ -100,6 +112,10 @@ export class InspectorOAuthClientProvider implements OAuthClientProvider {
     );
     sessionStorage.removeItem(
       getServerSpecificKey(SESSION_KEYS.CODE_VERIFIER, this.serverUrl),
+    );
+    // Clean up transport type when clearing OAuth data
+    sessionStorage.removeItem(
+      getServerSpecificKey(SESSION_KEYS.TRANSPORT_TYPE, this.serverUrl),
     );
   }
 }

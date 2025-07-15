@@ -6,160 +6,117 @@ import {
   ProviderConfig,
   SettingsTabProps,
 } from "@/components/settings/types";
-import ProviderSection from "./ApiKeyManagementSection";
+import ProviderCard from "./ProviderCard";
+
+import ClaudeLogo from "./assests/logos/claude.svg";
+import OpenAILogo from "./assests/logos/openai.svg";
+import OllamaLogo from "./assests/logos/ollama.svg";
 
 const PROVIDERS: Record<SupportedProvider, ProviderConfig> = {
   anthropic: {
     name: "anthropic",
     displayName: "Anthropic (Claude)",
-    placeholder: "Enter your Claude API key (sk-ant-api03-...)",
-    description: "Required for Claude AI chat functionality",
+    placeholder: "sk-ant-…",
+    description: "Enable Claude AI chat functionality",
+    logo: ClaudeLogo,
   },
   openai: {
     name: "openai",
     displayName: "OpenAI",
-    placeholder: "Enter your OpenAI API key (sk-...)",
-    description: "Required for GPT models and OpenAI features",
+    placeholder: "sk-…",
+    description: "Enable GPT models & OpenAI features",
+    logo: OpenAILogo,
   },
   ollama: {
     name: "ollama",
     displayName: "Ollama",
-    placeholder:
-      "Enter Ollama host URL (optional, defaults to http://127.0.0.1:11434)",
+    placeholder: "http://127.0.0.1:11434",
     description:
-      "Local Ollama installation - requires Ollama to be running. 📥 Download from https://ollama.com/download • 🔧 Pull tool-calling models from https://ollama.com/search?c=tools • 🔄 Models appear dynamically in chat",
+      "Local Ollama—requires Ollama running. Models load dynamically.",
+    logo: OllamaLogo,
   },
 };
 
 const SettingsTab: React.FC<SettingsTabProps> = ({ disabled = false }) => {
-  const [apiKeys, setApiKeys] = useState<ProvidersState>({
-    anthropic: { key: "", isValid: false, showKey: false },
-    openai: { key: "", isValid: false, showKey: false },
-    ollama: { key: "", isValid: false, showKey: false },
-  });
-  const [collapsedSections, setCollapsedSections] = useState<
-    Record<string, boolean>
-  >({});
-  const { toast } = useToast();
-
-  // Load API keys from ProviderManager on mount
-  useEffect(() => {
-    const newApiKeys = { ...apiKeys };
-
-    Object.keys(PROVIDERS).forEach((providerName) => {
-      const provider = providerName as SupportedProvider;
-      const apiKey = providerManager.getApiKey(provider);
-      const isValid = providerManager.isProviderReady(provider);
-
-      newApiKeys[provider] = {
-        key: apiKey,
-        isValid,
-        showKey: false,
-      };
-
-      // Collapse sections that have valid keys
-      if (isValid) {
-        setCollapsedSections((prev) => ({ ...prev, [providerName]: true }));
-      }
-    });
-
-    setApiKeys(newApiKeys);
-  }, []);
-
-  const handleApiKeyChange = (
-    providerName: SupportedProvider,
-    value: string,
-  ) => {
-    const config = PROVIDERS[providerName];
-    const isValid = providerManager.setApiKey(providerName, value);
-
-    setApiKeys((prev) => ({
-      ...prev,
-      [providerName]: {
-        ...prev[providerName],
-        key: value,
-        isValid,
-      },
-    }));
-
-    if (isValid) {
-      setCollapsedSections((prev) => ({ ...prev, [providerName]: true }));
-      toast({
-        title: "API Key Set",
-        description: `Your ${config.displayName} API key has been saved and configured successfully.`,
-        variant: "default",
-      });
-    } else {
-      setCollapsedSections((prev) => ({ ...prev, [providerName]: false }));
-    }
-  };
-
-  const clearApiKey = (providerName: SupportedProvider) => {
-    const config = PROVIDERS[providerName];
-
-    providerManager.clearApiKey(providerName);
-
-    setApiKeys((prev) => ({
-      ...prev,
-      [providerName]: {
-        ...prev[providerName],
+  const [apiKeys, setApiKeys] = useState<ProvidersState>(() =>
+    Object.keys(PROVIDERS).reduce((acc, p) => {
+      acc[p as SupportedProvider] = {
         key: "",
         isValid: false,
-      },
+        showKey: false,
+      };
+      return acc;
+    }, {} as ProvidersState),
+  );
+  const { toast } = useToast();
+
+  // load saved keys
+  useEffect(() => {
+    Object.keys(PROVIDERS).forEach((prov) => {
+      const provider = prov as SupportedProvider;
+      const key = providerManager.getApiKey(provider);
+      const valid = providerManager.isProviderReady(provider);
+      setApiKeys((prev) => ({
+        ...prev,
+        [provider]: { key, isValid: valid, showKey: false },
+      }));
+    });
+  }, []);
+
+  const handleApiKeyChange = (provider: SupportedProvider, value: string) => {
+    const cfg = PROVIDERS[provider];
+    const valid = providerManager.setApiKey(provider, value);
+    setApiKeys((prev) => ({
+      ...prev,
+      [provider]: { ...prev[provider], key: value, isValid: valid },
     }));
-
-    setCollapsedSections((prev) => ({ ...prev, [providerName]: false }));
-
     toast({
-      title: "API Key Cleared",
-      description: `Your ${config.displayName} API key has been removed from storage.`,
-      variant: "default",
+      title: valid
+        ? `${cfg.displayName} key saved`
+        : `${cfg.displayName} key invalid`,
+      description: valid
+        ? `Your ${cfg.displayName} API key was saved successfully.`
+        : `Unable to validate your ${cfg.displayName} key.`,
     });
   };
 
-  const toggleShowKey = (providerName: SupportedProvider) => {
-    setApiKeys((prev) => ({
-      ...prev,
-      [providerName]: {
-        ...prev[providerName],
-        showKey: !prev[providerName].showKey,
-      },
+  const handleClear = (provider: SupportedProvider) => {
+    const cfg = PROVIDERS[provider];
+    providerManager.clearApiKey(provider);
+    setApiKeys((p) => ({
+      ...p,
+      [provider]: { ...p[provider], key: "", isValid: false },
     }));
+    toast({ title: `${cfg.displayName} key cleared` });
   };
 
-  const toggleCollapse = (providerName: SupportedProvider) => {
-    setCollapsedSections((prev) => ({
-      ...prev,
-      [providerName]: !prev[providerName],
+  const toggleShow = (provider: SupportedProvider) => {
+    setApiKeys((p) => ({
+      ...p,
+      [provider]: { ...p[provider], showKey: !p[provider].showKey },
     }));
   };
 
   return (
-    <div className="space-y-6 p-6">
-      <div className="space-y-4">
-        <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-200 mb-6">
-          API Key Management
-        </h2>
-        <p className="text-slate-600 dark:text-slate-400 mb-6">
-          Configure your API keys for different AI providers. Keys are stored
-          securely in your browser's local storage.
-        </p>
+    <div className="space-y-8 p-8">
+      <h2 className="text-3xl font-bold text-gray-900 dark:text-gray-100">
+        API Key Management
+      </h2>
+      <p className="text-gray-600 dark:text-gray-400 max-w-2xl">
+        Enter your API keys below. They’re stored securely in local storage.
+      </p>
 
-        {Object.entries(PROVIDERS).map(([providerName, config]) => (
-          <ProviderSection
-            key={providerName}
-            providerName={providerName as SupportedProvider}
-            config={config}
-            keyData={apiKeys[providerName as SupportedProvider]}
-            isCollapsed={
-              collapsedSections[providerName] &&
-              apiKeys[providerName as SupportedProvider].isValid
-            }
+      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+        {Object.entries(PROVIDERS).map(([prov, cfg]) => (
+          <ProviderCard
+            key={prov}
+            provider={prov as SupportedProvider}
+            config={cfg}
+            data={apiKeys[prov as SupportedProvider]}
             disabled={disabled}
-            onApiKeyChange={handleApiKeyChange}
-            onClearApiKey={clearApiKey}
-            onToggleShowKey={toggleShowKey}
-            onToggleCollapse={toggleCollapse}
+            onChange={handleApiKeyChange}
+            onClear={handleClear}
+            onToggleShow={toggleShow}
           />
         ))}
       </div>

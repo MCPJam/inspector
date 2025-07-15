@@ -13,7 +13,7 @@ import "./App.css";
 
 // Components
 import HistoryAndNotifications from "./components/History";
-import Sidebar from "./components/Sidebar";
+import Sidebar from "./components/Sidebar/Sidebar";
 import Tabs from "./components/Tabs";
 import ClientFormSection from "./components/ClientFormSection";
 import StarGitHubModal from "./components/StarGitHubModal";
@@ -68,7 +68,7 @@ const App = () => {
     mcpOperations.addClientLog,
   );
   const configState = useConfigState();
-
+  console.log("🔧 serverState", serverState);
   // Refs
   const rootsRef = useRef(mcpOperations.roots);
   const nextRequestId = useRef(0);
@@ -158,8 +158,7 @@ const App = () => {
     handleRemoveServer,
     handleEditClient,
     handleConnectServer,
-    handleSaveClient,
-    handleSaveMultiple,
+    saveClients,
     handleAddServer,
   } = useServerManagement(
     serverState,
@@ -489,22 +488,26 @@ const App = () => {
   const renderTabs = () => {
     // Show ClientFormSection when creating or editing a client
     if (serverState.isCreatingClient || serverState.editingClientName) {
+      // Get initial client data for editing mode
+      const initialClient = serverState.editingClientName
+        ? {
+            name: serverState.editingClientName,
+            config: serverState.serverConfigs[serverState.editingClientName],
+          }
+        : undefined;
+
       return (
         <ClientFormSection
           isCreating={serverState.isCreatingClient}
           editingClientName={serverState.editingClientName}
-          clientFormName={serverState.clientFormName}
-          setClientFormName={serverState.setClientFormName}
-          clientFormConfig={serverState.clientFormConfig}
-          setClientFormConfig={serverState.setClientFormConfig}
+          initialClient={initialClient}
           config={configState.config}
           setConfig={configState.setConfig}
           bearerToken={configState.bearerToken}
           setBearerToken={configState.setBearerToken}
           headerName={configState.headerName}
           setHeaderName={configState.setHeaderName}
-          onSave={handleSaveClient}
-          onSaveMultiple={handleSaveMultiple}
+          onSave={saveClients}
           onCancel={serverState.handleCancelClientForm}
         />
       );
@@ -553,7 +556,10 @@ const App = () => {
           {/* Horizontal Tabs */}
           <Tabs
             currentPage={currentPage}
-            onPageChange={setCurrentPage}
+            onPageChange={(page) => {
+              setCurrentPage(page);
+              serverState.handleCancelClientForm();
+            }}
             serverCapabilities={serverCapabilities}
             pendingSampleRequests={mcpOperations.pendingSampleRequests}
             shouldDisableAll={!connectionState.mcpAgent}

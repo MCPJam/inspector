@@ -14,6 +14,7 @@
 
 [![npm version](https://img.shields.io/npm/v/@mcpjam/inspector?style=for-the-badge&color=blue)](https://www.npmjs.com/package/@mcpjam/inspector)
 [![npm downloads](https://img.shields.io/npm/dm/@mcpjam/inspector?style=for-the-badge&color=green)](https://www.npmjs.com/package/@mcpjam/inspector)
+[![Docker Pulls](https://img.shields.io/docker/pulls/mcpjam/mcp-inspector?style=for-the-badge)](https://hub.docker.com/r/mcpjam/mcp-inspector)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=for-the-badge)](https://opensource.org/licenses/Apache-2.0)
 [![Node.js](https://img.shields.io/badge/Node.js-22.7.5+-green.svg?style=for-the-badge&logo=node.js)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8+-blue.svg?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)

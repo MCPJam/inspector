@@ -12,6 +12,7 @@ import { ApiKeyRequiredState } from "./ApiKeyRequiredState";
 import { EmptyChatsState, ChatConfig } from "./EmptyChatsState";
 import { ToolCallApproval, PendingToolCall } from "./ToolCallApproval";
 import { ToolSelector, ToolSelection, ServerInfo } from "./ToolSelector";
+import { formatPlural } from "@/utils/pluralizeUtil";
 
 interface ChatProps {
   provider: MCPJamAgent | null;
@@ -296,21 +297,23 @@ const Chat: React.FC<ChatProps> = ({
     setShowProviderSelector(false);
 
     // Get current models for the new provider
-    const models = providerManager.getProvider(provider)?.getSupportedModels() || [];
-    
-    if (provider === 'ollama') {
+    const models =
+      providerManager.getProvider(provider)?.getSupportedModels() || [];
+
+    if (provider === "ollama") {
       if (models.length === 0) {
         // For Ollama, clear the selected model and wait for async fetch
         setIsLoadingModels(true);
-        setSelectedModel('');
-        
+        setSelectedModel("");
+
         // Set up a polling mechanism to check for models with timeout
         let attempts = 0;
         const maxAttempts = 20; // 10 seconds total (20 attempts * 500ms)
-        
+
         const checkForModels = () => {
           attempts++;
-          const updatedModels = providerManager.getProvider('ollama')?.getSupportedModels() || [];
+          const updatedModels =
+            providerManager.getProvider("ollama")?.getSupportedModels() || [];
           if (updatedModels.length > 0) {
             setSelectedModel(updatedModels[0].id);
             setIsLoadingModels(false);
@@ -322,7 +325,7 @@ const Chat: React.FC<ChatProps> = ({
             setIsLoadingModels(false);
           }
         };
-        
+
         // Start checking after a short delay
         setTimeout(checkForModels, 200);
       } else {
@@ -486,7 +489,7 @@ const Chat: React.FC<ChatProps> = ({
                 </h1>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
                   {hasApiKey
-                    ? `${serversCount} servers • ${toolSelection.enabledTools.size}/${toolsCount} tools`
+                    ? `${formatPlural(serversCount, "server")} • ${toolSelection.enabledTools.size}/${formatPlural(toolsCount, "tool")}`
                     : "API key required"}
                 </p>
               </div>
@@ -549,13 +552,17 @@ const Chat: React.FC<ChatProps> = ({
                     disabled={loading}
                   >
                     <span className="text-slate-700 dark:text-slate-200 font-medium">
-                      {selectedProvider === 'ollama' && isLoadingModels
-                        ? 'Loading models...'
-                        : selectedProvider === 'ollama' && availableModels.length === 0 && selectedModel === ''
-                        ? 'No models found'
-                        : availableModels.find((m) => m.id === selectedModel)?.name || 
-                          (selectedProvider === 'ollama' ? 'Select model' : selectedModel)
-                      }
+                      {selectedProvider === "ollama" && isLoadingModels
+                        ? "Loading models..."
+                        : selectedProvider === "ollama" &&
+                            availableModels.length === 0 &&
+                            selectedModel === ""
+                          ? "No models found"
+                          : availableModels.find((m) => m.id === selectedModel)
+                              ?.name ||
+                            (selectedProvider === "ollama"
+                              ? "Select model"
+                              : selectedModel)}
                     </span>
                     <ChevronDown className="w-3 h-3 text-slate-400" />
                   </button>
@@ -651,9 +658,6 @@ const Chat: React.FC<ChatProps> = ({
             {/* Pending Tool Calls */}
             {hasPendingToolCalls && (
               <div className="px-6 mb-2">
-                <div className="mb-2 text-sm text-amber-600 dark:text-amber-400 font-medium">
-                  Pending Tool Calls:
-                </div>
                 {Array.from(pendingToolCalls.values()).map((toolCall) => (
                   <ToolCallApproval
                     key={toolCall.id}
