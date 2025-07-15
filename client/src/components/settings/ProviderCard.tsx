@@ -33,7 +33,7 @@ const ProviderCard: React.FC<Props> = ({
             className="w-5 h-5"
           />
         </div>
-        <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
+        <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 pl-2">
           {config.displayName}
         </h3>
       </div>
