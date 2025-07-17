@@ -25,7 +25,7 @@ const ProviderCard: React.FC<Props> = ({
   return (
     <div className="bg-white dark:bg-gray-800 rounded-xl shadow hover:shadow-lg transition p-6 flex flex-col">
       {/* Header */}
-      <div className="flex items-center mb-4 -ml-1">
+      <div className="flex items-center mb-4 -ml-1 gap-1">
         <div className="w-8 h-8 flex items-center justify-center bg-white rounded-md">
           <img
             src={config.logo}
