@@ -1,103 +1,205 @@
-import Image from "next/image";
+'use client';
+
+import { useState, useEffect } from 'react';
+import { ServerConnection } from '@/components/ServerConnection';
+import { ToolsTab } from '@/components/ToolsTab';
+import { ResourcesTab } from '@/components/ResourcesTab';
+import { PromptsTab } from '@/components/PromptsTab';
+import { ChatTab } from '@/components/ChatTab';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Wrench, FolderOpen, MessageSquare, MessageCircle, Server } from 'lucide-react';
+
+interface ServerConfig {
+  name: string;
+  type: 'stdio' | 'http';
+  command?: string;
+  args?: string[];
+  url?: string;
+  headers?: Record<string, string>;
+  env?: Record<string, string>;
+}
 
 export default function Home() {
-  return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [activeTab, setActiveTab] = useState('servers');
+  const [selectedServer, setSelectedServer] = useState<string>('none');
+  const [connectedServers, setConnectedServers] = useState<string[]>([]);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  useEffect(() => {
+    fetchConnectedServers();
+  }, []);
+
+  const fetchConnectedServers = async () => {
+    try {
+      const response = await fetch('/api/mcp/connect');
+      const data = await response.json();
+      setConnectedServers(data.servers || []);
+    } catch (error) {
+      console.error('Failed to fetch connected servers:', error);
+    }
+  };
+
+  const handleConnect = async (config: ServerConfig) => {
+    try {
+      let serverConfig;
+      
+      if (config.type === 'stdio') {
+        serverConfig = { command: config.command, args: config.args, env: config.env };
+      } else {
+        // Validate URL for HTTP connections
+        if (!config.url || config.url.trim() === '') {
+          alert('URL is required for HTTP connections');
+          return;
+        }
+        
+        try {
+          const urlObj = new URL(config.url);
+          serverConfig = { url: urlObj, requestInit: { headers: config.headers } };
+        } catch (urlError) {
+          alert(`Invalid URL format: ${config.url}`);
+          return;
+        }
+      }
+
+      const response = await fetch('/api/mcp/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          serverName: config.name,
+          config: serverConfig
+        })
+      });
+
+      if (response.ok) {
+        setConnectedServers(prev => [...prev, config.name]);
+        setSelectedServer(config.name);
+      } else {
+        const error = await response.json();
+        alert(`Failed to connect: ${error.error}`);
+      }
+    } catch (error) {
+      alert(`Network error: ${error}`);
+    }
+  };
+
+  const handleDisconnect = async (serverName: string) => {
+    try {
+      const response = await fetch(`/api/mcp/connect?server=${serverName}`, {
+        method: 'DELETE'
+      });
+
+      if (response.ok) {
+        setConnectedServers(prev => prev.filter(s => s !== serverName));
+        if (selectedServer === serverName) {
+          setSelectedServer('none');
+        }
+      }
+    } catch (error) {
+      alert(`Failed to disconnect: ${error}`);
+    }
+  };
+
+  const tabs = [
+    { id: 'servers', label: 'Servers', icon: Server },
+    { id: 'tools', label: 'Tools', icon: Wrench },
+    { id: 'resources', label: 'Resources', icon: FolderOpen },
+    { id: 'prompts', label: 'Prompts', icon: MessageSquare },
+    { id: 'chat', label: 'Chat', icon: MessageCircle },
+  ];
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <div className="container mx-auto p-6">
+        {/* Header */}
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-gray-900">MCP Inspector</h1>
+          <p className="text-gray-600 mt-2">
+            A Next.js clone of MCPJam built with Mastra MCP
+          </p>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+
+        {/* Server Selection */}
+        {connectedServers.length > 0 && (
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle>Active Server</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <select
+                value={selectedServer}
+                onChange={(e) => setSelectedServer(e.target.value)}
+                className="w-full p-2 border rounded"
+              >
+                <option value="none">Select a server...</option>
+                {connectedServers.map(server => (
+                  <option key={server} value={server}>
+                    {server}
+                  </option>
+                ))}
+              </select>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Tabs */}
+        <div className="mb-6">
+          <div className="flex space-x-1 border-b">
+            {tabs.map(tab => {
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`flex items-center gap-2 px-4 py-2 font-medium text-sm rounded-t-lg transition-colors ${
+                    activeTab === tab.id
+                      ? 'bg-white text-blue-600 border-b-2 border-blue-600'
+                      : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                  }`}
+                >
+                  <Icon className="h-4 w-4" />
+                  {tab.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Tab Content */}
+        <div className="bg-white rounded-lg shadow-sm">
+          {activeTab === 'servers' && (
+            <div className="p-6">
+              <ServerConnection
+                connectedServers={connectedServers}
+                onConnect={handleConnect}
+                onDisconnect={handleDisconnect}
+              />
+            </div>
+          )}
+
+          {activeTab === 'tools' && (
+            <div className="p-6">
+              <ToolsTab selectedServer={selectedServer} />
+            </div>
+          )}
+
+          {activeTab === 'resources' && (
+            <div className="p-6">
+              <ResourcesTab selectedServer={selectedServer} />
+            </div>
+          )}
+
+          {activeTab === 'prompts' && (
+            <div className="p-6">
+              <PromptsTab selectedServer={selectedServer} />
+            </div>
+          )}
+
+          {activeTab === 'chat' && (
+            <div className="p-6">
+              <ChatTab selectedServer={selectedServer} />
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
