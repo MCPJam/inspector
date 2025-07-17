@@ -10,8 +10,6 @@
 
 # MCPJam Inspectors test
 
-**The developer tool for testing and debugging MCP servers**
-
 [![npm version](https://img.shields.io/npm/v/@mcpjam/inspector?style=for-the-badge&color=blue)](https://www.npmjs.com/package/@mcpjam/inspector)
 [![npm downloads](https://img.shields.io/npm/dm/@mcpjam/inspector?style=for-the-badge&color=green)](https://www.npmjs.com/package/@mcpjam/inspector)
 [![Docker Pulls](https://img.shields.io/docker/pulls/mcpjam/mcp-inspector?style=for-the-badge)](https://hub.docker.com/r/mcpjam/mcp-inspector)
@@ -21,6 +19,24 @@
 [![Discord](https://img.shields.io/badge/Discord-Join%20Server-5865F2.svg?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/JEnDtz8X6z)
 
 </div>
+
+MCPJam is a developer tool for testing and debugging Model Context Protocol (MCP) servers. It connects to any MCP server and allows you to manually test every part of your server. The project is open source and fully compliant to the MCP spec. 
+
+Main features are: 
+
+| Features                                               | Description                                                                                                                                                                                                                                                                                            |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| All transports supported                                           | This inspector supports STDIO, SSE, and Streambable HTTP. Connect to any MCP server with environment variables and full authorization support. |
+| Full MCP Spec Compliance       | The inspector has full compliance to the MCP spec. Test any MCP implementation in your server, like tools, prompts, resources, elicitation, authorization, and correct schemas.                                    |
+| Authorization Testing (OAuth 2.0)    | Support for Dynamic Client Registration (DCR) and the full OAuth 2.0 spec. Test your server's MCP token handling, authorization server implementation, and OAuth flow.                             |
+| LLM Playground |Test your MCP server against LLMs or custom agents. Has support for OpenAI, Anthropic, and Ollama models. Tweak agents' system prompts and temperature. Everything you need for MCP testing all in one platform.                |
+| Debugging tools             |  Everything is logged including all of the error messages. This helps quickly debug your MCP server implementation.                                                                                                       |
+| Usability    | Save requests, multi-server connection, saved connections. CLI shortcuts to quickly spin up a testing environment.                                                                                                                                                  |
+
+## 📋 Requirements
+
+- **Node.js**: `^22.7.5` or higher
+- **npm**: `^10.0.0` or higher (comes with Node.js)
 
 ---
 
@@ -57,27 +73,12 @@ The inspector will be available in your browser at `http://127.0.0.1:6274`.
 ## 📸 Screenshots
 
 <div align="center">
-<img width="1511" alt="MCPJam Inspector Interface" src="https://github.com/user-attachments/assets/ade8a46a-f738-4d32-ac85-260a5e22b90f" />
+<img width="1511" alt="MCPJam Inspector Interface" src="ideation/public/mcpjam_current.png" />
 </div>
 
 ---
 
-## ✨ Core Features
 
-This project is a fork of the [@modelcontextprotocol/inspector](https://github.com/modelcontextprotocol/inspector). Many of the features are the same but with some enhancements. Key features include:
-
-- **STDIO / SSE / Streamable HTTP** - This inspector supports all three protocols. Connect to any MCP server.
-- **Tool Execution** - Run server tools with live parameter input. Easily debug errors.
-- **(New) LLM tool interaction** - Test your MCP server against a real LLM.
-- **Debugging tools** - Enhanced logging experience to debug your server.
-- **Quality of life improvements** - Save requests, multi-server connection, saved connections.
-
-## 📋 Requirements
-
-- **Node.js**: `^22.7.5` or higher
-- **npm**: `^10.0.0` or higher (comes with Node.js)
-
----
 
 ## 🎯 Usage Examples
 
@@ -196,7 +197,7 @@ We put together these commands to help you build locally:
 
 ## 🤝 Contributing
 
-We welcome contributions! We thought the original inspector repository moved too slowly, so we wanted to build this project ourselves.
+We welcome contributions! We thought the original inspector repository moved too slowly, so we wanted to build this project ourselves. Please read our [CONTRIBUTING.md](/CONTRIBUTING.md) for more details. 
 
 1. **Clone** the repository
 2. **Create** a feature branch (`git checkout -b feature/amazing-feature`)
@@ -206,35 +207,7 @@ We welcome contributions! We thought the original inspector repository moved too
 
 ## 🗺️ Our Roadmap
 
-We're continuously improving the MCPJam Inspector. Here's what's coming next:
-
-### UI/UX Improvements
-
-- **Fix dark mode styling** - Improve run tool button appearance in dark mode
-- **Enhanced logging UX** - Address misleading red color for INFO logs
-
-### Core Features
-
-- **AI parameter fill** - Smart parameter completion using AI
-- **Collections** - Organize and group your MCP servers / tools
-- **Multi Provider support** - Support for other LLMs like ChatGPT
-
-### Technical Enhancements
-
-- **Security scanning** - Built-in vulnerability scanning tools
-- **Electron App** - Desktop application for enhanced user experience
-
-### Ecosystem
-
-- **Landing page improvements** - Update MCP Jam landing page
-- **Documentation expansion** - Enhanced guides and tutorials
-
-### Development Guidelines
-
-- Follow the existing code style (Prettier + ESLint)
-- Update documentation as needed
-
----
+The community is working on MCPJam v1.0.0. We are on a mission to make MCPJam a production grade project. If you're interested, please read the [design proposal](/ideation/PRODUCT_SPEC.md). We're collaborating on this on [Discord](https://discord.gg/JEnDtz8X6z)! 
 
 ## 📚 Resources
 
