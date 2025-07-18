@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { validateServerConfig, createMCPClient, createErrorResponse } from "@/lib/mcp-utils";
+import { validateServerConfig, createMCPClient } from "@/lib/mcp-utils";
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,8 +13,8 @@ export async function POST(request: NextRequest) {
     const client = createMCPClient(validation.config!, `test-${Date.now()}`);
 
     try {
-      const tools = await client.getTools();
-      
+      const tools = await client.getTools(); // TODO: Remove tool count
+
       // Cleanup
       await client.disconnect();
 
@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
         error: "Failed to connect to MCP server",
         details: error instanceof Error ? error.message : "Unknown error",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

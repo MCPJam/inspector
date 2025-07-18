@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { MCPClient } from "@mastra/mcp";
-import { MastraMCPServerDefinition } from "./types";
+import { MastraMCPServerDefinition, HttpServerDefinition } from "./types";
+import { OAuthClientState } from "./oauth-types";
 
 export interface ValidationResult {
   success: boolean;
@@ -38,8 +39,44 @@ export function validateServerConfig(serverConfig: any): ValidationResult {
         };
       }
 
-      // For SSE connections, add eventSourceInit if requestInit has custom headers
-      if (config.requestInit?.headers) {
+      // Handle OAuth authentication for HTTP servers
+      if (config.oauth?.access_token) {
+        const authHeaders = {
+          'Authorization': `Bearer ${config.oauth.access_token}`,
+          ...(config.requestInit?.headers || {})
+        };
+
+        config.requestInit = {
+          ...config.requestInit,
+          headers: authHeaders
+        };
+
+        // For SSE connections, add eventSourceInit with OAuth headers
+        config.eventSourceInit = {
+          fetch(input: Request | URL | string, init?: RequestInit) {
+            const headers = new Headers(init?.headers || {});
+
+            // Add OAuth authorization header
+            headers.set('Authorization', `Bearer ${config.oauth!.access_token}`);
+
+            // Copy other headers from requestInit
+            if (config.requestInit?.headers) {
+              const requestHeaders = new Headers(config.requestInit.headers);
+              requestHeaders.forEach((value, key) => {
+                if (key.toLowerCase() !== 'authorization') {
+                  headers.set(key, value);
+                }
+              });
+            }
+
+            return fetch(input, {
+              ...init,
+              headers,
+            });
+          },
+        };
+      } else if (config.requestInit?.headers) {
+        // For SSE connections without OAuth, add eventSourceInit if requestInit has custom headers
         config.eventSourceInit = {
           fetch(input: Request | URL | string, init?: RequestInit) {
             const headers = new Headers(init?.headers || {});

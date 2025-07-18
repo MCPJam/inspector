@@ -81,7 +81,7 @@ export function ChatTab({ serverConfig }: ChatTabProps) {
             Chat
           </CardTitle>
           <CardDescription>
-            Chat with an AI assistant that can use tools from {selectedServer}
+            Chat with an AI assistant that can use tools from your selected server
           </CardDescription>
         </CardHeader>
         <CardContent>

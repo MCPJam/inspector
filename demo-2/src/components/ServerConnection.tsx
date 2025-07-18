@@ -20,6 +20,8 @@ interface ServerFormData {
   url?: string;
   headers?: Record<string, string>;
   env?: Record<string, string>;
+  useOAuth?: boolean;
+  oauthScopes?: string[];
 }
 
 interface ServerConnectionProps {
@@ -42,6 +44,8 @@ export function ServerConnection({
     url: "",
     headers: {},
     env: {},
+    useOAuth: false,
+    oauthScopes: ["mcp:*"],
   });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -56,6 +60,8 @@ export function ServerConnection({
         url: "",
         headers: {},
         env: {},
+        useOAuth: false,
+        oauthScopes: ["mcp:*"],
       });
       setIsAddingServer(false);
     }
@@ -178,20 +184,69 @@ export function ServerConnection({
                   </div>
                 </>
               ) : (
-                <div>
-                  <label className="block text-sm font-medium mb-1">URL</label>
-                  <Input
-                    value={serverFormData.url}
-                    onChange={(e) =>
-                      setServerFormData((prev) => ({
-                        ...prev,
-                        url: e.target.value,
-                      }))
-                    }
-                    placeholder="http://localhost:8080/mcp"
-                    required
-                  />
-                </div>
+                <>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">
+                      URL
+                    </label>
+                    <Input
+                      value={serverFormData.url}
+                      onChange={(e) =>
+                        setServerFormData((prev) => ({
+                          ...prev,
+                          url: e.target.value,
+                        }))
+                      }
+                      placeholder="http://localhost:8080/mcp"
+                      required
+                    />
+                  </div>
+
+                  {/* OAuth Configuration */}
+                  <div className="space-y-3 p-3 border rounded bg-gray-50">
+                    <div className="flex items-center space-x-2">
+                      <input
+                        type="checkbox"
+                        id="useOAuth"
+                        checked={serverFormData.useOAuth}
+                        onChange={(e) =>
+                          setServerFormData((prev) => ({
+                            ...prev,
+                            useOAuth: e.target.checked,
+                          }))
+                        }
+                        className="w-4 h-4"
+                      />
+                      <label htmlFor="useOAuth" className="text-sm font-medium">
+                        Use OAuth 2.1 Authentication
+                      </label>
+                    </div>
+
+                    {serverFormData.useOAuth && (
+                      <div>
+                        <label className="block text-sm font-medium mb-1">
+                          OAuth Scopes
+                        </label>
+                        <Input
+                          value={serverFormData.oauthScopes?.join(" ") || ""}
+                          onChange={(e) =>
+                            setServerFormData((prev) => ({
+                              ...prev,
+                              oauthScopes: e.target.value
+                                .split(" ")
+                                .filter((s) => s.trim()),
+                            }))
+                          }
+                          placeholder="mcp:* mcp:tools mcp:resources"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">
+                          Space-separated OAuth scopes. Use &apos;mcp:*&apos;
+                          for full access.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </>
               )}
 
               <div className="flex gap-2">
