@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { MessageSquare, Play, RefreshCw } from 'lucide-react';
+import { MastraMCPServerDefinition, StdioServerDefinition, HttpServerDefinition } from '@/lib/types';
 
 interface Prompt {
   name: string;
@@ -16,18 +17,8 @@ interface Prompt {
   }[];
 }
 
-interface ServerConfig {
-  name: string;
-  type: 'stdio' | 'http';
-  command?: string;
-  args?: string[];
-  url?: string;
-  headers?: Record<string, string>;
-  env?: Record<string, string>;
-}
-
 interface PromptsTabProps {
-  serverConfig?: ServerConfig;
+  serverConfig?: MastraMCPServerDefinition;
 }
 
 export function PromptsTab({ serverConfig }: PromptsTabProps) {
@@ -44,21 +35,9 @@ export function PromptsTab({ serverConfig }: PromptsTabProps) {
     }
   }, [serverConfig]);
 
-  const getServerConfig = () => {
+  const getServerConfig = (): MastraMCPServerDefinition | null => {
     if (!serverConfig) return null;
-    
-    if (serverConfig.type === 'stdio') {
-      return { 
-        command: serverConfig.command, 
-        args: serverConfig.args, 
-        env: serverConfig.env 
-      };
-    } else {
-      return { 
-        url: serverConfig.url, 
-        requestInit: { headers: serverConfig.headers || {} }
-      };
-    }
+    return serverConfig;
   };
 
   const fetchPrompts = async () => {

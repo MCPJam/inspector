@@ -8,8 +8,20 @@ import { PromptsTab } from '@/components/PromptsTab';
 import { ChatTab } from '@/components/ChatTab';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Wrench, FolderOpen, MessageSquare, MessageCircle, Server } from 'lucide-react';
+import { MastraMCPServerDefinition, StdioServerDefinition, HttpServerDefinition } from '@/lib/types';
 
-interface ServerConfig {
+interface ServerWithName {
+  name: string;
+  config: MastraMCPServerDefinition;
+}
+
+interface AppState {
+  servers: Record<string, ServerWithName>;
+  selectedServer: string;
+}
+
+// UI form interface - only used for the form input
+interface ServerFormData {
   name: string;
   type: 'stdio' | 'http';
   command?: string;
@@ -17,11 +29,6 @@ interface ServerConfig {
   url?: string;
   headers?: Record<string, string>;
   env?: Record<string, string>;
-}
-
-interface AppState {
-  servers: Record<string, ServerConfig>;
-  selectedServer: string;
 }
 
 export default function Home() {
@@ -50,50 +57,73 @@ export default function Home() {
   }, [appState]);
 
   const connectedServers = Object.keys(appState.servers);
-  const selectedServerConfig = appState.servers[appState.selectedServer];
+  const selectedServerEntry = appState.servers[appState.selectedServer];
+  const selectedMCPConfig = selectedServerEntry?.config;
+  
+  // Convert form data to MastraMCPServerDefinition
+  const convertFormToMCPConfig = (formData: ServerFormData): MastraMCPServerDefinition => {
+    if (formData.type === 'stdio') {
+      return {
+        command: formData.command!,
+        args: formData.args,
+        env: formData.env
+      } as StdioServerDefinition;
+    } else {
+      return {
+        url: new URL(formData.url!),
+        requestInit: { headers: formData.headers || {} }
+      } as HttpServerDefinition;
+    }
+  };
 
-  const handleConnect = async (config: ServerConfig) => {
+  const handleConnect = async (formData: ServerFormData) => {
     try {
-      let serverConfig;
-      
-      if (config.type === 'stdio') {
-        serverConfig = { command: config.command, args: config.args, env: config.env };
+      // Validate form data first
+      if (formData.type === 'stdio') {
+        if (!formData.command || formData.command.trim() === '') {
+          alert('Command is required for STDIO connections');
+          return;
+        }
       } else {
-        // Validate URL for HTTP connections
-        if (!config.url || config.url.trim() === '') {
+        if (!formData.url || formData.url.trim() === '') {
           alert('URL is required for HTTP connections');
           return;
         }
         
         try {
-          const urlObj = new URL(config.url);
-          serverConfig = { url: urlObj, requestInit: { headers: config.headers } };
+          new URL(formData.url);
         } catch (urlError) {
-          alert(`Invalid URL format: ${config.url}`);
+          alert(`Invalid URL format: ${formData.url}`);
           return;
         }
       }
+
+      // Convert form data to MCP config
+      const mcpConfig = convertFormToMCPConfig(formData);
 
       // Test connection using the new stateless endpoint
       const response = await fetch('/api/mcp/test-connection', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          serverConfig
+          serverConfig: mcpConfig
         })
       });
 
       const result = await response.json();
       
       if (result.success) {
-        // Add server to state
+        // Add server to state with both name and config
         setAppState(prev => ({
           ...prev,
           servers: {
             ...prev.servers,
-            [config.name]: config
+            [formData.name]: {
+              name: formData.name,
+              config: mcpConfig
+            }
           },
-          selectedServer: config.name
+          selectedServer: formData.name
         }));
         
         alert(`Connected successfully! Found ${result.toolCount} tools.`);
@@ -200,25 +230,25 @@ export default function Home() {
 
           {activeTab === 'tools' && (
             <div className="p-6">
-              <ToolsTab serverConfig={selectedServerConfig} />
+              <ToolsTab serverConfig={selectedMCPConfig} />
             </div>
           )}
 
           {activeTab === 'resources' && (
             <div className="p-6">
-              <ResourcesTab serverConfig={selectedServerConfig} />
+              <ResourcesTab serverConfig={selectedMCPConfig} />
             </div>
           )}
 
           {activeTab === 'prompts' && (
             <div className="p-6">
-              <PromptsTab serverConfig={selectedServerConfig} />
+              <PromptsTab serverConfig={selectedMCPConfig} />
             </div>
           )}
 
           {activeTab === 'chat' && (
             <div className="p-6">
-              <ChatTab serverConfig={selectedServerConfig} />
+              <ChatTab serverConfig={selectedMCPConfig} />
             </div>
           )}
         </div>

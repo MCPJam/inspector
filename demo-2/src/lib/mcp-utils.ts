@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { MastraMCPServerDefinition, MCPClient } from "@mastra/mcp";
+import { MCPClient } from "@mastra/mcp";
+import { MastraMCPServerDefinition } from "./types";
 
 export interface ValidationResult {
   success: boolean;

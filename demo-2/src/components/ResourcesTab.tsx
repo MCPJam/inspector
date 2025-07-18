@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { FolderOpen, File, RefreshCw, Eye } from 'lucide-react';
+import { MastraMCPServerDefinition, StdioServerDefinition, HttpServerDefinition } from '@/lib/types';
 
 interface Resource {
   uri: string;
@@ -12,18 +13,8 @@ interface Resource {
   mimeType?: string;
 }
 
-interface ServerConfig {
-  name: string;
-  type: 'stdio' | 'http';
-  command?: string;
-  args?: string[];
-  url?: string;
-  headers?: Record<string, string>;
-  env?: Record<string, string>;
-}
-
 interface ResourcesTabProps {
-  serverConfig?: ServerConfig;
+  serverConfig?: MastraMCPServerDefinition;
 }
 
 export function ResourcesTab({ serverConfig }: ResourcesTabProps) {
@@ -39,21 +30,9 @@ export function ResourcesTab({ serverConfig }: ResourcesTabProps) {
     }
   }, [serverConfig]);
 
-  const getServerConfig = () => {
+  const getServerConfig = (): MastraMCPServerDefinition | null => {
     if (!serverConfig) return null;
-    
-    if (serverConfig.type === 'stdio') {
-      return { 
-        command: serverConfig.command, 
-        args: serverConfig.args, 
-        env: serverConfig.env 
-      };
-    } else {
-      return { 
-        url: serverConfig.url, 
-        requestInit: { headers: serverConfig.headers || {} }
-      };
-    }
+    return serverConfig;
   };
 
   const fetchResources = async () => {

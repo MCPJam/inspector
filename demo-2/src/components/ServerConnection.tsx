@@ -12,7 +12,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Plus, Trash2, Link, Link2Off } from "lucide-react";
 
-interface ServerConfig {
+interface ServerFormData {
   name: string;
   type: "stdio" | "http";
   command?: string;
@@ -24,7 +24,7 @@ interface ServerConfig {
 
 interface ServerConnectionProps {
   connectedServers: string[];
-  onConnect: (config: ServerConfig) => void;
+  onConnect: (formData: ServerFormData) => void;
   onDisconnect: (serverName: string) => void;
 }
 
@@ -34,7 +34,7 @@ export function ServerConnection({
   onDisconnect,
 }: ServerConnectionProps) {
   const [isAddingServer, setIsAddingServer] = useState(false);
-  const [serverConfig, setServerConfig] = useState<ServerConfig>({
+  const [serverFormData, setServerFormData] = useState<ServerFormData>({
     name: "",
     type: "stdio",
     command: "",
@@ -46,9 +46,9 @@ export function ServerConnection({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (serverConfig.name) {
-      onConnect(serverConfig);
-      setServerConfig({
+    if (serverFormData.name) {
+      onConnect(serverFormData);
+      setServerFormData({
         name: "",
         type: "stdio",
         command: "",
@@ -62,7 +62,7 @@ export function ServerConnection({
   };
 
   const handleArgsChange = (value: string) => {
-    setServerConfig((prev) => ({
+    setServerFormData((prev) => ({
       ...prev,
       args: value.split(" ").filter((arg) => arg.trim()),
     }));
@@ -119,9 +119,9 @@ export function ServerConnection({
                   Server Name
                 </label>
                 <Input
-                  value={serverConfig.name}
+                  value={serverFormData.name}
                   onChange={(e) =>
-                    setServerConfig((prev) => ({
+                    setServerFormData((prev) => ({
                       ...prev,
                       name: e.target.value,
                     }))
@@ -134,9 +134,9 @@ export function ServerConnection({
               <div>
                 <label className="block text-sm font-medium mb-1">Type</label>
                 <select
-                  value={serverConfig.type}
+                  value={serverFormData.type}
                   onChange={(e) =>
-                    setServerConfig((prev) => ({
+                    setServerFormData((prev) => ({
                       ...prev,
                       type: e.target.value as "stdio" | "http",
                     }))
@@ -148,16 +148,16 @@ export function ServerConnection({
                 </select>
               </div>
 
-              {serverConfig.type === "stdio" ? (
+              {serverFormData.type === "stdio" ? (
                 <>
                   <div>
                     <label className="block text-sm font-medium mb-1">
                       Command
                     </label>
                     <Input
-                      value={serverConfig.command}
+                      value={serverFormData.command}
                       onChange={(e) =>
-                        setServerConfig((prev) => ({
+                        setServerFormData((prev) => ({
                           ...prev,
                           command: e.target.value,
                         }))
@@ -171,7 +171,7 @@ export function ServerConnection({
                       Arguments
                     </label>
                     <Input
-                      value={serverConfig.args?.join(" ") || ""}
+                      value={serverFormData.args?.join(" ") || ""}
                       onChange={(e) => handleArgsChange(e.target.value)}
                       placeholder="-y @modelcontextprotocol/server-filesystem /path/to/directory"
                     />
@@ -181,9 +181,9 @@ export function ServerConnection({
                 <div>
                   <label className="block text-sm font-medium mb-1">URL</label>
                   <Input
-                    value={serverConfig.url}
+                    value={serverFormData.url}
                     onChange={(e) =>
-                      setServerConfig((prev) => ({
+                      setServerFormData((prev) => ({
                         ...prev,
                         url: e.target.value,
                       }))

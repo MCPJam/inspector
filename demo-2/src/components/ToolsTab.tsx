@@ -12,6 +12,7 @@ import { Button } from "./ui/button";
 import { Wrench, Play, RefreshCw } from "lucide-react";
 import type { MCPToolType } from "@mastra/core/mcp";
 import { ZodType, ZodTypeDef } from "zod";
+import { MastraMCPServerDefinition, StdioServerDefinition, HttpServerDefinition } from "@/lib/types";
 
 interface Tool {
   name: string;
@@ -21,18 +22,8 @@ interface Tool {
   toolType?: MCPToolType;
 }
 
-interface ServerConfig {
-  name: string;
-  type: 'stdio' | 'http';
-  command?: string;
-  args?: string[];
-  url?: string;
-  headers?: Record<string, string>;
-  env?: Record<string, string>;
-}
-
 interface ToolsTabProps {
-  serverConfig?: ServerConfig;
+  serverConfig?: MastraMCPServerDefinition;
 }
 
 export function ToolsTab({ serverConfig }: ToolsTabProps) {
@@ -49,21 +40,9 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
     }
   }, [serverConfig]);
 
-  const getServerConfig = () => {
+  const getServerConfig = (): MastraMCPServerDefinition | null => {
     if (!serverConfig) return null;
-    
-    if (serverConfig.type === 'stdio') {
-      return { 
-        command: serverConfig.command, 
-        args: serverConfig.args, 
-        env: serverConfig.env 
-      };
-    } else {
-      return { 
-        url: serverConfig.url, 
-        requestInit: { headers: serverConfig.headers || {} }
-      };
-    }
+    return serverConfig;
   };
 
   const fetchTools = async () => {

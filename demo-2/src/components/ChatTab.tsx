@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { MessageCircle, Send, Bot, User } from 'lucide-react';
+import { MastraMCPServerDefinition, StdioServerDefinition, HttpServerDefinition } from '@/lib/types';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -12,18 +13,8 @@ interface ChatMessage {
   timestamp: Date;
 }
 
-interface ServerConfig {
-  name: string;
-  type: 'stdio' | 'http';
-  command?: string;
-  args?: string[];
-  url?: string;
-  headers?: Record<string, string>;
-  env?: Record<string, string>;
-}
-
 interface ChatTabProps {
-  serverConfig?: ServerConfig;
+  serverConfig?: MastraMCPServerDefinition;
 }
 
 export function ChatTab({ serverConfig }: ChatTabProps) {
