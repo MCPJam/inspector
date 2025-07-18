@@ -16,11 +16,21 @@ interface Prompt {
   }[];
 }
 
-interface PromptsTabProps {
-  selectedServer: string;
+interface ServerConfig {
+  name: string;
+  type: 'stdio' | 'http';
+  command?: string;
+  args?: string[];
+  url?: string;
+  headers?: Record<string, string>;
+  env?: Record<string, string>;
 }
 
-export function PromptsTab({ selectedServer }: PromptsTabProps) {
+interface PromptsTabProps {
+  serverConfig?: ServerConfig;
+}
+
+export function PromptsTab({ serverConfig }: PromptsTabProps) {
   const [prompts, setPrompts] = useState<Record<string, Prompt[]>>({});
   const [selectedPrompt, setSelectedPrompt] = useState<string>('');
   const [promptArgs, setPromptArgs] = useState<Record<string, string>>({});
@@ -29,14 +39,38 @@ export function PromptsTab({ selectedServer }: PromptsTabProps) {
   const [error, setError] = useState<string>('');
 
   useEffect(() => {
-    if (selectedServer && selectedServer !== 'none') {
+    if (serverConfig) {
       fetchPrompts();
     }
-  }, [selectedServer]);
+  }, [serverConfig]);
+
+  const getServerConfig = () => {
+    if (!serverConfig) return null;
+    
+    if (serverConfig.type === 'stdio') {
+      return { 
+        command: serverConfig.command, 
+        args: serverConfig.args, 
+        env: serverConfig.env 
+      };
+    } else {
+      return { 
+        url: serverConfig.url, 
+        requestInit: { headers: serverConfig.headers || {} }
+      };
+    }
+  };
 
   const fetchPrompts = async () => {
+    const config = getServerConfig();
+    if (!config) return;
+    
     try {
-      const response = await fetch(`/api/mcp/prompts?server=${selectedServer}`);
+      const response = await fetch('/api/mcp/prompts/list', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ serverConfig: config })
+      });
       const data = await response.json();
       
       if (response.ok) {
@@ -52,17 +86,23 @@ export function PromptsTab({ selectedServer }: PromptsTabProps) {
   const getPrompt = async () => {
     if (!selectedPrompt) return;
     
+    const config = getServerConfig();
+    if (!config) return;
+    
     setLoading(true);
     setError('');
     
     try {
-      const params = new URLSearchParams({
-        server: selectedServer,
-        name: selectedPrompt,
-        ...promptArgs
+      const response = await fetch('/api/mcp/prompts/get', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          serverConfig: config,
+          name: selectedPrompt,
+          args: promptArgs
+        })
       });
       
-      const response = await fetch(`/api/mcp/prompts?${params}`);
       const data = await response.json();
       
       if (response.ok) {
@@ -80,7 +120,7 @@ export function PromptsTab({ selectedServer }: PromptsTabProps) {
   const allPrompts = Object.values(prompts).flat();
   const currentPrompt = allPrompts.find(p => p.name === selectedPrompt);
 
-  if (selectedServer === 'none') {
+  if (!serverConfig) {
     return (
       <Card>
         <CardContent className="pt-6">

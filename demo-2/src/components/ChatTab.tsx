@@ -12,11 +12,21 @@ interface ChatMessage {
   timestamp: Date;
 }
 
-interface ChatTabProps {
-  selectedServer: string;
+interface ServerConfig {
+  name: string;
+  type: 'stdio' | 'http';
+  command?: string;
+  args?: string[];
+  url?: string;
+  headers?: Record<string, string>;
+  env?: Record<string, string>;
 }
 
-export function ChatTab({ selectedServer }: ChatTabProps) {
+interface ChatTabProps {
+  serverConfig?: ServerConfig;
+}
+
+export function ChatTab({ serverConfig }: ChatTabProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputMessage, setInputMessage] = useState('');
   const [loading, setLoading] = useState(false);
@@ -59,7 +69,7 @@ export function ChatTab({ selectedServer }: ChatTabProps) {
     }
   };
 
-  if (selectedServer === 'none') {
+  if (!serverConfig) {
     return (
       <Card>
         <CardContent className="pt-6">

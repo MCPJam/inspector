@@ -19,24 +19,38 @@ interface ServerConfig {
   env?: Record<string, string>;
 }
 
+interface AppState {
+  servers: Record<string, ServerConfig>;
+  selectedServer: string;
+}
+
 export default function Home() {
   const [activeTab, setActiveTab] = useState('servers');
-  const [selectedServer, setSelectedServer] = useState<string>('none');
-  const [connectedServers, setConnectedServers] = useState<string[]>([]);
+  const [appState, setAppState] = useState<AppState>({
+    servers: {},
+    selectedServer: 'none',
+  });
 
+  // Load state from localStorage on mount
   useEffect(() => {
-    fetchConnectedServers();
+    const savedState = localStorage.getItem('mcp-inspector-state');
+    if (savedState) {
+      try {
+        const parsed = JSON.parse(savedState);
+        setAppState(parsed);
+      } catch (error) {
+        console.error('Failed to parse saved state:', error);
+      }
+    }
   }, []);
 
-  const fetchConnectedServers = async () => {
-    try {
-      const response = await fetch('/api/mcp/connect');
-      const data = await response.json();
-      setConnectedServers(data.servers || []);
-    } catch (error) {
-      console.error('Failed to fetch connected servers:', error);
-    }
-  };
+  // Save state to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem('mcp-inspector-state', JSON.stringify(appState));
+  }, [appState]);
+
+  const connectedServers = Object.keys(appState.servers);
+  const selectedServerConfig = appState.servers[appState.selectedServer];
 
   const handleConnect = async (config: ServerConfig) => {
     try {
@@ -60,21 +74,31 @@ export default function Home() {
         }
       }
 
-      const response = await fetch('/api/mcp/connect', {
+      // Test connection using the new stateless endpoint
+      const response = await fetch('/api/mcp/test-connection', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          serverName: config.name,
-          config: serverConfig
+          serverConfig
         })
       });
 
-      if (response.ok) {
-        setConnectedServers(prev => [...prev, config.name]);
-        setSelectedServer(config.name);
+      const result = await response.json();
+      
+      if (result.success) {
+        // Add server to state
+        setAppState(prev => ({
+          ...prev,
+          servers: {
+            ...prev.servers,
+            [config.name]: config
+          },
+          selectedServer: config.name
+        }));
+        
+        alert(`Connected successfully! Found ${result.toolCount} tools.`);
       } else {
-        const error = await response.json();
-        alert(`Failed to connect: ${error.error}`);
+        alert(`Failed to connect: ${result.error}`);
       }
     } catch (error) {
       alert(`Network error: ${error}`);
@@ -82,20 +106,16 @@ export default function Home() {
   };
 
   const handleDisconnect = async (serverName: string) => {
-    try {
-      const response = await fetch(`/api/mcp/connect?server=${serverName}`, {
-        method: 'DELETE'
-      });
-
-      if (response.ok) {
-        setConnectedServers(prev => prev.filter(s => s !== serverName));
-        if (selectedServer === serverName) {
-          setSelectedServer('none');
-        }
-      }
-    } catch (error) {
-      alert(`Failed to disconnect: ${error}`);
-    }
+    // Remove server from state (no API call needed for stateless architecture)
+    setAppState(prev => {
+      const newServers = { ...prev.servers };
+      delete newServers[serverName];
+      
+      return {
+        servers: newServers,
+        selectedServer: prev.selectedServer === serverName ? 'none' : prev.selectedServer
+      };
+    });
   };
 
   const tabs = [
@@ -125,8 +145,11 @@ export default function Home() {
             </CardHeader>
             <CardContent>
               <select
-                value={selectedServer}
-                onChange={(e) => setSelectedServer(e.target.value)}
+                value={appState.selectedServer}
+                onChange={(e) => setAppState(prev => ({
+                  ...prev,
+                  selectedServer: e.target.value
+                }))}
                 className="w-full p-2 border rounded"
               >
                 <option value="none">Select a server...</option>
@@ -177,25 +200,25 @@ export default function Home() {
 
           {activeTab === 'tools' && (
             <div className="p-6">
-              <ToolsTab selectedServer={selectedServer} />
+              <ToolsTab serverConfig={selectedServerConfig} />
             </div>
           )}
 
           {activeTab === 'resources' && (
             <div className="p-6">
-              <ResourcesTab selectedServer={selectedServer} />
+              <ResourcesTab serverConfig={selectedServerConfig} />
             </div>
           )}
 
           {activeTab === 'prompts' && (
             <div className="p-6">
-              <PromptsTab selectedServer={selectedServer} />
+              <PromptsTab serverConfig={selectedServerConfig} />
             </div>
           )}
 
           {activeTab === 'chat' && (
             <div className="p-6">
-              <ChatTab selectedServer={selectedServer} />
+              <ChatTab serverConfig={selectedServerConfig} />
             </div>
           )}
         </div>

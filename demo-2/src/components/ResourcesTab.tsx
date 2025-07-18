@@ -12,11 +12,21 @@ interface Resource {
   mimeType?: string;
 }
 
-interface ResourcesTabProps {
-  selectedServer: string;
+interface ServerConfig {
+  name: string;
+  type: 'stdio' | 'http';
+  command?: string;
+  args?: string[];
+  url?: string;
+  headers?: Record<string, string>;
+  env?: Record<string, string>;
 }
 
-export function ResourcesTab({ selectedServer }: ResourcesTabProps) {
+interface ResourcesTabProps {
+  serverConfig?: ServerConfig;
+}
+
+export function ResourcesTab({ serverConfig }: ResourcesTabProps) {
   const [resources, setResources] = useState<Record<string, Resource[]>>({});
   const [selectedResource, setSelectedResource] = useState<string>('');
   const [resourceContent, setResourceContent] = useState<any>(null);
@@ -24,14 +34,39 @@ export function ResourcesTab({ selectedServer }: ResourcesTabProps) {
   const [error, setError] = useState<string>('');
 
   useEffect(() => {
-    if (selectedServer && selectedServer !== 'none') {
+    if (serverConfig) {
       fetchResources();
     }
-  }, [selectedServer]);
+  }, [serverConfig]);
+
+  const getServerConfig = () => {
+    if (!serverConfig) return null;
+    
+    if (serverConfig.type === 'stdio') {
+      return { 
+        command: serverConfig.command, 
+        args: serverConfig.args, 
+        env: serverConfig.env 
+      };
+    } else {
+      return { 
+        url: serverConfig.url, 
+        requestInit: { headers: serverConfig.headers || {} }
+      };
+    }
+  };
 
   const fetchResources = async () => {
+    const config = getServerConfig();
+    if (!config) return;
+    
     try {
-      const response = await fetch(`/api/mcp/resources?server=${selectedServer}`);
+      const response = await fetch('/api/mcp/resources/list', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ serverConfig: config })
+      });
+      
       const data = await response.json();
       
       if (response.ok) {
@@ -45,11 +80,22 @@ export function ResourcesTab({ selectedServer }: ResourcesTabProps) {
   };
 
   const readResource = async (uri: string) => {
+    const config = getServerConfig();
+    if (!config) return;
+    
     setLoading(true);
     setError('');
     
     try {
-      const response = await fetch(`/api/mcp/resources?server=${selectedServer}&uri=${encodeURIComponent(uri)}`);
+      const response = await fetch('/api/mcp/resources/read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          serverConfig: config,
+          uri: uri 
+        })
+      });
+      
       const data = await response.json();
       
       if (response.ok) {
@@ -66,7 +112,7 @@ export function ResourcesTab({ selectedServer }: ResourcesTabProps) {
 
   const allResources = Object.values(resources).flat();
 
-  if (selectedServer === 'none') {
+  if (!serverConfig) {
     return (
       <Card>
         <CardContent className="pt-6">

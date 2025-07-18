@@ -9,37 +9,74 @@ import {
   CardTitle,
 } from "./ui/card";
 import { Button } from "./ui/button";
-import { Input } from "./ui/input";
 import { Wrench, Play, RefreshCw } from "lucide-react";
+import type { MCPToolType } from "@mastra/core/mcp";
+import { ZodType, ZodTypeDef } from "zod";
 
 interface Tool {
   name: string;
-  description: string;
-  inputSchema: any;
-  execute: (args: any) => Promise<any>;
+  description?: string;
+  inputSchema: ZodType<any, ZodTypeDef, any>;
+  outputSchema?: Record<string, unknown>;
+  toolType?: MCPToolType;
+}
+
+interface ServerConfig {
+  name: string;
+  type: 'stdio' | 'http';
+  command?: string;
+  args?: string[];
+  url?: string;
+  headers?: Record<string, string>;
+  env?: Record<string, string>;
 }
 
 interface ToolsTabProps {
-  selectedServer: string;
+  serverConfig?: ServerConfig;
 }
 
-export function ToolsTab({ selectedServer }: ToolsTabProps) {
+export function ToolsTab({ serverConfig }: ToolsTabProps) {
   const [tools, setTools] = useState<Record<string, Tool>>({});
   const [selectedTool, setSelectedTool] = useState<string>("");
   const [toolParams, setToolParams] = useState<string>("{}");
-  const [result, setResult] = useState<any>(null);
+  const [result, setResult] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
-
+  
   useEffect(() => {
-    if (selectedServer && selectedServer !== "none") {
+    if (serverConfig) {
       fetchTools();
     }
-  }, [selectedServer]);
-  console.log(tools);
+  }, [serverConfig]);
+
+  const getServerConfig = () => {
+    if (!serverConfig) return null;
+    
+    if (serverConfig.type === 'stdio') {
+      return { 
+        command: serverConfig.command, 
+        args: serverConfig.args, 
+        env: serverConfig.env 
+      };
+    } else {
+      return { 
+        url: serverConfig.url, 
+        requestInit: { headers: serverConfig.headers || {} }
+      };
+    }
+  };
+
   const fetchTools = async () => {
+    const config = getServerConfig();
+    if (!config) return;
+    
     try {
-      const response = await fetch(`/api/mcp/tools?server=${selectedServer}`);
+      const response = await fetch('/api/mcp/tools/list', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ serverConfig: config })
+      });
+      
       const data = await response.json();
 
       if (response.ok) {
@@ -55,18 +92,21 @@ export function ToolsTab({ selectedServer }: ToolsTabProps) {
   const executeTool = async () => {
     if (!selectedTool) return;
 
+    const config = getServerConfig();
+    if (!config) return;
+
     setLoading(true);
     setError("");
 
     try {
       const params = JSON.parse(toolParams);
-      const response = await fetch("/api/mcp/tools", {
+      const response = await fetch("/api/mcp/tools/execute", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          serverName: selectedServer,
+          serverConfig: config,
           toolName: selectedTool,
           parameters: params,
         }),
@@ -88,7 +128,7 @@ export function ToolsTab({ selectedServer }: ToolsTabProps) {
 
   const toolNames = Object.keys(tools);
 
-  if (selectedServer === "none") {
+  if (!serverConfig) {
     return (
       <Card>
         <CardContent className="pt-6">
@@ -159,11 +199,7 @@ export function ToolsTab({ selectedServer }: ToolsTabProps) {
                         Input Schema
                       </summary>
                       <pre className="mt-1 text-xs bg-white p-2 rounded border overflow-auto">
-                        {JSON.stringify(
-                          tools[selectedTool]?.inputSchema,
-                          null,
-                          2,
-                        )}
+                        {JSON.stringify(tools[selectedTool]?.inputSchema)}
                       </pre>
                     </details>
                   </div>
