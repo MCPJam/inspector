@@ -3,16 +3,11 @@
  * Provides a complete OAuth integration for MCP Inspector
  */
 
-import { 
-  MCPOAuthConfig, 
-  OAuthClientState, 
-  HttpServerDefinition,
-  MastraMCPServerDefinition,
-  OAUTH_SCOPES 
-} from './oauth-types';
-import { OAuthFlowManager, createOAuthFlow } from './oauth-flow';
-import { tokenManager, OAuthSecurityValidator } from './oauth-security';
-import { discoverMCPOAuth } from './oauth-discovery';
+import { MCPOAuthConfig, OAuthClientState, OAUTH_SCOPES } from "./oauth-types";
+import { OAuthFlowManager, createOAuthFlow } from "./oauth-flow";
+import { tokenManager, OAuthSecurityValidator } from "./oauth-security";
+import { discoverMCPOAuth } from "./oauth-discovery";
+import { HttpServerDefinition } from "./types";
 
 export interface OAuthIntegrationOptions {
   serverName: string;
@@ -25,7 +20,7 @@ export interface OAuthIntegrationOptions {
 
 export interface OAuthIntegrationResult {
   success: boolean;
-  serverConfig?: MastraMCPServerDefinition;
+  serverConfig?: HttpServerDefinition;
   authorizationUrl?: string;
   error?: string;
   warnings?: string[];
@@ -42,10 +37,10 @@ export class MCPOAuthIntegration {
   constructor(options: OAuthIntegrationOptions) {
     this.options = {
       scopes: [OAUTH_SCOPES.MCP_FULL],
-      redirectUri: `${typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'}/oauth/callback`,
+      redirectUri: `${typeof window !== "undefined" ? window.location.origin : "http://localhost:3000"}/oauth/callback`,
       autoRegister: true,
       securityValidation: true,
-      ...options
+      ...options,
     };
   }
 
@@ -58,14 +53,14 @@ export class MCPOAuthIntegration {
       if (this.options.securityValidation) {
         const validation = OAuthSecurityValidator.validateOAuthConfig({
           redirectUri: this.options.redirectUri,
-          scopes: this.options.scopes
+          scopes: this.options.scopes,
         });
 
         if (!validation.valid) {
           return {
             success: false,
-            error: `Security validation failed: ${validation.errors.join(', ')}`,
-            warnings: validation.warnings
+            error: `Security validation failed: ${validation.errors.join(", ")}`,
+            warnings: validation.warnings,
           };
         }
       }
@@ -75,7 +70,7 @@ export class MCPOAuthIntegration {
         client_name: `MCP Inspector - ${this.options.serverName}`,
         requested_scopes: this.options.scopes,
         redirect_uri: this.options.redirectUri,
-        auto_register: this.options.autoRegister
+        auto_register: this.options.autoRegister,
       });
 
       // Store flow for later use
@@ -87,19 +82,18 @@ export class MCPOAuthIntegration {
       if (result.success && result.authorization_url) {
         return {
           success: true,
-          authorizationUrl: result.authorization_url
+          authorizationUrl: result.authorization_url,
         };
       } else {
         return {
           success: false,
-          error: result.error?.error_description || 'OAuth initiation failed'
+          error: result.error?.error_description || "OAuth initiation failed",
         };
       }
-
     } catch (error) {
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown OAuth error'
+        error: error instanceof Error ? error.message : "Unknown OAuth error",
       };
     }
   }
@@ -113,7 +107,7 @@ export class MCPOAuthIntegration {
       if (!flow) {
         return {
           success: false,
-          error: 'OAuth flow not found. Please restart the connection process.'
+          error: "OAuth flow not found. Please restart the connection process.",
         };
       }
 
@@ -123,25 +117,29 @@ export class MCPOAuthIntegration {
       if (!tokenResult.success || !tokenResult.tokens) {
         return {
           success: false,
-          error: tokenResult.error?.error_description || 'Token exchange failed'
+          error:
+            tokenResult.error?.error_description || "Token exchange failed",
         };
       }
 
       // Store tokens securely
-      await tokenManager.storeTokens(this.options.serverName, tokenResult.tokens);
+      await tokenManager.storeTokens(
+        this.options.serverName,
+        tokenResult.tokens,
+      );
 
       // Create server configuration with OAuth
       const serverConfig = this.createServerConfig(flow.getState());
 
       return {
         success: true,
-        serverConfig
+        serverConfig,
       };
-
     } catch (error) {
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown callback error'
+        error:
+          error instanceof Error ? error.message : "Unknown callback error",
       };
     }
   }
@@ -170,7 +168,7 @@ export class MCPOAuthIntegration {
 
       return false;
     } catch (error) {
-      console.error('Token refresh failed:', error);
+      console.error("Token refresh failed:", error);
       return false;
     }
   }
@@ -178,15 +176,19 @@ export class MCPOAuthIntegration {
   /**
    * Creates MCP server configuration with OAuth
    */
-  private createServerConfig(oauthState: OAuthClientState): HttpServerDefinition {
+  private createServerConfig(
+    oauthState: OAuthClientState,
+  ): HttpServerDefinition {
     return {
       url: new URL(this.options.serverUrl),
       requestInit: {
-        headers: oauthState.access_token ? {
-          'Authorization': `Bearer ${oauthState.access_token}`
-        } : {}
+        headers: oauthState.access_token
+          ? {
+              Authorization: `Bearer ${oauthState.access_token}`,
+            }
+          : {},
       },
-      oauth: oauthState
+      oauth: oauthState,
     };
   }
 
@@ -196,7 +198,7 @@ export class MCPOAuthIntegration {
   async disconnect(serverName: string): Promise<void> {
     // Remove stored tokens
     await tokenManager.removeTokens(serverName);
-    
+
     // Remove OAuth flow
     this.flows.delete(serverName);
   }
@@ -220,17 +222,19 @@ export class MCPOAuthIntegration {
       if (discoveryResult.error) {
         return {
           supportsOAuth: false,
-          error: discoveryResult.error.error_description
+          error: discoveryResult.error.error_description,
         };
       }
 
-      const authServer = discoveryResult.authorization_server?.authorization_server_metadata;
-      const protectedResource = discoveryResult.protected_resource?.protected_resource_metadata;
+      const authServer =
+        discoveryResult.authorization_server?.authorization_server_metadata;
+      const protectedResource =
+        discoveryResult.protected_resource?.protected_resource_metadata;
 
       if (!authServer && !protectedResource) {
         return {
           supportsOAuth: false,
-          error: 'No OAuth metadata discovered'
+          error: "No OAuth metadata discovered",
         };
       }
 
@@ -238,19 +242,18 @@ export class MCPOAuthIntegration {
         supportsOAuth: true,
         capabilities: [
           ...(authServer?.mcp_capabilities || []),
-          ...(protectedResource?.mcp_capabilities || [])
+          ...(protectedResource?.mcp_capabilities || []),
         ],
         endpoints: {
           authorization: authServer?.authorization_endpoint,
           token: authServer?.token_endpoint,
-          registration: authServer?.registration_endpoint
-        }
+          registration: authServer?.registration_endpoint,
+        },
       };
-
     } catch (error) {
       return {
         supportsOAuth: false,
-        error: error instanceof Error ? error.message : 'Discovery failed'
+        error: error instanceof Error ? error.message : "Discovery failed",
       };
     }
   }
@@ -262,12 +265,12 @@ export class MCPOAuthIntegration {
 export async function createOAuthServerConfig(
   serverName: string,
   serverUrl: string,
-  options: Partial<OAuthIntegrationOptions> = {}
+  options: Partial<OAuthIntegrationOptions> = {},
 ): Promise<OAuthIntegrationResult> {
   const integration = new MCPOAuthIntegration({
     serverName,
     serverUrl,
-    ...options
+    ...options,
   });
 
   return await integration.initiate();
@@ -286,7 +289,7 @@ export async function checkOAuthSupport(serverUrl: string): Promise<boolean> {
  */
 export async function getValidAccessToken(
   serverName: string,
-  refreshCallback?: (refreshToken: string) => Promise<any>
+  refreshCallback?: (refreshToken: string) => Promise<any>,
 ): Promise<string | null> {
   const tokens = await tokenManager.getValidTokens(serverName, refreshCallback);
   return tokens?.access_token || null;
@@ -297,11 +300,11 @@ export async function getValidAccessToken(
  */
 export const DEFAULT_MCP_OAUTH_CONFIG: Partial<MCPOAuthConfig> = {
   use_pkce: true,
-  pkce_method: 'S256',
+  pkce_method: "S256",
   requested_scopes: [OAUTH_SCOPES.MCP_FULL],
   discovery_timeout: 10000,
   registration_timeout: 30000,
-  token_timeout: 30000
+  token_timeout: 30000,
 };
 
 export { MCPOAuthIntegration as default };

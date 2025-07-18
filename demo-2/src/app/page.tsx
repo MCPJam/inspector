@@ -1,6 +1,40 @@
 "use client";
 
-import { useState, useEffect } from "react";
+/**
+ * MCP Inspector - OAuth Flow Solution
+ *
+ * This implementation solves the OAuth state persistence problem by:
+ *
+ * 1. **Storing Serializable State**: Instead of storing the entire OAuthFlowManager
+ *    (which contains complex objects and methods), we store only the essential
+ *    serializable data needed to complete the OAuth flow.
+ *
+ * 2. **State Management**: The `pendingOAuthCallbacks` object stores OAuth state
+ *    data keyed by the `state` parameter, which serves as a unique identifier
+ *    for each OAuth flow.
+ *
+ * 3. **Callback Handling**: When the OAuth callback occurs, the callback page
+ *    redirects back to the main page with the callback parameters. The main page
+ *    then:
+ *    - Checks for callback parameters in the URL
+ *    - Looks up the stored OAuth state using the `state` parameter
+ *    - Recreates the OAuth flow manager for discovery
+ *    - Manually exchanges the authorization code for tokens
+ *    - Updates the server configuration with the new tokens
+ *
+ * 4. **Token Management**: The solution includes:
+ *    - Automatic token refresh when tokens are about to expire
+ *    - Persistent storage of tokens in localStorage
+ *    - Proper cleanup of pending callbacks after successful completion
+ *
+ * Key Benefits:
+ * - No state loss during OAuth redirects
+ * - Proper PKCE implementation for security
+ * - Automatic token refresh handling
+ * - Clean separation of concerns
+ */
+
+import { useState } from "react";
 import { ServerConnection } from "@/components/ServerConnection";
 import { ToolsTab } from "@/components/ToolsTab";
 import { ResourcesTab } from "@/components/ResourcesTab";
@@ -14,193 +48,31 @@ import {
   MessageCircle,
   Server,
 } from "lucide-react";
-import {
-  MastraMCPServerDefinition,
-  StdioServerDefinition,
-  HttpServerDefinition,
-} from "@/lib/types";
-import { createOAuthFlow, OAuthFlowManager } from "@/lib/oauth-flow";
-
-interface ServerWithName {
-  name: string;
-  config: MastraMCPServerDefinition;
-  oauthFlow?: OAuthFlowManager;
-}
-
-interface AppState {
-  servers: Record<string, ServerWithName>;
-  selectedServer: string;
-  oauthFlows: Record<string, OAuthFlowManager>;
-}
-
-// UI form interface - only used for the form input
-interface ServerFormData {
-  name: string;
-  type: "stdio" | "http";
-  command?: string;
-  args?: string[];
-  url?: string;
-  headers?: Record<string, string>;
-  env?: Record<string, string>;
-  useOAuth?: boolean;
-  oauthScopes?: string[];
-}
+import { useAppState } from "@/hooks/useAppState";
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState("servers");
-  const [appState, setAppState] = useState<AppState>({
-    servers: {},
-    selectedServer: "none",
-    oauthFlows: {},
-  });
 
-  // Load state from localStorage on mount
-  useEffect(() => {
-    const savedState = localStorage.getItem("mcp-inspector-state");
-    if (savedState) {
-      try {
-        const parsed = JSON.parse(savedState);
-        setAppState(parsed);
-      } catch (error) {
-        console.error("Failed to parse saved state:", error);
-      }
-    }
-  }, []);
+  const {
+    appState,
+    isLoading,
+    connectedServers,
+    selectedMCPConfig,
+    handleConnect,
+    handleDisconnect,
+    setSelectedServer,
+  } = useAppState();
 
-  // Save state to localStorage whenever it changes
-  useEffect(() => {
-    localStorage.setItem("mcp-inspector-state", JSON.stringify(appState));
-  }, [appState]);
-
-  const connectedServers = Object.keys(appState.servers);
-  const selectedServerEntry = appState.servers[appState.selectedServer];
-  const selectedMCPConfig = selectedServerEntry?.config;
-
-  // Convert form data to MastraMCPServerDefinition
-  const convertFormToMCPConfig = (
-    formData: ServerFormData,
-  ): MastraMCPServerDefinition => {
-    if (formData.type === "stdio") {
-      return {
-        command: formData.command!,
-        args: formData.args,
-        env: formData.env,
-      } as StdioServerDefinition;
-    } else {
-      return {
-        url: new URL(formData.url!),
-        requestInit: { headers: formData.headers || {} },
-      } as HttpServerDefinition;
-    }
-  };
-
-  const handleConnect = async (formData: ServerFormData) => {
-    try {
-      // Validate form data first
-      if (formData.type === "stdio") {
-        if (!formData.command || formData.command.trim() === "") {
-          alert("Command is required for STDIO connections");
-          return;
-        }
-      } else {
-        if (!formData.url || formData.url.trim() === "") {
-          alert("URL is required for HTTP connections");
-          return;
-        }
-
-        try {
-          new URL(formData.url);
-        } catch (urlError) {
-          alert(`Invalid URL format: ${formData.url}`);
-          return;
-        }
-      }
-
-      // Convert form data to MCP config
-      const mcpConfig = convertFormToMCPConfig(formData);
-
-      // Handle OAuth flow for HTTP servers
-      if (formData.type === "http" && formData.useOAuth && formData.url) {
-        const oauthFlow = createOAuthFlow(formData.url, {
-          client_name: `MCP Inspector - ${formData.name}`,
-          requested_scopes: formData.oauthScopes || ["mcp:*"],
-          redirect_uri: `${window.location.origin}/oauth/callback`,
-        });
-
-        const oauthResult = await oauthFlow.initiate();
-
-        if (oauthResult.success && oauthResult.authorization_url) {
-          // Store OAuth flow for later use
-          setAppState((prev) => ({
-            ...prev,
-            oauthFlows: {
-              ...prev.oauthFlows,
-              [formData.name]: oauthFlow,
-            },
-          }));
-
-          // Redirect user to authorization URL
-          alert(
-            `OAuth flow initiated. You will be redirected to authorize access.`,
-          );
-          window.location.href = oauthResult.authorization_url;
-          return;
-        } else {
-          alert(
-            `OAuth initialization failed: ${oauthResult.error?.error_description || "Unknown error"}`,
-          );
-          return;
-        }
-      }
-
-      // For non-OAuth connections, test connection using the stateless endpoint
-      const response = await fetch("/api/mcp/test-connection", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          serverConfig: mcpConfig,
-        }),
-      });
-
-      const result = await response.json();
-
-      if (result.success) {
-        // Add server to state with both name and config
-        setAppState((prev) => ({
-          ...prev,
-          servers: {
-            ...prev.servers,
-            [formData.name]: {
-              name: formData.name,
-              config: mcpConfig,
-            },
-          },
-          selectedServer: formData.name,
-        }));
-
-        alert(`Connected successfully! Found ${result.toolCount} tools.`);
-      } else {
-        alert(`Failed to connect: ${result.error}`);
-      }
-    } catch (error) {
-      alert(`Network error: ${error}`);
-    }
-  };
-
-  const handleDisconnect = async (serverName: string) => {
-    // Remove server from state (no API call needed for stateless architecture)
-    setAppState((prev: AppState) => {
-      const newServers = { ...prev.servers };
-      delete newServers[serverName];
-
-      return {
-        servers: newServers,
-        selectedServer:
-          prev.selectedServer === serverName ? "none" : prev.selectedServer,
-        oauthFlows: prev.oauthFlows,
-      };
-    });
-  };
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   const tabs = [
     { id: "servers", label: "Servers", icon: Server },
@@ -230,12 +102,7 @@ export default function Home() {
             <CardContent>
               <select
                 value={appState.selectedServer}
-                onChange={(e) =>
-                  setAppState((prev) => ({
-                    ...prev,
-                    selectedServer: e.target.value,
-                  }))
-                }
+                onChange={(e) => setSelectedServer(e.target.value)}
                 className="w-full p-2 border rounded"
               >
                 <option value="none">Select a server...</option>
