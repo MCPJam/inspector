@@ -71,7 +71,7 @@ export default function Home() {
 
   return (
     <SidebarProvider defaultOpen={true}>
-      <MCPSidebar onNavigate={handleNavigate} />
+      <MCPSidebar onNavigate={handleNavigate} activeTab={activeTab} />
       <SidebarInset className="flex flex-col">
         <header className="flex h-14 items-center gap-4 border-b bg-background px-4 lg:h-[60px] lg:px-6">
           <CustomSidebarTrigger />

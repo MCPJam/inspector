@@ -21,101 +21,56 @@ import {
   SidebarHeader,
 } from "@/components/ui/sidebar";
 
-const data = {
-  user: {
-    name: "MCP Inspector",
-    email: "inspector@example.com",
-    avatar: "/avatars/shadcn.jpg",
+const navMainItems = [
+  {
+    title: "Servers",
+    url: "#servers",
+    icon: Server,
   },
-  navMain: [
-    {
-      title: "Server Management",
-      url: "#",
-      icon: Server,
-      isActive: true,
-      items: [
-        {
-          title: "Connections",
-          url: "#servers",
-        },
-        {
-          title: "Configuration",
-          url: "#config",
-        },
-      ],
-    },
-    {
-      title: "MCP Tools",
-      url: "#",
-      icon: Wrench,
-      items: [
-        {
-          title: "Available Tools",
-          url: "#tools",
-        },
-        {
-          title: "Tool History",
-          url: "#history",
-        },
-      ],
-    },
-    {
-      title: "Resources",
-      url: "#",
-      icon: FolderOpen,
-      items: [
-        {
-          title: "Browse Resources",
-          url: "#resources",
-        },
-        {
-          title: "Resource Templates",
-          url: "#templates",
-        },
-      ],
-    },
-    {
-      title: "Prompts",
-      url: "#",
-      icon: MessageSquare,
-      items: [
-        {
-          title: "Prompt Library",
-          url: "#prompts",
-        },
-        {
-          title: "Custom Prompts",
-          url: "#custom",
-        },
-      ],
-    },
-    {
-      title: "Chat Interface",
-      url: "#",
-      icon: MessageCircle,
-      items: [
-        {
-          title: "Chat Console",
-          url: "#chat",
-        },
-        {
-          title: "Chat History",
-          url: "#chat-history",
-        },
-      ],
-    },
-  ],
-};
+  {
+    title: "Tools",
+    url: "#tools",
+    icon: Wrench,
+  },
+  {
+    title: "Resources",
+    url: "#resources",
+    icon: FolderOpen,
+  },
+  {
+    title: "Prompts",
+    url: "#prompts",
+    icon: MessageSquare,
+  },
+  {
+    title: "Chat",
+    url: "#chat",
+    icon: MessageCircle,
+  },
+];
 
 interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   onNavigate?: (section: string) => void;
+  activeTab?: string;
 }
 
-export function MCPSidebar({ onNavigate, ...props }: MCPSidebarProps) {
+export function MCPSidebar({ onNavigate, activeTab, ...props }: MCPSidebarProps) {
   const handleNavClick = (url: string) => {
     if (onNavigate && url.startsWith("#")) {
       onNavigate(url.slice(1));
     }
+  };
+
+  const data = {
+    user: {
+      name: "MCP Inspector",
+      email: "inspector@example.com",
+      avatar: "/avatars/shadcn.jpg",
+    },
+    navMain: navMainItems.map(item => ({
+      ...item,
+      isActive: item.url === `#${activeTab}`
+    }))
   };
 
   return (

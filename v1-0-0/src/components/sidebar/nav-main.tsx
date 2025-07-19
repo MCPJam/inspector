@@ -13,9 +13,6 @@ interface NavMainItem {
   url: string;
   icon?: React.ElementType;
   isActive?: boolean;
-  items?: NavMainItem[];
-  isHeader?: boolean;
-  isSubItem?: boolean;
 }
 
 interface NavMainProps {
@@ -34,49 +31,21 @@ export function NavMain({ items, onItemClick }: NavMainProps) {
     return item.isActive || false;
   };
 
-  // Flatten all items including sub-items
-  const flattenItems = (items: NavMainItem[]): NavMainItem[] => {
-    const flattened: NavMainItem[] = [];
-    
-    items.forEach((item) => {
-      // Add parent item as a section header
-      flattened.push({ ...item, isHeader: true });
-      
-      // Add sub-items
-      if (item.items) {
-        item.items.forEach((subItem) => {
-          flattened.push({ ...subItem, isSubItem: true });
-        });
-      }
-    });
-    
-    return flattened;
-  };
-
-  const flatItems = flattenItems(items);
-
   return (
     <SidebarGroup>
       <SidebarGroupContent>
         <SidebarMenu>
-          {flatItems.map((item, index) => (
-            <SidebarMenuItem key={`${item.title}-${index}`}>
-              {item.isHeader ? (
-                <div className="flex items-center gap-2 px-3 py-2 text-sm font-semibold text-muted-foreground">
-                  {item.icon && <item.icon className="h-4 w-4" />}
-                  <span>{item.title}</span>
-                </div>
-              ) : (
-                <SidebarMenuButton
-                  className={item.isSubItem ? "pl-9" : ""}
-                  tooltip={item.title}
-                  isActive={isItemActive(item)}
-                  onClick={() => handleClick(item.url)}
-                >
-                  {item.icon && <item.icon />}
-                  <span>{item.title}</span>
-                </SidebarMenuButton>
-              )}
+          {items.map((item) => (
+            <SidebarMenuItem key={item.title}>
+              <SidebarMenuButton
+                tooltip={item.title}
+                isActive={isItemActive(item)}
+                onClick={() => handleClick(item.url)}
+                className={isItemActive(item) ? "[&[data-active=true]]:bg-black/5 dark:[&[data-active=true]]:bg-white/5" : ""}
+              >
+                {item.icon && <item.icon className="h-4 w-4" />}
+                <span>{item.title}</span>
+              </SidebarMenuButton>
             </SidebarMenuItem>
           ))}
         </SidebarMenu>
