@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { PanelLeft, PanelLeftClose } from "lucide-react";
 
 import { ServerConnection } from "@/components/ServerConnection";
 import { ToolsTab } from "@/components/ToolsTab";
@@ -14,8 +15,10 @@ import {
   SidebarInset,
   SidebarProvider,
   SidebarTrigger,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import { SearchDialog } from "@/components/sidebar/search-dialog";
+import { Button } from "@/components/ui/button";
 import { ThemeSwitcher } from "@/components/sidebar/theme-switcher";
 import { AccountSwitcher } from "@/components/sidebar/account-switcher";
 import { useAppState } from "@/hooks/useAppState";
@@ -29,6 +32,25 @@ const users = [
     role: "Inspector",
   },
 ] as const;
+
+function CustomSidebarTrigger() {
+  const { open, toggleSidebar } = useSidebar();
+
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      onClick={toggleSidebar}
+      className="h-9 w-9"
+    >
+      {open ? (
+        <PanelLeftClose className="h-5 w-5" />
+      ) : (
+        <PanelLeft className="h-5 w-5" />
+      )}
+    </Button>
+  );
+}
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState("servers");
@@ -61,7 +83,7 @@ export default function Home() {
 
   return (
     <SidebarProvider defaultOpen={true}>
-      <MCPSidebar onNavigate={handleNavigate} />
+      <MCPSidebar onNavigate={handleNavigate} activeTab={activeTab} />
       <SidebarInset className="flex flex-col">
         <header className="flex h-12 shrink-0 items-center gap-2 border-b transition-[width,height] ease-linear">
           <div className="flex w-full items-center justify-between px-4 lg:px-6">
