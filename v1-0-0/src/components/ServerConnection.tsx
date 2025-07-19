@@ -10,7 +10,8 @@ import {
 } from "./ui/card";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
-import { Plus, Link, Link2Off } from "lucide-react";
+import { Plus, Server, Database } from "lucide-react";
+import { ServerWithName } from "@/hooks/useAppState";
 
 interface ServerFormData {
   name: string;
@@ -25,17 +26,22 @@ interface ServerFormData {
 }
 
 interface ServerConnectionProps {
-  connectedServers: string[];
+  connectedServerConfigs: Record<string, ServerWithName>;
   onConnect: (formData: ServerFormData) => void;
   onDisconnect: (serverName: string) => void;
 }
 
+// Import the new card component
+import { ServerConnectionCard } from "./ServerConnectionCard";
+
 export function ServerConnection({
-  connectedServers,
+  connectedServerConfigs,
   onConnect,
   onDisconnect,
 }: ServerConnectionProps) {
   const [isAddingServer, setIsAddingServer] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [filterType, setFilterType] = useState<"all" | "stdio" | "http">("all");
   const [serverFormData, setServerFormData] = useState<ServerFormData>({
     name: "",
     type: "stdio",
@@ -74,52 +80,89 @@ export function ServerConnection({
     }));
   };
 
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Link className="h-5 w-5" />
-          Server Connections
-        </CardTitle>
-        <CardDescription>Manage your MCP server connections</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="space-y-4">
-          {/* Connected Servers */}
-          {connectedServers.length > 0 && (
-            <div className="space-y-2">
-              <h4 className="font-medium">Connected Servers:</h4>
-              {connectedServers.map((server) => (
-                <div
-                  key={server}
-                  className="flex items-center justify-between p-2 bg-green-50 rounded border"
-                >
-                  <span className="font-medium">{server}</span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => onDisconnect(server)}
-                    className="text-red-600 hover:text-red-700"
-                  >
-                    <Link2Off className="h-4 w-4 mr-1" />
-                    Disconnect
-                  </Button>
-                </div>
-              ))}
-            </div>
-          )}
+  // Filter and search servers
+  const filteredServers = Object.entries(connectedServerConfigs).filter(
+    ([name, server]) => {
+      const matchesSearch = name
+        .toLowerCase()
+        .includes(searchTerm.toLowerCase());
+      const matchesFilter =
+        filterType === "all" ||
+        (filterType === "stdio" && "command" in server.config) ||
+        (filterType === "http" && "url" in server.config);
+      return matchesSearch && matchesFilter;
+    },
+  );
 
-          {/* Add Server Form */}
-          {!isAddingServer ? (
-            <Button onClick={() => setIsAddingServer(true)} className="w-full">
+  const connectedCount = Object.keys(connectedServerConfigs).length;
+
+  return (
+    <div className="space-y-6">
+      {/* Header Section */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold tracking-tight">
+            Server Connections
+          </h2>
+          <p className="text-muted-foreground">
+            Manage your MCP server connections and monitor their status
+          </p>
+        </div>
+        <Button onClick={() => setIsAddingServer(true)}>
+          <Plus className="h-4 w-4 mr-2" />
+          Add Server
+        </Button>
+      </div>
+      {/* Server Cards Grid */}
+      {connectedCount > 0 ? (
+        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+          {filteredServers.map(([name, server]) => (
+            <ServerConnectionCard
+              key={name}
+              server={server}
+              onDisconnect={onDisconnect}
+            />
+          ))}
+        </div>
+      ) : (
+        <Card className="p-12 text-center">
+          <div className="mx-auto max-w-sm">
+            <Server className="mx-auto h-12 w-12 text-muted-foreground" />
+            <h3 className="mt-4 text-lg font-semibold">No servers connected</h3>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Get started by connecting to your first MCP server
+            </p>
+            <Button onClick={() => setIsAddingServer(true)} className="mt-4">
               <Plus className="h-4 w-4 mr-2" />
-              Add Server
+              Add Your First Server
             </Button>
-          ) : (
-            <form
-              onSubmit={handleSubmit}
-              className="space-y-4 p-4 border rounded"
-            >
+          </div>
+        </Card>
+      )}
+
+      {filteredServers.length === 0 && connectedCount > 0 && (
+        <Card className="p-8 text-center">
+          <div className="mx-auto max-w-sm">
+            <Database className="mx-auto h-8 w-8 text-muted-foreground" />
+            <h3 className="mt-4 text-lg font-semibold">No servers found</h3>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Try adjusting your search or filter criteria
+            </p>
+          </div>
+        </Card>
+      )}
+
+      {/* Add Server Modal/Form */}
+      {isAddingServer && (
+        <Card className="border-2 border-dashed">
+          <CardHeader>
+            <CardTitle>Add New Server</CardTitle>
+            <CardDescription>
+              Configure a new MCP server connection
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium mb-1">
                   Server Name
@@ -147,7 +190,7 @@ export function ServerConnection({
                       type: e.target.value as "stdio" | "http",
                     }))
                   }
-                  className="w-full p-2 border rounded"
+                  className="w-full p-2 border rounded-md bg-background"
                 >
                   <option value="stdio">STDIO</option>
                   <option value="http">HTTP</option>
@@ -202,8 +245,7 @@ export function ServerConnection({
                     />
                   </div>
 
-                  {/* OAuth Configuration */}
-                  <div className="space-y-3 p-3 border rounded bg-gray-50">
+                  <div className="space-y-3 p-4 border rounded-lg bg-muted/50">
                     <div className="flex items-center space-x-2">
                       <input
                         type="checkbox"
@@ -239,7 +281,7 @@ export function ServerConnection({
                           }
                           placeholder="mcp:* mcp:tools mcp:resources"
                         />
-                        <p className="text-xs text-gray-500 mt-1">
+                        <p className="text-xs text-muted-foreground mt-1">
                           Space-separated OAuth scopes. Use &apos;mcp:*&apos;
                           for full access.
                         </p>
@@ -249,8 +291,8 @@ export function ServerConnection({
                 </>
               )}
 
-              <div className="flex gap-2">
-                <Button type="submit">Connect</Button>
+              <div className="flex gap-2 pt-4">
+                <Button type="submit">Connect Server</Button>
                 <Button
                   type="button"
                   variant="outline"
@@ -260,9 +302,9 @@ export function ServerConnection({
                 </Button>
               </div>
             </form>
-          )}
-        </div>
-      </CardContent>
-    </Card>
+          </CardContent>
+        </Card>
+      )}
+    </div>
   );
 }

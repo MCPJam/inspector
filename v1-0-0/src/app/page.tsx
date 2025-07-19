@@ -8,9 +8,13 @@ import { ResourcesTab } from "@/components/ResourcesTab";
 import { PromptsTab } from "@/components/PromptsTab";
 import { ChatTab } from "@/components/ChatTab";
 import { MCPSidebar } from "@/components/mcp-sidebar";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ActiveServerSelector } from "@/components/ActiveServerSelector";
 import { Separator } from "@/components/ui/separator";
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import {
+  SidebarInset,
+  SidebarProvider,
+  SidebarTrigger,
+} from "@/components/ui/sidebar";
 import { SearchDialog } from "@/components/sidebar/search-dialog";
 import { ThemeSwitcher } from "@/components/sidebar/theme-switcher";
 import { AccountSwitcher } from "@/components/sidebar/account-switcher";
@@ -33,6 +37,7 @@ export default function Home() {
     appState,
     isLoading,
     connectedServers,
+    connectedServerConfigs,
     selectedMCPConfig,
     handleConnect,
     handleDisconnect,
@@ -62,7 +67,10 @@ export default function Home() {
           <div className="flex w-full items-center justify-between px-4 lg:px-6">
             <div className="flex items-center gap-1 lg:gap-2">
               <SidebarTrigger className="-ml-1" />
-              <Separator orientation="vertical" className="mx-2 data-[orientation=vertical]:h-4" />
+              <Separator
+                orientation="vertical"
+                className="mx-2 data-[orientation=vertical]:h-4"
+              />
               <SearchDialog />
             </div>
             <div className="flex items-center gap-2">
@@ -71,35 +79,23 @@ export default function Home() {
             </div>
           </div>
         </header>
-        
+
         <div className="flex-1 p-4 md:p-6">
-          {/* Server Selection */}
-          {connectedServers.length > 0 && (
-            <Card className="mb-6">
-              <CardHeader>
-                <CardTitle>Active Server</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <select
-                  value={appState.selectedServer}
-                  onChange={(e) => setSelectedServer(e.target.value)}
-                  className="w-full p-2 border rounded"
-                >
-                  <option value="none">Select a server...</option>
-                  {connectedServers.map((server) => (
-                    <option key={server} value={server}>
-                      {server}
-                    </option>
-                  ))}
-                </select>
-              </CardContent>
-            </Card>
+          {/* Active Server Selector - Only show on Tools, Resources, and Prompts pages */}
+          {(activeTab === "tools" ||
+            activeTab === "resources" ||
+            activeTab === "prompts") && (
+            <ActiveServerSelector
+              connectedServers={connectedServers}
+              selectedServer={appState.selectedServer}
+              onServerChange={setSelectedServer}
+            />
           )}
 
           {/* Content Areas */}
           {activeTab === "servers" && (
             <ServerConnection
-              connectedServers={connectedServers}
+              connectedServerConfigs={connectedServerConfigs}
               onConnect={handleConnect}
               onDisconnect={handleDisconnect}
             />
@@ -117,9 +113,7 @@ export default function Home() {
             <PromptsTab serverConfig={selectedMCPConfig} />
           )}
 
-          {activeTab === "chat" && (
-            <ChatTab serverConfig={selectedMCPConfig} />
-          )}
+          {activeTab === "chat" && <ChatTab serverConfig={selectedMCPConfig} />}
         </div>
       </SidebarInset>
     </SidebarProvider>
