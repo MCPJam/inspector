@@ -555,6 +555,7 @@ export function useAppState() {
 
     // Computed values
     connectedServers: Object.keys(appState.servers),
+    connectedServerConfigs: appState.servers,
     selectedServerEntry: appState.servers[appState.selectedServer],
     selectedMCPConfig: appState.servers[appState.selectedServer]?.config,
 

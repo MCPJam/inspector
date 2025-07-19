@@ -9,9 +9,16 @@ import { ResourcesTab } from "@/components/ResourcesTab";
 import { PromptsTab } from "@/components/PromptsTab";
 import { ChatTab } from "@/components/ChatTab";
 import { MCPSidebar } from "@/components/mcp-sidebar";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ActiveServerSelector } from "@/components/ActiveServerSelector";
+import { Separator } from "@/components/ui/separator";
+import {
+  SidebarInset,
+  SidebarProvider,
+  SidebarTrigger,
+  useSidebar,
+} from "@/components/ui/sidebar";
+import { SearchDialog } from "@/components/sidebar/search-dialog";
 import { Button } from "@/components/ui/button";
-import { SidebarInset, SidebarProvider, useSidebar } from "@/components/ui/sidebar";
 import { ThemeSwitcher } from "@/components/sidebar/theme-switcher";
 import { AccountSwitcher } from "@/components/sidebar/account-switcher";
 import { useAppState } from "@/hooks/useAppState";
@@ -28,7 +35,7 @@ const users = [
 
 function CustomSidebarTrigger() {
   const { open, toggleSidebar } = useSidebar();
-  
+
   return (
     <Button
       variant="ghost"
@@ -36,7 +43,11 @@ function CustomSidebarTrigger() {
       onClick={toggleSidebar}
       className="h-9 w-9"
     >
-      {open ? <PanelLeftClose className="h-5 w-5" /> : <PanelLeft className="h-5 w-5" />}
+      {open ? (
+        <PanelLeftClose className="h-5 w-5" />
+      ) : (
+        <PanelLeft className="h-5 w-5" />
+      )}
     </Button>
   );
 }
@@ -48,6 +59,7 @@ export default function Home() {
     appState,
     isLoading,
     connectedServers,
+    connectedServerConfigs,
     selectedMCPConfig,
     handleConnect,
     handleDisconnect,
@@ -73,42 +85,39 @@ export default function Home() {
     <SidebarProvider defaultOpen={true}>
       <MCPSidebar onNavigate={handleNavigate} activeTab={activeTab} />
       <SidebarInset className="flex flex-col">
-        <header className="flex h-14 items-center gap-4 border-b bg-background px-4 lg:h-[60px] lg:px-6">
-          <CustomSidebarTrigger />
-          <div className="flex w-full items-center justify-end gap-2">
-            <ThemeSwitcher />
-            <AccountSwitcher users={users} />
+        <header className="flex h-12 shrink-0 items-center gap-2 border-b transition-[width,height] ease-linear">
+          <div className="flex w-full items-center justify-between px-4 lg:px-6">
+            <div className="flex items-center gap-1 lg:gap-2">
+              <SidebarTrigger className="-ml-1" />
+              <Separator
+                orientation="vertical"
+                className="mx-2 data-[orientation=vertical]:h-4"
+              />
+              <SearchDialog />
+            </div>
+            <div className="flex items-center gap-2">
+              <ThemeSwitcher />
+              <AccountSwitcher users={users} />
+            </div>
           </div>
         </header>
-        
+
         <div className="flex-1 p-4 md:p-6">
-          {/* Server Selection */}
-          {connectedServers.length > 0 && (
-            <Card className="mb-6">
-              <CardHeader>
-                <CardTitle>Active Server</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <select
-                  value={appState.selectedServer}
-                  onChange={(e) => setSelectedServer(e.target.value)}
-                  className="w-full p-2 border rounded"
-                >
-                  <option value="none">Select a server...</option>
-                  {connectedServers.map((server) => (
-                    <option key={server} value={server}>
-                      {server}
-                    </option>
-                  ))}
-                </select>
-              </CardContent>
-            </Card>
+          {/* Active Server Selector - Only show on Tools, Resources, and Prompts pages */}
+          {(activeTab === "tools" ||
+            activeTab === "resources" ||
+            activeTab === "prompts") && (
+            <ActiveServerSelector
+              connectedServers={connectedServers}
+              selectedServer={appState.selectedServer}
+              onServerChange={setSelectedServer}
+            />
           )}
 
           {/* Content Areas */}
           {activeTab === "servers" && (
             <ServerConnection
-              connectedServers={connectedServers}
+              connectedServerConfigs={connectedServerConfigs}
               onConnect={handleConnect}
               onDisconnect={handleDisconnect}
             />
@@ -126,9 +135,7 @@ export default function Home() {
             <PromptsTab serverConfig={selectedMCPConfig} />
           )}
 
-          {activeTab === "chat" && (
-            <ChatTab serverConfig={selectedMCPConfig} />
-          )}
+          {activeTab === "chat" && <ChatTab serverConfig={selectedMCPConfig} />}
         </div>
       </SidebarInset>
     </SidebarProvider>
