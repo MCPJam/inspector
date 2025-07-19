@@ -1,54 +1,30 @@
 "use client";
 
-/**
- * MCP Inspector - OAuth Flow Solution
- *
- * This implementation solves the OAuth state persistence problem by:
- *
- * 1. **Storing Serializable State**: Instead of storing the entire OAuthFlowManager
- *    (which contains complex objects and methods), we store only the essential
- *    serializable data needed to complete the OAuth flow.
- *
- * 2. **State Management**: The `pendingOAuthCallbacks` object stores OAuth state
- *    data keyed by the `state` parameter, which serves as a unique identifier
- *    for each OAuth flow.
- *
- * 3. **Callback Handling**: When the OAuth callback occurs, the callback page
- *    redirects back to the main page with the callback parameters. The main page
- *    then:
- *    - Checks for callback parameters in the URL
- *    - Looks up the stored OAuth state using the `state` parameter
- *    - Recreates the OAuth flow manager for discovery
- *    - Manually exchanges the authorization code for tokens
- *    - Updates the server configuration with the new tokens
- *
- * 4. **Token Management**: The solution includes:
- *    - Automatic token refresh when tokens are about to expire
- *    - Persistent storage of tokens in localStorage
- *    - Proper cleanup of pending callbacks after successful completion
- *
- * Key Benefits:
- * - No state loss during OAuth redirects
- * - Proper PKCE implementation for security
- * - Automatic token refresh handling
- * - Clean separation of concerns
- */
-
 import { useState } from "react";
+
 import { ServerConnection } from "@/components/ServerConnection";
 import { ToolsTab } from "@/components/ToolsTab";
 import { ResourcesTab } from "@/components/ResourcesTab";
 import { PromptsTab } from "@/components/PromptsTab";
 import { ChatTab } from "@/components/ChatTab";
+import { MCPSidebar } from "@/components/mcp-sidebar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Wrench,
-  FolderOpen,
-  MessageSquare,
-  MessageCircle,
-  Server,
-} from "lucide-react";
+import { Separator } from "@/components/ui/separator";
+import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { SearchDialog } from "@/components/sidebar/search-dialog";
+import { ThemeSwitcher } from "@/components/sidebar/theme-switcher";
+import { AccountSwitcher } from "@/components/sidebar/account-switcher";
 import { useAppState } from "@/hooks/useAppState";
+
+const users = [
+  {
+    id: "1",
+    name: "MCP Inspector",
+    email: "inspector@example.com",
+    avatar: "/avatars/shadcn.jpg",
+    role: "Inspector",
+  },
+] as const;
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState("servers");
@@ -63,119 +39,89 @@ export default function Home() {
     setSelectedServer,
   } = useAppState();
 
+  const handleNavigate = (section: string) => {
+    setActiveTab(section);
+  };
+
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+          <p className="mt-4 text-muted-foreground">Loading...</p>
         </div>
       </div>
     );
   }
 
-  const tabs = [
-    { id: "servers", label: "Servers", icon: Server },
-    { id: "tools", label: "Tools", icon: Wrench },
-    { id: "resources", label: "Resources", icon: FolderOpen },
-    { id: "prompts", label: "Prompts", icon: MessageSquare },
-    { id: "chat", label: "Chat", icon: MessageCircle },
-  ];
-
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="container mx-auto p-6">
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">MCP Inspector</h1>
-          <p className="text-gray-600 mt-2">
-            A Next.js clone of MCPJam built with Mastra MCP
-          </p>
-        </div>
-
-        {/* Server Selection */}
-        {connectedServers.length > 0 && (
-          <Card className="mb-6">
-            <CardHeader>
-              <CardTitle>Active Server</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <select
-                value={appState.selectedServer}
-                onChange={(e) => setSelectedServer(e.target.value)}
-                className="w-full p-2 border rounded"
-              >
-                <option value="none">Select a server...</option>
-                {connectedServers.map((server) => (
-                  <option key={server} value={server}>
-                    {server}
-                  </option>
-                ))}
-              </select>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Tabs */}
-        <div className="mb-6">
-          <div className="flex space-x-1 border-b">
-            {tabs.map((tab) => {
-              const Icon = tab.icon;
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center gap-2 px-4 py-2 font-medium text-sm rounded-t-lg transition-colors ${
-                    activeTab === tab.id
-                      ? "bg-white text-blue-600 border-b-2 border-blue-600"
-                      : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
-                  }`}
-                >
-                  <Icon className="h-4 w-4" />
-                  {tab.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Tab Content */}
-        <div className="bg-white rounded-lg shadow-sm">
-          {activeTab === "servers" && (
-            <div className="p-6">
-              <ServerConnection
-                connectedServers={connectedServers}
-                onConnect={handleConnect}
-                onDisconnect={handleDisconnect}
-              />
+    <SidebarProvider defaultOpen={true}>
+      <MCPSidebar onNavigate={handleNavigate} />
+      <SidebarInset className="flex flex-col">
+        <header className="flex h-12 shrink-0 items-center gap-2 border-b transition-[width,height] ease-linear">
+          <div className="flex w-full items-center justify-between px-4 lg:px-6">
+            <div className="flex items-center gap-1 lg:gap-2">
+              <SidebarTrigger className="-ml-1" />
+              <Separator orientation="vertical" className="mx-2 data-[orientation=vertical]:h-4" />
+              <SearchDialog />
             </div>
+            <div className="flex items-center gap-2">
+              <ThemeSwitcher />
+              <AccountSwitcher users={users} />
+            </div>
+          </div>
+        </header>
+        
+        <div className="flex-1 p-4 md:p-6">
+          {/* Server Selection */}
+          {connectedServers.length > 0 && (
+            <Card className="mb-6">
+              <CardHeader>
+                <CardTitle>Active Server</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <select
+                  value={appState.selectedServer}
+                  onChange={(e) => setSelectedServer(e.target.value)}
+                  className="w-full p-2 border rounded"
+                >
+                  <option value="none">Select a server...</option>
+                  {connectedServers.map((server) => (
+                    <option key={server} value={server}>
+                      {server}
+                    </option>
+                  ))}
+                </select>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Content Areas */}
+          {activeTab === "servers" && (
+            <ServerConnection
+              connectedServers={connectedServers}
+              onConnect={handleConnect}
+              onDisconnect={handleDisconnect}
+            />
           )}
 
           {activeTab === "tools" && (
-            <div className="p-6">
-              <ToolsTab serverConfig={selectedMCPConfig} />
-            </div>
+            <ToolsTab serverConfig={selectedMCPConfig} />
           )}
 
           {activeTab === "resources" && (
-            <div className="p-6">
-              <ResourcesTab serverConfig={selectedMCPConfig} />
-            </div>
+            <ResourcesTab serverConfig={selectedMCPConfig} />
           )}
 
           {activeTab === "prompts" && (
-            <div className="p-6">
-              <PromptsTab serverConfig={selectedMCPConfig} />
-            </div>
+            <PromptsTab serverConfig={selectedMCPConfig} />
           )}
 
           {activeTab === "chat" && (
-            <div className="p-6">
-              <ChatTab serverConfig={selectedMCPConfig} />
-            </div>
+            <ChatTab serverConfig={selectedMCPConfig} />
           )}
         </div>
-      </div>
-    </div>
+      </SidebarInset>
+    </SidebarProvider>
   );
 }
