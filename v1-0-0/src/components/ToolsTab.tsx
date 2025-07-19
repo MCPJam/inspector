@@ -12,7 +12,7 @@ import { Button } from "./ui/button";
 import { Wrench, Play, RefreshCw } from "lucide-react";
 import type { MCPToolType } from "@mastra/core/mcp";
 import { ZodType, ZodTypeDef } from "zod";
-import { MastraMCPServerDefinition, StdioServerDefinition, HttpServerDefinition } from "@/lib/types";
+import { MastraMCPServerDefinition } from "@/lib/types";
 
 interface Tool {
   name: string;
@@ -33,7 +33,7 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
   const [result, setResult] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
-  
+
   useEffect(() => {
     if (serverConfig) {
       fetchTools();
@@ -48,14 +48,14 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
   const fetchTools = async () => {
     const config = getServerConfig();
     if (!config) return;
-    
+
     try {
-      const response = await fetch('/api/mcp/tools/list', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ serverConfig: config })
+      const response = await fetch("/api/mcp/tools/list", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ serverConfig: config }),
       });
-      
+
       const data = await response.json();
 
       if (response.ok) {

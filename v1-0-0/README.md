@@ -1,4 +1,4 @@
-# MCP Inspector v1.0.0
+# MCP Inspector v1.0.0 (Hack)
 
 [![Discord](https://img.shields.io/badge/Discord-Join%20Server-5865F2.svg?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/JEnDtz8X6z)
 
@@ -76,19 +76,21 @@ src/
 
 ### Prerequisites
 
-- Node.js 18+ 
+- Node.js 18+
 - npm or yarn
 - A Model Context Protocol (MCP) server to test
 
 ### Installation
 
 1. **Clone and setup the project:**
+
    ```bash
    cd v1-0-0
    npm install
    ```
 
 2. **Start the development server:**
+
    ```bash
    npm run dev
    ```
@@ -194,12 +196,12 @@ Servers can be configured through the UI or by loading a configuration file. The
 {
   name: string;           // Server display name
   type: "stdio" | "http"; // Connection type
-  
+
   // STDIO servers
   command?: string;       // Command to execute
   args?: string[];        // Command arguments
   env?: Record<string, string>; // Environment variables
-  
+
   // HTTP servers
   url?: string;          // Server URL
   headers?: Record<string, string>; // Custom headers
@@ -211,6 +213,7 @@ Servers can be configured through the UI or by loading a configuration file. The
 ### OAuth Configuration
 
 OAuth servers must support:
+
 - OAuth 2.0 Authorization Code flow with PKCE
 - Dynamic Client Registration (RFC 7591)
 - Token refresh capabilities
@@ -260,6 +263,7 @@ Please report bugs and feature requests through [GitHub Issues](https://github.c
 ### Community
 
 Join our community:
+
 - **Discord**: [MCPJam Discord Server](https://discord.gg/JEnDtz8X6z)
 - **GitHub**: [MCPJam Inspector Repository](https://github.com/MCPJam/inspector)
 - **Website**: [mcpjam.com](https://www.mcpjam.com/)

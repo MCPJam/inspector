@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { validateServerConfig, createMCPClient, createErrorResponse } from "@/lib/mcp-utils";
+import {
+  validateServerConfig,
+  createMCPClient,
+  createErrorResponse,
+} from "@/lib/mcp-utils";
 
 export async function POST(request: NextRequest) {
   try {
@@ -10,11 +14,16 @@ export async function POST(request: NextRequest) {
       return validation.error!;
     }
 
-    const client = createMCPClient(validation.config!, `tools-list-${Date.now()}`);
+    const client = createMCPClient(
+      validation.config!,
+      `tools-list-${Date.now()}`,
+    );
 
     try {
       const tools = await client.getTools();
-      
+      // for every tool, convert zod to JSON schema
+      console.log("matthewwang", tools);
+
       // Cleanup
       await client.disconnect();
 
@@ -32,7 +41,7 @@ export async function POST(request: NextRequest) {
     console.error("Error fetching tools:", error);
     return createErrorResponse(
       "Failed to fetch tools",
-      error instanceof Error ? error.message : "Unknown error"
+      error instanceof Error ? error.message : "Unknown error",
     );
   }
 }
