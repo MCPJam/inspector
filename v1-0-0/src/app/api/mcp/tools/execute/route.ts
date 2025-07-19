@@ -26,8 +26,11 @@ export async function POST(request: NextRequest) {
       if (!tool) {
         return NextResponse.json({ error: "Tool not found" }, { status: 404 });
       }
-
-      const result = await tool.execute(parameters || {});
+      
+      const toolArgs = parameters && typeof parameters === 'object' ? parameters : {};
+      const result = await tool.execute({
+        context: toolArgs
+      });
       
       // Cleanup
       await client.disconnect();
