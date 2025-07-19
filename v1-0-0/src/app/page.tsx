@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { PanelLeft, PanelLeftClose } from "lucide-react";
 
 import { ServerConnection } from "@/components/ServerConnection";
 import { ToolsTab } from "@/components/ToolsTab";
@@ -9,9 +10,8 @@ import { PromptsTab } from "@/components/PromptsTab";
 import { ChatTab } from "@/components/ChatTab";
 import { MCPSidebar } from "@/components/mcp-sidebar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-import { SearchDialog } from "@/components/sidebar/search-dialog";
+import { Button } from "@/components/ui/button";
+import { SidebarInset, SidebarProvider, useSidebar } from "@/components/ui/sidebar";
 import { ThemeSwitcher } from "@/components/sidebar/theme-switcher";
 import { AccountSwitcher } from "@/components/sidebar/account-switcher";
 import { useAppState } from "@/hooks/useAppState";
@@ -25,6 +25,21 @@ const users = [
     role: "Inspector",
   },
 ] as const;
+
+function CustomSidebarTrigger() {
+  const { open, toggleSidebar } = useSidebar();
+  
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      onClick={toggleSidebar}
+      className="h-9 w-9"
+    >
+      {open ? <PanelLeftClose className="h-5 w-5" /> : <PanelLeft className="h-5 w-5" />}
+    </Button>
+  );
+}
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState("servers");
@@ -58,17 +73,11 @@ export default function Home() {
     <SidebarProvider defaultOpen={true}>
       <MCPSidebar onNavigate={handleNavigate} />
       <SidebarInset className="flex flex-col">
-        <header className="flex h-12 shrink-0 items-center gap-2 border-b transition-[width,height] ease-linear">
-          <div className="flex w-full items-center justify-between px-4 lg:px-6">
-            <div className="flex items-center gap-1 lg:gap-2">
-              <SidebarTrigger className="-ml-1" />
-              <Separator orientation="vertical" className="mx-2 data-[orientation=vertical]:h-4" />
-              <SearchDialog />
-            </div>
-            <div className="flex items-center gap-2">
-              <ThemeSwitcher />
-              <AccountSwitcher users={users} />
-            </div>
+        <header className="flex h-14 items-center gap-4 border-b bg-background px-4 lg:h-[60px] lg:px-6">
+          <CustomSidebarTrigger />
+          <div className="flex w-full items-center justify-end gap-2">
+            <ThemeSwitcher />
+            <AccountSwitcher users={users} />
           </div>
         </header>
         

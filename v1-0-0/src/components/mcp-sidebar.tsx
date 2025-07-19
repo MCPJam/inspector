@@ -14,13 +14,11 @@ import {
 
 import { NavMain } from "@/components/sidebar/nav-main";
 import { NavUser } from "@/components/sidebar/nav-user";
-import { SearchDialog } from "@/components/sidebar/search-dialog";
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
   SidebarHeader,
-  SidebarRail,
 } from "@/components/ui/sidebar";
 
 const data = {
@@ -121,7 +119,7 @@ export function MCPSidebar({ onNavigate, ...props }: MCPSidebarProps) {
   };
 
   return (
-    <Sidebar collapsible="icon" {...props}>
+    <Sidebar collapsible="offcanvas" {...props}>
       <SidebarHeader>
         <div className="flex items-center gap-2 px-4 py-2">
           <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
@@ -132,7 +130,6 @@ export function MCPSidebar({ onNavigate, ...props }: MCPSidebarProps) {
             <span className="truncate text-xs">Model Context Protocol</span>
           </div>
         </div>
-        <SearchDialog />
       </SidebarHeader>
       <SidebarContent>
         <NavMain items={data.navMain} onItemClick={handleNavClick} />
@@ -140,7 +137,6 @@ export function MCPSidebar({ onNavigate, ...props }: MCPSidebarProps) {
       <SidebarFooter>
         <NavUser user={data.user} />
       </SidebarFooter>
-      <SidebarRail />
     </Sidebar>
   );
 }
