@@ -1,14 +1,20 @@
-'use client';
+"use client";
 
-import { useState } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
-import { Button } from './ui/button';
-import { Input } from './ui/input';
-import { MessageCircle, Send, Bot, User } from 'lucide-react';
-import { MastraMCPServerDefinition, StdioServerDefinition, HttpServerDefinition } from '@/lib/types';
+import { useState } from "react";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "./ui/card";
+import { Button } from "./ui/button";
+import { Input } from "./ui/input";
+import { MessageCircle, Send, Bot, User } from "lucide-react";
+import { MastraMCPServerDefinition } from "@/lib/types";
 
 interface ChatMessage {
-  role: 'user' | 'assistant';
+  role: "user" | "assistant";
   content: string;
   timestamp: Date;
 }
@@ -19,33 +25,34 @@ interface ChatTabProps {
 
 export function ChatTab({ serverConfig }: ChatTabProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [inputMessage, setInputMessage] = useState('');
+  const [inputMessage, setInputMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
   const sendMessage = async () => {
     if (!inputMessage.trim()) return;
 
     const userMessage: ChatMessage = {
-      role: 'user',
+      role: "user",
       content: inputMessage,
-      timestamp: new Date()
+      timestamp: new Date(),
     };
 
-    setMessages(prev => [...prev, userMessage]);
-    setInputMessage('');
+    setMessages((prev) => [...prev, userMessage]);
+    setInputMessage("");
     setLoading(true);
 
     try {
       // This is a placeholder - in a real implementation, you'd integrate with an LLM
       // that can use the MCP tools from the selected server
       const assistantMessage: ChatMessage = {
-        role: 'assistant',
-        content: 'This is a placeholder response. In a real implementation, this would be connected to an LLM that can use the MCP tools from your selected server.',
-        timestamp: new Date()
+        role: "assistant",
+        content:
+          "This is a placeholder response. In a real implementation, this would be connected to an LLM that can use the MCP tools from your selected server.",
+        timestamp: new Date(),
       };
 
       setTimeout(() => {
-        setMessages(prev => [...prev, assistantMessage]);
+        setMessages((prev) => [...prev, assistantMessage]);
         setLoading(false);
       }, 1000);
     } catch (error) {
@@ -54,7 +61,7 @@ export function ChatTab({ serverConfig }: ChatTabProps) {
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
     }
@@ -81,7 +88,8 @@ export function ChatTab({ serverConfig }: ChatTabProps) {
             Chat
           </CardTitle>
           <CardDescription>
-            Chat with an AI assistant that can use tools from your selected server
+            Chat with an AI assistant that can use tools from your selected
+            server
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -89,36 +97,41 @@ export function ChatTab({ serverConfig }: ChatTabProps) {
           <div className="space-y-4 mb-4 min-h-[400px] max-h-[600px] overflow-y-auto">
             {messages.length === 0 && (
               <div className="text-center text-gray-500 py-8">
-                Start a conversation! The AI can use tools from your connected MCP server.
+                Start a conversation! The AI can use tools from your connected
+                MCP server.
               </div>
             )}
-            
+
             {messages.map((message, index) => (
               <div
                 key={index}
                 className={`flex gap-3 ${
-                  message.role === 'user' ? 'justify-end' : 'justify-start'
+                  message.role === "user" ? "justify-end" : "justify-start"
                 }`}
               >
                 <div
                   className={`max-w-[70%] p-3 rounded-lg ${
-                    message.role === 'user'
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-gray-100 text-gray-900'
+                    message.role === "user"
+                      ? "bg-blue-600 text-white"
+                      : "bg-gray-100 text-gray-900"
                   }`}
                 >
                   <div className="flex items-start gap-2">
-                    {message.role === 'assistant' && (
+                    {message.role === "assistant" && (
                       <Bot className="h-4 w-4 mt-0.5 flex-shrink-0" />
                     )}
-                    {message.role === 'user' && (
+                    {message.role === "user" && (
                       <User className="h-4 w-4 mt-0.5 flex-shrink-0" />
                     )}
                     <div>
                       <p className="text-sm">{message.content}</p>
-                      <p className={`text-xs mt-1 ${
-                        message.role === 'user' ? 'text-blue-200' : 'text-gray-500'
-                      }`}>
+                      <p
+                        className={`text-xs mt-1 ${
+                          message.role === "user"
+                            ? "text-blue-200"
+                            : "text-gray-500"
+                        }`}
+                      >
                         {message.timestamp.toLocaleTimeString()}
                       </p>
                     </div>
@@ -126,7 +139,7 @@ export function ChatTab({ serverConfig }: ChatTabProps) {
                 </div>
               </div>
             ))}
-            
+
             {loading && (
               <div className="flex gap-3 justify-start">
                 <div className="bg-gray-100 p-3 rounded-lg">

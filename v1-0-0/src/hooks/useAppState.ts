@@ -157,7 +157,7 @@ export function useAppState() {
           });
 
           const oauthResult = await oauthFlow.initiate();
-
+          console.log("oauthResult", oauthResult);
           if (oauthResult.success && oauthResult.authorization_url) {
             // Store only serializable OAuth state data
             const oauthState = oauthFlow.getState();
@@ -213,7 +213,7 @@ export function useAppState() {
             }
           } else {
             alert(
-              `OAuth initialization failed: ${oauthResult.error?.error_description || "Unknown error"}`,
+              `OAuth initialization failed: ${oauthResult.error?.error || "Unknown error"}`,
             );
             return;
           }

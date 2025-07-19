@@ -10,7 +10,7 @@ import {
 } from "./ui/card";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
-import { Plus, Trash2, Link, Link2Off } from "lucide-react";
+import { Plus, Link, Link2Off } from "lucide-react";
 
 interface ServerFormData {
   name: string;
@@ -44,7 +44,7 @@ export function ServerConnection({
     url: "",
     headers: {},
     env: {},
-    useOAuth: false,
+    useOAuth: true,
     oauthScopes: ["mcp:*"],
   });
 
