@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
       
       const toolArgs = parameters && typeof parameters === 'object' ? parameters : {};
       const result = await tool.execute({
-        args: toolArgs
+        context: toolArgs
       });
       
       // Cleanup
