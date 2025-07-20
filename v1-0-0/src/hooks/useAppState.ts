@@ -317,7 +317,7 @@ export function useAppState() {
             },
           }));
 
-          toast.error(`Failed to connect: ${result.error}`);
+          toast.error(`Failed to connect to ${formData.name}`);
         }
       } catch (error) {
         const errorMessage =
@@ -712,7 +712,7 @@ export function useAppState() {
               },
             },
           }));
-          toast.error(`Failed to connect: ${result.error}`);
+          toast.error(`Failed to connect: ${serverName}`);
         }
       } catch (error) {
         const errorMessage =

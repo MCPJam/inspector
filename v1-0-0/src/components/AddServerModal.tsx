@@ -37,6 +37,11 @@ export function AddServerModal({
   });
   const [commandInput, setCommandInput] = useState("");
   const [oauthScopesInput, setOauthScopesInput] = useState("");
+  const [bearerToken, setBearerToken] = useState("");
+  const [authType, setAuthType] = useState<"oauth" | "bearer">("oauth");
+  const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>(
+    [],
+  );
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -48,34 +53,62 @@ export function AddServerModal({
         const command = parts[0] || "";
         const args = parts.slice(1);
         finalFormData = { ...finalFormData, command, args };
+
+        // Add environment variables for STDIO
+        const envObj = envVars.reduce(
+          (acc, { key, value }) => {
+            if (key && value) acc[key] = value;
+            return acc;
+          },
+          {} as Record<string, string>,
+        );
+        finalFormData = { ...finalFormData, env: envObj };
       }
 
-      if (serverFormData.useOAuth && oauthScopesInput) {
-        const scopes = oauthScopesInput
-          .split(" ")
-          .filter((scope) => scope.trim());
-        finalFormData = { ...finalFormData, oauthScopes: scopes };
+      if (serverFormData.type === "http") {
+        if (authType === "bearer" && bearerToken) {
+          finalFormData = {
+            ...finalFormData,
+            headers: {
+              ...finalFormData.headers,
+              Authorization: `Bearer ${bearerToken}`,
+            },
+            useOAuth: false,
+          };
+        } else if (
+          authType === "oauth" &&
+          serverFormData.useOAuth &&
+          oauthScopesInput
+        ) {
+          const scopes = oauthScopesInput
+            .split(" ")
+            .filter((scope) => scope.trim());
+          finalFormData = { ...finalFormData, oauthScopes: scopes };
+        }
       }
 
       onConnect(finalFormData);
-      setServerFormData({
-        name: "",
-        type: "stdio",
-        command: "",
-        args: [],
-        url: "",
-        headers: {},
-        env: {},
-        useOAuth: false,
-        oauthScopes: ["mcp:*"],
-      });
+      resetForm();
       setCommandInput("");
       setOauthScopesInput("");
+      setBearerToken("");
+      setAuthType("oauth");
+      setEnvVars([]);
       onClose();
     }
   };
 
   const handleClose = () => {
+    resetForm();
+    setCommandInput("");
+    setOauthScopesInput("");
+    setBearerToken("");
+    setAuthType("oauth");
+    setEnvVars([]);
+    onClose();
+  };
+
+  const resetForm = () => {
     setServerFormData({
       name: "",
       type: "stdio",
@@ -87,9 +120,24 @@ export function AddServerModal({
       useOAuth: true,
       oauthScopes: ["mcp:*"],
     });
-    setCommandInput("");
-    setOauthScopesInput("");
-    onClose();
+  };
+
+  const addEnvVar = () => {
+    setEnvVars([...envVars, { key: "", value: "" }]);
+  };
+
+  const removeEnvVar = (index: number) => {
+    setEnvVars(envVars.filter((_, i) => i !== index));
+  };
+
+  const updateEnvVar = (
+    index: number,
+    field: "key" | "value",
+    value: string,
+  ) => {
+    const updated = [...envVars];
+    updated[index][field] = value;
+    setEnvVars(updated);
   };
 
   return (
@@ -99,9 +147,6 @@ export function AddServerModal({
           <DialogTitle className="text-xl font-semibold">
             Add MCP Server
           </DialogTitle>
-          <p className="text-sm text-muted-foreground">
-            Configure a new MCP server connection
-          </p>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-6">
@@ -189,30 +234,95 @@ export function AddServerModal({
             )}
           </div>
 
+          {serverFormData.type === "stdio" && (
+            <div className="space-y-4 p-4 border rounded-lg bg-muted/30 border-border/50">
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-medium text-foreground">
+                  Environment Variables
+                </label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={addEnvVar}
+                  className="h-8 px-2 text-xs"
+                >
+                  Add Variable
+                </Button>
+              </div>
+              {envVars.length > 0 && (
+                <div className="space-y-2">
+                  {envVars.map((envVar, index) => (
+                    <div key={index} className="flex gap-2">
+                      <Input
+                        placeholder="key"
+                        value={envVar.key}
+                        onChange={(e) =>
+                          updateEnvVar(index, "key", e.target.value)
+                        }
+                        className="h-8 text-sm"
+                      />
+                      <Input
+                        placeholder="value"
+                        value={envVar.value}
+                        onChange={(e) =>
+                          updateEnvVar(index, "value", e.target.value)
+                        }
+                        className="h-8 text-sm"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => removeEnvVar(index)}
+                        className="h-8 px-2 text-xs"
+                      >
+                        ×
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {serverFormData.type === "http" && (
             <div className="space-y-4 p-4 border rounded-lg bg-muted/30 border-border/50">
-              <div className="flex items-center space-x-3">
-                <input
-                  type="checkbox"
-                  id="useOAuth"
-                  checked={serverFormData.useOAuth}
-                  onChange={(e) =>
-                    setServerFormData((prev) => ({
-                      ...prev,
-                      useOAuth: e.target.checked,
-                    }))
-                  }
-                  className="w-4 h-4 cursor-pointer rounded border-border"
-                />
-                <label
-                  htmlFor="useOAuth"
-                  className="text-sm font-medium cursor-pointer text-foreground"
-                >
-                  Use OAuth 2.1 Authentication
+              <div className="space-y-3">
+                <label className="block text-sm font-medium text-foreground">
+                  Authentication Method
                 </label>
+                <div className="flex gap-4">
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="radio"
+                      id="oauth"
+                      name="authType"
+                      checked={authType === "oauth"}
+                      onChange={() => setAuthType("oauth")}
+                      className="w-4 h-4 cursor-pointer"
+                    />
+                    <label htmlFor="oauth" className="text-sm cursor-pointer">
+                      OAuth 2.1
+                    </label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="radio"
+                      id="bearer"
+                      name="authType"
+                      checked={authType === "bearer"}
+                      onChange={() => setAuthType("bearer")}
+                      className="w-4 h-4 cursor-pointer"
+                    />
+                    <label htmlFor="bearer" className="text-sm cursor-pointer">
+                      Bearer Token
+                    </label>
+                  </div>
+                </div>
               </div>
 
-              {serverFormData.useOAuth && (
+              {authType === "oauth" && (
                 <div className="space-y-2">
                   <label className="block text-sm font-medium text-foreground">
                     OAuth Scopes
@@ -226,6 +336,25 @@ export function AddServerModal({
                   <p className="text-xs text-muted-foreground">
                     Space-separated OAuth scopes. Use &apos;mcp:*&apos; for full
                     access.
+                  </p>
+                </div>
+              )}
+
+              {authType === "bearer" && (
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-foreground">
+                    Bearer Token
+                  </label>
+                  <Input
+                    type="password"
+                    value={bearerToken}
+                    onChange={(e) => setBearerToken(e.target.value)}
+                    placeholder="Enter your bearer token"
+                    className="h-10"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Token will be sent as Authorization: Bearer &lt;token&gt;
+                    header
                   </p>
                 </div>
               )}
