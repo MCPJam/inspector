@@ -255,7 +255,7 @@ export function ServerConnectionCard({
                   <div className="space-y-3 text-xs">
                     <div>
                       <span className="text-muted-foreground font-medium">
-                        Access Token:
+                        Bearer Access Token:
                       </span>
                       <div className="font-mono text-foreground break-all bg-muted/30 p-2 rounded mt-1 relative group">
                         <div className="pr-8">
