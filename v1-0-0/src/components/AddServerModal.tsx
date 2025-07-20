@@ -3,13 +3,14 @@
 import { useState } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "./ui/dialog";
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
 import { ServerFormData } from "@/lib/types";
 
 interface AddServerModalProps {
@@ -34,11 +35,21 @@ export function AddServerModal({
     useOAuth: true,
     oauthScopes: ["mcp:*"],
   });
+  const [commandInput, setCommandInput] = useState("");
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (serverFormData.name) {
-      onConnect(serverFormData);
+      let finalFormData = { ...serverFormData };
+
+      if (serverFormData.type === "stdio" && commandInput) {
+        const parts = commandInput.split(" ").filter((part) => part.trim());
+        const command = parts[0] || "";
+        const args = parts.slice(1);
+        finalFormData = { ...finalFormData, command, args };
+      }
+
+      onConnect(finalFormData);
       setServerFormData({
         name: "",
         type: "stdio",
@@ -50,15 +61,9 @@ export function AddServerModal({
         useOAuth: false,
         oauthScopes: ["mcp:*"],
       });
+      setCommandInput("");
       onClose();
     }
-  };
-
-  const handleArgsChange = (value: string) => {
-    setServerFormData((prev) => ({
-      ...prev,
-      args: value.split(" ").filter((arg) => arg.trim()),
-    }));
   };
 
   const handleClose = () => {
@@ -73,22 +78,25 @@ export function AddServerModal({
       useOAuth: true,
       oauthScopes: ["mcp:*"],
     });
+    setCommandInput("");
     onClose();
   };
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Add New Server</DialogTitle>
-          <DialogDescription>
+      <DialogContent className="max-w-md sm:max-w-lg">
+        <DialogHeader className="space-y-2">
+          <DialogTitle className="text-xl font-semibold">
+            Add MCP Server
+          </DialogTitle>
+          <p className="text-sm text-muted-foreground">
             Configure a new MCP server connection
-          </DialogDescription>
+          </p>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium mb-1">
+        <form onSubmit={handleSubmit} className="space-y-6">
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-foreground">
               Server Name
             </label>
             <Input
@@ -101,59 +109,60 @@ export function AddServerModal({
               }
               placeholder="my-mcp-server"
               required
+              className="h-10"
             />
           </div>
 
-          <div>
-            <label className="block text-sm font-medium mb-1">Type</label>
-            <select
-              value={serverFormData.type}
-              onChange={(e) =>
-                setServerFormData((prev) => ({
-                  ...prev,
-                  type: e.target.value as "stdio" | "http",
-                }))
-              }
-              className="w-full p-2 border rounded-md bg-background cursor-pointer"
-            >
-              <option value="stdio">STDIO</option>
-              <option value="http">HTTP</option>
-            </select>
-          </div>
-
-          {serverFormData.type === "stdio" ? (
-            <>
-              <div>
-                <label className="block text-sm font-medium mb-1">
-                  Command
-                </label>
-                <Input
-                  value={serverFormData.command}
-                  onChange={(e) =>
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-foreground">
+              Connection Type
+            </label>
+            {serverFormData.type === "stdio" ? (
+              <div className="flex">
+                <Select
+                  value={serverFormData.type}
+                  onValueChange={(value: "stdio" | "http") =>
                     setServerFormData((prev) => ({
                       ...prev,
-                      command: e.target.value,
+                      type: value,
                     }))
                   }
-                  placeholder="npx"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">
-                  Arguments
-                </label>
+                >
+                  <SelectTrigger className="w-22 rounded-r-none border-r-0 text-xs border-border">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="stdio">STDIO</SelectItem>
+                    <SelectItem value="http">HTTP</SelectItem>
+                  </SelectContent>
+                </Select>
                 <Input
-                  value={serverFormData.args?.join(" ") || ""}
-                  onChange={(e) => handleArgsChange(e.target.value)}
-                  placeholder="-y @modelcontextprotocol/server-filesystem /path/to/directory"
+                  value={commandInput}
+                  onChange={(e) => setCommandInput(e.target.value)}
+                  placeholder="npx -y @modelcontextprotocol/server-everything"
+                  required
+                  className="flex-1 rounded-l-none text-sm border-border"
                 />
               </div>
-            </>
-          ) : (
-            <>
-              <div>
-                <label className="block text-sm font-medium mb-1">URL</label>
+            ) : (
+              <div className="flex">
+                <Select
+                  value={serverFormData.type}
+                  onValueChange={(value: "stdio" | "http") =>
+                    setServerFormData((prev) => ({
+                      ...prev,
+                      type: value,
+                    }))
+                  }
+                >
+                  <SelectTrigger className="w-22 rounded-r-none border-r-0 text-xs border-border">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="stdio">STDIO</SelectItem>
+                    <SelectItem value="http">HTTP</SelectItem>
+                  </SelectContent>
+                </Select>
                 <Input
                   value={serverFormData.url}
                   onChange={(e) =>
@@ -164,67 +173,71 @@ export function AddServerModal({
                   }
                   placeholder="http://localhost:8080/mcp"
                   required
+                  className="flex-1 rounded-l-none text-sm"
                 />
               </div>
+            )}
+          </div>
 
-              <div className="space-y-3 p-4 border rounded-lg bg-muted/50">
-                <div className="flex items-center space-x-2">
-                  <input
-                    type="checkbox"
-                    id="useOAuth"
-                    checked={serverFormData.useOAuth}
+          {serverFormData.type === "http" && (
+            <div className="space-y-4 p-4 border rounded-lg bg-muted/30 border-border/50">
+              <div className="flex items-center space-x-3">
+                <input
+                  type="checkbox"
+                  id="useOAuth"
+                  checked={serverFormData.useOAuth}
+                  onChange={(e) =>
+                    setServerFormData((prev) => ({
+                      ...prev,
+                      useOAuth: e.target.checked,
+                    }))
+                  }
+                  className="w-4 h-4 cursor-pointer rounded border-border"
+                />
+                <label
+                  htmlFor="useOAuth"
+                  className="text-sm font-medium cursor-pointer text-foreground"
+                >
+                  Use OAuth 2.1 Authentication
+                </label>
+              </div>
+
+              {serverFormData.useOAuth && (
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-foreground">
+                    OAuth Scopes
+                  </label>
+                  <Input
+                    value={serverFormData.oauthScopes?.join(" ") || ""}
                     onChange={(e) =>
                       setServerFormData((prev) => ({
                         ...prev,
-                        useOAuth: e.target.checked,
+                        oauthScopes: e.target.value
+                          .split(" ")
+                          .filter((s) => s.trim()),
                       }))
                     }
-                    className="w-4 h-4 cursor-pointer"
+                    placeholder="mcp:* mcp:tools mcp:resources"
+                    className="h-10"
                   />
-                  <label
-                    htmlFor="useOAuth"
-                    className="text-sm font-medium cursor-pointer"
-                  >
-                    Use OAuth 2.1 Authentication
-                  </label>
+                  <p className="text-xs text-muted-foreground">
+                    Space-separated OAuth scopes. Use &apos;mcp:*&apos; for full
+                    access.
+                  </p>
                 </div>
-
-                {serverFormData.useOAuth && (
-                  <div>
-                    <label className="block text-sm font-medium mb-1">
-                      OAuth Scopes
-                    </label>
-                    <Input
-                      value={serverFormData.oauthScopes?.join(" ") || ""}
-                      onChange={(e) =>
-                        setServerFormData((prev) => ({
-                          ...prev,
-                          oauthScopes: e.target.value
-                            .split(" ")
-                            .filter((s) => s.trim()),
-                        }))
-                      }
-                      placeholder="mcp:* mcp:tools mcp:resources"
-                    />
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Space-separated OAuth scopes. Use &apos;mcp:*&apos; for
-                      full access.
-                    </p>
-                  </div>
-                )}
-              </div>
-            </>
+              )}
+            </div>
           )}
 
-          <div className="flex gap-2 pt-4">
-            <Button type="submit" className="cursor-pointer">
+          <div className="flex gap-3 pt-6 border-t">
+            <Button type="submit" className="flex-1 cursor-pointer">
               Connect Server
             </Button>
             <Button
               type="button"
               variant="outline"
               onClick={handleClose}
-              className="cursor-pointer"
+              className="flex-1 cursor-pointer"
             >
               Cancel
             </Button>

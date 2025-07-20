@@ -10,7 +10,21 @@ export async function POST(request: NextRequest) {
       return validation.error!;
     }
 
-    const client = createMCPClient(validation.config!, `test-${Date.now()}`);
+    let client;
+    try {
+      client = createMCPClient(validation.config!, `test-${Date.now()}`);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Failed to create MCP client: ${errorMessage}`,
+          details: errorMessage,
+        },
+        { status: 500 },
+      );
+    }
 
     try {
       await client.getTools();
@@ -22,7 +36,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           success: false,
-          error: `Failed to connect to MCP server ${error}`,
+          error: `Failed to connect to MCP server: ${error}`,
           details: error instanceof Error ? error.message : "Unknown error",
         },
         { status: 500 },

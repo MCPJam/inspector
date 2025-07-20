@@ -42,13 +42,13 @@ export function validateServerConfig(serverConfig: any): ValidationResult {
       // Handle OAuth authentication for HTTP servers
       if (config.oauth?.access_token) {
         const authHeaders = {
-          'Authorization': `Bearer ${config.oauth.access_token}`,
-          ...(config.requestInit?.headers || {})
+          Authorization: `Bearer ${config.oauth.access_token}`,
+          ...(config.requestInit?.headers || {}),
         };
 
         config.requestInit = {
           ...config.requestInit,
-          headers: authHeaders
+          headers: authHeaders,
         };
 
         // For SSE connections, add eventSourceInit with OAuth headers
@@ -57,13 +57,16 @@ export function validateServerConfig(serverConfig: any): ValidationResult {
             const headers = new Headers(init?.headers || {});
 
             // Add OAuth authorization header
-            headers.set('Authorization', `Bearer ${config.oauth!.access_token}`);
+            headers.set(
+              "Authorization",
+              `Bearer ${config.oauth!.access_token}`,
+            );
 
             // Copy other headers from requestInit
             if (config.requestInit?.headers) {
               const requestHeaders = new Headers(config.requestInit.headers);
               requestHeaders.forEach((value, key) => {
-                if (key.toLowerCase() !== 'authorization') {
+                if (key.toLowerCase() !== "authorization") {
                   headers.set(key, value);
                 }
               });
