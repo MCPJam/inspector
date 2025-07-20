@@ -696,7 +696,6 @@ export function useAppState() {
               },
             },
           }));
-          toast.success(`Reconnected to ${serverName}`);
           return { success: true };
         } else {
           // Update status to failed and increment retry count
