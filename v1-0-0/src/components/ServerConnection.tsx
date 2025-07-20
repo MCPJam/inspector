@@ -110,7 +110,10 @@ export function ServerConnection({
             Manage your MCP server connections and monitor their status
           </p>
         </div>
-        <Button onClick={() => setIsAddingServer(true)}>
+        <Button
+          onClick={() => setIsAddingServer(true)}
+          className="cursor-pointer"
+        >
           <Plus className="h-4 w-4 mr-2" />
           Add Server
         </Button>
@@ -135,7 +138,10 @@ export function ServerConnection({
             <p className="mt-2 text-sm text-muted-foreground">
               Get started by connecting to your first MCP server
             </p>
-            <Button onClick={() => setIsAddingServer(true)} className="mt-4">
+            <Button
+              onClick={() => setIsAddingServer(true)}
+              className="mt-4 cursor-pointer"
+            >
               <Plus className="h-4 w-4 mr-2" />
               Add Your First Server
             </Button>
@@ -193,7 +199,7 @@ export function ServerConnection({
                       type: e.target.value as "stdio" | "http",
                     }))
                   }
-                  className="w-full p-2 border rounded-md bg-background"
+                  className="w-full p-2 border rounded-md bg-background cursor-pointer"
                 >
                   <option value="stdio">STDIO</option>
                   <option value="http">HTTP</option>
@@ -260,9 +266,12 @@ export function ServerConnection({
                             useOAuth: e.target.checked,
                           }))
                         }
-                        className="w-4 h-4"
+                        className="w-4 h-4 cursor-pointer"
                       />
-                      <label htmlFor="useOAuth" className="text-sm font-medium">
+                      <label
+                        htmlFor="useOAuth"
+                        className="text-sm font-medium cursor-pointer"
+                      >
                         Use OAuth 2.1 Authentication
                       </label>
                     </div>
@@ -295,11 +304,14 @@ export function ServerConnection({
               )}
 
               <div className="flex gap-2 pt-4">
-                <Button type="submit">Connect Server</Button>
+                <Button type="submit" className="cursor-pointer">
+                  Connect Server
+                </Button>
                 <Button
                   type="button"
                   variant="outline"
                   onClick={() => setIsAddingServer(false)}
+                  className="cursor-pointer"
                 >
                   Cancel
                 </Button>

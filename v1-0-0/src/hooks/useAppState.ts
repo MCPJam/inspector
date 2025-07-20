@@ -684,7 +684,7 @@ export function useAppState() {
               },
             },
           }));
-
+          toast.success(`Reconnected to ${serverName}`);
           return { success: true };
         } else {
           toast.error(`Failed to connect: ${result.error}`);
@@ -713,6 +713,7 @@ export function useAppState() {
     [appState.servers, isTokenExpired, refreshOAuthToken],
   );
 
+  // TODO: Decide whether or not we want retries
   const scheduleAutoReconnect = useCallback(
     (serverName: string, retryCount: number) => {
       const MAX_RETRIES = 5;
@@ -746,17 +747,8 @@ export function useAppState() {
     [handleReconnect],
   );
 
-  // Effect to handle automatic reconnection for failed servers
+  // Effect to handle cleanup of reconnection timeouts (automatic retries disabled)
   useEffect(() => {
-    Object.entries(appState.servers).forEach(([serverName, server]) => {
-      if (
-        server.connectionStatus === "failed" &&
-        !reconnectionTimeouts[serverName]
-      ) {
-        scheduleAutoReconnect(serverName, server.retryCount);
-      }
-    });
-
     // Cleanup timeouts for servers that are no longer failed or have been removed
     Object.keys(reconnectionTimeouts).forEach((serverName) => {
       const server = appState.servers[serverName];
@@ -769,7 +761,7 @@ export function useAppState() {
         });
       }
     });
-  }, [appState.servers, reconnectionTimeouts, scheduleAutoReconnect]);
+  }, [appState.servers, reconnectionTimeouts]);
 
   // Cleanup timeouts on unmount
   useEffect(() => {

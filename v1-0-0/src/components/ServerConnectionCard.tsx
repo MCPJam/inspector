@@ -19,6 +19,8 @@ import {
   Link2Off,
   RefreshCw,
   Loader2,
+  Copy,
+  Check,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/useAppState";
 import { formatTimeRemaining, getTimeBreakdown } from "@/lib/utils";
@@ -37,6 +39,8 @@ export function ServerConnectionCard({
   const [isExpanded, setIsExpanded] = useState(false);
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [currentTime, setCurrentTime] = useState(Date.now());
+  const [isErrorExpanded, setIsErrorExpanded] = useState(false);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
 
   const isHttpServer = "url" in server.config;
   const hasOAuth = server.oauthState || server.oauthFlow;
@@ -66,15 +70,20 @@ export function ServerConnectionCard({
 
   const tokenStatus = getTokenStatus();
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
+  const copyToClipboard = async (text: string, fieldName: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedField(fieldName);
+      setTimeout(() => setCopiedField(null), 2000); // Reset after 2 seconds
+    } catch (error) {
+      console.error("Failed to copy text:", error);
+    }
   };
 
   const handleReconnect = async () => {
     setIsReconnecting(true);
     try {
       onReconnect(server.name);
-      toast.success(`Reconnected to ${server.name}!`);
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
@@ -147,7 +156,7 @@ export function ServerConnectionCard({
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="h-6 w-6 p-0 text-muted-foreground/50 hover:text-foreground"
+                    className="h-6 w-6 p-0 text-muted-foreground/50 hover:text-foreground cursor-pointer"
                   >
                     <MoreVertical className="h-3 w-3" />
                   </Button>
@@ -158,7 +167,7 @@ export function ServerConnectionCard({
                     disabled={
                       isReconnecting || server.connectionStatus === "connecting"
                     }
-                    className="text-xs"
+                    className="text-xs cursor-pointer"
                   >
                     {isReconnecting ? (
                       <Loader2 className="h-3 w-3 mr-2 animate-spin" />
@@ -169,7 +178,7 @@ export function ServerConnectionCard({
                   </DropdownMenuItem>
                   <Separator />
                   <DropdownMenuItem
-                    className="text-destructive text-xs"
+                    className="text-destructive text-xs cursor-pointer"
                     onClick={() => onDisconnect(server.name)}
                   >
                     <Link2Off className="h-3 w-3 mr-2" />
@@ -181,14 +190,38 @@ export function ServerConnectionCard({
           </div>
 
           {/* Command/URL Display */}
-          <div className="font-mono text-xs text-muted-foreground bg-muted/30 p-2 rounded border border-border/30 break-all">
-            {getCommandDisplay()}
+          <div className="font-mono text-xs text-muted-foreground bg-muted/30 p-2 rounded border border-border/30 break-all relative group">
+            <div className="pr-8">{getCommandDisplay()}</div>
+            <button
+              onClick={() => copyToClipboard(getCommandDisplay(), "command")}
+              className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
+            >
+              {copiedField === "command" ? (
+                <Check className="h-3 w-3 text-green-500" />
+              ) : (
+                <Copy className="h-3 w-3" />
+              )}
+            </button>
           </div>
 
           {/* Error Alert for Failed Connections */}
           {server.connectionStatus === "failed" && server.lastError && (
             <div className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 p-2 rounded border border-red-200 dark:border-red-800/30">
-              {server.lastError}
+              <div className="break-all">
+                {isErrorExpanded
+                  ? server.lastError
+                  : server.lastError.length > 100
+                    ? `${server.lastError.substring(0, 100)}...`
+                    : server.lastError}
+              </div>
+              {server.lastError.length > 100 && (
+                <button
+                  onClick={() => setIsErrorExpanded(!isErrorExpanded)}
+                  className="text-red-500/70 hover:text-red-500 mt-1 underline text-xs cursor-pointer"
+                >
+                  {isErrorExpanded ? "Show less" : "Show more"}
+                </button>
+              )}
               {server.retryCount > 0 && (
                 <div className="text-red-500/70 mt-1">
                   {server.retryCount} retry attempt
@@ -202,7 +235,7 @@ export function ServerConnectionCard({
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+                className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground cursor-pointer"
                 onClick={() => setIsExpanded(!isExpanded)}
               >
                 {isExpanded ? (
@@ -224,16 +257,50 @@ export function ServerConnectionCard({
                       <span className="text-muted-foreground font-medium">
                         Access Token:
                       </span>
-                      <div className="font-mono text-foreground break-all bg-muted/30 p-2 rounded mt-1">
-                        {server.oauthState.accessToken}
+                      <div className="font-mono text-foreground break-all bg-muted/30 p-2 rounded mt-1 relative group">
+                        <div className="pr-8">
+                          {server.oauthState.accessToken}
+                        </div>
+                        <button
+                          onClick={() =>
+                            copyToClipboard(
+                              server.oauthState?.accessToken || "",
+                              "accessToken",
+                            )
+                          }
+                          className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
+                        >
+                          {copiedField === "accessToken" ? (
+                            <Check className="h-3 w-3 text-green-500" />
+                          ) : (
+                            <Copy className="h-3 w-3" />
+                          )}
+                        </button>
                       </div>
                     </div>
                     <div>
                       <span className="text-muted-foreground font-medium">
                         Client ID:
                       </span>
-                      <div className="font-mono text-foreground break-all bg-muted/30 p-2 rounded mt-1">
-                        {server.oauthState.clientId || "N/A"}
+                      <div className="font-mono text-foreground break-all bg-muted/30 p-2 rounded mt-1 relative group">
+                        <div className="pr-8">
+                          {server.oauthState.clientId || "N/A"}
+                        </div>
+                        <button
+                          onClick={() =>
+                            copyToClipboard(
+                              server.oauthState?.clientId || "N/A",
+                              "clientId",
+                            )
+                          }
+                          className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
+                        >
+                          {copiedField === "clientId" ? (
+                            <Check className="h-3 w-3 text-green-500" />
+                          ) : (
+                            <Copy className="h-3 w-3" />
+                          )}
+                        </button>
                       </div>
                     </div>
                     {server.oauthState.scopes.length > 0 && (
