@@ -29,6 +29,7 @@ interface ServerConnectionProps {
   connectedServerConfigs: Record<string, ServerWithName>;
   onConnect: (formData: ServerFormData) => void;
   onDisconnect: (serverName: string) => void;
+  onReconnect: (serverName: string) => void;
 }
 
 // Import the new card component
@@ -38,6 +39,7 @@ export function ServerConnection({
   connectedServerConfigs,
   onConnect,
   onDisconnect,
+  onReconnect,
 }: ServerConnectionProps) {
   const [isAddingServer, setIsAddingServer] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
@@ -121,6 +123,7 @@ export function ServerConnection({
               key={name}
               server={server}
               onDisconnect={onDisconnect}
+              onReconnect={onReconnect}
             />
           ))}
         </div>

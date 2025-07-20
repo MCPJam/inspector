@@ -1,29 +1,11 @@
 "use client";
 
-import { useState } from "react";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  CardFooter,
-} from "./ui/card";
+import { useState, useEffect } from "react";
+import { toast } from "sonner";
+import { Card } from "./ui/card";
 import { Button } from "./ui/button";
-import { Badge } from "./ui/badge";
 import { Separator } from "./ui/separator";
-import { Progress } from "./ui/progress";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "./ui/tooltip";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "./ui/collapsible";
-import { Alert, AlertDescription } from "./ui/alert";
+import { TooltipProvider } from "./ui/tooltip";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -33,293 +15,276 @@ import {
 import {
   ChevronDown,
   ChevronUp,
-  Globe,
-  Terminal,
-  Shield,
-  Clock,
-  Settings,
   MoreVertical,
-  CheckCircle,
-  AlertCircle,
-  Wifi,
-  Zap,
-  Key,
   Link2Off,
   RefreshCw,
-  Eye,
-  Copy,
+  Loader2,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/useAppState";
+import { formatTimeRemaining, getTimeBreakdown } from "@/lib/utils";
 
 interface ServerConnectionCardProps {
   server: ServerWithName;
   onDisconnect: (serverName: string) => void;
+  onReconnect: (serverName: string) => void;
 }
 
 export function ServerConnectionCard({
   server,
   onDisconnect,
+  onReconnect,
 }: ServerConnectionCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [isReconnecting, setIsReconnecting] = useState(false);
+  const [currentTime, setCurrentTime] = useState(Date.now());
 
   const isHttpServer = "url" in server.config;
-  const isStdioServer = "command" in server.config;
   const hasOAuth = server.oauthState || server.oauthFlow;
+
+  // Update current time every second for live countdown
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentTime(Date.now());
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, []);
 
   // Calculate OAuth token expiration
   const getTokenStatus = () => {
     if (!server.oauthState?.expiresAt) return null;
-    const now = Date.now();
-    const expiresAt = server.oauthState.expiresAt;
-    const timeLeft = expiresAt - now;
+    const timeLeft = server.oauthState.expiresAt - currentTime;
     const totalTime = 3600000; // Assume 1 hour default
     const percentage = Math.max(0, (timeLeft / totalTime) * 100);
 
     return {
       percentage,
       timeLeft,
-      isExpired: timeLeft <= 0,
-      isExpiringSoon: timeLeft <= 300000, // 5 minutes
+      ...getTimeBreakdown(timeLeft),
     };
   };
 
   const tokenStatus = getTokenStatus();
 
-  const getConnectionStatus = () => {
-    // Mock connection status - in real implementation, you'd check actual connection
-    return {
-      isConnected: true,
-      lastConnected: new Date(),
-      latency: Math.floor(Math.random() * 100) + 10,
-    };
-  };
-
-  const connectionStatus = getConnectionStatus();
-
-  const formatTimeAgo = (date: Date) => {
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMinutes = Math.floor(diffMs / 60000);
-
-    if (diffMinutes < 1) return "Just now";
-    if (diffMinutes < 60) return `${diffMinutes}m ago`;
-    const diffHours = Math.floor(diffMinutes / 60);
-    if (diffHours < 24) return `${diffHours}h ago`;
-    const diffDays = Math.floor(diffHours / 24);
-    return `${diffDays}d ago`;
-  };
-
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
   };
 
+  const handleReconnect = async () => {
+    setIsReconnecting(true);
+    try {
+      onReconnect(server.name);
+      toast.success(`Reconnected to ${server.name}!`);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+      toast.error(`Failed to reconnect to ${server.name}: ${errorMessage}`);
+    } finally {
+      setIsReconnecting(false);
+    }
+  };
+
+  const getConnectionStatusText = () => {
+    switch (server.connectionStatus) {
+      case "connected":
+        return "Connected";
+      case "connecting":
+        return "Connecting...";
+      case "failed":
+        return `Failed (${server.retryCount} retries)`;
+      case "disconnected":
+        return "Disconnected";
+    }
+  };
+
+  const getCommandDisplay = () => {
+    if (isHttpServer) {
+      return server.config.url?.toString() || "";
+    }
+    const command = server.config.command;
+    const args = server.config.args || [];
+    return [command, ...args].join(" ");
+  };
+
   return (
     <TooltipProvider>
-      <Card className="w-full hover:shadow-md transition-shadow">
-        <CardHeader className="pb-3">
+      <Card className="border border-border/50 bg-card/50 backdrop-blur-sm hover:border-border transition-colors">
+        <div className="p-4 space-y-3 py-0">
+          {/* Header Row */}
           <div className="flex items-start justify-between">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-primary/10">
-                {isHttpServer ? (
-                  <Globe className="h-5 w-5 text-primary" />
-                ) : (
-                  <Terminal className="h-5 w-5 text-primary" />
-                )}
-              </div>
-              <div>
-                <CardTitle className="text-lg">{server.name}</CardTitle>
+            <div className="flex items-start gap-3">
+              <div
+                className="h-2 w-2 rounded-full flex-shrink-0 mt-1.5"
+                style={{
+                  backgroundColor:
+                    server.connectionStatus === "connected"
+                      ? "#10b981"
+                      : server.connectionStatus === "connecting"
+                        ? "#3b82f6"
+                        : server.connectionStatus === "failed"
+                          ? "#ef4444"
+                          : "#9ca3af",
+                }}
+              />
+              <div className="min-w-0 flex-1">
+                <h3 className="font-medium text-sm text-foreground">
+                  {server.name}
+                </h3>
                 <div className="flex items-center gap-2 mt-1">
-                  <Badge
-                    variant={
-                      connectionStatus.isConnected ? "default" : "secondary"
-                    }
+                  <span className="text-xs text-muted-foreground">
+                    {isHttpServer ? "HTTP/SSE" : "STDIO"}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {getConnectionStatusText()}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 w-6 p-0 text-muted-foreground/50 hover:text-foreground"
                   >
-                    {connectionStatus.isConnected ? (
-                      <>
-                        <CheckCircle className="h-3 w-3 mr-1" />
-                        Connected
-                      </>
+                    <MoreVertical className="h-3 w-3" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-40">
+                  <DropdownMenuItem
+                    onClick={handleReconnect}
+                    disabled={
+                      isReconnecting || server.connectionStatus === "connecting"
+                    }
+                    className="text-xs"
+                  >
+                    {isReconnecting ? (
+                      <Loader2 className="h-3 w-3 mr-2 animate-spin" />
                     ) : (
-                      <>
-                        <AlertCircle className="h-3 w-3 mr-1" />
-                        Disconnected
-                      </>
+                      <RefreshCw className="h-3 w-3 mr-2" />
                     )}
-                  </Badge>
-                  <Badge variant="outline">
-                    {isHttpServer ? "HTTP" : "STDIO"}
-                  </Badge>
-                  {hasOAuth && (
-                    <Badge variant="outline">
-                      <Shield className="h-3 w-3 mr-1" />
-                      OAuth
-                    </Badge>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm">
-                  <MoreVertical className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem>
-                  <RefreshCw className="h-4 w-4 mr-2" />
-                  Reconnect
-                </DropdownMenuItem>
-                <DropdownMenuItem>
-                  <Eye className="h-4 w-4 mr-2" />
-                  View Logs
-                </DropdownMenuItem>
-                <DropdownMenuItem>
-                  <Settings className="h-4 w-4 mr-2" />
-                  Configure
-                </DropdownMenuItem>
-                <Separator />
-                <DropdownMenuItem
-                  className="text-destructive"
-                  onClick={() => onDisconnect(server.name)}
-                >
-                  <Link2Off className="h-4 w-4 mr-2" />
-                  Disconnect
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </CardHeader>
-
-        <CardContent className="space-y-4">
-          {/* Connection Stats */}
-          <div className="grid grid-cols-3 gap-4">
-            <div className="text-center">
-              <div className="flex items-center justify-center gap-1">
-                <Wifi className="h-4 w-4 text-green-500" />
-                <span className="text-sm font-medium">
-                  {connectionStatus.latency}ms
-                </span>
-              </div>
-              <p className="text-xs text-muted-foreground">Latency</p>
-            </div>
-            <div className="text-center">
-              <div className="flex items-center justify-center gap-1">
-                <Clock className="h-4 w-4 text-blue-500" />
-                <span className="text-sm font-medium">
-                  {formatTimeAgo(connectionStatus.lastConnected)}
-                </span>
-              </div>
-              <p className="text-xs text-muted-foreground">Last Connected</p>
-            </div>
-            <div className="text-center">
-              <div className="flex items-center justify-center gap-1">
-                <Zap className="h-4 w-4 text-orange-500" />
-                <span className="text-sm font-medium">
-                  {Math.floor(Math.random() * 20) + 5}
-                </span>
-              </div>
-              <p className="text-xs text-muted-foreground">Tools</p>
+                    {isReconnecting ? "Reconnecting..." : "Reconnect"}
+                  </DropdownMenuItem>
+                  <Separator />
+                  <DropdownMenuItem
+                    className="text-destructive text-xs"
+                    onClick={() => onDisconnect(server.name)}
+                  >
+                    <Link2Off className="h-3 w-3 mr-2" />
+                    Disconnect
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
 
-          {/* OAuth Token Status */}
-          {hasOAuth && tokenStatus && (
-            <Alert
-              className={
-                tokenStatus.isExpired
-                  ? "border-destructive"
-                  : tokenStatus.isExpiringSoon
-                    ? "border-yellow-500"
-                    : "border-green-500"
-              }
-            >
-              <Shield className="h-4 w-4" />
-              <AlertDescription>
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium">OAuth Token</span>
-                    <span className="text-xs text-muted-foreground">
-                      {tokenStatus.isExpired
-                        ? "Expired"
-                        : `${Math.floor(tokenStatus.timeLeft / 60000)}m left`}
-                    </span>
-                  </div>
-                  <Progress value={tokenStatus.percentage} className="h-2" />
+          {/* Command/URL Display */}
+          <div className="font-mono text-xs text-muted-foreground bg-muted/30 p-2 rounded border border-border/30 break-all">
+            {getCommandDisplay()}
+          </div>
+
+          {/* Error Alert for Failed Connections */}
+          {server.connectionStatus === "failed" && server.lastError && (
+            <div className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 p-2 rounded border border-red-200 dark:border-red-800/30">
+              {server.lastError}
+              {server.retryCount > 0 && (
+                <div className="text-red-500/70 mt-1">
+                  {server.retryCount} retry attempt
+                  {server.retryCount !== 1 ? "s" : ""}
                 </div>
-              </AlertDescription>
-            </Alert>
+              )}
+            </div>
           )}
-
-          {/* Configuration Details */}
-          <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
-            <CollapsibleTrigger asChild>
+          {(hasOAuth || !isHttpServer) && (
+            <div className="flex justify-end">
               <Button
                 variant="ghost"
-                className="w-full justify-between p-0 h-auto"
+                size="sm"
+                className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+                onClick={() => setIsExpanded(!isExpanded)}
               >
-                <span className="text-sm font-medium">
-                  Configuration Details
-                </span>
                 {isExpanded ? (
-                  <ChevronUp className="h-4 w-4" />
+                  <ChevronUp className="h-3 w-3" />
                 ) : (
-                  <ChevronDown className="h-4 w-4" />
+                  <ChevronDown className="h-3 w-3" />
                 )}
               </Button>
-            </CollapsibleTrigger>
-            <CollapsibleContent className="space-y-3 pt-3">
-              {isHttpServer && (
+            </div>
+          )}
+          {/* Expandable Details */}
+          {isExpanded && (hasOAuth || !isHttpServer) && (
+            <div className="space-y-3 pt-2">
+              {/* OAuth Information */}
+              {server.oauthState && (
                 <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium flex items-center gap-2">
-                      <Globe className="h-4 w-4" />
-                      URL
-                    </span>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() =>
-                            copyToClipboard(server.config.url?.toString() || "")
-                          }
-                        >
-                          <Copy className="h-3 w-3" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>Copy URL</TooltipContent>
-                    </Tooltip>
+                  <div className="space-y-3 text-xs">
+                    <div>
+                      <span className="text-muted-foreground font-medium">
+                        Access Token:
+                      </span>
+                      <div className="font-mono text-foreground break-all bg-muted/30 p-2 rounded mt-1">
+                        {server.oauthState.accessToken}
+                      </div>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground font-medium">
+                        Client ID:
+                      </span>
+                      <div className="font-mono text-foreground break-all bg-muted/30 p-2 rounded mt-1">
+                        {server.oauthState.clientId || "N/A"}
+                      </div>
+                    </div>
+                    {server.oauthState.scopes.length > 0 && (
+                      <div>
+                        <span className="text-muted-foreground font-medium">
+                          Scopes:
+                        </span>
+                        <div className="font-mono text-foreground break-all bg-muted/30 p-2 rounded mt-1">
+                          {server.oauthState.scopes.join(", ")}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  <p className="text-sm text-muted-foreground font-mono bg-muted p-2 rounded">
-                    {server.config.url?.toString()}
-                  </p>
+
+                  {tokenStatus && (
+                    <div>
+                      <span className="text-xs text-muted-foreground font-medium">
+                        Token Expiry:
+                      </span>
+                      <div
+                        className={`text-xs font-mono mt-1 bg-muted/30 p-2 rounded ${
+                          tokenStatus.isExpired
+                            ? "text-red-500"
+                            : tokenStatus.isExpiringSoon
+                              ? "text-yellow-500"
+                              : "text-green-500"
+                        }`}
+                      >
+                        {formatTimeRemaining(tokenStatus.timeLeft)}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
-              {isStdioServer && (
+              {/* Command Arguments and Environment */}
+              {!isHttpServer && (
                 <div className="space-y-3">
-                  <div className="space-y-2">
-                    <span className="text-sm font-medium flex items-center gap-2">
-                      <Terminal className="h-4 w-4" />
-                      Command
-                    </span>
-                    <p className="text-sm text-muted-foreground font-mono bg-muted p-2 rounded">
-                      {server.config.command}
-                    </p>
-                  </div>
-
                   {server.config.args && server.config.args.length > 0 && (
-                    <div className="space-y-2">
-                      <span className="text-sm font-medium">Arguments</span>
-                      <div className="space-y-1">
+                    <div>
+                      <span className="text-xs text-muted-foreground font-medium">
+                        Arguments:
+                      </span>
+                      <div className="space-y-1 mt-1">
                         {server.config.args.map((arg, index) => (
-                          <p
+                          <div
                             key={index}
-                            className="text-sm text-muted-foreground font-mono bg-muted p-1 px-2 rounded"
+                            className="text-xs font-mono text-foreground bg-muted/30 p-2 rounded break-all"
                           >
                             {arg}
-                          </p>
+                          </div>
                         ))}
                       </div>
                     </div>
@@ -327,16 +292,16 @@ export function ServerConnectionCard({
 
                   {server.config.env &&
                     Object.keys(server.config.env).length > 0 && (
-                      <div className="space-y-2">
-                        <span className="text-sm font-medium">
-                          Environment Variables
+                      <div>
+                        <span className="text-xs text-muted-foreground font-medium">
+                          Environment:
                         </span>
-                        <div className="space-y-1">
+                        <div className="space-y-1 mt-1">
                           {Object.entries(server.config.env).map(
                             ([key, value]) => (
                               <div
                                 key={key}
-                                className="text-sm font-mono bg-muted p-2 rounded"
+                                className="text-xs font-mono bg-muted/30 p-2 rounded break-all"
                               >
                                 <span className="text-blue-600">{key}</span>=
                                 <span className="text-green-600">{value}</span>
@@ -348,53 +313,9 @@ export function ServerConnectionCard({
                     )}
                 </div>
               )}
-
-              {server.oauthState && (
-                <div className="space-y-2">
-                  <span className="text-sm font-medium flex items-center gap-2">
-                    <Key className="h-4 w-4" />
-                    OAuth Configuration
-                  </span>
-                  <div className="space-y-2 text-sm text-muted-foreground">
-                    <div className="flex justify-between">
-                      <span>Client ID:</span>
-                      <span className="font-mono">
-                        {server.oauthState.clientId || "N/A"}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Scopes:</span>
-                      <span className="font-mono">
-                        {server.oauthState.scopes.join(", ")}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Status:</span>
-                      <Badge
-                        variant={
-                          server.oauthState.accessToken
-                            ? "default"
-                            : "secondary"
-                        }
-                      >
-                        {server.oauthState.accessToken
-                          ? "Authenticated"
-                          : "Not Authenticated"}
-                      </Badge>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </CollapsibleContent>
-          </Collapsible>
-        </CardContent>
-
-        <CardFooter className="pt-0">
-          <div className="flex items-center justify-between w-full text-xs text-muted-foreground">
-            <span>Connection stable</span>
-            <span>ID: {server.name.slice(0, 8)}...</span>
-          </div>
-        </CardFooter>
+            </div>
+          )}
+        </div>
       </Card>
     </TooltipProvider>
   );

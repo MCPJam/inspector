@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { toast } from "sonner";
 import { createOAuthFlow, OAuthFlowManager } from "@/lib/oauth-flow";
 import {
   MastraMCPServerDefinition,
@@ -22,6 +23,10 @@ export interface ServerWithName {
     refreshToken?: string;
     expiresAt?: number;
   };
+  lastConnectionTime: Date;
+  connectionStatus: "connected" | "connecting" | "failed" | "disconnected";
+  retryCount: number;
+  lastError?: string;
 }
 
 export interface AppState {
@@ -65,6 +70,9 @@ export function useAppState() {
   });
 
   const [isLoading, setIsLoading] = useState(true);
+  const [reconnectionTimeouts, setReconnectionTimeouts] = useState<
+    Record<string, NodeJS.Timeout>
+  >({});
 
   // Load state from localStorage on mount
   useEffect(() => {
@@ -72,7 +80,26 @@ export function useAppState() {
     if (savedState) {
       try {
         const parsed = JSON.parse(savedState);
-        setAppState(parsed);
+        // Ensure all loaded servers have the new fields with defaults
+        const updatedServers = Object.fromEntries(
+          Object.entries(parsed.servers || {}).map(
+            ([name, server]: [string, any]) => [
+              name,
+              {
+                ...server,
+                connectionStatus: server.connectionStatus || "disconnected",
+                retryCount: server.retryCount || 0,
+                lastConnectionTime: server.lastConnectionTime
+                  ? new Date(server.lastConnectionTime)
+                  : new Date(),
+              },
+            ],
+          ),
+        );
+        setAppState({
+          ...parsed,
+          servers: updatedServers,
+        });
       } catch (error) {
         console.error("Failed to parse saved state:", error);
       }
@@ -124,30 +151,46 @@ export function useAppState() {
 
   const handleConnect = useCallback(
     async (formData: ServerFormData) => {
-      try {
-        // Validate form data first
-        if (formData.type === "stdio") {
-          if (!formData.command || formData.command.trim() === "") {
-            alert("Command is required for STDIO connections");
-            return;
-          }
-        } else {
-          if (!formData.url || formData.url.trim() === "") {
-            alert("URL is required for HTTP connections");
-            return;
-          }
-
-          try {
-            new URL(formData.url);
-          } catch (urlError) {
-            alert(`Invalid URL format: ${formData.url}`);
-            return;
-          }
+      // Validate form data first
+      if (formData.type === "stdio") {
+        if (!formData.command || formData.command.trim() === "") {
+          toast.error("Command is required for STDIO connections");
+          return;
+        }
+      } else {
+        if (!formData.url || formData.url.trim() === "") {
+          toast.error("URL is required for HTTP connections");
+          return;
         }
 
-        // Convert form data to MCP config
-        const mcpConfig = convertFormToMCPConfig(formData);
+        try {
+          new URL(formData.url);
+        } catch (urlError) {
+          toast.error(`Invalid URL format: ${formData.url}`);
+          return;
+        }
+      }
 
+      // Convert form data to MCP config
+      const mcpConfig = convertFormToMCPConfig(formData);
+
+      // Immediately create server with 'connecting' state for responsive UI
+      setAppState((prev) => ({
+        ...prev,
+        servers: {
+          ...prev.servers,
+          [formData.name]: {
+            name: formData.name,
+            config: mcpConfig,
+            lastConnectionTime: new Date(),
+            connectionStatus: "connecting" as const,
+            retryCount: 0,
+          },
+        },
+        selectedServer: formData.name,
+      }));
+
+      try {
         // Handle OAuth flow for HTTP servers
         if (formData.type === "http" && formData.useOAuth && formData.url) {
           const oauthFlow = createOAuthFlow(formData.url, {
@@ -203,8 +246,8 @@ export function useAppState() {
 
               // Wait a bit for the state to be saved, then redirect
               setTimeout(() => {
-                alert(
-                  `OAuth flow initiated. You will be redirected to authorize access.`,
+                toast.success(
+                  "OAuth flow initiated. You will be redirected to authorize access.",
                 );
                 window.location.href = oauthResult.authorization_url!;
               }, 100);
@@ -212,7 +255,7 @@ export function useAppState() {
               return;
             }
           } else {
-            alert(
+            toast.error(
               `OAuth initialization failed: ${oauthResult.error?.error || "Unknown error"}`,
             );
             return;
@@ -231,25 +274,58 @@ export function useAppState() {
         const result = await response.json();
 
         if (result.success) {
-          // Add server to state with both name and config
+          // Update existing server to connected state
           setAppState((prev) => ({
             ...prev,
             servers: {
               ...prev.servers,
               [formData.name]: {
-                name: formData.name,
-                config: mcpConfig,
+                ...prev.servers[formData.name],
+                connectionStatus: "connected" as const,
+                lastConnectionTime: new Date(),
+                retryCount: 0,
+                lastError: undefined,
               },
             },
-            selectedServer: formData.name,
           }));
 
-          alert(`Connected successfully! Found ${result.toolCount} tools.`);
+          toast.success(`Connected successfully!`);
         } else {
-          alert(`Failed to connect: ${result.error}`);
+          // Update existing server to failed state
+          setAppState((prev) => ({
+            ...prev,
+            servers: {
+              ...prev.servers,
+              [formData.name]: {
+                ...prev.servers[formData.name],
+                connectionStatus: "failed" as const,
+                retryCount: 0,
+                lastError: result.error,
+              },
+            },
+          }));
+
+          toast.error(`Failed to connect: ${result.error}`);
         }
       } catch (error) {
-        alert(`Network error: ${error}`);
+        const errorMessage =
+          error instanceof Error ? error.message : "Unknown error";
+
+        // Update existing server to failed state
+        setAppState((prev) => ({
+          ...prev,
+          servers: {
+            ...prev.servers,
+            [formData.name]: {
+              ...prev.servers[formData.name],
+              connectionStatus: "failed" as const,
+              retryCount: 0,
+              lastError: errorMessage,
+            },
+          },
+        }));
+
+        toast.error(`Network error: ${errorMessage}`);
       }
     },
     [convertFormToMCPConfig],
@@ -369,6 +445,9 @@ export function useAppState() {
                     ? Date.now() + tokens.expires_in * 1000
                     : undefined,
                 },
+                lastConnectionTime: new Date(),
+                connectionStatus: "connected" as const,
+                retryCount: 0,
               },
             },
             selectedServer: serverName,
@@ -383,9 +462,11 @@ export function useAppState() {
           window.location.pathname,
         );
 
-        alert(`OAuth connection successful! Connected to ${serverName}.`);
+        toast.success(
+          `OAuth connection successful! Connected to ${serverName}.`,
+        );
       } catch (error) {
-        alert(
+        toast.error(
           `Error completing OAuth flow: ${error instanceof Error ? error.message : "Unknown error"}`,
         );
       }
@@ -541,6 +622,162 @@ export function useAppState() {
     });
   }, []);
 
+  const handleReconnect = useCallback(
+    async (serverName: string) => {
+      const server = appState.servers[serverName];
+      if (!server) {
+        throw new Error(`Server ${serverName} not found`);
+      }
+
+      // Update status to connecting
+      setAppState((prev) => ({
+        ...prev,
+        servers: {
+          ...prev.servers,
+          [serverName]: {
+            ...server,
+            connectionStatus: "connecting" as const,
+          },
+        },
+      }));
+
+      try {
+        // Check if OAuth token needs refresh
+        if (
+          server.oauthState?.accessToken &&
+          isTokenExpired(server.oauthState.expiresAt)
+        ) {
+          try {
+            await refreshOAuthToken(serverName);
+          } catch (error) {
+            console.error(`Failed to refresh token for ${serverName}:`, error);
+            // Continue with reconnection attempt even if token refresh fails
+          }
+        }
+
+        // Get the current server config (may have been updated with new tokens)
+        const currentServer = appState.servers[serverName];
+
+        // Test connection using the stateless endpoint
+        const response = await fetch("/api/mcp/test-connection", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            serverConfig: currentServer.config,
+          }),
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+          // Update status to connected and reset retry count
+          setAppState((prev) => ({
+            ...prev,
+            servers: {
+              ...prev.servers,
+              [serverName]: {
+                ...prev.servers[serverName],
+                connectionStatus: "connected" as const,
+                lastConnectionTime: new Date(),
+                retryCount: 0,
+                lastError: undefined,
+              },
+            },
+          }));
+
+          return { success: true };
+        } else {
+          toast.error(`Failed to connect: ${result.error}`);
+        }
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : "Unknown error";
+
+        // Update status to failed and increment retry count
+        setAppState((prev) => ({
+          ...prev,
+          servers: {
+            ...prev.servers,
+            [serverName]: {
+              ...prev.servers[serverName],
+              connectionStatus: "failed" as const,
+              retryCount: prev.servers[serverName].retryCount + 1,
+              lastError: errorMessage,
+            },
+          },
+        }));
+
+        throw error;
+      }
+    },
+    [appState.servers, isTokenExpired, refreshOAuthToken],
+  );
+
+  const scheduleAutoReconnect = useCallback(
+    (serverName: string, retryCount: number) => {
+      const MAX_RETRIES = 5;
+      const BASE_DELAY = 5000; // 5 seconds
+
+      if (retryCount >= MAX_RETRIES) {
+        console.log(`Max retries (${MAX_RETRIES}) reached for ${serverName}`);
+        return;
+      }
+
+      // Exponential backoff: 5s, 10s, 20s, 40s, 80s
+      const delay = BASE_DELAY * Math.pow(2, retryCount);
+
+      console.log(
+        `Scheduling auto-reconnect for ${serverName} in ${delay}ms (attempt ${retryCount + 1})`,
+      );
+
+      const timeoutId = setTimeout(async () => {
+        try {
+          await handleReconnect(serverName);
+        } catch (error) {
+          console.error(`Auto-reconnect failed for ${serverName}:`, error);
+        }
+      }, delay);
+
+      setReconnectionTimeouts((prev) => ({
+        ...prev,
+        [serverName]: timeoutId,
+      }));
+    },
+    [handleReconnect],
+  );
+
+  // Effect to handle automatic reconnection for failed servers
+  useEffect(() => {
+    Object.entries(appState.servers).forEach(([serverName, server]) => {
+      if (
+        server.connectionStatus === "failed" &&
+        !reconnectionTimeouts[serverName]
+      ) {
+        scheduleAutoReconnect(serverName, server.retryCount);
+      }
+    });
+
+    // Cleanup timeouts for servers that are no longer failed or have been removed
+    Object.keys(reconnectionTimeouts).forEach((serverName) => {
+      const server = appState.servers[serverName];
+      if (!server || server.connectionStatus !== "failed") {
+        clearTimeout(reconnectionTimeouts[serverName]);
+        setReconnectionTimeouts((prev) => {
+          const newTimeouts = { ...prev };
+          delete newTimeouts[serverName];
+          return newTimeouts;
+        });
+      }
+    });
+  }, [appState.servers, reconnectionTimeouts, scheduleAutoReconnect]);
+
+  // Cleanup timeouts on unmount
+  useEffect(() => {
+    return () => {
+      Object.values(reconnectionTimeouts).forEach(clearTimeout);
+    };
+  }, [reconnectionTimeouts]);
+
   const setSelectedServer = useCallback((serverName: string) => {
     setAppState((prev) => ({
       ...prev,
@@ -562,6 +799,7 @@ export function useAppState() {
     // Actions
     handleConnect,
     handleDisconnect,
+    handleReconnect,
     setSelectedServer,
     refreshOAuthToken,
     getValidAccessToken,

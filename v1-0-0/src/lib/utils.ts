@@ -29,7 +29,13 @@ export function formatCurrency(
     noDecimals?: boolean;
   },
 ) {
-  const { currency = "USD", locale = "en-US", minimumFractionDigits, maximumFractionDigits, noDecimals } = opts ?? {};
+  const {
+    currency = "USD",
+    locale = "en-US",
+    minimumFractionDigits,
+    maximumFractionDigits,
+    noDecimals,
+  } = opts ?? {};
 
   const formatOptions: Intl.NumberFormatOptions = {
     style: "currency",
@@ -39,4 +45,41 @@ export function formatCurrency(
   };
 
   return new Intl.NumberFormat(locale, formatOptions).format(amount);
+}
+
+export function formatTimeRemaining(timeLeftMs: number): string {
+  if (timeLeftMs <= 0) return "Expired";
+
+  const days = Math.floor(timeLeftMs / (1000 * 60 * 60 * 24));
+  const hours = Math.floor(
+    (timeLeftMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60),
+  );
+  const minutes = Math.floor((timeLeftMs % (1000 * 60 * 60)) / (1000 * 60));
+  const seconds = Math.floor((timeLeftMs % (1000 * 60)) / 1000);
+
+  const parts = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  if (seconds > 0 || parts.length === 0) parts.push(`${seconds}s`);
+
+  return parts.join(" ") + " remaining";
+}
+
+export function getTimeBreakdown(timeLeftMs: number) {
+  const days = Math.floor(timeLeftMs / (1000 * 60 * 60 * 24));
+  const hours = Math.floor(
+    (timeLeftMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60),
+  );
+  const minutes = Math.floor((timeLeftMs % (1000 * 60 * 60)) / (1000 * 60));
+  const seconds = Math.floor((timeLeftMs % (1000 * 60)) / 1000);
+
+  return {
+    days,
+    hours,
+    minutes,
+    seconds,
+    isExpired: timeLeftMs <= 0,
+    isExpiringSoon: timeLeftMs <= 300000, // 5 minutes
+  };
 }
