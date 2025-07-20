@@ -255,6 +255,18 @@ export function useAppState() {
               return;
             }
           } else {
+            setAppState((prev) => ({
+              ...prev,
+              servers: {
+                ...prev.servers,
+                [formData.name]: {
+                  ...prev.servers[formData.name],
+                  connectionStatus: "failed" as const,
+                  retryCount: 0,
+                  lastError: oauthResult.error?.error || "Unknown error",
+                },
+              },
+            }));
             toast.error(
               `OAuth initialization failed: ${oauthResult.error?.error || "Unknown error"}`,
             );

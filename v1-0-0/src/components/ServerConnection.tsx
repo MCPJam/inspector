@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
 import { Plus, Server, Database } from "lucide-react";
@@ -25,6 +25,12 @@ export function ServerConnection({
   const [isAddingServer, setIsAddingServer] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [filterType, setFilterType] = useState<"all" | "stdio" | "http">("all");
+
+  useEffect(() => {
+    Object.keys(connectedServerConfigs).forEach((serverName) => {
+      onReconnect(serverName);
+    });
+  }, []);
 
   // Filter and search servers
   const filteredServers = Object.entries(connectedServerConfigs).filter(
