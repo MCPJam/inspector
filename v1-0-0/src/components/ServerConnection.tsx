@@ -49,16 +49,11 @@ export function ServerConnection({
   const connectedCount = Object.keys(connectedServerConfigs).length;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 p-8">
       {/* Header Section */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">
-            Server Connections
-          </h2>
-          <p className="text-muted-foreground">
-            Manage your MCP server connections and monitor their status
-          </p>
+          <h2 className="text-2xl font-bold tracking-tight">MCP Servers</h2>
         </div>
         <Button
           onClick={() => setIsAddingServer(true)}
