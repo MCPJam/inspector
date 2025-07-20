@@ -21,7 +21,8 @@ import {
   ResizableHandle,
 } from "./ui/resizable";
 import { Wrench, Play, RefreshCw, ChevronRight } from "lucide-react";
-import JsonView from "@uiw/react-json-view";
+import JsonView from "react18-json-view";
+import "react18-json-view/src/style.css";
 import type { MCPToolType } from "@mastra/core/mcp";
 import { MastraMCPServerDefinition } from "@/lib/types";
 
@@ -263,7 +264,9 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                     size="sm"
                     disabled={fetchingTools}
                   >
-                    <RefreshCw className={`h-3 w-3 ${fetchingTools ? "animate-spin" : ""}`} />
+                    <RefreshCw
+                      className={`h-3 w-3 ${fetchingTools ? "animate-spin" : ""} cursor-pointer`}
+                    />
                   </Button>
                 </div>
 
@@ -274,7 +277,7 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                       {fetchingTools ? (
                         <div className="flex flex-col items-center justify-center py-16 text-center">
                           <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center mb-3">
-                            <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin" />
+                            <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin cursor-pointer" />
                           </div>
                           <p className="text-xs text-muted-foreground font-semibold mb-1">
                             Loading tools...
@@ -350,12 +353,12 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                       >
                         {loading ? (
                           <>
-                            <RefreshCw className="h-3 w-3 mr-1.5 animate-spin" />
+                            <RefreshCw className="h-3 w-3 mr-1.5 animate-spin cursor-pointer" />
                             <span className="font-mono text-xs">Running</span>
                           </>
                         ) : (
                           <>
-                            <Play className="h-3 w-3 mr-1.5" />
+                            <Play className="h-3 w-3 mr-1.5 cursor-pointer" />
                             <span className="font-mono text-xs">Execute</span>
                           </>
                         )}
@@ -554,19 +557,21 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                 <ScrollArea className="h-full">
                   <div className="p-4">
                     <JsonView
-                      value={result}
-                      style={{
-                        backgroundColor: "hsl(var(--muted))",
-                        borderRadius: "6px",
-                        border: "1px solid hsl(var(--border))",
-                        padding: "12px",
-                        fontSize: "12px",
-                        color: "hsl(var(--foreground))",
-                      }}
-                      displayDataTypes={false}
-                      displayObjectSize={false}
+                      src={result}
+                      dark={true}
+                      theme="atom"
                       enableClipboard={true}
-                      collapsed={false}
+                      displaySize={false}
+                      collapseStringsAfterLength={100}
+                      style={{
+                        fontSize: "12px",
+                        fontFamily:
+                          "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                        backgroundColor: "hsl(var(--background))",
+                        padding: "16px",
+                        borderRadius: "8px",
+                        border: "1px solid hsl(var(--border))",
+                      }}
                     />
                   </div>
                 </ScrollArea>

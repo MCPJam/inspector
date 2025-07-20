@@ -41,7 +41,11 @@ export function NavMain({ items, onItemClick }: NavMainProps) {
                 tooltip={item.title}
                 isActive={isItemActive(item)}
                 onClick={() => handleClick(item.url)}
-                className={isItemActive(item) ? "[&[data-active=true]]:bg-black/5 dark:[&[data-active=true]]:bg-white/5" : ""}
+                className={
+                  isItemActive(item)
+                    ? "[&[data-active=true]]:bg-black/5 dark:[&[data-active=true]]:bg-white/5 cursor-pointer"
+                    : "cursor-pointer"
+                }
               >
                 {item.icon && <item.icon className="h-4 w-4" />}
                 <span>{item.title}</span>
