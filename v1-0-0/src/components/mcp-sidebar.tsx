@@ -7,8 +7,6 @@ import {
   MessageSquare,
   MessageCircle,
   Server,
-  Database,
-  Bot,
   Monitor,
 } from "lucide-react";
 
@@ -20,6 +18,7 @@ import {
   SidebarFooter,
   SidebarHeader,
 } from "@/components/ui/sidebar";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
 const navMainItems = [
   {
@@ -54,7 +53,13 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   activeTab?: string;
 }
 
-export function MCPSidebar({ onNavigate, activeTab, ...props }: MCPSidebarProps) {
+export function MCPSidebar({
+  onNavigate,
+  activeTab,
+  ...props
+}: MCPSidebarProps) {
+  const themeMode = usePreferencesStore((s) => s.themeMode);
+
   const handleNavClick = (url: string) => {
     if (onNavigate && url.startsWith("#")) {
       onNavigate(url.slice(1));
@@ -67,23 +72,23 @@ export function MCPSidebar({ onNavigate, activeTab, ...props }: MCPSidebarProps)
       email: "inspector@example.com",
       avatar: "/avatars/shadcn.jpg",
     },
-    navMain: navMainItems.map(item => ({
+    navMain: navMainItems.map((item) => ({
       ...item,
-      isActive: item.url === `#${activeTab}`
-    }))
+      isActive: item.url === `#${activeTab}`,
+    })),
   };
 
   return (
     <Sidebar collapsible="offcanvas" {...props}>
       <SidebarHeader>
-        <div className="flex items-center gap-2 px-4 py-2">
-          <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-            <Monitor className="size-4" />
-          </div>
-          <div className="grid flex-1 text-left text-sm leading-tight">
-            <span className="truncate font-semibold">MCP Inspector</span>
-            <span className="truncate text-xs">Model Context Protocol</span>
-          </div>
+        <div className="flex items-center justify-center px-4 py-4">
+          <img
+            src={
+              themeMode === "dark" ? "/mcp_jam_dark.png" : "/mcp_jam_light.png"
+            }
+            alt="MCP Jam"
+            className="h-4 w-auto"
+          />
         </div>
       </SidebarHeader>
       <SidebarContent>

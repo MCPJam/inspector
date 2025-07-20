@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { validateServerConfig, createMCPClient, createErrorResponse } from "@/lib/mcp-utils";
+import { validateServerConfig, createMCPClient } from "@/lib/mcp-utils";
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
     if (!toolName) {
       return NextResponse.json(
         { error: "Tool name is required" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -26,12 +26,13 @@ export async function POST(request: NextRequest) {
       if (!tool) {
         return NextResponse.json({ error: "Tool not found" }, { status: 404 });
       }
-      
-      const toolArgs = parameters && typeof parameters === 'object' ? parameters : {};
+
+      const toolArgs =
+        parameters && typeof parameters === "object" ? parameters : {};
       const result = await tool.execute({
-        context: toolArgs
+        context: toolArgs,
       });
-      
+
       // Cleanup
       await client.disconnect();
 
@@ -47,9 +48,12 @@ export async function POST(request: NextRequest) {
     }
   } catch (error) {
     console.error("Error executing tool:", error);
-    return createErrorResponse(
-      "Failed to execute tool",
-      error instanceof Error ? error.message : "Unknown error"
+    return NextResponse.json(
+      {
+        error: `Failed to execute tool: ${error}`,
+        details: error instanceof Error ? error.message : "Unknown error",
+      },
+      { status: 500 },
     );
   }
 }
