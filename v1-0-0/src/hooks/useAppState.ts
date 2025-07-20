@@ -687,6 +687,19 @@ export function useAppState() {
           toast.success(`Reconnected to ${serverName}`);
           return { success: true };
         } else {
+          // Update status to failed and increment retry count
+          setAppState((prev) => ({
+            ...prev,
+            servers: {
+              ...prev.servers,
+              [serverName]: {
+                ...prev.servers[serverName],
+                connectionStatus: "failed" as const,
+                retryCount: prev.servers[serverName].retryCount + 1,
+                lastError: result.error || "Connection test failed",
+              },
+            },
+          }));
           toast.error(`Failed to connect: ${result.error}`);
         }
       } catch (error) {
