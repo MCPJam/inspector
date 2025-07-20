@@ -7,12 +7,14 @@ This proposal outlines how to replace the custom `MCPJamClient` and `MCPJamAgent
 ## Current Architecture Analysis
 
 ### MCPJamAgent Responsibilities
+
 - **Multi-Server Management**: Manages multiple MCP server connections via `Map<string, MCPJamClient>`
 - **Performance Caching**: Tools (5min), Resources (2min), Prompts (3min) with background refresh
 - **Server Discovery**: Cross-server tool/resource/prompt discovery
 - **Connection Orchestration**: Parallel connection setup and cache initialization
 
-### MCPJamClient Responsibilities  
+### MCPJamClient Responsibilities
+
 - **Transport Abstraction**: STDIO, SSE, Streamable HTTP via proxy server
 - **Authentication**: OAuth flows, bearer tokens, custom headers
 - **Error Handling**: Retry logic, timeout management, progress tracking
@@ -26,22 +28,22 @@ Create an adapter that wraps Mastra's MCPClient to provide the same interface as
 
 ```typescript
 // client/src/lib/utils/mcp/mastraAdapter.ts
-import { MCPClient } from '@mastra/mcp';
-import { Agent } from '@mastra/core/agent';
-import { 
-  Tool, 
-  Resource, 
-  Prompt, 
+import { MCPClient } from "@mastra/mcp";
+import { Agent } from "@mastra/core/agent";
+import {
+  Tool,
+  Resource,
+  Prompt,
   ServerCapabilities,
   ElicitRequest,
   CreateMessageRequest,
-  CreateMessageResult 
-} from '@modelcontextprotocol/sdk/types.js';
-import { MCPJamServerConfig } from '@/lib/types/serverTypes';
-import { InspectorConfig } from '@/lib/types/configurationTypes';
-import { StdErrNotification } from '@/lib/types/notificationTypes';
-import { ElicitationResponse } from '@/components/ElicitationModal';
-import { ClientLogLevels } from '@/hooks/helpers/types';
+  CreateMessageResult,
+} from "@modelcontextprotocol/sdk/types.js";
+import { MCPJamServerConfig } from "@/lib/types/serverTypes";
+import { InspectorConfig } from "@/lib/types/configurationTypes";
+import { StdErrNotification } from "@/lib/types/notificationTypes";
+import { ElicitationResponse } from "@/components/ElicitationModal";
+import { ClientLogLevels } from "@/hooks/helpers/types";
 
 /**
  * Adapter that provides MCPJamAgent interface using Mastra MCPClient
@@ -50,22 +52,35 @@ export class MastraMCPAdapter {
   private mcpClient: MCPClient;
   private serverConfigs: Record<string, MCPJamServerConfig>;
   private inspectorConfig: InspectorConfig;
-  
+
   // Caching system (maintaining existing cache behavior)
   private toolsCache = new Map<string, { tools: Tool[]; timestamp: number }>();
-  private resourcesCache = new Map<string, { resources: Resource[]; timestamp: number }>();
-  private promptsCache = new Map<string, { prompts: Prompt[]; timestamp: number }>();
-  
+  private resourcesCache = new Map<
+    string,
+    { resources: Resource[]; timestamp: number }
+  >();
+  private promptsCache = new Map<
+    string,
+    { prompts: Prompt[]; timestamp: number }
+  >();
+
   // Cache expiry times (same as original)
   private readonly TOOLS_CACHE_EXPIRY = 5 * 60 * 1000; // 5 minutes
-  private readonly RESOURCES_CACHE_EXPIRY = 2 * 60 * 1000; // 2 minutes  
+  private readonly RESOURCES_CACHE_EXPIRY = 2 * 60 * 1000; // 2 minutes
   private readonly PROMPTS_CACHE_EXPIRY = 3 * 60 * 1000; // 3 minutes
-  
+
   // Connection state tracking
-  private connectionStates = new Map<string, {
-    status: 'connected' | 'disconnected' | 'error' | 'error-connecting-to-proxy';
-    capabilities: ServerCapabilities | null;
-  }>();
+  private connectionStates = new Map<
+    string,
+    {
+      status:
+        | "connected"
+        | "disconnected"
+        | "error"
+        | "error-connecting-to-proxy";
+      capabilities: ServerCapabilities | null;
+    }
+  >();
 
   // Callbacks (maintaining existing interface)
   private onStdErrNotification?: (notification: StdErrNotification) => void;
@@ -112,9 +127,9 @@ export class MastraMCPAdapter {
 
     // Convert MCPJamServerConfig to Mastra server config
     const mastraServers = this.convertToMastraConfig(options.servers);
-    
+
     this.mcpClient = new MCPClient({
-      servers: mastraServers
+      servers: mastraServers,
     });
   }
 
@@ -123,25 +138,25 @@ export class MastraMCPAdapter {
    */
   private convertToMastraConfig(servers: Record<string, MCPJamServerConfig>) {
     const mastraServers: Record<string, any> = {};
-    
+
     for (const [name, config] of Object.entries(servers)) {
-      if (config.transportType === 'stdio') {
+      if (config.transportType === "stdio") {
         mastraServers[name] = {
           command: config.command,
           args: config.args || [],
-          env: config.env || {}
+          env: config.env || {},
         };
       } else {
         // For HTTP transports, we'll need to handle through proxy
         mastraServers[name] = {
           url: this.buildProxyUrl(config),
           requestInit: {
-            headers: this.buildHeaders(config)
-          }
+            headers: this.buildHeaders(config),
+          },
         };
       }
     }
-    
+
     return mastraServers;
   }
 
@@ -149,22 +164,23 @@ export class MastraMCPAdapter {
    * Build proxy URL for HTTP transports (maintaining existing proxy behavior)
    */
   private buildProxyUrl(config: MCPJamServerConfig): URL {
-    const proxyBase = this.inspectorConfig.proxyServerUrl || 'http://localhost:6274';
-    
-    if (config.transportType === 'sse') {
+    const proxyBase =
+      this.inspectorConfig.proxyServerUrl || "http://localhost:6274";
+
+    if (config.transportType === "sse") {
       const url = new URL(`${proxyBase}/sse`);
-      if ('url' in config && config.url) {
-        url.searchParams.append('url', config.url.toString());
+      if ("url" in config && config.url) {
+        url.searchParams.append("url", config.url.toString());
       }
       return url;
-    } else if (config.transportType === 'streamable-http') {
+    } else if (config.transportType === "streamable-http") {
       const url = new URL(`${proxyBase}/mcp`);
-      if ('url' in config && config.url) {
-        url.searchParams.append('url', config.url.toString());
+      if ("url" in config && config.url) {
+        url.searchParams.append("url", config.url.toString());
       }
       return url;
     }
-    
+
     throw new Error(`Unsupported transport type: ${config.transportType}`);
   }
 
@@ -173,10 +189,10 @@ export class MastraMCPAdapter {
    */
   private buildHeaders(config: MCPJamServerConfig): Record<string, string> {
     const headers: Record<string, string> = {};
-    
+
     // Add authentication headers if available
     // This will need to be enhanced based on your OAuth implementation
-    
+
     return headers;
   }
 
@@ -200,7 +216,7 @@ export class MastraMCPAdapter {
     delete this.serverConfigs[name];
     this.connectionStates.delete(name);
     this.clearCaches(name);
-    
+
     // Recreate MCPClient without the removed server
     const mastraServers = this.convertToMastraConfig(this.serverConfigs);
     this.mcpClient = new MCPClient({ servers: mastraServers });
@@ -218,31 +234,38 @@ export class MastraMCPAdapter {
    */
   async connectToServer(serverName: string): Promise<void> {
     try {
-      this.addClientLog(`Connecting to server: ${serverName}`, 'info');
-      
+      this.addClientLog(`Connecting to server: ${serverName}`, "info");
+
       // Mastra handles the connection internally
       // We just need to track the state and initialize caches
-      
+
       this.connectionStates.set(serverName, {
-        status: 'connected',
-        capabilities: null // Will be populated after connection
+        status: "connected",
+        capabilities: null, // Will be populated after connection
       });
-      
+
       // Initialize caches in parallel (maintaining existing behavior)
       await Promise.all([
         this.cacheToolsForServer(serverName),
         this.cacheResourcesForServer(serverName),
         this.cachePromptsForServer(serverName),
       ]);
-      
-      this.addClientLog(`Successfully connected to server: ${serverName}`, 'info');
+
+      this.addClientLog(
+        `Successfully connected to server: ${serverName}`,
+        "info",
+      );
     } catch (error) {
       this.connectionStates.set(serverName, {
-        status: 'error',
-        capabilities: null
+        status: "error",
+        capabilities: null,
       });
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      this.addClientLog(`Failed to connect to server ${serverName}: ${errorMessage}`, 'error');
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.addClientLog(
+        `Failed to connect to server ${serverName}: ${errorMessage}`,
+        "error",
+      );
       throw error;
     }
   }
@@ -253,9 +276,9 @@ export class MastraMCPAdapter {
   async disconnectFromServer(serverName: string): Promise<void> {
     const state = this.connectionStates.get(serverName);
     if (state) {
-      state.status = 'disconnected';
+      state.status = "disconnected";
       this.clearCaches(serverName);
-      this.addClientLog(`Disconnected from server: ${serverName}`, 'info');
+      this.addClientLog(`Disconnected from server: ${serverName}`, "info");
     }
   }
 
@@ -284,9 +307,12 @@ export class MastraMCPAdapter {
 
     // Background refresh if needed
     if (refreshPromises.length > 0) {
-      this.addClientLog(`Starting background refresh for ${refreshPromises.length} expired tool caches`, 'debug');
+      this.addClientLog(
+        `Starting background refresh for ${refreshPromises.length} expired tool caches`,
+        "debug",
+      );
       Promise.all(refreshPromises).catch((error) => {
-        console.error('Error refreshing tool cache:', error);
+        console.error("Error refreshing tool cache:", error);
       });
     }
 
@@ -300,17 +326,17 @@ export class MastraMCPAdapter {
     try {
       // Use Mastra's getTools() method to get tools for specific server
       const allTools = await this.mcpClient.getTools();
-      
+
       // Filter tools for this specific server (tools are namespaced)
       const serverTools: Tool[] = [];
       const prefix = `${serverName}.`;
-      
+
       for (const [toolName, tool] of Object.entries(allTools)) {
         if (toolName.startsWith(prefix)) {
           // Remove the server prefix from the tool name
           const cleanTool = {
             ...tool,
-            name: toolName.substring(prefix.length)
+            name: toolName.substring(prefix.length),
           };
           serverTools.push(cleanTool);
         }
@@ -322,7 +348,10 @@ export class MastraMCPAdapter {
         timestamp,
       });
 
-      this.addClientLog(`Cached ${serverTools.length} tools for ${serverName}`, 'debug');
+      this.addClientLog(
+        `Cached ${serverTools.length} tools for ${serverName}`,
+        "debug",
+      );
     } catch (error) {
       console.error(`Failed to cache tools for server ${serverName}:`, error);
       this.toolsCache.set(serverName, { tools: [], timestamp: Date.now() });
@@ -344,10 +373,19 @@ export class MastraMCPAdapter {
         timestamp,
       });
 
-      this.addClientLog(`Cached ${serverResources.length} resources for ${serverName}`, 'debug');
+      this.addClientLog(
+        `Cached ${serverResources.length} resources for ${serverName}`,
+        "debug",
+      );
     } catch (error) {
-      console.error(`Failed to cache resources for server ${serverName}:`, error);
-      this.resourcesCache.set(serverName, { resources: [], timestamp: Date.now() });
+      console.error(
+        `Failed to cache resources for server ${serverName}:`,
+        error,
+      );
+      this.resourcesCache.set(serverName, {
+        resources: [],
+        timestamp: Date.now(),
+      });
     }
   }
 
@@ -366,7 +404,10 @@ export class MastraMCPAdapter {
         timestamp,
       });
 
-      this.addClientLog(`Cached ${serverPrompts.length} prompts for ${serverName}`, 'debug');
+      this.addClientLog(
+        `Cached ${serverPrompts.length} prompts for ${serverName}`,
+        "debug",
+      );
     } catch (error) {
       console.error(`Failed to cache prompts for server ${serverName}:`, error);
       this.promptsCache.set(serverName, { prompts: [], timestamp: Date.now() });
@@ -376,15 +417,27 @@ export class MastraMCPAdapter {
   // ====== Cache Management (maintaining existing logic) ======
 
   private isToolsCacheValid(serverName: string): boolean {
-    return this.isCacheValid(this.toolsCache, serverName, this.TOOLS_CACHE_EXPIRY);
+    return this.isCacheValid(
+      this.toolsCache,
+      serverName,
+      this.TOOLS_CACHE_EXPIRY,
+    );
   }
 
   private isResourcesCacheValid(serverName: string): boolean {
-    return this.isCacheValid(this.resourcesCache, serverName, this.RESOURCES_CACHE_EXPIRY);
+    return this.isCacheValid(
+      this.resourcesCache,
+      serverName,
+      this.RESOURCES_CACHE_EXPIRY,
+    );
   }
 
   private isPromptsCacheValid(serverName: string): boolean {
-    return this.isCacheValid(this.promptsCache, serverName, this.PROMPTS_CACHE_EXPIRY);
+    return this.isCacheValid(
+      this.promptsCache,
+      serverName,
+      this.PROMPTS_CACHE_EXPIRY,
+    );
   }
 
   private isCacheValid<T>(
@@ -403,13 +456,13 @@ export class MastraMCPAdapter {
     this.toolsCache.delete(serverName);
     this.resourcesCache.delete(serverName);
     this.promptsCache.delete(serverName);
-    this.addClientLog(`Cleared all caches for server ${serverName}`, 'debug');
+    this.addClientLog(`Cleared all caches for server ${serverName}`, "debug");
   }
 
   private getConnectedServers(): string[] {
     const connected: string[] = [];
     for (const [name, state] of this.connectionStates.entries()) {
-      if (state.status === 'connected') {
+      if (state.status === "connected") {
         connected.push(name);
       }
     }
@@ -431,7 +484,7 @@ export class MastraMCPAdapter {
       const allTools = await this.mcpClient.getTools();
       const namespacedToolName = `${serverName}.${toolName}`;
       const tool = allTools[namespacedToolName];
-      
+
       if (!tool) {
         throw new Error(`Tool ${toolName} not found on server ${serverName}`);
       }
@@ -439,20 +492,21 @@ export class MastraMCPAdapter {
       // Execute the tool manually (since Mastra supports manual tool execution)
       const result = await tool.execute({
         context: params,
-        runtimeContext: new (await import('@mastra/core/di')).RuntimeContext()
+        runtimeContext: new (await import("@mastra/core/di")).RuntimeContext(),
       });
 
       this.addRequestHistory(
-        { method: 'tools/call', params: { name: toolName, arguments: params } },
-        result
+        { method: "tools/call", params: { name: toolName, arguments: params } },
+        result,
       );
 
       return result;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
       this.addRequestHistory(
-        { method: 'tools/call', params: { name: toolName, arguments: params } },
-        { error: errorMessage }
+        { method: "tools/call", params: { name: toolName, arguments: params } },
+        { error: errorMessage },
       );
       throw error;
     }
@@ -461,25 +515,35 @@ export class MastraMCPAdapter {
   /**
    * Read a resource from a specific server
    */
-  async readResourceFromServer(serverName: string, uri: string): Promise<unknown> {
+  async readResourceFromServer(
+    serverName: string,
+    uri: string,
+  ): Promise<unknown> {
     try {
-      this.addClientLog(`Reading resource '${uri}' from server ${serverName}`, 'debug');
-      
+      this.addClientLog(
+        `Reading resource '${uri}' from server ${serverName}`,
+        "debug",
+      );
+
       const result = await this.mcpClient.resources.read(uri);
-      
-      this.addClientLog(`Successfully read resource '${uri}'`, 'debug');
+
+      this.addClientLog(`Successfully read resource '${uri}'`, "debug");
       this.addRequestHistory(
-        { method: 'resources/read', params: { uri } },
-        result
+        { method: "resources/read", params: { uri } },
+        result,
       );
 
       return result;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      this.addClientLog(`Failed to read resource '${uri}' from server ${serverName}: ${errorMessage}`, 'error');
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.addClientLog(
+        `Failed to read resource '${uri}' from server ${serverName}: ${errorMessage}`,
+        "error",
+      );
       this.addRequestHistory(
-        { method: 'resources/read', params: { uri } },
-        { error: errorMessage }
+        { method: "resources/read", params: { uri } },
+        { error: errorMessage },
       );
       throw error;
     }
@@ -494,23 +558,30 @@ export class MastraMCPAdapter {
     args: Record<string, string> = {},
   ): Promise<unknown> {
     try {
-      this.addClientLog(`Fetching prompt '${name}' from server ${serverName}`, 'debug');
-      
+      this.addClientLog(
+        `Fetching prompt '${name}' from server ${serverName}`,
+        "debug",
+      );
+
       const result = await this.mcpClient.prompts.get(name, args);
-      
-      this.addClientLog(`Successfully fetched prompt '${name}'`, 'debug');
+
+      this.addClientLog(`Successfully fetched prompt '${name}'`, "debug");
       this.addRequestHistory(
-        { method: 'prompts/get', params: { name, arguments: args } },
-        result
+        { method: "prompts/get", params: { name, arguments: args } },
+        result,
       );
 
       return result;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      this.addClientLog(`Failed to get prompt '${name}' from server ${serverName}: ${errorMessage}`, 'error');
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.addClientLog(
+        `Failed to get prompt '${name}' from server ${serverName}: ${errorMessage}`,
+        "error",
+      );
       this.addRequestHistory(
-        { method: 'prompts/get', params: { name, arguments: args } },
-        { error: errorMessage }
+        { method: "prompts/get", params: { name, arguments: args } },
+        { error: errorMessage },
       );
       throw error;
     }
@@ -532,16 +603,24 @@ export class MastraMCPAdapter {
       completionsSupported: true, // Mastra supports completions
       makeRequest: async (request: any) => {
         // Route to appropriate Mastra method based on request
-        if (request.method === 'tools/call') {
-          return this.callToolOnServer(serverName, request.params.name, request.params.arguments || {});
-        } else if (request.method === 'resources/read') {
+        if (request.method === "tools/call") {
+          return this.callToolOnServer(
+            serverName,
+            request.params.name,
+            request.params.arguments || {},
+          );
+        } else if (request.method === "resources/read") {
           return this.readResourceFromServer(serverName, request.params.uri);
-        } else if (request.method === 'prompts/get') {
-          return this.getPromptFromServer(serverName, request.params.name, request.params.arguments || {});
+        } else if (request.method === "prompts/get") {
+          return this.getPromptFromServer(
+            serverName,
+            request.params.name,
+            request.params.arguments || {},
+          );
         }
         // Add other methods as needed
         throw new Error(`Unsupported method: ${request.method}`);
-      }
+      },
     };
   }
 
@@ -561,7 +640,7 @@ export class MastraMCPAdapter {
         name,
         config,
         client: this.getClient(name),
-        connectionStatus: state?.status || 'disconnected',
+        connectionStatus: state?.status || "disconnected",
         capabilities: state?.capabilities || null,
       };
     });
@@ -572,16 +651,16 @@ export class MastraMCPAdapter {
    */
   async disconnectFromAllServers(): Promise<void> {
     await this.mcpClient.disconnect();
-    
+
     for (const serverName of this.getServerNames()) {
       this.connectionStates.set(serverName, {
-        status: 'disconnected',
-        capabilities: null
+        status: "disconnected",
+        capabilities: null,
       });
       this.clearCaches(serverName);
     }
-    
-    this.addClientLog('Disconnected from all servers', 'info');
+
+    this.addClientLog("Disconnected from all servers", "info");
   }
 
   // ====== Direct Mastra Access ======
@@ -601,8 +680,8 @@ Modify the connection state hook to use the Mastra adapter:
 
 ```typescript
 // client/src/hooks/useConnectionState.ts
-import { useState, useCallback, useRef } from 'react';
-import { MastraMCPAdapter } from '@/lib/utils/mcp/mastraAdapter';
+import { useState, useCallback, useRef } from "react";
+import { MastraMCPAdapter } from "@/lib/utils/mcp/mastraAdapter";
 // ... other imports
 
 export function useConnectionState(
@@ -612,22 +691,25 @@ export function useConnectionState(
   const [mcpAgent, setMcpAgent] = useState<MastraMCPAdapter | null>(null);
   const [sidebarUpdateTrigger, setSidebarUpdateTrigger] = useState(0);
 
-  const createMCPAgent = useCallback((
-    servers: Record<string, MCPJamServerConfig>,
-    inspectorConfig: InspectorConfig,
-    // ... other parameters
-  ) => {
-    const agent = new MastraMCPAdapter({
-      servers,
-      inspectorConfig,
-      addRequestHistory,
-      addClientLog,
-      // ... other options
-    });
-    
-    setMcpAgent(agent);
-    return agent;
-  }, [addRequestHistory, addClientLog]);
+  const createMCPAgent = useCallback(
+    (
+      servers: Record<string, MCPJamServerConfig>,
+      inspectorConfig: InspectorConfig,
+      // ... other parameters
+    ) => {
+      const agent = new MastraMCPAdapter({
+        servers,
+        inspectorConfig,
+        addRequestHistory,
+        addClientLog,
+        // ... other options
+      });
+
+      setMcpAgent(agent);
+      return agent;
+    },
+    [addRequestHistory, addClientLog],
+  );
 
   // ... rest of the hook implementation
 }
@@ -643,56 +725,68 @@ Modify the MCP operations to work with the Mastra adapter:
 export function useMCPOperations() {
   // ... existing state
 
-  const makeRequest = useCallback(async (
-    mcpAgent: MastraMCPAdapter | null,
-    serverName: string,
-    request: ClientRequest,
-  ) => {
-    if (!mcpAgent) throw new Error('No MCP agent available');
-    
-    const client = mcpAgent.getClient(serverName);
-    if (!client) throw new Error(`No client for server: ${serverName}`);
-    
-    return await client.makeRequest(request);
-  }, []);
+  const makeRequest = useCallback(
+    async (
+      mcpAgent: MastraMCPAdapter | null,
+      serverName: string,
+      request: ClientRequest,
+    ) => {
+      if (!mcpAgent) throw new Error("No MCP agent available");
 
-  const listTools = useCallback(async (
-    mcpAgent: MastraMCPAdapter | null,
-    serverName: string,
-  ) => {
-    if (!mcpAgent) return;
-    
-    try {
-      const allServerTools = await mcpAgent.getAllTools();
-      const serverTools = allServerTools.find(st => st.serverName === serverName);
-      
-      if (serverTools) {
-        setTools(serverTools.tools);
-        addRequestHistory(
-          { method: 'tools/list' },
-          { tools: serverTools.tools }
+      const client = mcpAgent.getClient(serverName);
+      if (!client) throw new Error(`No client for server: ${serverName}`);
+
+      return await client.makeRequest(request);
+    },
+    [],
+  );
+
+  const listTools = useCallback(
+    async (mcpAgent: MastraMCPAdapter | null, serverName: string) => {
+      if (!mcpAgent) return;
+
+      try {
+        const allServerTools = await mcpAgent.getAllTools();
+        const serverTools = allServerTools.find(
+          (st) => st.serverName === serverName,
         );
-      }
-    } catch (error) {
-      handleOperationError('tools', error);
-    }
-  }, [addRequestHistory]);
 
-  const callTool = useCallback(async (
-    mcpAgent: MastraMCPAdapter | null,
-    serverName: string,
-    toolName: string,
-    params: Record<string, unknown>,
-  ) => {
-    if (!mcpAgent) return;
-    
-    try {
-      const result = await mcpAgent.callToolOnServer(serverName, toolName, params);
-      setToolResult(result);
-    } catch (error) {
-      handleOperationError('tools', error);
-    }
-  }, []);
+        if (serverTools) {
+          setTools(serverTools.tools);
+          addRequestHistory(
+            { method: "tools/list" },
+            { tools: serverTools.tools },
+          );
+        }
+      } catch (error) {
+        handleOperationError("tools", error);
+      }
+    },
+    [addRequestHistory],
+  );
+
+  const callTool = useCallback(
+    async (
+      mcpAgent: MastraMCPAdapter | null,
+      serverName: string,
+      toolName: string,
+      params: Record<string, unknown>,
+    ) => {
+      if (!mcpAgent) return;
+
+      try {
+        const result = await mcpAgent.callToolOnServer(
+          serverName,
+          toolName,
+          params,
+        );
+        setToolResult(result);
+      } catch (error) {
+        handleOperationError("tools", error);
+      }
+    },
+    [],
+  );
 
   // ... implement other operations similarly
 
@@ -708,21 +802,25 @@ export function useMCPOperations() {
 ## Migration Benefits
 
 ### 1. **Industry Standard Implementation**
+
 - Uses Mastra's battle-tested MCP implementation
 - Automatic compatibility with latest MCP protocol changes
 - Community support and maintenance
 
 ### 2. **Simplified Codebase**
+
 - Remove ~2000 lines of custom MCP client code
 - Reduce maintenance burden
 - Focus on inspector-specific features
 
 ### 3. **Enhanced Capabilities**
+
 - Built-in support for Vercel AI SDK integration
 - Better error handling and retry logic
 - Improved performance optimizations
 
 ### 4. **Future-Proof Architecture**
+
 - Easy integration with Mastra's Agent system for chat functionality
 - Support for advanced MCP features as they're added to Mastra
 - Plugin ecosystem compatibility
@@ -730,18 +828,21 @@ export function useMCPOperations() {
 ## Implementation Timeline
 
 ### Week 1: Core Adapter Development
+
 - [ ] Create `MastraMCPAdapter` class
 - [ ] Implement basic connection management
 - [ ] Add caching layer compatibility
 - [ ] Create unit tests
 
 ### Week 2: Integration and Testing
+
 - [ ] Update hooks to use Mastra adapter
 - [ ] Migrate all MCP operations
 - [ ] Comprehensive integration testing
 - [ ] Performance benchmarking
 
 ### Week 3: Polish and Optimization
+
 - [ ] Error handling improvements
 - [ ] Authentication flow updates
 - [ ] Documentation updates
@@ -750,16 +851,19 @@ export function useMCPOperations() {
 ## Risk Mitigation
 
 ### 1. **Gradual Migration**
+
 - Keep existing classes during development
 - Use feature flags to switch between implementations
 - Thorough testing before removing old code
 
 ### 2. **Compatibility Layer**
+
 - Maintain exact same interface initially
 - Gradually expose Mastra-specific features
 - Ensure all existing functionality works
 
 ### 3. **Rollback Plan**
+
 - Keep old implementation in separate branch
 - Document all changes for easy reversal
 - Staged deployment with monitoring
@@ -767,6 +871,7 @@ export function useMCPOperations() {
 ## Configuration Changes Required
 
 ### 1. **Package Dependencies**
+
 ```json
 {
   "dependencies": {
@@ -777,9 +882,11 @@ export function useMCPOperations() {
 ```
 
 ### 2. **Proxy Server Updates**
+
 The existing proxy server should continue to work with minimal changes, as Mastra will connect through the same endpoints.
 
 ### 3. **Authentication Flow**
+
 May need updates to work with Mastra's authentication system, but the existing OAuth implementation should be largely compatible.
 
 ## Conclusion

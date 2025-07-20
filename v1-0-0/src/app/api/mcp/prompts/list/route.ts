@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { validateServerConfig, createMCPClient, createErrorResponse } from "@/lib/mcp-utils";
+import {
+  validateServerConfig,
+  createMCPClient,
+  createErrorResponse,
+} from "@/lib/mcp-utils";
 
 export async function POST(request: NextRequest) {
   try {
@@ -10,11 +14,14 @@ export async function POST(request: NextRequest) {
       return validation.error!;
     }
 
-    const client = createMCPClient(validation.config!, `prompts-list-${Date.now()}`);
+    const client = createMCPClient(
+      validation.config!,
+      `prompts-list-${Date.now()}`,
+    );
 
     try {
       const prompts = await client.prompts.list();
-      
+
       // Cleanup
       await client.disconnect();
 
@@ -32,7 +39,7 @@ export async function POST(request: NextRequest) {
     console.error("Error fetching prompts:", error);
     return createErrorResponse(
       "Failed to fetch prompts",
-      error instanceof Error ? error.message : "Unknown error"
+      error instanceof Error ? error.message : "Unknown error",
     );
   }
 }

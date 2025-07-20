@@ -35,7 +35,7 @@ npm uninstall @modelcontextprotocol/sdk
 {
   "dependencies": {
     "@mastra/mcp": "^latest",
-    "@mastra/core": "^latest", 
+    "@mastra/core": "^latest",
     "@ai-sdk/openai": "^latest",
     "zod": "^3.22.0"
   }
@@ -49,20 +49,20 @@ npm uninstall @modelcontextprotocol/sdk
 Create `client/src/lib/mcp/mastraClient.ts`:
 
 ```typescript
-import { MCPClient } from '@mastra/mcp';
-import { RuntimeContext } from '@mastra/core/di';
-import { MCPJamServerConfig } from '@/lib/types/serverTypes';
-import { 
-  Tool, 
-  Resource, 
+import { MCPClient } from "@mastra/mcp";
+import { RuntimeContext } from "@mastra/core/di";
+import { MCPJamServerConfig } from "@/lib/types/serverTypes";
+import {
+  Tool,
+  Resource,
   Prompt,
-  ServerCapabilities 
-} from '@modelcontextprotocol/sdk/types.js';
+  ServerCapabilities,
+} from "@modelcontextprotocol/sdk/types.js";
 
 export interface ServerConnectionInfo {
   name: string;
   config: MCPJamServerConfig;
-  status: 'connected' | 'disconnected' | 'error' | 'connecting';
+  status: "connected" | "disconnected" | "error" | "connecting";
   error?: string;
 }
 
@@ -85,45 +85,46 @@ export class InspectorMCPClient {
    */
   async configure(servers: Record<string, MCPJamServerConfig>): Promise<void> {
     this.serverConfigs = servers;
-    
+
     // Update connection states to connecting
     for (const serverName of Object.keys(servers)) {
       this.connectionStates.set(serverName, {
         name: serverName,
         config: servers[serverName],
-        status: 'connecting'
+        status: "connecting",
       });
     }
 
     try {
       // Convert to Mastra server configuration
       const mastraServers = this.convertToMastraConfig(servers);
-      
+
       // Create new Mastra client
       this.mcpClient = new MCPClient({
-        servers: mastraServers
+        servers: mastraServers,
       });
 
       // Connect to all servers
       await this.mcpClient.connect();
-      
+
       // Update connection states to connected
       for (const serverName of Object.keys(servers)) {
         this.connectionStates.set(serverName, {
           name: serverName,
           config: servers[serverName],
-          status: 'connected'
+          status: "connected",
         });
       }
     } catch (error) {
       // Update connection states to error
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
       for (const serverName of Object.keys(servers)) {
         this.connectionStates.set(serverName, {
           name: serverName,
           config: servers[serverName],
-          status: 'error',
-          error: errorMessage
+          status: "error",
+          error: errorMessage,
         });
       }
       throw error;
@@ -137,24 +138,27 @@ export class InspectorMCPClient {
     const mastraServers: Record<string, any> = {};
 
     for (const [name, config] of Object.entries(servers)) {
-      if (config.transportType === 'stdio') {
+      if (config.transportType === "stdio") {
         // STDIO configuration
         mastraServers[name] = {
           command: config.command,
           args: config.args || [],
           env: {
             ...process.env,
-            ...config.env
-          }
+            ...config.env,
+          },
         };
-      } else if (config.transportType === 'sse' || config.transportType === 'streamable-http') {
+      } else if (
+        config.transportType === "sse" ||
+        config.transportType === "streamable-http"
+      ) {
         // HTTP configuration
-        if ('url' in config && config.url) {
+        if ("url" in config && config.url) {
           mastraServers[name] = {
             url: config.url,
             requestInit: {
-              headers: this.buildAuthHeaders(config)
-            }
+              headers: this.buildAuthHeaders(config),
+            },
           };
         }
       }
@@ -168,10 +172,10 @@ export class InspectorMCPClient {
    */
   private buildAuthHeaders(config: MCPJamServerConfig): Record<string, string> {
     const headers: Record<string, string> = {};
-    
+
     // Add bearer token if available (from config state)
     // This will be passed in from the component level
-    
+
     return headers;
   }
 
@@ -180,7 +184,7 @@ export class InspectorMCPClient {
    * Mastra automatically namespaces tools with server names
    */
   async getTools(): Promise<Record<string, any>> {
-    if (!this.mcpClient) throw new Error('Client not configured');
+    if (!this.mcpClient) throw new Error("Client not configured");
     return await this.mcpClient.getTools();
   }
 
@@ -191,17 +195,17 @@ export class InspectorMCPClient {
     const allTools = await this.getTools();
     const serverTools: Tool[] = [];
     const prefix = `${serverName}.`;
-    
+
     for (const [toolName, tool] of Object.entries(allTools)) {
       if (toolName.startsWith(prefix)) {
         serverTools.push({
           name: toolName.substring(prefix.length), // Remove server prefix
-          description: tool.description || '',
-          inputSchema: tool.inputSchema || {}
+          description: tool.description || "",
+          inputSchema: tool.inputSchema || {},
         });
       }
     }
-    
+
     return serverTools;
   }
 
@@ -209,7 +213,7 @@ export class InspectorMCPClient {
    * Get toolsets for dynamic configuration (used by agents)
    */
   async getToolsets(): Promise<Record<string, Record<string, any>>> {
-    if (!this.mcpClient) throw new Error('Client not configured');
+    if (!this.mcpClient) throw new Error("Client not configured");
     return await this.mcpClient.getToolsets();
   }
 
@@ -217,11 +221,11 @@ export class InspectorMCPClient {
    * Call a tool manually
    */
   async callTool(toolName: string, params: Record<string, any>): Promise<any> {
-    if (!this.mcpClient) throw new Error('Client not configured');
-    
+    if (!this.mcpClient) throw new Error("Client not configured");
+
     const tools = await this.getTools();
     const tool = tools[toolName];
-    
+
     if (!tool) {
       throw new Error(`Tool ${toolName} not found`);
     }
@@ -229,7 +233,7 @@ export class InspectorMCPClient {
     // Execute tool manually using Mastra's pattern
     return await tool.execute({
       context: params,
-      runtimeContext: this.runtimeContext
+      runtimeContext: this.runtimeContext,
     });
   }
 
@@ -237,9 +241,9 @@ export class InspectorMCPClient {
    * Call a tool on a specific server
    */
   async callToolOnServer(
-    serverName: string, 
-    toolName: string, 
-    params: Record<string, any>
+    serverName: string,
+    toolName: string,
+    params: Record<string, any>,
   ): Promise<any> {
     const namespacedToolName = `${serverName}.${toolName}`;
     return await this.callTool(namespacedToolName, params);
@@ -249,7 +253,7 @@ export class InspectorMCPClient {
    * List all resources from all servers
    */
   async listResources(): Promise<Record<string, Resource[]>> {
-    if (!this.mcpClient) throw new Error('Client not configured');
+    if (!this.mcpClient) throw new Error("Client not configured");
     return await this.mcpClient.resources.list();
   }
 
@@ -265,7 +269,7 @@ export class InspectorMCPClient {
    * Read a specific resource
    */
   async readResource(uri: string): Promise<any> {
-    if (!this.mcpClient) throw new Error('Client not configured');
+    if (!this.mcpClient) throw new Error("Client not configured");
     return await this.mcpClient.resources.read(uri);
   }
 
@@ -273,7 +277,7 @@ export class InspectorMCPClient {
    * List resource templates
    */
   async listResourceTemplates(): Promise<Record<string, any[]>> {
-    if (!this.mcpClient) throw new Error('Client not configured');
+    if (!this.mcpClient) throw new Error("Client not configured");
     return await this.mcpClient.resources.templates();
   }
 
@@ -281,7 +285,7 @@ export class InspectorMCPClient {
    * List all prompts from all servers
    */
   async listPrompts(): Promise<Record<string, Prompt[]>> {
-    if (!this.mcpClient) throw new Error('Client not configured');
+    if (!this.mcpClient) throw new Error("Client not configured");
     return await this.mcpClient.prompts.list();
   }
 
@@ -297,7 +301,7 @@ export class InspectorMCPClient {
    * Get a specific prompt
    */
   async getPrompt(name: string, args?: Record<string, any>): Promise<any> {
-    if (!this.mcpClient) throw new Error('Client not configured');
+    if (!this.mcpClient) throw new Error("Client not configured");
     return await this.mcpClient.prompts.get(name, args);
   }
 
@@ -327,7 +331,7 @@ export class InspectorMCPClient {
    */
   hasConnectedServers(): boolean {
     return Array.from(this.connectionStates.values()).some(
-      info => info.status === 'connected'
+      (info) => info.status === "connected",
     );
   }
 
@@ -344,12 +348,12 @@ export class InspectorMCPClient {
   async disconnect(): Promise<void> {
     if (this.mcpClient) {
       await this.mcpClient.disconnect();
-      
+
       // Update connection states
       for (const [serverName, info] of this.connectionStates.entries()) {
         this.connectionStates.set(serverName, {
           ...info,
-          status: 'disconnected'
+          status: "disconnected",
         });
       }
     }
@@ -369,7 +373,7 @@ export class InspectorMCPClient {
   async removeServer(name: string): Promise<void> {
     delete this.serverConfigs[name];
     this.connectionStates.delete(name);
-    
+
     if (Object.keys(this.serverConfigs).length > 0) {
       await this.configure(this.serverConfigs);
     } else {
@@ -395,18 +399,18 @@ export class InspectorMCPClient {
   /**
    * Ping a server (basic connectivity test)
    */
-  async ping(): Promise<{ status: 'ok' | 'error'; message?: string }> {
+  async ping(): Promise<{ status: "ok" | "error"; message?: string }> {
     try {
       if (!this.mcpClient) {
-        return { status: 'error', message: 'Client not configured' };
+        return { status: "error", message: "Client not configured" };
       }
-      
+
       // Try to list tools as a connectivity test
       await this.getTools();
-      return { status: 'ok' };
+      return { status: "ok" };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return { status: 'error', message };
+      return { status: "error", message };
     }
   }
 }
@@ -417,9 +421,12 @@ export class InspectorMCPClient {
 Create `client/src/hooks/useConnectionState.ts`:
 
 ```typescript
-import { useState, useCallback } from 'react';
-import { InspectorMCPClient, ServerConnectionInfo } from '@/lib/mcp/mastraClient';
-import { MCPJamServerConfig } from '@/lib/types/serverTypes';
+import { useState, useCallback } from "react";
+import {
+  InspectorMCPClient,
+  ServerConnectionInfo,
+} from "@/lib/mcp/mastraClient";
+import { MCPJamServerConfig } from "@/lib/types/serverTypes";
 
 export interface ConnectionState {
   mcpClient: InspectorMCPClient | null;
@@ -437,7 +444,7 @@ export function useConnectionState() {
   const [sidebarUpdateTrigger, setSidebarUpdateTrigger] = useState(0);
 
   const triggerSidebarUpdate = useCallback(() => {
-    setSidebarUpdateTrigger(prev => prev + 1);
+    setSidebarUpdateTrigger((prev) => prev + 1);
   }, []);
 
   const createClient = useCallback(() => {
@@ -446,30 +453,34 @@ export function useConnectionState() {
     return client;
   }, []);
 
-  const connectToServers = useCallback(async (servers: Record<string, MCPJamServerConfig>) => {
-    setIsConnecting(true);
-    setConnectionError(null);
-    
-    try {
-      let client = mcpClient;
-      if (!client) {
-        client = createClient();
-      }
+  const connectToServers = useCallback(
+    async (servers: Record<string, MCPJamServerConfig>) => {
+      setIsConnecting(true);
+      setConnectionError(null);
 
-      await client.configure(servers);
-      setIsConnected(client.hasConnectedServers());
-      triggerSidebarUpdate();
-      
-      return client;
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      setConnectionError(errorMessage);
-      setIsConnected(false);
-      throw error;
-    } finally {
-      setIsConnecting(false);
-    }
-  }, [mcpClient, createClient, triggerSidebarUpdate]);
+      try {
+        let client = mcpClient;
+        if (!client) {
+          client = createClient();
+        }
+
+        await client.configure(servers);
+        setIsConnected(client.hasConnectedServers());
+        triggerSidebarUpdate();
+
+        return client;
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+        setConnectionError(errorMessage);
+        setIsConnected(false);
+        throw error;
+      } finally {
+        setIsConnecting(false);
+      }
+    },
+    [mcpClient, createClient, triggerSidebarUpdate],
+  );
 
   const disconnect = useCallback(async () => {
     if (mcpClient) {
@@ -479,61 +490,76 @@ export function useConnectionState() {
     }
   }, [mcpClient, triggerSidebarUpdate]);
 
-  const disconnectServer = useCallback(async (serverName: string) => {
-    if (mcpClient) {
-      await mcpClient.removeServer(serverName);
+  const disconnectServer = useCallback(
+    async (serverName: string) => {
+      if (mcpClient) {
+        await mcpClient.removeServer(serverName);
+        setIsConnected(mcpClient.hasConnectedServers());
+        triggerSidebarUpdate();
+      }
+    },
+    [mcpClient, triggerSidebarUpdate],
+  );
+
+  const addServer = useCallback(
+    async (name: string, config: MCPJamServerConfig) => {
+      if (!mcpClient) throw new Error("No client available");
+
+      await mcpClient.addServer(name, config);
       setIsConnected(mcpClient.hasConnectedServers());
       triggerSidebarUpdate();
-    }
-  }, [mcpClient, triggerSidebarUpdate]);
+    },
+    [mcpClient, triggerSidebarUpdate],
+  );
 
-  const addServer = useCallback(async (name: string, config: MCPJamServerConfig) => {
-    if (!mcpClient) throw new Error('No client available');
-    
-    await mcpClient.addServer(name, config);
-    setIsConnected(mcpClient.hasConnectedServers());
-    triggerSidebarUpdate();
-  }, [mcpClient, triggerSidebarUpdate]);
+  const removeServer = useCallback(
+    async (name: string) => {
+      if (!mcpClient) throw new Error("No client available");
 
-  const removeServer = useCallback(async (name: string) => {
-    if (!mcpClient) throw new Error('No client available');
-    
-    await mcpClient.removeServer(name);
-    setIsConnected(mcpClient.hasConnectedServers());
-    triggerSidebarUpdate();
-  }, [mcpClient, triggerSidebarUpdate]);
+      await mcpClient.removeServer(name);
+      setIsConnected(mcpClient.hasConnectedServers());
+      triggerSidebarUpdate();
+    },
+    [mcpClient, triggerSidebarUpdate],
+  );
 
   const getConnectionStatus = useCallback(() => {
-    if (isConnecting) return 'connecting';
-    if (connectionError) return 'error';
-    if (isConnected) return 'connected';
-    return 'disconnected';
+    if (isConnecting) return "connecting";
+    if (connectionError) return "error";
+    if (isConnected) return "connected";
+    return "disconnected";
   }, [isConnecting, connectionError, isConnected]);
 
-  const getCurrentClient = useCallback((serverName: string) => {
-    if (!mcpClient) return null;
-    
-    const connectionInfo = mcpClient.getConnectionInfo(serverName);
-    if (!connectionInfo) return null;
-    
-    return {
-      connectionStatus: connectionInfo.status,
-      serverCapabilities: null, // Mastra doesn't expose capabilities directly
-      completionsSupported: true, // Assume true for Mastra
-    };
-  }, [mcpClient]);
+  const getCurrentClient = useCallback(
+    (serverName: string) => {
+      if (!mcpClient) return null;
 
-  const getServerCapabilities = useCallback((serverName: string) => {
-    if (!mcpClient || !isConnected) return null;
-    
-    // Mastra doesn't expose server capabilities directly
-    // Return default capabilities
-    return {
-      tools: { listChanged: true },
-      resources: { subscribe: false, listChanged: true },
-      prompts: { listChanged: true },
-    };
-  }, [mcpClient, isConnected]);
+      const connectionInfo = mcpClient.getConnectionInfo(serverName);
+      if (!connectionInfo) return null;
+
+      return {
+        connectionStatus: connectionInfo.status,
+        serverCapabilities: null, // Mastra doesn't expose capabilities directly
+        completionsSupported: true, // Assume true for Mastra
+      };
+    },
+    [mcpClient],
+  );
+
+  const getServerCapabilities = useCallback(
+    (serverName: string) => {
+      if (!mcpClient || !isConnected) return null;
+
+      // Mastra doesn't expose server capabilities directly
+      // Return default capabilities
+      return {
+        tools: { listChanged: true },
+        resources: { subscribe: false, listChanged: true },
+        prompts: { listChanged: true },
+      };
+    },
+    [mcpClient, isConnected],
+  );
 
   const getAllConnectionInfo = useCallback((): ServerConnectionInfo[] => {
     if (!mcpClient) return [];
@@ -547,7 +573,7 @@ export function useConnectionState() {
     connectionError,
     isConnecting,
     sidebarUpdateTrigger,
-    
+
     // Actions
     connectToServers,
     disconnect,
@@ -555,7 +581,7 @@ export function useConnectionState() {
     addServer,
     removeServer,
     createClient,
-    
+
     // Getters
     getConnectionStatus,
     getCurrentClient,
@@ -570,27 +596,27 @@ export function useConnectionState() {
 Create `client/src/hooks/useMCPOperations.ts`:
 
 ```typescript
-import { useState, useCallback } from 'react';
-import { Tool, Resource, Prompt } from '@modelcontextprotocol/sdk/types.js';
-import { InspectorMCPClient } from '@/lib/mcp/mastraClient';
+import { useState, useCallback } from "react";
+import { Tool, Resource, Prompt } from "@modelcontextprotocol/sdk/types.js";
+import { InspectorMCPClient } from "@/lib/mcp/mastraClient";
 
 export interface MCPOperationsState {
   // Tools
   tools: Tool[];
   selectedTool: Tool | null;
   toolResult: any;
-  
+
   // Resources
   resources: Resource[];
   resourceTemplates: any[];
   selectedResource: Resource | null;
   resourceContent: any;
-  
+
   // Prompts
   prompts: Prompt[];
   selectedPrompt: Prompt | null;
   promptContent: any;
-  
+
   // Error handling
   errors: Record<string, string>;
 }
@@ -604,7 +630,9 @@ export function useMCPOperations() {
   // State for resources
   const [resources, setResources] = useState<Resource[]>([]);
   const [resourceTemplates, setResourceTemplates] = useState<any[]>([]);
-  const [selectedResource, setSelectedResource] = useState<Resource | null>(null);
+  const [selectedResource, setSelectedResource] = useState<Resource | null>(
+    null,
+  );
   const [resourceContent, setResourceContent] = useState<any>(null);
 
   // State for prompts
@@ -617,7 +645,7 @@ export function useMCPOperations() {
 
   // Helper functions
   const clearError = useCallback((operation: string) => {
-    setErrors(prev => {
+    setErrors((prev) => {
       const newErrors = { ...prev };
       delete newErrors[operation];
       return newErrors;
@@ -625,234 +653,259 @@ export function useMCPOperations() {
   }, []);
 
   const setError = useCallback((operation: string, error: string) => {
-    setErrors(prev => ({ ...prev, [operation]: error }));
+    setErrors((prev) => ({ ...prev, [operation]: error }));
   }, []);
 
   // Tool operations
-  const listTools = useCallback(async (
-    client: InspectorMCPClient, 
-    serverName?: string
-  ) => {
-    try {
-      clearError('tools');
-      
-      if (serverName && serverName !== 'all') {
-        // Get tools for specific server
-        const serverTools = await client.getToolsForServer(serverName);
-        setTools(serverTools);
-      } else {
-        // Get all tools from all servers
-        const allTools = await client.getTools();
-        const toolsArray: Tool[] = [];
-        
-        for (const [toolName, tool] of Object.entries(allTools)) {
-          toolsArray.push({
-            name: toolName,
-            description: tool.description || '',
-            inputSchema: tool.inputSchema || {}
-          });
-        }
-        
-        setTools(toolsArray);
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      setError('tools', errorMessage);
-      console.error('Failed to list tools:', error);
-    }
-  }, [clearError, setError]);
+  const listTools = useCallback(
+    async (client: InspectorMCPClient, serverName?: string) => {
+      try {
+        clearError("tools");
 
-  const callTool = useCallback(async (
-    client: InspectorMCPClient,
-    serverName: string,
-    toolName: string,
-    params: Record<string, unknown>
-  ) => {
-    try {
-      clearError('tools');
-      setToolResult(null);
-      
-      let result: any;
-      if (serverName === 'all') {
-        // Call tool without server specification (let Mastra find it)
-        result = await client.callTool(toolName, params);
-      } else {
-        // Call tool on specific server
-        result = await client.callToolOnServer(serverName, toolName, params);
+        if (serverName && serverName !== "all") {
+          // Get tools for specific server
+          const serverTools = await client.getToolsForServer(serverName);
+          setTools(serverTools);
+        } else {
+          // Get all tools from all servers
+          const allTools = await client.getTools();
+          const toolsArray: Tool[] = [];
+
+          for (const [toolName, tool] of Object.entries(allTools)) {
+            toolsArray.push({
+              name: toolName,
+              description: tool.description || "",
+              inputSchema: tool.inputSchema || {},
+            });
+          }
+
+          setTools(toolsArray);
+        }
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+        setError("tools", errorMessage);
+        console.error("Failed to list tools:", error);
       }
-      
-      setToolResult(result);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      setError('tools', errorMessage);
-      console.error('Failed to call tool:', error);
-    }
-  }, [clearError, setError]);
+    },
+    [clearError, setError],
+  );
+
+  const callTool = useCallback(
+    async (
+      client: InspectorMCPClient,
+      serverName: string,
+      toolName: string,
+      params: Record<string, unknown>,
+    ) => {
+      try {
+        clearError("tools");
+        setToolResult(null);
+
+        let result: any;
+        if (serverName === "all") {
+          // Call tool without server specification (let Mastra find it)
+          result = await client.callTool(toolName, params);
+        } else {
+          // Call tool on specific server
+          result = await client.callToolOnServer(serverName, toolName, params);
+        }
+
+        setToolResult(result);
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+        setError("tools", errorMessage);
+        console.error("Failed to call tool:", error);
+      }
+    },
+    [clearError, setError],
+  );
 
   // Resource operations
-  const listResources = useCallback(async (
-    client: InspectorMCPClient,
-    serverName?: string
-  ) => {
-    try {
-      clearError('resources');
-      
-      if (serverName && serverName !== 'all') {
-        // Get resources for specific server
-        const serverResources = await client.getResourcesForServer(serverName);
-        setResources(serverResources);
-      } else {
-        // Get all resources from all servers
-        const allResources = await client.listResources();
-        const resourcesArray: Resource[] = [];
-        
-        for (const serverResources of Object.values(allResources)) {
-          resourcesArray.push(...serverResources);
-        }
-        
-        setResources(resourcesArray);
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      setError('resources', errorMessage);
-      console.error('Failed to list resources:', error);
-    }
-  }, [clearError, setError]);
+  const listResources = useCallback(
+    async (client: InspectorMCPClient, serverName?: string) => {
+      try {
+        clearError("resources");
 
-  const listResourceTemplates = useCallback(async (
-    client: InspectorMCPClient,
-    serverName?: string
-  ) => {
-    try {
-      clearError('resources');
-      
-      const allTemplates = await client.listResourceTemplates();
-      
-      if (serverName && serverName !== 'all') {
-        setResourceTemplates(allTemplates[serverName] || []);
-      } else {
-        const templatesArray: any[] = [];
-        for (const serverTemplates of Object.values(allTemplates)) {
-          templatesArray.push(...serverTemplates);
-        }
-        setResourceTemplates(templatesArray);
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      setError('resources', errorMessage);
-      console.error('Failed to list resource templates:', error);
-    }
-  }, [clearError, setError]);
+        if (serverName && serverName !== "all") {
+          // Get resources for specific server
+          const serverResources =
+            await client.getResourcesForServer(serverName);
+          setResources(serverResources);
+        } else {
+          // Get all resources from all servers
+          const allResources = await client.listResources();
+          const resourcesArray: Resource[] = [];
 
-  const readResource = useCallback(async (
-    client: InspectorMCPClient,
-    _serverName: string,
-    uri: string
-  ) => {
-    try {
-      clearError('resources');
-      const content = await client.readResource(uri);
-      setResourceContent(content);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      setError('resources', errorMessage);
-      console.error('Failed to read resource:', error);
-    }
-  }, [clearError, setError]);
+          for (const serverResources of Object.values(allResources)) {
+            resourcesArray.push(...serverResources);
+          }
+
+          setResources(resourcesArray);
+        }
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+        setError("resources", errorMessage);
+        console.error("Failed to list resources:", error);
+      }
+    },
+    [clearError, setError],
+  );
+
+  const listResourceTemplates = useCallback(
+    async (client: InspectorMCPClient, serverName?: string) => {
+      try {
+        clearError("resources");
+
+        const allTemplates = await client.listResourceTemplates();
+
+        if (serverName && serverName !== "all") {
+          setResourceTemplates(allTemplates[serverName] || []);
+        } else {
+          const templatesArray: any[] = [];
+          for (const serverTemplates of Object.values(allTemplates)) {
+            templatesArray.push(...serverTemplates);
+          }
+          setResourceTemplates(templatesArray);
+        }
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+        setError("resources", errorMessage);
+        console.error("Failed to list resource templates:", error);
+      }
+    },
+    [clearError, setError],
+  );
+
+  const readResource = useCallback(
+    async (client: InspectorMCPClient, _serverName: string, uri: string) => {
+      try {
+        clearError("resources");
+        const content = await client.readResource(uri);
+        setResourceContent(content);
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+        setError("resources", errorMessage);
+        console.error("Failed to read resource:", error);
+      }
+    },
+    [clearError, setError],
+  );
 
   // Prompt operations
-  const listPrompts = useCallback(async (
-    client: InspectorMCPClient,
-    serverName?: string
-  ) => {
-    try {
-      clearError('prompts');
-      
-      if (serverName && serverName !== 'all') {
-        // Get prompts for specific server
-        const serverPrompts = await client.getPromptsForServer(serverName);
-        setPrompts(serverPrompts);
-      } else {
-        // Get all prompts from all servers
-        const allPrompts = await client.listPrompts();
-        const promptsArray: Prompt[] = [];
-        
-        for (const serverPrompts of Object.values(allPrompts)) {
-          promptsArray.push(...serverPrompts);
-        }
-        
-        setPrompts(promptsArray);
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      setError('prompts', errorMessage);
-      console.error('Failed to list prompts:', error);
-    }
-  }, [clearError, setError]);
+  const listPrompts = useCallback(
+    async (client: InspectorMCPClient, serverName?: string) => {
+      try {
+        clearError("prompts");
 
-  const getPrompt = useCallback(async (
-    client: InspectorMCPClient,
-    _serverName: string,
-    name: string,
-    args: Record<string, string>
-  ) => {
-    try {
-      clearError('prompts');
-      const content = await client.getPrompt(name, args);
-      setPromptContent(content);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      setError('prompts', errorMessage);
-      console.error('Failed to get prompt:', error);
-    }
-  }, [clearError, setError]);
+        if (serverName && serverName !== "all") {
+          // Get prompts for specific server
+          const serverPrompts = await client.getPromptsForServer(serverName);
+          setPrompts(serverPrompts);
+        } else {
+          // Get all prompts from all servers
+          const allPrompts = await client.listPrompts();
+          const promptsArray: Prompt[] = [];
+
+          for (const serverPrompts of Object.values(allPrompts)) {
+            promptsArray.push(...serverPrompts);
+          }
+
+          setPrompts(promptsArray);
+        }
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+        setError("prompts", errorMessage);
+        console.error("Failed to list prompts:", error);
+      }
+    },
+    [clearError, setError],
+  );
+
+  const getPrompt = useCallback(
+    async (
+      client: InspectorMCPClient,
+      _serverName: string,
+      name: string,
+      args: Record<string, string>,
+    ) => {
+      try {
+        clearError("prompts");
+        const content = await client.getPrompt(name, args);
+        setPromptContent(content);
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+        setError("prompts", errorMessage);
+        console.error("Failed to get prompt:", error);
+      }
+    },
+    [clearError, setError],
+  );
 
   // Generic request handler for compatibility
-  const makeRequest = useCallback(async (
-    client: InspectorMCPClient,
-    serverName: string,
-    request: any
-  ) => {
-    // Route requests to appropriate handlers based on method
-    switch (request.method) {
-      case 'tools/list':
-        await listTools(client, serverName);
-        break;
-      case 'tools/call':
-        await callTool(client, serverName, request.params.name, request.params.arguments || {});
-        break;
-      case 'resources/list':
-        await listResources(client, serverName);
-        break;
-      case 'resources/read':
-        await readResource(client, serverName, request.params.uri);
-        break;
-      case 'prompts/list':
-        await listPrompts(client, serverName);
-        break;
-      case 'prompts/get':
-        await getPrompt(client, serverName, request.params.name, request.params.arguments || {});
-        break;
-      case 'ping':
-        return await client.ping();
-      default:
-        throw new Error(`Unsupported method: ${request.method}`);
-    }
-  }, [listTools, callTool, listResources, readResource, listPrompts, getPrompt]);
+  const makeRequest = useCallback(
+    async (client: InspectorMCPClient, serverName: string, request: any) => {
+      // Route requests to appropriate handlers based on method
+      switch (request.method) {
+        case "tools/list":
+          await listTools(client, serverName);
+          break;
+        case "tools/call":
+          await callTool(
+            client,
+            serverName,
+            request.params.name,
+            request.params.arguments || {},
+          );
+          break;
+        case "resources/list":
+          await listResources(client, serverName);
+          break;
+        case "resources/read":
+          await readResource(client, serverName, request.params.uri);
+          break;
+        case "prompts/list":
+          await listPrompts(client, serverName);
+          break;
+        case "prompts/get":
+          await getPrompt(
+            client,
+            serverName,
+            request.params.name,
+            request.params.arguments || {},
+          );
+          break;
+        case "ping":
+          return await client.ping();
+        default:
+          throw new Error(`Unsupported method: ${request.method}`);
+      }
+    },
+    [listTools, callTool, listResources, readResource, listPrompts, getPrompt],
+  );
 
   // Completion handler (simplified - Mastra handles this internally)
-  const handleCompletion = useCallback(async (
-    _client: InspectorMCPClient,
-    _serverName: string,
-    _ref: any,
-    _argName: string,
-    _value: string,
-    _signal?: AbortSignal
-  ) => {
-    // Mastra handles completions internally
-    // Return empty array for compatibility
-    return [];
-  }, []);
+  const handleCompletion = useCallback(
+    async (
+      _client: InspectorMCPClient,
+      _serverName: string,
+      _ref: any,
+      _argName: string,
+      _value: string,
+      _signal?: AbortSignal,
+    ) => {
+      // Mastra handles completions internally
+      // Return empty array for compatibility
+      return [];
+    },
+    [],
+  );
 
   return {
     // Tool state and operations
@@ -904,47 +957,49 @@ export function useMCPOperations() {
 Create `client/src/hooks/useServerManagement.ts`:
 
 ```typescript
-import { useCallback } from 'react';
-import { MCPJamServerConfig } from '@/lib/types/serverTypes';
+import { useCallback } from "react";
+import { MCPJamServerConfig } from "@/lib/types/serverTypes";
 
 export function useServerManagement(
   serverState: any,
   connectionState: any,
   configState: any,
 ) {
-  const handleConnectServer = useCallback(async (serverName: string) => {
-    try {
-      const serverConfig = serverState.serverConfigs[serverName];
-      if (!serverConfig) {
-        throw new Error(`Server ${serverName} not found`);
+  const handleConnectServer = useCallback(
+    async (serverName: string) => {
+      try {
+        const serverConfig = serverState.serverConfigs[serverName];
+        if (!serverConfig) {
+          throw new Error(`Server ${serverName} not found`);
+        }
+
+        // Add authentication headers if available
+        const configWithAuth = {
+          ...serverConfig,
+          bearerToken: configState.bearerToken,
+          headerName: configState.headerName,
+        };
+
+        // Connect using the connection state
+        await connectionState.connectToServers({
+          [serverName]: configWithAuth,
+        });
+      } catch (error) {
+        console.error(`Failed to connect to server ${serverName}:`, error);
+        throw error;
       }
-
-      // Add authentication headers if available
-      const configWithAuth = {
-        ...serverConfig,
-        bearerToken: configState.bearerToken,
-        headerName: configState.headerName,
-      };
-
-      // Connect using the connection state
-      await connectionState.connectToServers({
-        [serverName]: configWithAuth
-      });
-      
-    } catch (error) {
-      console.error(`Failed to connect to server ${serverName}:`, error);
-      throw error;
-    }
-  }, [serverState.serverConfigs, connectionState, configState]);
+    },
+    [serverState.serverConfigs, connectionState, configState],
+  );
 
   const handleConnectAllServers = useCallback(async () => {
     try {
       // Add authentication to all server configs
       const configsWithAuth: Record<string, MCPJamServerConfig> = {};
-      
+
       for (const [name, config] of Object.entries(serverState.serverConfigs)) {
         configsWithAuth[name] = {
-          ...config as MCPJamServerConfig,
+          ...(config as MCPJamServerConfig),
           bearerToken: configState.bearerToken,
           headerName: configState.headerName,
         };
@@ -952,68 +1007,80 @@ export function useServerManagement(
 
       await connectionState.connectToServers(configsWithAuth);
     } catch (error) {
-      console.error('Failed to connect to servers:', error);
+      console.error("Failed to connect to servers:", error);
       throw error;
     }
   }, [serverState.serverConfigs, connectionState, configState]);
 
-  const handleAddServer = useCallback(async (name: string, config: MCPJamServerConfig) => {
-    try {
-      // Add to server state
-      serverState.addServer(name, config);
-      
-      // If we have an active connection, add the server to it
-      if (connectionState.mcpClient) {
-        const configWithAuth = {
-          ...config,
-          bearerToken: configState.bearerToken,
-          headerName: configState.headerName,
-        };
-        await connectionState.addServer(name, configWithAuth);
-      }
-    } catch (error) {
-      console.error(`Failed to add server ${name}:`, error);
-      throw error;
-    }
-  }, [serverState, connectionState, configState]);
+  const handleAddServer = useCallback(
+    async (name: string, config: MCPJamServerConfig) => {
+      try {
+        // Add to server state
+        serverState.addServer(name, config);
 
-  const handleRemoveServer = useCallback(async (serverName: string) => {
-    try {
-      // Remove from connection state first
-      if (connectionState.mcpClient) {
-        await connectionState.removeServer(serverName);
+        // If we have an active connection, add the server to it
+        if (connectionState.mcpClient) {
+          const configWithAuth = {
+            ...config,
+            bearerToken: configState.bearerToken,
+            headerName: configState.headerName,
+          };
+          await connectionState.addServer(name, configWithAuth);
+        }
+      } catch (error) {
+        console.error(`Failed to add server ${name}:`, error);
+        throw error;
       }
-      
-      // Remove from server state
-      serverState.removeServer(serverName);
-    } catch (error) {
-      console.error(`Failed to remove server ${serverName}:`, error);
-      throw error;
-    }
-  }, [serverState, connectionState]);
+    },
+    [serverState, connectionState, configState],
+  );
 
-  const handleEditClient = useCallback((serverName: string) => {
-    serverState.setEditingClientName(serverName);
-  }, [serverState]);
+  const handleRemoveServer = useCallback(
+    async (serverName: string) => {
+      try {
+        // Remove from connection state first
+        if (connectionState.mcpClient) {
+          await connectionState.removeServer(serverName);
+        }
 
-  const saveClients = useCallback(async (serverConfig: MCPJamServerConfig) => {
-    try {
-      if (serverState.editingClientName) {
-        // Update existing server
-        await handleAddServer(serverState.editingClientName, serverConfig);
-      } else {
-        // Add new server
-        const serverName = `server-${Date.now()}`;
-        await handleAddServer(serverName, serverConfig);
+        // Remove from server state
+        serverState.removeServer(serverName);
+      } catch (error) {
+        console.error(`Failed to remove server ${serverName}:`, error);
+        throw error;
       }
-      
-      // Cancel editing
-      serverState.handleCancelClientForm();
-    } catch (error) {
-      console.error('Failed to save client:', error);
-      throw error;
-    }
-  }, [serverState, handleAddServer]);
+    },
+    [serverState, connectionState],
+  );
+
+  const handleEditClient = useCallback(
+    (serverName: string) => {
+      serverState.setEditingClientName(serverName);
+    },
+    [serverState],
+  );
+
+  const saveClients = useCallback(
+    async (serverConfig: MCPJamServerConfig) => {
+      try {
+        if (serverState.editingClientName) {
+          // Update existing server
+          await handleAddServer(serverState.editingClientName, serverConfig);
+        } else {
+          // Add new server
+          const serverName = `server-${Date.now()}`;
+          await handleAddServer(serverName, serverConfig);
+        }
+
+        // Cancel editing
+        serverState.handleCancelClientForm();
+      } catch (error) {
+        console.error("Failed to save client:", error);
+        throw error;
+      }
+    },
+    [serverState, handleAddServer],
+  );
 
   return {
     handleConnectServer,
@@ -1165,7 +1232,7 @@ const App = () => {
       if (!connectionState.mcpClient) {
         throw new Error('No MCP client available');
       }
-      
+
       return await mcpOperations.makeRequest(
         connectionState.mcpClient,
         serverState.selectedServerName,
@@ -1183,7 +1250,7 @@ const App = () => {
       signal?: AbortSignal,
     ) => {
       if (!connectionState.mcpClient) return [];
-      
+
       return await mcpOperations.handleCompletion(
         connectionState.mcpClient,
         serverState.selectedServerName,
@@ -1546,7 +1613,7 @@ export default function ChatTab({ mcpClient }: ChatTabProps) {
     if (mcpClient && mcpClient.isConfigured()) {
       const newAgent = new Agent({
         name: 'MCP Inspector Assistant',
-        instructions: `You are an AI assistant that can use MCP tools to help users. 
+        instructions: `You are an AI assistant that can use MCP tools to help users.
         You have access to tools from connected MCP servers. Use them to answer questions and help with tasks.
         Always explain what tools you're using and why.`,
         model: openai('gpt-4'),
@@ -1597,7 +1664,7 @@ export default function ChatTab({ mcpClient }: ChatTabProps) {
       setMessages(prev => [...prev, assistantMessage]);
     } catch (error) {
       console.error('Chat error:', error);
-      
+
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
@@ -1671,7 +1738,7 @@ export default function ChatTab({ mcpClient }: ChatTabProps) {
               <p>Start a conversation! I can help you using the connected MCP tools.</p>
             </div>
           )}
-          
+
           {messages.map((message) => (
             <div
               key={message.id}
@@ -1698,7 +1765,7 @@ export default function ChatTab({ mcpClient }: ChatTabProps) {
               </div>
             </div>
           ))}
-          
+
           {isLoading && (
             <div className="flex justify-start">
               <div className="bg-gray-100 dark:bg-gray-800 rounded-lg px-4 py-2">
@@ -1751,16 +1818,16 @@ Update `client/src/lib/types/serverTypes.ts`:
 ```typescript
 // Keep existing types but add Mastra-specific fields
 export interface MCPJamServerConfig {
-  transportType: 'stdio' | 'sse' | 'streamable-http';
-  
+  transportType: "stdio" | "sse" | "streamable-http";
+
   // STDIO configuration
   command?: string;
   args?: string[];
   env?: Record<string, string>;
-  
-  // HTTP configuration  
+
+  // HTTP configuration
   url?: URL;
-  
+
   // Authentication (added for Mastra)
   bearerToken?: string;
   headerName?: string;
@@ -1772,7 +1839,7 @@ export interface MastraServerConfig {
   command?: string;
   args?: string[];
   env?: Record<string, string>;
-  
+
   // HTTP
   url?: URL;
   requestInit?: RequestInit;
@@ -1784,6 +1851,7 @@ export interface MastraServerConfig {
 ### Phase 1: Setup and Core Implementation (Days 1-2)
 
 1. **Install dependencies:**
+
    ```bash
    npm install @mastra/mcp @mastra/core @ai-sdk/openai
    ```
@@ -1810,6 +1878,7 @@ export interface MastraServerConfig {
 ### Phase 3: Testing and Cleanup (Day 5-7)
 
 1. **Remove old files:**
+
    ```bash
    rm client/src/lib/utils/mcp/mcpjamAgent.ts
    rm client/src/lib/utils/mcp/mcpjamClient.ts
@@ -1818,7 +1887,7 @@ export interface MastraServerConfig {
 2. **Test all functionality:**
    - Connection management
    - Tool operations
-   - Resource operations  
+   - Resource operations
    - Prompt operations
    - Chat functionality
 
@@ -1832,33 +1901,33 @@ export interface MastraServerConfig {
 
 ```typescript
 // test/mastraClient.test.ts
-import { InspectorMCPClient } from '@/lib/mcp/mastraClient';
+import { InspectorMCPClient } from "@/lib/mcp/mastraClient";
 
-describe('InspectorMCPClient', () => {
+describe("InspectorMCPClient", () => {
   let client: InspectorMCPClient;
 
   beforeEach(() => {
     client = new InspectorMCPClient();
   });
 
-  test('should configure servers correctly', async () => {
+  test("should configure servers correctly", async () => {
     const servers = {
       testServer: {
-        transportType: 'stdio' as const,
-        command: 'echo',
-        args: ['hello'],
-      }
+        transportType: "stdio" as const,
+        command: "echo",
+        args: ["hello"],
+      },
     };
 
     await client.configure(servers);
     expect(client.isConfigured()).toBe(true);
-    expect(client.getServerNames()).toEqual(['testServer']);
+    expect(client.getServerNames()).toEqual(["testServer"]);
   });
 
-  test('should list tools', async () => {
+  test("should list tools", async () => {
     // Mock Mastra client
     const tools = await client.getTools();
-    expect(typeof tools).toBe('object');
+    expect(typeof tools).toBe("object");
   });
 });
 ```
@@ -1867,21 +1936,25 @@ describe('InspectorMCPClient', () => {
 
 ```typescript
 // test/integration.test.ts
-describe('Mastra Integration', () => {
-  test('should connect to real MCP server', async () => {
+describe("Mastra Integration", () => {
+  test("should connect to real MCP server", async () => {
     const client = new InspectorMCPClient();
-    
+
     await client.configure({
       filesystem: {
-        transportType: 'stdio',
-        command: 'npx',
-        args: ['-y', '@modelcontextprotocol/server-filesystem', './test-workspace']
-      }
+        transportType: "stdio",
+        command: "npx",
+        args: [
+          "-y",
+          "@modelcontextprotocol/server-filesystem",
+          "./test-workspace",
+        ],
+      },
     });
 
     const tools = await client.getTools();
     expect(Object.keys(tools).length).toBeGreaterThan(0);
-    
+
     await client.disconnect();
   });
 });
@@ -1904,7 +1977,7 @@ describe('ChatTab', () => {
   test('should enable chat when client is connected', () => {
     const mockClient = new InspectorMCPClient();
     render(<ChatTab mcpClient={mockClient} />);
-    
+
     const textarea = screen.getByPlaceholderText(/Type your message/);
     expect(textarea).toBeInTheDocument();
   });
@@ -1914,26 +1987,31 @@ describe('ChatTab', () => {
 ## Benefits of This Implementation
 
 ### 1. **Massive Code Reduction**
+
 - **Before**: ~2000 lines of custom MCP implementation
 - **After**: ~800 lines of Mastra wrapper and hooks
 - **Reduction**: 60% fewer lines of MCP-specific code
 
 ### 2. **Industry Standard**
+
 - Uses Mastra's battle-tested MCP implementation
 - Automatic compatibility with MCP protocol updates
 - Community support and documentation
 
 ### 3. **Enhanced Features**
+
 - **Native AI Agent**: Built-in chat with tool access
 - **Better Performance**: Mastra's optimized caching and connection management
 - **Simplified API**: Cleaner, more intuitive interfaces
 
 ### 4. **Future-Proof**
+
 - Easy integration with Mastra ecosystem
 - Support for new MCP features as they're added
 - Plugin system compatibility
 
 ### 5. **Maintained Functionality**
+
 - ✅ Multi-server support
 - ✅ All MCP operations (tools, resources, prompts)
 - ✅ Authentication flows

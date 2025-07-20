@@ -545,6 +545,10 @@ export class MCPJamClient extends Client<Request, Notification, Result> {
    * Establish connection to transport and update capabilities
    */
   private async connectToTransport(): Promise<void> {
+    // Prepare authentication headers before creating transport
+    const authHeaders = await this.prepareAuthHeaders();
+    this.headers = { ...this.headers, ...authHeaders };
+
     switch (this.serverConfig.transportType) {
       case "stdio":
         await this.connectStdio();
@@ -596,10 +600,6 @@ export class MCPJamClient extends Client<Request, Notification, Result> {
         `Attempting to connect to MCP server (attempt ${retryCount + 1}/${MAX_RETRIES + 1})`,
         "info",
       );
-
-      // Get authentication headers and update the client's headers
-      const authHeaders = await this.prepareAuthHeaders();
-      this.headers = { ...this.headers, ...authHeaders };
 
       try {
         // Connect to transport based on server config

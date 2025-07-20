@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { validateServerConfig, createMCPClient, createErrorResponse } from "@/lib/mcp-utils";
+import {
+  validateServerConfig,
+  createMCPClient,
+  createErrorResponse,
+} from "@/lib/mcp-utils";
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,15 +17,18 @@ export async function POST(request: NextRequest) {
     if (!uri) {
       return NextResponse.json(
         { error: "Resource URI is required" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
-    const client = createMCPClient(validation.config!, `resources-read-${Date.now()}`);
+    const client = createMCPClient(
+      validation.config!,
+      `resources-read-${Date.now()}`,
+    );
 
     try {
       const content = await client.resources.read("server", uri);
-      
+
       // Cleanup
       await client.disconnect();
 
@@ -39,7 +46,7 @@ export async function POST(request: NextRequest) {
     console.error("Error reading resource:", error);
     return createErrorResponse(
       "Failed to read resource",
-      error instanceof Error ? error.message : "Unknown error"
+      error instanceof Error ? error.message : "Unknown error",
     );
   }
 }

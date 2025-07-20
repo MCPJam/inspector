@@ -1,11 +1,21 @@
-'use client';
+"use client";
 
-import { useState, useEffect } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
-import { Button } from './ui/button';
-import { Input } from './ui/input';
-import { MessageSquare, Play, RefreshCw } from 'lucide-react';
-import { MastraMCPServerDefinition, StdioServerDefinition, HttpServerDefinition } from '@/lib/types';
+import { useState, useEffect } from "react";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "./ui/card";
+import { Button } from "./ui/button";
+import { Input } from "./ui/input";
+import { MessageSquare, Play, RefreshCw } from "lucide-react";
+import {
+  MastraMCPServerDefinition,
+  StdioServerDefinition,
+  HttpServerDefinition,
+} from "@/lib/types";
 
 interface Prompt {
   name: string;
@@ -23,11 +33,11 @@ interface PromptsTabProps {
 
 export function PromptsTab({ serverConfig }: PromptsTabProps) {
   const [prompts, setPrompts] = useState<Record<string, Prompt[]>>({});
-  const [selectedPrompt, setSelectedPrompt] = useState<string>('');
+  const [selectedPrompt, setSelectedPrompt] = useState<string>("");
   const [promptArgs, setPromptArgs] = useState<Record<string, string>>({});
   const [promptContent, setPromptContent] = useState<any>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string>('');
+  const [error, setError] = useState<string>("");
 
   useEffect(() => {
     if (serverConfig) {
@@ -43,61 +53,61 @@ export function PromptsTab({ serverConfig }: PromptsTabProps) {
   const fetchPrompts = async () => {
     const config = getServerConfig();
     if (!config) return;
-    
+
     try {
-      const response = await fetch('/api/mcp/prompts/list', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ serverConfig: config })
+      const response = await fetch("/api/mcp/prompts/list", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ serverConfig: config }),
       });
       const data = await response.json();
-      
+
       if (response.ok) {
         setPrompts(data.prompts || {});
       } else {
-        setError(data.error || 'Failed to fetch prompts');
+        setError(data.error || "Failed to fetch prompts");
       }
     } catch (err) {
-      setError('Network error fetching prompts');
+      setError("Network error fetching prompts");
     }
   };
 
   const getPrompt = async () => {
     if (!selectedPrompt) return;
-    
+
     const config = getServerConfig();
     if (!config) return;
-    
+
     setLoading(true);
-    setError('');
-    
+    setError("");
+
     try {
-      const response = await fetch('/api/mcp/prompts/get', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
+      const response = await fetch("/api/mcp/prompts/get", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
           serverConfig: config,
           name: selectedPrompt,
-          args: promptArgs
-        })
+          args: promptArgs,
+        }),
       });
-      
+
       const data = await response.json();
-      
+
       if (response.ok) {
         setPromptContent(data.content);
       } else {
-        setError(data.error || 'Failed to get prompt');
+        setError(data.error || "Failed to get prompt");
       }
     } catch (err) {
-      setError('Network error getting prompt');
+      setError("Network error getting prompt");
     } finally {
       setLoading(false);
     }
   };
 
   const allPrompts = Object.values(prompts).flat();
-  const currentPrompt = allPrompts.find(p => p.name === selectedPrompt);
+  const currentPrompt = allPrompts.find((p) => p.name === selectedPrompt);
 
   if (!serverConfig) {
     return (
@@ -119,9 +129,7 @@ export function PromptsTab({ serverConfig }: PromptsTabProps) {
             <MessageSquare className="h-5 w-5" />
             Prompts
           </CardTitle>
-          <CardDescription>
-            Use prompts from your MCP server
-          </CardDescription>
+          <CardDescription>Use prompts from your MCP server</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
@@ -137,7 +145,9 @@ export function PromptsTab({ serverConfig }: PromptsTabProps) {
 
             {allPrompts.length > 0 && (
               <div>
-                <label className="block text-sm font-medium mb-2">Select Prompt</label>
+                <label className="block text-sm font-medium mb-2">
+                  Select Prompt
+                </label>
                 <select
                   value={selectedPrompt}
                   onChange={(e) => {
@@ -147,7 +157,7 @@ export function PromptsTab({ serverConfig }: PromptsTabProps) {
                   className="w-full p-2 border rounded"
                 >
                   <option value="">Choose a prompt...</option>
-                  {allPrompts.map(prompt => (
+                  {allPrompts.map((prompt) => (
                     <option key={prompt.name} value={prompt.name}>
                       {prompt.name}
                     </option>
@@ -161,41 +171,53 @@ export function PromptsTab({ serverConfig }: PromptsTabProps) {
                 <div>
                   <h4 className="font-medium mb-2">Prompt Details</h4>
                   <div className="p-3 bg-gray-50 rounded">
-                    <p className="text-sm"><strong>Name:</strong> {currentPrompt.name}</p>
+                    <p className="text-sm">
+                      <strong>Name:</strong> {currentPrompt.name}
+                    </p>
                     {currentPrompt.description && (
-                      <p className="text-sm"><strong>Description:</strong> {currentPrompt.description}</p>
+                      <p className="text-sm">
+                        <strong>Description:</strong>{" "}
+                        {currentPrompt.description}
+                      </p>
                     )}
                   </div>
                 </div>
 
-                {currentPrompt.arguments && currentPrompt.arguments.length > 0 && (
-                  <div className="space-y-3">
-                    <h4 className="font-medium">Arguments</h4>
-                    {currentPrompt.arguments.map(arg => (
-                      <div key={arg.name}>
-                        <label className="block text-sm font-medium mb-1">
-                          {arg.name}
-                          {arg.required && <span className="text-red-500 ml-1">*</span>}
-                        </label>
-                        {arg.description && (
-                          <p className="text-sm text-gray-500 mb-1">{arg.description}</p>
-                        )}
-                        <Input
-                          value={promptArgs[arg.name] || ''}
-                          onChange={(e) => setPromptArgs(prev => ({
-                            ...prev,
-                            [arg.name]: e.target.value
-                          }))}
-                          placeholder={`Enter ${arg.name}`}
-                          required={arg.required}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                )}
+                {currentPrompt.arguments &&
+                  currentPrompt.arguments.length > 0 && (
+                    <div className="space-y-3">
+                      <h4 className="font-medium">Arguments</h4>
+                      {currentPrompt.arguments.map((arg) => (
+                        <div key={arg.name}>
+                          <label className="block text-sm font-medium mb-1">
+                            {arg.name}
+                            {arg.required && (
+                              <span className="text-red-500 ml-1">*</span>
+                            )}
+                          </label>
+                          {arg.description && (
+                            <p className="text-sm text-gray-500 mb-1">
+                              {arg.description}
+                            </p>
+                          )}
+                          <Input
+                            value={promptArgs[arg.name] || ""}
+                            onChange={(e) =>
+                              setPromptArgs((prev) => ({
+                                ...prev,
+                                [arg.name]: e.target.value,
+                              }))
+                            }
+                            placeholder={`Enter ${arg.name}`}
+                            required={arg.required}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
 
-                <Button 
-                  onClick={getPrompt} 
+                <Button
+                  onClick={getPrompt}
                   disabled={loading}
                   className="w-full"
                 >
@@ -233,11 +255,15 @@ export function PromptsTab({ serverConfig }: PromptsTabProps) {
                 {promptContent?.messages?.map((message: any, index: number) => (
                   <div key={index} className="border rounded">
                     <div className="p-2 bg-gray-50 border-b">
-                      <span className="text-sm font-medium">Role: {message.role}</span>
+                      <span className="text-sm font-medium">
+                        Role: {message.role}
+                      </span>
                     </div>
                     <div className="p-3">
-                      {message.content?.type === 'text' ? (
-                        <pre className="text-sm whitespace-pre-wrap">{message.content.text}</pre>
+                      {message.content?.type === "text" ? (
+                        <pre className="text-sm whitespace-pre-wrap">
+                          {message.content.text}
+                        </pre>
                       ) : (
                         <pre className="text-sm bg-gray-50 p-2 rounded overflow-auto">
                           {JSON.stringify(message.content, null, 2)}

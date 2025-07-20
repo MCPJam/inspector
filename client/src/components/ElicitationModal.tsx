@@ -201,9 +201,7 @@ const ElicitationModal = ({ request, onClose }: ElicitationModalProps) => {
           <Button variant="outline" onClick={handleReject}>
             Decline
           </Button>
-          <Button onClick={handleAccept}>
-            Submit
-          </Button>
+          <Button onClick={handleAccept}>Submit</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

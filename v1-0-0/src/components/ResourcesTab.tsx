@@ -1,10 +1,20 @@
-'use client';
+"use client";
 
-import { useState, useEffect } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
-import { Button } from './ui/button';
-import { FolderOpen, File, RefreshCw, Eye } from 'lucide-react';
-import { MastraMCPServerDefinition, StdioServerDefinition, HttpServerDefinition } from '@/lib/types';
+import { useState, useEffect } from "react";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "./ui/card";
+import { Button } from "./ui/button";
+import { FolderOpen, File, RefreshCw, Eye } from "lucide-react";
+import {
+  MastraMCPServerDefinition,
+  StdioServerDefinition,
+  HttpServerDefinition,
+} from "@/lib/types";
 
 interface Resource {
   uri: string;
@@ -19,10 +29,10 @@ interface ResourcesTabProps {
 
 export function ResourcesTab({ serverConfig }: ResourcesTabProps) {
   const [resources, setResources] = useState<Record<string, Resource[]>>({});
-  const [selectedResource, setSelectedResource] = useState<string>('');
+  const [selectedResource, setSelectedResource] = useState<string>("");
   const [resourceContent, setResourceContent] = useState<any>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string>('');
+  const [error, setError] = useState<string>("");
 
   useEffect(() => {
     if (serverConfig) {
@@ -38,52 +48,52 @@ export function ResourcesTab({ serverConfig }: ResourcesTabProps) {
   const fetchResources = async () => {
     const config = getServerConfig();
     if (!config) return;
-    
+
     try {
-      const response = await fetch('/api/mcp/resources/list', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ serverConfig: config })
+      const response = await fetch("/api/mcp/resources/list", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ serverConfig: config }),
       });
-      
+
       const data = await response.json();
-      
+
       if (response.ok) {
         setResources(data.resources || {});
       } else {
-        setError(data.error || 'Failed to fetch resources');
+        setError(data.error || "Failed to fetch resources");
       }
     } catch (err) {
-      setError('Network error fetching resources');
+      setError("Network error fetching resources");
     }
   };
 
   const readResource = async (uri: string) => {
     const config = getServerConfig();
     if (!config) return;
-    
+
     setLoading(true);
-    setError('');
-    
+    setError("");
+
     try {
-      const response = await fetch('/api/mcp/resources/read', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
+      const response = await fetch("/api/mcp/resources/read", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
           serverConfig: config,
-          uri: uri 
-        })
+          uri: uri,
+        }),
       });
-      
+
       const data = await response.json();
-      
+
       if (response.ok) {
         setResourceContent(data.content);
       } else {
-        setError(data.error || 'Failed to read resource');
+        setError(data.error || "Failed to read resource");
       }
     } catch (err) {
-      setError('Network error reading resource');
+      setError("Network error reading resource");
     } finally {
       setLoading(false);
     }
@@ -129,13 +139,17 @@ export function ResourcesTab({ serverConfig }: ResourcesTabProps) {
 
             {allResources.length > 0 && (
               <div className="space-y-2">
-                <label className="block text-sm font-medium">Available Resources</label>
+                <label className="block text-sm font-medium">
+                  Available Resources
+                </label>
                 <div className="space-y-1 max-h-60 overflow-y-auto">
-                  {allResources.map(resource => (
+                  {allResources.map((resource) => (
                     <div
                       key={resource.uri}
                       className={`p-3 border rounded cursor-pointer hover:bg-gray-50 ${
-                        selectedResource === resource.uri ? 'border-blue-500 bg-blue-50' : ''
+                        selectedResource === resource.uri
+                          ? "border-blue-500 bg-blue-50"
+                          : ""
                       }`}
                       onClick={() => setSelectedResource(resource.uri)}
                     >
@@ -144,9 +158,13 @@ export function ResourcesTab({ serverConfig }: ResourcesTabProps) {
                         <div className="flex-1">
                           <p className="font-medium">{resource.name}</p>
                           {resource.description && (
-                            <p className="text-sm text-gray-500">{resource.description}</p>
+                            <p className="text-sm text-gray-500">
+                              {resource.description}
+                            </p>
                           )}
-                          <p className="text-xs text-gray-400">{resource.uri}</p>
+                          <p className="text-xs text-gray-400">
+                            {resource.uri}
+                          </p>
                         </div>
                       </div>
                     </div>
@@ -156,7 +174,7 @@ export function ResourcesTab({ serverConfig }: ResourcesTabProps) {
             )}
 
             {selectedResource && (
-              <Button 
+              <Button
                 onClick={() => readResource(selectedResource)}
                 disabled={loading}
                 className="w-full"
@@ -184,7 +202,9 @@ export function ResourcesTab({ serverConfig }: ResourcesTabProps) {
           <CardHeader>
             <CardTitle>Resource Content</CardTitle>
             {selectedResource && (
-              <CardDescription className="break-all">{selectedResource}</CardDescription>
+              <CardDescription className="break-all">
+                {selectedResource}
+              </CardDescription>
             )}
           </CardHeader>
           <CardContent>
@@ -194,25 +214,33 @@ export function ResourcesTab({ serverConfig }: ResourcesTabProps) {
               </div>
             ) : (
               <div className="space-y-2">
-                {resourceContent?.contents?.map((content: any, index: number) => (
-                  <div key={index} className="border rounded">
-                    <div className="p-2 bg-gray-50 border-b">
-                      <span className="text-sm font-medium">Type: {content.type}</span>
-                      {content.mimeType && (
-                        <span className="text-sm text-gray-500 ml-2">({content.mimeType})</span>
-                      )}
+                {resourceContent?.contents?.map(
+                  (content: any, index: number) => (
+                    <div key={index} className="border rounded">
+                      <div className="p-2 bg-gray-50 border-b">
+                        <span className="text-sm font-medium">
+                          Type: {content.type}
+                        </span>
+                        {content.mimeType && (
+                          <span className="text-sm text-gray-500 ml-2">
+                            ({content.mimeType})
+                          </span>
+                        )}
+                      </div>
+                      <div className="p-3">
+                        {content.type === "text" ? (
+                          <pre className="text-sm whitespace-pre-wrap">
+                            {content.text}
+                          </pre>
+                        ) : (
+                          <pre className="text-sm bg-gray-50 p-2 rounded overflow-auto">
+                            {JSON.stringify(content, null, 2)}
+                          </pre>
+                        )}
+                      </div>
                     </div>
-                    <div className="p-3">
-                      {content.type === 'text' ? (
-                        <pre className="text-sm whitespace-pre-wrap">{content.text}</pre>
-                      ) : (
-                        <pre className="text-sm bg-gray-50 p-2 rounded overflow-auto">
-                          {JSON.stringify(content, null, 2)}
-                        </pre>
-                      )}
-                    </div>
-                  </div>
-                ))}
+                  ),
+                )}
               </div>
             )}
           </CardContent>

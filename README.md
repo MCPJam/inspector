@@ -20,18 +20,18 @@
 
 </div>
 
-MCPJam is a developer tool for testing and debugging Model Context Protocol (MCP) servers. It connects to any MCP server and allows you to manually test every part of your server. The project is open source and fully compliant to the MCP spec. 
+MCPJam is a developer tool for testing and debugging Model Context Protocol (MCP) servers. It connects to any MCP server and allows you to manually test every part of your server. The project is open source and fully compliant to the MCP spec.
 
-Main features are: 
+Main features are:
 
-| Features                                               | Description                                                                                                                                                                                                                                                                                            |
-| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| All transports supported                                           | This inspector supports STDIO, SSE, and Streambable HTTP. Connect to any MCP server with environment variables and full authorization support. |
-| Full MCP Spec Compliance       | The inspector has full compliance to the MCP spec. Test any MCP implementation in your server, like tools, prompts, resources, elicitation, authorization, and correct schemas.                                    |
-| Authorization Testing (OAuth 2.0)    | Support for Dynamic Client Registration (DCR) and the full OAuth 2.0 spec. Test your server's MCP token handling, authorization server implementation, and OAuth flow.                             |
-| LLM Playground |Test your MCP server against LLMs or custom agents. Has support for OpenAI, Anthropic, and Ollama models. Tweak agents' system prompts and temperature. Everything you need for MCP testing all in one platform.                |
-| Debugging tools             |  Everything is logged including all of the error messages. This helps quickly debug your MCP server implementation.                                                                                                       |
-| Usability    | Save requests, multi-server connection, saved connections. CLI shortcuts to quickly spin up a testing environment.                                                                                                                                                  |
+| Features                          | Description                                                                                                                                                                                                      |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| All transports supported          | This inspector supports STDIO, SSE, and Streambable HTTP. Connect to any MCP server with environment variables and full authorization support.                                                                   |
+| Full MCP Spec Compliance          | The inspector has full compliance to the MCP spec. Test any MCP implementation in your server, like tools, prompts, resources, elicitation, authorization, and correct schemas.                                  |
+| Authorization Testing (OAuth 2.0) | Support for Dynamic Client Registration (DCR) and the full OAuth 2.0 spec. Test your server's MCP token handling, authorization server implementation, and OAuth flow.                                           |
+| LLM Playground                    | Test your MCP server against LLMs or custom agents. Has support for OpenAI, Anthropic, and Ollama models. Tweak agents' system prompts and temperature. Everything you need for MCP testing all in one platform. |
+| Debugging tools                   | Everything is logged including all of the error messages. This helps quickly debug your MCP server implementation.                                                                                               |
+| Usability                         | Save requests, multi-server connection, saved connections. CLI shortcuts to quickly spin up a testing environment.                                                                                               |
 
 ## 📋 Requirements
 
@@ -77,8 +77,6 @@ The inspector will be available in your browser at `http://127.0.0.1:6274`.
 </div>
 
 ---
-
-
 
 ## 🎯 Usage Examples
 
@@ -197,7 +195,7 @@ We put together these commands to help you build locally:
 
 ## 🤝 Contributing
 
-We welcome contributions! We thought the original inspector repository moved too slowly, so we wanted to build this project ourselves. Please read our [CONTRIBUTING.md](/CONTRIBUTING.md) for more details. 
+We welcome contributions! We thought the original inspector repository moved too slowly, so we wanted to build this project ourselves. Please read our [CONTRIBUTING.md](/CONTRIBUTING.md) for more details.
 
 1. **Clone** the repository
 2. **Create** a feature branch (`git checkout -b feature/amazing-feature`)
@@ -207,7 +205,7 @@ We welcome contributions! We thought the original inspector repository moved too
 
 ## 🗺️ Our Roadmap
 
-The community is working on MCPJam v1.0.0. We are on a mission to make MCPJam a production grade project. If you're interested, please read the [design proposal](/ideation/PRODUCT_SPEC.md). We're collaborating on this on [Discord](https://discord.gg/JEnDtz8X6z)! 
+The community is working on MCPJam v1.0.0. We are on a mission to make MCPJam a production grade project. If you're interested, please read the [design proposal](/ideation/PRODUCT_SPEC.md). We're collaborating on this on [Discord](https://discord.gg/JEnDtz8X6z)!
 
 ## 📚 Resources
 

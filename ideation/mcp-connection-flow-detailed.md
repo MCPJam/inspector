@@ -7,15 +7,18 @@ The MCP Inspector is a sophisticated debugging and inspection tool for Model Con
 ## Architecture Components
 
 ### 1. CLI Tool (`cli/src/index.ts`)
+
 The CLI provides a direct command-line interface for interacting with MCP servers without the web UI.
 
 **Key Features:**
+
 - Direct MCP server connections using the official MCP SDK
 - Support for STDIO and SSE transports
 - Command-line parameter parsing for method invocation
 - Transport type detection (URL vs command)
 
 **Connection Process:**
+
 ```typescript
 // Transport detection
 const isUrl = command.startsWith("http://") || command.startsWith("https://");
@@ -33,92 +36,107 @@ await connect(client, transport);
 ```
 
 ### 2. Client Application (`client/src/App.tsx`)
+
 The React frontend orchestrates the entire user interface and connection management.
 
 **State Management:**
+
 - **Server State**: Manages configured servers and selected server
 - **Connection State**: Tracks active connections and their status
 - **MCP Operations**: Handles data fetching and caching
 
 **Key Hooks:**
+
 - `useServerState()`: Server configuration management
 - `useConnectionState()`: Connection status and MCPJamAgent lifecycle
 - `useMCPOperations()`: Tools, resources, prompts operations
 - `useServerManagement()`: Connect/disconnect operations
 
 **Connection Integration:**
+
 ```typescript
-const makeRequest = useCallback(async (request: ClientRequest) => {
-  return await mcpOperations.makeRequest(
-    connectionState.mcpAgent,
-    serverState.selectedServerName,
-    request,
-  );
-}, [mcpOperations, connectionState.mcpAgent, serverState.selectedServerName]);
+const makeRequest = useCallback(
+  async (request: ClientRequest) => {
+    return await mcpOperations.makeRequest(
+      connectionState.mcpAgent,
+      serverState.selectedServerName,
+      request,
+    );
+  },
+  [mcpOperations, connectionState.mcpAgent, serverState.selectedServerName],
+);
 ```
 
 ### 3. MCPJamAgent (`client/src/lib/utils/mcp/mcpjamAgent.ts`)
+
 The central orchestrator that manages multiple MCP server connections.
 
 **Core Responsibilities:**
+
 1. **Multi-Server Management**: Maintains connections to multiple MCP servers simultaneously
 2. **Performance Caching**: Implements intelligent caching with expiry times
 3. **Server Discovery**: Finds which server has specific capabilities
 4. **Unified Interface**: Aggregates data across all connected servers
 
 **Connection Management:**
+
 ```typescript
 export class MCPJamAgent {
   private mcpClientsById = new Map<string, MCPJamClient>();
   private serverConfigs: Record<string, MCPJamServerConfig>;
-  
+
   async connectToServer(serverName: string): Promise<MCPJamClient> {
     const serverConfig = this.serverConfigs[serverName];
     const client = await this.getOrCreateClient(serverName, serverConfig);
-    
+
     // Initialize caches in parallel for performance
     await Promise.all([
       this.cacheToolsForServer(serverName),
       this.cacheResourcesForServer(serverName),
       this.cachePromptsForServer(serverName),
     ]);
-    
+
     return client;
   }
 }
 ```
 
 **Intelligent Caching System:**
+
 - **Tools Cache**: 5-minute expiry
-- **Resources Cache**: 2-minute expiry  
+- **Resources Cache**: 2-minute expiry
 - **Prompts Cache**: 3-minute expiry
 - **Background Refresh**: Expired caches refresh in background while serving stale data
 
 **Server Discovery:**
+
 ```typescript
 async findServerWithTool(toolName: string): Promise<string | null> {
   const allServerTools = await this.getAllTools();
-  
+
   const matchingServers = this.findServersWithCapability(
     allServerTools,
     "tools",
     (tools: Tool[]) => tools.some((t) => t.name === toolName),
   );
-  
+
   return matchingServers.length > 0 ? matchingServers[0] : null;
 }
 ```
 
 ### 4. MCPJamClient (`client/src/lib/utils/mcp/mcpjamClient.ts`)
+
 Individual MCP server connection implementation.
 
 **Key Features:**
+
 - **Transport Abstraction**: Supports STDIO, SSE, and Streamable HTTP
 - **Authentication Management**: OAuth flows and bearer tokens
 - **Proxy Integration**: All connections route through inspector proxy
 - **Error Handling**: Comprehensive error handling with retry logic
 
 **Transport Selection:**
+
 ```typescript
 private async connectToTransport(): Promise<void> {
   switch (this.serverConfig.transportType) {
@@ -136,16 +154,17 @@ private async connectToTransport(): Promise<void> {
 ```
 
 **STDIO Connection (via Proxy):**
+
 ```typescript
 async connectStdio() {
   const serverUrl = new URL(`${await getMCPProxyAddressAsync(this.inspectorConfig)}/stdio`);
-  
+
   if (this.serverConfig.transportType === "stdio" && "command" in this.serverConfig) {
     serverUrl.searchParams.append("command", this.serverConfig.command);
     serverUrl.searchParams.append("args", this.serverConfig.args?.join(" ") ?? "");
     serverUrl.searchParams.append("env", JSON.stringify(this.serverConfig.env ?? {}));
   }
-  
+
   // Use SSE transport to proxy server, which handles STDIO internally
   this.clientTransport = new SSEClientTransport(serverUrl, transportOptions);
   await this.connect(this.clientTransport);
@@ -153,33 +172,35 @@ async connectStdio() {
 ```
 
 **Authentication System:**
+
 ```typescript
 private async prepareAuthHeaders(): Promise<HeadersInit> {
   const headers: HeadersInit = {};
-  
+
   // OAuth for HTTP transports
   if (this.serverConfig.transportType !== "stdio" && "url" in this.serverConfig) {
     const serverAuthProvider = new InspectorOAuthClientProvider(
       this.serverConfig.url.toString(),
       this.serverConfig.transportType,
     );
-    
+
     const token = this.bearerToken || (await serverAuthProvider.tokens())?.access_token;
     if (token) {
       const authHeaderName = this.headerName || "Authorization";
       headers[authHeaderName] = `Bearer ${token}`;
     }
   }
-  
+
   return headers;
 }
 ```
 
 **Error Handling with Retry:**
+
 ```typescript
 async connectToServer(_e?: unknown, retryCount: number = 0): Promise<void> {
   const MAX_RETRIES = 1;
-  
+
   try {
     await this.connectToTransport();
     this.connectionStatus = "connected";
@@ -206,6 +227,7 @@ All client connections are routed through the inspector's proxy server:
 ```
 
 **Why Use a Proxy?**
+
 1. **Transport Unification**: Provides consistent WebSocket/HTTP interface regardless of actual transport
 2. **STDIO Process Management**: Spawns and manages local MCP server processes
 3. **CORS Handling**: Bypasses browser CORS restrictions for remote servers
@@ -213,6 +235,7 @@ All client connections are routed through the inspector's proxy server:
 5. **Protocol Translation**: Converts between different MCP transport protocols
 
 **Transport Mapping:**
+
 - **STDIO**: Proxy spawns process and bridges stdin/stdout to SSE
 - **SSE**: Proxy forwards SSE events between client and server
 - **Streamable HTTP**: Proxy handles HTTP streaming and reconnection
@@ -240,11 +263,11 @@ User clicks "Connect to Server" or adds a new server configuration in the UI.
 // Server configuration object
 const serverConfig: MCPJamServerConfig = {
   transportType: "stdio", // or "sse" or "streamable-http"
-  command: "python",      // for STDIO
+  command: "python", // for STDIO
   args: ["-m", "my_mcp_server"],
-  env: { "ENV_VAR": "value" },
+  env: { ENV_VAR: "value" },
   // OR for HTTP transports:
-  url: new URL("https://api.example.com/mcp")
+  url: new URL("https://api.example.com/mcp"),
 };
 ```
 
@@ -285,7 +308,7 @@ async checkProxyHealth() {
   const proxyHealthUrl = new URL(`${await getMCPProxyAddressAsync(this.inspectorConfig)}/health`);
   const proxyHealthResponse = await fetch(proxyHealthUrl);
   const proxyHealth = await proxyHealthResponse.json();
-  
+
   if (proxyHealth?.status !== "ok") {
     throw new Error("MCP Proxy Server is not healthy");
   }
@@ -305,6 +328,7 @@ this.headers = { ...this.headers, ...authHeaders };
 Based on transport type, the client connects through the appropriate proxy endpoint:
 
 **STDIO Example:**
+
 ```typescript
 // Client connects to: http://localhost:6274/stdio?command=python&args=-m my_mcp_server
 // Proxy spawns: python -m my_mcp_server
@@ -312,6 +336,7 @@ Based on transport type, the client connects through the appropriate proxy endpo
 ```
 
 **SSE Example:**
+
 ```typescript
 // Client connects to: http://localhost:6274/sse?url=https://api.example.com/mcp
 // Proxy forwards SSE events between client and remote server
@@ -377,13 +402,13 @@ servers: {
 // Find which server has a specific tool
 async findServerWithTool(toolName: string): Promise<string | null> {
   const allServerTools = await this.getAllTools();
-  
+
   for (const serverTools of allServerTools) {
     if (serverTools.tools.some(tool => tool.name === toolName)) {
       return serverTools.serverName;
     }
   }
-  
+
   return null;
 }
 
@@ -408,7 +433,7 @@ private toolsCache = new Map<string, { tools: Tool[]; timestamp: number }>();
 private isCacheValid(cache: Map<string, any>, serverName: string, expiryTime: number): boolean {
   const cacheEntry = cache.get(serverName);
   if (!cacheEntry) return false;
-  
+
   const now = Date.now();
   return now - cacheEntry.timestamp < expiryTime;
 }
@@ -416,13 +441,13 @@ private isCacheValid(cache: Map<string, any>, serverName: string, expiryTime: nu
 // Background refresh for expired caches
 async getAllTools(): Promise<{ serverName: string; tools: Tool[] }[]> {
   const refreshPromises: Promise<void>[] = [];
-  
+
   for (const serverInfo of connectedServers) {
     if (!this.isToolsCacheValid(serverInfo.name)) {
       // Start refresh in background, don't wait
       refreshPromises.push(this.cacheToolsForServer(serverInfo.name));
     }
-    
+
     // Return cached data immediately (even if stale)
     const cachedEntry = this.toolsCache.get(serverInfo.name);
     allServerTools.push({
@@ -430,10 +455,10 @@ async getAllTools(): Promise<{ serverName: string; tools: Tool[] }[]> {
       tools: cachedEntry?.tools || [],
     });
   }
-  
+
   // Background refresh continues without blocking
   Promise.all(refreshPromises).catch(console.error);
-  
+
   return allServerTools;
 }
 ```
@@ -464,7 +489,7 @@ await Promise.all([
 ```typescript
 async connectToServer(retryCount: number = 0): Promise<void> {
   const MAX_RETRIES = 1;
-  
+
   try {
     await this.connectToTransport();
   } catch (error) {
@@ -475,7 +500,7 @@ async connectToServer(retryCount: number = 0): Promise<void> {
         return this.connectToServer(retryCount + 1);
       }
     }
-    
+
     this.connectionStatus = "error";
     throw error;
   }
@@ -496,12 +521,12 @@ private handleAuthError = async (error: unknown): Promise<boolean> => {
 private async performOAuthFlow(): Promise<boolean> {
   const authProvider = this.createAuthProvider();
   if (!authProvider) return false;
-  
+
   try {
     const result = await auth(authProvider, {
       serverUrl: this.serverConfig.url.toString(),
     });
-    
+
     return result === "AUTHORIZED";
   } catch (error) {
     this.addClientLog(`OAuth flow failed: ${error.message}`, "error");
@@ -570,7 +595,11 @@ this.addRequestHistory(request, { error: errorMessage });
 ### Connection Status Monitoring
 
 ```typescript
-type ConnectionStatus = "connected" | "disconnected" | "error" | "error-connecting-to-proxy";
+type ConnectionStatus =
+  | "connected"
+  | "disconnected"
+  | "error"
+  | "error-connecting-to-proxy";
 
 // Real-time status updates
 this.connectionStatus = "connected";
@@ -584,12 +613,12 @@ this.connectionStatus = "error-connecting-to-proxy";
 ```typescript
 interface MCPJamServerConfig {
   transportType: "stdio" | "sse" | "streamable-http";
-  
+
   // STDIO-specific
   command?: string;
   args?: string[];
   env?: Record<string, string>;
-  
+
   // HTTP-specific
   url?: URL;
 }

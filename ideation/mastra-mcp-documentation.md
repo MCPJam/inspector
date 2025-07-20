@@ -35,18 +35,20 @@ const mcp = new MCPClient({
 #### Server Configuration Types
 
 **Stdio Server Configuration:**
+
 ```typescript
 interface StdioServerConfig {
-  command: string;           // Command to execute
-  args?: string[];          // Command arguments
+  command: string; // Command to execute
+  args?: string[]; // Command arguments
   env?: Record<string, string>; // Environment variables
 }
 ```
 
 **HTTP Server Configuration:**
+
 ```typescript
 interface HttpServerConfig {
-  url: URL;                 // Server endpoint URL
+  url: URL; // Server endpoint URL
   requestInit?: RequestInit; // Additional fetch options
 }
 ```
@@ -54,18 +56,23 @@ interface HttpServerConfig {
 #### Basic Usage Examples
 
 **Stdio Server Setup:**
+
 ```typescript
 const mcp = new MCPClient({
   servers: {
     filesystem: {
       command: "npx",
-      args: ["-y", "@modelcontextprotocol/server-filesystem", "/Users/username/Downloads"],
+      args: [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/Users/username/Downloads",
+      ],
     },
     stockPrice: {
-      command: 'npx',
-      args: ['tsx', 'stock-price.ts'],
+      command: "npx",
+      args: ["tsx", "stock-price.ts"],
       env: {
-        API_KEY: 'your-api-key',
+        API_KEY: "your-api-key",
       },
     },
   },
@@ -73,31 +80,33 @@ const mcp = new MCPClient({
 ```
 
 **HTTP Server Setup:**
+
 ```typescript
 const mcp = new MCPClient({
   servers: {
     weather: {
-      url: new URL('http://localhost:8080/mcp'),
+      url: new URL("http://localhost:8080/mcp"),
       requestInit: {
         headers: {
-          'X-Api-Key': 'weather-key',
-          'Authorization': 'Bearer your-token'
+          "X-Api-Key": "weather-key",
+          Authorization: "Bearer your-token",
         },
       },
     },
     remoteApi: {
-      url: new URL('https://your-mcp-server.com/mcp'),
+      url: new URL("https://your-mcp-server.com/mcp"),
       requestInit: {
-        headers: { 
-          Authorization: 'Bearer your-token' 
-        }
-      }
-    }
+        headers: {
+          Authorization: "Bearer your-token",
+        },
+      },
+    },
   },
 });
 ```
 
 **Mixed Server Configuration:**
+
 ```typescript
 const mcp = new MCPClient({
   servers: {
@@ -108,20 +117,20 @@ const mcp = new MCPClient({
     },
     // Remote HTTP server
     webSearch: {
-      url: new URL('https://search-api.example.com/mcp'),
+      url: new URL("https://search-api.example.com/mcp"),
       requestInit: {
-        headers: { 'API-Key': 'search-key' }
-      }
+        headers: { "API-Key": "search-key" },
+      },
     },
     // Another stdio server with custom environment
     database: {
-      command: 'python',
-      args: ['-m', 'my_database_server'],
+      command: "python",
+      args: ["-m", "my_database_server"],
       env: {
-        DB_CONNECTION_STRING: 'postgresql://...',
-        LOG_LEVEL: 'debug'
-      }
-    }
+        DB_CONNECTION_STRING: "postgresql://...",
+        LOG_LEVEL: "debug",
+      },
+    },
   },
 });
 ```
@@ -137,19 +146,20 @@ async getTools(): Promise<Record<string, Tool>>
 ```
 
 **Usage with Agents:**
+
 ```typescript
-import { Agent } from '@mastra/core/agent';
+import { Agent } from "@mastra/core/agent";
 
 const mcp = new MCPClient({
   servers: {
     stockPrice: {
-      command: 'npx',
-      args: ['tsx', 'stock-price.ts'],
+      command: "npx",
+      args: ["tsx", "stock-price.ts"],
     },
     weather: {
-      url: new URL('http://localhost:8080/mcp'),
-    }
-  }
+      url: new URL("http://localhost:8080/mcp"),
+    },
+  },
 });
 
 // Get all tools from all servers (namespaced)
@@ -164,13 +174,13 @@ const tools = await mcp.getTools();
 // }
 
 const agent = new Agent({
-  name: 'Trading Assistant',
-  instructions: 'Help users with stock prices and weather data',
-  model: openai('gpt-4'),
+  name: "Trading Assistant",
+  instructions: "Help users with stock prices and weather data",
+  model: openai("gpt-4"),
   tools: tools, // All tools available to agent
 });
 
-const response = await agent.generate('What is the current price of AAPL?');
+const response = await agent.generate("What is the current price of AAPL?");
 ```
 
 ### getToolsets()
@@ -182,28 +192,32 @@ async getToolsets(): Promise<Record<string, Record<string, Tool>>>
 ```
 
 **Usage with Dynamic Configuration:**
+
 ```typescript
 // Function to create user-specific MCP client
-function createUserMCPClient(userId: string, userApiKeys: Record<string, string>) {
+function createUserMCPClient(
+  userId: string,
+  userApiKeys: Record<string, string>,
+) {
   return new MCPClient({
     servers: {
       stockPrice: {
-        command: 'npx',
-        args: ['tsx', 'stock-price.ts'],
+        command: "npx",
+        args: ["tsx", "stock-price.ts"],
         env: {
           API_KEY: userApiKeys.stockApi, // User-specific API key
           USER_ID: userId,
         },
       },
       weather: {
-        url: new URL('http://localhost:8080/mcp'),
+        url: new URL("http://localhost:8080/mcp"),
         requestInit: {
           headers: {
-            'X-User-Id': userId,
-            'X-Api-Key': userApiKeys.weatherApi, // User-specific API key
-          }
-        }
-      }
+            "X-User-Id": userId,
+            "X-Api-Key": userApiKeys.weatherApi, // User-specific API key
+          },
+        },
+      },
     },
   });
 }
@@ -212,10 +226,10 @@ function createUserMCPClient(userId: string, userApiKeys: Record<string, string>
 async function handleUserRequest(userId: string, query: string) {
   const userApiKeys = await getUserApiKeys(userId);
   const mcp = createUserMCPClient(userId, userApiKeys);
-  
+
   // Get tools grouped by server
   const toolsets = await mcp.getToolsets();
-  
+
   // Toolsets structure:
   // {
   //   stockPrice: {
@@ -229,16 +243,16 @@ async function handleUserRequest(userId: string, query: string) {
   // }
 
   const agent = new Agent({
-    name: 'Personal Assistant',
-    instructions: 'Help the user with their specific requests',
-    model: openai('gpt-4'),
+    name: "Personal Assistant",
+    instructions: "Help the user with their specific requests",
+    model: openai("gpt-4"),
   });
 
   // Pass toolsets dynamically during generation
   const response = await agent.generate(query, {
     toolsets: toolsets,
   });
-  
+
   await mcp.disconnect();
   return response;
 }
@@ -257,6 +271,7 @@ interface ResourcesManager {
 ```
 
 **Usage Examples:**
+
 ```typescript
 const mcp = new MCPClient({
   servers: {
@@ -265,9 +280,9 @@ const mcp = new MCPClient({
       args: ["-y", "@modelcontextprotocol/server-filesystem", "./workspace"],
     },
     database: {
-      url: new URL('http://localhost:8080/mcp'),
-    }
-  }
+      url: new URL("http://localhost:8080/mcp"),
+    },
+  },
 });
 
 // List all resources from all servers
@@ -288,7 +303,9 @@ const allResources = await mcp.resources.list();
 const templates = await mcp.resources.templates();
 
 // Read specific resource
-const configContent = await mcp.resources.read("file://./workspace/config.json");
+const configContent = await mcp.resources.read(
+  "file://./workspace/config.json",
+);
 ```
 
 ### Prompts Management
@@ -303,6 +320,7 @@ interface PromptsManager {
 ```
 
 **Usage Examples:**
+
 ```typescript
 // List all prompts from all servers
 const allPrompts = await mcp.prompts.list();
@@ -310,7 +328,7 @@ const allPrompts = await mcp.prompts.list();
 // Get specific prompt with arguments
 const promptContent = await mcp.prompts.get("code-review", {
   language: "typescript",
-  severity: "high"
+  severity: "high",
 });
 ```
 
@@ -335,32 +353,32 @@ class TenantMCPManager {
   async getClientForTenant(tenantId: string): Promise<MCPClient> {
     if (!this.clients.has(tenantId)) {
       const tenantConfig = await this.getTenantConfig(tenantId);
-      
+
       const client = new MCPClient({
         servers: {
           tenantSpecificService: {
             url: new URL(`https://api.example.com/tenant/${tenantId}/mcp`),
             requestInit: {
               headers: {
-                'X-Tenant-Id': tenantId,
-                'Authorization': `Bearer ${tenantConfig.apiKey}`
-              }
-            }
+                "X-Tenant-Id": tenantId,
+                Authorization: `Bearer ${tenantConfig.apiKey}`,
+              },
+            },
           },
           sharedService: {
-            command: 'npx',
-            args: ['tsx', 'shared-service.ts'],
+            command: "npx",
+            args: ["tsx", "shared-service.ts"],
             env: {
               TENANT_ID: tenantId,
-              CONFIG_PATH: `/configs/${tenantId}.json`
-            }
-          }
-        }
+              CONFIG_PATH: `/configs/${tenantId}.json`,
+            },
+          },
+        },
       });
-      
+
       this.clients.set(tenantId, client);
     }
-    
+
     return this.clients.get(tenantId)!;
   }
 
@@ -377,52 +395,52 @@ class TenantMCPManager {
 ### Environment-Specific Configuration
 
 ```typescript
-function createEnvironmentMCPClient(env: 'dev' | 'staging' | 'prod') {
+function createEnvironmentMCPClient(env: "dev" | "staging" | "prod") {
   const baseConfig = {
     filesystem: {
       command: "npx",
       args: ["-y", "@modelcontextprotocol/server-filesystem", "./workspace"],
-    }
+    },
   };
 
   const envConfigs = {
     dev: {
       apiService: {
-        url: new URL('http://localhost:8080/mcp'),
+        url: new URL("http://localhost:8080/mcp"),
         requestInit: {
-          headers: { 'X-Environment': 'development' }
-        }
-      }
+          headers: { "X-Environment": "development" },
+        },
+      },
     },
     staging: {
       apiService: {
-        url: new URL('https://staging-api.example.com/mcp'),
+        url: new URL("https://staging-api.example.com/mcp"),
         requestInit: {
-          headers: { 
-            'X-Environment': 'staging',
-            'Authorization': `Bearer ${process.env.STAGING_API_KEY}`
-          }
-        }
-      }
+          headers: {
+            "X-Environment": "staging",
+            Authorization: `Bearer ${process.env.STAGING_API_KEY}`,
+          },
+        },
+      },
     },
     prod: {
       apiService: {
-        url: new URL('https://api.example.com/mcp'),
+        url: new URL("https://api.example.com/mcp"),
         requestInit: {
-          headers: { 
-            'X-Environment': 'production',
-            'Authorization': `Bearer ${process.env.PROD_API_KEY}`
-          }
-        }
-      }
-    }
+          headers: {
+            "X-Environment": "production",
+            Authorization: `Bearer ${process.env.PROD_API_KEY}`,
+          },
+        },
+      },
+    },
   };
 
   return new MCPClient({
     servers: {
       ...baseConfig,
-      ...envConfigs[env]
-    }
+      ...envConfigs[env],
+    },
   });
 }
 ```
@@ -432,12 +450,12 @@ function createEnvironmentMCPClient(env: 'dev' | 'staging' | 'prod') {
 ### Static Tool Configuration
 
 ```typescript
-import { Agent } from '@mastra/core/agent';
+import { Agent } from "@mastra/core/agent";
 
 // Best for single-user applications or shared tool configurations
 class StaticAgentService {
   private agent: Agent;
-  
+
   constructor() {
     this.initializeAgent();
   }
@@ -446,21 +464,21 @@ class StaticAgentService {
     const mcp = new MCPClient({
       servers: {
         codeAnalysis: {
-          command: 'npx',
-          args: ['tsx', 'code-analysis-server.ts'],
+          command: "npx",
+          args: ["tsx", "code-analysis-server.ts"],
         },
         documentation: {
-          url: new URL('https://docs-api.example.com/mcp'),
-        }
-      }
+          url: new URL("https://docs-api.example.com/mcp"),
+        },
+      },
     });
 
     const tools = await mcp.getTools();
 
     this.agent = new Agent({
-      name: 'Code Assistant',
-      instructions: 'Help developers with code analysis and documentation',
-      model: openai('gpt-4'),
+      name: "Code Assistant",
+      instructions: "Help developers with code analysis and documentation",
+      model: openai("gpt-4"),
       tools: tools, // Static tool configuration
     });
   }
@@ -481,52 +499,60 @@ class DynamicAgentService {
     const userCredentials = await this.getUserCredentials(userId);
 
     const mcp = new MCPClient({
-      servers: this.buildUserServerConfig(userId, userPreferences, userCredentials)
+      servers: this.buildUserServerConfig(
+        userId,
+        userPreferences,
+        userCredentials,
+      ),
     });
 
     const toolsets = await mcp.getToolsets();
 
     const agent = new Agent({
-      name: 'Personal Assistant',
+      name: "Personal Assistant",
       instructions: `Help ${userPreferences.name} with their tasks`,
-      model: openai('gpt-4'),
+      model: openai("gpt-4"),
     });
 
     try {
       const response = await agent.generate(query, {
         toolsets: toolsets, // Dynamic tool configuration
       });
-      
+
       return response;
     } finally {
       await mcp.disconnect(); // Cleanup per-request
     }
   }
 
-  private buildUserServerConfig(userId: string, preferences: any, credentials: any) {
+  private buildUserServerConfig(
+    userId: string,
+    preferences: any,
+    credentials: any,
+  ) {
     const servers: any = {};
 
     // Add servers based on user preferences
     if (preferences.enableCodeAnalysis) {
       servers.codeAnalysis = {
-        command: 'npx',
-        args: ['tsx', 'code-analysis-server.ts'],
+        command: "npx",
+        args: ["tsx", "code-analysis-server.ts"],
         env: {
           USER_ID: userId,
-          ANALYSIS_LEVEL: preferences.analysisLevel
-        }
+          ANALYSIS_LEVEL: preferences.analysisLevel,
+        },
       };
     }
 
     if (preferences.enableWebSearch) {
       servers.webSearch = {
-        url: new URL('https://search-api.example.com/mcp'),
+        url: new URL("https://search-api.example.com/mcp"),
         requestInit: {
           headers: {
-            'X-User-Id': userId,
-            'Authorization': `Bearer ${credentials.searchApiKey}`
-          }
-        }
+            "X-User-Id": userId,
+            Authorization: `Bearer ${credentials.searchApiKey}`,
+          },
+        },
       };
     }
 
@@ -542,29 +568,33 @@ class DynamicAgentService {
 ```typescript
 class RobustMCPClient {
   private client: MCPClient;
-  
+
   constructor(config: any) {
     this.client = new MCPClient(config);
   }
 
   async withRetry<T>(operation: () => Promise<T>, maxRetries = 3): Promise<T> {
     let lastError: Error;
-    
+
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         return await operation();
       } catch (error) {
         lastError = error as Error;
-        
+
         if (attempt === maxRetries) {
-          throw new Error(`Operation failed after ${maxRetries} attempts: ${lastError.message}`);
+          throw new Error(
+            `Operation failed after ${maxRetries} attempts: ${lastError.message}`,
+          );
         }
-        
+
         // Exponential backoff
-        await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.pow(2, attempt) * 1000),
+        );
       }
     }
-    
+
     throw lastError!;
   }
 
@@ -607,7 +637,9 @@ class ManagedMCPClient {
     }
   }
 
-  async withConnection<T>(operation: (client: MCPClient) => Promise<T>): Promise<T> {
+  async withConnection<T>(
+    operation: (client: MCPClient) => Promise<T>,
+  ): Promise<T> {
     await this.connect();
     try {
       return await operation(this.client);
@@ -619,7 +651,9 @@ class ManagedMCPClient {
 
 // Usage
 const managedClient = new ManagedMCPClient({
-  servers: { /* config */ }
+  servers: {
+    /* config */
+  },
 });
 
 const result = await managedClient.withConnection(async (client) => {
@@ -638,7 +672,7 @@ interface ServerConfig {
   command?: string;
   args?: string[];
   env?: Record<string, string>;
-  
+
   // HTTP configuration
   url?: URL;
   requestInit?: RequestInit;
@@ -686,50 +720,50 @@ interface MCPClientConfig {
 ## Integration with Mastra Workflows
 
 ```typescript
-import { Workflow } from '@mastra/core/workflow';
+import { Workflow } from "@mastra/core/workflow";
 
 // Create workflow that uses MCP tools
 const analysisWorkflow = new Workflow({
-  name: 'Code Analysis Workflow',
+  name: "Code Analysis Workflow",
   steps: [
     {
-      id: 'analyze',
+      id: "analyze",
       action: async ({ inputs, context }) => {
         const mcp = new MCPClient({
           servers: {
             codeAnalysis: {
-              command: 'npx',
-              args: ['tsx', 'code-analysis-server.ts'],
-            }
-          }
+              command: "npx",
+              args: ["tsx", "code-analysis-server.ts"],
+            },
+          },
         });
 
         const toolsets = await mcp.getToolsets();
-        
+
         const agent = new Agent({
-          name: 'Code Analyzer',
-          instructions: 'Analyze the provided code',
-          model: openai('gpt-4'),
+          name: "Code Analyzer",
+          instructions: "Analyze the provided code",
+          model: openai("gpt-4"),
         });
 
         const result = await agent.generate(
           `Analyze this code: ${inputs.code}`,
-          { toolsets }
+          { toolsets },
         );
 
         await mcp.disconnect();
         return { analysis: result };
-      }
-    }
-  ]
+      },
+    },
+  ],
 });
 
 // Use in agent with workflow
 const agent = new Agent({
-  name: 'Development Assistant',
-  instructions: 'Help with development tasks',
-  model: openai('gpt-4'),
-  workflows: [analysisWorkflow]
+  name: "Development Assistant",
+  instructions: "Help with development tasks",
+  model: openai("gpt-4"),
+  workflows: [analysisWorkflow],
 });
 ```
 
