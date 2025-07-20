@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { PanelLeft, PanelLeftClose } from "lucide-react";
 
 import { ServerConnection } from "@/components/ServerConnection";
 import { ToolsTab } from "@/components/ToolsTab";
@@ -10,15 +9,11 @@ import { PromptsTab } from "@/components/PromptsTab";
 import { ChatTab } from "@/components/ChatTab";
 import { MCPSidebar } from "@/components/mcp-sidebar";
 import { ActiveServerSelector } from "@/components/ActiveServerSelector";
-import { Separator } from "@/components/ui/separator";
 import {
   SidebarInset,
   SidebarProvider,
   SidebarTrigger,
-  useSidebar,
 } from "@/components/ui/sidebar";
-import { SearchDialog } from "@/components/sidebar/search-dialog";
-import { Button } from "@/components/ui/button";
 import { ThemeSwitcher } from "@/components/sidebar/theme-switcher";
 import { AccountSwitcher } from "@/components/sidebar/account-switcher";
 import { useAppState } from "@/hooks/useAppState";
@@ -33,25 +28,6 @@ const users = [
   },
 ] as const;
 
-function CustomSidebarTrigger() {
-  const { open, toggleSidebar } = useSidebar();
-
-  return (
-    <Button
-      variant="ghost"
-      size="icon"
-      onClick={toggleSidebar}
-      className="h-9 w-9"
-    >
-      {open ? (
-        <PanelLeftClose className="h-5 w-5" />
-      ) : (
-        <PanelLeft className="h-5 w-5" />
-      )}
-    </Button>
-  );
-}
-
 export default function Home() {
   const [activeTab, setActiveTab] = useState("servers");
 
@@ -63,6 +39,7 @@ export default function Home() {
     selectedMCPConfig,
     handleConnect,
     handleDisconnect,
+    handleReconnect,
     setSelectedServer,
   } = useAppState();
 
@@ -89,11 +66,6 @@ export default function Home() {
           <div className="flex w-full items-center justify-between px-4 lg:px-6">
             <div className="flex items-center gap-1 lg:gap-2">
               <SidebarTrigger className="-ml-1" />
-              <Separator
-                orientation="vertical"
-                className="mx-2 data-[orientation=vertical]:h-4"
-              />
-              <SearchDialog />
             </div>
             <div className="flex items-center gap-2">
               <ThemeSwitcher />
@@ -120,6 +92,7 @@ export default function Home() {
               connectedServerConfigs={connectedServerConfigs}
               onConnect={handleConnect}
               onDisconnect={handleDisconnect}
+              onReconnect={handleReconnect}
             />
           )}
 

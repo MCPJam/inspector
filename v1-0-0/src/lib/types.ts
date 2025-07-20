@@ -35,6 +35,18 @@ export type HttpServerDefinition = BaseServerOptions & {
   oauth?: OAuthClientState;
 };
 
+export interface ServerFormData {
+  name: string;
+  type: "stdio" | "http";
+  command?: string;
+  args?: string[];
+  url?: string;
+  headers?: Record<string, string>;
+  env?: Record<string, string>;
+  useOAuth?: boolean;
+  oauthScopes?: string[];
+}
+
 export type MastraMCPServerDefinition =
   | StdioServerDefinition
   | HttpServerDefinition;

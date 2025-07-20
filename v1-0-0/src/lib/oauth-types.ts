@@ -102,25 +102,25 @@ export interface ClientRegistrationResponse {
 export interface PKCEParams {
   code_verifier: string;
   code_challenge: string;
-  code_challenge_method: 'S256' | 'plain';
+  code_challenge_method: "S256" | "plain";
 }
 
 // OAuth 2.1 Authorization Request
 export interface AuthorizationRequest {
-  response_type: 'code';
+  response_type: "code";
   client_id: string;
   redirect_uri?: string;
   scope?: string;
   state?: string;
   code_challenge: string;
-  code_challenge_method: 'S256';
+  code_challenge_method: "S256";
   // Resource indicators (RFC 8707)
   resource?: string | string[];
 }
 
 // OAuth 2.1 Token Request
 export interface TokenRequest {
-  grant_type: 'authorization_code' | 'refresh_token';
+  grant_type: "authorization_code" | "refresh_token";
   code?: string;
   redirect_uri?: string;
   client_id: string;
@@ -134,7 +134,7 @@ export interface TokenRequest {
 // OAuth 2.1 Token Response
 export interface TokenResponse {
   access_token: string;
-  token_type: 'Bearer';
+  token_type: "Bearer";
   expires_in?: number;
   refresh_token?: string;
   scope?: string;
@@ -171,22 +171,22 @@ export interface MCPOAuthConfig {
   server_url: string;
   client_name: string;
   client_description?: string;
-  
+
   // Optional pre-configured values
   client_id?: string;
   client_secret?: string;
   authorization_server?: string;
-  
+
   // Scopes and permissions
   requested_scopes?: string[];
   requested_tools?: string[];
   requested_resources?: string[];
   requested_prompts?: string[];
-  
+
   // PKCE settings
   use_pkce: boolean;
-  pkce_method: 'S256';
-  
+  pkce_method: "S256";
+
   // Timeouts and retries
   discovery_timeout?: number;
   registration_timeout?: number;
@@ -198,85 +198,92 @@ export interface OAuthClientState {
   // Discovery results
   authorization_server_metadata?: AuthorizationServerMetadata;
   protected_resource_metadata?: ProtectedResourceMetadata;
-  
+
   // Registration results
   client_registration?: ClientRegistrationResponse;
-  
+
   // Authorization flow state
   authorization_request?: AuthorizationRequest;
   pkce_params?: PKCEParams;
-  
+
   // Token state
   access_token?: string;
   token_type?: string;
   expires_at?: number;
   refresh_token?: string;
   scope?: string;
-  
+
   // Error state
   last_error?: OAuthError;
-  
+
   // MCP connection state
-  connection_status: 'disconnected' | 'discovering' | 'registering' | 'authorizing' | 'connected' | 'error';
+  connection_status:
+    | "disconnected"
+    | "discovering"
+    | "registering"
+    | "authorizing"
+    | "connected"
+    | "error";
 }
 
 // Discovery endpoints
 export const WELL_KNOWN_PATHS = {
-  AUTHORIZATION_SERVER: '/.well-known/oauth-authorization-server',
-  PROTECTED_RESOURCE: '/.well-known/oauth-protected-resource',
-  MCP_OAUTH: '/.well-known/mcp-oauth',
+  AUTHORIZATION_SERVER: "/.well-known/oauth-authorization-server",
+  PROTECTED_RESOURCE: "/.well-known/oauth-protected-resource",
+  MCP_OAUTH: "/.well-known/mcp-oauth",
 } as const;
 
 // Standard OAuth scopes
 export const OAUTH_SCOPES = {
-  MCP_TOOLS: 'mcp:tools',
-  MCP_RESOURCES: 'mcp:resources', 
-  MCP_PROMPTS: 'mcp:prompts',
-  MCP_FULL: 'mcp:*',
+  MCP_TOOLS: "mcp:tools",
+  MCP_RESOURCES: "mcp:resources",
+  MCP_PROMPTS: "mcp:prompts",
+  MCP_FULL: "mcp:*",
 } as const;
 
 // PKCE code challenge methods
 export const PKCE_METHODS = {
-  S256: 'S256',
-  PLAIN: 'plain'
+  S256: "S256",
+  PLAIN: "plain",
 } as const;
 
 // OAuth grant types
 export const GRANT_TYPES = {
-  AUTHORIZATION_CODE: 'authorization_code',
-  REFRESH_TOKEN: 'refresh_token',
+  AUTHORIZATION_CODE: "authorization_code",
+  REFRESH_TOKEN: "refresh_token",
 } as const;
 
-// OAuth response types  
+// OAuth response types
 export const RESPONSE_TYPES = {
-  CODE: 'code',
+  CODE: "code",
 } as const;
 
 // Token endpoint auth methods
 export const TOKEN_ENDPOINT_AUTH_METHODS = {
-  CLIENT_SECRET_BASIC: 'client_secret_basic',
-  CLIENT_SECRET_POST: 'client_secret_post',
-  NONE: 'none',
+  CLIENT_SECRET_BASIC: "client_secret_basic",
+  CLIENT_SECRET_POST: "client_secret_post",
+  NONE: "none",
 } as const;
 
 // Standard OAuth errors
 export const OAUTH_ERRORS = {
-  INVALID_REQUEST: 'invalid_request',
-  INVALID_CLIENT: 'invalid_client',
-  INVALID_GRANT: 'invalid_grant',
-  UNAUTHORIZED_CLIENT: 'unauthorized_client',
-  UNSUPPORTED_GRANT_TYPE: 'unsupported_grant_type',
-  INVALID_SCOPE: 'invalid_scope',
-  ACCESS_DENIED: 'access_denied',
-  UNSUPPORTED_RESPONSE_TYPE: 'unsupported_response_type',
-  SERVER_ERROR: 'server_error',
-  TEMPORARILY_UNAVAILABLE: 'temporarily_unavailable',
+  INVALID_REQUEST: "invalid_request",
+  INVALID_CLIENT: "invalid_client",
+  INVALID_GRANT: "invalid_grant",
+  UNAUTHORIZED_CLIENT: "unauthorized_client",
+  UNSUPPORTED_GRANT_TYPE: "unsupported_grant_type",
+  INVALID_SCOPE: "invalid_scope",
+  ACCESS_DENIED: "access_denied",
+  UNSUPPORTED_RESPONSE_TYPE: "unsupported_response_type",
+  SERVER_ERROR: "server_error",
+  TEMPORARILY_UNAVAILABLE: "temporarily_unavailable",
 } as const;
 
 // MCP-specific errors
 export const MCP_OAUTH_ERRORS = {
-  DISCOVERY_FAILED: 'mcp_discovery_failed',
-  REGISTRATION_FAILED: 'mcp_registration_failed',
-  UNSUPPORTED_VERSION: 'mcp_unsupported_version',
-  INSUFFICIENT_PERMISSIONS: 'mcp_insufficient_permissions',
+  DISCOVERY_FAILED:
+    "OAuth Discovery Failed. Check to make sure a auth server is running.",
+  REGISTRATION_FAILED: "OAuth Registration Failed",
+  UNSUPPORTED_VERSION: "OAuth Unsupported Version",
+  INSUFFICIENT_PERMISSIONS: "OAuth Insufficient Permissions",
 } as const;
