@@ -36,6 +36,7 @@ export function AddServerModal({
     oauthScopes: ["mcp:*"],
   });
   const [commandInput, setCommandInput] = useState("");
+  const [oauthScopesInput, setOauthScopesInput] = useState("");
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -47,6 +48,13 @@ export function AddServerModal({
         const command = parts[0] || "";
         const args = parts.slice(1);
         finalFormData = { ...finalFormData, command, args };
+      }
+
+      if (serverFormData.useOAuth && oauthScopesInput) {
+        const scopes = oauthScopesInput
+          .split(" ")
+          .filter((scope) => scope.trim());
+        finalFormData = { ...finalFormData, oauthScopes: scopes };
       }
 
       onConnect(finalFormData);
@@ -62,6 +70,7 @@ export function AddServerModal({
         oauthScopes: ["mcp:*"],
       });
       setCommandInput("");
+      setOauthScopesInput("");
       onClose();
     }
   };
@@ -79,6 +88,7 @@ export function AddServerModal({
       oauthScopes: ["mcp:*"],
     });
     setCommandInput("");
+    setOauthScopesInput("");
     onClose();
   };
 
@@ -208,15 +218,8 @@ export function AddServerModal({
                     OAuth Scopes
                   </label>
                   <Input
-                    value={serverFormData.oauthScopes?.join(" ") || ""}
-                    onChange={(e) =>
-                      setServerFormData((prev) => ({
-                        ...prev,
-                        oauthScopes: e.target.value
-                          .split(" ")
-                          .filter((s) => s.trim()),
-                      }))
-                    }
+                    value={oauthScopesInput}
+                    onChange={(e) => setOauthScopesInput(e.target.value)}
                     placeholder="mcp:* mcp:tools mcp:resources"
                     className="h-10"
                   />
