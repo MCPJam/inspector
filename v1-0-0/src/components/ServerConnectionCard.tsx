@@ -21,6 +21,8 @@ import {
   Loader2,
   Copy,
   Check,
+  X,
+  Wifi,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/useAppState";
 import { formatTimeRemaining, getTimeBreakdown } from "@/lib/utils";
@@ -106,6 +108,19 @@ export function ServerConnectionCard({
     }
   };
 
+  const getConnectionStatusIcon = () => {
+    switch (server.connectionStatus) {
+      case "connected":
+        return <Check className="h-3 w-3 text-green-500" />;
+      case "connecting":
+        return <Loader2 className="h-3 w-3 text-blue-500 animate-spin" />;
+      case "failed":
+        return <X className="h-3 w-3 text-red-500" />;
+      case "disconnected":
+        return <Wifi className="h-3 w-3 text-gray-500" />;
+    }
+  };
+
   const getCommandDisplay = () => {
     if (isHttpServer) {
       return server.config.url?.toString() || "";
@@ -121,7 +136,7 @@ export function ServerConnectionCard({
         <div className="p-4 space-y-3 py-0">
           {/* Header Row */}
           <div className="flex items-start justify-between">
-            <div className="flex items-start gap-3">
+            <div className="flex items-start gap-3 flex-1">
               <div
                 className="h-2 w-2 rounded-full flex-shrink-0 mt-1.5"
                 style={{
@@ -139,13 +154,16 @@ export function ServerConnectionCard({
                 <h3 className="font-medium text-sm text-foreground">
                   {server.name}
                 </h3>
-                <div className="flex items-center gap-2 mt-1">
-                  <span className="text-xs text-muted-foreground">
+                <div className="flex justify-between mt-1">
+                  <p className="text-xs text-muted-foreground">
                     {isHttpServer ? "HTTP/SSE" : "STDIO"}
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    {getConnectionStatusText()}
-                  </span>
+                  </p>
+                  <div className="flex items-center gap-1 -mr-3">
+                    {getConnectionStatusIcon()}
+                    <p className="text-xs text-muted-foreground">
+                      {getConnectionStatusText()}
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
