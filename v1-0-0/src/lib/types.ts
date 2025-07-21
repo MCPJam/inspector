@@ -5,6 +5,7 @@ import type { ClientCapabilities } from "@modelcontextprotocol/sdk/types.js";
 import { OAuthClientState } from "./oauth-types";
 
 export type BaseServerOptions = {
+  name?: string;
   logger?: LogHandler;
   timeout?: number;
   capabilities?: ClientCapabilities;
