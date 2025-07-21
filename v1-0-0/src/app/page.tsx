@@ -31,10 +31,6 @@ const users = [
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState("servers");
-  const [chatConfig, setChatConfig] = useState({
-    model: "claude-3-5-sonnet-20240620",
-    systemPrompt: "",
-  });
 
   const {
     appState,
@@ -114,16 +110,7 @@ export default function Home() {
           )}
 
           {activeTab === "chat" && (
-            <div className="flex flex-col h-full">
-              <div className="flex-1">
-                <ChatTab
-                  serverConfig={selectedMCPConfig}
-                  model={chatConfig.model}
-                  apiKey={""}
-                  systemPrompt={chatConfig.systemPrompt}
-                />
-              </div>
-            </div>
+            <ChatTab serverConfig={selectedMCPConfig} />
           )}
 
           {activeTab === "settings" && <SettingsTab />}

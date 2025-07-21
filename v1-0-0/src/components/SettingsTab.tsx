@@ -6,10 +6,10 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
-import { useProviderTokens } from "@/hooks/useProviderTokens";
+import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
 
 export function SettingsTab() {
-  const { tokens, setToken, clearToken, hasToken } = useProviderTokens();
+  const { tokens, setToken, clearToken, hasToken } = useAiProviderKeys();
   const [showAnthropicKey, setShowAnthropicKey] = useState(false);
   const [showOpenAIKey, setShowOpenAIKey] = useState(false);
 
@@ -37,7 +37,8 @@ export function SettingsTab() {
             API Keys
           </CardTitle>
           <p className="text-sm text-muted-foreground">
-            Configure your LLM provider API keys. Keys are stored locally in your browser.
+            Configure your LLM provider API keys. Keys are stored locally in
+            your browser.
           </p>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -59,7 +60,11 @@ export function SettingsTab() {
                 <Input
                   id="anthropic-key"
                   type={showAnthropicKey ? "text" : "password"}
-                  value={showAnthropicKey ? tokens.anthropic : maskToken(tokens.anthropic)}
+                  value={
+                    showAnthropicKey
+                      ? tokens.anthropic
+                      : maskToken(tokens.anthropic)
+                  }
                   onChange={(e) => setToken("anthropic", e.target.value)}
                   placeholder="sk-ant-..."
                   className="pr-10"
@@ -119,7 +124,9 @@ export function SettingsTab() {
                 <Input
                   id="openai-key"
                   type={showOpenAIKey ? "text" : "password"}
-                  value={showOpenAIKey ? tokens.openai : maskToken(tokens.openai)}
+                  value={
+                    showOpenAIKey ? tokens.openai : maskToken(tokens.openai)
+                  }
                   onChange={(e) => setToken("openai", e.target.value)}
                   placeholder="sk-..."
                   className="pr-10"

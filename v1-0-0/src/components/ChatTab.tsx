@@ -1,28 +1,22 @@
 "use client";
 
 import { useRef, useEffect, useState } from "react";
-import { MessageCircle } from "lucide-react";
+import { MessageCircle, ChevronUp } from "lucide-react";
 import { MastraMCPServerDefinition } from "@/lib/types";
 import { useChat } from "@/hooks/use-chat";
 import { Message } from "./chat/message";
 import { ChatInput } from "./chat/chat-input";
+import { ModelSelector } from "./chat/model-selector";
 import { TooltipProvider } from "./ui/tooltip";
-import { cn } from "@/lib/chat-utils";
+import { Button } from "./ui/button";
 import { motion } from "framer-motion";
 
 interface ChatTabProps {
   serverConfig?: MastraMCPServerDefinition;
-  model?: string;
-  apiKey?: string;
   systemPrompt?: string;
 }
 
-export function ChatTab({
-  serverConfig,
-  model,
-  apiKey,
-  systemPrompt,
-}: ChatTabProps) {
+export function ChatTab({ serverConfig, systemPrompt = "" }: ChatTabProps) {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [showScrollButton, setShowScrollButton] = useState(false);
@@ -37,10 +31,12 @@ export function ChatTab({
     stopGeneration,
     regenerateMessage,
     clearChat,
+    model,
+    availableModels,
+    hasValidApiKey,
+    setModel,
   } = useChat({
     serverConfig,
-    model,
-    apiKey,
     systemPrompt,
     onError: (error) => {
       console.error("Chat error:", error);
@@ -82,17 +78,18 @@ export function ChatTab({
     // You could add a toast notification here
   };
 
-  if (!serverConfig || !model || !apiKey) {
+  if (!serverConfig) {
     return (
-      <div className="flex flex-col min-w-0 h-dvh bg-background">
+      <div className="flex flex-col min-w-0 h-dvh">
         <div className="flex items-center justify-center h-full">
-          <div className="text-center space-y-3">
-            <MessageCircle className="h-12 w-12 mx-auto text-muted-foreground" />
-            <div>
-              <h3 className="font-medium text-lg">Configuration Required</h3>
-              <p className="text-muted-foreground">
-                Please select a server, model, and provide an API key to use
-                chat functionality
+          <div className="text-center space-y-4 max-w-sm">
+            <div className="w-16 h-16 mx-auto bg-muted/50 rounded-full flex items-center justify-center">
+              <MessageCircle className="h-8 w-8 text-muted-foreground" />
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-lg font-medium">No Server Connected</h3>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                Connect to an MCP server to start chatting with AI assistants.
               </p>
             </div>
           </div>
@@ -103,51 +100,44 @@ export function ChatTab({
 
   return (
     <TooltipProvider>
-      <div className="flex flex-col min-w-0 h-dvh bg-background">
-        {/* Chat Header */}
-        <div className="flex items-center justify-between p-4 border-b bg-background">
-          <div className="flex items-center gap-2">
-            <MessageCircle className="h-5 w-5" />
-            <span className="font-medium">Chat</span>
-            <span className="text-muted-foreground">
-              with {serverConfig.name}
-            </span>
+      <div className="flex flex-col min-w-0 h-dvh">
+        {/* Minimal Header */}
+        <div className="flex items-center justify-between px-6 py-3">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 bg-green-500 rounded-full" />
+              <span className="text-sm font-medium">{serverConfig.name}</span>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            {messages.length > 0 && (
-              <button
-                onClick={clearChat}
-                className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-              >
-                Clear
-              </button>
-            )}
-            <div
-              className={cn(
-                "w-2 h-2 rounded-full",
-                serverConfig ? "bg-green-500" : "bg-red-500",
-              )}
-            />
-          </div>
+          {messages.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={clearChat}
+              className="text-xs h-7 px-2 text-muted-foreground hover:text-foreground"
+            >
+              Clear
+            </Button>
+          )}
         </div>
 
         {/* Messages Container */}
         <div
           ref={messagesContainerRef}
           onScroll={handleScroll}
-          className="flex flex-col min-w-0 gap-6 flex-1 overflow-y-scroll pt-4 relative"
+          className="flex flex-col min-w-0 gap-6 flex-1 overflow-y-scroll px-6 relative"
         >
           {messages.length === 0 && (
             <div className="flex items-center justify-center h-full">
-              <div className="text-center space-y-3 max-w-md">
-                <div className="text-4xl">👋</div>
-                <div>
-                  <h3 className="font-medium text-lg mb-2">
-                    Start a conversation
+              <div className="text-center space-y-4 max-w-md">
+                <div className="text-5xl">💬</div>
+                <div className="space-y-2">
+                  <h3 className="text-xl font-medium">
+                    Ready to chat
                   </h3>
                   <p className="text-muted-foreground text-sm leading-relaxed">
-                    I can help you interact with your MCP server and use its
-                    tools. Try asking me to perform tasks or get information!
+                    Ask me anything about your MCP server or request help with tasks.
+                    I can use the available tools to assist you.
                   </p>
                 </div>
               </div>
@@ -171,52 +161,79 @@ export function ChatTab({
             messages.length > 0 &&
             messages[messages.length - 1].role === "user" && (
               <motion.div
-                initial={{ y: 5, opacity: 0 }}
+                initial={{ y: 8, opacity: 0 }}
                 animate={{ y: 0, opacity: 1 }}
-                className="w-full mx-auto max-w-4xl px-4"
+                className="w-full max-w-4xl mx-auto"
               >
-                <div className="flex gap-4">
-                  <div className="size-8 flex items-center rounded-full justify-center ring-1 shrink-0 ring-border bg-background">
-                    <MessageCircle className="h-4 w-4" />
+                <div className="flex gap-3">
+                  <div className="w-7 h-7 flex items-center rounded-full justify-center bg-muted/50 shrink-0">
+                    <MessageCircle className="h-3.5 w-3.5 text-muted-foreground" />
                   </div>
-                  <div className="flex flex-col gap-2">
-                    <div className="flex items-center gap-2 text-muted-foreground">
-                      <span className="text-sm">Thinking...</span>
-                      <div className="flex space-x-1">
-                        <div className="w-1 h-1 bg-current rounded-full animate-bounce" />
-                        <div className="w-1 h-1 bg-current rounded-full animate-bounce delay-100" />
-                        <div className="w-1 h-1 bg-current rounded-full animate-bounce delay-200" />
-                      </div>
+                  <div className="flex items-center gap-2 text-muted-foreground pt-1">
+                    <span className="text-sm">Thinking</span>
+                    <div className="flex space-x-0.5">
+                      <div className="w-1 h-1 bg-current rounded-full animate-bounce" />
+                      <div className="w-1 h-1 bg-current rounded-full animate-bounce delay-100" />
+                      <div className="w-1 h-1 bg-current rounded-full animate-bounce delay-200" />
                     </div>
                   </div>
                 </div>
               </motion.div>
             )}
 
-          <motion.div className="shrink-0 min-w-[24px] min-h-[24px]" />
+          <div className="shrink-0 h-4" />
         </div>
 
         {/* Error Display */}
         {error && (
-          <div className="mx-4 mb-4 bg-destructive/10 border border-destructive/20 rounded-lg p-3">
+          <div className="mx-6 mb-4 bg-destructive/5 border border-destructive/10 rounded-lg p-3">
             <p className="text-sm text-destructive">{error}</p>
           </div>
         )}
 
         {/* Chat Input */}
-        <form className="flex mx-auto px-4 bg-background pb-4 md:pb-6 gap-2 w-full md:max-w-3xl">
-          <ChatInput
-            value={input}
-            onChange={setInput}
-            onSubmit={sendMessage}
-            onStop={stopGeneration}
-            disabled={!serverConfig || !model || !apiKey}
-            isLoading={isLoading}
-            placeholder={`Message ${serverConfig.name}...`}
-            showScrollToBottom={showScrollButton}
-            onScrollToBottom={scrollToBottom}
-          />
-        </form>
+        <div className="px-6 pb-6">
+          <div className="mx-auto max-w-4xl">
+            <div className="flex gap-3 items-end">
+              <div className="flex-1">
+                <ChatInput
+                  value={input}
+                  onChange={setInput}
+                  onSubmit={sendMessage}
+                  onStop={stopGeneration}
+                  disabled={!serverConfig || !hasValidApiKey}
+                  isLoading={isLoading}
+                  placeholder={`Message ${serverConfig.name}...`}
+                  showScrollToBottom={showScrollButton}
+                  onScrollToBottom={scrollToBottom}
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <ModelSelector
+                  currentModel={model}
+                  availableModels={availableModels}
+                  onModelChange={setModel}
+                  disabled={isLoading}
+                />
+                {showScrollButton && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={scrollToBottom}
+                    className="h-7 w-7 p-0"
+                  >
+                    <ChevronUp className="h-3 w-3" />
+                  </Button>
+                )}
+              </div>
+            </div>
+            {!hasValidApiKey && availableModels.length === 0 && (
+              <p className="text-xs text-muted-foreground mt-2 text-center">
+                Configure API keys in Settings to enable chat
+              </p>
+            )}
+          </div>
+        </div>
       </div>
     </TooltipProvider>
   );

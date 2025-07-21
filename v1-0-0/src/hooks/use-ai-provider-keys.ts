@@ -7,7 +7,7 @@ export interface ProviderTokens {
   openai: string;
 }
 
-export interface UseProviderTokensReturn {
+export interface useAiProviderKeysReturn {
   tokens: ProviderTokens;
   setToken: (provider: keyof ProviderTokens, token: string) => void;
   clearToken: (provider: keyof ProviderTokens) => void;
@@ -23,7 +23,7 @@ const defaultTokens: ProviderTokens = {
   openai: "",
 };
 
-export function useProviderTokens(): UseProviderTokensReturn {
+export function useAiProviderKeys(): useAiProviderKeysReturn {
   const [tokens, setTokens] = useState<ProviderTokens>(defaultTokens);
   const [isInitialized, setIsInitialized] = useState(false);
 
@@ -37,7 +37,10 @@ export function useProviderTokens(): UseProviderTokensReturn {
           setTokens(parsedTokens);
         }
       } catch (error) {
-        console.warn("Failed to load provider tokens from localStorage:", error);
+        console.warn(
+          "Failed to load provider tokens from localStorage:",
+          error,
+        );
       }
       setIsInitialized(true);
     }
@@ -54,12 +57,15 @@ export function useProviderTokens(): UseProviderTokensReturn {
     }
   }, [tokens, isInitialized]);
 
-  const setToken = useCallback((provider: keyof ProviderTokens, token: string) => {
-    setTokens((prev) => ({
-      ...prev,
-      [provider]: token,
-    }));
-  }, []);
+  const setToken = useCallback(
+    (provider: keyof ProviderTokens, token: string) => {
+      setTokens((prev) => ({
+        ...prev,
+        [provider]: token,
+      }));
+    },
+    [],
+  );
 
   const clearToken = useCallback((provider: keyof ProviderTokens) => {
     setTokens((prev) => ({
@@ -72,13 +78,19 @@ export function useProviderTokens(): UseProviderTokensReturn {
     setTokens(defaultTokens);
   }, []);
 
-  const hasToken = useCallback((provider: keyof ProviderTokens) => {
-    return Boolean(tokens[provider]?.trim());
-  }, [tokens]);
+  const hasToken = useCallback(
+    (provider: keyof ProviderTokens) => {
+      return Boolean(tokens[provider]?.trim());
+    },
+    [tokens],
+  );
 
-  const getToken = useCallback((provider: keyof ProviderTokens) => {
-    return tokens[provider] || "";
-  }, [tokens]);
+  const getToken = useCallback(
+    (provider: keyof ProviderTokens) => {
+      return tokens[provider] || "";
+    },
+    [tokens],
+  );
 
   return {
     tokens,

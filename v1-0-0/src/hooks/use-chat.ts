@@ -4,28 +4,29 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import { ChatMessage, ChatState, Attachment } from "@/lib/chat-types";
 import { createMessage } from "@/lib/chat-utils";
 import { MastraMCPServerDefinition } from "@/lib/types";
+import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
 
 interface UseChatOptions {
   initialMessages?: ChatMessage[];
   serverConfig?: MastraMCPServerDefinition;
-  model?: string;
-  apiKey?: string;
+  initialModel?: string;
   systemPrompt?: string;
   onMessageSent?: (message: ChatMessage) => void;
   onMessageReceived?: (message: ChatMessage) => void;
   onError?: (error: string) => void;
+  onModelChange?: (model: string) => void;
 }
 
 export function useChat(options: UseChatOptions = {}) {
   const {
     initialMessages = [],
     serverConfig,
-    model,
-    apiKey,
+    initialModel = "claude-3-5-sonnet-20240620",
     systemPrompt,
     onMessageSent,
     onMessageReceived,
     onError,
+    onModelChange,
   } = options;
 
   const [state, setState] = useState<ChatState>({
@@ -36,11 +37,49 @@ export function useChat(options: UseChatOptions = {}) {
 
   const [input, setInput] = useState("");
   const [status, setStatus] = useState<"idle" | "error">("idle");
+  const [model, setModel] = useState(initialModel);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const { getToken, hasToken } = useAiProviderKeys();
+
+  // Get API key based on current model
+  const getApiKeyForModel = useCallback(
+    (modelName: string) => {
+      if (modelName.includes("claude")) {
+        return getToken("anthropic");
+      } else if (modelName.includes("gpt")) {
+        return getToken("openai");
+      }
+      return "";
+    },
+    [getToken],
+  );
+
+  const currentApiKey = getApiKeyForModel(model);
+
+  // Handle model changes
+  const handleModelChange = useCallback(
+    (newModel: string) => {
+      setModel(newModel);
+      if (onModelChange) {
+        onModelChange(newModel);
+      }
+    },
+    [onModelChange],
+  );
+
+  // Available models with API keys
+  const availableModels = [
+    {
+      id: "claude-3-5-sonnet-20240620",
+      name: "Claude 3.5 Sonnet",
+      provider: "anthropic",
+    },
+    { id: "gpt-4o-mini", name: "GPT-4o Mini", provider: "openai" },
+  ].filter((m) => hasToken(m.provider as "anthropic" | "openai"));
 
   const sendChatRequest = useCallback(
     async (userMessage: ChatMessage) => {
-      if (!serverConfig || !model || !apiKey) {
+      if (!serverConfig || !model || !currentApiKey) {
         throw new Error(
           "Missing required configuration: serverConfig, model, and apiKey are required",
         );
@@ -59,12 +98,12 @@ export function useChat(options: UseChatOptions = {}) {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Accept": "text/event-stream",
+            Accept: "text/event-stream",
           },
           body: JSON.stringify({
             serverConfig,
             model,
-            apiKey,
+            apiKey: currentApiKey,
             systemPrompt,
             messages: state.messages.concat(userMessage),
           }),
@@ -93,12 +132,12 @@ export function useChat(options: UseChatOptions = {}) {
             if (done) break;
 
             const chunk = decoder.decode(value);
-            const lines = chunk.split('\n');
+            const lines = chunk.split("\n");
 
             for (const line of lines) {
-              if (line.startsWith('data: ')) {
+              if (line.startsWith("data: ")) {
                 const data = line.slice(6);
-                if (data === '[DONE]') {
+                if (data === "[DONE]") {
                   setState((prev) => ({
                     ...prev,
                     isLoading: false,
@@ -148,7 +187,7 @@ export function useChat(options: UseChatOptions = {}) {
     [
       serverConfig,
       model,
-      apiKey,
+      currentApiKey,
       systemPrompt,
       state.messages,
       onMessageReceived,
@@ -280,13 +319,16 @@ export function useChat(options: UseChatOptions = {}) {
     status,
     input,
     setInput,
+    model,
+    availableModels,
+    hasValidApiKey: Boolean(currentApiKey),
 
     // Actions
     sendMessage,
     stopGeneration,
-    // editMessage,
     regenerateMessage,
     deleteMessage,
     clearChat,
+    setModel: handleModelChange,
   };
 }
