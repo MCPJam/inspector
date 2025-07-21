@@ -118,6 +118,8 @@ export function useChat(options: UseChatOptions = {}) {
         const reader = response.body?.getReader();
         const decoder = new TextDecoder();
         let assistantContent = "";
+        let toolCalls: any[] = [];
+        const toolResults: any[] = [];
 
         if (reader) {
           while (true) {
@@ -140,6 +142,7 @@ export function useChat(options: UseChatOptions = {}) {
 
                 try {
                   const parsed = JSON.parse(data);
+
                   if (parsed.content) {
                     assistantContent += parsed.content;
                     setState((prev) => ({
@@ -151,6 +154,46 @@ export function useChat(options: UseChatOptions = {}) {
                       ),
                     }));
                   }
+
+                  if (parsed.toolCall) {
+                    toolCalls.push(parsed.toolCall);
+                    setState((prev) => ({
+                      ...prev,
+                      messages: prev.messages.map((msg) =>
+                        msg.id === assistantMessage.id
+                          ? { ...msg, toolCalls: [...toolCalls] }
+                          : msg,
+                      ),
+                    }));
+                  }
+
+                  if (parsed.toolResult) {
+                    toolResults.push(parsed.toolResult);
+                    // Update the corresponding tool call status
+                    toolCalls = toolCalls.map((tc) =>
+                      tc.id === parsed.toolResult.toolCallId
+                        ? {
+                            ...tc,
+                            status: parsed.toolResult.error
+                              ? "error"
+                              : "completed",
+                          }
+                        : tc,
+                    );
+                    setState((prev) => ({
+                      ...prev,
+                      messages: prev.messages.map((msg) =>
+                        msg.id === assistantMessage.id
+                          ? {
+                              ...msg,
+                              toolCalls: [...toolCalls],
+                              toolResults: [...toolResults],
+                            }
+                          : msg,
+                      ),
+                    }));
+                  }
+
                   if (parsed.error) {
                     throw new Error(parsed.error);
                   }

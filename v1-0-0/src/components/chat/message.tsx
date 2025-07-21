@@ -2,14 +2,14 @@
 
 import { memo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { cn, formatTimestamp, sanitizeText } from "@/lib/chat-utils";
+import { formatTimestamp, sanitizeText } from "@/lib/chat-utils";
 import { ChatMessage } from "@/lib/chat-types";
-import { Bot, Edit, Copy, RotateCcw } from "lucide-react";
+import { Bot, Copy, RotateCcw } from "lucide-react";
 import { Markdown } from "./markdown";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { MessageEditor } from "./message-editor";
-import { ToolCallDisplay } from "./tool-call-display";
+import { ToolCallDisplay } from "./tool-call";
 
 interface MessageProps {
   message: ChatMessage;
@@ -98,9 +98,18 @@ const PureMessage = ({
               {/* Tool Calls */}
               {message.toolCalls && message.toolCalls.length > 0 && (
                 <div className="space-y-2">
-                  {message.toolCalls.map((toolCall) => (
-                    <ToolCallDisplay key={toolCall.id} toolCall={toolCall} />
-                  ))}
+                  {message.toolCalls.map((toolCall) => {
+                    const toolResult = message.toolResults?.find(
+                      (tr) => tr.toolCallId === toolCall.id,
+                    );
+                    return (
+                      <ToolCallDisplay
+                        key={toolCall.id}
+                        toolCall={toolCall}
+                        toolResult={toolResult}
+                      />
+                    );
+                  })}
                 </div>
               )}
 
@@ -265,6 +274,10 @@ export const Message = memo(PureMessage, (prevProps, nextProps) => {
   return (
     prevProps.message.id === nextProps.message.id &&
     prevProps.message.content === nextProps.message.content &&
-    prevProps.isLoading === nextProps.isLoading
+    prevProps.isLoading === nextProps.isLoading &&
+    JSON.stringify(prevProps.message.toolCalls) ===
+      JSON.stringify(nextProps.message.toolCalls) &&
+    JSON.stringify(prevProps.message.toolResults) ===
+      JSON.stringify(nextProps.message.toolResults)
   );
 });

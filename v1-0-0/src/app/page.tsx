@@ -78,7 +78,8 @@ export default function Home() {
           {/* Active Server Selector - Only show on Tools, Resources, and Prompts pages */}
           {(activeTab === "tools" ||
             activeTab === "resources" ||
-            activeTab === "prompts") && (
+            activeTab === "prompts" ||
+            activeTab === "chat") && (
             <ActiveServerSelector
               connectedServerConfigs={connectedServerConfigs}
               selectedServer={appState.selectedServer}
@@ -109,9 +110,7 @@ export default function Home() {
             <PromptsTab serverConfig={selectedMCPConfig} />
           )}
 
-          {activeTab === "chat" && (
-            <ChatTab serverConfig={selectedMCPConfig} />
-          )}
+          {activeTab === "chat" && <ChatTab serverConfig={selectedMCPConfig} />}
 
           {activeTab === "settings" && <SettingsTab />}
         </div>
