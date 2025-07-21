@@ -11,16 +11,16 @@ import {
   MoreIcon,
   CopyIcon,
   RefreshIcon,
-} from "./icons";
+} from "../icons";
 import { Markdown } from "./markdown";
-import { Button } from "./ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { Button } from "../ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "./ui/dropdown-menu";
+} from "../ui/dropdown-menu";
 import { MessageEditor } from "./message-editor";
 import { ToolCallDisplay } from "./tool-call-display";
 

@@ -2,12 +2,12 @@
 
 import { useState } from "react";
 
-import { ServerConnection } from "@/components/ServerConnection";
+import { ServersTab } from "@/components/ServersTab";
 import { ToolsTab } from "@/components/ToolsTab";
 import { ResourcesTab } from "@/components/ResourcesTab";
 import { PromptsTab } from "@/components/PromptsTab";
 import { ChatTab } from "@/components/ChatTab";
-import { ChatConfig } from "@/components/ChatConfig";
+import { SettingsTab } from "@/components/SettingsTab";
 import { MCPSidebar } from "@/components/mcp-sidebar";
 import { ActiveServerSelector } from "@/components/ActiveServerSelector";
 import {
@@ -33,14 +33,12 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState("servers");
   const [chatConfig, setChatConfig] = useState({
     model: "claude-3-5-sonnet-20240620",
-    apiKey: "",
     systemPrompt: "",
   });
 
   const {
     appState,
     isLoading,
-    connectedServers,
     connectedServerConfigs,
     selectedMCPConfig,
     handleConnect,
@@ -95,7 +93,7 @@ export default function Home() {
 
           {/* Content Areas */}
           {activeTab === "servers" && (
-            <ServerConnection
+            <ServersTab
               connectedServerConfigs={connectedServerConfigs}
               onConnect={handleConnect}
               onDisconnect={handleDisconnect}
@@ -117,24 +115,18 @@ export default function Home() {
 
           {activeTab === "chat" && (
             <div className="flex flex-col h-full">
-              <ChatConfig
-                model={chatConfig.model}
-                apiKey={chatConfig.apiKey}
-                systemPrompt={chatConfig.systemPrompt}
-                onModelChange={(model) => setChatConfig(prev => ({ ...prev, model }))}
-                onApiKeyChange={(apiKey) => setChatConfig(prev => ({ ...prev, apiKey }))}
-                onSystemPromptChange={(systemPrompt) => setChatConfig(prev => ({ ...prev, systemPrompt }))}
-              />
               <div className="flex-1">
-                <ChatTab 
+                <ChatTab
                   serverConfig={selectedMCPConfig}
                   model={chatConfig.model}
-                  apiKey={chatConfig.apiKey}
+                  apiKey={""}
                   systemPrompt={chatConfig.systemPrompt}
                 />
               </div>
             </div>
           )}
+
+          {activeTab === "settings" && <SettingsTab />}
         </div>
       </SidebarInset>
     </SidebarProvider>

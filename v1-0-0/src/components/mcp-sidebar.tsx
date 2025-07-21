@@ -8,6 +8,7 @@ import {
   MessageCircle,
   Server,
   Monitor,
+  Settings,
 } from "lucide-react";
 
 import { NavMain } from "@/components/sidebar/nav-main";
@@ -45,6 +46,11 @@ const navMainItems = [
     title: "Chat",
     url: "#chat",
     icon: MessageCircle,
+  },
+  {
+    title: "Settings",
+    url: "#settings",
+    icon: Settings,
   },
 ];
 

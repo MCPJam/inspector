@@ -5,23 +5,23 @@ import { Card } from "./ui/card";
 import { Button } from "./ui/button";
 import { Plus, Server, Database } from "lucide-react";
 import { ServerWithName } from "@/hooks/useAppState";
-import { ServerConnectionCard } from "./ServerConnectionCard";
-import { AddServerModal } from "./AddServerModal";
+import { ServerConnectionCard } from "./connection/ServerConnectionCard";
+import { AddServerModal } from "./connection/AddServerModal";
 import { ServerFormData } from "@/lib/types";
 
-interface ServerConnectionProps {
+interface ServersTabProps {
   connectedServerConfigs: Record<string, ServerWithName>;
   onConnect: (formData: ServerFormData) => void;
   onDisconnect: (serverName: string) => void;
   onReconnect: (serverName: string) => void;
 }
 
-export function ServerConnection({
+export function ServersTab({
   connectedServerConfigs,
   onConnect,
   onDisconnect,
   onReconnect,
-}: ServerConnectionProps) {
+}: ServersTabProps) {
   const [isAddingServer, setIsAddingServer] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [filterType, setFilterType] = useState<"all" | "stdio" | "http">("all");

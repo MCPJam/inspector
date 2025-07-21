@@ -1,29 +1,29 @@
-'use client';
+"use client";
 
-import { ToolCall, MCPToolCall } from '@/lib/chat-types';
-import { cn } from '@/lib/chat-utils';
-import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
-import { Badge } from './ui/badge';
+import { ToolCall, MCPToolCall } from "@/lib/chat-types";
+import { cn } from "@/lib/chat-utils";
+import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
+import { Badge } from "../ui/badge";
 
 interface ToolCallDisplayProps {
   toolCall: ToolCall | MCPToolCall;
 }
 
 export function ToolCallDisplay({ toolCall }: ToolCallDisplayProps) {
-  const isMCPTool = 'serverId' in toolCall;
-  
-  const getStatusColor = (status: ToolCall['status']) => {
+  const isMCPTool = "serverId" in toolCall;
+
+  const getStatusColor = (status: ToolCall["status"]) => {
     switch (status) {
-      case 'pending':
-        return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300';
-      case 'executing':
-        return 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300';
-      case 'completed':
-        return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300';
-      case 'error':
-        return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300';
+      case "pending":
+        return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300";
+      case "executing":
+        return "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300";
+      case "completed":
+        return "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300";
+      case "error":
+        return "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300";
       default:
-        return 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-300';
+        return "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-300";
     }
   };
 
@@ -39,8 +39,8 @@ export function ToolCallDisplay({ toolCall }: ToolCallDisplayProps) {
               </span>
             )}
           </CardTitle>
-          <Badge 
-            variant="secondary" 
+          <Badge
+            variant="secondary"
             className={cn("text-xs", getStatusColor(toolCall.status))}
           >
             {toolCall.status}
@@ -50,7 +50,9 @@ export function ToolCallDisplay({ toolCall }: ToolCallDisplayProps) {
       <CardContent>
         {Object.keys(toolCall.parameters).length > 0 && (
           <div className="space-y-2">
-            <div className="text-xs font-medium text-muted-foreground">Parameters:</div>
+            <div className="text-xs font-medium text-muted-foreground">
+              Parameters:
+            </div>
             <div className="bg-background rounded-md p-3 text-sm">
               <pre className="whitespace-pre-wrap break-words">
                 {JSON.stringify(toolCall.parameters, null, 2)}
@@ -58,8 +60,8 @@ export function ToolCallDisplay({ toolCall }: ToolCallDisplayProps) {
             </div>
           </div>
         )}
-        
-        {toolCall.status === 'executing' && (
+
+        {toolCall.status === "executing" && (
           <div className="flex items-center gap-2 text-sm text-muted-foreground mt-2">
             <div className="flex space-x-1">
               <div className="w-2 h-2 bg-current rounded-full animate-bounce" />

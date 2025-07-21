@@ -2,16 +2,16 @@
 
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
-import { Card } from "./ui/card";
-import { Button } from "./ui/button";
-import { Separator } from "./ui/separator";
-import { TooltipProvider } from "./ui/tooltip";
+import { Card } from "../ui/card";
+import { Button } from "../ui/button";
+import { Separator } from "../ui/separator";
+import { TooltipProvider } from "../ui/tooltip";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "./ui/dropdown-menu";
+} from "../ui/dropdown-menu";
 import {
   ChevronDown,
   ChevronUp,

@@ -1,13 +1,13 @@
-'use client';
+"use client";
 
-import { useState, useRef, useEffect, useCallback } from 'react';
-import { cn } from '@/lib/chat-utils';
-import { Attachment } from '@/lib/chat-types';
-import { Button } from './ui/button';
-import { Textarea } from './ui/textarea';
-import { ArrowUpIcon, PaperclipIcon, StopIcon } from './icons';
-import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowDown } from 'lucide-react';
+import { useState, useRef, useEffect, useCallback } from "react";
+import { cn } from "@/lib/chat-utils";
+import { Attachment } from "@/lib/chat-types";
+import { Button } from "../ui/button";
+import { Textarea } from "../ui/textarea";
+import { ArrowUpIcon, PaperclipIcon, StopIcon } from "../icons";
+import { motion, AnimatePresence } from "framer-motion";
+import { ArrowDown } from "lucide-react";
 
 interface ChatInputProps {
   value: string;
@@ -45,74 +45,86 @@ export function ChatInput({
 
   const adjustHeight = () => {
     if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = "auto";
       textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
     }
   };
 
   const resetHeight = () => {
     if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = "auto";
     }
   };
 
   const handleSubmit = useCallback(() => {
-    if (!value.trim() || disabled || isLoading || uploadQueue.length > 0) return;
-    
+    if (!value.trim() || disabled || isLoading || uploadQueue.length > 0)
+      return;
+
     onSubmit(value.trim(), attachments.length > 0 ? attachments : undefined);
-    onChange('');
+    onChange("");
     setAttachments([]);
     resetHeight();
-    
+
     // Focus back to textarea
     setTimeout(() => {
       textareaRef.current?.focus();
     }, 0);
-  }, [value, disabled, isLoading, uploadQueue.length, onSubmit, attachments, onChange]);
+  }, [
+    value,
+    disabled,
+    isLoading,
+    uploadQueue.length,
+    onSubmit,
+    attachments,
+    onChange,
+  ]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       handleSubmit();
     }
   };
 
-  const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
-    if (files.length === 0) return;
+  const handleFileChange = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(e.target.files || []);
+      if (files.length === 0) return;
 
-    setUploadQueue(files.map(f => f.name));
+      setUploadQueue(files.map((f) => f.name));
 
-    try {
-      // Mock file upload - in real implementation, upload to your backend
-      const uploadedFiles: Attachment[] = await Promise.all(
-        files.map(async (file) => {
-          // Simulate upload delay
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          
-          return {
-            id: Math.random().toString(36).substr(2, 9),
-            name: file.name,
-            url: URL.createObjectURL(file), // Temporary URL for demo
-            contentType: file.type,
-            size: file.size,
-          };
-        })
-      );
+      try {
+        // Mock file upload - in real implementation, upload to your backend
+        const uploadedFiles: Attachment[] = await Promise.all(
+          files.map(async (file) => {
+            // Simulate upload delay
+            await new Promise((resolve) => setTimeout(resolve, 1000));
 
-      setAttachments(prev => [...prev, ...uploadedFiles]);
-    } catch (error) {
-      console.error('Error uploading files:', error);
-    } finally {
-      setUploadQueue([]);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
+            return {
+              id: Math.random().toString(36).substr(2, 9),
+              name: file.name,
+              url: URL.createObjectURL(file), // Temporary URL for demo
+              contentType: file.type,
+              size: file.size,
+            };
+          }),
+        );
+
+        setAttachments((prev) => [...prev, ...uploadedFiles]);
+      } catch (error) {
+        console.error("Error uploading files:", error);
+      } finally {
+        setUploadQueue([]);
+        if (fileInputRef.current) {
+          fileInputRef.current.value = "";
+        }
       }
-    }
-  }, []);
+    },
+    [],
+  );
 
   const removeAttachment = (id: string) => {
-    setAttachments(prev => prev.filter(a => a.id !== id));
+    setAttachments((prev) => prev.filter((a) => a.id !== id));
   };
 
   return (
@@ -189,7 +201,7 @@ export function ChatInput({
           className={cn(
             "min-h-[80px] max-h-[200px] resize-none pr-20 pb-12",
             "focus-visible:ring-1",
-            className
+            className,
           )}
           rows={2}
           autoFocus
