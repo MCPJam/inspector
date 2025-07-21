@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 
-import { ServerConnection } from "@/components/ServerConnection";
+import { ServersTab } from "@/components/ServersTab";
 import { ToolsTab } from "@/components/ToolsTab";
 import { ResourcesTab } from "@/components/ResourcesTab";
 import { PromptsTab } from "@/components/PromptsTab";
 import { ChatTab } from "@/components/ChatTab";
+import { SettingsTab } from "@/components/SettingsTab";
 import { MCPSidebar } from "@/components/mcp-sidebar";
 import { ActiveServerSelector } from "@/components/ActiveServerSelector";
 import {
@@ -34,7 +35,6 @@ export default function Home() {
   const {
     appState,
     isLoading,
-    connectedServers,
     connectedServerConfigs,
     selectedMCPConfig,
     handleConnect,
@@ -78,7 +78,8 @@ export default function Home() {
           {/* Active Server Selector - Only show on Tools, Resources, and Prompts pages */}
           {(activeTab === "tools" ||
             activeTab === "resources" ||
-            activeTab === "prompts") && (
+            activeTab === "prompts" ||
+            activeTab === "chat") && (
             <ActiveServerSelector
               connectedServerConfigs={connectedServerConfigs}
               selectedServer={appState.selectedServer}
@@ -89,7 +90,7 @@ export default function Home() {
 
           {/* Content Areas */}
           {activeTab === "servers" && (
-            <ServerConnection
+            <ServersTab
               connectedServerConfigs={connectedServerConfigs}
               onConnect={handleConnect}
               onDisconnect={handleDisconnect}
@@ -110,6 +111,8 @@ export default function Home() {
           )}
 
           {activeTab === "chat" && <ChatTab serverConfig={selectedMCPConfig} />}
+
+          {activeTab === "settings" && <SettingsTab />}
         </div>
       </SidebarInset>
     </SidebarProvider>

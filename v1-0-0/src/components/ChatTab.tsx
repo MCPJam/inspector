@@ -1,180 +1,253 @@
 "use client";
 
-import { useState } from "react";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "./ui/card";
-import { Button } from "./ui/button";
-import { Input } from "./ui/input";
-import { MessageCircle, Send, Bot, User } from "lucide-react";
+import { useRef, useEffect, useState } from "react";
+import { MessageCircle } from "lucide-react";
 import { MastraMCPServerDefinition } from "@/lib/types";
-
-interface ChatMessage {
-  role: "user" | "assistant";
-  content: string;
-  timestamp: Date;
-}
+import { useChat } from "@/hooks/use-chat";
+import { Message } from "./chat/message";
+import { ChatInput } from "./chat/chat-input";
+import { TooltipProvider } from "./ui/tooltip";
+import { motion, AnimatePresence } from "framer-motion";
+import { toast } from "sonner";
 
 interface ChatTabProps {
   serverConfig?: MastraMCPServerDefinition;
+  systemPrompt?: string;
 }
 
-export function ChatTab({ serverConfig }: ChatTabProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [inputMessage, setInputMessage] = useState("");
-  const [loading, setLoading] = useState(false);
+export function ChatTab({ serverConfig, systemPrompt = "" }: ChatTabProps) {
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const [isAtBottom, setIsAtBottom] = useState(true);
 
-  const sendMessage = async () => {
-    if (!inputMessage.trim()) return;
+  const {
+    messages,
+    isLoading,
+    error,
+    input,
+    setInput,
+    sendMessage,
+    stopGeneration,
+    regenerateMessage,
+    clearChat,
+    model,
+    availableModels,
+    hasValidApiKey,
+    setModel,
+  } = useChat({
+    serverConfig,
+    systemPrompt,
+    onError: (error) => {
+      toast.error(error);
+    },
+  });
 
-    const userMessage: ChatMessage = {
-      role: "user",
-      content: inputMessage,
-      timestamp: new Date(),
-    };
+  const hasMessages = messages.length > 0;
 
-    setMessages((prev) => [...prev, userMessage]);
-    setInputMessage("");
-    setLoading(true);
-
-    try {
-      // This is a placeholder - in a real implementation, you'd integrate with an LLM
-      // that can use the MCP tools from the selected server
-      const assistantMessage: ChatMessage = {
-        role: "assistant",
-        content:
-          "This is a placeholder response. In a real implementation, this would be connected to an LLM that can use the MCP tools from your selected server.",
-        timestamp: new Date(),
-      };
-
-      setTimeout(() => {
-        setMessages((prev) => [...prev, assistantMessage]);
-        setLoading(false);
-      }, 1000);
-    } catch (error) {
-      setLoading(false);
+  // Auto-scroll to bottom when new messages arrive
+  useEffect(() => {
+    if (isAtBottom && messagesContainerRef.current) {
+      messagesContainerRef.current.scrollTop =
+        messagesContainerRef.current.scrollHeight;
     }
+  }, [messages, isAtBottom]);
+
+  // Check if user is at bottom
+  const handleScroll = () => {
+    if (!messagesContainerRef.current) return;
+
+    const { scrollTop, scrollHeight, clientHeight } =
+      messagesContainerRef.current;
+    const threshold = 100;
+    const atBottom = scrollHeight - scrollTop - clientHeight < threshold;
+
+    setIsAtBottom(atBottom);
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
+  const handleCopyMessage = (content: string) => {
+    navigator.clipboard.writeText(content);
   };
 
   if (!serverConfig) {
     return (
-      <Card>
-        <CardContent className="pt-6">
-          <p className="text-center text-gray-500">
-            Please select a server to use chat functionality
-          </p>
-        </CardContent>
-      </Card>
+      <div className="flex flex-col h-screen">
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center space-y-6 max-w-md px-4">
+            <div className="w-20 h-20 mx-auto bg-gradient-to-br from-blue-500/10 to-purple-500/10 rounded-full flex items-center justify-center">
+              <MessageCircle className="h-10 w-10 text-muted-foreground/60" />
+            </div>
+            <div className="space-y-3">
+              <h3 className="text-2xl font-semibold">Connect to get started</h3>
+              <p className="text-muted-foreground text-base leading-relaxed">
+                Choose an MCP server from the sidebar to begin chatting with AI
+                assistants.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
     );
   }
 
-  return (
-    <div className="space-y-4">
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <MessageCircle className="h-5 w-5" />
-            Chat
-          </CardTitle>
-          <CardDescription>
-            Chat with an AI assistant that can use tools from your selected
-            server
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {/* Chat Messages */}
-          <div className="space-y-4 mb-4 min-h-[400px] max-h-[600px] overflow-y-auto">
-            {messages.length === 0 && (
-              <div className="text-center text-gray-500 py-8">
-                Start a conversation! The AI can use tools from your connected
-                MCP server.
-              </div>
-            )}
+  // Empty state - centered input
+  if (!hasMessages) {
+    return (
+      <div className="flex flex-col h-screen">
+        <div className="flex-1 flex flex-col items-center justify-center px-4">
+          {/* Welcome Message */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5 }}
+            className="text-center space-y-6 max-w-2xl mb-8"
+          >
+            <div className="space-y-3">
+              <h1 className="text-4xl font-semibold bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
+                What can I help with?
+              </h1>
+              <p className="text-muted-foreground text-lg">
+                Connected to{" "}
+                <span className="font-medium text-foreground">
+                  {serverConfig.name}
+                </span>
+              </p>
+            </div>
+          </motion.div>
 
-            {messages.map((message, index) => (
-              <div
-                key={index}
-                className={`flex gap-3 ${
-                  message.role === "user" ? "justify-end" : "justify-start"
-                }`}
-              >
-                <div
-                  className={`max-w-[70%] p-3 rounded-lg ${
-                    message.role === "user"
-                      ? "bg-blue-600 text-white"
-                      : "bg-gray-100 text-gray-900"
-                  }`}
-                >
-                  <div className="flex items-start gap-2">
-                    {message.role === "assistant" && (
-                      <Bot className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                    )}
-                    {message.role === "user" && (
-                      <User className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                    )}
-                    <div>
-                      <p className="text-sm">{message.content}</p>
-                      <p
-                        className={`text-xs mt-1 ${
-                          message.role === "user"
-                            ? "text-blue-200"
-                            : "text-gray-500"
-                        }`}
-                      >
-                        {message.timestamp.toLocaleTimeString()}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
-
-            {loading && (
-              <div className="flex gap-3 justify-start">
-                <div className="bg-gray-100 p-3 rounded-lg">
-                  <div className="flex items-center gap-2">
-                    <Bot className="h-4 w-4" />
-                    <div className="flex space-x-1">
-                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-100"></div>
-                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-200"></div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Input */}
-          <div className="flex gap-2">
-            <Input
-              value={inputMessage}
-              onChange={(e) => setInputMessage(e.target.value)}
-              onKeyPress={handleKeyPress}
-              placeholder="Type your message..."
-              disabled={loading}
-              className="flex-1"
+          {/* Centered Input */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.1 }}
+            className="w-full max-w-3xl"
+          >
+            <ChatInput
+              value={input}
+              onChange={setInput}
+              onSubmit={sendMessage}
+              onStop={stopGeneration}
+              disabled={!serverConfig || !hasValidApiKey}
+              isLoading={isLoading}
+              placeholder="Send a message..."
+              className="border-2 shadow-lg bg-background/80 backdrop-blur-sm"
+              currentModel={model}
+              availableModels={availableModels}
+              onModelChange={setModel}
+              onClearChat={clearChat}
+              hasMessages={false}
             />
-            <Button
-              onClick={sendMessage}
-              disabled={loading || !inputMessage.trim()}
-            >
-              <Send className="h-4 w-4" />
-            </Button>
+            {!hasValidApiKey && availableModels.length === 0 && (
+              <motion.p
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.3 }}
+                className="text-sm text-muted-foreground mt-3 text-center"
+              >
+                Configure API keys in Settings to start chatting
+              </motion.p>
+            )}
+          </motion.div>
+        </div>
+      </div>
+    );
+  }
+
+  // Active state - messages with bottom input
+  return (
+    <TooltipProvider>
+      <div className="relative bg-background h-screen overflow-hidden">
+        {/* Messages Area - Scrollable with bottom padding for input */}
+        <div
+          ref={messagesContainerRef}
+          onScroll={handleScroll}
+          className="h-full overflow-y-auto pb-40"
+        >
+          <div className="max-w-4xl mx-auto px-4 pt-8 pb-8">
+            <AnimatePresence mode="popLayout">
+              {messages.map((message, index) => (
+                <motion.div
+                  key={message.id}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.3, delay: index * 0.05 }}
+                  className="mb-8"
+                >
+                  <Message
+                    message={message}
+                    isLoading={isLoading && index === messages.length - 1}
+                    onEdit={() => {}}
+                    onRegenerate={regenerateMessage}
+                    onCopy={handleCopyMessage}
+                    showActions={true}
+                  />
+                </motion.div>
+              ))}
+              {/* Thinking indicator */}
+              {isLoading &&
+                messages.length > 0 &&
+                messages[messages.length - 1].role === "user" && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="mb-8"
+                  >
+                    <div className="flex gap-4 items-start">
+                      <div className="w-8 h-8 flex items-center rounded-full justify-center bg-muted/50 shrink-0">
+                        <MessageCircle className="h-4 w-4 text-muted-foreground" />
+                      </div>
+                      <div className="flex items-center gap-2 pt-2">
+                        <span className="text-sm text-muted-foreground">
+                          Thinking
+                        </span>
+                        <div className="flex space-x-1">
+                          <div className="w-1.5 h-1.5 bg-muted-foreground/60 rounded-full animate-bounce" />
+                          <div className="w-1.5 h-1.5 bg-muted-foreground/60 rounded-full animate-bounce delay-100" />
+                          <div className="w-1.5 h-1.5 bg-muted-foreground/60 rounded-full animate-bounce delay-200" />
+                        </div>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+            </AnimatePresence>
           </div>
-        </CardContent>
-      </Card>
-    </div>
+        </div>
+
+        {/* Error Display - Absolute positioned above input */}
+        <AnimatePresence>
+          {error && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 20 }}
+              className="absolute bottom-40 left-0 right-0 px-4 py-3 bg-destructive/5 border-t border-destructive/10 z-10"
+            >
+              <div className="max-w-4xl mx-auto">
+                <p className="text-sm text-destructive">{error}</p>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Fixed Bottom Input - Absolute positioned */}
+        <div className="absolute bottom-0 left-0 right-0 border-t border-border/50 bg-background/80 backdrop-blur-sm">
+          <div className="max-w-4xl mx-auto p-4">
+            <ChatInput
+              value={input}
+              onChange={setInput}
+              onSubmit={sendMessage}
+              onStop={stopGeneration}
+              disabled={!serverConfig || !hasValidApiKey}
+              isLoading={isLoading}
+              placeholder="Send a message..."
+              className="border-2 shadow-sm"
+              currentModel={model}
+              availableModels={availableModels}
+              onModelChange={setModel}
+              onClearChat={clearChat}
+              hasMessages={hasMessages}
+            />
+          </div>
+        </div>
+      </div>
+    </TooltipProvider>
   );
 }
