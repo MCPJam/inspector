@@ -8,10 +8,12 @@ import { Agent } from "@mastra/core/agent";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import { ChatMessage } from "@/lib/chat-types";
+import { MCPClient } from "@mastra/mcp";
+import { getModelById, isModelSupported } from "@/lib/types";
 
 export async function POST(request: NextRequest) {
-  let client: any = null;
-  
+  let client: MCPClient | null = null;
+
   try {
     const { serverConfig, model, apiKey, systemPrompt, messages } =
       await request.json();
@@ -30,10 +32,12 @@ export async function POST(request: NextRequest) {
 
     // Create and connect the MCP client
     client = createMCPClient(validation.config!, `chat-${Date.now()}`);
-    
+
     // Get tools and ensure client is connected
     const tools = await client.getTools();
-    console.log(`MCP client connected, available tools: ${Object.keys(tools || {}).length}`);
+    console.log(
+      `MCP client connected, available tools: ${Object.keys(tools || {}).length}`,
+    );
 
     const llmModel = getLlmModel(model, apiKey);
 
@@ -41,8 +45,7 @@ export async function POST(request: NextRequest) {
     const agent = new Agent({
       name: "MCP Chat Agent",
       instructions:
-        systemPrompt ||
-        "You are a helpful assistant with access to MCP tools.",
+        systemPrompt || "You are a helpful assistant with access to MCP tools.",
       model: llmModel,
       tools: tools && Object.keys(tools).length > 0 ? tools : undefined,
     });
@@ -62,12 +65,18 @@ export async function POST(request: NextRequest) {
       async start(controller) {
         try {
           for await (const chunk of stream.textStream) {
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content: chunk })}\n\n`));
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify({ content: chunk })}\n\n`),
+            );
           }
           controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
         } catch (error) {
           console.error("Streaming error:", error);
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" })}\n\n`));
+          controller.enqueue(
+            encoder.encode(
+              `data: ${JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" })}\n\n`,
+            ),
+          );
         } finally {
           // Clean up client after streaming is complete
           if (client) {
@@ -75,7 +84,10 @@ export async function POST(request: NextRequest) {
               await client.disconnect();
               console.log("MCP client disconnected after streaming");
             } catch (cleanupError) {
-              console.warn("Error cleaning up MCP client after streaming:", cleanupError);
+              console.warn(
+                "Error cleaning up MCP client after streaming:",
+                cleanupError,
+              );
             }
           }
           controller.close();
@@ -85,15 +97,14 @@ export async function POST(request: NextRequest) {
 
     return new Response(readableStream, {
       headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
       },
     });
-
   } catch (error) {
     console.error("Error in chat API:", error);
-    
+
     // Clean up client on error
     if (client) {
       try {
@@ -103,7 +114,7 @@ export async function POST(request: NextRequest) {
         console.warn("Error cleaning up MCP client after error:", cleanupError);
       }
     }
-    
+
     return createErrorResponse(
       "Failed to process chat request",
       error instanceof Error ? error.message : "Unknown error",
@@ -112,12 +123,21 @@ export async function POST(request: NextRequest) {
 }
 
 const getLlmModel = (model: string, apiKey: string) => {
-  switch (model) {
-    case "claude-3-5-sonnet-20240620":
+  if (!isModelSupported(model)) {
+    throw new Error(`Unsupported model: ${model}`);
+  }
+
+  const modelDefinition = getModelById(model);
+  if (!modelDefinition) {
+    throw new Error(`Model not found: ${model}`);
+  }
+
+  switch (modelDefinition.provider) {
+    case "anthropic":
       return createAnthropic({ apiKey })(model);
-    case "gpt-4o-mini":
+    case "openai":
       return createOpenAI({ apiKey })(model);
     default:
-      throw new Error(`Unsupported model: ${model}`);
+      throw new Error(`Unsupported provider for model: ${model}`);
   }
 };

@@ -1,15 +1,14 @@
 "use client";
 
 import { useRef, useEffect, useState } from "react";
-import { MessageCircle, ChevronUp } from "lucide-react";
+import { MessageCircle } from "lucide-react";
 import { MastraMCPServerDefinition } from "@/lib/types";
 import { useChat } from "@/hooks/use-chat";
 import { Message } from "./chat/message";
 import { ChatInput } from "./chat/chat-input";
-import { ModelSelector } from "./chat/model-selector";
 import { TooltipProvider } from "./ui/tooltip";
-import { Button } from "./ui/button";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
+import { toast } from "sonner";
 
 interface ChatTabProps {
   serverConfig?: MastraMCPServerDefinition;
@@ -19,7 +18,6 @@ interface ChatTabProps {
 export function ChatTab({ serverConfig, systemPrompt = "" }: ChatTabProps) {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
-  const [showScrollButton, setShowScrollButton] = useState(false);
 
   const {
     messages,
@@ -39,9 +37,11 @@ export function ChatTab({ serverConfig, systemPrompt = "" }: ChatTabProps) {
     serverConfig,
     systemPrompt,
     onError: (error) => {
-      console.error("Chat error:", error);
+      toast.error(error);
     },
   });
+
+  const hasMessages = messages.length > 0;
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -61,35 +61,25 @@ export function ChatTab({ serverConfig, systemPrompt = "" }: ChatTabProps) {
     const atBottom = scrollHeight - scrollTop - clientHeight < threshold;
 
     setIsAtBottom(atBottom);
-    setShowScrollButton(!atBottom && messages.length > 0);
-  };
-
-  const scrollToBottom = () => {
-    if (messagesContainerRef.current) {
-      messagesContainerRef.current.scrollTo({
-        top: messagesContainerRef.current.scrollHeight,
-        behavior: "smooth",
-      });
-    }
   };
 
   const handleCopyMessage = (content: string) => {
     navigator.clipboard.writeText(content);
-    // You could add a toast notification here
   };
 
   if (!serverConfig) {
     return (
-      <div className="flex flex-col min-w-0 h-dvh">
-        <div className="flex items-center justify-center h-full">
-          <div className="text-center space-y-4 max-w-sm">
-            <div className="w-16 h-16 mx-auto bg-muted/50 rounded-full flex items-center justify-center">
-              <MessageCircle className="h-8 w-8 text-muted-foreground" />
+      <div className="flex flex-col h-full">
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center space-y-6 max-w-md px-4">
+            <div className="w-20 h-20 mx-auto bg-gradient-to-br from-blue-500/10 to-purple-500/10 rounded-full flex items-center justify-center">
+              <MessageCircle className="h-10 w-10 text-muted-foreground/60" />
             </div>
-            <div className="space-y-2">
-              <h3 className="text-lg font-medium">No Server Connected</h3>
-              <p className="text-sm text-muted-foreground leading-relaxed">
-                Connect to an MCP server to start chatting with AI assistants.
+            <div className="space-y-3">
+              <h3 className="text-2xl font-semibold">Connect to get started</h3>
+              <p className="text-muted-foreground text-base leading-relaxed">
+                Choose an MCP server from the sidebar to begin chatting with AI
+                assistants.
               </p>
             </div>
           </div>
@@ -98,140 +88,168 @@ export function ChatTab({ serverConfig, systemPrompt = "" }: ChatTabProps) {
     );
   }
 
+  // Empty state - centered input
+  if (!hasMessages) {
+    return (
+      <TooltipProvider>
+        <div className="flex flex-col h-full">
+          <div className="flex-1 flex flex-col items-center justify-center px-4">
+            {/* Welcome Message */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5 }}
+              className="text-center space-y-6 max-w-2xl mb-8"
+            >
+              <div className="space-y-3">
+                <h1 className="text-4xl font-semibold bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
+                  What can I help with?
+                </h1>
+                <p className="text-muted-foreground text-lg">
+                  Connected to{" "}
+                  <span className="font-medium text-foreground">
+                    {serverConfig.name}
+                  </span>
+                </p>
+              </div>
+            </motion.div>
+
+            {/* Centered Input */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: 0.1 }}
+              className="w-full max-w-3xl"
+            >
+              <ChatInput
+                value={input}
+                onChange={setInput}
+                onSubmit={sendMessage}
+                onStop={stopGeneration}
+                disabled={!serverConfig || !hasValidApiKey}
+                isLoading={isLoading}
+                placeholder="Send a message..."
+                className="border-2 shadow-lg bg-background/80 backdrop-blur-sm"
+                currentModel={model}
+                availableModels={availableModels}
+                onModelChange={setModel}
+                onClearChat={clearChat}
+                hasMessages={false}
+              />
+              {!hasValidApiKey && availableModels.length === 0 && (
+                <motion.p
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: 0.3 }}
+                  className="text-sm text-muted-foreground mt-3 text-center"
+                >
+                  Configure API keys in Settings to start chatting
+                </motion.p>
+              )}
+            </motion.div>
+          </div>
+        </div>
+      </TooltipProvider>
+    );
+  }
+
+  // Active state - messages with bottom input
   return (
     <TooltipProvider>
-      <div className="flex flex-col min-w-0 h-dvh">
-        {/* Minimal Header */}
-        <div className="flex items-center justify-between px-6 py-3">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 bg-green-500 rounded-full" />
-              <span className="text-sm font-medium">{serverConfig.name}</span>
+      <div className="flex flex-col h-full">
+        {/* Messages Area */}
+        <div className="flex-1 overflow-hidden">
+          <div
+            ref={messagesContainerRef}
+            onScroll={handleScroll}
+            className="h-full overflow-y-auto"
+          >
+            <div className="max-w-4xl mx-auto px-4 pt-8 pb-4">
+              <AnimatePresence mode="popLayout">
+                {messages.map((message, index) => (
+                  <motion.div
+                    key={message.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.3, delay: index * 0.05 }}
+                    className="mb-8"
+                  >
+                    <Message
+                      message={message}
+                      isLoading={isLoading && index === messages.length - 1}
+                      onEdit={() => {}}
+                      onRegenerate={regenerateMessage}
+                      onCopy={handleCopyMessage}
+                      showActions={true}
+                    />
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+              {/* Thinking indicator */}
+              {isLoading &&
+                messages.length > 0 &&
+                messages[messages.length - 1].role === "user" && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="mb-8"
+                  >
+                    <div className="flex gap-4 items-start">
+                      <div className="w-8 h-8 flex items-center rounded-full justify-center bg-muted/50 shrink-0">
+                        <MessageCircle className="h-4 w-4 text-muted-foreground" />
+                      </div>
+                      <div className="flex items-center gap-2 pt-2">
+                        <span className="text-sm text-muted-foreground">
+                          Thinking
+                        </span>
+                        <div className="flex space-x-1">
+                          <div className="w-1.5 h-1.5 bg-muted-foreground/60 rounded-full animate-bounce" />
+                          <div className="w-1.5 h-1.5 bg-muted-foreground/60 rounded-full animate-bounce delay-100" />
+                          <div className="w-1.5 h-1.5 bg-muted-foreground/60 rounded-full animate-bounce delay-200" />
+                        </div>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              <div className="h-16" /> {/* Reduced bottom spacing */}
             </div>
           </div>
-          {messages.length > 0 && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={clearChat}
-              className="text-xs h-7 px-2 text-muted-foreground hover:text-foreground"
-            >
-              Clear
-            </Button>
-          )}
-        </div>
-
-        {/* Messages Container */}
-        <div
-          ref={messagesContainerRef}
-          onScroll={handleScroll}
-          className="flex flex-col min-w-0 gap-6 flex-1 overflow-y-scroll px-6 relative"
-        >
-          {messages.length === 0 && (
-            <div className="flex items-center justify-center h-full">
-              <div className="text-center space-y-4 max-w-md">
-                <div className="text-5xl">💬</div>
-                <div className="space-y-2">
-                  <h3 className="text-xl font-medium">
-                    Ready to chat
-                  </h3>
-                  <p className="text-muted-foreground text-sm leading-relaxed">
-                    Ask me anything about your MCP server or request help with tasks.
-                    I can use the available tools to assist you.
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {messages.map((message, index) => (
-            <Message
-              key={message.id}
-              message={message}
-              isLoading={isLoading && index === messages.length - 1}
-              onEdit={() => {}}
-              onRegenerate={regenerateMessage}
-              onCopy={handleCopyMessage}
-              showActions={true}
-            />
-          ))}
-
-          {/* Thinking indicator */}
-          {isLoading &&
-            messages.length > 0 &&
-            messages[messages.length - 1].role === "user" && (
-              <motion.div
-                initial={{ y: 8, opacity: 0 }}
-                animate={{ y: 0, opacity: 1 }}
-                className="w-full max-w-4xl mx-auto"
-              >
-                <div className="flex gap-3">
-                  <div className="w-7 h-7 flex items-center rounded-full justify-center bg-muted/50 shrink-0">
-                    <MessageCircle className="h-3.5 w-3.5 text-muted-foreground" />
-                  </div>
-                  <div className="flex items-center gap-2 text-muted-foreground pt-1">
-                    <span className="text-sm">Thinking</span>
-                    <div className="flex space-x-0.5">
-                      <div className="w-1 h-1 bg-current rounded-full animate-bounce" />
-                      <div className="w-1 h-1 bg-current rounded-full animate-bounce delay-100" />
-                      <div className="w-1 h-1 bg-current rounded-full animate-bounce delay-200" />
-                    </div>
-                  </div>
-                </div>
-              </motion.div>
-            )}
-
-          <div className="shrink-0 h-4" />
         </div>
 
         {/* Error Display */}
-        {error && (
-          <div className="mx-6 mb-4 bg-destructive/5 border border-destructive/10 rounded-lg p-3">
-            <p className="text-sm text-destructive">{error}</p>
-          </div>
-        )}
+        <AnimatePresence>
+          {error && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 20 }}
+              className="mx-4 mb-4"
+            >
+              <div className="max-w-4xl mx-auto bg-destructive/5 border border-destructive/10 rounded-xl p-4">
+                <p className="text-sm text-destructive">{error}</p>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-        {/* Chat Input */}
-        <div className="px-6 pb-6">
-          <div className="mx-auto max-w-4xl">
-            <div className="flex gap-3 items-end">
-              <div className="flex-1">
-                <ChatInput
-                  value={input}
-                  onChange={setInput}
-                  onSubmit={sendMessage}
-                  onStop={stopGeneration}
-                  disabled={!serverConfig || !hasValidApiKey}
-                  isLoading={isLoading}
-                  placeholder={`Message ${serverConfig.name}...`}
-                  showScrollToBottom={showScrollButton}
-                  onScrollToBottom={scrollToBottom}
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <ModelSelector
-                  currentModel={model}
-                  availableModels={availableModels}
-                  onModelChange={setModel}
-                  disabled={isLoading}
-                />
-                {showScrollButton && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={scrollToBottom}
-                    className="h-7 w-7 p-0"
-                  >
-                    <ChevronUp className="h-3 w-3" />
-                  </Button>
-                )}
-              </div>
-            </div>
-            {!hasValidApiKey && availableModels.length === 0 && (
-              <p className="text-xs text-muted-foreground mt-2 text-center">
-                Configure API keys in Settings to enable chat
-              </p>
-            )}
+        {/* Fixed Bottom Input */}
+        <div className="border-t border-border/50 bg-background/80 backdrop-blur-sm shrink-0">
+          <div className="max-w-4xl mx-auto p-4">
+            <ChatInput
+              value={input}
+              onChange={setInput}
+              onSubmit={sendMessage}
+              onStop={stopGeneration}
+              disabled={!serverConfig || !hasValidApiKey}
+              isLoading={isLoading}
+              placeholder="Send a message..."
+              className="border-2 shadow-sm"
+              currentModel={model}
+              availableModels={availableModels}
+              onModelChange={setModel}
+              onClearChat={clearChat}
+              hasMessages={hasMessages}
+            />
           </div>
         </div>
       </div>

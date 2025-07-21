@@ -588,7 +588,7 @@ export function useAppState() {
 
         return tokens.access_token;
       } catch (error) {
-        throw new Error(
+        toast.error(
           `Failed to refresh token: ${error instanceof Error ? error.message : "Unknown error"}`,
         );
       }

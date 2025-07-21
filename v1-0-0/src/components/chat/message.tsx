@@ -4,23 +4,10 @@ import { memo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn, formatTimestamp, sanitizeText } from "@/lib/chat-utils";
 import { ChatMessage } from "@/lib/chat-types";
-import {
-  BotIcon,
-  UserIcon,
-  PencilEditIcon,
-  MoreIcon,
-  CopyIcon,
-  RefreshIcon,
-} from "../icons";
+import { Bot, Edit, Copy, RotateCcw } from "lucide-react";
 import { Markdown } from "./markdown";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "../ui/dropdown-menu";
 import { MessageEditor } from "./message-editor";
 import { ToolCallDisplay } from "./tool-call-display";
 
@@ -85,153 +72,190 @@ const PureMessage = ({
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
       >
-        <div
-          className={cn("flex gap-4 w-full", {
-            "group-data-[role=user]/message:ml-auto group-data-[role=user]/message:max-w-2xl":
-              message.role === "user" && mode !== "edit",
-            "w-full": mode === "edit",
-          })}
-        >
-          {/* Avatar */}
-          {message.role === "assistant" && (
-            <div className="size-8 flex items-center rounded-full justify-center ring-1 shrink-0 ring-border bg-background">
-              <BotIcon />
+        {/* Assistant Messages - Left aligned with avatar */}
+        {message.role === "assistant" && (
+          <div className="flex gap-4 w-full">
+            <div className="size-8 flex items-center rounded-full justify-center shrink-0 bg-muted/50">
+              <Bot size={16} className="text-muted-foreground" />
             </div>
-          )}
 
-          {message.role === "user" && mode === "view" && (
-            <div className="size-8 flex items-center rounded-full justify-center ring-1 shrink-0 ring-border bg-primary text-primary-foreground">
-              <UserIcon />
-            </div>
-          )}
+            {/* Assistant Message Content */}
+            <div className="flex flex-col gap-4 w-full min-w-0">
+              {/* Attachments */}
+              {message.attachments && message.attachments.length > 0 && (
+                <div className="flex flex-row gap-2">
+                  {message.attachments.map((attachment) => (
+                    <div
+                      key={attachment.id}
+                      className="px-3 py-2 bg-muted rounded-lg text-sm"
+                    >
+                      {attachment.name}
+                    </div>
+                  ))}
+                </div>
+              )}
 
-          {/* Message Content */}
-          <div className="flex flex-col gap-4 w-full min-w-0">
-            {/* Attachments */}
-            {message.attachments && message.attachments.length > 0 && (
-              <div className="flex flex-row justify-end gap-2">
-                {message.attachments.map((attachment) => (
+              {/* Tool Calls */}
+              {message.toolCalls && message.toolCalls.length > 0 && (
+                <div className="space-y-2">
+                  {message.toolCalls.map((toolCall) => (
+                    <ToolCallDisplay key={toolCall.id} toolCall={toolCall} />
+                  ))}
+                </div>
+              )}
+
+              {/* Assistant Message Text */}
+              {mode === "view" ? (
+                <div className="relative">
                   <div
-                    key={attachment.id}
-                    className="px-3 py-2 bg-muted rounded-lg text-sm"
+                    data-testid="message-content"
+                    className="prose prose-sm max-w-none dark:prose-invert prose-p:leading-relaxed prose-pre:bg-muted/50 prose-pre:border prose-pre:border-border/30 flex-1 min-w-0"
                   >
-                    {attachment.name}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Tool Calls */}
-            {message.toolCalls && message.toolCalls.length > 0 && (
-              <div className="space-y-2">
-                {message.toolCalls.map((toolCall) => (
-                  <ToolCallDisplay key={toolCall.id} toolCall={toolCall} />
-                ))}
-              </div>
-            )}
-
-            {/* Main Content */}
-            {mode === "view" ? (
-              <div className="flex flex-row gap-2 items-start">
-                {/* Edit Button for User Messages */}
-                {message.role === "user" && !isReadonly && showActions && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        data-testid="message-edit-button"
-                        variant="ghost"
-                        size="sm"
-                        className={cn(
-                          "px-2 h-fit rounded-full text-muted-foreground transition-opacity",
-                          isHovered ? "opacity-100" : "opacity-0",
-                        )}
-                        onClick={handleEdit}
-                      >
-                        <PencilEditIcon size={14} />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Edit message</TooltipContent>
-                  </Tooltip>
-                )}
-
-                {/* Message Text */}
-                <div
-                  data-testid="message-content"
-                  className={cn("flex flex-col gap-4 flex-1 min-w-0", {
-                    "bg-primary text-primary-foreground px-3 py-2 rounded-xl":
-                      message.role === "user",
-                    "prose prose-sm max-w-none dark:prose-invert":
-                      message.role === "assistant",
-                  })}
-                >
-                  {message.role === "assistant" ? (
                     <Markdown>{sanitizeText(message.content)}</Markdown>
-                  ) : (
-                    <div className="whitespace-pre-wrap break-words">
-                      {sanitizeText(message.content)}
+                  </div>
+
+                  {/* Timestamp and Actions - Absolute positioned below message */}
+                  {isHovered && (
+                    <div className="absolute -bottom-6 left-0 right-0 flex items-center justify-between">
+                      <div className="text-xs text-muted-foreground/60">
+                        {formatTimestamp(message.timestamp)}
+                      </div>
+
+                      {/* Assistant Actions */}
+                      {showActions && !isReadonly && (
+                        <div className="flex items-center gap-1">
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="px-2 h-7 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all"
+                                onClick={handleCopy}
+                              >
+                                <Copy size={14} />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>Copy</TooltipContent>
+                          </Tooltip>
+                          {onRegenerate && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="px-2 h-7 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all"
+                                  onClick={handleRegenerate}
+                                >
+                                  <RotateCcw size={14} />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Regenerate</TooltipContent>
+                            </Tooltip>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
+                </div>
+              ) : (
+                /* Edit Mode for Assistant */
+                <div className="flex flex-row gap-2 items-start">
+                  <MessageEditor
+                    message={message}
+                    onSave={handleSaveEdit}
+                    onCancel={handleCancelEdit}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
-                  {/* Timestamp */}
-                  <div
-                    className={cn(
-                      "text-xs mt-1",
-                      message.role === "user"
-                        ? "text-primary-foreground/70"
-                        : "text-muted-foreground",
+        {/* User Messages - Right aligned floating bubbles */}
+        {message.role === "user" && (
+          <div className="flex justify-end w-full">
+            <div className="flex flex-col gap-2 max-w-2xl">
+              {/* User Attachments */}
+              {message.attachments && message.attachments.length > 0 && (
+                <div className="flex flex-row justify-end gap-2">
+                  {message.attachments.map((attachment) => (
+                    <div
+                      key={attachment.id}
+                      className="px-3 py-2 bg-muted rounded-lg text-sm"
+                    >
+                      {attachment.name}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* User Message Bubble */}
+              {mode === "view" ? (
+                <div className="flex items-start gap-2 justify-end">
+                  {/* User Actions - Left of bubble when hovered */}
+                  {/* {showActions && !isReadonly && isHovered && (
+                    <div className="flex items-center gap-1 mt-1">
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="px-2 h-7 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all"
+                            onClick={handleCopy}
+                          >
+                            <CopyIcon size={14} />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Copy</TooltipContent>
+                      </Tooltip>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            data-testid="message-edit-button"
+                            variant="ghost"
+                            size="sm"
+                            className="px-2 h-7 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all"
+                            onClick={handleEdit}
+                          >
+                            <PencilEditIcon size={14} />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Edit message</TooltipContent>
+                      </Tooltip>
+                    </div>
+                  )} */}
+
+                  {/* User Message Content */}
+                  <div className="relative">
+                    <div
+                      data-testid="message-content"
+                      className="bg-primary text-primary-foreground px-4 py-3 rounded-2xl max-w-fit"
+                    >
+                      <div className="whitespace-pre-wrap break-words font-medium">
+                        {sanitizeText(message.content)}
+                      </div>
+                    </div>
+                    {/* Timestamp - absolute positioned below message */}
+                    {isHovered && (
+                      <div className="absolute -bottom-6 right-0 text-xs text-muted-foreground/60">
+                        {formatTimestamp(message.timestamp)}
+                      </div>
                     )}
-                  >
-                    {formatTimestamp(message.timestamp)}
                   </div>
                 </div>
-
-                {/* Message Actions */}
-                {showActions && !isReadonly && (
-                  <div
-                    className={cn(
-                      "transition-opacity",
-                      isHovered ? "opacity-100" : "opacity-0",
-                    )}
-                  >
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="px-2 h-fit rounded-full text-muted-foreground"
-                        >
-                          <MoreIcon size={14} />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={handleCopy}>
-                          <CopyIcon size={14} />
-                          Copy
-                        </DropdownMenuItem>
-                        {message.role === "assistant" && onRegenerate && (
-                          <DropdownMenuItem onClick={handleRegenerate}>
-                            <RefreshIcon size={14} />
-                            Regenerate
-                          </DropdownMenuItem>
-                        )}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
-                )}
-              </div>
-            ) : (
-              /* Edit Mode */
-              <div className="flex flex-row gap-2 items-start">
-                <div className="size-8" />
-                <MessageEditor
-                  message={message}
-                  onSave={handleSaveEdit}
-                  onCancel={handleCancelEdit}
-                />
-              </div>
-            )}
+              ) : (
+                /* Edit Mode for User */
+                <div className="w-full">
+                  <MessageEditor
+                    message={message}
+                    onSave={handleSaveEdit}
+                    onCancel={handleCancelEdit}
+                  />
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        )}
       </motion.div>
     </AnimatePresence>
   );

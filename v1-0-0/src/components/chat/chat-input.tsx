@@ -5,9 +5,22 @@ import { cn } from "@/lib/chat-utils";
 import { Attachment } from "@/lib/chat-types";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
-import { ArrowUpIcon, PaperclipIcon, StopIcon } from "../icons";
+import { ArrowUp, Paperclip, Square } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowDown } from "lucide-react";
+import { ArrowDown, Zap, X } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
+
+interface ModelOption {
+  id: string;
+  name: string;
+  provider: string;
+}
 
 interface ChatInputProps {
   value: string;
@@ -20,6 +33,13 @@ interface ChatInputProps {
   className?: string;
   showScrollToBottom?: boolean;
   onScrollToBottom?: () => void;
+  // Model selector props
+  currentModel: string;
+  availableModels: ModelOption[];
+  onModelChange: (model: string) => void;
+  // Clear chat functionality
+  onClearChat?: () => void;
+  hasMessages?: boolean;
 }
 
 export function ChatInput({
@@ -33,11 +53,40 @@ export function ChatInput({
   className,
   showScrollToBottom = false,
   onScrollToBottom,
+  currentModel,
+  availableModels,
+  onModelChange,
+  onClearChat,
+  hasMessages = false,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [uploadQueue, setUploadQueue] = useState<string[]>([]);
+
+  // Model selector state
+  const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false);
+
+  // Get current model data
+  const currentModelData = availableModels.find((m) => m.id === currentModel);
+
+  // Get provider color and model letter
+  const getProviderColor = (provider: string) => {
+    switch (provider) {
+      case "anthropic":
+        return "text-orange-600 dark:text-orange-400";
+      case "openai":
+        return "text-green-600 dark:text-green-400";
+      default:
+        return "text-blue-600 dark:text-blue-400";
+    }
+  };
+
+  const getModelLetter = (modelName: string) => {
+    if (modelName.toLowerCase().includes("claude")) return "C";
+    if (modelName.toLowerCase().includes("gpt")) return "G";
+    return modelName.charAt(0).toUpperCase();
+  };
 
   useEffect(() => {
     adjustHeight();
@@ -46,7 +95,7 @@ export function ChatInput({
   const adjustHeight = () => {
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
-      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 120)}px`;
     }
   };
 
@@ -141,7 +190,7 @@ export function ChatInput({
             <Button
               size="sm"
               variant="outline"
-              className="rounded-full shadow-lg"
+              className="rounded-full shadow-lg cursor-pointer"
               onClick={onScrollToBottom}
             >
               <ArrowDown className="h-4 w-4" />
@@ -171,7 +220,7 @@ export function ChatInput({
               <span className="truncate max-w-[200px]">{attachment.name}</span>
               <button
                 onClick={() => removeAttachment(attachment.id)}
-                className="text-muted-foreground hover:text-foreground"
+                className="text-muted-foreground hover:text-foreground cursor-pointer"
               >
                 ×
               </button>
@@ -189,7 +238,7 @@ export function ChatInput({
         </div>
       )}
 
-      {/* Input container */}
+      {/* Text input row */}
       <div className="relative">
         <Textarea
           ref={textareaRef}
@@ -199,50 +248,125 @@ export function ChatInput({
           placeholder={placeholder}
           disabled={disabled}
           className={cn(
-            "min-h-[80px] max-h-[200px] resize-none pr-20 pb-12",
-            "focus-visible:ring-1",
+            "min-h-[56px] max-h-[120px] resize-none pl-16 pr-14 py-4 rounded-3xl",
+            "border-border/30 bg-background/50 focus-visible:border-border/50",
+            "focus-visible:ring-0 focus-visible:ring-offset-0",
+            "transition-all duration-200 ease-in-out overflow-y-auto",
+            "text-base placeholder:text-muted-foreground/60",
             className,
           )}
-          rows={2}
+          rows={1}
           autoFocus
         />
 
-        {/* Attachment button */}
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="absolute bottom-2 left-2 h-8 w-8 p-0"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={disabled || isLoading}
-        >
-          <PaperclipIcon size={16} />
-        </Button>
+        {/* Attachment button - positioned on the left side of text input */}
+        <div className="absolute bottom-3 left-4 flex items-center gap-1">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-8 w-8 p-0 rounded-full hover:bg-muted/80 transition-colors cursor-pointer"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={disabled || isLoading}
+              >
+                <Paperclip size={16} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Add files</TooltipContent>
+          </Tooltip>
+        </div>
 
-        {/* Submit/Stop button */}
-        <div className="absolute bottom-2 right-2">
+        {/* Submit/Stop button - positioned on the right side of text input */}
+        <div className="absolute bottom-3 right-4 flex items-center gap-1">
+          {/* Submit/Stop button */}
           {isLoading ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-8 w-8 p-0 rounded-full"
-              onClick={onStop}
-            >
-              <StopIcon size={16} />
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-8 w-8 p-0 rounded-full border-border/30 hover:border-border/50 transition-colors cursor-pointer"
+                  onClick={onStop}
+                >
+                  <Square size={16} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Stop generating</TooltipContent>
+            </Tooltip>
           ) : (
-            <Button
-              type="button"
-              size="sm"
-              className="h-8 w-8 p-0 rounded-full"
-              onClick={handleSubmit}
-              disabled={!value.trim() || disabled || uploadQueue.length > 0}
-            >
-              <ArrowUpIcon size={16} />
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  size="sm"
+                  className={cn(
+                    "h-8 w-8 p-0 rounded-full transition-all duration-200 cursor-pointer",
+                    value.trim() && !disabled && uploadQueue.length === 0
+                      ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm"
+                      : "bg-muted text-muted-foreground cursor-not-allowed",
+                  )}
+                  onClick={handleSubmit}
+                  disabled={!value.trim() || disabled || uploadQueue.length > 0}
+                >
+                  <ArrowUp size={16} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Send message</TooltipContent>
+            </Tooltip>
           )}
         </div>
+      </div>
+
+      {/* Model selector row */}
+      <div className="flex items-center gap-2 mt-2">
+        {/* Model Selector */}
+        {availableModels.length > 0 && currentModelData && (
+          <DropdownMenu
+            open={isModelSelectorOpen}
+            onOpenChange={setIsModelSelectorOpen}
+          >
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={disabled || isLoading}
+                className="h-8 px-2 rounded-full hover:bg-muted/80 transition-colors text-xs cursor-pointer"
+              >
+                <span className="text-[10px] font-medium">
+                  {currentModelData.name}
+                </span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="min-w-[200px]">
+              {availableModels.map((model) => (
+                <DropdownMenuItem
+                  key={model.id}
+                  onClick={() => {
+                    onModelChange(model.id);
+                    setIsModelSelectorOpen(false);
+                  }}
+                  className="flex items-center gap-3 text-sm cursor-pointer"
+                >
+                  <Zap
+                    className={cn("h-3 w-3", getProviderColor(model.provider))}
+                  />
+                  <div className="flex flex-col">
+                    <span className="font-medium">{model.name}</span>
+                    <span className="text-xs text-muted-foreground capitalize">
+                      {model.provider}
+                    </span>
+                  </div>
+                  {model.id === currentModel && (
+                    <div className="ml-auto w-2 h-2 bg-primary rounded-full" />
+                  )}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
     </div>
   );

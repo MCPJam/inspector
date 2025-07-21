@@ -3,7 +3,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { ChatMessage, ChatState, Attachment } from "@/lib/chat-types";
 import { createMessage } from "@/lib/chat-utils";
-import { MastraMCPServerDefinition } from "@/lib/types";
+import { MastraMCPServerDefinition, SUPPORTED_MODELS } from "@/lib/types";
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
 
 interface UseChatOptions {
@@ -68,14 +68,7 @@ export function useChat(options: UseChatOptions = {}) {
   );
 
   // Available models with API keys
-  const availableModels = [
-    {
-      id: "claude-3-5-sonnet-20240620",
-      name: "Claude 3.5 Sonnet",
-      provider: "anthropic",
-    },
-    { id: "gpt-4o-mini", name: "GPT-4o Mini", provider: "openai" },
-  ].filter((m) => hasToken(m.provider as "anthropic" | "openai"));
+  const availableModels = SUPPORTED_MODELS.filter((m) => hasToken(m.provider));
 
   const sendChatRequest = useCallback(
     async (userMessage: ChatMessage) => {
