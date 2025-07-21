@@ -136,10 +136,13 @@ export const useAppEffects = (
             const config = cliConfig as any;
 
             // Convert different transport types
-            if (config.type === "sse" && config.url) {
-              // SSE configuration
+            if (config.url) {
+              // HTTP configuration
               convertedConfigs[serverName] = {
-                transportType: "sse",
+                transportType:
+                  config.type === "sse" || config.type === "streamable-http"
+                    ? config.type
+                    : "sse",
                 url: new URL(config.url),
                 name: serverName,
               };
@@ -153,13 +156,6 @@ export const useAppEffects = (
                   ...(data.defaultEnvironment || {}),
                   ...(config.env || {}),
                 },
-                name: serverName,
-              };
-            } else if (config.url) {
-              // Default to SSE for URL-based configs
-              convertedConfigs[serverName] = {
-                transportType: "sse",
-                url: new URL(config.url),
                 name: serverName,
               };
             }
