@@ -211,10 +211,25 @@ export function createMCPClient(
 export function createMCPClientWithMultipleConnections(
   serverConfigs: Record<string, MastraMCPServerDefinition>,
 ): MCPClient {
+  // Normalize server config names
+  const normalizedConfigs: Record<string, MastraMCPServerDefinition> = {};
+  for (const [serverName, config] of Object.entries(serverConfigs)) {
+    const normalizedName = normalizeServerConfigName(serverName);
+    normalizedConfigs[normalizedName] = config;
+  }
+
   return new MCPClient({
     id: `chat-${Date.now()}`,
-    servers: serverConfigs,
+    servers: normalizedConfigs,
   });
+}
+
+export function normalizeServerConfigName(serverName: string): string {
+  // Convert to lowercase and replace spaces/hyphens with underscores
+  return serverName
+    .toLowerCase()
+    .replace(/[\s\-]+/g, "_")
+    .replace(/[^a-z0-9_]/g, "");
 }
 
 export function createErrorResponse(

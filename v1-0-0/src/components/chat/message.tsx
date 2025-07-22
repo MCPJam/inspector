@@ -4,13 +4,14 @@ import { memo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { formatTimestamp, sanitizeText } from "@/lib/chat-utils";
 import { ChatMessage } from "@/lib/chat-types";
-import { Bot, Copy, RotateCcw } from "lucide-react";
+import { Bot, Copy, CopyIcon, RotateCcw } from "lucide-react";
 import { Markdown } from "./markdown";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { MessageEditor } from "./message-editor";
 import { ToolCallDisplay } from "./tool-call";
 import { getProviderLogoFromModel } from "./chat-helpers";
+import { PencilEditIcon } from "../icons";
 
 interface MessageProps {
   message: ChatMessage;
@@ -23,8 +24,21 @@ interface MessageProps {
   model: string;
 }
 
+// Thinking indicator component
+const ThinkingIndicator = () => (
+  <div className="flex items-center gap-2 py-2">
+    <span className="text-sm text-muted-foreground">Thinking</span>
+    <div className="flex space-x-1">
+      <div className="w-1.5 h-1.5 bg-muted-foreground/60 rounded-full animate-bounce" />
+      <div className="w-1.5 h-1.5 bg-muted-foreground/60 rounded-full animate-bounce [animation-delay:-0.2s]" />
+      <div className="w-1.5 h-1.5 bg-muted-foreground/60 rounded-full animate-bounce [animation-delay:-0.4s]" />
+    </div>
+  </div>
+);
+
 const PureMessage = ({
   message,
+  isLoading = false,
   onEdit,
   onRegenerate,
   onCopy,
@@ -63,6 +77,12 @@ const PureMessage = ({
       onRegenerate(message.id);
     }
   };
+
+  // Check if we should show thinking indicator for assistant messages
+  const shouldShowThinking =
+    message.role === "assistant" &&
+    isLoading &&
+    (!message.content || message.content.trim() === "");
 
   return (
     <AnimatePresence>
@@ -120,8 +140,16 @@ const PureMessage = ({
                 </div>
               )}
 
-              {/* Assistant Message Text */}
-              {mode === "view" ? (
+              {/* Assistant Message Text or Thinking Indicator */}
+              {shouldShowThinking ? (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.3 }}
+                >
+                  <ThinkingIndicator />
+                </motion.div>
+              ) : mode === "view" ? (
                 <div className="relative">
                   <div
                     data-testid="message-content"
@@ -209,7 +237,7 @@ const PureMessage = ({
               {mode === "view" ? (
                 <div className="flex items-start gap-2 justify-end">
                   {/* User Actions - Left of bubble when hovered */}
-                  {/* {showActions && !isReadonly && isHovered && (
+                  {showActions && !isReadonly && isHovered && (
                     <div className="flex items-center gap-1 mt-1">
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -224,22 +252,8 @@ const PureMessage = ({
                         </TooltipTrigger>
                         <TooltipContent>Copy</TooltipContent>
                       </Tooltip>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            data-testid="message-edit-button"
-                            variant="ghost"
-                            size="sm"
-                            className="px-2 h-7 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all"
-                            onClick={handleEdit}
-                          >
-                            <PencilEditIcon size={14} />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Edit message</TooltipContent>
-                      </Tooltip>
                     </div>
-                  )} */}
+                  )}
 
                   {/* User Message Content */}
                   <div className="relative">
