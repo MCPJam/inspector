@@ -9,7 +9,6 @@ import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
 interface UseChatOptions {
   initialMessages?: ChatMessage[];
   serverConfig?: MastraMCPServerDefinition;
-  initialModel?: string;
   systemPrompt?: string;
   onMessageSent?: (message: ChatMessage) => void;
   onMessageReceived?: (message: ChatMessage) => void;
@@ -18,10 +17,14 @@ interface UseChatOptions {
 }
 
 export function useChat(options: UseChatOptions = {}) {
+  const { getToken, hasToken, tokens } = useAiProviderKeys();
+  const initialModel = tokens.anthropic
+    ? "claude-3-5-sonnet-20240620"
+    : "gpt-4o";
+
   const {
     initialMessages = [],
     serverConfig,
-    initialModel = "claude-3-5-sonnet-20240620",
     systemPrompt,
     onMessageSent,
     onMessageReceived,
@@ -39,7 +42,6 @@ export function useChat(options: UseChatOptions = {}) {
   const [status, setStatus] = useState<"idle" | "error">("idle");
   const [model, setModel] = useState(initialModel);
   const abortControllerRef = useRef<AbortController | null>(null);
-  const { getToken, hasToken } = useAiProviderKeys();
 
   // Get API key based on current model
   const getApiKeyForModel = useCallback(
@@ -55,7 +57,7 @@ export function useChat(options: UseChatOptions = {}) {
   );
 
   const currentApiKey = getApiKeyForModel(model);
-
+  console.log("currentApiKey", currentApiKey);
   // Handle model changes
   const handleModelChange = useCallback(
     (newModel: string) => {

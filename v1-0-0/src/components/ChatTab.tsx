@@ -40,7 +40,6 @@ export function ChatTab({ serverConfig, systemPrompt = "" }: ChatTabProps) {
       toast.error(error);
     },
   });
-  console.log("messages", messages);
   const hasMessages = messages.length > 0;
 
   // Auto-scroll to bottom when new messages arrive
@@ -104,12 +103,6 @@ export function ChatTab({ serverConfig, systemPrompt = "" }: ChatTabProps) {
               <h1 className="text-4xl font-semibold bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
                 What can I help with?
               </h1>
-              <p className="text-muted-foreground text-lg">
-                Connected to{" "}
-                <span className="font-medium text-foreground">
-                  {serverConfig.name}
-                </span>
-              </p>
             </div>
           </motion.div>
 

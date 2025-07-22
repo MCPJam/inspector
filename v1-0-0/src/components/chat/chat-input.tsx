@@ -7,7 +7,7 @@ import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 import { ArrowUp, Paperclip, Square } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowDown, Zap, X } from "lucide-react";
+import { ArrowDown, X } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,6 +15,8 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
+import claudeLogo from "../../../public/claude_logo.png";
+import openaiLogo from "../../../public/openai_logo.png";
 
 interface ModelOption {
   id: string;
@@ -79,6 +81,17 @@ export function ChatInput({
         return "text-green-600 dark:text-green-400";
       default:
         return "text-blue-600 dark:text-blue-400";
+    }
+  };
+
+  const getProviderLogo = (provider: string): string | null => {
+    switch (provider) {
+      case "anthropic":
+        return claudeLogo.src;
+      case "openai":
+        return openaiLogo.src;
+      default:
+        return null;
     }
   };
 
@@ -335,9 +348,16 @@ export function ChatInput({
                 disabled={disabled || isLoading}
                 className="h-8 px-2 rounded-full hover:bg-muted/80 transition-colors text-xs cursor-pointer"
               >
-                <span className="text-[10px] font-medium">
-                  {currentModelData.name}
-                </span>
+                <>
+                  <img
+                    src={getProviderLogo(currentModelData.provider)!}
+                    alt={`${currentModelData.provider} logo`}
+                    className="h-3 w-3 object-contain"
+                  />
+                  <span className="text-[10px] font-medium">
+                    {currentModelData.name}
+                  </span>
+                </>
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="min-w-[200px]">
@@ -350,9 +370,20 @@ export function ChatInput({
                   }}
                   className="flex items-center gap-3 text-sm cursor-pointer"
                 >
-                  <Zap
-                    className={cn("h-3 w-3", getProviderColor(model.provider))}
-                  />
+                  {getProviderLogo(model.provider) ? (
+                    <img
+                      src={getProviderLogo(model.provider)!}
+                      alt={`${model.provider} logo`}
+                      className="h-3 w-3 object-contain"
+                    />
+                  ) : (
+                    <div
+                      className={cn(
+                        "h-3 w-3 rounded-sm",
+                        getProviderColor(model.provider),
+                      )}
+                    />
+                  )}
                   <div className="flex flex-col">
                     <span className="font-medium">{model.name}</span>
                     <span className="text-xs text-muted-foreground capitalize">
