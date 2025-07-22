@@ -15,8 +15,7 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
-import claudeLogo from "../../../public/claude_logo.png";
-import openaiLogo from "../../../public/openai_logo.png";
+import { getProviderLogoFromProvider } from "./chat-helpers";
 
 interface ModelOption {
   id: string;
@@ -82,23 +81,6 @@ export function ChatInput({
       default:
         return "text-blue-600 dark:text-blue-400";
     }
-  };
-
-  const getProviderLogo = (provider: string): string | null => {
-    switch (provider) {
-      case "anthropic":
-        return claudeLogo.src;
-      case "openai":
-        return openaiLogo.src;
-      default:
-        return null;
-    }
-  };
-
-  const getModelLetter = (modelName: string) => {
-    if (modelName.toLowerCase().includes("claude")) return "C";
-    if (modelName.toLowerCase().includes("gpt")) return "G";
-    return modelName.charAt(0).toUpperCase();
   };
 
   useEffect(() => {
@@ -350,7 +332,9 @@ export function ChatInput({
               >
                 <>
                   <img
-                    src={getProviderLogo(currentModelData.provider)!}
+                    src={
+                      getProviderLogoFromProvider(currentModelData.provider)!
+                    }
                     alt={`${currentModelData.provider} logo`}
                     className="h-3 w-3 object-contain"
                   />
@@ -370,9 +354,9 @@ export function ChatInput({
                   }}
                   className="flex items-center gap-3 text-sm cursor-pointer"
                 >
-                  {getProviderLogo(model.provider) ? (
+                  {getProviderLogoFromProvider(model.provider) ? (
                     <img
-                      src={getProviderLogo(model.provider)!}
+                      src={getProviderLogoFromProvider(model.provider)!}
                       alt={`${model.provider} logo`}
                       className="h-3 w-3 object-contain"
                     />

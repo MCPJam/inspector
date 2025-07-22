@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { ChatMessage, ChatState, Attachment } from "@/lib/chat-types";
 import { createMessage } from "@/lib/chat-utils";
 import { MastraMCPServerDefinition, SUPPORTED_MODELS } from "@/lib/types";
@@ -42,23 +42,21 @@ export function useChat(options: UseChatOptions = {}) {
   const [status, setStatus] = useState<"idle" | "error">("idle");
   const [model, setModel] = useState(initialModel);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const messagesRef = useRef(state.messages);
 
-  // Get API key based on current model
-  const getApiKeyForModel = useCallback(
-    (modelName: string) => {
-      if (modelName.includes("claude")) {
-        return getToken("anthropic");
-      } else if (modelName.includes("gpt")) {
-        return getToken("openai");
-      }
-      return "";
-    },
-    [getToken],
-  );
+  // Keep messages ref in sync
+  useEffect(() => {
+    messagesRef.current = state.messages;
+  }, [state.messages]);
 
-  const currentApiKey = getApiKeyForModel(model);
-  console.log("currentApiKey", currentApiKey);
-  // Handle model changes
+  const currentApiKey = useMemo(() => {
+    const modelDefinition = SUPPORTED_MODELS.find((m) => m.id === model);
+    if (modelDefinition) {
+      return getToken(modelDefinition.provider);
+    }
+    return "";
+  }, [model, getToken]);
+
   const handleModelChange = useCallback(
     (newModel: string) => {
       setModel(newModel);
@@ -71,6 +69,81 @@ export function useChat(options: UseChatOptions = {}) {
 
   // Available models with API keys
   const availableModels = SUPPORTED_MODELS.filter((m) => hasToken(m.provider));
+
+  const handleStreamingEvent = useCallback(
+    (
+      parsed: any,
+      assistantMessage: ChatMessage,
+      assistantContent: { current: string },
+      toolCalls: { current: any[] },
+      toolResults: { current: any[] },
+    ) => {
+      // Handle text content
+      if ((parsed.type === "text" || (!parsed.type && parsed.content)) && parsed.content) {
+        assistantContent.current += parsed.content;
+        setState((prev) => ({
+          ...prev,
+          messages: prev.messages.map((msg) =>
+            msg.id === assistantMessage.id
+              ? { ...msg, content: assistantContent.current }
+              : msg,
+          ),
+        }));
+        return;
+      }
+
+      // Handle tool calls
+      if ((parsed.type === "tool_call" || (!parsed.type && parsed.toolCall)) && (parsed.toolCall || parsed.toolCall)) {
+        const toolCall = parsed.toolCall || parsed.toolCall;
+        toolCalls.current = [...toolCalls.current, toolCall];
+        setState((prev) => ({
+          ...prev,
+          messages: prev.messages.map((msg) =>
+            msg.id === assistantMessage.id
+              ? { ...msg, toolCalls: [...toolCalls.current] }
+              : msg,
+          ),
+        }));
+        return;
+      }
+
+      // Handle tool results
+      if ((parsed.type === "tool_result" || (!parsed.type && parsed.toolResult)) && (parsed.toolResult || parsed.toolResult)) {
+        const toolResult = parsed.toolResult || parsed.toolResult;
+        toolResults.current = [...toolResults.current, toolResult];
+        
+        // Update the corresponding tool call status
+        toolCalls.current = toolCalls.current.map((tc) =>
+          tc.id === toolResult.toolCallId
+            ? {
+                ...tc,
+                status: toolResult.error ? "error" : "completed",
+              }
+            : tc,
+        );
+        
+        setState((prev) => ({
+          ...prev,
+          messages: prev.messages.map((msg) =>
+            msg.id === assistantMessage.id
+              ? {
+                  ...msg,
+                  toolCalls: [...toolCalls.current],
+                  toolResults: [...toolResults.current],
+                }
+              : msg,
+          ),
+        }));
+        return;
+      }
+
+      // Handle errors
+      if ((parsed.type === "error" || (!parsed.type && parsed.error)) && parsed.error) {
+        throw new Error(parsed.error);
+      }
+    },
+    [],
+  );
 
   const sendChatRequest = useCallback(
     async (userMessage: ChatMessage) => {
@@ -100,7 +173,7 @@ export function useChat(options: UseChatOptions = {}) {
             model,
             apiKey: currentApiKey,
             systemPrompt,
-            messages: state.messages.concat(userMessage),
+            messages: messagesRef.current.concat(userMessage),
           }),
           signal: abortControllerRef.current?.signal,
         });
@@ -119,9 +192,9 @@ export function useChat(options: UseChatOptions = {}) {
         // Handle streaming response
         const reader = response.body?.getReader();
         const decoder = new TextDecoder();
-        let assistantContent = "";
-        let toolCalls: any[] = [];
-        const toolResults: any[] = [];
+        const assistantContent = { current: "" };
+        const toolCalls = { current: [] as any[] };
+        const toolResults = { current: [] as any[] };
 
         if (reader) {
           while (true) {
@@ -144,115 +217,13 @@ export function useChat(options: UseChatOptions = {}) {
 
                 try {
                   const parsed = JSON.parse(data);
-
-                  // Handle different event types
-                  if (parsed.type === "text" && parsed.content) {
-                    assistantContent += parsed.content;
-                    setState((prev) => ({
-                      ...prev,
-                      messages: prev.messages.map((msg) =>
-                        msg.id === assistantMessage.id
-                          ? { ...msg, content: assistantContent }
-                          : msg,
-                      ),
-                    }));
-                  } else if (parsed.type === "tool_call" && parsed.toolCall) {
-                    toolCalls.push(parsed.toolCall);
-                    setState((prev) => ({
-                      ...prev,
-                      messages: prev.messages.map((msg) =>
-                        msg.id === assistantMessage.id
-                          ? { ...msg, toolCalls: [...toolCalls] }
-                          : msg,
-                      ),
-                    }));
-                  } else if (
-                    parsed.type === "tool_result" &&
-                    parsed.toolResult
-                  ) {
-                    toolResults.push(parsed.toolResult);
-                    // Update the corresponding tool call status
-                    toolCalls = toolCalls.map((tc) =>
-                      tc.id === parsed.toolResult.toolCallId
-                        ? {
-                            ...tc,
-                            status: parsed.toolResult.error
-                              ? "error"
-                              : "completed",
-                          }
-                        : tc,
-                    );
-                    setState((prev) => ({
-                      ...prev,
-                      messages: prev.messages.map((msg) =>
-                        msg.id === assistantMessage.id
-                          ? {
-                              ...msg,
-                              toolCalls: [...toolCalls],
-                              toolResults: [...toolResults],
-                            }
-                          : msg,
-                      ),
-                    }));
-                  } else if (parsed.type === "error" && parsed.error) {
-                    throw new Error(parsed.error);
-                  }
-
-                  // Backward compatibility for old format
-                  if (parsed.content && !parsed.type) {
-                    assistantContent += parsed.content;
-                    setState((prev) => ({
-                      ...prev,
-                      messages: prev.messages.map((msg) =>
-                        msg.id === assistantMessage.id
-                          ? { ...msg, content: assistantContent }
-                          : msg,
-                      ),
-                    }));
-                  }
-
-                  if (parsed.toolCall && !parsed.type) {
-                    toolCalls.push(parsed.toolCall);
-                    setState((prev) => ({
-                      ...prev,
-                      messages: prev.messages.map((msg) =>
-                        msg.id === assistantMessage.id
-                          ? { ...msg, toolCalls: [...toolCalls] }
-                          : msg,
-                      ),
-                    }));
-                  }
-
-                  if (parsed.toolResult && !parsed.type) {
-                    toolResults.push(parsed.toolResult);
-                    // Update the corresponding tool call status
-                    toolCalls = toolCalls.map((tc) =>
-                      tc.id === parsed.toolResult.toolCallId
-                        ? {
-                            ...tc,
-                            status: parsed.toolResult.error
-                              ? "error"
-                              : "completed",
-                          }
-                        : tc,
-                    );
-                    setState((prev) => ({
-                      ...prev,
-                      messages: prev.messages.map((msg) =>
-                        msg.id === assistantMessage.id
-                          ? {
-                              ...msg,
-                              toolCalls: [...toolCalls],
-                              toolResults: [...toolResults],
-                            }
-                          : msg,
-                      ),
-                    }));
-                  }
-
-                  if (parsed.error && !parsed.type) {
-                    throw new Error(parsed.error);
-                  }
+                  handleStreamingEvent(
+                    parsed,
+                    assistantMessage,
+                    assistantContent,
+                    toolCalls,
+                    toolResults,
+                  );
                 } catch (parseError) {
                   console.warn("Failed to parse SSE data:", data);
                 }
@@ -264,7 +235,7 @@ export function useChat(options: UseChatOptions = {}) {
         if (onMessageReceived) {
           const finalMessage = {
             ...assistantMessage,
-            content: assistantContent,
+            content: assistantContent.current,
           };
           onMessageReceived(finalMessage);
         }
@@ -281,8 +252,8 @@ export function useChat(options: UseChatOptions = {}) {
       model,
       currentApiKey,
       systemPrompt,
-      state.messages,
       onMessageReceived,
+      handleStreamingEvent,
     ],
   );
 
@@ -341,10 +312,11 @@ export function useChat(options: UseChatOptions = {}) {
   const regenerateMessage = useCallback(
     async (messageId: string) => {
       // Find the message and the user message before it
-      const messageIndex = state.messages.findIndex((m) => m.id === messageId);
+      const messages = messagesRef.current;
+      const messageIndex = messages.findIndex((m) => m.id === messageId);
       if (messageIndex === -1 || messageIndex === 0) return;
 
-      const userMessage = state.messages[messageIndex - 1];
+      const userMessage = messages[messageIndex - 1];
       if (userMessage.role !== "user") return;
 
       // Remove the assistant message and regenerate
@@ -374,7 +346,7 @@ export function useChat(options: UseChatOptions = {}) {
         }
       }
     },
-    [state.messages, sendChatRequest, onError],
+    [sendChatRequest, onError],
   );
 
   const deleteMessage = useCallback((messageId: string) => {

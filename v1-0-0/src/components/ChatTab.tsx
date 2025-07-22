@@ -166,6 +166,7 @@ export function ChatTab({ serverConfig, systemPrompt = "" }: ChatTabProps) {
                 >
                   <Message
                     message={message}
+                    model={model}
                     isLoading={isLoading && index === messages.length - 1}
                     onEdit={() => {}}
                     onRegenerate={regenerateMessage}

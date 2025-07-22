@@ -10,6 +10,7 @@ import { Button } from "../ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { MessageEditor } from "./message-editor";
 import { ToolCallDisplay } from "./tool-call";
+import { getProviderLogoFromModel } from "./chat-helpers";
 
 interface MessageProps {
   message: ChatMessage;
@@ -19,6 +20,7 @@ interface MessageProps {
   onCopy?: (content: string) => void;
   isReadonly?: boolean;
   showActions?: boolean;
+  model: string;
 }
 
 const PureMessage = ({
@@ -28,6 +30,7 @@ const PureMessage = ({
   onCopy,
   isReadonly = false,
   showActions = true,
+  model,
 }: MessageProps) => {
   const [mode, setMode] = useState<"view" | "edit">("view");
   const [isHovered, setIsHovered] = useState(false);
@@ -76,7 +79,11 @@ const PureMessage = ({
         {message.role === "assistant" && (
           <div className="flex gap-4 w-full">
             <div className="size-8 flex items-center rounded-full justify-center shrink-0 bg-muted/50">
-              <Bot size={16} className="text-muted-foreground" />
+              <img
+                src={getProviderLogoFromModel(model)!}
+                alt={`${model} logo`}
+                className="h-4 w-4 object-contain"
+              />
             </div>
 
             {/* Assistant Message Content */}
