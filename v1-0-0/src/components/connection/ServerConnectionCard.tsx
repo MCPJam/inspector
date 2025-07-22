@@ -44,7 +44,7 @@ export function ServerConnectionCard({
   const [isErrorExpanded, setIsErrorExpanded] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
-  const isHttpServer = "url" in server.config;
+  const isHttpServer = server.config.url !== undefined;
   const hasOAuth = server.oauthState || server.oauthFlow;
 
   // Update current time every second for live countdown

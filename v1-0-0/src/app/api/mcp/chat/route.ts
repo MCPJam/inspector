@@ -1,8 +1,9 @@
 import { NextRequest } from "next/server";
 import {
-  validateServerConfig,
   createMCPClient,
   createErrorResponse,
+  validateMultipleServerConfigs,
+  createMCPClientWithMultipleConnections,
 } from "@/lib/mcp-utils";
 import { Agent } from "@mastra/core/agent";
 import { createAnthropic } from "@ai-sdk/anthropic";
@@ -13,9 +14,8 @@ import { getModelById, isModelSupported } from "@/lib/types";
 
 export async function POST(request: NextRequest) {
   let client: MCPClient | null = null;
-
   try {
-    const { serverConfig, model, apiKey, systemPrompt, messages } =
+    const { serverConfigs, model, apiKey, systemPrompt, messages } =
       await request.json();
 
     if (!model || !apiKey || !messages) {
@@ -25,19 +25,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const validation = validateServerConfig(serverConfig);
+    const validation = validateMultipleServerConfigs(serverConfigs);
     if (!validation.success) {
       return validation.error!;
     }
 
     // Create and connect the MCP client
-    client = createMCPClient(validation.config!, `chat-${Date.now()}`);
+    client = createMCPClientWithMultipleConnections(validation.validConfigs!);
 
     // Get tools and ensure client is connected
     const tools = await client.getTools();
     console.log(
       `MCP client connected, available tools: ${Object.keys(tools || {}).length}`,
     );
+    console.log("tools", tools);
 
     const llmModel = getLlmModel(model, apiKey);
 
@@ -119,7 +120,6 @@ export async function POST(request: NextRequest) {
       };
     }
 
-    // Create a Mastra agent with the wrapped MCP tools
     const agent = new Agent({
       name: "MCP Chat Agent",
       instructions:
@@ -128,7 +128,6 @@ export async function POST(request: NextRequest) {
       tools: Object.keys(wrappedTools).length > 0 ? wrappedTools : undefined,
     });
 
-    // Convert ChatMessage[] to the format expected by Mastra Agent
     const formattedMessages = messages.map((msg: ChatMessage) => ({
       role: msg.role,
       content: msg.content,
@@ -139,14 +138,12 @@ export async function POST(request: NextRequest) {
       maxSteps: 10, // Allow up to 10 steps for tool usage
     });
 
-    // Create a ReadableStream for streaming response
     encoder = new TextEncoder();
     const readableStream = new ReadableStream({
       async start(controller) {
         streamController = controller;
 
         try {
-          // Stream text content
           for await (const chunk of stream.textStream) {
             controller.enqueue(
               encoder!.encode(
@@ -167,7 +164,6 @@ export async function POST(request: NextRequest) {
             ),
           );
         } finally {
-          // Clean up client after streaming is complete
           if (client) {
             try {
               await client.disconnect();

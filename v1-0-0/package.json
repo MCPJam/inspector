@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/inspector-v1",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "MCPJam inspector",
   "license": "Apache-2.0",
@@ -22,7 +22,8 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "publish": "npm publish --access public"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^1.2.12",

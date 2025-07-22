@@ -1,11 +1,17 @@
 import { NextResponse } from "next/server";
 import { MCPClient } from "@mastra/mcp";
-import { MastraMCPServerDefinition, HttpServerDefinition } from "./types";
-import { OAuthClientState } from "./oauth-types";
+import { MastraMCPServerDefinition } from "./types";
 
 export interface ValidationResult {
   success: boolean;
   config?: MastraMCPServerDefinition;
+  error?: NextResponse;
+}
+
+export interface MultipleValidationResult {
+  success: boolean;
+  validConfigs?: Record<string, MastraMCPServerDefinition>;
+  errors?: Record<string, string>;
   error?: NextResponse;
 }
 
@@ -114,6 +120,82 @@ export function validateServerConfig(serverConfig: any): ValidationResult {
   };
 }
 
+export const validateMultipleServerConfigs = (
+  serverConfigs: Record<string, MastraMCPServerDefinition>,
+): MultipleValidationResult => {
+  if (!serverConfigs || Object.keys(serverConfigs).length === 0) {
+    return {
+      success: false,
+      error: NextResponse.json(
+        { error: "At least one server configuration is required" },
+        { status: 400 },
+      ),
+    };
+  }
+
+  const validConfigs: Record<string, MastraMCPServerDefinition> = {};
+  const errors: Record<string, string> = {};
+  let hasErrors = false;
+
+  // Validate each server configuration
+  for (const [serverName, serverConfig] of Object.entries(serverConfigs)) {
+    const validationResult = validateServerConfig(serverConfig);
+
+    if (validationResult.success && validationResult.config) {
+      validConfigs[serverName] = validationResult.config;
+    } else {
+      hasErrors = true;
+      // Extract error message from the NextResponse
+      let errorMessage = "Validation failed";
+      if (validationResult.error) {
+        try {
+          const errorBody = validationResult.error.body;
+          if (
+            errorBody &&
+            typeof errorBody === "object" &&
+            "error" in errorBody
+          ) {
+            errorMessage = errorBody.error as string;
+          }
+        } catch {
+          errorMessage = "Validation failed";
+        }
+      }
+      errors[serverName] = errorMessage;
+    }
+  }
+
+  // If all configs are valid, return success
+  if (!hasErrors) {
+    return {
+      success: true,
+      validConfigs,
+    };
+  }
+
+  // If some configs are valid but others failed, return partial success
+  if (Object.keys(validConfigs).length > 0) {
+    return {
+      success: false,
+      validConfigs,
+      errors,
+    };
+  }
+
+  // If all configs failed, return error
+  return {
+    success: false,
+    errors,
+    error: NextResponse.json(
+      {
+        error: "All server configurations failed validation",
+        details: errors,
+      },
+      { status: 400 },
+    ),
+  };
+};
+
 export function createMCPClient(
   config: MastraMCPServerDefinition,
   id: string,
@@ -123,6 +205,15 @@ export function createMCPClient(
     servers: {
       server: config,
     },
+  });
+}
+
+export function createMCPClientWithMultipleConnections(
+  serverConfigs: Record<string, MastraMCPServerDefinition>,
+): MCPClient {
+  return new MCPClient({
+    id: `chat-${Date.now()}`,
+    servers: serverConfigs,
   });
 }
 

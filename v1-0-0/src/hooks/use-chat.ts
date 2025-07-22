@@ -8,7 +8,7 @@ import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
 
 interface UseChatOptions {
   initialMessages?: ChatMessage[];
-  serverConfig?: MastraMCPServerDefinition;
+  serverConfigs?: Record<string, MastraMCPServerDefinition>;
   systemPrompt?: string;
   onMessageSent?: (message: ChatMessage) => void;
   onMessageReceived?: (message: ChatMessage) => void;
@@ -24,7 +24,7 @@ export function useChat(options: UseChatOptions = {}) {
 
   const {
     initialMessages = [],
-    serverConfig,
+    serverConfigs,
     systemPrompt,
     onMessageSent,
     onMessageReceived,
@@ -79,7 +79,10 @@ export function useChat(options: UseChatOptions = {}) {
       toolResults: { current: any[] },
     ) => {
       // Handle text content
-      if ((parsed.type === "text" || (!parsed.type && parsed.content)) && parsed.content) {
+      if (
+        (parsed.type === "text" || (!parsed.type && parsed.content)) &&
+        parsed.content
+      ) {
         assistantContent.current += parsed.content;
         setState((prev) => ({
           ...prev,
@@ -93,7 +96,10 @@ export function useChat(options: UseChatOptions = {}) {
       }
 
       // Handle tool calls
-      if ((parsed.type === "tool_call" || (!parsed.type && parsed.toolCall)) && (parsed.toolCall || parsed.toolCall)) {
+      if (
+        (parsed.type === "tool_call" || (!parsed.type && parsed.toolCall)) &&
+        (parsed.toolCall || parsed.toolCall)
+      ) {
         const toolCall = parsed.toolCall || parsed.toolCall;
         toolCalls.current = [...toolCalls.current, toolCall];
         setState((prev) => ({
@@ -108,10 +114,14 @@ export function useChat(options: UseChatOptions = {}) {
       }
 
       // Handle tool results
-      if ((parsed.type === "tool_result" || (!parsed.type && parsed.toolResult)) && (parsed.toolResult || parsed.toolResult)) {
+      if (
+        (parsed.type === "tool_result" ||
+          (!parsed.type && parsed.toolResult)) &&
+        (parsed.toolResult || parsed.toolResult)
+      ) {
         const toolResult = parsed.toolResult || parsed.toolResult;
         toolResults.current = [...toolResults.current, toolResult];
-        
+
         // Update the corresponding tool call status
         toolCalls.current = toolCalls.current.map((tc) =>
           tc.id === toolResult.toolCallId
@@ -121,7 +131,7 @@ export function useChat(options: UseChatOptions = {}) {
               }
             : tc,
         );
-        
+
         setState((prev) => ({
           ...prev,
           messages: prev.messages.map((msg) =>
@@ -138,7 +148,10 @@ export function useChat(options: UseChatOptions = {}) {
       }
 
       // Handle errors
-      if ((parsed.type === "error" || (!parsed.type && parsed.error)) && parsed.error) {
+      if (
+        (parsed.type === "error" || (!parsed.type && parsed.error)) &&
+        parsed.error
+      ) {
         throw new Error(parsed.error);
       }
     },
@@ -147,7 +160,7 @@ export function useChat(options: UseChatOptions = {}) {
 
   const sendChatRequest = useCallback(
     async (userMessage: ChatMessage) => {
-      if (!serverConfig || !model || !currentApiKey) {
+      if (!serverConfigs || !model || !currentApiKey) {
         throw new Error(
           "Missing required configuration: serverConfig, model, and apiKey are required",
         );
@@ -161,7 +174,7 @@ export function useChat(options: UseChatOptions = {}) {
       }));
 
       try {
-        console.log("serverConfig", serverConfig);
+        console.log("serverConfigs", serverConfigs);
         const response = await fetch("/api/mcp/chat", {
           method: "POST",
           headers: {
@@ -169,7 +182,7 @@ export function useChat(options: UseChatOptions = {}) {
             Accept: "text/event-stream",
           },
           body: JSON.stringify({
-            serverConfig,
+            serverConfigs,
             model,
             apiKey: currentApiKey,
             systemPrompt,
@@ -248,7 +261,7 @@ export function useChat(options: UseChatOptions = {}) {
       }
     },
     [
-      serverConfig,
+      serverConfigs,
       model,
       currentApiKey,
       systemPrompt,

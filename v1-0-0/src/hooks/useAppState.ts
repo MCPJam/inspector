@@ -32,6 +32,8 @@ export interface ServerWithName {
 export interface AppState {
   servers: Record<string, ServerWithName>;
   selectedServer: string;
+  selectedMCPConfigs: string[]; // Array of selected server names for multi-select mode
+  isMultiSelectMode: boolean; // Flag to enable/disable multi-select mode
   oauthFlows: Record<string, OAuthFlowManager>;
   pendingOAuthCallbacks: Record<
     string,
@@ -65,6 +67,8 @@ export function useAppState() {
   const [appState, setAppState] = useState<AppState>({
     servers: {},
     selectedServer: "none",
+    selectedMCPConfigs: [],
+    isMultiSelectMode: false,
     oauthFlows: {},
     pendingOAuthCallbacks: {},
   });
@@ -97,8 +101,12 @@ export function useAppState() {
           ),
         );
         setAppState({
-          ...parsed,
           servers: updatedServers,
+          selectedServer: parsed.selectedServer || "none",
+          selectedMCPConfigs: parsed.selectedMCPConfigs || [],
+          isMultiSelectMode: parsed.isMultiSelectMode || false,
+          oauthFlows: parsed.oauthFlows || {},
+          pendingOAuthCallbacks: parsed.pendingOAuthCallbacks || {},
         });
       } catch (error) {
         console.error("Failed to parse saved state:", error);
@@ -625,11 +633,13 @@ export function useAppState() {
       delete newServers[serverName];
 
       return {
+        ...prev,
         servers: newServers,
         selectedServer:
           prev.selectedServer === serverName ? "none" : prev.selectedServer,
-        oauthFlows: prev.oauthFlows,
-        pendingOAuthCallbacks: prev.pendingOAuthCallbacks,
+        selectedMCPConfigs: prev.selectedMCPConfigs.filter(
+          (name) => name !== serverName,
+        ),
       };
     });
   }, []);
@@ -801,6 +811,36 @@ export function useAppState() {
     }));
   }, []);
 
+  const setSelectedMCPConfigs = useCallback((serverNames: string[]) => {
+    setAppState((prev) => ({
+      ...prev,
+      selectedMCPConfigs: serverNames,
+    }));
+  }, []);
+
+  const toggleMultiSelectMode = useCallback((enabled: boolean) => {
+    setAppState((prev) => ({
+      ...prev,
+      isMultiSelectMode: enabled,
+      // Reset selections when switching modes
+      selectedMCPConfigs: enabled ? [] : prev.selectedMCPConfigs,
+    }));
+  }, []);
+
+  const toggleServerSelection = useCallback((serverName: string) => {
+    setAppState((prev) => {
+      const currentSelected = prev.selectedMCPConfigs;
+      const isSelected = currentSelected.includes(serverName);
+
+      return {
+        ...prev,
+        selectedMCPConfigs: isSelected
+          ? currentSelected.filter((name) => name !== serverName)
+          : [...currentSelected, serverName],
+      };
+    });
+  }, []);
+
   return {
     // State
     appState,
@@ -810,12 +850,28 @@ export function useAppState() {
     connectedServerConfigs: appState.servers,
     selectedServerEntry: appState.servers[appState.selectedServer],
     selectedMCPConfig: appState.servers[appState.selectedServer]?.config,
+    selectedMCPConfigs: appState.selectedMCPConfigs
+      .map((name) => appState.servers[name])
+      .filter(Boolean),
+    selectedMCPConfigsMap: appState.selectedMCPConfigs.reduce(
+      (acc, name) => {
+        if (appState.servers[name]) {
+          acc[name] = appState.servers[name].config;
+        }
+        return acc;
+      },
+      {} as Record<string, MastraMCPServerDefinition>,
+    ),
+    isMultiSelectMode: appState.isMultiSelectMode,
 
     // Actions
     handleConnect,
     handleDisconnect,
     handleReconnect,
     setSelectedServer,
+    setSelectedMCPConfigs,
+    toggleMultiSelectMode,
+    toggleServerSelection,
     refreshOAuthToken,
     getValidAccessToken,
     isTokenExpired,

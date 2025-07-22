@@ -41,6 +41,8 @@ export default function Home() {
     handleDisconnect,
     handleReconnect,
     setSelectedServer,
+    toggleServerSelection,
+    selectedMCPConfigsMap,
   } = useAppState();
 
   const handleNavigate = (section: string) => {
@@ -85,6 +87,9 @@ export default function Home() {
               selectedServer={appState.selectedServer}
               onServerChange={setSelectedServer}
               onConnect={handleConnect}
+              isMultiSelectEnabled={activeTab === "chat"}
+              onMultiServerToggle={toggleServerSelection}
+              selectedMCPConfigs={appState.selectedMCPConfigs}
             />
           )}
 
@@ -110,7 +115,9 @@ export default function Home() {
             <PromptsTab serverConfig={selectedMCPConfig} />
           )}
 
-          {activeTab === "chat" && <ChatTab serverConfig={selectedMCPConfig} />}
+          {activeTab === "chat" && (
+            <ChatTab serverConfigs={selectedMCPConfigsMap} />
+          )}
 
           {activeTab === "settings" && <SettingsTab />}
         </div>

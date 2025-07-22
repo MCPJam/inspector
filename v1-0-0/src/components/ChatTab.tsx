@@ -11,11 +11,11 @@ import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 
 interface ChatTabProps {
-  serverConfig?: MastraMCPServerDefinition;
+  serverConfigs?: Record<string, MastraMCPServerDefinition>;
   systemPrompt?: string;
 }
 
-export function ChatTab({ serverConfig, systemPrompt = "" }: ChatTabProps) {
+export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
 
@@ -34,7 +34,7 @@ export function ChatTab({ serverConfig, systemPrompt = "" }: ChatTabProps) {
     hasValidApiKey,
     setModel,
   } = useChat({
-    serverConfig,
+    serverConfigs: serverConfigs,
     systemPrompt,
     onError: (error) => {
       toast.error(error);
@@ -66,7 +66,10 @@ export function ChatTab({ serverConfig, systemPrompt = "" }: ChatTabProps) {
     navigator.clipboard.writeText(content);
   };
 
-  if (!serverConfig) {
+  const hasServerConfig =
+    serverConfigs && Object.keys(serverConfigs).length > 0;
+
+  if (!hasServerConfig) {
     return (
       <div className="flex flex-col h-screen">
         <div className="flex-1 flex items-center justify-center">
@@ -77,8 +80,8 @@ export function ChatTab({ serverConfig, systemPrompt = "" }: ChatTabProps) {
             <div className="space-y-3">
               <h3 className="text-2xl font-semibold">Connect to get started</h3>
               <p className="text-muted-foreground text-base leading-relaxed">
-                Choose an MCP server from the sidebar to begin chatting with AI
-                assistants.
+                Select MCP servers from the sidebar to begin chatting with
+                multiple AI assistants.
               </p>
             </div>
           </div>
@@ -101,8 +104,15 @@ export function ChatTab({ serverConfig, systemPrompt = "" }: ChatTabProps) {
           >
             <div className="space-y-3">
               <h1 className="text-4xl font-semibold bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
-                What can I help with?
+                Let&apos;s test out your MCP servers!
               </h1>
+              {serverConfigs && (
+                <div className="text-sm text-muted-foreground mt-4">
+                  <p>
+                    Connected servers: {Object.keys(serverConfigs).join(", ")}
+                  </p>
+                </div>
+              )}
             </div>
           </motion.div>
 
@@ -118,7 +128,7 @@ export function ChatTab({ serverConfig, systemPrompt = "" }: ChatTabProps) {
               onChange={setInput}
               onSubmit={sendMessage}
               onStop={stopGeneration}
-              disabled={!serverConfig || !hasValidApiKey}
+              disabled={!hasServerConfig || !hasValidApiKey}
               isLoading={isLoading}
               placeholder="Send a message..."
               className="border-2 shadow-lg bg-background/80 backdrop-blur-sm"
@@ -229,7 +239,7 @@ export function ChatTab({ serverConfig, systemPrompt = "" }: ChatTabProps) {
               onChange={setInput}
               onSubmit={sendMessage}
               onStop={stopGeneration}
-              disabled={!serverConfig || !hasValidApiKey}
+              disabled={!hasServerConfig || !hasValidApiKey}
               isLoading={isLoading}
               placeholder="Send a message..."
               className="border-2 shadow-sm"
