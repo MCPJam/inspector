@@ -279,7 +279,7 @@ export function useAppState() {
         }
 
         // For non-OAuth connections, test connection using the stateless endpoint
-        const response = await fetch("/api/mcp/test-connection", {
+        const response = await fetch("/api/mcp/connect", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -670,7 +670,7 @@ export function useAppState() {
         const currentServer = appState.servers[serverName];
 
         // Test connection using the stateless endpoint
-        const response = await fetch("/api/mcp/test-connection", {
+        const response = await fetch("/api/mcp/connect", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

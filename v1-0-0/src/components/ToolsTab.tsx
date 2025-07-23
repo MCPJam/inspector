@@ -20,11 +20,20 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "./ui/resizable";
-import { Wrench, Play, RefreshCw, ChevronRight } from "lucide-react";
+import {
+  Wrench,
+  Play,
+  RefreshCw,
+  ChevronRight,
+  MessageSquare,
+  X,
+  Check,
+} from "lucide-react";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import type { MCPToolType } from "@mastra/core/mcp";
 import { MastraMCPServerDefinition } from "@/lib/types";
+import { ElicitationDialog } from "./ElicitationDialog";
 
 interface Tool {
   name: string;
@@ -50,6 +59,13 @@ interface FormField {
   pattern?: string;
 }
 
+interface ElicitationRequest {
+  requestId: string;
+  message: string;
+  schema: any;
+  timestamp: string;
+}
+
 export function ToolsTab({ serverConfig }: ToolsTabProps) {
   const [tools, setTools] = useState<Record<string, Tool>>({});
   const [selectedTool, setSelectedTool] = useState<string>("");
@@ -58,11 +74,22 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
   const [loading, setLoading] = useState(false);
   const [fetchingTools, setFetchingTools] = useState(false);
   const [error, setError] = useState<string>("");
+  const [eventSource, setEventSource] = useState<EventSource | null>(null);
+  const [elicitationRequest, setElicitationRequest] =
+    useState<ElicitationRequest | null>(null);
+  const [elicitationLoading, setElicitationLoading] = useState(false);
 
   useEffect(() => {
     if (serverConfig) {
       fetchTools();
     }
+
+    // Cleanup EventSource on unmount
+    return () => {
+      if (eventSource) {
+        eventSource.close();
+      }
+    };
   }, [serverConfig]);
 
   useEffect(() => {
@@ -80,24 +107,70 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
     const config = getServerConfig();
     if (!config) return;
 
+    // Close existing EventSource if any
+    if (eventSource) {
+      eventSource.close();
+      setEventSource(null);
+    }
+
     setFetchingTools(true);
     setError("");
+    setTools({});
 
     try {
-      const response = await fetch("/api/mcp/tools/list", {
+      const response = await fetch("/api/mcp/tools", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ serverConfig: config }),
+        body: JSON.stringify({
+          action: "list",
+          serverConfig: config,
+        }),
       });
 
-      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
 
-      if (response.ok) {
-        setTools(data.tools || {});
-      } else {
-        setError(data.error || "Failed to fetch tools");
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+
+      if (!reader) {
+        throw new Error("No response body");
+      }
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split("\n");
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const data = line.slice(6);
+            if (data === "[DONE]") {
+              setFetchingTools(false);
+              return;
+            }
+
+            try {
+              const parsed = JSON.parse(data);
+
+              if (parsed.type === "tools_list") {
+                setTools(parsed.tools || {});
+              } else if (parsed.type === "tool_error") {
+                setError(parsed.error);
+                setFetchingTools(false);
+                return;
+              }
+            } catch (parseError) {
+              console.warn("Failed to parse SSE data:", parseError);
+            }
+          }
+        }
       }
     } catch (err) {
+      console.error("Error fetching tools:", err);
       setError("Network error fetching tools");
     } finally {
       setFetchingTools(false);
@@ -195,32 +268,121 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
 
     setLoading(true);
     setError("");
+    setResult(null);
 
     try {
       const params = buildParameters();
-      const response = await fetch("/api/mcp/tools/execute", {
+      const response = await fetch("/api/mcp/tools", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
+          action: "execute",
           serverConfig: config,
           toolName: selectedTool,
           parameters: params,
         }),
       });
 
-      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
 
-      if (response.ok) {
-        setResult(data.result);
-      } else {
-        setError(data.error || "Failed to execute tool");
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+
+      if (!reader) {
+        throw new Error("No response body");
+      }
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split("\n");
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const data = line.slice(6);
+            if (data === "[DONE]") {
+              setLoading(false);
+              return;
+            }
+
+            try {
+              const parsed = JSON.parse(data);
+
+              if (parsed.type === "tool_result") {
+                setResult(parsed.result);
+              } else if (parsed.type === "tool_error") {
+                setError(parsed.error);
+                setLoading(false);
+                return;
+              } else if (parsed.type === "elicitation_request") {
+                setElicitationRequest({
+                  requestId: parsed.requestId,
+                  message: parsed.message,
+                  schema: parsed.schema,
+                  timestamp: parsed.timestamp,
+                });
+              } else if (parsed.type === "elicitation_complete") {
+                setElicitationRequest(null);
+              }
+            } catch (parseError) {
+              console.warn("Failed to parse SSE data:", parseError);
+            }
+          }
+        }
       }
     } catch (err) {
+      console.error("Error executing tool:", err);
       setError("Error executing tool");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleElicitationResponse = async (
+    action: "accept" | "decline" | "cancel",
+    parameters?: Record<string, any>,
+  ) => {
+    if (!elicitationRequest) return;
+
+    setElicitationLoading(true);
+
+    try {
+      let responseData = null;
+      if (action === "accept") {
+        responseData = {
+          action: "accept",
+          content: parameters || {},
+        };
+      } else {
+        responseData = {
+          action,
+        };
+      }
+
+      await fetch("/api/mcp/tools", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "respond",
+          requestId: elicitationRequest.requestId,
+          response: responseData,
+        }),
+      });
+
+      setElicitationRequest(null);
+    } catch (err) {
+      console.error("Error responding to elicitation:", err);
+      setError("Error responding to elicitation request");
+    } finally {
+      setElicitationLoading(false);
     }
   };
 
@@ -354,7 +516,9 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                         {loading ? (
                           <>
                             <RefreshCw className="h-3 w-3 mr-1.5 animate-spin cursor-pointer" />
-                            <span className="font-mono text-xs">Running</span>
+                            <span className="font-mono text-xs">
+                              {elicitationRequest ? "Waiting..." : "Running"}
+                            </span>
                           </>
                         ) : (
                           <>
@@ -586,6 +750,12 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
           </div>
         </ResizablePanel>
       </ResizablePanelGroup>
+
+      <ElicitationDialog
+        elicitationRequest={elicitationRequest}
+        onResponse={handleElicitationResponse}
+        loading={elicitationLoading}
+      />
     </div>
   );
 }
