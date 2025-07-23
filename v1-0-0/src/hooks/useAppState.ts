@@ -32,7 +32,7 @@ export interface ServerWithName {
 export interface AppState {
   servers: Record<string, ServerWithName>;
   selectedServer: string;
-  selectedMCPConfigs: string[]; // Array of selected server names for multi-select mode
+  selectedMultipleServers: string[]; // Array of selected server names for multi-select mode
   isMultiSelectMode: boolean; // Flag to enable/disable multi-select mode
   oauthFlows: Record<string, OAuthFlowManager>;
   pendingOAuthCallbacks: Record<
@@ -67,7 +67,7 @@ export function useAppState() {
   const [appState, setAppState] = useState<AppState>({
     servers: {},
     selectedServer: "none",
-    selectedMCPConfigs: [],
+    selectedMultipleServers: [],
     isMultiSelectMode: false,
     oauthFlows: {},
     pendingOAuthCallbacks: {},
@@ -103,7 +103,7 @@ export function useAppState() {
         setAppState({
           servers: updatedServers,
           selectedServer: parsed.selectedServer || "none",
-          selectedMCPConfigs: parsed.selectedMCPConfigs || [],
+          selectedMultipleServers: parsed.selectedMultipleServers || [],
           isMultiSelectMode: parsed.isMultiSelectMode || false,
           oauthFlows: parsed.oauthFlows || {},
           pendingOAuthCallbacks: parsed.pendingOAuthCallbacks || {},
@@ -118,10 +118,16 @@ export function useAppState() {
   // Save state to localStorage whenever it changes
   useEffect(() => {
     if (!isLoading) {
-      console.log("Saving appState to localStorage:", appState);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
     }
   }, [appState, isLoading]);
+
+  const setSelectedMultipleServersToAllServers = useCallback(() => {
+    setAppState((prev) => ({
+      ...prev,
+      selectedMultipleServers: Object.keys(appState.servers),
+    }));
+  }, [appState.servers]);
 
   // Check for OAuth callback completion on mount
   useEffect(() => {
@@ -208,7 +214,7 @@ export function useAppState() {
           });
 
           const oauthResult = await oauthFlow.initiate();
-          console.log("oauthResult", oauthResult);
+
           if (oauthResult.success && oauthResult.authorization_url) {
             // Store only serializable OAuth state data
             const oauthState = oauthFlow.getState();
@@ -219,14 +225,6 @@ export function useAppState() {
               const clientId: string | undefined =
                 oauthState.client_registration?.client_id;
 
-              console.log("OAuth initiation debug:", {
-                clientId,
-                stateParam,
-                authorizationRequest: oauthState.authorization_request,
-                clientRegistration: oauthState.client_registration,
-              });
-
-              // Update state and wait for it to be saved
               setAppState((prev) => {
                 const newState = {
                   ...prev,
@@ -243,8 +241,6 @@ export function useAppState() {
                     },
                   },
                 };
-
-                console.log("Updated appState for OAuth:", newState);
 
                 // Force save to localStorage immediately
                 localStorage.setItem(STORAGE_KEY, JSON.stringify(newState));
@@ -388,13 +384,6 @@ export function useAppState() {
 
         // Use the stored client ID from the original OAuth flow
         const clientId = oauthData.clientId;
-
-        console.log("OAuth callback debug:", {
-          storedClientId: oauthData.clientId,
-          discoveredClientId: oauthState.client_registration?.client_id,
-          tokenEndpoint,
-          state,
-        });
 
         if (!tokenEndpoint) {
           throw new Error("Token endpoint not available after discovery");
@@ -637,7 +626,7 @@ export function useAppState() {
         servers: newServers,
         selectedServer:
           prev.selectedServer === serverName ? "none" : prev.selectedServer,
-        selectedMCPConfigs: prev.selectedMCPConfigs.filter(
+        selectedMultipleServers: prev.selectedMultipleServers.filter(
           (name) => name !== serverName,
         ),
       };
@@ -747,40 +736,6 @@ export function useAppState() {
     [appState.servers, isTokenExpired, refreshOAuthToken],
   );
 
-  // TODO: Decide whether or not we want retries
-  const scheduleAutoReconnect = useCallback(
-    (serverName: string, retryCount: number) => {
-      const MAX_RETRIES = 5;
-      const BASE_DELAY = 5000; // 5 seconds
-
-      if (retryCount >= MAX_RETRIES) {
-        console.log(`Max retries (${MAX_RETRIES}) reached for ${serverName}`);
-        return;
-      }
-
-      // Exponential backoff: 5s, 10s, 20s, 40s, 80s
-      const delay = BASE_DELAY * Math.pow(2, retryCount);
-
-      console.log(
-        `Scheduling auto-reconnect for ${serverName} in ${delay}ms (attempt ${retryCount + 1})`,
-      );
-
-      const timeoutId = setTimeout(async () => {
-        try {
-          await handleReconnect(serverName);
-        } catch (error) {
-          console.error(`Auto-reconnect failed for ${serverName}:`, error);
-        }
-      }, delay);
-
-      setReconnectionTimeouts((prev) => ({
-        ...prev,
-        [serverName]: timeoutId,
-      }));
-    },
-    [handleReconnect],
-  );
-
   // Effect to handle cleanup of reconnection timeouts (automatic retries disabled)
   useEffect(() => {
     // Cleanup timeouts for servers that are no longer failed or have been removed
@@ -823,18 +778,18 @@ export function useAppState() {
       ...prev,
       isMultiSelectMode: enabled,
       // Reset selections when switching modes
-      selectedMCPConfigs: enabled ? [] : prev.selectedMCPConfigs,
+      selectedMultipleServers: enabled ? [] : prev.selectedMultipleServers,
     }));
   }, []);
 
   const toggleServerSelection = useCallback((serverName: string) => {
     setAppState((prev) => {
-      const currentSelected = prev.selectedMCPConfigs;
+      const currentSelected = prev.selectedMultipleServers;
       const isSelected = currentSelected.includes(serverName);
 
       return {
         ...prev,
-        selectedMCPConfigs: isSelected
+        selectedMultipleServers: isSelected
           ? currentSelected.filter((name) => name !== serverName)
           : [...currentSelected, serverName],
       };
@@ -850,10 +805,10 @@ export function useAppState() {
     connectedServerConfigs: appState.servers,
     selectedServerEntry: appState.servers[appState.selectedServer],
     selectedMCPConfig: appState.servers[appState.selectedServer]?.config,
-    selectedMCPConfigs: appState.selectedMCPConfigs
+    selectedMCPConfigs: appState.selectedMultipleServers
       .map((name) => appState.servers[name])
       .filter(Boolean),
-    selectedMCPConfigsMap: appState.selectedMCPConfigs.reduce(
+    selectedMCPConfigsMap: appState.selectedMultipleServers.reduce(
       (acc, name) => {
         if (appState.servers[name]) {
           acc[name] = appState.servers[name].config;
@@ -875,5 +830,6 @@ export function useAppState() {
     refreshOAuthToken,
     getValidAccessToken,
     isTokenExpired,
+    setSelectedMultipleServersToAllServers,
   };
 }

@@ -8,7 +8,7 @@ import { Check } from "lucide-react";
 interface ActiveServerSelectorProps {
   connectedServerConfigs: Record<string, ServerWithName>;
   selectedServer: string;
-  selectedMCPConfigs: string[];
+  selectedMultipleServers: string[];
   isMultiSelectEnabled: boolean;
   onServerChange: (server: string) => void;
   onMultiServerToggle: (server: string) => void;
@@ -48,7 +48,7 @@ function getStatusText(status: string): string {
 export function ActiveServerSelector({
   connectedServerConfigs,
   selectedServer,
-  selectedMCPConfigs,
+  selectedMultipleServers,
   isMultiSelectEnabled,
   onServerChange,
   onMultiServerToggle,
@@ -56,7 +56,6 @@ export function ActiveServerSelector({
 }: ActiveServerSelectorProps) {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const servers = Object.entries(connectedServerConfigs);
-
   if (servers.length === 0) {
     return (
       <div className="mb-6 p-4 border rounded-lg bg-muted/30 text-center text-sm text-muted-foreground">
@@ -69,14 +68,18 @@ export function ActiveServerSelector({
     <div>
       <div className="flex flex-wrap">
         {servers.map(([name, serverConfig]) => {
-          const isSelected = isMultiSelectEnabled 
-            ? selectedMCPConfigs.includes(name)
+          const isSelected = isMultiSelectEnabled
+            ? selectedMultipleServers.includes(name)
             : selectedServer === name;
-          
+
           return (
             <button
               key={name}
-              onClick={() => isMultiSelectEnabled ? onMultiServerToggle(name) : onServerChange(name)}
+              onClick={() =>
+                isMultiSelectEnabled
+                  ? onMultiServerToggle(name)
+                  : onServerChange(name)
+              }
               className={cn(
                 "group relative flex items-center gap-3 px-4 py-3 border-r border-b border-border transition-all duration-200 cursor-pointer",
                 "hover:bg-accent hover:text-accent-foreground",
@@ -86,12 +89,14 @@ export function ActiveServerSelector({
               )}
             >
               {isMultiSelectEnabled && (
-                <div className={cn(
-                  "w-4 h-4 rounded border-2 flex items-center justify-center transition-colors",
-                  isSelected 
-                    ? "bg-primary border-primary text-primary-foreground"
-                    : "border-muted-foreground/30 hover:border-primary/50"
-                )}>
+                <div
+                  className={cn(
+                    "w-4 h-4 rounded border-2 flex items-center justify-center transition-colors",
+                    isSelected
+                      ? "bg-primary border-primary text-primary-foreground"
+                      : "border-muted-foreground/30 hover:border-primary/50",
+                  )}
+                >
                   {isSelected && <Check className="w-3 h-3" />}
                 </div>
               )}

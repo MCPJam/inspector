@@ -1,7 +1,13 @@
 "use client";
 
 import * as React from "react";
-import { MessageCircle, Settings, Telescope } from "lucide-react";
+import {
+  Brain,
+  FolderOpen,
+  Hammer,
+  MessageCircle,
+  Settings,
+} from "lucide-react";
 
 import { NavMain } from "@/components/sidebar/nav-main";
 import {
@@ -44,10 +50,10 @@ const navigationSections = [
       {
         title: "MCP Servers",
         url: "#servers",
-        icon: Telescope,
+        icon: MCPIcon,
       },
       {
-        title: "Chat",
+        title: "Playground",
         url: "#chat",
         icon: MessageCircle,
       },
@@ -59,17 +65,17 @@ const navigationSections = [
       {
         title: "Tools",
         url: "#tools",
-        icon: MCPIcon,
+        icon: Hammer,
       },
       {
         title: "Resources",
         url: "#resources",
-        icon: MCPIcon,
+        icon: FolderOpen,
       },
       {
         title: "Prompts",
         url: "#prompts",
-        icon: MCPIcon,
+        icon: Brain,
       },
     ],
   },

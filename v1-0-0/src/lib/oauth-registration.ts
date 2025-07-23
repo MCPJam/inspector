@@ -1,8 +1,3 @@
-/**
- * Dynamic Client Registration Implementation
- * Implements RFC 7591 OAuth 2.0 Dynamic Client Registration Protocol
- */
-
 import {
   ClientRegistrationRequest,
   ClientRegistrationResponse,
@@ -12,8 +7,8 @@ import {
   GRANT_TYPES,
   RESPONSE_TYPES,
   TOKEN_ENDPOINT_AUTH_METHODS,
-  OAUTH_SCOPES
-} from './oauth-types';
+  OAUTH_SCOPES,
+} from "./oauth-types";
 
 export interface RegistrationOptions {
   timeout?: number;
@@ -43,18 +38,18 @@ export interface RegistrationResult {
  */
 export async function registerOAuthClient(
   authServerMetadata: AuthorizationServerMetadata,
-  options: RegistrationOptions = {}
+  options: RegistrationOptions = {},
 ): Promise<RegistrationResult> {
   const {
     timeout = 30000,
-    client_name = 'MCP Inspector',
-    client_description = 'MCP Inspector OAuth Client',
-    redirect_uris = ['http://localhost:3000/oauth/callback'],
+    client_name = "MCP Inspector",
+    client_description = "MCP Inspector OAuth Client",
+    redirect_uris = ["http://localhost:3000/oauth/callback"],
     scopes = [OAUTH_SCOPES.MCP_FULL],
     grant_types = [GRANT_TYPES.AUTHORIZATION_CODE, GRANT_TYPES.REFRESH_TOKEN],
     response_types = [RESPONSE_TYPES.CODE],
     token_endpoint_auth_method = TOKEN_ENDPOINT_AUTH_METHODS.NONE,
-    mcp_capabilities = {}
+    mcp_capabilities = {},
   } = options;
 
   // Check if registration is supported
@@ -63,8 +58,9 @@ export async function registerOAuthClient(
       success: false,
       error: {
         error: MCP_OAUTH_ERRORS.REGISTRATION_FAILED,
-        error_description: 'Authorization server does not support dynamic client registration'
-      }
+        error_description:
+          "Authorization server does not support dynamic client registration",
+      },
     };
   }
 
@@ -76,97 +72,100 @@ export async function registerOAuthClient(
       grant_types,
       response_types,
       token_endpoint_auth_method,
-      scope: scopes.join(' '),
+      scope: scopes.join(" "),
       // MCP-specific fields
-      mcp_version: '1.0',
+      mcp_version: "1.0",
       mcp_client_name: client_name,
-      mcp_client_description: client_description
+      mcp_client_description: client_description,
     };
 
     // Add optional fields
     if (mcp_capabilities.tools?.length) {
-      registrationRequest.software_id = 'mcp-inspector';
-      registrationRequest.software_version = '1.0.0';
+      registrationRequest.software_id = "mcp-inspector";
+      registrationRequest.software_version = "1.0.0";
     }
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeout);
 
     const response = await fetch(authServerMetadata.registration_endpoint, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'User-Agent': 'MCP-Inspector/1.0'
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "User-Agent": "MCP-Inspector/1.0",
       },
       body: JSON.stringify(registrationRequest),
-      signal: controller.signal
+      signal: controller.signal,
     });
 
     clearTimeout(timeoutId);
 
     if (response.ok) {
-      const clientRegistration = await response.json() as ClientRegistrationResponse;
-      
-      // Log the raw response for debugging
-      console.log('OAuth registration response:', clientRegistration);
-      
-      // Validate response - but be lenient for testing
+      const clientRegistration =
+        (await response.json()) as ClientRegistrationResponse;
+
       const validation = validateClientRegistrationResponse(clientRegistration);
       if (!validation.valid) {
-        console.warn('OAuth registration validation issues:', validation.errors);
-        console.warn('Registration response data:', clientRegistration);
-        
-        // Only fail if client_id is missing (critical error)
-        const criticalErrors = validation.errors.filter(error => 
-          error.includes('client_id') || error.includes('Missing required field')
+        console.warn(
+          "OAuth registration validation issues:",
+          validation.errors,
         );
-        
+        console.warn("Registration response data:", clientRegistration);
+
+        // Only fail if client_id is missing (critical error)
+        const criticalErrors = validation.errors.filter(
+          (error) =>
+            error.includes("client_id") ||
+            error.includes("Missing required field"),
+        );
+
         if (criticalErrors.length > 0) {
           return {
             success: false,
             error: {
               error: MCP_OAUTH_ERRORS.REGISTRATION_FAILED,
-              error_description: `Critical registration error: ${criticalErrors.join(', ')}`
-            }
+              error_description: `Critical registration error: ${criticalErrors.join(", ")}`,
+            },
           };
         }
-        
+
         // For non-critical errors, proceed but log warnings
-        console.warn('Proceeding with registration despite validation warnings');
+        console.warn(
+          "Proceeding with registration despite validation warnings",
+        );
       }
 
       return {
         success: true,
         client_registration: clientRegistration,
-        registered_at: Date.now()
+        registered_at: Date.now(),
       };
     } else {
       // Parse error response
       let errorResponse: OAuthError;
       try {
-        errorResponse = await response.json() as OAuthError;
+        errorResponse = (await response.json()) as OAuthError;
       } catch {
         errorResponse = {
           error: MCP_OAUTH_ERRORS.REGISTRATION_FAILED,
-          error_description: `Registration failed with status ${response.status}`
+          error_description: `Registration failed with status ${response.status}`,
         };
       }
 
       return {
         success: false,
-        error: errorResponse
+        error: errorResponse,
       };
     }
-
   } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
+    if (error instanceof DOMException && error.name === "AbortError") {
       return {
         success: false,
         error: {
           error: MCP_OAUTH_ERRORS.REGISTRATION_FAILED,
-          error_description: 'Registration request timed out'
-        }
+          error_description: "Registration request timed out",
+        },
       };
     }
 
@@ -174,8 +173,9 @@ export async function registerOAuthClient(
       success: false,
       error: {
         error: MCP_OAUTH_ERRORS.REGISTRATION_FAILED,
-        error_description: error instanceof Error ? error.message : 'Unknown registration error'
-      }
+        error_description:
+          error instanceof Error ? error.message : "Unknown registration error",
+      },
     };
   }
 }
@@ -186,17 +186,21 @@ export async function registerOAuthClient(
 export async function updateOAuthClient(
   clientRegistration: ClientRegistrationResponse,
   updates: Partial<ClientRegistrationRequest>,
-  options: { timeout?: number } = {}
+  options: { timeout?: number } = {},
 ): Promise<RegistrationResult> {
   const { timeout = 30000 } = options;
 
-  if (!clientRegistration.registration_client_uri || !clientRegistration.registration_access_token) {
+  if (
+    !clientRegistration.registration_client_uri ||
+    !clientRegistration.registration_access_token
+  ) {
     return {
       success: false,
       error: {
         error: MCP_OAUTH_ERRORS.REGISTRATION_FAILED,
-        error_description: 'Client registration does not support updates (missing registration URI or access token)'
-      }
+        error_description:
+          "Client registration does not support updates (missing registration URI or access token)",
+      },
     };
   }
 
@@ -205,54 +209,55 @@ export async function updateOAuthClient(
     const timeoutId = setTimeout(() => controller.abort(), timeout);
 
     const response = await fetch(clientRegistration.registration_client_uri, {
-      method: 'PUT',
+      method: "PUT",
       headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'Authorization': `Bearer ${clientRegistration.registration_access_token}`,
-        'User-Agent': 'MCP-Inspector/1.0'
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        Authorization: `Bearer ${clientRegistration.registration_access_token}`,
+        "User-Agent": "MCP-Inspector/1.0",
       },
       body: JSON.stringify({
         ...extractRegistrationRequest(clientRegistration),
-        ...updates
+        ...updates,
       }),
-      signal: controller.signal
+      signal: controller.signal,
     });
 
     clearTimeout(timeoutId);
 
     if (response.ok) {
-      const updatedRegistration = await response.json() as ClientRegistrationResponse;
-      
+      const updatedRegistration =
+        (await response.json()) as ClientRegistrationResponse;
+
       return {
         success: true,
         client_registration: updatedRegistration,
-        registered_at: Date.now()
+        registered_at: Date.now(),
       };
     } else {
       let errorResponse: OAuthError;
       try {
-        errorResponse = await response.json() as OAuthError;
+        errorResponse = (await response.json()) as OAuthError;
       } catch {
         errorResponse = {
           error: MCP_OAUTH_ERRORS.REGISTRATION_FAILED,
-          error_description: `Update failed with status ${response.status}`
+          error_description: `Update failed with status ${response.status}`,
         };
       }
 
       return {
         success: false,
-        error: errorResponse
+        error: errorResponse,
       };
     }
-
   } catch (error) {
     return {
       success: false,
       error: {
         error: MCP_OAUTH_ERRORS.REGISTRATION_FAILED,
-        error_description: error instanceof Error ? error.message : 'Unknown update error'
-      }
+        error_description:
+          error instanceof Error ? error.message : "Unknown update error",
+      },
     };
   }
 }
@@ -262,17 +267,21 @@ export async function updateOAuthClient(
  */
 export async function readOAuthClient(
   clientRegistration: ClientRegistrationResponse,
-  options: { timeout?: number } = {}
+  options: { timeout?: number } = {},
 ): Promise<RegistrationResult> {
   const { timeout = 30000 } = options;
 
-  if (!clientRegistration.registration_client_uri || !clientRegistration.registration_access_token) {
+  if (
+    !clientRegistration.registration_client_uri ||
+    !clientRegistration.registration_access_token
+  ) {
     return {
       success: false,
       error: {
         error: MCP_OAUTH_ERRORS.REGISTRATION_FAILED,
-        error_description: 'Client registration does not support reading (missing registration URI or access token)'
-      }
+        error_description:
+          "Client registration does not support reading (missing registration URI or access token)",
+      },
     };
   }
 
@@ -281,48 +290,49 @@ export async function readOAuthClient(
     const timeoutId = setTimeout(() => controller.abort(), timeout);
 
     const response = await fetch(clientRegistration.registration_client_uri, {
-      method: 'GET',
+      method: "GET",
       headers: {
-        'Accept': 'application/json',
-        'Authorization': `Bearer ${clientRegistration.registration_access_token}`,
-        'User-Agent': 'MCP-Inspector/1.0'
+        Accept: "application/json",
+        Authorization: `Bearer ${clientRegistration.registration_access_token}`,
+        "User-Agent": "MCP-Inspector/1.0",
       },
-      signal: controller.signal
+      signal: controller.signal,
     });
 
     clearTimeout(timeoutId);
 
     if (response.ok) {
-      const currentRegistration = await response.json() as ClientRegistrationResponse;
-      
+      const currentRegistration =
+        (await response.json()) as ClientRegistrationResponse;
+
       return {
         success: true,
-        client_registration: currentRegistration
+        client_registration: currentRegistration,
       };
     } else {
       let errorResponse: OAuthError;
       try {
-        errorResponse = await response.json() as OAuthError;
+        errorResponse = (await response.json()) as OAuthError;
       } catch {
         errorResponse = {
           error: MCP_OAUTH_ERRORS.REGISTRATION_FAILED,
-          error_description: `Read failed with status ${response.status}`
+          error_description: `Read failed with status ${response.status}`,
         };
       }
 
       return {
         success: false,
-        error: errorResponse
+        error: errorResponse,
       };
     }
-
   } catch (error) {
     return {
       success: false,
       error: {
         error: MCP_OAUTH_ERRORS.REGISTRATION_FAILED,
-        error_description: error instanceof Error ? error.message : 'Unknown read error'
-      }
+        error_description:
+          error instanceof Error ? error.message : "Unknown read error",
+      },
     };
   }
 }
@@ -332,17 +342,21 @@ export async function readOAuthClient(
  */
 export async function deleteOAuthClient(
   clientRegistration: ClientRegistrationResponse,
-  options: { timeout?: number } = {}
+  options: { timeout?: number } = {},
 ): Promise<{ success: boolean; error?: OAuthError }> {
   const { timeout = 30000 } = options;
 
-  if (!clientRegistration.registration_client_uri || !clientRegistration.registration_access_token) {
+  if (
+    !clientRegistration.registration_client_uri ||
+    !clientRegistration.registration_access_token
+  ) {
     return {
       success: false,
       error: {
         error: MCP_OAUTH_ERRORS.REGISTRATION_FAILED,
-        error_description: 'Client registration does not support deletion (missing registration URI or access token)'
-      }
+        error_description:
+          "Client registration does not support deletion (missing registration URI or access token)",
+      },
     };
   }
 
@@ -351,12 +365,12 @@ export async function deleteOAuthClient(
     const timeoutId = setTimeout(() => controller.abort(), timeout);
 
     const response = await fetch(clientRegistration.registration_client_uri, {
-      method: 'DELETE',
+      method: "DELETE",
       headers: {
-        'Authorization': `Bearer ${clientRegistration.registration_access_token}`,
-        'User-Agent': 'MCP-Inspector/1.0'
+        Authorization: `Bearer ${clientRegistration.registration_access_token}`,
+        "User-Agent": "MCP-Inspector/1.0",
       },
-      signal: controller.signal
+      signal: controller.signal,
     });
 
     clearTimeout(timeoutId);
@@ -366,27 +380,27 @@ export async function deleteOAuthClient(
     } else {
       let errorResponse: OAuthError;
       try {
-        errorResponse = await response.json() as OAuthError;
+        errorResponse = (await response.json()) as OAuthError;
       } catch {
         errorResponse = {
           error: MCP_OAUTH_ERRORS.REGISTRATION_FAILED,
-          error_description: `Delete failed with status ${response.status}`
+          error_description: `Delete failed with status ${response.status}`,
         };
       }
 
       return {
         success: false,
-        error: errorResponse
+        error: errorResponse,
       };
     }
-
   } catch (error) {
     return {
       success: false,
       error: {
         error: MCP_OAUTH_ERRORS.REGISTRATION_FAILED,
-        error_description: error instanceof Error ? error.message : 'Unknown delete error'
-      }
+        error_description:
+          error instanceof Error ? error.message : "Unknown delete error",
+      },
     };
   }
 }
@@ -395,40 +409,52 @@ export async function deleteOAuthClient(
  * Validates a client registration response
  */
 export function validateClientRegistrationResponse(
-  response: ClientRegistrationResponse
+  response: ClientRegistrationResponse,
 ): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
 
   // Required fields
   if (!response.client_id) {
-    errors.push('Missing required field: client_id');
+    errors.push("Missing required field: client_id");
   }
 
   // Validate URLs if present - be lenient for testing servers
-  const urlFields = ['client_uri', 'logo_uri', 'tos_uri', 'policy_uri', 'jwks_uri', 'registration_client_uri'];
-  
+  const urlFields = [
+    "client_uri",
+    "logo_uri",
+    "tos_uri",
+    "policy_uri",
+    "jwks_uri",
+    "registration_client_uri",
+  ];
+
   for (const field of urlFields) {
     const value = response[field as keyof ClientRegistrationResponse];
-    if (value && typeof value === 'string' && value.trim() !== '') {
+    if (value && typeof value === "string" && value.trim() !== "") {
       try {
         // Allow relative URLs for registration_client_uri as some servers may return them
-        if (field === 'registration_client_uri' && (value.startsWith('/') || value.startsWith('.'))) {
+        if (
+          field === "registration_client_uri" &&
+          (value.startsWith("/") || value.startsWith("."))
+        ) {
           // Relative URL - this is acceptable
           continue;
         }
-        
+
         // Try to parse as URL
         new URL(value);
       } catch {
         // Be more lenient - only warn about invalid URLs, don't fail validation
         console.warn(`Potentially invalid URL in field ${field}: ${value}`);
-        
+
         // Check if it's a completely malformed URL or just non-standard
-        if (value.includes('://') || value.startsWith('http')) {
+        if (value.includes("://") || value.startsWith("http")) {
           // Looks like it's trying to be a URL but malformed
-          console.warn(`Malformed URL detected in ${field}, but continuing anyway`);
+          console.warn(
+            `Malformed URL detected in ${field}, but continuing anyway`,
+          );
         }
-        
+
         // Don't add to errors - be permissive for testing
       }
     }
@@ -440,7 +466,7 @@ export function validateClientRegistrationResponse(
       try {
         const url = new URL(uri);
         // Validate redirect URI scheme (should be http/https for web clients)
-        if (!['http:', 'https:'].includes(url.protocol)) {
+        if (!["http:", "https:"].includes(url.protocol)) {
           errors.push(`Invalid redirect URI scheme: ${uri}`);
         }
       } catch {
@@ -451,16 +477,19 @@ export function validateClientRegistrationResponse(
 
   // Validate timestamps
   if (response.client_id_issued_at && response.client_id_issued_at <= 0) {
-    errors.push('Invalid client_id_issued_at timestamp');
+    errors.push("Invalid client_id_issued_at timestamp");
   }
 
-  if (response.client_secret_expires_at && response.client_secret_expires_at <= 0) {
-    errors.push('Invalid client_secret_expires_at timestamp');
+  if (
+    response.client_secret_expires_at &&
+    response.client_secret_expires_at <= 0
+  ) {
+    errors.push("Invalid client_secret_expires_at timestamp");
   }
 
   return {
     valid: errors.length === 0,
-    errors
+    errors,
   };
 }
 
@@ -468,7 +497,9 @@ export function validateClientRegistrationResponse(
  * Extracts registration request from registration response
  * Useful for updates
  */
-function extractRegistrationRequest(response: ClientRegistrationResponse): ClientRegistrationRequest {
+function extractRegistrationRequest(
+  response: ClientRegistrationResponse,
+): ClientRegistrationRequest {
   return {
     redirect_uris: response.redirect_uris,
     token_endpoint_auth_method: response.token_endpoint_auth_method,
@@ -484,7 +515,7 @@ function extractRegistrationRequest(response: ClientRegistrationResponse): Clien
     jwks_uri: response.jwks_uri,
     jwks: response.jwks,
     software_id: response.software_id,
-    software_version: response.software_version
+    software_version: response.software_version,
   };
 }
 
@@ -493,7 +524,7 @@ function extractRegistrationRequest(response: ClientRegistrationResponse): Clien
  */
 export function isClientSecretExpiringSoon(
   clientRegistration: ClientRegistrationResponse,
-  thresholdMinutes: number = 60
+  thresholdMinutes: number = 60,
 ): boolean {
   if (!clientRegistration.client_secret_expires_at) {
     return false; // Secret doesn't expire
@@ -501,28 +532,29 @@ export function isClientSecretExpiringSoon(
 
   const expiresAt = clientRegistration.client_secret_expires_at * 1000; // Convert to milliseconds
   const thresholdMs = thresholdMinutes * 60 * 1000;
-  
-  return (expiresAt - Date.now()) < thresholdMs;
+
+  return expiresAt - Date.now() < thresholdMs;
 }
 
 /**
  * Generates default registration options for MCP Inspector
  */
 export function getDefaultRegistrationOptions(
-  baseUrl: string = 'http://localhost:3000'
+  baseUrl: string = "http://localhost:3000",
 ): RegistrationOptions {
   return {
-    client_name: 'MCP Inspector',
-    client_description: 'Interactive MCP (Model Context Protocol) Server Inspector',
+    client_name: "MCP Inspector",
+    client_description:
+      "Interactive MCP (Model Context Protocol) Server Inspector",
     redirect_uris: [`${baseUrl}/oauth/callback`],
     scopes: [OAUTH_SCOPES.MCP_FULL],
     grant_types: [GRANT_TYPES.AUTHORIZATION_CODE, GRANT_TYPES.REFRESH_TOKEN],
     response_types: [RESPONSE_TYPES.CODE],
     token_endpoint_auth_method: TOKEN_ENDPOINT_AUTH_METHODS.NONE, // Use PKCE instead
     mcp_capabilities: {
-      tools: ['*'],
-      resources: ['*'],
-      prompts: ['*']
-    }
+      tools: ["*"],
+      resources: ["*"],
+      prompts: ["*"],
+    },
   };
 }

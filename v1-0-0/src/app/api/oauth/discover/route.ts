@@ -29,7 +29,6 @@ export async function POST(request: NextRequest) {
       timeout: options.timeout || 10000,
       ...options,
     });
-    console.log("Discovery result:", JSON.stringify(discoveryResult, null, 2));
     if (discoveryResult.error) {
       return NextResponse.json(
         {

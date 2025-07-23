@@ -174,7 +174,6 @@ export function useChat(options: UseChatOptions = {}) {
       }));
 
       try {
-        console.log("serverConfigs", serverConfigs);
         const response = await fetch("/api/mcp/chat", {
           method: "POST",
           headers: {

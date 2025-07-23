@@ -38,7 +38,7 @@ export function AddServerModal({
   const [commandInput, setCommandInput] = useState("");
   const [oauthScopesInput, setOauthScopesInput] = useState("");
   const [bearerToken, setBearerToken] = useState("");
-  const [authType, setAuthType] = useState<"oauth" | "bearer">("oauth");
+  const [authType, setAuthType] = useState<"oauth" | "bearer" | "none">("none");
   const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>(
     [],
   );
@@ -66,7 +66,12 @@ export function AddServerModal({
       }
 
       if (serverFormData.type === "http") {
-        if (authType === "bearer" && bearerToken) {
+        if (authType === "none") {
+          finalFormData = {
+            ...finalFormData,
+            useOAuth: false,
+          };
+        } else if (authType === "bearer" && bearerToken) {
           finalFormData = {
             ...finalFormData,
             headers: {
@@ -92,7 +97,7 @@ export function AddServerModal({
       setCommandInput("");
       setOauthScopesInput("");
       setBearerToken("");
-      setAuthType("oauth");
+      setAuthType("none");
       setEnvVars([]);
       onClose();
     }
@@ -293,6 +298,19 @@ export function AddServerModal({
                   Authentication Method
                 </label>
                 <div className="flex gap-4">
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="radio"
+                      id="none"
+                      name="authType"
+                      checked={authType === "none"}
+                      onChange={() => setAuthType("none")}
+                      className="w-4 h-4 cursor-pointer"
+                    />
+                    <label htmlFor="none" className="text-sm cursor-pointer">
+                      None
+                    </label>
+                  </div>
                   <div className="flex items-center space-x-2">
                     <input
                       type="radio"

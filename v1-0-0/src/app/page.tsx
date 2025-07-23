@@ -43,10 +43,14 @@ export default function Home() {
     setSelectedServer,
     toggleServerSelection,
     selectedMCPConfigsMap,
+    setSelectedMultipleServersToAllServers,
   } = useAppState();
 
   const handleNavigate = (section: string) => {
     setActiveTab(section);
+    if (section === "chat") {
+      setSelectedMultipleServersToAllServers();
+    }
   };
 
   if (isLoading) {
@@ -89,7 +93,7 @@ export default function Home() {
               onConnect={handleConnect}
               isMultiSelectEnabled={activeTab === "chat"}
               onMultiServerToggle={toggleServerSelection}
-              selectedMCPConfigs={appState.selectedMCPConfigs}
+              selectedMultipleServers={appState.selectedMultipleServers}
             />
           )}
 

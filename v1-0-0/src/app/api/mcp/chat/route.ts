@@ -35,10 +35,6 @@ export async function POST(request: NextRequest) {
 
     // Get tools and ensure client is connected
     const tools = await client.getTools();
-    console.log(
-      `MCP client connected, available tools: ${Object.keys(tools || {}).length}`,
-    );
-    console.log("tools", tools);
 
     const llmModel = getLlmModel(model, apiKey);
 
@@ -167,7 +163,6 @@ export async function POST(request: NextRequest) {
           if (client) {
             try {
               await client.disconnect();
-              console.log("MCP client disconnected after streaming");
             } catch (cleanupError) {
               console.warn(
                 "Error cleaning up MCP client after streaming:",
@@ -194,7 +189,6 @@ export async function POST(request: NextRequest) {
     if (client) {
       try {
         await client.disconnect();
-        console.log("MCP client disconnected after error");
       } catch (cleanupError) {
         console.warn("Error cleaning up MCP client after error:", cleanupError);
       }
