@@ -184,6 +184,14 @@ async function main() {
       continue;
     }
 
+    if (parsingFlags && arg === "--port" && i + 1 < args.length) {
+      const port = args[++i];
+      envVars.PORT = port;
+      envVars.NEXT_PUBLIC_BASE_URL = `http://localhost:${port}`;
+      envVars.BASE_URL = `http://localhost:${port}`;
+      continue;
+    }
+
     if (parsingFlags && arg === "-e" && i + 1 < args.length) {
       const envVar = args[++i];
       const equalsIndex = envVar.indexOf("=");

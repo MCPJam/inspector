@@ -8,6 +8,7 @@ import { OAuthFlowManager, createOAuthFlow } from "./oauth-flow";
 import { tokenManager, OAuthSecurityValidator } from "./oauth-security";
 import { discoverMCPOAuth } from "./oauth-discovery";
 import { HttpServerDefinition } from "./types";
+import { getOAuthCallbackUrl } from "./url-utils";
 
 export interface OAuthIntegrationOptions {
   serverName: string;
@@ -37,7 +38,7 @@ export class MCPOAuthIntegration {
   constructor(options: OAuthIntegrationOptions) {
     this.options = {
       scopes: [OAUTH_SCOPES.MCP_FULL],
-      redirectUri: `${typeof window !== "undefined" ? window.location.origin : "http://localhost:3000"}/oauth/callback`,
+      redirectUri: getOAuthCallbackUrl(),
       autoRegister: true,
       securityValidation: true,
       ...options,

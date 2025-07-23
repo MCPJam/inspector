@@ -3,6 +3,7 @@
  * Orchestrates the complete OAuth flow for MCP servers
  */
 
+import { getOAuthCallbackUrl } from "./url-utils";
 import {
   MCPOAuthConfig,
   OAuthClientState,
@@ -69,7 +70,7 @@ export class OAuthFlowManager {
       discovery_timeout: 10000,
       registration_timeout: 30000,
       token_timeout: 30000,
-      redirect_uri: "http://localhost:3000/oauth/callback",
+      redirect_uri: getOAuthCallbackUrl(),
       scopes: [OAUTH_SCOPES.MCP_FULL],
       auto_register: true,
       save_tokens: true,
@@ -651,7 +652,7 @@ export function createOAuthFlow(
     discovery_timeout: config.discovery_timeout,
     registration_timeout: config.registration_timeout,
     token_timeout: config.token_timeout,
-    redirect_uri: "http://localhost:3000/oauth/callback",
+    redirect_uri: getOAuthCallbackUrl(),
     scopes: config.requested_scopes,
     auto_register: true,
     save_tokens: true,

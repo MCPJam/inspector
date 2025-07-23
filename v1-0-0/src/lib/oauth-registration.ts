@@ -9,6 +9,7 @@ import {
   TOKEN_ENDPOINT_AUTH_METHODS,
   OAUTH_SCOPES,
 } from "./oauth-types";
+import { getOAuthCallbackUrl, getBaseUrl } from "./url-utils";
 
 export interface RegistrationOptions {
   timeout?: number;
@@ -44,7 +45,7 @@ export async function registerOAuthClient(
     timeout = 30000,
     client_name = "MCP Inspector",
     client_description = "MCP Inspector OAuth Client",
-    redirect_uris = ["http://localhost:3000/oauth/callback"],
+    redirect_uris = [getOAuthCallbackUrl()],
     scopes = [OAUTH_SCOPES.MCP_FULL],
     grant_types = [GRANT_TYPES.AUTHORIZATION_CODE, GRANT_TYPES.REFRESH_TOKEN],
     response_types = [RESPONSE_TYPES.CODE],
@@ -540,13 +541,14 @@ export function isClientSecretExpiringSoon(
  * Generates default registration options for MCP Inspector
  */
 export function getDefaultRegistrationOptions(
-  baseUrl: string = "http://localhost:3000",
+  baseUrl?: string,
 ): RegistrationOptions {
+  const effectiveBaseUrl = baseUrl || getBaseUrl();
   return {
     client_name: "MCP Inspector",
     client_description:
       "Interactive MCP (Model Context Protocol) Server Inspector",
-    redirect_uris: [`${baseUrl}/oauth/callback`],
+    redirect_uris: [`${effectiveBaseUrl}/oauth/callback`],
     scopes: [OAUTH_SCOPES.MCP_FULL],
     grant_types: [GRANT_TYPES.AUTHORIZATION_CODE, GRANT_TYPES.REFRESH_TOKEN],
     response_types: [RESPONSE_TYPES.CODE],
