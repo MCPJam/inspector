@@ -44,7 +44,10 @@ interface ElicitationRequest {
 
 interface ElicitationDialogProps {
   elicitationRequest: ElicitationRequest | null;
-  onResponse: (action: "accept" | "decline" | "cancel", parameters?: Record<string, any>) => Promise<void>;
+  onResponse: (
+    action: "accept" | "decline" | "cancel",
+    parameters?: Record<string, any>,
+  ) => Promise<void>;
   loading?: boolean;
 }
 
@@ -151,9 +154,9 @@ export function ElicitationDialog({
     if (action === "accept") {
       // Validate required fields
       const missingFields = fields.filter(
-        (field) => field.required && (!field.value || field.value === "")
+        (field) => field.required && (!field.value || field.value === ""),
       );
-      
+
       if (missingFields.length > 0) {
         // You could show validation errors here
         return;
@@ -233,11 +236,11 @@ export function ElicitationDialog({
     <Dialog open={!!elicitationRequest} onOpenChange={() => {}}>
       <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <MessageSquare className="h-4 w-4" />
-            Additional Information Required
+          <DialogTitle className="flex items-center gap-2 text-sm font-medium">
+            <MessageSquare className="h-3 w-3" />
+            Elicitation Request
           </DialogTitle>
-          <DialogDescription className="text-sm leading-relaxed">
+          <DialogDescription className="text-md font-bold">
             {elicitationRequest?.message}
           </DialogDescription>
         </DialogHeader>
@@ -248,9 +251,7 @@ export function ElicitationDialog({
               <div className="flex items-start justify-between mb-2">
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
-                    <Label className="text-sm font-medium">
-                      {field.name}
-                    </Label>
+                    <Label className="text-sm font-medium">{field.name}</Label>
                     {field.required && (
                       <div
                         className="w-1.5 h-1.5 bg-red-500 rounded-full"
@@ -289,10 +290,7 @@ export function ElicitationDialog({
           >
             Decline
           </Button>
-          <Button
-            onClick={() => handleResponse("accept")}
-            disabled={loading}
-          >
+          <Button onClick={() => handleResponse("accept")} disabled={loading}>
             {loading ? (
               <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
             ) : (
