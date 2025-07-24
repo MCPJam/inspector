@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/sidebar";
 import { ThemeSwitcher } from "@/components/sidebar/theme-switcher";
 // import { AccountSwitcher } from "@/components/sidebar/account-switcher";
-import { useAppState } from "@/hooks/useAppState";
+import { useAppState } from "@/hooks/use-app-state";
 
 // const users = [
 //   {

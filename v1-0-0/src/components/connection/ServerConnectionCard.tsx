@@ -24,7 +24,7 @@ import {
   X,
   Wifi,
 } from "lucide-react";
-import { ServerWithName } from "@/hooks/useAppState";
+import { ServerWithName } from "@/hooks/use-app-state";
 import { formatTimeRemaining, getTimeBreakdown } from "@/lib/utils";
 
 interface ServerConnectionCardProps {

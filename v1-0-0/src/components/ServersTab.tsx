@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
 import { Plus, Database } from "lucide-react";
-import { ServerWithName } from "@/hooks/useAppState";
+import { ServerWithName } from "@/hooks/use-app-state";
 import { ServerConnectionCard } from "./connection/ServerConnectionCard";
 import { AddServerModal } from "./connection/AddServerModal";
 import { ServerFormData } from "@/lib/types";

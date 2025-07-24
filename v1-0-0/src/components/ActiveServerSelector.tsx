@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ServerWithName } from "@/hooks/useAppState";
+import { ServerWithName } from "@/hooks/use-app-state";
 import { cn } from "@/lib/utils";
 import { AddServerModal } from "./connection/AddServerModal";
 import { ServerFormData } from "@/lib/types";
