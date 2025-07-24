@@ -7,6 +7,7 @@ import {
   Hammer,
   MessageCircle,
   Settings,
+  Activity,
 } from "lucide-react";
 
 import { NavMain } from "@/components/sidebar/nav-main";
@@ -33,6 +34,11 @@ const navigationSections = [
         title: "Playground",
         url: "#chat",
         icon: MessageCircle,
+      },
+      {
+        title: "Tracing",
+        url: "#tracing",
+        icon: Activity,
       },
     ],
   },

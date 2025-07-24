@@ -8,6 +8,7 @@ import { ResourcesTab } from "@/components/ResourcesTab";
 import { PromptsTab } from "@/components/PromptsTab";
 import { ChatTab } from "@/components/ChatTab";
 import { SettingsTab } from "@/components/SettingsTab";
+import { TracingTab } from "@/components/TracingTab";
 import { MCPSidebar } from "@/components/mcp-sidebar";
 import { ActiveServerSelector } from "@/components/ActiveServerSelector";
 import {
@@ -122,6 +123,8 @@ export default function Home() {
           {activeTab === "chat" && (
             <ChatTab serverConfigs={selectedMCPConfigsMap} />
           )}
+
+          {activeTab === "tracing" && <TracingTab />}
 
           {activeTab === "settings" && <SettingsTab />}
         </div>
