@@ -46,6 +46,14 @@ export function ServerConnectionCard({
 
   const isHttpServer = server.config.url !== undefined;
   const hasOAuth = server.oauthState || server.oauthFlow;
+  
+  // Extract manual Bearer token from headers
+  const manualBearerToken = server.config.requestInit?.headers?.Authorization?.startsWith('Bearer ') 
+    ? server.config.requestInit.headers.Authorization.slice(7) // Remove 'Bearer ' prefix
+    : null;
+  
+  // Show expandable section if there's OAuth data, manual Bearer token, or STDIO server
+  const hasExpandableContent = hasOAuth || manualBearerToken || !isHttpServer;
 
   // Update current time every second for live countdown
   useEffect(() => {
@@ -248,7 +256,7 @@ export function ServerConnectionCard({
               )}
             </div>
           )}
-          {(hasOAuth || !isHttpServer) && (
+          {hasExpandableContent && (
             <div className="flex justify-end">
               <Button
                 variant="ghost"
@@ -265,8 +273,38 @@ export function ServerConnectionCard({
             </div>
           )}
           {/* Expandable Details */}
-          {isExpanded && (hasOAuth || !isHttpServer) && (
+          {isExpanded && hasExpandableContent && (
             <div className="space-y-3 pt-2">
+              {/* Manual Bearer Token Information - only show if no OAuth */}
+              {manualBearerToken && !server.oauthState && (
+                <div className="space-y-2">
+                  <div className="space-y-3 text-xs">
+                    <div>
+                      <span className="text-muted-foreground font-medium">
+                        Bearer Access Token (Manual):
+                      </span>
+                      <div className="font-mono text-foreground break-all bg-muted/30 p-2 rounded mt-1 relative group">
+                        <div className="pr-8">
+                          {manualBearerToken}
+                        </div>
+                        <button
+                          onClick={() =>
+                            copyToClipboard(manualBearerToken, "manualBearerToken")
+                          }
+                          className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
+                        >
+                          {copiedField === "manualBearerToken" ? (
+                            <Check className="h-3 w-3 text-green-500" />
+                          ) : (
+                            <Copy className="h-3 w-3" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* OAuth Information */}
               {server.oauthState && (
                 <div className="space-y-2">
