@@ -250,7 +250,7 @@ export function AddServerModal({
                   variant="outline"
                   size="sm"
                   onClick={addEnvVar}
-                  className="h-8 px-2 text-xs"
+                  className="h-8 px-2 text-xs cursor-pointer"
                 >
                   Add Variable
                 </Button>
