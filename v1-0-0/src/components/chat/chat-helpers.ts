@@ -10,6 +10,8 @@ export const getProviderLogoFromProvider = (
       return claudeLogo.src;
     case "openai":
       return openaiLogo.src;
+    case "web-llm":
+      return "🌐";
     default:
       return null;
   }
