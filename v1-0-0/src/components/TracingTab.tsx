@@ -1,17 +1,7 @@
 "use client";
 
 import { useState, useMemo, useRef, useEffect } from "react";
-import {
-  ChevronDown,
-  ChevronRight,
-  Trash2,
-  Search,
-  Pause,
-  Play,
-  Filter,
-  ArrowDownToLine,
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { ChevronDown, ChevronRight, Search, ArrowUp } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -21,8 +11,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
 import { useLoggerState, LogEntry, LogLevel } from "@/hooks/use-logger";
 
 const LOG_LEVEL_COLORS = {
@@ -39,56 +28,24 @@ const LOG_LEVEL_COLORS = {
 const LOG_LEVEL_ORDER = ["error", "warn", "info", "debug", "trace"];
 
 export function TracingTab() {
-  const { entries, clearBuffer, getFilteredEntries } = useLoggerState();
+  const { entries, getFilteredEntries } = useLoggerState();
   const [expandedEntries, setExpandedEntries] = useState<Set<number>>(
     new Set(),
   );
   const [levelFilter, setLevelFilter] = useState<LogLevel | "all">("all");
-  const [contextFilter, setContextFilter] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
-  const [isPaused, setIsPaused] = useState(false);
-  const [autoScroll, setAutoScroll] = useState(true);
-  const [pausedEntries, setPausedEntries] = useState<LogEntry[]>([]);
+  const [showScrollToTop, setShowScrollToTop] = useState(false);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Get current entries (paused or live)
-  const currentEntries = isPaused ? pausedEntries : entries;
-
-  // Pause/Resume functionality
-  useEffect(() => {
-    if (isPaused && pausedEntries.length === 0) {
-      setPausedEntries(entries);
-    }
-  }, [isPaused, entries, pausedEntries.length]);
-
-  const handlePauseToggle = () => {
-    if (isPaused) {
-      // Resume - clear paused entries to show live data
-      setPausedEntries([]);
-    } else {
-      // Pause - capture current entries
-      setPausedEntries(entries);
-    }
-    setIsPaused(!isPaused);
-  };
-
   // Filter entries
   const filteredEntries = useMemo(() => {
-    let filtered = currentEntries;
+    let filtered = entries;
 
     // Filter by level
     if (levelFilter !== "all") {
       filtered = getFilteredEntries(levelFilter);
-    }
-
-    // Filter by context
-    if (contextFilter.trim()) {
-      const contextLower = contextFilter.toLowerCase();
-      filtered = filtered.filter((entry) =>
-        entry.context.toLowerCase().includes(contextLower),
-      );
     }
 
     // Filter by search query
@@ -104,20 +61,36 @@ export function TracingTab() {
     }
 
     return filtered;
-  }, [
-    currentEntries,
-    levelFilter,
-    contextFilter,
-    searchQuery,
-    getFilteredEntries,
-  ]);
+  }, [entries, levelFilter, searchQuery, getFilteredEntries]);
 
   // Auto-scroll to bottom when new entries arrive
   useEffect(() => {
-    if (autoScroll && !isPaused && bottomRef.current) {
+    if (bottomRef.current) {
       bottomRef.current.scrollIntoView({ behavior: "smooth" });
     }
-  }, [entries.length, autoScroll, isPaused]);
+  }, [entries.length]);
+
+  // Handle scroll events to show/hide scroll to top button
+  useEffect(() => {
+    const handleScroll = () => {
+      if (scrollContainerRef.current) {
+        const { scrollTop } = scrollContainerRef.current;
+        setShowScrollToTop(scrollTop > 200);
+      }
+    };
+
+    const scrollContainer = scrollContainerRef.current;
+    if (scrollContainer) {
+      scrollContainer.addEventListener("scroll", handleScroll);
+      return () => scrollContainer.removeEventListener("scroll", handleScroll);
+    }
+  }, []);
+
+  const scrollToTop = () => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  };
 
   const toggleExpanded = (index: number) => {
     const newExpanded = new Set(expandedEntries);
@@ -139,129 +112,61 @@ export function TracingTab() {
     });
   };
 
-  const scrollToBottom = () => {
-    if (bottomRef.current) {
-      bottomRef.current.scrollIntoView({ behavior: "smooth" });
-    }
-  };
-
   const hasExpandableContent = (entry: LogEntry) => {
     return entry.data !== undefined || entry.error !== undefined;
   };
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header Controls */}
-      <div className="border-b p-4 space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Application Tracing</h2>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={scrollToBottom}
-              className="gap-2"
-            >
-              <ArrowDownToLine className="h-4 w-4" />
-              Bottom
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handlePauseToggle}
-              className="gap-2"
-            >
-              {isPaused ? (
-                <Play className="h-4 w-4" />
-              ) : (
-                <Pause className="h-4 w-4" />
-              )}
-              {isPaused ? "Resume" : "Pause"}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={clearBuffer}
-              className="gap-2"
-            >
-              <Trash2 className="h-4 w-4" />
-              Clear
-            </Button>
-          </div>
-        </div>
+      {/* Sticky Header Controls */}
+      <div className="border-b bg-background p-4 space-y-4 flex-shrink-0 sticky top-0 z-10">
+        <h2 className="text-lg font-semibold">Tracing</h2>
 
         {/* Filters */}
-        <div className="flex items-center gap-4 flex-wrap">
-          <div className="flex items-center gap-2">
-            <Filter className="h-4 w-4" />
-            <Select
-              value={levelFilter}
-              onValueChange={(value) =>
-                setLevelFilter(value as LogLevel | "all")
-              }
-            >
-              <SelectTrigger className="w-32">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Levels</SelectItem>
-                {LOG_LEVEL_ORDER.map((level) => (
-                  <SelectItem key={level} value={level}>
-                    {level.toUpperCase()}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+        <div className="flex items-center gap-4">
+          <Select
+            value={levelFilter}
+            onValueChange={(value) => setLevelFilter(value as LogLevel | "all")}
+          >
+            <SelectTrigger className="w-32">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Levels</SelectItem>
+              {LOG_LEVEL_ORDER.map((level) => (
+                <SelectItem key={level} value={level}>
+                  {level.toUpperCase()}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
-          <div className="flex items-center gap-2 flex-1 max-w-xs">
+          <div className="flex items-center gap-2 flex-1">
             <Search className="h-4 w-4" />
             <Input
-              placeholder="Filter by context..."
-              value={contextFilter}
-              onChange={(e) => setContextFilter(e.target.value)}
-              className="h-8"
-            />
-          </div>
-
-          <div className="flex items-center gap-2 flex-1 max-w-xs">
-            <Input
-              placeholder="Search messages..."
+              placeholder="Search logs..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="h-8"
             />
           </div>
-
-          <div className="flex items-center gap-2">
-            <Switch
-              id="auto-scroll"
-              checked={autoScroll}
-              onCheckedChange={setAutoScroll}
-              disabled={isPaused}
-            />
-            <Label htmlFor="auto-scroll" className="text-sm">
-              Auto-scroll
-            </Label>
-          </div>
         </div>
 
         {/* Stats */}
         <div className="flex items-center gap-4 text-sm text-muted-foreground">
-          <span>Total: {currentEntries.length}</span>
+          <span>Total: {entries.length}</span>
           <span>Filtered: {filteredEntries.length}</span>
-          {isPaused && <Badge variant="secondary">Paused</Badge>}
         </div>
       </div>
 
       {/* Log Entries */}
       <div
         ref={scrollContainerRef}
-        className="flex-1 overflow-auto p-4 space-y-2 font-mono text-sm"
+        className="flex-1 overflow-y-auto p-4 space-y-2 font-mono text-sm min-h-0"
       >
         {filteredEntries.length === 0 ? (
           <div className="text-center text-muted-foreground py-8">
-            {currentEntries.length === 0
+            {entries.length === 0
               ? "No logs yet"
               : "No logs match current filters"}
           </div>
@@ -346,6 +251,19 @@ export function TracingTab() {
         )}
         <div ref={bottomRef} />
       </div>
+
+      {/* Floating Scroll to Top Button */}
+      {showScrollToTop && (
+        <Button
+          onClick={scrollToTop}
+          size="sm"
+          className="fixed bottom-4 right-4 z-20 shadow-lg"
+          variant="secondary"
+        >
+          <ArrowUp className="h-4 w-4 mr-1" />
+          Top
+        </Button>
+      )}
     </div>
   );
 }

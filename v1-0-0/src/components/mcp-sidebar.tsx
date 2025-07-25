@@ -7,7 +7,7 @@ import {
   Hammer,
   MessageCircle,
   Settings,
-  Activity,
+  Glasses,
 } from "lucide-react";
 
 import { NavMain } from "@/components/sidebar/nav-main";
@@ -38,7 +38,7 @@ const navigationSections = [
       {
         title: "Tracing",
         url: "#tracing",
-        icon: Activity,
+        icon: Glasses,
       },
     ],
   },
