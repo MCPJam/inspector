@@ -9,9 +9,6 @@ export default function OAuthCallback() {
   const router = useRouter();
 
   useEffect(() => {
-    // Simply redirect back to the main page with the callback parameters
-    // The main page will handle the OAuth completion
-    const currentUrl = window.location.href;
     const mainPageUrl = new URL("/", window.location.origin);
 
     // Copy all search parameters to the main page URL

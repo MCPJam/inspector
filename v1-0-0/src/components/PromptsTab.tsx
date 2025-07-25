@@ -27,11 +27,12 @@ import { MastraMCPServerDefinition } from "@/lib/types";
 interface Prompt {
   name: string;
   description?: string;
-  parameters?: {
-    type: string;
-    properties: Record<string, any>;
-    required?: string[];
-  };
+  version?: string;
+  arguments?: {
+    name: string;
+    description?: string;
+    required?: boolean;
+  }[];
 }
 
 interface PromptsTabProps {
@@ -50,8 +51,11 @@ interface FormField {
 }
 
 export function PromptsTab({ serverConfig }: PromptsTabProps) {
-  const [prompts, setPrompts] = useState<Record<string, Prompt>>({});
+  const [prompts, setPrompts] = useState<Record<string, Prompt[]>>({});
   const [selectedPrompt, setSelectedPrompt] = useState<string>("");
+  const [selectedPromptData, setSelectedPromptData] = useState<Prompt | null>(
+    null,
+  );
   const [formFields, setFormFields] = useState<FormField[]>([]);
   const [promptContent, setPromptContent] = useState<any>(null);
   const [loading, setLoading] = useState(false);
@@ -65,12 +69,12 @@ export function PromptsTab({ serverConfig }: PromptsTabProps) {
   }, [serverConfig]);
 
   useEffect(() => {
-    if (selectedPrompt && prompts[selectedPrompt]?.parameters) {
-      generateFormFields(prompts[selectedPrompt].parameters);
+    if (selectedPromptData?.arguments) {
+      generateFormFields(selectedPromptData.arguments);
     } else {
       setFormFields([]);
     }
-  }, [selectedPrompt, prompts]);
+  }, [selectedPromptData]);
 
   const getServerConfig = (): MastraMCPServerDefinition | null => {
     if (!serverConfig) return null;
@@ -92,7 +96,7 @@ export function PromptsTab({ serverConfig }: PromptsTabProps) {
       });
 
       const data = await response.json();
-
+      console.log("bigData", data);
       if (response.ok) {
         setPrompts(data.prompts || {});
       } else {
@@ -105,64 +109,39 @@ export function PromptsTab({ serverConfig }: PromptsTabProps) {
     }
   };
 
-  const generateFormFields = (schema: any) => {
-    if (!schema || !schema.properties) {
+  const generateFormFields = (args: any[]) => {
+    if (!args || args.length === 0) {
       setFormFields([]);
       return;
     }
 
-    const fields: FormField[] = [];
-    const required = schema.required || [];
-
-    Object.entries(schema.properties).forEach(([key, prop]: [string, any]) => {
-      const fieldType = prop.enum ? "enum" : prop.type || "string";
-      fields.push({
-        name: key,
-        type: fieldType,
-        description: prop.description,
-        required: required.includes(key),
-        value: getDefaultValue(fieldType, prop.enum),
-        enum: prop.enum,
-        minimum: prop.minimum,
-        maximum: prop.maximum,
-      });
-    });
+    const fields: FormField[] = args.map((arg) => ({
+      name: arg.name,
+      type: "string", // Default to string for now, could be enhanced based on arg type
+      description: arg.description,
+      required: arg.required || false,
+      value: "",
+    }));
 
     setFormFields(fields);
-  };
-
-  const getDefaultValue = (type: string, enumValues?: string[]) => {
-    switch (type) {
-      case "enum":
-        return enumValues?.[0] || "";
-      case "string":
-        return "";
-      case "number":
-      case "integer":
-        return "";
-      case "boolean":
-        return false;
-      case "array":
-        return [];
-      case "object":
-        return {};
-      default:
-        return "";
-    }
   };
 
   const updateFieldValue = (fieldName: string, value: any) => {
     setFormFields((prev) =>
       prev.map((field) =>
-        field.name === fieldName ? { ...field, value } : field
-      )
+        field.name === fieldName ? { ...field, value } : field,
+      ),
     );
   };
 
   const buildParameters = (): Record<string, any> => {
     const params: Record<string, any> = {};
     formFields.forEach((field) => {
-      if (field.value !== "" && field.value !== null && field.value !== undefined) {
+      if (
+        field.value !== "" &&
+        field.value !== null &&
+        field.value !== undefined
+      ) {
         let processedValue = field.value;
 
         if (field.type === "number" || field.type === "integer") {
@@ -212,13 +191,15 @@ export function PromptsTab({ serverConfig }: PromptsTabProps) {
         setError(data.error || "Failed to get prompt");
       }
     } catch (err) {
-      setError("Error getting prompt");
+      setError(`Error getting prompt: ${err}`);
     } finally {
       setLoading(false);
     }
   };
 
-  const promptNames = Object.keys(prompts);
+  const promptNames = Object.values(prompts)
+    .flat()
+    .map((prompt) => prompt.name);
 
   if (!serverConfig) {
     return (
@@ -296,7 +277,13 @@ export function PromptsTab({ serverConfig }: PromptsTabProps) {
                                   ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
                                   : "hover:shadow-sm"
                               }`}
-                              onClick={() => setSelectedPrompt(name)}
+                              onClick={() => {
+                                setSelectedPrompt(name);
+                                const promptData = Object.values(prompts)
+                                  .flat()
+                                  .find((p) => p.name === name);
+                                setSelectedPromptData(promptData || null);
+                              }}
                             >
                               <div className="flex items-start gap-3">
                                 <div className="flex-1 min-w-0">
@@ -305,9 +292,17 @@ export function PromptsTab({ serverConfig }: PromptsTabProps) {
                                       {name}
                                     </code>
                                   </div>
-                                  {prompts[name]?.description && (
+                                  {Object.values(prompts)
+                                    .flat()
+                                    .find((p) => p.name === name)
+                                    ?.description && (
                                     <p className="text-xs mt-2 line-clamp-2 leading-relaxed text-muted-foreground">
-                                      {prompts[name].description}
+                                      {
+                                        Object.values(prompts)
+                                          .flat()
+                                          .find((p) => p.name === name)
+                                          ?.description
+                                      }
                                     </p>
                                   )}
                                 </div>
@@ -353,17 +348,19 @@ export function PromptsTab({ serverConfig }: PromptsTabProps) {
                         ) : (
                           <>
                             <Play className="h-3 w-3 mr-1.5 cursor-pointer" />
-                            <span className="font-mono text-xs">Get Prompt</span>
+                            <span className="font-mono text-xs">
+                              Get Prompt
+                            </span>
                           </>
                         )}
                       </Button>
                     </div>
 
                     {/* Description */}
-                    {prompts[selectedPrompt]?.description && (
+                    {selectedPromptData?.description && (
                       <div className="px-6 py-4 bg-muted/50 border-b border-border">
                         <p className="text-xs text-muted-foreground leading-relaxed font-medium">
-                          {prompts[selectedPrompt].description}
+                          {selectedPromptData.description}
                         </p>
                       </div>
                     )}
@@ -449,7 +446,7 @@ export function PromptsTab({ serverConfig }: PromptsTabProps) {
                                           onChange={(e) =>
                                             updateFieldValue(
                                               field.name,
-                                              e.target.checked
+                                              e.target.checked,
                                             )
                                           }
                                           className="w-4 h-4 text-primary bg-background border-border rounded focus:ring-ring focus:ring-2"
@@ -464,10 +461,17 @@ export function PromptsTab({ serverConfig }: PromptsTabProps) {
                                         value={
                                           typeof field.value === "string"
                                             ? field.value
-                                            : JSON.stringify(field.value, null, 2)
+                                            : JSON.stringify(
+                                                field.value,
+                                                null,
+                                                2,
+                                              )
                                         }
                                         onChange={(e) =>
-                                          updateFieldValue(field.name, e.target.value)
+                                          updateFieldValue(
+                                            field.name,
+                                            e.target.value,
+                                          )
                                         }
                                         placeholder={`Enter ${field.type} as JSON`}
                                         className="font-mono text-xs h-20 bg-background border-border hover:border-border/80 focus:border-ring focus:ring-0 resize-none"
@@ -482,7 +486,10 @@ export function PromptsTab({ serverConfig }: PromptsTabProps) {
                                         }
                                         value={field.value}
                                         onChange={(e) =>
-                                          updateFieldValue(field.name, e.target.value)
+                                          updateFieldValue(
+                                            field.name,
+                                            e.target.value,
+                                          )
                                         }
                                         placeholder={`Enter ${field.name}`}
                                         className="bg-background border-border hover:border-border/80 focus:border-ring focus:ring-0 font-medium text-xs"

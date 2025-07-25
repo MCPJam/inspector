@@ -8,7 +8,7 @@
 
 <br/>
 
-# MCPJam Inspectors test
+# MCPJam Inspector
 
 [![npm version](https://img.shields.io/npm/v/@mcpjam/inspector?style=for-the-badge&color=blue)](https://www.npmjs.com/package/@mcpjam/inspector)
 [![npm downloads](https://img.shields.io/npm/dm/@mcpjam/inspector?style=for-the-badge&color=green)](https://www.npmjs.com/package/@mcpjam/inspector)

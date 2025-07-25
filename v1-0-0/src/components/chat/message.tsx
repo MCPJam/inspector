@@ -4,14 +4,13 @@ import { memo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { formatTimestamp, sanitizeText } from "@/lib/chat-utils";
 import { ChatMessage } from "@/lib/chat-types";
-import { Bot, Copy, CopyIcon, RotateCcw } from "lucide-react";
+import { Copy, CopyIcon, RotateCcw } from "lucide-react";
 import { Markdown } from "./markdown";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { MessageEditor } from "./message-editor";
 import { ToolCallDisplay } from "./tool-call";
 import { getProviderLogoFromModel } from "./chat-helpers";
-import { PencilEditIcon } from "../icons";
 
 interface MessageProps {
   message: ChatMessage;

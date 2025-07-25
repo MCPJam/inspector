@@ -20,15 +20,7 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "./ui/resizable";
-import {
-  Wrench,
-  Play,
-  RefreshCw,
-  ChevronRight,
-  MessageSquare,
-  X,
-  Check,
-} from "lucide-react";
+import { Wrench, Play, RefreshCw, ChevronRight } from "lucide-react";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import type { MCPToolType } from "@mastra/core/mcp";

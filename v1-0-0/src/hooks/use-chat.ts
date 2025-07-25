@@ -3,7 +3,11 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { ChatMessage, ChatState, Attachment } from "@/lib/chat-types";
 import { createMessage } from "@/lib/chat-utils";
-import { MastraMCPServerDefinition, SUPPORTED_MODELS } from "@/lib/types";
+import {
+  MastraMCPServerDefinition,
+  Model,
+  SUPPORTED_MODELS,
+} from "@/lib/types";
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
 
 interface UseChatOptions {
@@ -13,14 +17,11 @@ interface UseChatOptions {
   onMessageSent?: (message: ChatMessage) => void;
   onMessageReceived?: (message: ChatMessage) => void;
   onError?: (error: string) => void;
-  onModelChange?: (model: string) => void;
+  onModelChange?: (model: Model) => void;
 }
 
 export function useChat(options: UseChatOptions = {}) {
   const { getToken, hasToken, tokens } = useAiProviderKeys();
-  const initialModel = tokens.anthropic
-    ? "claude-3-5-sonnet-20240620"
-    : "gpt-4o";
 
   const {
     initialMessages = [],
@@ -40,14 +41,21 @@ export function useChat(options: UseChatOptions = {}) {
 
   const [input, setInput] = useState("");
   const [status, setStatus] = useState<"idle" | "error">("idle");
-  const [model, setModel] = useState(initialModel);
+  const [model, setModel] = useState(Model.GPT_4O);
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesRef = useRef(state.messages);
 
-  // Keep messages ref in sync
   useEffect(() => {
     messagesRef.current = state.messages;
   }, [state.messages]);
+
+  useEffect(() => {
+    if (tokens.anthropic?.length > 0) {
+      setModel(Model.CLAUDE_3_5_SONNET_20240620);
+    } else if (tokens.openai?.length > 0) {
+      setModel(Model.GPT_4O);
+    }
+  }, [tokens]);
 
   const currentApiKey = useMemo(() => {
     const modelDefinition = SUPPORTED_MODELS.find((m) => m.id === model);
@@ -58,7 +66,7 @@ export function useChat(options: UseChatOptions = {}) {
   }, [model, getToken]);
 
   const handleModelChange = useCallback(
-    (newModel: string) => {
+    (newModel: Model) => {
       setModel(newModel);
       if (onModelChange) {
         onModelChange(newModel);
@@ -237,7 +245,7 @@ export function useChat(options: UseChatOptions = {}) {
                     toolResults,
                   );
                 } catch (parseError) {
-                  console.warn("Failed to parse SSE data:", data);
+                  console.warn("Failed to parse SSE data:", data, parseError);
                 }
               }
             }

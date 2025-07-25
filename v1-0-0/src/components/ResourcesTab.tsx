@@ -10,13 +10,7 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "./ui/resizable";
-import {
-  FolderOpen,
-  File,
-  RefreshCw,
-  ChevronRight,
-  Eye,
-} from "lucide-react";
+import { FolderOpen, File, RefreshCw, ChevronRight, Eye } from "lucide-react";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import { MastraMCPServerDefinition } from "@/lib/types";
@@ -74,7 +68,7 @@ export function ResourcesTab({ serverConfig }: ResourcesTabProps) {
         setError(data.error || "Failed to fetch resources");
       }
     } catch (err) {
-      setError("Network error fetching resources");
+      setError(`Network error fetching resources: ${err}`);
     } finally {
       setFetchingResources(false);
     }
@@ -105,7 +99,7 @@ export function ResourcesTab({ serverConfig }: ResourcesTabProps) {
         setError(data.error || "Failed to read resource");
       }
     } catch (err) {
-      setError("Network error reading resource");
+      setError(`Network error reading resource: ${err}`);
     } finally {
       setLoading(false);
     }
@@ -208,7 +202,10 @@ export function ResourcesTab({ serverConfig }: ResourcesTabProps) {
                                     {resource.uri}
                                   </p>
                                   {resource.mimeType && (
-                                    <Badge variant="outline" className="text-xs mt-2 font-mono">
+                                    <Badge
+                                      variant="outline"
+                                      className="text-xs mt-2 font-mono"
+                                    >
                                       {resource.mimeType}
                                     </Badge>
                                   )}
@@ -237,7 +234,9 @@ export function ResourcesTab({ serverConfig }: ResourcesTabProps) {
                       <div className="space-y-2">
                         <div className="flex items-center gap-3">
                           <code className="font-mono font-semibold text-foreground bg-muted px-2 py-1 rounded-md border border-border text-xs">
-                            {allResources.find(r => r.uri === selectedResource)?.name || selectedResource}
+                            {allResources.find(
+                              (r) => r.uri === selectedResource,
+                            )?.name || selectedResource}
                           </code>
                         </div>
                         <p className="text-xs text-muted-foreground font-mono truncate max-w-md">
@@ -265,10 +264,14 @@ export function ResourcesTab({ serverConfig }: ResourcesTabProps) {
                     </div>
 
                     {/* Description */}
-                    {allResources.find(r => r.uri === selectedResource)?.description && (
+                    {allResources.find((r) => r.uri === selectedResource)
+                      ?.description && (
                       <div className="px-6 py-4 bg-muted/50 border-b border-border">
                         <p className="text-xs text-muted-foreground leading-relaxed font-medium">
-                          {allResources.find(r => r.uri === selectedResource)?.description}
+                          {
+                            allResources.find((r) => r.uri === selectedResource)
+                              ?.description
+                          }
                         </p>
                       </div>
                     )}
@@ -291,47 +294,56 @@ export function ResourcesTab({ serverConfig }: ResourcesTabProps) {
                             </div>
                           ) : (
                             <div className="space-y-4">
-                              {resourceContent?.contents?.map((content: any, index: number) => (
-                                <div key={index} className="group">
-                                  <div className="flex items-center gap-3 mb-3">
-                                    <Badge variant="secondary" className="text-xs font-mono font-medium">
-                                      {content.type}
-                                    </Badge>
-                                    {content.mimeType && (
-                                      <Badge variant="outline" className="text-xs font-mono">
-                                        {content.mimeType}
+                              {resourceContent?.contents?.map(
+                                (content: any, index: number) => (
+                                  <div key={index} className="group">
+                                    <div className="flex items-center gap-3 mb-3">
+                                      <Badge
+                                        variant="secondary"
+                                        className="text-xs font-mono font-medium"
+                                      >
+                                        {content.type}
                                       </Badge>
-                                    )}
+                                      {content.mimeType && (
+                                        <Badge
+                                          variant="outline"
+                                          className="text-xs font-mono"
+                                        >
+                                          {content.mimeType}
+                                        </Badge>
+                                      )}
+                                    </div>
+                                    <div className="border border-border rounded-md overflow-hidden">
+                                      {content.type === "text" ? (
+                                        <pre className="text-xs font-mono whitespace-pre-wrap p-4 bg-background overflow-auto max-h-96">
+                                          {content.text}
+                                        </pre>
+                                      ) : (
+                                        <div className="p-4">
+                                          <JsonView
+                                            src={content}
+                                            dark={true}
+                                            theme="atom"
+                                            enableClipboard={true}
+                                            displaySize={false}
+                                            collapseStringsAfterLength={100}
+                                            style={{
+                                              fontSize: "12px",
+                                              fontFamily:
+                                                "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                                              backgroundColor:
+                                                "hsl(var(--background))",
+                                              padding: "0",
+                                              borderRadius: "0",
+                                              border: "none",
+                                            }}
+                                          />
+                                        </div>
+                                      )}
+                                    </div>
                                   </div>
-                                  <div className="border border-border rounded-md overflow-hidden">
-                                    {content.type === "text" ? (
-                                      <pre className="text-xs font-mono whitespace-pre-wrap p-4 bg-background overflow-auto max-h-96">
-                                        {content.text}
-                                      </pre>
-                                    ) : (
-                                      <div className="p-4">
-                                        <JsonView
-                                          src={content}
-                                          dark={true}
-                                          theme="atom"
-                                          enableClipboard={true}
-                                          displaySize={false}
-                                          collapseStringsAfterLength={100}
-                                          style={{
-                                            fontSize: "12px",
-                                            fontFamily:
-                                              "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                                            backgroundColor: "hsl(var(--background))",
-                                            padding: "0",
-                                            borderRadius: "0",
-                                            border: "none",
-                                          }}
-                                        />
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                              ))}
+                                ),
+                              )}
                             </div>
                           )}
                         </div>
@@ -365,9 +377,7 @@ export function ResourcesTab({ serverConfig }: ResourcesTabProps) {
           <div className="h-full flex flex-col border-t border-border bg-background">
             {/* Header */}
             <div className="flex items-center justify-between p-4 border-b border-border">
-              <h2 className="text-xs font-semibold text-foreground">
-                Status
-              </h2>
+              <h2 className="text-xs font-semibold text-foreground">Status</h2>
             </div>
 
             {/* Content */}

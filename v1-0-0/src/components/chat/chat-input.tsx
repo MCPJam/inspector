@@ -7,7 +7,7 @@ import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 import { ArrowUp, Paperclip, Square } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowDown, X } from "lucide-react";
+import { ArrowDown } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,12 +16,7 @@ import {
 } from "../ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { getProviderLogoFromProvider } from "./chat-helpers";
-
-interface ModelOption {
-  id: string;
-  name: string;
-  provider: string;
-}
+import { Model, ModelDefinition } from "@/lib/types";
 
 interface ChatInputProps {
   value: string;
@@ -35,9 +30,9 @@ interface ChatInputProps {
   showScrollToBottom?: boolean;
   onScrollToBottom?: () => void;
   // Model selector props
-  currentModel: string;
-  availableModels: ModelOption[];
-  onModelChange: (model: string) => void;
+  currentModel: Model;
+  availableModels: ModelDefinition[];
+  onModelChange: (model: Model) => void;
   // Clear chat functionality
   onClearChat?: () => void;
   hasMessages?: boolean;
@@ -57,8 +52,6 @@ export function ChatInput({
   currentModel,
   availableModels,
   onModelChange,
-  onClearChat,
-  hasMessages = false,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);

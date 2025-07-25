@@ -34,6 +34,7 @@ export function ServersTab({
   }, []);
 
   // Filter and search servers
+  // TODO: Search and filter is not implemented yet
   const filteredServers = Object.entries(connectedServerConfigs).filter(
     ([name, server]) => {
       const matchesSearch = name

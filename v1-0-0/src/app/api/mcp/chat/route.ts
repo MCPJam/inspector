@@ -1,6 +1,5 @@
 import { NextRequest } from "next/server";
 import {
-  createMCPClient,
   createErrorResponse,
   validateMultipleServerConfigs,
   createMCPClientWithMultipleConnections,
