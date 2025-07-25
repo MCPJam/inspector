@@ -5,7 +5,7 @@ import type { ClientCapabilities } from "@modelcontextprotocol/sdk/types.js";
 import { OAuthClientState } from "./oauth-types";
 
 // Shared model definitions
-export type ModelProvider = "anthropic" | "openai";
+export type ModelProvider = "anthropic" | "openai" | "web-llm";
 
 export interface ModelDefinition {
   id: Model;
@@ -36,6 +36,11 @@ export enum Model {
   GPT_4 = "gpt-4",
   GPT_3_5_TURBO = "gpt-3.5-turbo",
   O1 = "o1",
+  // Web-LLM models
+  LLAMA_3_1_8B_INSTRUCT = "Llama-3.1-8B-Instruct-q4f32_1-MLC",
+  LLAMA_3_2_3B_INSTRUCT = "Llama-3.2-3B-Instruct-q4f16_1-MLC",
+  PHI_3_MINI_4K_INSTRUCT = "Phi-3-mini-4k-instruct-q4f16_1-MLC",
+  GEMMA_2_2B_INSTRUCT = "gemma-2-2b-it-q4f16_1-MLC",
 }
 
 export const SUPPORTED_MODELS: ModelDefinition[] = [
@@ -101,6 +106,27 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
   { id: Model.GPT_4, name: "GPT-4", provider: "openai" },
   { id: Model.GPT_3_5_TURBO, name: "GPT-3.5 Turbo", provider: "openai" },
   { id: Model.O1, name: "O1", provider: "openai" },
+  // Web-LLM models
+  {
+    id: Model.LLAMA_3_1_8B_INSTRUCT,
+    name: "Llama 3.1 8B Instruct",
+    provider: "web-llm",
+  },
+  {
+    id: Model.LLAMA_3_2_3B_INSTRUCT,
+    name: "Llama 3.2 3B Instruct",
+    provider: "web-llm",
+  },
+  {
+    id: Model.PHI_3_MINI_4K_INSTRUCT,
+    name: "Phi-3 Mini 4K Instruct",
+    provider: "web-llm",
+  },
+  {
+    id: Model.GEMMA_2_2B_INSTRUCT,
+    name: "Gemma 2 2B Instruct",
+    provider: "web-llm",
+  },
 ];
 
 // Helper function to get model by ID

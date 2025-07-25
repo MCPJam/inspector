@@ -9,6 +9,7 @@ import {
   SUPPORTED_MODELS,
 } from "@/lib/types";
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
+import { CreateMLCEngine, MLCEngine } from "@mlc-ai/web-llm";
 
 interface UseChatOptions {
   initialMessages?: ChatMessage[];
@@ -42,6 +43,9 @@ export function useChat(options: UseChatOptions = {}) {
   const [input, setInput] = useState("");
   const [status, setStatus] = useState<"idle" | "error">("idle");
   const [model, setModel] = useState(Model.GPT_4O);
+  const [webLlmEngine, setWebLlmEngine] = useState<MLCEngine | null>(null);
+  const [webLlmLoading, setWebLlmLoading] = useState(false);
+  const [webGpuSupported, setWebGpuSupported] = useState<boolean | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesRef = useRef(state.messages);
 
@@ -49,17 +53,37 @@ export function useChat(options: UseChatOptions = {}) {
     messagesRef.current = state.messages;
   }, [state.messages]);
 
+  // Check WebGPU support
+  useEffect(() => {
+    const checkWebGpuSupport = async () => {
+      if (typeof navigator !== "undefined" && "gpu" in navigator) {
+        try {
+          const gpu = (navigator as any).gpu;
+          const adapter = await gpu.requestAdapter();
+          setWebGpuSupported(!!adapter);
+        } catch {
+          setWebGpuSupported(false);
+        }
+      } else {
+        setWebGpuSupported(false);
+      }
+    };
+    checkWebGpuSupport();
+  }, []);
+
   useEffect(() => {
     if (tokens.anthropic?.length > 0) {
       setModel(Model.CLAUDE_3_5_SONNET_20240620);
     } else if (tokens.openai?.length > 0) {
       setModel(Model.GPT_4O);
+    } else if (webGpuSupported) {
+      setModel(Model.LLAMA_3_1_8B_INSTRUCT);
     }
-  }, [tokens]);
+  }, [tokens, webGpuSupported]);
 
   const currentApiKey = useMemo(() => {
     const modelDefinition = SUPPORTED_MODELS.find((m) => m.id === model);
-    if (modelDefinition) {
+    if (modelDefinition && modelDefinition.provider !== "web-llm") {
       return getToken(modelDefinition.provider);
     }
     return "";
@@ -75,8 +99,31 @@ export function useChat(options: UseChatOptions = {}) {
     [onModelChange],
   );
 
-  // Available models with API keys
-  const availableModels = SUPPORTED_MODELS.filter((m) => hasToken(m.provider));
+  // Available models with API keys or WebGPU support
+  const availableModels = SUPPORTED_MODELS.filter((m) => 
+    m.provider === "web-llm" ? webGpuSupported : hasToken(m.provider)
+  );
+
+  // Initialize web-llm engine when needed
+  const initializeWebLlmEngine = useCallback(async (modelId: string) => {
+    if (webLlmEngine || webLlmLoading) return webLlmEngine;
+    
+    setWebLlmLoading(true);
+    try {
+      const engine = await CreateMLCEngine(modelId, {
+        initProgressCallback: (progress) => {
+          console.log("WebLLM init progress:", progress);
+        },
+      });
+      setWebLlmEngine(engine);
+      setWebLlmLoading(false);
+      return engine;
+    } catch (error) {
+      console.error("Failed to initialize WebLLM engine:", error);
+      setWebLlmLoading(false);
+      throw error;
+    }
+  }, [webLlmEngine, webLlmLoading]);
 
   const handleStreamingEvent = useCallback(
     (
@@ -166,8 +213,85 @@ export function useChat(options: UseChatOptions = {}) {
     [],
   );
 
+  const sendWebLlmRequest = useCallback(
+    async (userMessage: ChatMessage) => {
+      const modelDefinition = SUPPORTED_MODELS.find((m) => m.id === model);
+      if (!modelDefinition || modelDefinition.provider !== "web-llm") {
+        throw new Error("Invalid web-llm model");
+      }
+
+      const engine = await initializeWebLlmEngine(model);
+      if (!engine) {
+        throw new Error("Failed to initialize WebLLM engine");
+      }
+
+      const assistantMessage = createMessage("assistant", "");
+      setState((prev) => ({
+        ...prev,
+        messages: [...prev.messages, assistantMessage],
+      }));
+
+      try {
+        const messages = messagesRef.current.concat(userMessage).map(msg => ({
+          role: msg.role,
+          content: msg.content,
+        }));
+
+        if (systemPrompt) {
+          messages.unshift({ role: "system", content: systemPrompt });
+        }
+
+        const completion = await engine.chat.completions.create({
+          messages: messages as any,
+          stream: true,
+        });
+
+        let content = "";
+        for await (const chunk of completion) {
+          const delta = chunk.choices[0]?.delta?.content || "";
+          content += delta;
+          
+          setState((prev) => ({
+            ...prev,
+            messages: prev.messages.map((msg) =>
+              msg.id === assistantMessage.id
+                ? { ...msg, content }
+                : msg,
+            ),
+          }));
+        }
+
+        setState((prev) => ({
+          ...prev,
+          isLoading: false,
+        }));
+
+        if (onMessageReceived) {
+          const finalMessage = {
+            ...assistantMessage,
+            content,
+          };
+          onMessageReceived(finalMessage);
+        }
+      } catch (error) {
+        setState((prev) => ({
+          ...prev,
+          isLoading: false,
+        }));
+        throw error;
+      }
+    },
+    [model, initializeWebLlmEngine, systemPrompt, onMessageReceived],
+  );
+
   const sendChatRequest = useCallback(
     async (userMessage: ChatMessage) => {
+      const modelDefinition = SUPPORTED_MODELS.find((m) => m.id === model);
+      
+      if (modelDefinition?.provider === "web-llm") {
+        return sendWebLlmRequest(userMessage);
+      }
+
       if (!serverConfigs || !model || !currentApiKey) {
         throw new Error(
           "Missing required configuration: serverConfig, model, and apiKey are required",
@@ -274,6 +398,7 @@ export function useChat(options: UseChatOptions = {}) {
       systemPrompt,
       onMessageReceived,
       handleStreamingEvent,
+      sendWebLlmRequest,
     ],
   );
 
@@ -405,7 +530,7 @@ export function useChat(options: UseChatOptions = {}) {
     setInput,
     model,
     availableModels,
-    hasValidApiKey: Boolean(currentApiKey),
+    hasValidApiKey: Boolean(currentApiKey) || SUPPORTED_MODELS.find((m) => m.id === model)?.provider === "web-llm",
 
     // Actions
     sendMessage,
