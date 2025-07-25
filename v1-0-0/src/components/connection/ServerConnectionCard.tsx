@@ -46,12 +46,11 @@ export function ServerConnectionCard({
 
   const isHttpServer = server.config.url !== undefined;
   const hasOAuth = server.oauthState || server.oauthFlow;
-  
-  // Extract manual Bearer token from headers
-  const manualBearerToken = server.config.requestInit?.headers?.Authorization?.startsWith('Bearer ') 
-    ? server.config.requestInit.headers.Authorization.slice(7) // Remove 'Bearer ' prefix
-    : null;
-  
+  const headers = server.config.requestInit?.headers as Record<string, string>;
+  const manualBearerToken =
+    headers?.Authorization?.startsWith("Bearer ") &&
+    headers.Authorization.slice(7); // Remove 'Bearer ' prefix
+
   // Show expandable section if there's OAuth data, manual Bearer token, or STDIO server
   const hasExpandableContent = hasOAuth || manualBearerToken || !isHttpServer;
 
@@ -284,12 +283,13 @@ export function ServerConnectionCard({
                         Bearer Access Token (Manual):
                       </span>
                       <div className="font-mono text-foreground break-all bg-muted/30 p-2 rounded mt-1 relative group">
-                        <div className="pr-8">
-                          {manualBearerToken}
-                        </div>
+                        <div className="pr-8">{manualBearerToken}</div>
                         <button
                           onClick={() =>
-                            copyToClipboard(manualBearerToken, "manualBearerToken")
+                            copyToClipboard(
+                              manualBearerToken,
+                              "manualBearerToken",
+                            )
                           }
                           className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
                         >

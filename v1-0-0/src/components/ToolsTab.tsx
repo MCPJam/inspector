@@ -4,7 +4,6 @@ import { useState, useEffect } from "react";
 import { Card, CardContent } from "./ui/card";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
-import { Label } from "./ui/label";
 import { Textarea } from "./ui/textarea";
 import { Badge } from "./ui/badge";
 import { ScrollArea } from "./ui/scroll-area";
@@ -20,15 +19,7 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "./ui/resizable";
-import {
-  Wrench,
-  Play,
-  RefreshCw,
-  ChevronRight,
-  MessageSquare,
-  X,
-  Check,
-} from "lucide-react";
+import { Wrench, Play, RefreshCw, ChevronRight } from "lucide-react";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import type { MCPToolType } from "@mastra/core/mcp";

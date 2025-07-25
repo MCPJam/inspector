@@ -41,7 +41,6 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
     },
   });
   const hasMessages = messages.length > 0;
-
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     if (isAtBottom && messagesContainerRef.current) {

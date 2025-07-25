@@ -180,7 +180,7 @@ export function useAppState() {
         try {
           new URL(formData.url);
         } catch (urlError) {
-          toast.error(`Invalid URL format: ${formData.url}`);
+          toast.error(`Invalid URL format: ${formData.url} ${urlError}`);
           return;
         }
       }

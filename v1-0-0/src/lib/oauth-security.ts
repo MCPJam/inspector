@@ -3,7 +3,7 @@
  * Handles secure storage, validation, and lifecycle management of OAuth tokens
  */
 
-import { OAuthClientState, TokenResponse, OAuthError } from './oauth-types';
+import { TokenResponse, OAuthError } from "./oauth-types";
 
 export interface SecureTokenStorage {
   store(key: string, tokens: TokenResponse): Promise<void>;
@@ -21,7 +21,7 @@ export interface SecureTokenStorage {
  * - Hardware security modules (HSM) for key material
  */
 export class BrowserTokenStorage implements SecureTokenStorage {
-  private readonly storagePrefix = 'mcp-oauth-tokens:';
+  private readonly storagePrefix = "mcp-oauth-tokens:";
   private readonly encryptionKey: string;
 
   constructor(encryptionKey?: string) {
@@ -34,14 +34,16 @@ export class BrowserTokenStorage implements SecureTokenStorage {
       const data = {
         ...tokens,
         stored_at: Date.now(),
-        expires_at: tokens.expires_in ? Date.now() + (tokens.expires_in * 1000) : undefined
+        expires_at: tokens.expires_in
+          ? Date.now() + tokens.expires_in * 1000
+          : undefined,
       };
 
       const encrypted = await this.encrypt(JSON.stringify(data));
       sessionStorage.setItem(this.storagePrefix + key, encrypted);
     } catch (error) {
-      console.error('Failed to store OAuth tokens:', error);
-      throw new Error('Token storage failed');
+      console.error("Failed to store OAuth tokens:", error);
+      throw new Error("Token storage failed");
     }
   }
 
@@ -61,7 +63,7 @@ export class BrowserTokenStorage implements SecureTokenStorage {
 
       return data as TokenResponse;
     } catch (error) {
-      console.error('Failed to retrieve OAuth tokens:', error);
+      console.error("Failed to retrieve OAuth tokens:", error);
       await this.remove(key); // Remove corrupted data
       return null;
     }
@@ -73,7 +75,7 @@ export class BrowserTokenStorage implements SecureTokenStorage {
 
   async clear(): Promise<void> {
     const keys = Object.keys(sessionStorage);
-    keys.forEach(key => {
+    keys.forEach((key) => {
       if (key.startsWith(this.storagePrefix)) {
         sessionStorage.removeItem(key);
       }
@@ -87,39 +89,40 @@ export class BrowserTokenStorage implements SecureTokenStorage {
 
   private generateEncryptionKey(): string {
     // Generate a simple key from browser fingerprint + session
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d')!;
-    ctx.textBaseline = 'top';
-    ctx.font = '14px Arial';
-    ctx.fillText('MCP Inspector Fingerprint', 2, 2);
-    
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d")!;
+    ctx.textBaseline = "top";
+    ctx.font = "14px Arial";
+    ctx.fillText("MCP Inspector Fingerprint", 2, 2);
+
     const fingerprint = canvas.toDataURL();
-    const sessionId = sessionStorage.getItem('mcp-session-id') || Math.random().toString(36);
-    sessionStorage.setItem('mcp-session-id', sessionId);
-    
+    const sessionId =
+      sessionStorage.getItem("mcp-session-id") || Math.random().toString(36);
+    sessionStorage.setItem("mcp-session-id", sessionId);
+
     // Simple hash function (not cryptographically secure - use proper crypto in production)
     let hash = 0;
     const combined = fingerprint + sessionId;
     for (let i = 0; i < combined.length; i++) {
       const char = combined.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
+      hash = (hash << 5) - hash + char;
       hash = hash & hash; // Convert to 32-bit integer
     }
-    
+
     return Math.abs(hash).toString(36);
   }
 
   private async encrypt(data: string): Promise<string> {
     // Simple XOR encryption (not secure - use Web Crypto API in production)
     const key = this.encryptionKey;
-    let result = '';
-    
+    let result = "";
+
     for (let i = 0; i < data.length; i++) {
       const keyChar = key.charCodeAt(i % key.length);
       const dataChar = data.charCodeAt(i);
       result += String.fromCharCode(dataChar ^ keyChar);
     }
-    
+
     return btoa(result);
   }
 
@@ -127,14 +130,14 @@ export class BrowserTokenStorage implements SecureTokenStorage {
     // Simple XOR decryption
     const data = atob(encryptedData);
     const key = this.encryptionKey;
-    let result = '';
-    
+    let result = "";
+
     for (let i = 0; i < data.length; i++) {
       const keyChar = key.charCodeAt(i % key.length);
       const dataChar = data.charCodeAt(i);
       result += String.fromCharCode(dataChar ^ keyChar);
     }
-    
+
     return result;
   }
 }
@@ -164,19 +167,23 @@ export class OAuthTokenManager {
    */
   async getValidTokens(
     serverName: string,
-    refreshCallback?: (refreshToken: string) => Promise<TokenResponse>
+    refreshCallback?: (refreshToken: string) => Promise<TokenResponse>,
   ): Promise<TokenResponse | null> {
     const tokens = await this.storage.retrieve(serverName);
     if (!tokens) return null;
 
     // Check if token needs refresh
-    if (this.shouldRefreshToken(tokens) && tokens.refresh_token && refreshCallback) {
+    if (
+      this.shouldRefreshToken(tokens) &&
+      tokens.refresh_token &&
+      refreshCallback
+    ) {
       try {
         const newTokens = await refreshCallback(tokens.refresh_token);
         await this.storeTokens(serverName, newTokens);
         return newTokens;
       } catch (error) {
-        console.error('Token refresh failed:', error);
+        console.error("Token refresh failed:", error);
         await this.removeTokens(serverName);
         return null;
       }
@@ -206,10 +213,10 @@ export class OAuthTokenManager {
     if (!tokens.expires_in) return false;
 
     const storedAt = (tokens as any).stored_at || Date.now();
-    const expiresAt = storedAt + (tokens.expires_in * 1000);
+    const expiresAt = storedAt + tokens.expires_in * 1000;
     const refreshThreshold = this.refreshThresholdMinutes * 60 * 1000;
 
-    return (expiresAt - Date.now()) < refreshThreshold;
+    return expiresAt - Date.now() < refreshThreshold;
   }
 }
 
@@ -234,49 +241,59 @@ export class OAuthSecurityValidator {
     // Validate HTTPS usage
     if (config.authorizationEndpoint) {
       const authUrl = new URL(config.authorizationEndpoint);
-      if (authUrl.protocol !== 'https:' && authUrl.hostname !== 'localhost') {
-        errors.push('Authorization endpoint must use HTTPS (except localhost for development)');
+      if (authUrl.protocol !== "https:" && authUrl.hostname !== "localhost") {
+        errors.push(
+          "Authorization endpoint must use HTTPS (except localhost for development)",
+        );
       }
     }
 
     if (config.tokenEndpoint) {
       const tokenUrl = new URL(config.tokenEndpoint);
-      if (tokenUrl.protocol !== 'https:' && tokenUrl.hostname !== 'localhost') {
-        errors.push('Token endpoint must use HTTPS (except localhost for development)');
+      if (tokenUrl.protocol !== "https:" && tokenUrl.hostname !== "localhost") {
+        errors.push(
+          "Token endpoint must use HTTPS (except localhost for development)",
+        );
       }
     }
 
     // Validate redirect URI
     if (config.redirectUri) {
       const redirectUrl = new URL(config.redirectUri);
-      
+
       // Check for secure redirect URI
-      if (redirectUrl.protocol !== 'https:' && redirectUrl.hostname !== 'localhost') {
-        warnings.push('Redirect URI should use HTTPS in production');
+      if (
+        redirectUrl.protocol !== "https:" &&
+        redirectUrl.hostname !== "localhost"
+      ) {
+        warnings.push("Redirect URI should use HTTPS in production");
       }
 
       // Check for wildcard or overly broad redirect URIs
-      if (redirectUrl.pathname.includes('*') || redirectUrl.search.includes('*')) {
-        errors.push('Redirect URI must not contain wildcards');
+      if (
+        redirectUrl.pathname.includes("*") ||
+        redirectUrl.search.includes("*")
+      ) {
+        errors.push("Redirect URI must not contain wildcards");
       }
     }
 
     // Validate scopes
     if (config.scopes) {
-      const suspiciousScopes = ['admin', 'root', 'superuser', '*:*'];
-      const foundSuspicious = config.scopes.filter(scope => 
-        suspiciousScopes.some(suspicious => scope.includes(suspicious))
+      const suspiciousScopes = ["admin", "root", "superuser", "*:*"];
+      const foundSuspicious = config.scopes.filter((scope) =>
+        suspiciousScopes.some((suspicious) => scope.includes(suspicious)),
       );
-      
+
       if (foundSuspicious.length > 0) {
-        warnings.push(`Requesting broad scopes: ${foundSuspicious.join(', ')}`);
+        warnings.push(`Requesting broad scopes: ${foundSuspicious.join(", ")}`);
       }
     }
 
     return {
       valid: errors.length === 0,
       warnings,
-      errors
+      errors,
     };
   }
 
@@ -285,18 +302,18 @@ export class OAuthSecurityValidator {
    */
   static validateStateParameter(
     expectedState: string,
-    receivedState: string
+    receivedState: string,
   ): boolean {
     if (!expectedState || !receivedState) return false;
-    
+
     // Constant-time comparison to prevent timing attacks
     if (expectedState.length !== receivedState.length) return false;
-    
+
     let result = 0;
     for (let i = 0; i < expectedState.length; i++) {
       result |= expectedState.charCodeAt(i) ^ receivedState.charCodeAt(i);
     }
-    
+
     return result === 0;
   }
 
@@ -305,15 +322,15 @@ export class OAuthSecurityValidator {
    */
   static sanitizeOAuthError(error: OAuthError): OAuthError {
     const sanitizedError = { ...error };
-    
+
     // Remove potentially sensitive information from error descriptions
     if (sanitizedError.error_description) {
       sanitizedError.error_description = sanitizedError.error_description
-        .replace(/client_secret=[^&\s]+/gi, 'client_secret=[REDACTED]')
-        .replace(/password=[^&\s]+/gi, 'password=[REDACTED]')
-        .replace(/token=[^&\s]+/gi, 'token=[REDACTED]');
+        .replace(/client_secret=[^&\s]+/gi, "client_secret=[REDACTED]")
+        .replace(/password=[^&\s]+/gi, "password=[REDACTED]")
+        .replace(/token=[^&\s]+/gi, "token=[REDACTED]");
     }
-    
+
     return sanitizedError;
   }
 }
@@ -323,13 +340,16 @@ export class OAuthSecurityValidator {
  * Manages OAuth sessions and prevents session fixation attacks
  */
 export class OAuthSessionManager {
-  private sessions = new Map<string, {
-    serverName: string;
-    state: string;
-    codeVerifier: string;
-    createdAt: number;
-    expiresAt: number;
-  }>();
+  private sessions = new Map<
+    string,
+    {
+      serverName: string;
+      state: string;
+      codeVerifier: string;
+      createdAt: number;
+      expiresAt: number;
+    }
+  >();
 
   private readonly SESSION_TIMEOUT = 10 * 60 * 1000; // 10 minutes
 
@@ -340,16 +360,16 @@ export class OAuthSessionManager {
     sessionId: string,
     serverName: string,
     state: string,
-    codeVerifier: string
+    codeVerifier: string,
   ): void {
     const now = Date.now();
-    
+
     this.sessions.set(sessionId, {
       serverName,
       state,
       codeVerifier,
       createdAt: now,
-      expiresAt: now + this.SESSION_TIMEOUT
+      expiresAt: now + this.SESSION_TIMEOUT,
     });
 
     // Clean up expired sessions
@@ -361,10 +381,10 @@ export class OAuthSessionManager {
    */
   validateSession(
     sessionId: string,
-    state: string
+    state: string,
   ): { valid: boolean; session?: any } {
     const session = this.sessions.get(sessionId);
-    
+
     if (!session) {
       return { valid: false };
     }
@@ -395,7 +415,7 @@ export class OAuthSessionManager {
    */
   private cleanupExpiredSessions(): void {
     const now = Date.now();
-    
+
     for (const [sessionId, session] of this.sessions.entries()) {
       if (now > session.expiresAt) {
         this.sessions.delete(sessionId);

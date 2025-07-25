@@ -154,15 +154,19 @@ export function PromptsTab({ serverConfig }: PromptsTabProps) {
   const updateFieldValue = (fieldName: string, value: any) => {
     setFormFields((prev) =>
       prev.map((field) =>
-        field.name === fieldName ? { ...field, value } : field
-      )
+        field.name === fieldName ? { ...field, value } : field,
+      ),
     );
   };
 
   const buildParameters = (): Record<string, any> => {
     const params: Record<string, any> = {};
     formFields.forEach((field) => {
-      if (field.value !== "" && field.value !== null && field.value !== undefined) {
+      if (
+        field.value !== "" &&
+        field.value !== null &&
+        field.value !== undefined
+      ) {
         let processedValue = field.value;
 
         if (field.type === "number" || field.type === "integer") {
@@ -212,7 +216,7 @@ export function PromptsTab({ serverConfig }: PromptsTabProps) {
         setError(data.error || "Failed to get prompt");
       }
     } catch (err) {
-      setError("Error getting prompt");
+      setError(`Error getting prompt: ${err}`);
     } finally {
       setLoading(false);
     }
@@ -353,7 +357,9 @@ export function PromptsTab({ serverConfig }: PromptsTabProps) {
                         ) : (
                           <>
                             <Play className="h-3 w-3 mr-1.5 cursor-pointer" />
-                            <span className="font-mono text-xs">Get Prompt</span>
+                            <span className="font-mono text-xs">
+                              Get Prompt
+                            </span>
                           </>
                         )}
                       </Button>
@@ -449,7 +455,7 @@ export function PromptsTab({ serverConfig }: PromptsTabProps) {
                                           onChange={(e) =>
                                             updateFieldValue(
                                               field.name,
-                                              e.target.checked
+                                              e.target.checked,
                                             )
                                           }
                                           className="w-4 h-4 text-primary bg-background border-border rounded focus:ring-ring focus:ring-2"
@@ -464,10 +470,17 @@ export function PromptsTab({ serverConfig }: PromptsTabProps) {
                                         value={
                                           typeof field.value === "string"
                                             ? field.value
-                                            : JSON.stringify(field.value, null, 2)
+                                            : JSON.stringify(
+                                                field.value,
+                                                null,
+                                                2,
+                                              )
                                         }
                                         onChange={(e) =>
-                                          updateFieldValue(field.name, e.target.value)
+                                          updateFieldValue(
+                                            field.name,
+                                            e.target.value,
+                                          )
                                         }
                                         placeholder={`Enter ${field.type} as JSON`}
                                         className="font-mono text-xs h-20 bg-background border-border hover:border-border/80 focus:border-ring focus:ring-0 resize-none"
@@ -482,7 +495,10 @@ export function PromptsTab({ serverConfig }: PromptsTabProps) {
                                         }
                                         value={field.value}
                                         onChange={(e) =>
-                                          updateFieldValue(field.name, e.target.value)
+                                          updateFieldValue(
+                                            field.name,
+                                            e.target.value,
+                                          )
                                         }
                                         placeholder={`Enter ${field.name}`}
                                         className="bg-background border-border hover:border-border/80 focus:border-ring focus:ring-0 font-medium text-xs"

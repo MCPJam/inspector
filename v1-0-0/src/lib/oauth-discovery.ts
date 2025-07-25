@@ -3,13 +3,13 @@
  * Handles RFC 8414 Authorization Server Discovery and RFC 9728 Protected Resource Metadata
  */
 
-import { 
-  AuthorizationServerMetadata, 
-  ProtectedResourceMetadata, 
+import {
+  AuthorizationServerMetadata,
+  ProtectedResourceMetadata,
   WELL_KNOWN_PATHS,
   MCP_OAUTH_ERRORS,
-  OAuthError 
-} from './oauth-types';
+  OAuthError,
+} from "./oauth-types";
 
 export interface DiscoveryOptions {
   timeout?: number;
@@ -31,14 +31,14 @@ export interface DiscoveryResult {
  * Implements RFC 8414 discovery
  */
 export async function discoverAuthorizationServer(
-  serverUrl: string, 
-  options: DiscoveryOptions = {}
+  serverUrl: string,
+  options: DiscoveryOptions = {},
 ): Promise<DiscoveryResult> {
-  const { timeout = 10000, follow_redirects = true, max_redirects = 5 } = options;
-  
+  const { timeout = 10000, follow_redirects = true } = options;
+
   try {
     const url = new URL(serverUrl);
-    
+
     // Try multiple discovery endpoints in order of preference
     const discoveryUrls = [
       // MCP-specific OAuth discovery
@@ -46,10 +46,18 @@ export async function discoverAuthorizationServer(
       // Standard OAuth authorization server discovery
       new URL(WELL_KNOWN_PATHS.AUTHORIZATION_SERVER, url.origin).toString(),
       // Try with path prefix if original URL has a path
-      ...(url.pathname !== '/' ? [
-        new URL(url.pathname + WELL_KNOWN_PATHS.MCP_OAUTH, url.origin).toString(),
-        new URL(url.pathname + WELL_KNOWN_PATHS.AUTHORIZATION_SERVER, url.origin).toString()
-      ] : [])
+      ...(url.pathname !== "/"
+        ? [
+            new URL(
+              url.pathname + WELL_KNOWN_PATHS.MCP_OAUTH,
+              url.origin,
+            ).toString(),
+            new URL(
+              url.pathname + WELL_KNOWN_PATHS.AUTHORIZATION_SERVER,
+              url.origin,
+            ).toString(),
+          ]
+        : []),
     ];
 
     for (const discoveryUrl of discoveryUrls) {
@@ -58,20 +66,21 @@ export async function discoverAuthorizationServer(
         const timeoutId = setTimeout(() => controller.abort(), timeout);
 
         const response = await fetch(discoveryUrl, {
-          method: 'GET',
+          method: "GET",
           headers: {
-            'Accept': 'application/json',
-            'User-Agent': 'MCP-Inspector/1.0'
+            Accept: "application/json",
+            "User-Agent": "MCP-Inspector/1.0",
           },
           signal: controller.signal,
-          redirect: follow_redirects ? 'follow' : 'manual'
+          redirect: follow_redirects ? "follow" : "manual",
         });
 
         clearTimeout(timeoutId);
 
         if (response.ok) {
-          const metadata = await response.json() as AuthorizationServerMetadata;
-          
+          const metadata =
+            (await response.json()) as AuthorizationServerMetadata;
+
           // Validate required fields
           if (!metadata.issuer || !metadata.response_types_supported) {
             continue; // Try next URL
@@ -80,13 +89,15 @@ export async function discoverAuthorizationServer(
           // Validate issuer matches the expected format
           const issuerUrl = new URL(metadata.issuer);
           if (issuerUrl.origin !== url.origin) {
-            throw new Error(`Issuer ${metadata.issuer} does not match server origin ${url.origin}`);
+            throw new Error(
+              `Issuer ${metadata.issuer} does not match server origin ${url.origin}`,
+            );
           }
 
           return {
             authorization_server_metadata: metadata,
             discovery_url: discoveryUrl,
-            discovered_at: Date.now()
+            discovered_at: Date.now(),
           };
         }
       } catch (error) {
@@ -102,18 +113,19 @@ export async function discoverAuthorizationServer(
       discovered_at: Date.now(),
       error: {
         error: MCP_OAUTH_ERRORS.DISCOVERY_FAILED,
-        error_description: 'Authorization server metadata not found at any well-known endpoint'
-      }
+        error_description:
+          "Authorization server metadata not found at any well-known endpoint",
+      },
     };
-
   } catch (error) {
     return {
       discovery_url: serverUrl,
       discovered_at: Date.now(),
       error: {
         error: MCP_OAUTH_ERRORS.DISCOVERY_FAILED,
-        error_description: error instanceof Error ? error.message : 'Unknown discovery error'
-      }
+        error_description:
+          error instanceof Error ? error.message : "Unknown discovery error",
+      },
     };
   }
 }
@@ -124,13 +136,13 @@ export async function discoverAuthorizationServer(
  */
 export async function discoverProtectedResource(
   resourceUrl: string,
-  options: DiscoveryOptions = {}
+  options: DiscoveryOptions = {},
 ): Promise<DiscoveryResult> {
   const { timeout = 10000, follow_redirects = true } = options;
-  
+
   try {
     const url = new URL(resourceUrl);
-    
+
     // Try protected resource discovery endpoints
     const discoveryUrls = [
       // MCP-specific discovery first
@@ -138,10 +150,18 @@ export async function discoverProtectedResource(
       // Standard protected resource discovery
       new URL(WELL_KNOWN_PATHS.PROTECTED_RESOURCE, url.origin).toString(),
       // Try with path prefix if original URL has a path
-      ...(url.pathname !== '/' ? [
-        new URL(url.pathname + WELL_KNOWN_PATHS.MCP_OAUTH, url.origin).toString(),
-        new URL(url.pathname + WELL_KNOWN_PATHS.PROTECTED_RESOURCE, url.origin).toString()
-      ] : [])
+      ...(url.pathname !== "/"
+        ? [
+            new URL(
+              url.pathname + WELL_KNOWN_PATHS.MCP_OAUTH,
+              url.origin,
+            ).toString(),
+            new URL(
+              url.pathname + WELL_KNOWN_PATHS.PROTECTED_RESOURCE,
+              url.origin,
+            ).toString(),
+          ]
+        : []),
     ];
 
     for (const discoveryUrl of discoveryUrls) {
@@ -150,20 +170,20 @@ export async function discoverProtectedResource(
         const timeoutId = setTimeout(() => controller.abort(), timeout);
 
         const response = await fetch(discoveryUrl, {
-          method: 'GET',
+          method: "GET",
           headers: {
-            'Accept': 'application/json',
-            'User-Agent': 'MCP-Inspector/1.0'
+            Accept: "application/json",
+            "User-Agent": "MCP-Inspector/1.0",
           },
           signal: controller.signal,
-          redirect: follow_redirects ? 'follow' : 'manual'
+          redirect: follow_redirects ? "follow" : "manual",
         });
 
         clearTimeout(timeoutId);
 
         if (response.ok) {
-          const metadata = await response.json() as ProtectedResourceMetadata;
-          
+          const metadata = (await response.json()) as ProtectedResourceMetadata;
+
           // Validate required fields
           if (!metadata.resource_server) {
             continue; // Try next URL
@@ -172,12 +192,15 @@ export async function discoverProtectedResource(
           return {
             protected_resource_metadata: metadata,
             discovery_url: discoveryUrl,
-            discovered_at: Date.now()
+            discovered_at: Date.now(),
           };
         }
       } catch (error) {
         // Continue to next URL on error
-        console.debug(`Protected resource discovery failed for ${discoveryUrl}:`, error);
+        console.debug(
+          `Protected resource discovery failed for ${discoveryUrl}:`,
+          error,
+        );
         continue;
       }
     }
@@ -188,18 +211,19 @@ export async function discoverProtectedResource(
       discovered_at: Date.now(),
       error: {
         error: MCP_OAUTH_ERRORS.DISCOVERY_FAILED,
-        error_description: 'Protected resource metadata not found at any well-known endpoint'
-      }
+        error_description:
+          "Protected resource metadata not found at any well-known endpoint",
+      },
     };
-
   } catch (error) {
     return {
       discovery_url: resourceUrl,
       discovered_at: Date.now(),
       error: {
         error: MCP_OAUTH_ERRORS.DISCOVERY_FAILED,
-        error_description: error instanceof Error ? error.message : 'Unknown discovery error'
-      }
+        error_description:
+          error instanceof Error ? error.message : "Unknown discovery error",
+      },
     };
   }
 }
@@ -210,7 +234,7 @@ export async function discoverProtectedResource(
  */
 export async function discoverMCPOAuth(
   serverUrl: string,
-  options: DiscoveryOptions = {}
+  options: DiscoveryOptions = {},
 ): Promise<{
   authorization_server?: DiscoveryResult;
   protected_resource?: DiscoveryResult;
@@ -218,19 +242,29 @@ export async function discoverMCPOAuth(
 }> {
   try {
     // Try to discover both in parallel
-    const [authServerResult, protectedResourceResult] = await Promise.allSettled([
-      discoverAuthorizationServer(serverUrl, options),
-      discoverProtectedResource(serverUrl, options)
-    ]);
+    const [authServerResult, protectedResourceResult] =
+      await Promise.allSettled([
+        discoverAuthorizationServer(serverUrl, options),
+        discoverProtectedResource(serverUrl, options),
+      ]);
 
-    const authServer = authServerResult.status === 'fulfilled' ? authServerResult.value : undefined;
-    const protectedResource = protectedResourceResult.status === 'fulfilled' ? protectedResourceResult.value : undefined;
+    const authServer =
+      authServerResult.status === "fulfilled"
+        ? authServerResult.value
+        : undefined;
+    const protectedResource =
+      protectedResourceResult.status === "fulfilled"
+        ? protectedResourceResult.value
+        : undefined;
 
     // Check if we got at least one successful discovery
-    if (authServer?.authorization_server_metadata || protectedResource?.protected_resource_metadata) {
+    if (
+      authServer?.authorization_server_metadata ||
+      protectedResource?.protected_resource_metadata
+    ) {
       return {
         authorization_server: authServer,
-        protected_resource: protectedResource
+        protected_resource: protectedResource,
       };
     }
 
@@ -240,16 +274,16 @@ export async function discoverMCPOAuth(
       protected_resource: protectedResource,
       error: {
         error: MCP_OAUTH_ERRORS.DISCOVERY_FAILED,
-        error_description: 'Failed to discover OAuth metadata for MCP server'
-      }
+        error_description: "Failed to discover OAuth metadata for MCP server",
+      },
     };
-
   } catch (error) {
     return {
       error: {
         error: MCP_OAUTH_ERRORS.DISCOVERY_FAILED,
-        error_description: error instanceof Error ? error.message : 'Unknown discovery error'
-      }
+        error_description:
+          error instanceof Error ? error.message : "Unknown discovery error",
+      },
     };
   }
 }
@@ -258,28 +292,35 @@ export async function discoverMCPOAuth(
  * Validates authorization server metadata
  */
 export function validateAuthorizationServerMetadata(
-  metadata: AuthorizationServerMetadata
+  metadata: AuthorizationServerMetadata,
 ): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
 
   // Required fields
   if (!metadata.issuer) {
-    errors.push('Missing required field: issuer');
+    errors.push("Missing required field: issuer");
   }
 
-  if (!metadata.response_types_supported || metadata.response_types_supported.length === 0) {
-    errors.push('Missing required field: response_types_supported');
+  if (
+    !metadata.response_types_supported ||
+    metadata.response_types_supported.length === 0
+  ) {
+    errors.push("Missing required field: response_types_supported");
   }
 
   // Validate URLs
   const urlFields = [
-    'issuer', 'authorization_endpoint', 'token_endpoint', 
-    'userinfo_endpoint', 'jwks_uri', 'registration_endpoint'
+    "issuer",
+    "authorization_endpoint",
+    "token_endpoint",
+    "userinfo_endpoint",
+    "jwks_uri",
+    "registration_endpoint",
   ];
 
   for (const field of urlFields) {
     const value = metadata[field as keyof AuthorizationServerMetadata];
-    if (value && typeof value === 'string') {
+    if (value && typeof value === "string") {
       try {
         new URL(value);
       } catch {
@@ -292,17 +333,20 @@ export function validateAuthorizationServerMetadata(
   if (metadata.issuer) {
     try {
       const issuerUrl = new URL(metadata.issuer);
-      if (issuerUrl.protocol !== 'https:' && issuerUrl.hostname !== 'localhost') {
-        errors.push('Issuer must use HTTPS (except localhost)');
+      if (
+        issuerUrl.protocol !== "https:" &&
+        issuerUrl.hostname !== "localhost"
+      ) {
+        errors.push("Issuer must use HTTPS (except localhost)");
       }
     } catch {
-      errors.push('Invalid issuer URL format');
+      errors.push("Invalid issuer URL format");
     }
   }
 
   return {
     valid: errors.length === 0,
-    errors
+    errors,
   };
 }
 
@@ -310,21 +354,26 @@ export function validateAuthorizationServerMetadata(
  * Validates protected resource metadata
  */
 export function validateProtectedResourceMetadata(
-  metadata: ProtectedResourceMetadata
+  metadata: ProtectedResourceMetadata,
 ): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
 
   // Required fields
   if (!metadata.resource_server) {
-    errors.push('Missing required field: resource_server');
+    errors.push("Missing required field: resource_server");
   }
 
   // Validate URLs
-  const urlFields = ['jwks_uri', 'resource_documentation', 'resource_policy_uri', 'resource_tos_uri'];
+  const urlFields = [
+    "jwks_uri",
+    "resource_documentation",
+    "resource_policy_uri",
+    "resource_tos_uri",
+  ];
 
   for (const field of urlFields) {
     const value = metadata[field as keyof ProtectedResourceMetadata];
-    if (value && typeof value === 'string') {
+    if (value && typeof value === "string") {
       try {
         new URL(value);
       } catch {
@@ -346,7 +395,7 @@ export function validateProtectedResourceMetadata(
 
   return {
     valid: errors.length === 0,
-    errors
+    errors,
   };
 }
 
@@ -355,10 +404,10 @@ export function validateProtectedResourceMetadata(
  */
 export function supportsMCPOAuth(
   authServerMetadata?: AuthorizationServerMetadata,
-  protectedResourceMetadata?: ProtectedResourceMetadata
+  protectedResourceMetadata?: ProtectedResourceMetadata,
 ): boolean {
   return !!(
-    authServerMetadata?.mcp_version || 
+    authServerMetadata?.mcp_version ||
     authServerMetadata?.mcp_capabilities ||
     protectedResourceMetadata?.mcp_version ||
     protectedResourceMetadata?.mcp_capabilities
@@ -370,7 +419,7 @@ export function supportsMCPOAuth(
  */
 export function getMCPCapabilities(
   authServerMetadata?: AuthorizationServerMetadata,
-  protectedResourceMetadata?: ProtectedResourceMetadata
+  protectedResourceMetadata?: ProtectedResourceMetadata,
 ): {
   version?: string;
   capabilities?: string[];
@@ -379,13 +428,14 @@ export function getMCPCapabilities(
   prompts?: string[];
 } {
   return {
-    version: authServerMetadata?.mcp_version || protectedResourceMetadata?.mcp_version,
+    version:
+      authServerMetadata?.mcp_version || protectedResourceMetadata?.mcp_version,
     capabilities: [
       ...(authServerMetadata?.mcp_capabilities || []),
-      ...(protectedResourceMetadata?.mcp_capabilities || [])
+      ...(protectedResourceMetadata?.mcp_capabilities || []),
     ],
     tools: protectedResourceMetadata?.mcp_tools || [],
     resources: protectedResourceMetadata?.mcp_resources || [],
-    prompts: protectedResourceMetadata?.mcp_prompts || []
+    prompts: protectedResourceMetadata?.mcp_prompts || [],
   };
 }

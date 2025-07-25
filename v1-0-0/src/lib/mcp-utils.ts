@@ -107,7 +107,7 @@ export function validateServerConfig(serverConfig: any): ValidationResult {
       return {
         success: false,
         error: NextResponse.json(
-          { error: "Invalid URL format" },
+          { error: `Invalid URL format: ${error}` },
           { status: 400 },
         ),
       };
