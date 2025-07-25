@@ -59,7 +59,7 @@ interface ElicitationRequest {
 }
 
 export function ToolsTab({ serverConfig }: ToolsTabProps) {
-  const logger = useLogger('ToolsTab');
+  const logger = useLogger("ToolsTab");
   const [tools, setTools] = useState<Record<string, Tool>>({});
   const [selectedTool, setSelectedTool] = useState<string>("");
   const [formFields, setFormFields] = useState<FormField[]>([]);
@@ -74,19 +74,12 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
 
   useEffect(() => {
     if (serverConfig) {
-      logger.info('Server config changed, fetching tools', { 
-        serverType: 'command' in serverConfig ? 'stdio' : 'http',
-        hasConfig: !!serverConfig 
-      });
       fetchTools();
-    } else {
-      logger.debug('No server config available');
     }
 
     // Cleanup EventSource on unmount
     return () => {
       if (eventSource) {
-        logger.debug('Cleaning up EventSource on unmount');
         eventSource.close();
       }
     };
@@ -94,10 +87,6 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
 
   useEffect(() => {
     if (selectedTool && tools[selectedTool]) {
-      logger.debug('Tool selected, generating form fields', { 
-        toolName: selectedTool,
-        hasInputSchema: !!tools[selectedTool].inputSchema 
-      });
       generateFormFields(tools[selectedTool].inputSchema);
     }
   }, [selectedTool, tools, logger]);
@@ -110,17 +99,16 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
   const fetchTools = async () => {
     const config = getServerConfig();
     if (!config) {
-      logger.warn('Cannot fetch tools: no server config available');
+      logger.warn("Cannot fetch tools: no server config available");
       return;
     }
 
-    logger.info('Starting tool fetch', { 
-      serverType: 'command' in config ? 'stdio' : 'http' 
+    logger.info("Starting tool fetch", {
+      serverConfig: config,
     });
 
     // Close existing EventSource if any
     if (eventSource) {
-      logger.debug('Closing existing EventSource');
       eventSource.close();
       setEventSource(null);
     }
@@ -132,7 +120,6 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
     const fetchStartTime = Date.now();
 
     try {
-      logger.debug('Sending tools list request to API');
       const response = await fetch("/api/mcp/tools", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -144,7 +131,7 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
 
       if (!response.ok) {
         const errorMsg = `HTTP error! status: ${response.status}`;
-        logger.error('Tools fetch HTTP error', { status: response.status });
+        logger.error("Tools fetch HTTP error", { status: response.status });
         throw new Error(errorMsg);
       }
 
@@ -153,17 +140,15 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
 
       if (!reader) {
         const errorMsg = "No response body";
-        logger.error('Tools fetch error: no response body');
+        logger.error("Tools fetch error: no response body");
         throw new Error(errorMsg);
       }
 
-      logger.debug('Starting to read tools SSE stream');
       let toolCount = 0;
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) {
-          logger.debug('Tools SSE stream ended');
           break;
         }
 
@@ -174,63 +159,60 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
           if (line.startsWith("data: ")) {
             const data = line.slice(6);
             if (data === "[DONE]") {
-              const fetchDuration = Date.now() - fetchStartTime;
-              logger.info('Tools fetch completed successfully', { 
-                toolCount,
-                duration: fetchDuration 
-              });
               setFetchingTools(false);
               return;
             }
 
             try {
               const parsed = JSON.parse(data);
-              logger.trace('Received SSE event', { type: parsed.type });
-
               if (parsed.type === "tools_list") {
                 toolCount = Object.keys(parsed.tools || {}).length;
-                logger.debug('Received tools list', { toolCount });
                 setTools(parsed.tools || {});
+                const fetchDuration = Date.now() - fetchStartTime;
+                logger.info("Tools fetch completed successfully", {
+                  serverConfig: config,
+                  toolCount,
+                  duration: fetchDuration,
+                  tools: parsed.tools,
+                });
               } else if (parsed.type === "tool_error") {
-                logger.error('Tools fetch error from server', { error: parsed.error });
+                logger.error("Tools fetch error from server", {
+                  error: parsed.error,
+                });
                 setError(parsed.error);
                 setFetchingTools(false);
                 return;
-              } else if (parsed.type === "tools_loading") {
-                logger.debug('Tools loading progress', { message: parsed.message });
               }
             } catch (parseError) {
-              logger.warn('Failed to parse SSE data', { data, error: parseError });
+              logger.warn("Failed to parse SSE data", {
+                data,
+                error: parseError,
+              });
             }
           }
         }
       }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : "Unknown error";
-      logger.error('Tools fetch network error', { error: errorMsg }, err instanceof Error ? err : undefined);
+      logger.error(
+        "Tools fetch network error",
+        { error: errorMsg },
+        err instanceof Error ? err : undefined,
+      );
       setError("Network error fetching tools");
     } finally {
       setFetchingTools(false);
-      const fetchDuration = Date.now() - fetchStartTime;
-      logger.debug('Tools fetch operation completed', { duration: fetchDuration });
     }
   };
 
   const generateFormFields = (schema: any) => {
     if (!schema || !schema.properties) {
-      logger.debug('No schema properties found, clearing form fields');
       setFormFields([]);
       return;
     }
 
     const fields: FormField[] = [];
     const required = schema.required || [];
-    const propertyCount = Object.keys(schema.properties).length;
-
-    logger.debug('Generating form fields from schema', { 
-      propertyCount,
-      requiredFields: required.length 
-    });
 
     Object.entries(schema.properties).forEach(([key, prop]: [string, any]) => {
       const fieldType = prop.enum ? "enum" : prop.type || "string";
@@ -245,15 +227,8 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
         maximum: prop.maximum,
         pattern: prop.pattern,
       });
-      
-      logger.trace('Created form field', { 
-        fieldName: key,
-        fieldType,
-        required: required.includes(key) 
-      });
     });
 
-    logger.debug('Form fields generated successfully', { fieldCount: fields.length });
     setFormFields(fields);
   };
 
@@ -278,7 +253,6 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
   };
 
   const updateFieldValue = (fieldName: string, value: any) => {
-    logger.trace('Field value updated', { fieldName, newValue: value });
     setFormFields((prev) =>
       prev.map((field) =>
         field.name === fieldName ? { ...field, value } : field,
@@ -304,9 +278,9 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
           if (field.type === "number" || field.type === "integer") {
             processedValue = Number(field.value);
             if (isNaN(processedValue)) {
-              logger.warn('Invalid number value for field', { 
+              logger.warn("Invalid number value for field", {
                 fieldName: field.name,
-                value: field.value 
+                value: field.value,
               });
               validationErrors++;
             }
@@ -314,19 +288,15 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
             processedValue = Boolean(field.value);
           } else if (field.type === "array" || field.type === "object") {
             processedValue = JSON.parse(field.value);
-            logger.trace('Parsed JSON field', { 
-              fieldName: field.name,
-              type: field.type 
-            });
           }
 
           params[field.name] = processedValue;
         } catch (parseError) {
-          logger.warn('Failed to process field value', { 
+          logger.warn("Failed to process field value", {
             fieldName: field.name,
             type: field.type,
             value: field.value,
-            error: parseError 
+            error: parseError,
           });
           validationErrors++;
           // Use raw value as fallback
@@ -335,29 +305,20 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
       }
     });
 
-    logger.debug('Parameters built', { 
-      totalFields: formFields.length,
-      processedFields,
-      validationErrors,
-      paramCount: Object.keys(params).length 
-    });
-
     return params;
   };
 
   const executeTool = async () => {
     if (!selectedTool) {
-      logger.warn('Cannot execute tool: no tool selected');
+      logger.warn("Cannot execute tool: no tool selected");
       return;
     }
 
     const config = getServerConfig();
     if (!config) {
-      logger.warn('Cannot execute tool: no server config available');
+      logger.warn("Cannot execute tool: no server config available");
       return;
     }
-
-    logger.info('Starting tool execution', { toolName: selectedTool });
 
     setLoading(true);
     setError("");
@@ -367,12 +328,10 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
 
     try {
       const params = buildParameters();
-      logger.debug('Executing tool with parameters', { 
+      logger.info("Starting tool execution", {
         toolName: selectedTool,
-        parameterCount: Object.keys(params).length,
-        parameters: params 
+        parameters: params,
       });
-
       const response = await fetch("/api/mcp/tools", {
         method: "POST",
         headers: {
@@ -388,9 +347,9 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
 
       if (!response.ok) {
         const errorMsg = `HTTP error! status: ${response.status}`;
-        logger.error('Tool execution HTTP error', { 
+        logger.error("Tool execution HTTP error", {
           toolName: selectedTool,
-          status: response.status 
+          status: response.status,
         });
         throw new Error(errorMsg);
       }
@@ -400,16 +359,15 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
 
       if (!reader) {
         const errorMsg = "No response body";
-        logger.error('Tool execution error: no response body', { toolName: selectedTool });
+        logger.error("Tool execution error: no response body", {
+          toolName: selectedTool,
+        });
         throw new Error(errorMsg);
       }
-
-      logger.debug('Starting to read tool execution SSE stream', { toolName: selectedTool });
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) {
-          logger.debug('Tool execution SSE stream ended', { toolName: selectedTool });
           break;
         }
 
@@ -420,42 +378,31 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
           if (line.startsWith("data: ")) {
             const data = line.slice(6);
             if (data === "[DONE]") {
-              const executionDuration = Date.now() - executionStartTime;
-              logger.info('Tool execution completed successfully', { 
-                toolName: selectedTool,
-                duration: executionDuration 
-              });
               setLoading(false);
               return;
             }
 
             try {
               const parsed = JSON.parse(data);
-              logger.trace('Received tool execution SSE event', { 
-                type: parsed.type,
-                toolName: selectedTool 
-              });
 
               if (parsed.type === "tool_result") {
-                logger.info('Tool execution result received', { 
+                const result = parsed.result;
+                const executionDuration = Date.now() - executionStartTime;
+                logger.info("Tool execution completed successfully", {
                   toolName: selectedTool,
-                  hasResult: !!parsed.result 
+                  duration: executionDuration,
+                  result: result,
                 });
-                setResult(parsed.result);
+                setResult(result);
               } else if (parsed.type === "tool_error") {
-                logger.error('Tool execution error from server', { 
+                logger.error("Tool execution error from server", {
                   toolName: selectedTool,
-                  error: parsed.error 
+                  error: parsed.error,
                 });
                 setError(parsed.error);
                 setLoading(false);
                 return;
               } else if (parsed.type === "elicitation_request") {
-                logger.info('Elicitation request received', { 
-                  toolName: selectedTool,
-                  requestId: parsed.requestId,
-                  message: parsed.message 
-                });
                 setElicitationRequest({
                   requestId: parsed.requestId,
                   message: parsed.message,
@@ -463,21 +410,13 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                   timestamp: parsed.timestamp,
                 });
               } else if (parsed.type === "elicitation_complete") {
-                logger.info('Elicitation completed', { 
-                  toolName: selectedTool 
-                });
                 setElicitationRequest(null);
-              } else if (parsed.type === "tool_executing") {
-                logger.debug('Tool execution started on server', { 
-                  toolName: selectedTool,
-                  message: parsed.message 
-                });
               }
             } catch (parseError) {
-              logger.warn('Failed to parse tool execution SSE data', { 
+              logger.warn("Failed to parse tool execution SSE data", {
                 toolName: selectedTool,
                 data,
-                error: parseError 
+                error: parseError,
               });
             }
           }
@@ -485,18 +424,17 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
       }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : "Unknown error";
-      logger.error('Tool execution network error', { 
-        toolName: selectedTool,
-        error: errorMsg 
-      }, err instanceof Error ? err : undefined);
+      logger.error(
+        "Tool execution network error",
+        {
+          toolName: selectedTool,
+          error: errorMsg,
+        },
+        err instanceof Error ? err : undefined,
+      );
       setError("Error executing tool");
     } finally {
       setLoading(false);
-      const executionDuration = Date.now() - executionStartTime;
-      logger.debug('Tool execution operation completed', { 
-        toolName: selectedTool,
-        duration: executionDuration 
-      });
     }
   };
 
@@ -505,15 +443,9 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
     parameters?: Record<string, any>,
   ) => {
     if (!elicitationRequest) {
-      logger.warn('Cannot handle elicitation response: no active request');
+      logger.warn("Cannot handle elicitation response: no active request");
       return;
     }
-
-    logger.info('Handling elicitation response', { 
-      action,
-      requestId: elicitationRequest.requestId,
-      hasParameters: !!parameters 
-    });
 
     setElicitationLoading(true);
 
@@ -524,18 +456,10 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
           action: "accept",
           content: parameters || {},
         };
-        logger.debug('Elicitation accepted with parameters', { 
-          requestId: elicitationRequest.requestId,
-          parameterCount: Object.keys(parameters || {}).length 
-        });
       } else {
         responseData = {
           action,
         };
-        logger.debug('Elicitation declined or canceled', { 
-          requestId: elicitationRequest.requestId,
-          action 
-        });
       }
 
       const response = await fetch("/api/mcp/tools", {
@@ -552,27 +476,26 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
 
       if (!response.ok) {
         const errorMsg = `HTTP error! status: ${response.status}`;
-        logger.error('Elicitation response HTTP error', { 
+        logger.error("Elicitation response HTTP error", {
           requestId: elicitationRequest.requestId,
           action,
-          status: response.status 
+          status: response.status,
         });
         throw new Error(errorMsg);
       }
 
-      logger.info('Elicitation response sent successfully', { 
-        requestId: elicitationRequest.requestId,
-        action 
-      });
-
       setElicitationRequest(null);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : "Unknown error";
-      logger.error('Error responding to elicitation request', { 
-        requestId: elicitationRequest.requestId,
-        action,
-        error: errorMsg 
-      }, err instanceof Error ? err : undefined);
+      logger.error(
+        "Error responding to elicitation request",
+        {
+          requestId: elicitationRequest.requestId,
+          action,
+          error: errorMsg,
+        },
+        err instanceof Error ? err : undefined,
+      );
       setError("Error responding to elicitation request");
     } finally {
       setElicitationLoading(false);
@@ -658,10 +581,6 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                                   : "hover:shadow-sm"
                               }`}
                               onClick={() => {
-                                logger.info('Tool selected', { 
-                                  toolName: name,
-                                  hasDescription: !!tools[name]?.description 
-                                });
                                 setSelectedTool(name);
                               }}
                             >
