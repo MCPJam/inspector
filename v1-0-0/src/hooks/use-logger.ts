@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useState, useEffect } from 'react';
+import { useCallback, useMemo, useState, useEffect } from "react";
 
-export type LogLevel = 'error' | 'warn' | 'info' | 'debug' | 'trace';
+export type LogLevel = "error" | "warn" | "info" | "debug" | "trace";
 
 export interface LogEntry {
   timestamp: string;
@@ -26,21 +26,21 @@ const LOG_LEVELS: Record<LogLevel, number> = {
 };
 
 const LOG_COLORS: Record<LogLevel, string> = {
-  error: '#ef4444',
-  warn: '#f59e0b',
-  info: '#3b82f6',
-  debug: '#8b5cf6',
-  trace: '#6b7280',
+  error: "#ef4444",
+  warn: "#f59e0b",
+  info: "#3b82f6",
+  debug: "#8b5cf6",
+  trace: "#6b7280",
 };
 
 // Global logger state
 class LoggerState {
   private config: LoggerConfig = {
-    level: 'info',
+    level: "info",
     enableConsole: true,
     maxBufferSize: 1000,
   };
-  
+
   private buffer: LogEntry[] = [];
   private listeners: Set<() => void> = new Set();
 
@@ -55,12 +55,12 @@ class LoggerState {
 
   addEntry(entry: LogEntry) {
     this.buffer.push(entry);
-    
+
     // Maintain buffer size limit
     if (this.buffer.length > this.config.maxBufferSize) {
       this.buffer = this.buffer.slice(-this.config.maxBufferSize);
     }
-    
+
     this.notifyListeners();
   }
 
@@ -70,19 +70,21 @@ class LoggerState {
 
   getFilteredEntries(level?: LogLevel, context?: string): LogEntry[] {
     let entries = this.buffer;
-    
+
     if (level) {
       const levelThreshold = LOG_LEVELS[level];
-      entries = entries.filter(entry => LOG_LEVELS[entry.level] <= levelThreshold);
-    }
-    
-    if (context) {
-      const contextLower = context.toLowerCase();
-      entries = entries.filter(entry => 
-        entry.context.toLowerCase().includes(contextLower)
+      entries = entries.filter(
+        (entry) => LOG_LEVELS[entry.level] <= levelThreshold,
       );
     }
-    
+
+    if (context) {
+      const contextLower = context.toLowerCase();
+      entries = entries.filter((entry) =>
+        entry.context.toLowerCase().includes(contextLower),
+      );
+    }
+
     return entries;
   }
 
@@ -97,7 +99,7 @@ class LoggerState {
   }
 
   private notifyListeners() {
-    this.listeners.forEach(listener => listener());
+    this.listeners.forEach((listener) => listener());
   }
 
   shouldLog(level: LogLevel): boolean {
@@ -108,10 +110,10 @@ class LoggerState {
 const loggerState = new LoggerState();
 
 // Set initial config based on environment
-if (typeof window !== 'undefined') {
-  const isDevelopment = process.env.NODE_ENV === 'development';
+if (typeof window !== "undefined") {
+  const isDevelopment = process.env.NODE_ENV === "development";
   loggerState.setConfig({
-    level: isDevelopment ? 'debug' : 'info',
+    level: isDevelopment ? "debug" : "info",
     enableConsole: true,
   });
 }
@@ -125,45 +127,44 @@ export interface Logger {
   context: string;
 }
 
-export function useLogger(context: string = 'Unknown'): Logger {
+export function useLogger(context: string = "Unknown"): Logger {
   const createLogFunction = useCallback(
-    (level: LogLevel) => 
-      (message: string, data?: unknown, error?: Error) => {
-        if (!loggerState.shouldLog(level)) {
-          return;
-        }
+    (level: LogLevel) => (message: string, data?: unknown, error?: Error) => {
+      if (!loggerState.shouldLog(level)) {
+        return;
+      }
 
-        const timestamp = new Date().toISOString();
-        const entry: LogEntry = {
-          timestamp,
-          level,
-          context,
-          message,
-          data,
-          error,
-        };
+      const timestamp = new Date().toISOString();
+      const entry: LogEntry = {
+        timestamp,
+        level,
+        context,
+        message,
+        data,
+        error,
+      };
 
-        loggerState.addEntry(entry);
+      loggerState.addEntry(entry);
 
-        // Console output if enabled
-        const config = loggerState.getConfig();
-        if (config.enableConsole) {
-          outputToConsole(entry);
-        }
-      },
-    [context]
+      // Console output if enabled
+      const config = loggerState.getConfig();
+      if (config.enableConsole) {
+        outputToConsole(entry);
+      }
+    },
+    [context],
   );
 
   const logger = useMemo(
     () => ({
-      error: createLogFunction('error'),
-      warn: createLogFunction('warn'),
-      info: createLogFunction('info'),
-      debug: createLogFunction('debug'),
-      trace: createLogFunction('trace'),
+      error: createLogFunction("error"),
+      warn: createLogFunction("warn"),
+      info: createLogFunction("info"),
+      debug: createLogFunction("debug"),
+      trace: createLogFunction("trace"),
       context,
     }),
-    [createLogFunction, context]
+    [createLogFunction, context],
   );
 
   return logger;
@@ -173,30 +174,34 @@ function outputToConsole(entry: LogEntry) {
   const { timestamp, level, context, message, data, error } = entry;
   const time = new Date(timestamp).toLocaleTimeString();
   const color = LOG_COLORS[level];
-  
+
   const contextStyle = `color: ${color}; font-weight: bold;`;
   const messageStyle = `color: ${color};`;
-  
+
   const args: unknown[] = [
     `%c[${time}] %c${level.toUpperCase()} %c[${context}] %c${message}`,
-    'color: #6b7280;',
+    "color: #6b7280;",
     contextStyle,
-    'color: #6b7280;',
+    "color: #6b7280;",
     messageStyle,
   ];
 
   if (data !== undefined) {
-    args.push('\nData:', data);
+    args.push("\nData:", data);
   }
 
   if (error) {
-    args.push('\nError:', error);
+    args.push("\nError:", error);
   }
 
-  const consoleMethod = level === 'error' ? console.error : 
-                       level === 'warn' ? console.warn : 
-                       level === 'debug' ? console.debug : 
-                       console.log;
+  const consoleMethod =
+    level === "error"
+      ? console.error
+      : level === "warn"
+        ? console.warn
+        : level === "debug"
+          ? console.debug
+          : console.log;
 
   consoleMethod(...args);
 }
@@ -247,7 +252,7 @@ export const LoggerUtils = {
 // Hook for components that need to observe log changes
 export function useLoggerState() {
   const [, forceUpdate] = useState({});
-  
+
   useEffect(() => {
     const unsubscribe = loggerState.subscribe(() => {
       forceUpdate({});

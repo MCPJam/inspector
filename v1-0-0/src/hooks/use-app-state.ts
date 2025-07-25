@@ -6,6 +6,7 @@ import {
   StdioServerDefinition,
   HttpServerDefinition,
 } from "@/lib/types";
+import { useLogger } from "./use-logger";
 
 export interface ServerWithName {
   name: string;
@@ -64,6 +65,8 @@ export interface ServerFormData {
 const STORAGE_KEY = "mcp-inspector-state";
 
 export function useAppState() {
+  const logger = useLogger("Connections");
+
   const [appState, setAppState] = useState<AppState>({
     servers: {},
     selectedServer: "none",
@@ -109,7 +112,9 @@ export function useAppState() {
           pendingOAuthCallbacks: parsed.pendingOAuthCallbacks || {},
         });
       } catch (error) {
-        console.error("Failed to parse saved state:", error);
+        logger.error("Failed to parse saved state", {
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
       }
     }
     setIsLoading(false);
@@ -304,7 +309,9 @@ export function useAppState() {
               },
             },
           }));
-
+          logger.info("Connection successful", {
+            serverName: formData.name,
+          });
           toast.success(`Connected successfully!`);
         } else {
           // Update existing server to failed state
@@ -320,7 +327,10 @@ export function useAppState() {
               },
             },
           }));
-
+          logger.error("Connection failed", {
+            serverName: formData.name,
+            error: result.error,
+          });
           toast.error(`Failed to connect to ${formData.name}`);
         }
       } catch (error) {
@@ -340,6 +350,10 @@ export function useAppState() {
             },
           },
         }));
+        logger.error("Connection failed", {
+          serverName: formData.name,
+          error: errorMessage,
+        });
 
         toast.error(`Network error: ${errorMessage}`);
       }
@@ -478,6 +492,9 @@ export function useAppState() {
         toast.error(
           `Error completing OAuth flow: ${error instanceof Error ? error.message : "Unknown error"}`,
         );
+        logger.error("OAuth callback failed", {
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
       }
     },
     [],
@@ -588,6 +605,10 @@ export function useAppState() {
         toast.error(
           `Failed to refresh token: ${error instanceof Error ? error.message : "Unknown error"}`,
         );
+        logger.error("Token refresh failed", {
+          serverName,
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
       }
     },
     [appState.servers],
@@ -605,17 +626,24 @@ export function useAppState() {
         try {
           return await refreshOAuthToken(serverName);
         } catch (error) {
-          console.error(`Failed to refresh token for ${serverName}:`, error);
+          logger.error("Failed to refresh token", {
+            serverName,
+            error: error instanceof Error ? error.message : "Unknown error",
+          });
           return null;
         }
       }
-
+      logger.info("Access token retrieved", {
+        serverName,
+        accessToken: server.oauthState.accessToken,
+      });
       return server.oauthState.accessToken;
     },
     [appState.servers, isTokenExpired, refreshOAuthToken],
   );
 
   const handleDisconnect = useCallback(async (serverName: string) => {
+    logger.info("Disconnecting from server", { serverName });
     // Remove server from state (no API call needed for stateless architecture)
     setAppState((prev: AppState) => {
       const newServers = { ...prev.servers };
@@ -635,6 +663,8 @@ export function useAppState() {
 
   const handleReconnect = useCallback(
     async (serverName: string) => {
+      logger.info("Reconnecting to server", { serverName });
+
       const server = appState.servers[serverName];
       if (!server) {
         throw new Error(`Server ${serverName} not found`);
@@ -661,7 +691,10 @@ export function useAppState() {
           try {
             await refreshOAuthToken(serverName);
           } catch (error) {
-            console.error(`Failed to refresh token for ${serverName}:`, error);
+            logger.error("Failed to refresh token", {
+              serverName,
+              error: error instanceof Error ? error.message : "Unknown error",
+            });
             // Continue with reconnection attempt even if token refresh fails
           }
         }
@@ -682,6 +715,7 @@ export function useAppState() {
 
         if (result.success) {
           // Update status to connected and reset retry count
+
           setAppState((prev) => ({
             ...prev,
             servers: {
@@ -695,6 +729,10 @@ export function useAppState() {
               },
             },
           }));
+          logger.info("Reconnection successful", {
+            serverName,
+            result,
+          });
           return { success: true };
         } else {
           // Update status to failed and increment retry count
@@ -710,6 +748,10 @@ export function useAppState() {
               },
             },
           }));
+          logger.error("Reconnection failed", {
+            serverName,
+            result,
+          });
           toast.error(`Failed to connect: ${serverName}`);
         }
       } catch (error) {
@@ -729,7 +771,10 @@ export function useAppState() {
             },
           },
         }));
-
+        logger.error("Reconnection failed", {
+          serverName,
+          error: errorMessage,
+        });
         throw error;
       }
     },

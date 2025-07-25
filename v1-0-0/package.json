@@ -22,7 +22,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "publish": "npm publish --access public"
+    "publish": "npm publish --access public",
+    "prettier-fix": "prettier --write ."
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^1.2.12",
