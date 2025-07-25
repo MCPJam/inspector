@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         success: false,
-        error: `Failed to create a MCP client. Please double check your server configuration: ${JSON.stringify(serverConfig)}`,
+        error: `MCP Server configuration is invalid. Please double check your server configuration: ${JSON.stringify(serverConfig)}`,
         details: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },
