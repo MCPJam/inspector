@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback } from "react";
 export interface ProviderTokens {
   anthropic: string;
   openai: string;
+  ollama: string;
 }
 
 export interface useAiProviderKeysReturn {
@@ -21,6 +22,7 @@ const STORAGE_KEY = "mcp-inspector-provider-tokens";
 const defaultTokens: ProviderTokens = {
   anthropic: "",
   openai: "",
+  ollama: "local", // Ollama runs locally, no API key needed
 };
 
 export function useAiProviderKeys(): useAiProviderKeysReturn {

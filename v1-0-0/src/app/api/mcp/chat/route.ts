@@ -7,6 +7,7 @@ import {
 import { Agent } from "@mastra/core/agent";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
+import { createOllama } from "ollama-ai-provider";
 import { ChatMessage } from "@/lib/chat-types";
 import { MCPClient } from "@mastra/mcp";
 import { getModelById, isModelSupported } from "@/lib/types";
@@ -16,7 +17,7 @@ export async function POST(request: NextRequest) {
   try {
     const { serverConfigs, model, apiKey, systemPrompt, messages } =
       await request.json();
-
+    console.log("model", model);
     if (!model || !apiKey || !messages) {
       return createErrorResponse(
         "Missing required fields",
@@ -215,6 +216,10 @@ const getLlmModel = (model: string, apiKey: string) => {
       return createAnthropic({ apiKey })(model);
     case "openai":
       return createOpenAI({ apiKey })(model);
+    case "ollama":
+      return createOllama({
+        baseURL: "http://localhost:11434", // Default Ollama URL
+      })(model);
     default:
       throw new Error(`Unsupported provider for model: ${model}`);
   }

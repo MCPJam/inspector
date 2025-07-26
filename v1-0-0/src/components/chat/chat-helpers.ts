@@ -10,6 +10,10 @@ export const getProviderLogoFromProvider = (
       return claudeLogo.src;
     case "openai":
       return openaiLogo.src;
+    case "ollama":
+      // For now, return null - Ollama logo could be added later
+      // or use a generic local model icon
+      return null;
     default:
       return null;
   }
