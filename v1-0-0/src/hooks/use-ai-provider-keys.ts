@@ -6,6 +6,7 @@ export interface ProviderTokens {
   anthropic: string;
   openai: string;
   ollama: string;
+  ollamaBaseUrl: string;
 }
 
 export interface useAiProviderKeysReturn {
@@ -15,6 +16,8 @@ export interface useAiProviderKeysReturn {
   clearAllTokens: () => void;
   hasToken: (provider: keyof ProviderTokens) => boolean;
   getToken: (provider: keyof ProviderTokens) => string;
+  getOllamaBaseUrl: () => string;
+  setOllamaBaseUrl: (url: string) => void;
 }
 
 const STORAGE_KEY = "mcp-inspector-provider-tokens";
@@ -23,6 +26,7 @@ const defaultTokens: ProviderTokens = {
   anthropic: "",
   openai: "",
   ollama: "local", // Ollama runs locally, no API key needed
+  ollamaBaseUrl: "http://localhost:11434",
 };
 
 export function useAiProviderKeys(): useAiProviderKeysReturn {
@@ -94,6 +98,17 @@ export function useAiProviderKeys(): useAiProviderKeysReturn {
     [tokens],
   );
 
+  const getOllamaBaseUrl = useCallback(() => {
+    return tokens.ollamaBaseUrl || defaultTokens.ollamaBaseUrl;
+  }, [tokens.ollamaBaseUrl]);
+
+  const setOllamaBaseUrl = useCallback((url: string) => {
+    setTokens((prev) => ({
+      ...prev,
+      ollamaBaseUrl: url,
+    }));
+  }, []);
+
   return {
     tokens,
     setToken,
@@ -101,5 +116,7 @@ export function useAiProviderKeys(): useAiProviderKeysReturn {
     clearAllTokens,
     hasToken,
     getToken,
+    getOllamaBaseUrl,
+    setOllamaBaseUrl,
   };
 }

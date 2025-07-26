@@ -15,7 +15,7 @@ import { getModelById, isModelSupported } from "@/lib/types";
 export async function POST(request: NextRequest) {
   let client: MCPClient | null = null;
   try {
-    const { serverConfigs, model, apiKey, systemPrompt, messages } =
+    const { serverConfigs, model, apiKey, systemPrompt, messages, ollamaBaseUrl } =
       await request.json();
     if (!model || !apiKey || !messages) {
       return createErrorResponse(
@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
     // Get tools and ensure client is connected
     const tools = await client.getTools();
 
-    const llmModel = getLlmModel(model, apiKey);
+    const llmModel = getLlmModel(model, apiKey, ollamaBaseUrl);
 
     // Create a custom event emitter for streaming tool events
     let toolCallId = 0;
@@ -219,7 +219,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-const getLlmModel = (model: string, apiKey: string) => {
+const getLlmModel = (model: string, apiKey: string, ollamaBaseUrl?: string) => {
   if (!isModelSupported(model)) {
     throw new Error(`Unsupported model: ${model}`);
   }
@@ -235,8 +235,9 @@ const getLlmModel = (model: string, apiKey: string) => {
     case "openai":
       return createOpenAI({ apiKey })(model);
     case "ollama":
+      const baseUrl = ollamaBaseUrl || "http://localhost:11434";
       return createOllama({
-        baseURL: "http://localhost:11434/api", // Ollama API endpoint
+        baseURL: `${baseUrl}/api`, // Configurable Ollama API endpoint
       })(model, {
         simulateStreaming: true, // Enable streaming for Ollama models
       });

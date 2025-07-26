@@ -22,7 +22,7 @@ interface UseChatOptions {
 }
 
 export function useChat(options: UseChatOptions = {}) {
-  const { getToken, hasToken, tokens } = useAiProviderKeys();
+  const { getToken, hasToken, tokens, getOllamaBaseUrl } = useAiProviderKeys();
 
   const {
     initialMessages = [],
@@ -54,7 +54,7 @@ export function useChat(options: UseChatOptions = {}) {
   // Check for Ollama models on mount and periodically
   useEffect(() => {
     const checkOllama = async () => {
-      const { isRunning, availableModels } = await detectOllamaModels();
+      const { isRunning, availableModels } = await detectOllamaModels(getOllamaBaseUrl());
       setIsOllamaRunning(isRunning);
       setOllamaModels(availableModels);
     };
@@ -65,7 +65,7 @@ export function useChat(options: UseChatOptions = {}) {
     const interval = setInterval(checkOllama, 30000);
 
     return () => clearInterval(interval);
-  }, []);
+  }, [getOllamaBaseUrl]);
 
   useEffect(() => {
     if (isOllamaRunning && ollamaModels.length > 0) {
@@ -237,6 +237,7 @@ export function useChat(options: UseChatOptions = {}) {
             apiKey: currentApiKey,
             systemPrompt,
             messages: messagesRef.current.concat(userMessage),
+            ollamaBaseUrl: getOllamaBaseUrl(),
           }),
           signal: abortControllerRef.current?.signal,
         });
@@ -330,6 +331,7 @@ export function useChat(options: UseChatOptions = {}) {
       systemPrompt,
       onMessageReceived,
       handleStreamingEvent,
+      getOllamaBaseUrl,
     ],
   );
 

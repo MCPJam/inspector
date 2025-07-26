@@ -1,20 +1,33 @@
 "use client";
 
 import { useState } from "react";
-import { Settings, Key, Eye, EyeOff, Check, X } from "lucide-react";
+import { Settings, Key, Eye, EyeOff, Check, X, Server } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
 export function SettingsTab() {
-  const { tokens, setToken, clearToken, hasToken } = useAiProviderKeys();
+  const {
+    tokens,
+    setToken,
+    clearToken,
+    hasToken,
+    getOllamaBaseUrl,
+    setOllamaBaseUrl,
+  } = useAiProviderKeys();
   const [showAnthropicKey, setShowAnthropicKey] = useState(false);
   const [showOpenAIKey, setShowOpenAIKey] = useState(false);
+  const themeMode = usePreferencesStore((s) => s.themeMode);
 
   const handleClearToken = (provider: "anthropic" | "openai") => {
     clearToken(provider);
+  };
+
+  const handleResetOllamaUrl = () => {
+    setOllamaBaseUrl("http://localhost:11434");
   };
 
   const maskToken = (token: string) => {
@@ -165,6 +178,63 @@ export function SettingsTab() {
               >
                 OpenAI Platform
               </a>
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Ollama Configuration */}
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <img
+              src={
+                themeMode === "dark" ? "/ollama_dark.png" : "/ollama_logo.svg"
+              }
+              alt="Ollama"
+              className="h-5 w-5"
+            />
+            Ollama Configuration
+          </CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Configure your local Ollama server settings.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <Label htmlFor="ollama-url" className="text-base font-medium">
+                Base URL
+              </Label>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">
+                  Default: http://localhost:11434
+                </span>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Input
+                id="ollama-url"
+                type="text"
+                value={getOllamaBaseUrl()}
+                onChange={(e) => setOllamaBaseUrl(e.target.value)}
+                placeholder="http://localhost:11434"
+                className="flex-1"
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleResetOllamaUrl}
+              >
+                Reset
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Configure the base URL for your Ollama server. This is typically{" "}
+              <code className="text-xs bg-muted px-1 py-0.5 rounded">
+                http://localhost:11434
+              </code>{" "}
+              for local installations.
             </p>
           </div>
         </CardContent>

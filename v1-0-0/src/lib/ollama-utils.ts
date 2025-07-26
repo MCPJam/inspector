@@ -23,6 +23,10 @@ export class OllamaClient {
     this.baseUrl = baseUrl;
   }
 
+  setBaseUrl(baseUrl: string) {
+    this.baseUrl = baseUrl;
+  }
+
   async isOllamaRunning(): Promise<boolean> {
     try {
       const response = await fetch(`${this.baseUrl}/api/version`, {
@@ -80,17 +84,20 @@ export class OllamaClient {
 export const ollamaClient = new OllamaClient();
 
 // Utility functions
-export const detectOllamaModels = async (): Promise<{
+export const detectOllamaModels = async (baseUrl?: string): Promise<{
   isRunning: boolean;
   availableModels: string[];
 }> => {
-  const isRunning = await ollamaClient.isOllamaRunning();
+  // Use a temporary client with the provided base URL if given
+  const client = baseUrl ? new OllamaClient(baseUrl) : ollamaClient;
+  
+  const isRunning = await client.isOllamaRunning();
 
   if (!isRunning) {
     return { isRunning: false, availableModels: [] };
   }
 
-  const availableModels = await ollamaClient.getAvailableModels();
+  const availableModels = await client.getAvailableModels();
 
   return {
     isRunning: true,
