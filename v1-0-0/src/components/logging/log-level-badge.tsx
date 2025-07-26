@@ -28,4 +28,4 @@ export function LogLevelBadge({ level }: LogLevelBadgeProps) {
       {level.toUpperCase()}
     </Badge>
   );
-} 
+}

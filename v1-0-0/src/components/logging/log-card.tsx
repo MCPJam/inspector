@@ -65,9 +65,20 @@ export function LogCard({ entry, isExpanded, onToggleExpand }: LogCardProps) {
               <div className="text-xs bg-background border rounded overflow-auto max-h-60">
                 <JsonView
                   src={entry.data as object}
-                  dark={theme === "dark"}
-                  enableClipboard
-                  className="p-2"
+                  dark={true}
+                  theme="atom"
+                  enableClipboard={true}
+                  displaySize={false}
+                  collapseStringsAfterLength={100}
+                  style={{
+                    fontSize: "12px",
+                    fontFamily:
+                      "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                    backgroundColor: "hsl(var(--background))",
+                    padding: "0",
+                    borderRadius: "0",
+                    border: "none",
+                  }}
                 />
               </div>
             </div>
