@@ -1,6 +1,7 @@
 import { SUPPORTED_MODELS } from "@/lib/types";
 import claudeLogo from "../../../public/claude_logo.png";
 import openaiLogo from "../../../public/openai_logo.png";
+import ollamaLogo from "../../../public/ollama_logo.svg";
 
 export const getProviderLogoFromProvider = (
   provider: string,
@@ -11,9 +12,7 @@ export const getProviderLogoFromProvider = (
     case "openai":
       return openaiLogo.src;
     case "ollama":
-      // For now, return null - Ollama logo could be added later
-      // or use a generic local model icon
-      return null;
+      return ollamaLogo.src;
     default:
       return null;
   }
