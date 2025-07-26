@@ -66,9 +66,6 @@ export function ModelSelector({
             <ProviderLogo provider={model.provider} />
             <div className="flex flex-col">
               <span className="font-medium">{model.name}</span>
-              <span className="text-xs text-muted-foreground capitalize">
-                {model.provider}
-              </span>
             </div>
             {model.id === currentModel && (
               <div className="ml-auto w-2 h-2 bg-primary rounded-full" />
