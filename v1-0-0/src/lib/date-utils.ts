@@ -6,4 +6,4 @@ export const formatDate = (
 ): string => {
   const dateToFormat = typeof date === "string" ? parseISO(date) : date;
   return format(dateToFormat, formatString);
-}; 
+};
