@@ -17,7 +17,6 @@ export async function POST(request: NextRequest) {
   try {
     const { serverConfigs, model, apiKey, systemPrompt, messages } =
       await request.json();
-    console.log("model", model);
     if (!model || !apiKey || !messages) {
       return createErrorResponse(
         "Missing required fields",
@@ -25,13 +24,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const validation = validateMultipleServerConfigs(serverConfigs);
-    if (!validation.success) {
-      return validation.error!;
-    }
+    if (Object.keys(serverConfigs).length > 0) {
+      const validation = validateMultipleServerConfigs(serverConfigs);
+      if (!validation.success) {
+        return validation.error!;
+      }
 
-    // Create and connect the MCP client
-    client = createMCPClientWithMultipleConnections(validation.validConfigs!);
+      client = createMCPClientWithMultipleConnections(validation.validConfigs!);
+    } else {
+      client = new MCPClient({
+        id: `chat-${Date.now()}`,
+        servers: {},
+      });
+    }
 
     // Get tools and ensure client is connected
     const tools = await client.getTools();
