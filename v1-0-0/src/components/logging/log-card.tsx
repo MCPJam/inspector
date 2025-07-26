@@ -4,6 +4,10 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { LogEntry } from "@/hooks/use-logger";
 import { formatDate } from "@/lib/date-utils";
+import JsonView from "react18-json-view";
+import "react18-json-view/src/style.css";
+import "react18-json-view/src/dark.css";
+import { useTheme } from "next-themes";
 import { LogLevelBadge } from "./log-level-badge";
 
 interface LogCardProps {
@@ -14,6 +18,7 @@ interface LogCardProps {
 
 export function LogCard({ entry, isExpanded, onToggleExpand }: LogCardProps) {
   const hasExtra = entry.data !== undefined || entry.error !== undefined;
+  const { theme } = useTheme();
 
   return (
     <div className="border rounded-lg font-mono">
@@ -57,9 +62,25 @@ export function LogCard({ entry, isExpanded, onToggleExpand }: LogCardProps) {
               <div className="text-xs font-semibold text-muted-foreground mb-1">
                 DATA:
               </div>
-              <pre className="text-xs bg-background border rounded p-2 overflow-auto max-h-40">
-                {JSON.stringify(entry.data, null, 2)}
-              </pre>
+              <div className="text-xs bg-background border rounded overflow-auto max-h-60">
+                <JsonView
+                  src={entry.data as object}
+                  dark={true}
+                  theme="atom"
+                  enableClipboard={true}
+                  displaySize={false}
+                  collapseStringsAfterLength={100}
+                  style={{
+                    fontSize: "12px",
+                    fontFamily:
+                      "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                    backgroundColor: "hsl(var(--background))",
+                    padding: "0",
+                    borderRadius: "0",
+                    border: "none",
+                  }}
+                />
+              </div>
             </div>
           )}
 
