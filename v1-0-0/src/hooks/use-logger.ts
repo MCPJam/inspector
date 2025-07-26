@@ -72,10 +72,7 @@ class LoggerState {
     let entries = this.buffer;
 
     if (level) {
-      const levelThreshold = LOG_LEVELS[level];
-      entries = entries.filter(
-        (entry) => LOG_LEVELS[entry.level] <= levelThreshold,
-      );
+      entries = entries.filter((entry) => entry.level === level);
     }
 
     if (context) {

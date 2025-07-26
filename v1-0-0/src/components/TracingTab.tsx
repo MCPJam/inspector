@@ -31,27 +31,24 @@ export function TracingTab() {
 
   // Filter entries
   const filteredEntries = useMemo(() => {
-    let filtered = entries;
+    const filtered =
+      levelFilter === "all"
+        ? entries
+        : entries.filter((entry) => entry.level === levelFilter);
 
-    // Filter by level
-    if (levelFilter !== "all") {
-      filtered = getFilteredEntries(levelFilter);
+    if (!searchQuery.trim()) {
+      return filtered;
     }
 
-    // Filter by search query
-    if (searchQuery.trim()) {
-      const queryLower = searchQuery.toLowerCase();
-      filtered = filtered.filter(
-        (entry) =>
-          entry.message.toLowerCase().includes(queryLower) ||
-          entry.context.toLowerCase().includes(queryLower) ||
-          (entry.data &&
-            JSON.stringify(entry.data).toLowerCase().includes(queryLower)),
-      );
-    }
-
-    return filtered;
-  }, [entries, levelFilter, searchQuery, getFilteredEntries]);
+    const queryLower = searchQuery.toLowerCase();
+    return filtered.filter(
+      (entry) =>
+        entry.message.toLowerCase().includes(queryLower) ||
+        entry.context.toLowerCase().includes(queryLower) ||
+        (entry.data &&
+          JSON.stringify(entry.data).toLowerCase().includes(queryLower)),
+    );
+  }, [entries, levelFilter, searchQuery]);
 
   // Auto-scroll to bottom when new entries arrive
   useEffect(() => {
