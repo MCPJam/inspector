@@ -4,6 +4,10 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { LogEntry, LogLevel } from "@/hooks/use-logger";
 import { formatDate } from "@/lib/date-utils";
+import JsonView from "react18-json-view";
+import "react18-json-view/src/style.css";
+import "react18-json-view/src/dark.css";
+import { useTheme } from "next-themes";
 
 const LOG_LEVEL_COLORS: Record<LogLevel, string> = {
   error:
@@ -24,6 +28,7 @@ interface LogCardProps {
 
 export function LogCard({ entry, isExpanded, onToggleExpand }: LogCardProps) {
   const hasExtra = entry.data !== undefined || entry.error !== undefined;
+  const { theme } = useTheme();
 
   return (
     <div className="border rounded-lg font-mono">
@@ -72,9 +77,14 @@ export function LogCard({ entry, isExpanded, onToggleExpand }: LogCardProps) {
               <div className="text-xs font-semibold text-muted-foreground mb-1">
                 DATA:
               </div>
-              <pre className="text-xs bg-background border rounded p-2 overflow-auto max-h-40">
-                {JSON.stringify(entry.data, null, 2)}
-              </pre>
+              <div className="text-xs bg-background border rounded overflow-auto max-h-60">
+                <JsonView
+                  src={entry.data as object}
+                  dark={theme === "dark"}
+                  enableClipboard
+                  className="p-2"
+                />
+              </div>
             </div>
           )}
 
