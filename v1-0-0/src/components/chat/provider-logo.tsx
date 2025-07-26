@@ -4,13 +4,15 @@ import Image from "next/image";
 import { getProviderLogoFromProvider } from "./chat-helpers";
 import { cn } from "@/lib/chat-utils";
 import { getProviderColor } from "./chat-helpers";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
 interface ProviderLogoProps {
   provider: string;
 }
 
 export function ProviderLogo({ provider }: ProviderLogoProps) {
-  const logoSrc = getProviderLogoFromProvider(provider);
+  const themeMode = usePreferencesStore((s) => s.themeMode);
+  const logoSrc = getProviderLogoFromProvider(provider, themeMode);
 
   if (!logoSrc) {
     return (
