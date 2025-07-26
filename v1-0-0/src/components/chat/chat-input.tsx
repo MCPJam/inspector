@@ -8,15 +8,9 @@ import { Textarea } from "../ui/textarea";
 import { ArrowUp, Paperclip, Square } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowDown } from "lucide-react";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "../ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
-import { getProviderLogoFromProvider } from "./chat-helpers";
 import { Model, ModelDefinition } from "@/lib/types";
+import { ModelSelector } from "./model-selector";
 
 interface ChatInputProps {
   value: string;
@@ -58,23 +52,8 @@ export function ChatInput({
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [uploadQueue, setUploadQueue] = useState<string[]>([]);
 
-  // Model selector state
-  const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false);
-
   // Get current model data
   const currentModelData = availableModels.find((m) => m.id === currentModel);
-
-  // Get provider color and model letter
-  const getProviderColor = (provider: string) => {
-    switch (provider) {
-      case "anthropic":
-        return "text-orange-600 dark:text-orange-400";
-      case "openai":
-        return "text-green-600 dark:text-green-400";
-      default:
-        return "text-blue-600 dark:text-blue-400";
-    }
-  };
 
   useEffect(() => {
     adjustHeight();
@@ -312,68 +291,13 @@ export function ChatInput({
       <div className="flex items-center gap-2 mt-2">
         {/* Model Selector */}
         {availableModels.length > 0 && currentModelData && (
-          <DropdownMenu
-            open={isModelSelectorOpen}
-            onOpenChange={setIsModelSelectorOpen}
-          >
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={disabled || isLoading}
-                className="h-8 px-2 rounded-full hover:bg-muted/80 transition-colors text-xs cursor-pointer"
-              >
-                <>
-                  <img
-                    src={
-                      getProviderLogoFromProvider(currentModelData.provider)!
-                    }
-                    alt={`${currentModelData.provider} logo`}
-                    className="h-3 w-3 object-contain"
-                  />
-                  <span className="text-[10px] font-medium">
-                    {currentModelData.name}
-                  </span>
-                </>
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="min-w-[200px]">
-              {availableModels.map((model) => (
-                <DropdownMenuItem
-                  key={model.id}
-                  onClick={() => {
-                    onModelChange(model.id);
-                    setIsModelSelectorOpen(false);
-                  }}
-                  className="flex items-center gap-3 text-sm cursor-pointer"
-                >
-                  {getProviderLogoFromProvider(model.provider) ? (
-                    <img
-                      src={getProviderLogoFromProvider(model.provider)!}
-                      alt={`${model.provider} logo`}
-                      className="h-3 w-3 object-contain"
-                    />
-                  ) : (
-                    <div
-                      className={cn(
-                        "h-3 w-3 rounded-sm",
-                        getProviderColor(model.provider),
-                      )}
-                    />
-                  )}
-                  <div className="flex flex-col">
-                    <span className="font-medium">{model.name}</span>
-                    <span className="text-xs text-muted-foreground capitalize">
-                      {model.provider}
-                    </span>
-                  </div>
-                  {model.id === currentModel && (
-                    <div className="ml-auto w-2 h-2 bg-primary rounded-full" />
-                  )}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <ModelSelector
+            currentModel={currentModel}
+            availableModels={availableModels}
+            onModelChange={onModelChange}
+            disabled={disabled}
+            isLoading={isLoading}
+          />
         )}
       </div>
     </div>
