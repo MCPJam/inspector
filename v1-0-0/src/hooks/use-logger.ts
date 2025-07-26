@@ -17,7 +17,7 @@ export interface LoggerConfig {
   maxBufferSize: number;
 }
 
-const LOG_LEVELS: Record<LogLevel, number> = {
+export const LOG_LEVELS: Record<LogLevel, number> = {
   error: 0,
   warn: 1,
   info: 2,
@@ -72,10 +72,7 @@ class LoggerState {
     let entries = this.buffer;
 
     if (level) {
-      const levelThreshold = LOG_LEVELS[level];
-      entries = entries.filter(
-        (entry) => LOG_LEVELS[entry.level] <= levelThreshold,
-      );
+      entries = entries.filter((entry) => entry.level === level);
     }
 
     if (context) {
