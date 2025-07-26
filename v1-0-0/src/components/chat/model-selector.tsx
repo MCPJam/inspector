@@ -63,9 +63,7 @@ export function ModelSelector({
             }}
             className="flex items-center gap-3 text-sm cursor-pointer"
           >
-            <ProviderLogo
-              provider={model.provider}
-            />
+            <ProviderLogo provider={model.provider} />
             <div className="flex flex-col">
               <span className="font-medium">{model.name}</span>
               <span className="text-xs text-muted-foreground capitalize">

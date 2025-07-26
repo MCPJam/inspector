@@ -16,8 +16,7 @@ export function ProviderLogo({ provider }: ProviderLogoProps) {
     return (
       <div className={cn("h-3 w-3 rounded-sm", getProviderColor(provider))} />
     );
-  }
-  else {
+  } else {
     return (
       <Image
         src={logoSrc}
