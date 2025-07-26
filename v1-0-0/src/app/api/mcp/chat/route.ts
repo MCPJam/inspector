@@ -232,7 +232,9 @@ const getLlmModel = (model: string, apiKey: string) => {
     case "ollama":
       return createOllama({
         baseURL: "http://localhost:11434/api", // Ollama API endpoint
-      })(model);
+      })(model, {
+        simulateStreaming: true, // Enable streaming for Ollama models
+      });
     default:
       throw new Error(`Unsupported provider for model: ${model}`);
   }

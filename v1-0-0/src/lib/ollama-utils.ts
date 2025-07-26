@@ -56,19 +56,22 @@ export class OllamaClient {
 
   async checkModelExists(modelName: string): Promise<boolean> {
     const availableModels = await this.getAvailableModels();
-    return availableModels.some((model) => 
-      model === modelName || model.startsWith(`${modelName}:`)
+    return availableModels.some(
+      (model) => model === modelName || model.startsWith(`${modelName}:`),
     );
   }
 
-  async getFilteredAvailableModels(supportedModels: string[]): Promise<string[]> {
+  async getFilteredAvailableModels(
+    supportedModels: string[],
+  ): Promise<string[]> {
     const availableModels = await this.getAvailableModels();
-    
+
     return supportedModels.filter((supportedModel) =>
-      availableModels.some((availableModel) =>
-        availableModel === supportedModel || 
-        availableModel.startsWith(`${supportedModel}:`)
-      )
+      availableModels.some(
+        (availableModel) =>
+          availableModel === supportedModel ||
+          availableModel.startsWith(`${supportedModel}:`),
+      ),
     );
   }
 }
@@ -82,13 +85,13 @@ export const detectOllamaModels = async (): Promise<{
   availableModels: string[];
 }> => {
   const isRunning = await ollamaClient.isOllamaRunning();
-  
+
   if (!isRunning) {
     return { isRunning: false, availableModels: [] };
   }
 
   const availableModels = await ollamaClient.getAvailableModels();
-  
+
   return {
     isRunning: true,
     availableModels,

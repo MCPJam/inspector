@@ -68,12 +68,7 @@ export function useChat(options: UseChatOptions = {}) {
   }, []);
 
   useEffect(() => {
-    if (tokens.anthropic?.length > 0) {
-      setModel(Model.CLAUDE_3_5_SONNET_20240620);
-    } else if (tokens.openai?.length > 0) {
-      setModel(Model.GPT_4O);
-    } else if (isOllamaRunning && ollamaModels.length > 0) {
-      // Set to first available Ollama model if no API keys are available
+    if (isOllamaRunning && ollamaModels.length > 0) {
       const firstOllamaModel = SUPPORTED_MODELS.find(
         (m) =>
           m.provider === "ollama" &&
@@ -82,8 +77,12 @@ export function useChat(options: UseChatOptions = {}) {
       if (firstOllamaModel) {
         setModel(firstOllamaModel.id);
       }
+    } else if (tokens.anthropic?.length > 0) {
+      setModel(Model.CLAUDE_3_5_SONNET_20240620);
+    } else if (tokens.openai?.length > 0) {
+      setModel(Model.GPT_4O);
     }
-  }, [tokens, isOllamaRunning, ollamaModels]);
+  }, [tokens, ollamaModels]);
 
   const currentApiKey = useMemo(() => {
     const modelDefinition = SUPPORTED_MODELS.find((m) => m.id === model);
