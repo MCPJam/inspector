@@ -17,7 +17,7 @@ export interface LoggerConfig {
   maxBufferSize: number;
 }
 
-const LOG_LEVELS: Record<LogLevel, number> = {
+export const LOG_LEVELS: Record<LogLevel, number> = {
   error: 0,
   warn: 1,
   info: 2,
