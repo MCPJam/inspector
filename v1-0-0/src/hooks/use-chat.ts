@@ -6,6 +6,7 @@ import { createMessage } from "@/lib/chat-utils";
 import {
   MastraMCPServerDefinition,
   Model,
+  ModelDefinition,
   SUPPORTED_MODELS,
 } from "@/lib/types";
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
@@ -18,7 +19,7 @@ interface UseChatOptions {
   onMessageSent?: (message: ChatMessage) => void;
   onMessageReceived?: (message: ChatMessage) => void;
   onError?: (error: string) => void;
-  onModelChange?: (model: Model) => void;
+  onModelChange?: (model: ModelDefinition) => void;
 }
 
 export function useChat(options: UseChatOptions = {}) {
@@ -41,8 +42,8 @@ export function useChat(options: UseChatOptions = {}) {
   });
   const [input, setInput] = useState("");
   const [status, setStatus] = useState<"idle" | "error">("idle");
-  const [model, setModel] = useState(Model.GPT_4O);
-  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const [model, setModel] = useState<ModelDefinition | null>(null);
+  const [ollamaModels, setOllamaModels] = useState<ModelDefinition[]>([]);
   const [isOllamaRunning, setIsOllamaRunning] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesRef = useRef(state.messages);
@@ -57,7 +58,17 @@ export function useChat(options: UseChatOptions = {}) {
       const { isRunning, availableModels } =
         await detectOllamaModels(getOllamaBaseUrl());
       setIsOllamaRunning(isRunning);
-      setOllamaModels(availableModels);
+
+      // Convert string model names to ModelDefinition objects
+      const ollamaModelDefinitions: ModelDefinition[] = availableModels.map(
+        (modelName) => ({
+          id: modelName,
+          name: modelName,
+          provider: "ollama" as const,
+        }),
+      );
+
+      setOllamaModels(ollamaModelDefinitions);
     };
 
     checkOllama();
@@ -69,39 +80,37 @@ export function useChat(options: UseChatOptions = {}) {
   }, [getOllamaBaseUrl]);
 
   useEffect(() => {
-    if (isOllamaRunning && ollamaModels.length > 0) {
-      const firstOllamaModel = SUPPORTED_MODELS.find(
-        (m) =>
-          m.provider === "ollama" &&
-          ollamaModels.some((om) => om === m.id || om.startsWith(`${m.id}:`)),
-      );
-      if (firstOllamaModel) {
-        setModel(firstOllamaModel.id);
-      }
+    if (ollamaModels.length > 0) {
+      setModel(ollamaModels[0]);
     } else if (tokens.anthropic?.length > 0) {
-      setModel(Model.CLAUDE_3_5_SONNET_20240620);
+      const claudeModel = SUPPORTED_MODELS.find(
+        (m) => m.id === Model.CLAUDE_3_5_SONNET_20240620,
+      );
+      if (claudeModel) setModel(claudeModel);
     } else if (tokens.openai?.length > 0) {
-      setModel(Model.GPT_4O);
+      const gptModel = SUPPORTED_MODELS.find((m) => m.id === Model.GPT_4O);
+      if (gptModel) setModel(gptModel);
     }
-  }, [tokens, isOllamaRunning]);
+  }, [tokens, ollamaModels]);
 
   const currentApiKey = useMemo(() => {
-    const modelDefinition = SUPPORTED_MODELS.find((m) => m.id === model);
-    if (modelDefinition) {
-      if (modelDefinition.provider === "ollama") {
+    if (model) {
+      if (model.provider === "ollama") {
         // For Ollama, return "local" if it's running and the model is available
         return isOllamaRunning &&
-          ollamaModels.some((om) => om === model || om.startsWith(`${model}:`))
+          ollamaModels.some(
+            (om) => om.id === model.id || om.id.startsWith(`${model.id}:`),
+          )
           ? "local"
           : "";
       }
-      return getToken(modelDefinition.provider);
+      return getToken(model.provider);
     }
     return "";
   }, [model, getToken, isOllamaRunning, ollamaModels]);
 
   const handleModelChange = useCallback(
-    (newModel: Model) => {
+    (newModel: ModelDefinition) => {
       setModel(newModel);
       if (onModelChange) {
         onModelChange(newModel);
@@ -111,16 +120,35 @@ export function useChat(options: UseChatOptions = {}) {
   );
 
   // Available models with API keys or local Ollama models
-  const availableModels = SUPPORTED_MODELS.filter((m) => {
-    if (m.provider === "ollama") {
-      // For Ollama models, check if they're actually available locally
-      return (
-        isOllamaRunning &&
-        ollamaModels.some((om) => om === m.id || om.startsWith(`${m.id}:`))
-      );
+  const availableModels = useMemo(() => {
+    const filteredSupportedModels = SUPPORTED_MODELS.filter((m) => {
+      if (m.provider === "ollama") {
+        return (
+          isOllamaRunning &&
+          ollamaModels.some(
+            (om) => om.id === m.id || om.id.startsWith(`${m.id}:`),
+          )
+        );
+      }
+      return hasToken(m.provider);
+    });
+
+    // Add all available Ollama models that aren't already in SUPPORTED_MODELS
+    const dynamicOllamaModels: ModelDefinition[] = [];
+    if (isOllamaRunning) {
+      for (const ollamaModel of ollamaModels) {
+        const isAlreadySupported = SUPPORTED_MODELS.some(
+          (m) =>
+            m.id === ollamaModel.id || ollamaModel.id.startsWith(`${m.id}:`),
+        );
+        if (!isAlreadySupported) {
+          dynamicOllamaModels.push(ollamaModel);
+        }
+      }
     }
-    return hasToken(m.provider);
-  });
+
+    return [...filteredSupportedModels, ...dynamicOllamaModels];
+  }, [isOllamaRunning, ollamaModels, hasToken]);
 
   const handleStreamingEvent = useCallback(
     (

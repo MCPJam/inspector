@@ -10,17 +10,30 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createOllama } from "ollama-ai-provider";
 import { ChatMessage } from "@/lib/chat-types";
 import { MCPClient } from "@mastra/mcp";
-import { getModelById, isModelSupported } from "@/lib/types";
+import { ModelDefinition } from "@/lib/types";
 
 export async function POST(request: NextRequest) {
   let client: MCPClient | null = null;
   try {
-    const { serverConfigs, model, apiKey, systemPrompt, messages, ollamaBaseUrl } =
-      await request.json();
-    if (!model || !apiKey || !messages) {
+    const {
+      serverConfigs,
+      model,
+      apiKey,
+      systemPrompt,
+      messages,
+      ollamaBaseUrl,
+    }: {
+      serverConfigs: Record<string, any>;
+      model: ModelDefinition;
+      apiKey: string;
+      systemPrompt?: string;
+      messages: ChatMessage[];
+      ollamaBaseUrl?: string;
+    } = await request.json();
+    if (!model || !model.id || !apiKey || !messages) {
       return createErrorResponse(
         "Missing required fields",
-        "model, apiKey, and messages are required",
+        "model (with id), apiKey, and messages are required",
       );
     }
 
@@ -219,29 +232,24 @@ export async function POST(request: NextRequest) {
   }
 }
 
-const getLlmModel = (model: string, apiKey: string, ollamaBaseUrl?: string) => {
-  if (!isModelSupported(model)) {
-    throw new Error(`Unsupported model: ${model}`);
-  }
-
-  const modelDefinition = getModelById(model);
-  if (!modelDefinition) {
-    throw new Error(`Model not found: ${model}`);
+const getLlmModel = (modelDefinition: ModelDefinition, apiKey: string, ollamaBaseUrl?: string) => {
+  if (!modelDefinition || !modelDefinition.id || !modelDefinition.provider) {
+    throw new Error(`Invalid model definition: ${JSON.stringify(modelDefinition)}`);
   }
 
   switch (modelDefinition.provider) {
     case "anthropic":
-      return createAnthropic({ apiKey })(model);
+      return createAnthropic({ apiKey })(modelDefinition.id);
     case "openai":
-      return createOpenAI({ apiKey })(model);
+      return createOpenAI({ apiKey })(modelDefinition.id);
     case "ollama":
       const baseUrl = ollamaBaseUrl || "http://localhost:11434";
       return createOllama({
         baseURL: `${baseUrl}/api`, // Configurable Ollama API endpoint
-      })(model, {
+      })(modelDefinition.id, {
         simulateStreaming: true, // Enable streaming for Ollama models
       });
     default:
-      throw new Error(`Unsupported provider for model: ${model}`);
+      throw new Error(`Unsupported provider: ${modelDefinition.provider} for model: ${modelDefinition.id}`);
   }
 };

@@ -24,9 +24,9 @@ interface ChatInputProps {
   showScrollToBottom?: boolean;
   onScrollToBottom?: () => void;
   // Model selector props
-  currentModel: Model;
+  currentModel: ModelDefinition | null;
   availableModels: ModelDefinition[];
-  onModelChange: (model: Model) => void;
+  onModelChange: (model: ModelDefinition) => void;
   // Clear chat functionality
   onClearChat?: () => void;
   hasMessages?: boolean;
@@ -51,9 +51,9 @@ export function ChatInput({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [uploadQueue, setUploadQueue] = useState<string[]>([]);
-
+  console.log(currentModel);
   // Get current model data
-  const currentModelData = availableModels.find((m) => m.id === currentModel);
+  const currentModelData = currentModel;
 
   useEffect(() => {
     adjustHeight();
@@ -292,7 +292,7 @@ export function ChatInput({
         {/* Model Selector */}
         {availableModels.length > 0 && currentModelData && (
           <ModelSelector
-            currentModel={currentModel}
+            currentModel={currentModelData}
             availableModels={availableModels}
             onModelChange={onModelChange}
             disabled={disabled}

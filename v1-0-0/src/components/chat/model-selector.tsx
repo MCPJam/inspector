@@ -12,9 +12,9 @@ import { Model, ModelDefinition } from "@/lib/types";
 import { ProviderLogo } from "./provider-logo";
 
 interface ModelSelectorProps {
-  currentModel: Model;
+  currentModel: ModelDefinition;
   availableModels: ModelDefinition[];
-  onModelChange: (model: Model) => void;
+  onModelChange: (model: ModelDefinition) => void;
   disabled?: boolean;
   isLoading?: boolean;
 }
@@ -27,11 +27,7 @@ export function ModelSelector({
   isLoading,
 }: ModelSelectorProps) {
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false);
-  const currentModelData = availableModels.find((m) => m.id === currentModel);
-
-  if (!currentModelData) {
-    return null;
-  }
+  const currentModelData = currentModel;
 
   return (
     <DropdownMenu
@@ -58,7 +54,7 @@ export function ModelSelector({
           <DropdownMenuItem
             key={model.id}
             onClick={() => {
-              onModelChange(model.id);
+              onModelChange(model);
               setIsModelSelectorOpen(false);
             }}
             className="flex items-center gap-3 text-sm cursor-pointer"
@@ -67,7 +63,7 @@ export function ModelSelector({
             <div className="flex flex-col">
               <span className="font-medium">{model.name}</span>
             </div>
-            {model.id === currentModel && (
+            {model.id === currentModel.id && (
               <div className="ml-auto w-2 h-2 bg-primary rounded-full" />
             )}
           </DropdownMenuItem>

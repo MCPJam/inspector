@@ -64,7 +64,7 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
   const handleCopyMessage = (content: string) => {
     navigator.clipboard.writeText(content);
   };
-
+  console.log(availableModels);
   // Empty state - centered input
   if (!hasMessages) {
     return (
@@ -103,11 +103,11 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
               onChange={setInput}
               onSubmit={sendMessage}
               onStop={stopGeneration}
-              disabled={!hasValidApiKey}
+              disabled={availableModels.length === 0}
               isLoading={isLoading}
               placeholder="Send a message..."
               className="border-2 shadow-lg bg-background/80 backdrop-blur-sm"
-              currentModel={model}
+              currentModel={model || null}
               availableModels={availableModels}
               onModelChange={setModel}
               onClearChat={clearChat}
@@ -151,7 +151,7 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
                 >
                   <Message
                     message={message}
-                    model={model}
+                    model={model || null}
                     isLoading={isLoading && index === messages.length - 1}
                     onEdit={() => {}}
                     onRegenerate={regenerateMessage}
@@ -214,7 +214,7 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
               onChange={setInput}
               onSubmit={sendMessage}
               onStop={stopGeneration}
-              disabled={!hasValidApiKey}
+              disabled={availableModels.length === 0}
               isLoading={isLoading}
               placeholder="Send a message..."
               className="border-2 shadow-sm"

@@ -1,4 +1,4 @@
-import { SUPPORTED_MODELS } from "@/lib/types";
+import { ModelDefinition } from "@/lib/types";
 import claudeLogo from "../../../public/claude_logo.png";
 import openaiLogo from "../../../public/openai_logo.png";
 import ollamaLogo from "../../../public/ollama_logo.svg";
@@ -31,11 +31,10 @@ export const getProviderLogoFromProvider = (
 };
 
 export const getProviderLogoFromModel = (
-  model: string,
+  model: ModelDefinition,
   themeMode?: "light" | "dark" | "system",
 ): string | null => {
-  const provider = SUPPORTED_MODELS.find((m) => m.id === model);
-  return getProviderLogoFromProvider(provider?.provider || "", themeMode);
+  return getProviderLogoFromProvider(model.provider, themeMode);
 };
 
 export const getProviderColor = (provider: string) => {

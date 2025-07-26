@@ -8,7 +8,7 @@ import { OAuthClientState } from "./oauth-types";
 export type ModelProvider = "anthropic" | "openai" | "ollama";
 
 export interface ModelDefinition {
-  id: Model;
+  id: Model | string;
   name: string;
   provider: ModelProvider;
 }
@@ -36,16 +36,6 @@ export enum Model {
   GPT_4 = "gpt-4",
   GPT_3_5_TURBO = "gpt-3.5-turbo",
   O1 = "o1",
-  // Ollama Models
-  OLLAMA_LLAMA3_2 = "llama3.2",
-  OLLAMA_LLAMA3_1 = "llama3.1",
-  OLLAMA_LLAMA3 = "llama3",
-  OLLAMA_MISTRAL = "mistral",
-  OLLAMA_CODELLAMA = "codellama",
-  OLLAMA_MIXTRAL = "mixtral",
-  OLLAMA_QWEN2_5 = "qwen2.5",
-  OLLAMA_GEMMA2 = "gemma2",
-  DEEPSEEK_R1 = "deepseek-r1",
 }
 
 export const SUPPORTED_MODELS: ModelDefinition[] = [
@@ -111,16 +101,6 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
   { id: Model.GPT_4, name: "GPT-4", provider: "openai" },
   { id: Model.GPT_3_5_TURBO, name: "GPT-3.5 Turbo", provider: "openai" },
   { id: Model.O1, name: "O1", provider: "openai" },
-  // Ollama Models
-  { id: Model.OLLAMA_LLAMA3_2, name: "Llama 3.2", provider: "ollama" },
-  { id: Model.OLLAMA_LLAMA3_1, name: "Llama 3.1", provider: "ollama" },
-  { id: Model.OLLAMA_LLAMA3, name: "Llama 3", provider: "ollama" },
-  { id: Model.OLLAMA_MISTRAL, name: "Mistral", provider: "ollama" },
-  { id: Model.OLLAMA_CODELLAMA, name: "CodeLlama", provider: "ollama" },
-  { id: Model.OLLAMA_MIXTRAL, name: "Mixtral", provider: "ollama" },
-  { id: Model.OLLAMA_QWEN2_5, name: "Qwen 2.5", provider: "ollama" },
-  { id: Model.OLLAMA_GEMMA2, name: "Gemma 2", provider: "ollama" },
-  { id: Model.DEEPSEEK_R1, name: "DeepSeek R1", provider: "ollama" },
 ];
 
 // Helper function to get model by ID

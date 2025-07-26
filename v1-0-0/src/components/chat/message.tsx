@@ -12,6 +12,7 @@ import { MessageEditor } from "./message-editor";
 import { ToolCallDisplay } from "./tool-call";
 import { getProviderLogoFromModel } from "./chat-helpers";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { ModelDefinition } from "@/lib/types";
 
 interface MessageProps {
   message: ChatMessage;
@@ -21,7 +22,7 @@ interface MessageProps {
   onCopy?: (content: string) => void;
   isReadonly?: boolean;
   showActions?: boolean;
-  model: string;
+  model: ModelDefinition | null;
 }
 
 // Thinking indicator component
@@ -101,8 +102,8 @@ const PureMessage = ({
           <div className="flex gap-4 w-full">
             <div className="size-8 flex items-center rounded-full justify-center shrink-0 bg-muted/50">
               <img
-                src={getProviderLogoFromModel(model, themeMode)!}
-                alt={`${model} logo`}
+                src={getProviderLogoFromModel(model!, themeMode)!}
+                alt={`${model?.id} logo`}
                 className="h-4 w-4 object-contain"
               />
             </div>
