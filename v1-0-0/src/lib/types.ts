@@ -45,6 +45,7 @@ export enum Model {
   OLLAMA_MIXTRAL = "mixtral",
   OLLAMA_QWEN2_5 = "qwen2.5",
   OLLAMA_GEMMA2 = "gemma2",
+  DEEPSEEK_R1 = "deepseek-r1",
 }
 
 export const SUPPORTED_MODELS: ModelDefinition[] = [
@@ -119,6 +120,7 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
   { id: Model.OLLAMA_MIXTRAL, name: "Mixtral", provider: "ollama" },
   { id: Model.OLLAMA_QWEN2_5, name: "Qwen 2.5", provider: "ollama" },
   { id: Model.OLLAMA_GEMMA2, name: "Gemma 2", provider: "ollama" },
+  { id: Model.DEEPSEEK_R1, name: "DeepSeek R1", provider: "ollama" },
 ];
 
 // Helper function to get model by ID

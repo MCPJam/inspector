@@ -54,7 +54,8 @@ export function useChat(options: UseChatOptions = {}) {
   // Check for Ollama models on mount and periodically
   useEffect(() => {
     const checkOllama = async () => {
-      const { isRunning, availableModels } = await detectOllamaModels(getOllamaBaseUrl());
+      const { isRunning, availableModels } =
+        await detectOllamaModels(getOllamaBaseUrl());
       setIsOllamaRunning(isRunning);
       setOllamaModels(availableModels);
     };
@@ -82,7 +83,7 @@ export function useChat(options: UseChatOptions = {}) {
     } else if (tokens.openai?.length > 0) {
       setModel(Model.GPT_4O);
     }
-  }, [tokens, ollamaModels]);
+  }, [tokens, isOllamaRunning]);
 
   const currentApiKey = useMemo(() => {
     const modelDefinition = SUPPORTED_MODELS.find((m) => m.id === model);
