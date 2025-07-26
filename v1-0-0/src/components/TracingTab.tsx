@@ -13,6 +13,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useLoggerState, LogLevel } from "@/hooks/use-logger";
 import { LogCard } from "./logging/log-card";
+import { LogLevelBadge } from "./logging/log-level-badge";
 
 const LOG_LEVEL_ORDER = ["error", "warn", "info", "debug", "trace"];
 
@@ -110,7 +111,7 @@ export function TracingTab() {
               <SelectItem value="all">All Levels</SelectItem>
               {LOG_LEVEL_ORDER.map((level) => (
                 <SelectItem key={level} value={level}>
-                  {level.toUpperCase()}
+                  <LogLevelBadge level={level as LogLevel} />
                 </SelectItem>
               ))}
             </SelectContent>
