@@ -140,10 +140,23 @@ export async function POST(request: NextRequest) {
         streamController = controller;
 
         try {
+          let hasContent = false;
           for await (const chunk of stream.textStream) {
+            if (chunk && chunk.trim()) {
+              hasContent = true;
+              controller.enqueue(
+                encoder!.encode(
+                  `data: ${JSON.stringify({ type: "text", content: chunk })}\n\n`,
+                ),
+              );
+            }
+          }
+
+          // If no content was streamed, send a fallback message
+          if (!hasContent) {
             controller.enqueue(
               encoder!.encode(
-                `data: ${JSON.stringify({ type: "text", content: chunk })}\n\n`,
+                `data: ${JSON.stringify({ type: "text", content: "I apologize, but I couldn't generate a response. Please try again." })}\n\n`,
               ),
             );
           }

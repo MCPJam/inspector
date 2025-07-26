@@ -39,7 +39,6 @@ export function useChat(options: UseChatOptions = {}) {
     isLoading: false,
     connectionStatus: "disconnected",
   });
-
   const [input, setInput] = useState("");
   const [status, setStatus] = useState<"idle" | "error">("idle");
   const [model, setModel] = useState(Model.GPT_4O);
@@ -61,10 +60,10 @@ export function useChat(options: UseChatOptions = {}) {
     };
 
     checkOllama();
-    
+
     // Check every 30 seconds for Ollama availability
     const interval = setInterval(checkOllama, 30000);
-    
+
     return () => clearInterval(interval);
   }, []);
 
@@ -75,9 +74,10 @@ export function useChat(options: UseChatOptions = {}) {
       setModel(Model.GPT_4O);
     } else if (isOllamaRunning && ollamaModels.length > 0) {
       // Set to first available Ollama model if no API keys are available
-      const firstOllamaModel = SUPPORTED_MODELS.find(m => 
-        m.provider === "ollama" && 
-        ollamaModels.some(om => om === m.id || om.startsWith(`${m.id}:`))
+      const firstOllamaModel = SUPPORTED_MODELS.find(
+        (m) =>
+          m.provider === "ollama" &&
+          ollamaModels.some((om) => om === m.id || om.startsWith(`${m.id}:`)),
       );
       if (firstOllamaModel) {
         setModel(firstOllamaModel.id);
@@ -90,9 +90,10 @@ export function useChat(options: UseChatOptions = {}) {
     if (modelDefinition) {
       if (modelDefinition.provider === "ollama") {
         // For Ollama, return "local" if it's running and the model is available
-        return isOllamaRunning && ollamaModels.some(om => 
-          om === model || om.startsWith(`${model}:`)
-        ) ? "local" : "";
+        return isOllamaRunning &&
+          ollamaModels.some((om) => om === model || om.startsWith(`${model}:`))
+          ? "local"
+          : "";
       }
       return getToken(modelDefinition.provider);
     }
@@ -113,8 +114,9 @@ export function useChat(options: UseChatOptions = {}) {
   const availableModels = SUPPORTED_MODELS.filter((m) => {
     if (m.provider === "ollama") {
       // For Ollama models, check if they're actually available locally
-      return isOllamaRunning && ollamaModels.some(om => 
-        om === m.id || om.startsWith(`${m.id}:`)
+      return (
+        isOllamaRunning &&
+        ollamaModels.some((om) => om === m.id || om.startsWith(`${m.id}:`))
       );
     }
     return hasToken(m.provider);
@@ -148,9 +150,9 @@ export function useChat(options: UseChatOptions = {}) {
       // Handle tool calls
       if (
         (parsed.type === "tool_call" || (!parsed.type && parsed.toolCall)) &&
-        (parsed.toolCall || parsed.toolCall)
+        parsed.toolCall
       ) {
-        const toolCall = parsed.toolCall || parsed.toolCall;
+        const toolCall = parsed.toolCall;
         toolCalls.current = [...toolCalls.current, toolCall];
         setState((prev) => ({
           ...prev,
@@ -167,9 +169,9 @@ export function useChat(options: UseChatOptions = {}) {
       if (
         (parsed.type === "tool_result" ||
           (!parsed.type && parsed.toolResult)) &&
-        (parsed.toolResult || parsed.toolResult)
+        parsed.toolResult
       ) {
-        const toolResult = parsed.toolResult || parsed.toolResult;
+        const toolResult = parsed.toolResult;
         toolResults.current = [...toolResults.current, toolResult];
 
         // Update the corresponding tool call status
@@ -257,19 +259,25 @@ export function useChat(options: UseChatOptions = {}) {
         const assistantContent = { current: "" };
         const toolCalls = { current: [] as any[] };
         const toolResults = { current: [] as any[] };
+        let buffer = "";
+        let isDone = false;
 
         if (reader) {
-          while (true) {
+          while (!isDone) {
             const { done, value } = await reader.read();
             if (done) break;
 
-            const chunk = decoder.decode(value);
-            const lines = chunk.split("\n");
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+
+            // Keep the last incomplete line in the buffer
+            buffer = lines.pop() || "";
 
             for (const line of lines) {
               if (line.startsWith("data: ")) {
-                const data = line.slice(6);
+                const data = line.slice(6).trim();
                 if (data === "[DONE]") {
+                  isDone = true;
                   setState((prev) => ({
                     ...prev,
                     isLoading: false,
@@ -277,21 +285,28 @@ export function useChat(options: UseChatOptions = {}) {
                   break;
                 }
 
-                try {
-                  const parsed = JSON.parse(data);
-                  handleStreamingEvent(
-                    parsed,
-                    assistantMessage,
-                    assistantContent,
-                    toolCalls,
-                    toolResults,
-                  );
-                } catch (parseError) {
-                  console.warn("Failed to parse SSE data:", data, parseError);
+                if (data) {
+                  try {
+                    const parsed = JSON.parse(data);
+                    handleStreamingEvent(
+                      parsed,
+                      assistantMessage,
+                      assistantContent,
+                      toolCalls,
+                      toolResults,
+                    );
+                  } catch (parseError) {
+                    console.warn("Failed to parse SSE data:", data, parseError);
+                  }
                 }
               }
             }
           }
+        }
+
+        // Ensure we have some content, even if empty
+        if (!assistantContent.current && !toolCalls.current.length) {
+          console.warn("No content received from stream");
         }
 
         if (onMessageReceived) {
