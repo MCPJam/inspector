@@ -218,7 +218,7 @@ const getLlmModel = (model: string, apiKey: string) => {
       return createOpenAI({ apiKey })(model);
     case "ollama":
       return createOllama({
-        baseURL: "http://localhost:11434", // Default Ollama URL
+        baseURL: "http://localhost:11434/api", // Ollama API endpoint
       })(model);
     default:
       throw new Error(`Unsupported provider for model: ${model}`);
