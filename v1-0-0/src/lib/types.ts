@@ -37,27 +37,27 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
   {
     id: Model.CLAUDE_OPUS_4_0,
     name: "Claude Opus 4",
-    provider: "ollama",
+    provider: "anthropic",
   },
   {
     id: Model.CLAUDE_SONNET_4_0,
     name: "Claude Sonnet 4",
-    provider: "ollama",
+    provider: "anthropic",
   },
   {
     id: Model.CLAUDE_3_7_SONNET_LATEST,
     name: "Claude Sonnet 3.7",
-    provider: "ollama",
+    provider: "anthropic",
   },
   {
     id: Model.CLAUDE_3_5_SONNET_LATEST,
     name: "Claude Sonnet 3.5",
-    provider: "ollama",
+    provider: "anthropic",
   },
   {
     id: Model.CLAUDE_3_5_HAIKU_LATEST,
     name: "Claude Haiku 3.5",
-    provider: "ollama",
+    provider: "anthropic",
   },
   { id: Model.O3_MINI, name: "O3 Mini", provider: "openai" },
   { id: Model.O3, name: "O3", provider: "openai" },

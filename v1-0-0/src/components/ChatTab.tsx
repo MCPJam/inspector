@@ -31,7 +31,6 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
     clearChat,
     model,
     availableModels,
-    hasValidApiKey,
     setModel,
   } = useChat({
     serverConfigs: serverConfigs,
@@ -40,6 +39,7 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
       toast.error(error);
     },
   });
+  console.log("availableModels", availableModels);
   const hasMessages = messages.length > 0;
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -113,14 +113,14 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
               onClearChat={clearChat}
               hasMessages={false}
             />
-            {!hasValidApiKey && availableModels.length === 0 && (
+            {availableModels.length === 0 && (
               <motion.p
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ delay: 0.3 }}
                 className="text-sm text-muted-foreground mt-3 text-center"
               >
-                Configure API keys in Settings to start chatting
+                Configure API keys in Settings or start Ollama to enable chat
               </motion.p>
             )}
           </motion.div>
