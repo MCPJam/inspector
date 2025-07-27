@@ -4,6 +4,7 @@ import { resolve, dirname } from "path";
 import { spawn } from "child_process";
 import { fileURLToPath } from "url";
 import { createServer } from "net";
+import { execSync } from "child_process";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -106,15 +107,15 @@ function delay(ms) {
 function isPortAvailable(port) {
   return new Promise((resolve) => {
     const server = createServer();
-    
+
     server.listen(port, () => {
-      server.once('close', () => {
+      server.once("close", () => {
         resolve(true);
       });
       server.close();
     });
-    
-    server.on('error', () => {
+
+    server.on("error", () => {
       resolve(false);
     });
   });
@@ -126,7 +127,9 @@ async function findAvailablePort(startPort = 3000, maxPort = 3100) {
       return port;
     }
   }
-  throw new Error(`No available ports found between ${startPort} and ${maxPort}`);
+  throw new Error(
+    `No available ports found between ${startPort} and ${maxPort}`,
+  );
 }
 
 function spawnPromise(command, args, options) {
@@ -195,6 +198,146 @@ ${colors.dim}Press Ctrl+C to stop the server${colors.reset}`;
   logDivider();
 }
 
+async function checkOllamaInstalled() {
+  try {
+    await spawnPromise("ollama", ["--version"], { echoOutput: false });
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+function getTerminalCommand() {
+  const platform = process.platform;
+
+  if (platform === "darwin") {
+    // macOS
+    return ["open", "-a", "Terminal"];
+  } else if (platform === "win32") {
+    // Windows
+    return ["cmd", "/c", "start", "cmd", "/k"];
+  } else {
+    // Linux and other Unix-like systems
+    // Try common terminal emulators in order of preference
+    const terminals = [
+      "gnome-terminal",
+      "konsole",
+      "xterm",
+      "x-terminal-emulator",
+    ];
+    for (const terminal of terminals) {
+      try {
+        execSync(`which ${terminal}`, {
+          stdio: "ignore",
+        });
+        if (terminal === "gnome-terminal") {
+          return ["gnome-terminal", "--"];
+        } else if (terminal === "konsole") {
+          return ["konsole", "-e"];
+        } else {
+          return [terminal, "-e"];
+        }
+      } catch (e) {
+        // Terminal not found, try next
+      }
+    }
+    // Fallback
+    return ["xterm", "-e"];
+  }
+}
+
+async function openTerminalWithMultipleCommands(commands, title) {
+  const platform = process.platform;
+  const terminalCmd = getTerminalCommand();
+
+  if (platform === "darwin") {
+    // macOS: Chain commands with && separator
+    const chainedCommand = commands.join(" && ");
+    const script = `tell application "Terminal"
+      activate
+      do script "${chainedCommand}"
+    end tell`;
+
+    await spawnPromise("osascript", ["-e", script], { echoOutput: false });
+  } else if (platform === "win32") {
+    // Windows: Chain commands with && separator
+    const chainedCommand = commands.join(" && ");
+    const fullCommand = `${chainedCommand} && pause`;
+    await spawnPromise("cmd", ["/c", "start", "cmd", "/k", fullCommand], {
+      echoOutput: false,
+    });
+  } else {
+    // Linux and other Unix-like systems: Chain commands with && separator
+    const chainedCommand = commands.join(" && ");
+    const fullCommand = `${chainedCommand}; read -p "Press Enter to close..."`;
+    await spawnPromise(
+      terminalCmd[0],
+      [...terminalCmd.slice(1), "bash", "-c", fullCommand],
+      { echoOutput: false },
+    );
+  }
+}
+
+async function setupOllamaInSingleTerminal(model) {
+  logStep("Ollama", `Opening terminal to pull model ${model} and start server`);
+  logInfo("Both pull and serve commands will run in the same terminal window");
+
+  try {
+    const commands = [`ollama pull ${model}`, `ollama serve`];
+
+    await openTerminalWithMultipleCommands(
+      commands,
+      `Ollama: Pull ${model} & Serve`,
+    );
+    logSuccess("Ollama pull and serve started in same terminal");
+    logProgress(
+      "Waiting for model download to complete and server to start...",
+    );
+
+    // Wait a bit for the model pull to start
+    await delay(3000);
+
+    // Check if model was pulled successfully and server is ready
+    let setupReady = false;
+    for (let i = 0; i < 60; i++) {
+      // Wait up to 10 minutes for pull + server start
+      try {
+        // First check if server is responding
+        await spawnPromise("ollama", ["list"], { echoOutput: false });
+
+        // Then check if our model is available
+        try {
+          await spawnPromise("ollama", ["show", model], { echoOutput: false });
+          setupReady = true;
+          break;
+        } catch (e) {
+          // Model not ready yet, but server is responding
+        }
+      } catch (e) {
+        // Server not ready yet
+      }
+
+      await delay(10000); // Wait 10 seconds between checks
+      if (i % 3 === 0) {
+        logProgress(
+          `Still waiting for model ${model} to be ready and server to start...`,
+        );
+      }
+    }
+
+    if (setupReady) {
+      logSuccess(`Model ${model} is ready and Ollama server is running`);
+    } else {
+      logWarning(
+        `Setup may still be in progress. Please check the terminal window.`,
+      );
+    }
+  } catch (error) {
+    logError(`Failed to setup Ollama: ${error.message}`);
+    throw error;
+  }
+}
+
 async function main() {
   await showWelcomeMessage();
 
@@ -202,12 +345,18 @@ async function main() {
   const args = process.argv.slice(2);
   const envVars = {};
   let parsingFlags = true;
+  let ollamaModel = null;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
 
     if (parsingFlags && arg === "--") {
       parsingFlags = false;
+      continue;
+    }
+
+    if (parsingFlags && arg === "--ollama" && i + 1 < args.length) {
+      ollamaModel = args[++i];
       continue;
     }
 
@@ -233,6 +382,34 @@ async function main() {
     }
   }
 
+  // Handle Ollama setup if requested
+  if (ollamaModel) {
+    logStep("Setup", "Configuring Ollama integration");
+
+    const isOllamaInstalled = await checkOllamaInstalled();
+    if (!isOllamaInstalled) {
+      logError("Ollama is not installed. Please install Ollama first:");
+      logInfo(
+        "Visit https://ollama.ai/download to download and install Ollama",
+      );
+      process.exit(1);
+    }
+
+    logSuccess("Ollama is installed");
+
+    try {
+      await setupOllamaInSingleTerminal(ollamaModel);
+
+      logDivider();
+      logSuccess(`Ollama setup complete with model: ${ollamaModel}`);
+      logInfo("Ollama server is running and ready for MCP connections");
+      logDivider();
+    } catch (error) {
+      logError("Failed to setup Ollama");
+      process.exit(1);
+    }
+  }
+
   const projectRoot = resolve(__dirname, "..");
 
   // Apply parsed environment variables to process.env first
@@ -241,10 +418,10 @@ async function main() {
   // Get requested port and find available port
   const requestedPort = parseInt(process.env.PORT ?? "3000", 10);
   let PORT;
-  
+
   try {
     logStep("0", "Checking port availability...");
-    
+
     if (await isPortAvailable(requestedPort)) {
       PORT = requestedPort.toString();
       logSuccess(`Port ${requestedPort} is available`);
@@ -253,7 +430,7 @@ async function main() {
       const availablePort = await findAvailablePort(requestedPort + 1);
       PORT = availablePort.toString();
       logSuccess(`Using available port ${availablePort}`);
-      
+
       // Update environment variables with the new port
       envVars.PORT = PORT;
       envVars.NEXT_PUBLIC_BASE_URL = `http://localhost:${PORT}`;
