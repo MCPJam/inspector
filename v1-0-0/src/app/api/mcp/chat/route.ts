@@ -232,9 +232,15 @@ export async function POST(request: NextRequest) {
   }
 }
 
-const getLlmModel = (modelDefinition: ModelDefinition, apiKey: string, ollamaBaseUrl?: string) => {
+const getLlmModel = (
+  modelDefinition: ModelDefinition,
+  apiKey: string,
+  ollamaBaseUrl?: string,
+) => {
   if (!modelDefinition || !modelDefinition.id || !modelDefinition.provider) {
-    throw new Error(`Invalid model definition: ${JSON.stringify(modelDefinition)}`);
+    throw new Error(
+      `Invalid model definition: ${JSON.stringify(modelDefinition)}`,
+    );
   }
 
   switch (modelDefinition.provider) {
@@ -250,6 +256,8 @@ const getLlmModel = (modelDefinition: ModelDefinition, apiKey: string, ollamaBas
         simulateStreaming: true, // Enable streaming for Ollama models
       });
     default:
-      throw new Error(`Unsupported provider: ${modelDefinition.provider} for model: ${modelDefinition.id}`);
+      throw new Error(
+        `Unsupported provider: ${modelDefinition.provider} for model: ${modelDefinition.id}`,
+      );
   }
 };

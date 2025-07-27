@@ -2,7 +2,6 @@ import { LogHandler } from "@mastra/mcp";
 import { SSEClientTransportOptions } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransportOptions } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { ClientCapabilities } from "@modelcontextprotocol/sdk/types.js";
-import { OAuthClientState } from "./oauth-types";
 
 // Shared model definitions
 export type ModelProvider = "anthropic" | "openai" | "ollama";
@@ -112,7 +111,7 @@ export type HttpServerDefinition = BaseServerOptions & {
   eventSourceInit?: SSEClientTransportOptions["eventSourceInit"];
   reconnectionOptions?: StreamableHTTPClientTransportOptions["reconnectionOptions"];
   sessionId?: StreamableHTTPClientTransportOptions["sessionId"];
-  oauth?: OAuthClientState;
+  oauth?: any;
 };
 
 export interface ServerFormData {

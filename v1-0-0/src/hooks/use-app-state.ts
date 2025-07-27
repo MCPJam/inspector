@@ -1,6 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
-import { createOAuthFlow, OAuthFlowManager } from "@/lib/oauth-flow";
+import {
+  initiateOAuth,
+  handleOAuthCallback,
+  getStoredTokens,
+  clearOAuthData,
+} from "@/lib/mcp-oauth";
 import {
   MastraMCPServerDefinition,
   StdioServerDefinition,
@@ -11,21 +16,14 @@ import { useLogger } from "./use-logger";
 export interface ServerWithName {
   name: string;
   config: MastraMCPServerDefinition;
-  oauthFlow?: OAuthFlowManager;
-  oauthState?: {
-    serverUrl: string;
-    clientName: string;
-    clientId?: string;
-    scopes: string[];
-    state: string;
-    codeVerifier: string;
-    codeChallenge: string;
-    accessToken?: string;
-    refreshToken?: string;
-    expiresAt?: number;
-  };
+  oauthTokens?: any;
   lastConnectionTime: Date;
-  connectionStatus: "connected" | "connecting" | "failed" | "disconnected";
+  connectionStatus:
+    | "connected"
+    | "connecting"
+    | "failed"
+    | "disconnected"
+    | "oauth-flow";
   retryCount: number;
   lastError?: string;
 }
@@ -35,19 +33,6 @@ export interface AppState {
   selectedServer: string;
   selectedMultipleServers: string[]; // Array of selected server names for multi-select mode
   isMultiSelectMode: boolean; // Flag to enable/disable multi-select mode
-  oauthFlows: Record<string, OAuthFlowManager>;
-  pendingOAuthCallbacks: Record<
-    string,
-    {
-      serverUrl: string;
-      clientName: string;
-      clientId?: string;
-      scopes: string[];
-      state: string;
-      codeVerifier: string;
-      codeChallenge: string;
-    }
-  >;
 }
 
 export interface ServerFormData {
@@ -72,8 +57,6 @@ export function useAppState() {
     selectedServer: "none",
     selectedMultipleServers: [],
     isMultiSelectMode: false,
-    oauthFlows: {},
-    pendingOAuthCallbacks: {},
   });
 
   const [isLoading, setIsLoading] = useState(true);
@@ -108,8 +91,6 @@ export function useAppState() {
           selectedServer: parsed.selectedServer || "none",
           selectedMultipleServers: parsed.selectedMultipleServers || [],
           isMultiSelectMode: parsed.isMultiSelectMode || false,
-          oauthFlows: parsed.oauthFlows || {},
-          pendingOAuthCallbacks: parsed.pendingOAuthCallbacks || {},
         });
       } catch (error) {
         logger.error("Failed to parse saved state", {
@@ -139,16 +120,15 @@ export function useAppState() {
     if (!isLoading) {
       const urlParams = new URLSearchParams(window.location.search);
       const code = urlParams.get("code");
-      const state = urlParams.get("state");
       const error = urlParams.get("error");
 
-      if (code && state && appState.pendingOAuthCallbacks?.[state]) {
-        handleOAuthCallback(code, state, appState.pendingOAuthCallbacks[state]);
+      if (code) {
+        handleOAuthCallbackComplete(code);
       } else if (error) {
-        alert(`OAuth authorization failed: ${error}`);
+        toast.error(`OAuth authorization failed: ${error}`);
       }
     }
-  }, [isLoading, appState.pendingOAuthCallbacks]);
+  }, [isLoading]);
 
   const convertFormToMCPConfig = useCallback(
     (formData: ServerFormData): MastraMCPServerDefinition => {
@@ -212,55 +192,95 @@ export function useAppState() {
       try {
         // Handle OAuth flow for HTTP servers
         if (formData.type === "http" && formData.useOAuth && formData.url) {
-          const oauthFlow = createOAuthFlow(formData.url, {
-            client_name: `MCP Inspector - ${formData.name}`,
-            requested_scopes: formData.oauthScopes || ["mcp:*"],
-            redirect_uri: `${window.location.origin}/oauth/callback`,
+          // Mark as OAuth flow in progress
+          setAppState((prev) => ({
+            ...prev,
+            servers: {
+              ...prev.servers,
+              [formData.name]: {
+                ...prev.servers[formData.name],
+                connectionStatus: "oauth-flow" as const,
+              },
+            },
+          }));
+
+          const oauthResult = await initiateOAuth({
+            serverName: formData.name,
+            serverUrl: formData.url,
+            scopes: formData.oauthScopes || ["mcp:*"],
           });
 
-          const oauthResult = await oauthFlow.initiate();
+          if (oauthResult.success) {
+            if (oauthResult.serverConfig) {
+              // Already authorized, test connection immediately
+              try {
+                const response = await fetch("/api/mcp/connect", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    serverConfig: oauthResult.serverConfig,
+                  }),
+                });
 
-          if (oauthResult.success && oauthResult.authorization_url) {
-            // Store only serializable OAuth state data
-            const oauthState = oauthFlow.getState();
-            const pkceParams = oauthState.pkce_params;
+                const connectionResult = await response.json();
 
-            if (pkceParams && oauthState.authorization_request?.state) {
-              const stateParam = oauthState.authorization_request.state;
-              const clientId: string | undefined =
-                oauthState.client_registration?.client_id;
-
-              setAppState((prev) => {
-                const newState = {
+                if (connectionResult.success) {
+                  setAppState((prev) => ({
+                    ...prev,
+                    servers: {
+                      ...prev.servers,
+                      [formData.name]: {
+                        ...prev.servers[formData.name],
+                        config: oauthResult.serverConfig!,
+                        connectionStatus: "connected" as const,
+                        oauthTokens: getStoredTokens(formData.name),
+                        lastError: undefined,
+                      },
+                    },
+                  }));
+                  toast.success(`Connected successfully with OAuth!`);
+                } else {
+                  setAppState((prev) => ({
+                    ...prev,
+                    servers: {
+                      ...prev.servers,
+                      [formData.name]: {
+                        ...prev.servers[formData.name],
+                        connectionStatus: "failed" as const,
+                        lastError:
+                          connectionResult.error ||
+                          "OAuth connection test failed",
+                      },
+                    },
+                  }));
+                  toast.error(
+                    `OAuth succeeded but connection failed: ${connectionResult.error}`,
+                  );
+                }
+              } catch (error) {
+                const errorMessage =
+                  error instanceof Error ? error.message : "Unknown error";
+                setAppState((prev) => ({
                   ...prev,
-                  pendingOAuthCallbacks: {
-                    ...prev.pendingOAuthCallbacks,
-                    [stateParam]: {
-                      serverUrl: formData.url!,
-                      clientName: `MCP Inspector - ${formData.name}`,
-                      clientId,
-                      scopes: formData.oauthScopes || ["mcp:*"],
-                      state: stateParam,
-                      codeVerifier: pkceParams.code_verifier,
-                      codeChallenge: pkceParams.code_challenge,
+                  servers: {
+                    ...prev.servers,
+                    [formData.name]: {
+                      ...prev.servers[formData.name],
+                      connectionStatus: "failed" as const,
+                      lastError: errorMessage,
                     },
                   },
-                };
-
-                // Force save to localStorage immediately
-                localStorage.setItem(STORAGE_KEY, JSON.stringify(newState));
-
-                return newState;
-              });
-
-              // Wait a bit for the state to be saved, then redirect
-              setTimeout(() => {
-                toast.success(
-                  "OAuth flow initiated. You will be redirected to authorize access.",
+                }));
+                toast.error(
+                  `OAuth succeeded but connection test threw error: ${errorMessage}`,
                 );
-                window.location.href = oauthResult.authorization_url!;
-              }, 100);
-
+              }
+              return;
+            } else {
+              // Redirect needed - keep oauth-flow status
+              toast.success(
+                "OAuth flow initiated. You will be redirected to authorize access.",
+              );
               return;
             }
           } else {
@@ -272,13 +292,11 @@ export function useAppState() {
                   ...prev.servers[formData.name],
                   connectionStatus: "failed" as const,
                   retryCount: 0,
-                  lastError: oauthResult.error?.error || "Unknown error",
+                  lastError: oauthResult.error || "OAuth initialization failed",
                 },
               },
             }));
-            toast.error(
-              `OAuth initialization failed: ${oauthResult.error?.error || "Unknown error"}`,
-            );
+            toast.error(`OAuth initialization failed: ${oauthResult.error}`);
             return;
           }
         }
@@ -361,289 +379,169 @@ export function useAppState() {
     [convertFormToMCPConfig],
   );
 
-  const handleOAuthCallback = useCallback(
-    async (
-      code: string,
-      state: string,
-      oauthData: {
-        serverUrl: string;
-        clientName: string;
-        clientId?: string;
-        scopes: string[];
-        state: string;
-        codeVerifier: string;
-        codeChallenge: string;
-      },
-    ) => {
+  const handleOAuthCallbackComplete = useCallback(
+    async (code: string) => {
+      // Clean up URL parameters immediately
+      window.history.replaceState({}, document.title, window.location.pathname);
+
       try {
-        // Create a new OAuth flow manager for discovery
-        const oauthFlow = createOAuthFlow(oauthData.serverUrl, {
-          client_name: oauthData.clientName,
-          requested_scopes: oauthData.scopes,
-          redirect_uri: `${window.location.origin}/oauth/callback`,
-        });
+        const result = await handleOAuthCallback(code);
+        console.log("OAuth callback result:", result);
 
-        // Perform discovery to get the token endpoint
-        const discoveryResult = await oauthFlow.initiate();
-        if (!discoveryResult.success) {
-          throw new Error(
-            `Discovery failed: ${discoveryResult.error?.error_description}`,
-          );
-        }
+        if (result.success && result.serverConfig && result.serverName) {
+          const serverName = result.serverName;
 
-        // Get the discovered endpoints
-        const oauthState = oauthFlow.getState();
-        const tokenEndpoint =
-          oauthState.authorization_server_metadata?.token_endpoint;
-
-        // Use the stored client ID from the original OAuth flow
-        const clientId = oauthData.clientId;
-
-        if (!tokenEndpoint) {
-          throw new Error("Token endpoint not available after discovery");
-        }
-
-        if (!clientId) {
-          throw new Error(
-            "Client ID not available. OAuth flow may have failed during registration.",
-          );
-        }
-
-        // Manually exchange the authorization code for tokens
-        const tokenResponse = await fetch(tokenEndpoint, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-            Accept: "application/json",
-            "User-Agent": "MCP-Inspector/1.0",
-          },
-          body: new URLSearchParams({
-            grant_type: "authorization_code",
-            code: code,
-            redirect_uri: `${window.location.origin}/oauth/callback`,
-            client_id: clientId,
-            code_verifier: oauthData.codeVerifier,
-          }).toString(),
-        });
-
-        if (!tokenResponse.ok) {
-          const errorData = await tokenResponse.json().catch(() => ({}));
-          throw new Error(
-            `Token exchange failed: ${errorData.error_description || `HTTP ${tokenResponse.status}`}`,
-          );
-        }
-
-        const tokens = await tokenResponse.json();
-
-        // Create the MCP config with OAuth tokens
-        const mcpConfig: HttpServerDefinition = {
-          url: new URL(oauthData.serverUrl),
-          requestInit: {
-            headers: {
-              Authorization: `Bearer ${tokens.access_token}`,
-            },
-          },
-        };
-
-        // Extract server name from client name
-        const serverName = oauthData.clientName.replace("MCP Inspector - ", "");
-
-        // Add server to state with OAuth tokens
-        setAppState((prev) => {
-          const newPendingCallbacks = { ...prev.pendingOAuthCallbacks };
-          delete newPendingCallbacks[state];
-
-          return {
-            ...prev,
-            servers: {
-              ...prev.servers,
-              [serverName]: {
-                name: serverName,
-                config: mcpConfig,
-                oauthState: {
-                  ...oauthData,
-                  accessToken: tokens.access_token,
-                  refreshToken: tokens.refresh_token,
-                  expiresAt: tokens.expires_in
-                    ? Date.now() + tokens.expires_in * 1000
-                    : undefined,
+          // Check if server exists and is in oauth-flow state
+          const existingServer = appState.servers[serverName];
+          if (
+            !existingServer ||
+            existingServer.connectionStatus !== "oauth-flow"
+          ) {
+            // Create new server entry if it doesn't exist or wasn't in oauth flow
+            setAppState((prev) => ({
+              ...prev,
+              servers: {
+                ...prev.servers,
+                [serverName]: {
+                  name: serverName,
+                  config: result.serverConfig!,
+                  oauthTokens: getStoredTokens(serverName),
+                  lastConnectionTime: new Date(),
+                  connectionStatus: "connecting" as const,
+                  retryCount: 0,
                 },
-                lastConnectionTime: new Date(),
-                connectionStatus: "connected" as const,
-                retryCount: 0,
               },
-            },
-            selectedServer: serverName,
-            pendingOAuthCallbacks: newPendingCallbacks,
-          };
-        });
-
-        // Clean up URL parameters
-        window.history.replaceState(
-          {},
-          document.title,
-          window.location.pathname,
-        );
-
-        toast.success(
-          `OAuth connection successful! Connected to ${serverName}.`,
-        );
-      } catch (error) {
-        toast.error(
-          `Error completing OAuth flow: ${error instanceof Error ? error.message : "Unknown error"}`,
-        );
-        logger.error("OAuth callback failed", {
-          error: error instanceof Error ? error.message : "Unknown error",
-        });
-      }
-    },
-    [],
-  );
-
-  const isTokenExpired = useCallback(
-    (expiresAt?: number, bufferMinutes: number = 5): boolean => {
-      if (!expiresAt) return false;
-      return Date.now() + bufferMinutes * 60 * 1000 >= expiresAt;
-    },
-    [],
-  );
-
-  const refreshOAuthToken = useCallback(
-    async (serverName: string) => {
-      const server = appState.servers[serverName];
-      if (!server?.oauthState?.refreshToken) {
-        throw new Error("No refresh token available");
-      }
-
-      try {
-        // Create a new OAuth flow manager for discovery
-        const oauthFlow = createOAuthFlow(server.oauthState.serverUrl, {
-          client_name: server.oauthState.clientName,
-          requested_scopes: server.oauthState.scopes,
-          redirect_uri: `${window.location.origin}/oauth/callback`,
-        });
-
-        // Perform discovery to get the token endpoint
-        const discoveryResult = await oauthFlow.initiate();
-        if (!discoveryResult.success) {
-          throw new Error(
-            `Discovery failed: ${discoveryResult.error?.error_description}`,
-          );
-        }
-
-        const oauthState = oauthFlow.getState();
-        const tokenEndpoint =
-          oauthState.authorization_server_metadata?.token_endpoint;
-
-        // Use the stored client ID from the original OAuth flow
-        const clientId = server.oauthState.clientId;
-
-        if (!tokenEndpoint) {
-          throw new Error("Token endpoint not available after discovery");
-        }
-
-        if (!clientId) {
-          throw new Error("Client ID not available for token refresh");
-        }
-
-        // Refresh the token
-        const tokenResponse = await fetch(tokenEndpoint, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-            Accept: "application/json",
-            "User-Agent": "MCP-Inspector/1.0",
-          },
-          body: new URLSearchParams({
-            grant_type: "refresh_token",
-            refresh_token: server.oauthState.refreshToken,
-            client_id: clientId,
-          }).toString(),
-        });
-
-        if (!tokenResponse.ok) {
-          const errorData = await tokenResponse.json().catch(() => ({}));
-          throw new Error(
-            `Token refresh failed: ${errorData.error_description || `HTTP ${tokenResponse.status}`}`,
-          );
-        }
-
-        const tokens = await tokenResponse.json();
-
-        // Update the server config with new tokens
-        const updatedConfig: HttpServerDefinition = {
-          url: new URL(server.oauthState.serverUrl),
-          requestInit: {
-            headers: {
-              Authorization: `Bearer ${tokens.access_token}`,
-            },
-          },
-        };
-
-        setAppState((prev) => ({
-          ...prev,
-          servers: {
-            ...prev.servers,
-            [serverName]: {
-              ...server,
-              config: updatedConfig,
-              oauthState: {
-                ...server.oauthState!,
-                accessToken: tokens.access_token,
-                refreshToken:
-                  tokens.refresh_token || server.oauthState!.refreshToken,
-                expiresAt: tokens.expires_in
-                  ? Date.now() + tokens.expires_in * 1000
-                  : undefined,
+              selectedServer: serverName,
+            }));
+          } else {
+            // Update existing server to connecting with OAuth config
+            setAppState((prev) => ({
+              ...prev,
+              servers: {
+                ...prev.servers,
+                [serverName]: {
+                  ...prev.servers[serverName],
+                  config: result.serverConfig!,
+                  oauthTokens: getStoredTokens(serverName),
+                  connectionStatus: "connecting" as const,
+                  lastError: undefined,
+                },
               },
-            },
-          },
-        }));
+              selectedServer: serverName,
+            }));
+          }
 
-        return tokens.access_token;
+          // Test the connection
+          try {
+            const response = await fetch("/api/mcp/connect", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                serverConfig: result.serverConfig,
+              }),
+            });
+
+            const connectionResult = await response.json();
+
+            if (connectionResult.success) {
+              setAppState((prev) => ({
+                ...prev,
+                servers: {
+                  ...prev.servers,
+                  [serverName]: {
+                    ...prev.servers[serverName],
+                    connectionStatus: "connected" as const,
+                    lastConnectionTime: new Date(),
+                    lastError: undefined,
+                  },
+                },
+              }));
+
+              logger.info("OAuth connection successful", { serverName });
+              toast.success(
+                `OAuth connection successful! Connected to ${serverName}.`,
+              );
+            } else {
+              setAppState((prev) => ({
+                ...prev,
+                servers: {
+                  ...prev.servers,
+                  [serverName]: {
+                    ...prev.servers[serverName],
+                    connectionStatus: "failed" as const,
+                    lastError:
+                      connectionResult.error ||
+                      "Connection test failed after OAuth",
+                  },
+                },
+              }));
+
+              logger.error("OAuth connection test failed", {
+                serverName,
+                error: connectionResult.error,
+              });
+              toast.error(
+                `OAuth succeeded but connection test failed: ${connectionResult.error}`,
+              );
+            }
+          } catch (connectionError) {
+            const errorMessage =
+              connectionError instanceof Error
+                ? connectionError.message
+                : "Unknown connection error";
+
+            setAppState((prev) => ({
+              ...prev,
+              servers: {
+                ...prev.servers,
+                [serverName]: {
+                  ...prev.servers[serverName],
+                  connectionStatus: "failed" as const,
+                  lastError: errorMessage,
+                },
+              },
+            }));
+
+            logger.error("OAuth connection test error", {
+              serverName,
+              error: errorMessage,
+            });
+            toast.error(
+              `OAuth succeeded but connection test failed: ${errorMessage}`,
+            );
+          }
+        } else {
+          throw new Error(result.error || "OAuth callback failed");
+        }
       } catch (error) {
-        toast.error(
-          `Failed to refresh token: ${error instanceof Error ? error.message : "Unknown error"}`,
-        );
-        logger.error("Token refresh failed", {
-          serverName,
-          error: error instanceof Error ? error.message : "Unknown error",
-        });
+        const errorMessage =
+          error instanceof Error ? error.message : "Unknown error";
+        toast.error(`Error completing OAuth flow: ${errorMessage}`);
+        logger.error("OAuth callback failed", { error: errorMessage });
       }
     },
-    [appState.servers],
+    [appState.servers, logger],
   );
 
   const getValidAccessToken = useCallback(
     async (serverName: string): Promise<string | null> => {
       const server = appState.servers[serverName];
-      if (!server?.oauthState?.accessToken) {
+      if (!server?.oauthTokens) {
         return null;
       }
 
-      // Check if token is expired or about to expire
-      if (isTokenExpired(server.oauthState.expiresAt)) {
-        try {
-          return await refreshOAuthToken(serverName);
-        } catch (error) {
-          logger.error("Failed to refresh token", {
-            serverName,
-            error: error instanceof Error ? error.message : "Unknown error",
-          });
-          return null;
-        }
-      }
-      logger.info("Access token retrieved", {
-        serverName,
-        accessToken: server.oauthState.accessToken,
-      });
-      return server.oauthState.accessToken;
+      // The SDK handles token refresh automatically
+      return server.oauthTokens.access_token || null;
     },
-    [appState.servers, isTokenExpired, refreshOAuthToken],
+    [appState.servers],
   );
 
   const handleDisconnect = useCallback(async (serverName: string) => {
     logger.info("Disconnecting from server", { serverName });
+
+    // Clear OAuth data
+    clearOAuthData(serverName);
+
     // Remove server from state (no API call needed for stateless architecture)
     setAppState((prev: AppState) => {
       const newServers = { ...prev.servers };
@@ -683,21 +581,7 @@ export function useAppState() {
       }));
 
       try {
-        // Check if OAuth token needs refresh
-        if (
-          server.oauthState?.accessToken &&
-          isTokenExpired(server.oauthState.expiresAt)
-        ) {
-          try {
-            await refreshOAuthToken(serverName);
-          } catch (error) {
-            logger.error("Failed to refresh token", {
-              serverName,
-              error: error instanceof Error ? error.message : "Unknown error",
-            });
-            // Continue with reconnection attempt even if token refresh fails
-          }
-        }
+        // OAuth token refresh is handled automatically by the SDK
 
         // Get the current server config (may have been updated with new tokens)
         const currentServer = appState.servers[serverName];
@@ -778,7 +662,7 @@ export function useAppState() {
         throw error;
       }
     },
-    [appState.servers, isTokenExpired, refreshOAuthToken],
+    [appState.servers],
   );
 
   // Effect to handle cleanup of reconnection timeouts (automatic retries disabled)
@@ -872,9 +756,7 @@ export function useAppState() {
     setSelectedMCPConfigs,
     toggleMultiSelectMode,
     toggleServerSelection,
-    refreshOAuthToken,
     getValidAccessToken,
-    isTokenExpired,
     setSelectedMultipleServersToAllServers,
   };
 }

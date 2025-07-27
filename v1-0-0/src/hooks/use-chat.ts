@@ -81,7 +81,7 @@ export function useChat(options: UseChatOptions = {}) {
 
   useEffect(() => {
     // Only set a model if we don't have one or the current model is not available
-    if (!model || !availableModels.some(m => m.id === model.id)) {
+    if (!model || !availableModels.some((m) => m.id === model.id)) {
       if (isOllamaRunning && ollamaModels.length > 0) {
         setModel(ollamaModels[0]);
       } else if (hasToken("anthropic")) {

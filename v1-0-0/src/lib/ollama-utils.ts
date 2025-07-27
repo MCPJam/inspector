@@ -84,13 +84,15 @@ export class OllamaClient {
 export const ollamaClient = new OllamaClient();
 
 // Utility functions
-export const detectOllamaModels = async (baseUrl?: string): Promise<{
+export const detectOllamaModels = async (
+  baseUrl?: string,
+): Promise<{
   isRunning: boolean;
   availableModels: string[];
 }> => {
   // Use a temporary client with the provided base URL if given
   const client = baseUrl ? new OllamaClient(baseUrl) : ollamaClient;
-  
+
   const isRunning = await client.isOllamaRunning();
 
   if (!isRunning) {

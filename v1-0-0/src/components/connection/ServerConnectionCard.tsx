@@ -45,7 +45,7 @@ export function ServerConnectionCard({
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
   const isHttpServer = server.config.url !== undefined;
-  const hasOAuth = server.oauthState || server.oauthFlow;
+  const hasOAuth = server.oauthTokens;
   const headers = server.config.requestInit?.headers as Record<string, string>;
   const manualBearerToken =
     headers?.Authorization?.startsWith("Bearer ") &&
@@ -65,15 +65,16 @@ export function ServerConnectionCard({
 
   // Calculate OAuth token expiration
   const getTokenStatus = () => {
-    if (!server.oauthState?.expiresAt) return null;
-    const timeLeft = server.oauthState.expiresAt - currentTime;
-    const totalTime = 3600000; // Assume 1 hour default
-    const percentage = Math.max(0, (timeLeft / totalTime) * 100);
-
+    if (!server.oauthTokens?.expires_in) return null;
+    // For simplicity, we'll just show that token is active
     return {
-      percentage,
-      timeLeft,
-      ...getTimeBreakdown(timeLeft),
+      percentage: 100,
+      timeLeft: 3600000, // 1 hour default
+      hours: 1,
+      minutes: 0,
+      seconds: 0,
+      isExpired: false,
+      isExpiringSoon: false,
     };
   };
 
@@ -108,6 +109,8 @@ export function ServerConnectionCard({
         return "Connected";
       case "connecting":
         return "Connecting...";
+      case "oauth-flow":
+        return "Authorizing...";
       case "failed":
         return `Failed (${server.retryCount} retries)`;
       case "disconnected":
@@ -121,6 +124,8 @@ export function ServerConnectionCard({
         return <Check className="h-3 w-3 text-green-500" />;
       case "connecting":
         return <Loader2 className="h-3 w-3 text-blue-500 animate-spin" />;
+      case "oauth-flow":
+        return <Loader2 className="h-3 w-3 text-purple-500 animate-spin" />;
       case "failed":
         return <X className="h-3 w-3 text-red-500" />;
       case "disconnected":
@@ -152,9 +157,11 @@ export function ServerConnectionCard({
                       ? "#10b981"
                       : server.connectionStatus === "connecting"
                         ? "#3b82f6"
-                        : server.connectionStatus === "failed"
-                          ? "#ef4444"
-                          : "#9ca3af",
+                        : server.connectionStatus === "oauth-flow"
+                          ? "#a855f7"
+                          : server.connectionStatus === "failed"
+                            ? "#ef4444"
+                            : "#9ca3af",
                 }}
               />
               <div className="min-w-0 flex-1">
@@ -190,7 +197,9 @@ export function ServerConnectionCard({
                   <DropdownMenuItem
                     onClick={handleReconnect}
                     disabled={
-                      isReconnecting || server.connectionStatus === "connecting"
+                      isReconnecting ||
+                      server.connectionStatus === "connecting" ||
+                      server.connectionStatus === "oauth-flow"
                     }
                     className="text-xs cursor-pointer"
                   >
@@ -275,7 +284,7 @@ export function ServerConnectionCard({
           {isExpanded && hasExpandableContent && (
             <div className="space-y-3 pt-2">
               {/* Manual Bearer Token Information - only show if no OAuth */}
-              {manualBearerToken && !server.oauthState && (
+              {manualBearerToken && !server.oauthTokens && (
                 <div className="space-y-2">
                   <div className="space-y-3 text-xs">
                     <div>
@@ -306,7 +315,7 @@ export function ServerConnectionCard({
               )}
 
               {/* OAuth Information */}
-              {server.oauthState && (
+              {server.oauthTokens && (
                 <div className="space-y-2">
                   <div className="space-y-3 text-xs">
                     <div>
@@ -315,12 +324,12 @@ export function ServerConnectionCard({
                       </span>
                       <div className="font-mono text-foreground break-all bg-muted/30 p-2 rounded mt-1 relative group">
                         <div className="pr-8">
-                          {server.oauthState.accessToken}
+                          {server.oauthTokens.access_token}
                         </div>
                         <button
                           onClick={() =>
                             copyToClipboard(
-                              server.oauthState?.accessToken || "",
+                              server.oauthTokens?.access_token || "",
                               "accessToken",
                             )
                           }
@@ -340,12 +349,12 @@ export function ServerConnectionCard({
                       </span>
                       <div className="font-mono text-foreground break-all bg-muted/30 p-2 rounded mt-1 relative group">
                         <div className="pr-8">
-                          {server.oauthState.clientId || "N/A"}
+                          {server.oauthTokens.client_id || "N/A"}
                         </div>
                         <button
                           onClick={() =>
                             copyToClipboard(
-                              server.oauthState?.clientId || "N/A",
+                              server.oauthTokens?.client_id || "N/A",
                               "clientId",
                             )
                           }
@@ -359,13 +368,13 @@ export function ServerConnectionCard({
                         </button>
                       </div>
                     </div>
-                    {server.oauthState.scopes.length > 0 && (
+                    {server.oauthTokens.scope && (
                       <div>
                         <span className="text-muted-foreground font-medium">
                           Scopes:
                         </span>
                         <div className="font-mono text-foreground break-all bg-muted/30 p-2 rounded mt-1">
-                          {server.oauthState.scopes.join(", ")}
+                          {server.oauthTokens.scope}
                         </div>
                       </div>
                     )}
