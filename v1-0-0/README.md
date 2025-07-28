@@ -1,304 +1,161 @@
-# MCP Inspector v1.0.0 (Hack)
+<div align="center">
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./public/mcp_jam_dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="./public/mcp_jam_light.png">
+  <img width="250" alt="MCPJam Inspector V1 logo" src="./public/mcp_jam_light.png">
+</picture>
+
+<br/>
+
+# Inspector
+
+[![npm version](https://img.shields.io/npm/v/@mcpjam/inspector?style=for-the-badge&color=blue)](https://www.npmjs.com/package/@mcpjam/inspector)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=for-the-badge)](https://opensource.org/licenses/Apache-2.0)
 [![Discord](https://img.shields.io/badge/Discord-Join%20Server-5865F2.svg?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/JEnDtz8X6z)
 
-A modern, enterprise-grade Model Context Protocol (MCP) development tool built with Next.js and Mastra. This is the v1.0.0 implementation of the MCPJam Inspector, designed to provide developers with a comprehensive testing and debugging environment for MCP servers.
+</div>
 
-## What is MCP Inspector?
+A developer tool for testing, debugging Model Context Protocol (MCP) servers. It connects to any MCP server and allows you to manually test every part of your server. The project is open source and fully compliant to the MCP spec.
 
-MCP Inspector is a developer tool that allows you to connect to, test, and debug Model Context Protocol (MCP) servers. It provides an intuitive web interface for interacting with MCP tools, resources, prompts, and testing the complete OAuth flow for remote MCP servers.
+## ✨ Key Features
 
-### Key Features
+| Feature                      | Description                                                                                                                              |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| **Full MCP Spec Compliance** | Test your MCP server's tools, resources, prompts, and OAuth 2. MCPJam has full up to date MCP spec compliance.                           |
+| **All transports supported** | Connect to any MCP server. MCPJam inspector has support for STDIO, SSE, and Streamable HTTP servers.                                     |
+| **LLM Playground**           | Integrated chat playground with OpenAI, Anthropic Claude, and Ollama model support. Test how your MCp server would behave against an LLM |
+| **Debugging**                | Comprehensive logging, tracing, and error reporting for MCP server development                                                           |
+| **Developer Experience**     | Connect to multiple MCP servers. Save configurations. Upgraded UI/UX for modern dev experience.                                          |
 
-- **Multi-Protocol Support**: Connect to MCP servers via STDIO, SSE, and Streamable HTTP
-- **OAuth Integration**: Full OAuth 2.0 flow with PKCE for secure remote connections
-- **Real-time Testing**: Interactive tool execution, resource browsing, and prompt testing
-- **LLM Playground**: Test MCP servers with various AI models (Anthropic, OpenAI, Ollama)
-- **Multiple Connections**: Connect and manage multiple MCP servers simultaneously
-- **Persistent State**: Connections and configurations are saved locally
-- **Enterprise-Ready**: Built with TypeScript, proper error handling, and comprehensive logging
+## 📸 Screenshots
 
-## How It Works
+  <img alt="MCPJam Inspector Demo" src="./public/demo_1.png">
 
-MCP Inspector acts as an MCP client that connects to your MCP servers and provides a web interface for testing and debugging. The architecture includes:
+## 🚀 Quick Start
 
-1. **Frontend (Next.js)**: React-based UI with TypeScript for type safety
-2. **API Layer**: Next.js API routes that handle MCP communications
-3. **MCP Integration**: Uses Mastra's MCP client for protocol compliance
-4. **OAuth Flow**: Complete OAuth 2.0 implementation with dynamic client registration
-
-### Supported MCP Capabilities
-
-- ✅ **Tools**: Execute MCP tools with parameter validation and error handling
-- ✅ **Resources**: Browse and read MCP server resources
-- ✅ **Prompts**: Display and test MCP server prompts
-- ✅ **OAuth**: Complete OAuth 2.0 flow with PKCE and token refresh
-- ✅ **Multiple Transports**: STDIO, SSE, and Streamable HTTP support
-- 🚧 **Sampling**: LLM sampling (playground integration)
-- 🚧 **Roots**: Client root exposure (planned)
-- 🚧 **Elicitation**: Interactive tool elicitation (planned)
-
-## Project Structure
-
-```
-src/
-├── app/
-│   ├── api/                    # Next.js API routes
-│   │   ├── mcp/               # MCP protocol endpoints
-│   │   │   ├── tools/         # Tool listing and execution
-│   │   │   ├── resources/     # Resource operations
-│   │   │   ├── prompts/       # Prompt operations
-│   │   │   └── test-connection/ # Connection testing
-│   │   └── oauth/             # OAuth flow endpoints
-│   │       ├── discover/      # OAuth server discovery
-│   │       ├── register/      # Dynamic client registration
-│   │       └── token/         # Token exchange
-│   ├── oauth/callback/        # OAuth callback handler
-│   ├── layout.tsx             # Root layout component
-│   └── page.tsx               # Main application page
-├── components/                 # React components
-│   ├── ServerConnection.tsx   # Server connection management
-│   ├── ToolsTab.tsx          # Tools testing interface
-│   ├── ResourcesTab.tsx      # Resources browser
-│   ├── PromptsTab.tsx        # Prompts interface
-│   ├── ChatTab.tsx           # LLM playground
-│   └── ui/                   # Shared UI components
-├── hooks/
-│   └── useAppState.ts        # Application state management
-├── lib/                      # Utility libraries
-│   ├── types.ts              # TypeScript definitions
-│   ├── mcp-utils.ts          # MCP client utilities
-│   └── oauth-*.ts            # OAuth implementation
-└── globals.css               # Global styles
-```
-
-## Getting Started
-
-### Prerequisites
-
-- Node.js 18+
-- npm or yarn
-- A Model Context Protocol (MCP) server to test
-
-### Installation
-
-1. **Clone and setup the project:**
-
-   ```bash
-   cd v1-0-0
-   npm install
-   ```
-
-2. **Start the development server:**
-
-   ```bash
-   npm run dev
-   ```
-
-3. **Open your browser:**
-   Navigate to [http://localhost:3000](http://localhost:3000)
-
-### Quick Start Example
-
-1. **Connect to a local MCP server:**
-   - Go to the "Servers" tab
-   - Select "STDIO" connection type
-   - Enter command: `npx @modelcontextprotocol/server-everything`
-   - Click "Connect"
-
-2. **Test the connection:**
-   - Navigate to the "Tools" tab
-   - Try executing available tools
-   - Check the "Resources" tab for available resources
-
-3. **Connect to a remote server with OAuth:**
-   - Select "HTTP" connection type
-   - Enter your server URL
-   - Enable OAuth and set scopes
-   - Follow the OAuth flow
-
-## Technology Stack
-
-### Core Technologies
-
-- **[Next.js 15](https://nextjs.org/)**: React framework with App Router
-- **[React 19](https://react.dev/)**: UI library with modern hooks
-- **[TypeScript](https://www.typescriptlang.org/)**: Type-safe development
-- **[Tailwind CSS](https://tailwindcss.com/)**: Utility-first CSS framework
-
-### MCP Integration
-
-- **[@mastra/mcp](https://mastra.ai/)**: MCP client implementation
-- **[@modelcontextprotocol/sdk](https://github.com/modelcontextprotocol/sdk)**: Official MCP SDK types
-
-### UI Components
-
-- **[Lucide React](https://lucide.dev/)**: Icon library
-- **Custom UI Components**: Based on modern design patterns
-- **Responsive Design**: Mobile-friendly interface
-
-### Development Tools
-
-- **ESLint**: Code linting and formatting
-- **PostCSS**: CSS processing
-- **Zod**: Runtime type validation
-
-## Development
-
-### Available Scripts
+Start up the MCPJam inspector:
 
 ```bash
-# Development
-npm run dev          # Start development server with Turbopack
-npm run build        # Build for production
-npm run start        # Start production server
-npm run lint         # Run ESLint
-
-# Type checking (if configured)
-npm run type-check   # Run TypeScript compiler checks
+npx @mcpjam/inspector
 ```
 
-### Development Workflow
+Other commands:
 
-1. **Start the dev server**: `npm run dev`
-2. **Make your changes**: Edit files in `src/`
-3. **Test changes**: Use the web interface at localhost:3000
-4. **Format code**: Run `npm run lint` before committing
-5. **Build**: Test production build with `npm run build`
+```bash
+# Launch with custom port
+npx @mcpjam/inspector --port 4000
 
-### Adding New MCP Capabilities
-
-1. **Add API routes**: Create new endpoints in `src/app/api/mcp/`
-2. **Update types**: Add TypeScript definitions in `src/lib/types.ts`
-3. **Create UI components**: Add React components in `src/components/`
-4. **Update state management**: Modify `src/hooks/useAppState.ts`
-
-### Environment Variables
-
-Create a `.env.local` file for environment-specific configuration:
-
-```env
-# Optional: Configure OAuth settings
-OAUTH_CLIENT_NAME="MCP Inspector Dev"
-OAUTH_REDIRECT_URI="http://localhost:3000/oauth/callback"
-
-# Optional: Configure timeouts
-MCP_CONNECTION_TIMEOUT=30000
+# Launch with Ollama (ollama installation required)
+npx @mcpjam/inspector --ollama llama3.2
 ```
 
-## Configuration
+## Requirements
 
-### Server Configuration
+[![Node.js](https://img.shields.io/badge/Node.js-20+-green.svg?style=for-the-badge&logo=node.js)](https://nodejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5+-blue.svg?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
+[![Next.js](https://img.shields.io/badge/Next.js-15.4+-black.svg?style=for-the-badge&logo=next.js)](https://nextjs.org/)
 
-Servers can be configured through the UI or by loading a configuration file. The configuration supports:
+## 🏗️ Architecture
 
-```typescript
-{
-  name: string;           // Server display name
-  type: "stdio" | "http"; // Connection type
+MCPJam Inspector V1 is built as a modern Next.js application with integrated MCP capabilities:
 
-  // STDIO servers
-  command?: string;       // Command to execute
-  args?: string[];        // Command arguments
-  env?: Record<string, string>; // Environment variables
-
-  // HTTP servers
-  url?: string;          // Server URL
-  headers?: Record<string, string>; // Custom headers
-  useOAuth?: boolean;    // Enable OAuth flow
-  oauthScopes?: string[]; // OAuth scopes
-}
+```
+📦 @mcpjam/inspector-v1
+├── 🎨 src/app/              # Next.js 15 App Router
+├── 🧩 src/components/       # React components with Radix UI
+├── 🔧 src/lib/             # Utility functions and helpers
+├── 🎯 src/hooks/           # Custom React hooks
+├── 📱 src/stores/          # Zustand state management
+├── 🎨 src/styles/          # Tailwind CSS themes
+└── 🚀 bin/                # CLI launcher script
 ```
 
-### OAuth Configuration
+### Tech Stack
 
-OAuth servers must support:
-
-- OAuth 2.0 Authorization Code flow with PKCE
-- Dynamic Client Registration (RFC 7591)
-- Token refresh capabilities
-
-## Contributing
-
-We welcome contributions to MCP Inspector! Here's how to get started:
-
-### Setting Up for Development
-
-1. **Fork the repository**
-2. **Clone your fork:**
-   ```bash
-   git clone https://github.com/your-username/inspector.git
-   cd inspector/v1-0-0
-   ```
-3. **Install dependencies:**
-   ```bash
-   npm install
-   ```
-4. **Start development:**
-   ```bash
-   npm run dev
-   ```
-
-### Contribution Guidelines
-
-- **Code Style**: Follow the existing TypeScript and React patterns
-- **Testing**: Test your changes with multiple MCP servers
-- **Documentation**: Update README.md if adding new features
-- **Types**: Maintain strong TypeScript typing
-- **UI**: Follow the existing design patterns and accessibility guidelines
-
-### Areas for Contribution
-
-- **Protocol Compliance**: Help implement missing MCP capabilities
-- **UI/UX Improvements**: Enhance the user interface and experience
-- **Testing**: Add automated tests for better reliability
-- **Documentation**: Improve guides and API documentation
-- **Performance**: Optimize connection handling and UI performance
-- **Accessibility**: Improve accessibility features
-
-### Reporting Issues
-
-Please report bugs and feature requests through [GitHub Issues](https://github.com/MCPJam/inspector/issues).
-
-### Community
-
-Join our community:
-
-- **Discord**: [MCPJam Discord Server](https://discord.gg/JEnDtz8X6z)
-- **GitHub**: [MCPJam Inspector Repository](https://github.com/MCPJam/inspector)
-- **Website**: [mcpjam.com](https://www.mcpjam.com/)
-
-## Roadmap
-
-### v1.0.0 Goals
-
-- ✅ **Mastra Integration**: Migrate to industry-standard MCP client
-- ✅ **OAuth Flow**: Complete OAuth 2.0 implementation with PKCE
-- ✅ **UI Overhaul**: Modern, enterprise-grade interface
-- 🚧 **Full Spec Compliance**: Implement all MCP capabilities
-- 🚧 **CLI Shortcuts**: Direct server connection from command line
-- 🚧 **Testing Framework**: Automated MCP server testing
-
-### Future Releases
-
-- **v1.1**: CLI mode and automation features
-- **v1.2**: Advanced debugging and logging
-- **v1.3**: Plugin system for extensibility
-- **v2.0**: Multi-project workspace support
-
-## License
-
-This project is open source. See the LICENSE file for details.
-
-## Acknowledgments
-
-- **MCP Community**: For feedback and contributions
-- **Anthropic**: For the Model Context Protocol specification
-- **Mastra Team**: For the excellent MCP client implementation
-- **Contributors**: Everyone who has helped improve this project
+- **Framework**: Next.js 15.4 with App Router and React 19
+- **Styling**: Tailwind CSS 4.x with custom themes and Radix UI components
+- **MCP Integration**: Mastra framework (@mastra/core, @mastra/mcp)
+- **AI Integration**: AI SDK with OpenAI, Anthropic, and Ollama providers
 
 ---
 
-**Built with ❤️ by the MCPJam community**
+## 🛠️ Development
 
-For more information, visit [mcpjam.com](https://www.mcpjam.com/) or join our [Discord](https://discord.gg/JEnDtz8X6z).
+### Local Development Setup
+
+```bash
+# Clone the repository
+git clone https://github.com/mcpjam/inspector.git
+cd inspector
+
+# Install dependencies
+npm install
+
+# Start development server
+npm run dev
+```
+
+The development server will start at `http://localhost:3000` with hot reloading enabled.
+
+### Build for Production
+
+```bash
+# Build the application
+npm run build
+
+# Start production server
+npm run start
+```
+
+### Available Scripts
+
+| Script                 | Description                                     |
+| ---------------------- | ----------------------------------------------- |
+| `npm run dev`          | Start Next.js development server with Turbopack |
+| `npm run build`        | Build the application for production            |
+| `npm run start`        | Start the production server                     |
+| `npm run lint`         | Run ESLint code linting                         |
+| `npm run prettier-fix` | Format code with Prettier                       |
+
+---
+
+## 🤝 Contributing
+
+We welcome contributions to MCPJam Inspector V1! Please read our [CONTRIBUTING.md](./CONTRIBUTING.md) for development guidelines and best practices.
+
+### Development Workflow
+
+1. **Fork** the repository
+2. **Create** a feature branch (`git checkout -b feature/amazing-feature`)
+3. **Develop** your changes with proper testing
+4. **Format** code with `npm run prettier-fix`
+5. **Lint** code with `npm run lint`
+6. **Commit** your changes (`git commit -m 'Add amazing feature'`)
+7. **Push** to your branch (`git push origin feature/amazing-feature`)
+8. **Open** a Pull Request
+
+## 📚 Resources
+
+- **💬 Discord**: [Join the MCPJam Community](https://discord.gg/JEnDtz8X6z)
+- **📖 MCP Protocol**: [Model Context Protocol Documentation](https://modelcontextprotocol.io/)
+- **🔧 Mastra Framework**: [Mastra MCP Integration](https://github.com/mastra-ai/mastra)
+- **⚛️ Next.js**: [Next.js 15 Documentation](https://nextjs.org/docs)
+- **🎨 Radix UI**: [Component Library](https://www.radix-ui.com/)
+- **🤖 AI SDK**: [Vercel AI SDK](https://sdk.vercel.ai/)
+
+---
+
+## 📄 License
+
+This project is licensed under the **Apache License 2.0** - see the [LICENSE](LICENSE) file for details.
+
+---
+
+<div align="center">
+
+**MCPJam Inspector V1** • Built with Next.js and ❤️ for the MCP community
+
+[🌐 Website](https://mcpjam.com) • [📖 Docs](https://modelcontextprotocol.io/) • [🐛 Issues](https://github.com/mcpjam/inspector-v1/issues)
+
+</div>
