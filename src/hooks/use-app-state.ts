@@ -5,6 +5,7 @@ import {
   handleOAuthCallback,
   getStoredTokens,
   clearOAuthData,
+  refreshOAuthTokens,
 } from "@/lib/mcp-oauth";
 import {
   MastraMCPServerDefinition,
@@ -581,17 +582,46 @@ export function useAppState() {
       }));
 
       try {
-        // OAuth token refresh is handled automatically by the SDK
+        let serverConfig = server.config;
 
-        // Get the current server config (may have been updated with new tokens)
-        const currentServer = appState.servers[serverName];
+        // If server has OAuth tokens, try to refresh them
+        if (server.oauthTokens) {
+          logger.info("Attempting to refresh OAuth tokens", { serverName });
+          const refreshResult = await refreshOAuthTokens(serverName);
+
+          if (refreshResult.success && refreshResult.serverConfig) {
+            logger.info("OAuth tokens refreshed successfully", { serverName });
+            serverConfig = refreshResult.serverConfig;
+
+            // Update server state with refreshed config and tokens
+            setAppState((prev) => ({
+              ...prev,
+              servers: {
+                ...prev.servers,
+                [serverName]: {
+                  ...prev.servers[serverName],
+                  config: refreshResult.serverConfig!,
+                  oauthTokens: getStoredTokens(serverName),
+                },
+              },
+            }));
+          } else {
+            logger.warn(
+              "OAuth token refresh failed, attempting with existing tokens",
+              {
+                serverName,
+                error: refreshResult.error,
+              },
+            );
+          }
+        }
 
         // Test connection using the stateless endpoint
         const response = await fetch("/api/mcp/connect", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            serverConfig: currentServer.config,
+            serverConfig,
           }),
         });
 
@@ -599,7 +629,6 @@ export function useAppState() {
 
         if (result.success) {
           // Update status to connected and reset retry count
-
           setAppState((prev) => ({
             ...prev,
             servers: {

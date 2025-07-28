@@ -244,6 +244,61 @@ export async function waitForTokens(
 }
 
 /**
+ * Refreshes OAuth tokens for a server using the refresh token
+ */
+export async function refreshOAuthTokens(
+  serverName: string,
+): Promise<OAuthResult> {
+  try {
+    const provider = new MCPOAuthProvider(serverName);
+    const existingTokens = provider.tokens();
+
+    if (!existingTokens?.refresh_token) {
+      return {
+        success: false,
+        error: "No refresh token available",
+      };
+    }
+
+    // Get server URL
+    const serverUrl = localStorage.getItem(`mcp-serverUrl-${serverName}`);
+    if (!serverUrl) {
+      return {
+        success: false,
+        error: "Server URL not found for token refresh",
+      };
+    }
+
+    const result = await auth(provider, {
+      serverUrl,
+      refreshToken: existingTokens.refresh_token,
+      scope: "mcp:*",
+    });
+
+    if (result === "AUTHORIZED") {
+      const tokens = provider.tokens();
+      if (tokens) {
+        const serverConfig = createServerConfig(serverUrl, tokens);
+        return {
+          success: true,
+          serverConfig,
+        };
+      }
+    }
+
+    return {
+      success: false,
+      error: "Token refresh failed",
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown refresh error",
+    };
+  }
+}
+
+/**
  * Clears all OAuth data for a server
  */
 export function clearOAuthData(serverName: string): void {
