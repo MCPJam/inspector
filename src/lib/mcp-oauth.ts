@@ -43,7 +43,7 @@ class MCPOAuthProvider implements OAuthClientProvider {
       redirect_uris: [this.redirectUri],
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
-      token_endpoint_auth_method: "none", // PKCE only
+      token_endpoint_auth_method: "client_secret_post",
       scope: "mcp:*",
     };
   }
