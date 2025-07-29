@@ -56,7 +56,7 @@ class MCPOAuthProvider implements OAuthClientProvider {
   async saveClientInformation(clientInformation: any) {
     localStorage.setItem(
       `mcp-client-${this.serverName}`,
-      JSON.stringify(clientInformation),
+      JSON.stringify(clientInformation)
     );
   }
 
@@ -68,7 +68,7 @@ class MCPOAuthProvider implements OAuthClientProvider {
   async saveTokens(tokens: any) {
     localStorage.setItem(
       `mcp-tokens-${this.serverName}`,
-      JSON.stringify(tokens),
+      JSON.stringify(tokens)
     );
   }
 
@@ -115,7 +115,7 @@ class MCPOAuthProvider implements OAuthClientProvider {
  * Initiates OAuth flow for an MCP server
  */
 export async function initiateOAuth(
-  options: MCPOAuthOptions,
+  options: MCPOAuthOptions
 ): Promise<OAuthResult> {
   try {
     const provider = new MCPOAuthProvider(options.serverName);
@@ -123,7 +123,7 @@ export async function initiateOAuth(
     // Store server URL for callback recovery
     localStorage.setItem(
       `mcp-serverUrl-${options.serverName}`,
-      options.serverUrl,
+      options.serverUrl
     );
     localStorage.setItem("mcp-oauth-pending", options.serverName);
 
@@ -165,7 +165,7 @@ export async function initiateOAuth(
  * Handles OAuth callback and completes the flow
  */
 export async function handleOAuthCallback(
-  authorizationCode: string,
+  authorizationCode: string
 ): Promise<OAuthResult & { serverName?: string }> {
   try {
     // Get pending server name from localStorage
@@ -228,7 +228,7 @@ export function getStoredTokens(serverName: string): any {
  */
 export async function waitForTokens(
   serverName: string,
-  timeoutMs: number = 5000,
+  timeoutMs: number = 5000
 ): Promise<any> {
   const startTime = Date.now();
 
@@ -247,7 +247,7 @@ export async function waitForTokens(
  * Refreshes OAuth tokens for a server using the refresh token
  */
 export async function refreshOAuthTokens(
-  serverName: string,
+  serverName: string
 ): Promise<OAuthResult> {
   try {
     const provider = new MCPOAuthProvider(serverName);
@@ -271,7 +271,6 @@ export async function refreshOAuthTokens(
 
     const result = await auth(provider, {
       serverUrl,
-      refreshToken: existingTokens.refresh_token,
       scope: "mcp:*",
     });
 
@@ -313,7 +312,7 @@ export function clearOAuthData(serverName: string): void {
  */
 function createServerConfig(
   serverUrl: string,
-  tokens: any,
+  tokens: any
 ): HttpServerDefinition {
   return {
     url: new URL(serverUrl),
