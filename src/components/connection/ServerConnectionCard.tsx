@@ -40,10 +40,8 @@ export function ServerConnectionCard({
 }: ServerConnectionCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isReconnecting, setIsReconnecting] = useState(false);
-  const [currentTime, setCurrentTime] = useState(Date.now());
   const [isErrorExpanded, setIsErrorExpanded] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
-  console.log("server", server);
   const isHttpServer = server.config.url !== undefined;
   const hasOAuth = server.oauthTokens;
   const headers = server.config.requestInit?.headers as Record<string, string>;
@@ -53,15 +51,6 @@ export function ServerConnectionCard({
 
   // Show expandable section if there's OAuth data, manual Bearer token, or STDIO server
   const hasExpandableContent = hasOAuth || manualBearerToken || !isHttpServer;
-
-  // Update current time every second for live countdown
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setCurrentTime(Date.now());
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, []);
 
   // Calculate OAuth token expiration
   const getTokenStatus = () => {
@@ -156,12 +145,12 @@ export function ServerConnectionCard({
                     server.connectionStatus === "connected"
                       ? "#10b981"
                       : server.connectionStatus === "connecting"
-                      ? "#3b82f6"
-                      : server.connectionStatus === "oauth-flow"
-                      ? "#a855f7"
-                      : server.connectionStatus === "failed"
-                      ? "#ef4444"
-                      : "#9ca3af",
+                        ? "#3b82f6"
+                        : server.connectionStatus === "oauth-flow"
+                          ? "#a855f7"
+                          : server.connectionStatus === "failed"
+                            ? "#ef4444"
+                            : "#9ca3af",
                 }}
               />
               <div className="min-w-0 flex-1">
@@ -245,8 +234,8 @@ export function ServerConnectionCard({
                 {isErrorExpanded
                   ? server.lastError
                   : server.lastError.length > 100
-                  ? `${server.lastError.substring(0, 100)}...`
-                  : server.lastError}
+                    ? `${server.lastError.substring(0, 100)}...`
+                    : server.lastError}
               </div>
               {server.lastError.length > 100 && (
                 <button
@@ -365,8 +354,8 @@ export function ServerConnectionCard({
                           tokenStatus.isExpired
                             ? "text-red-500"
                             : tokenStatus.isExpiringSoon
-                            ? "text-yellow-500"
-                            : "text-green-500"
+                              ? "text-yellow-500"
+                              : "text-green-500"
                         }`}
                       >
                         {formatTimeRemaining(tokenStatus.timeLeft)}
