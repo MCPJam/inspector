@@ -7,6 +7,7 @@ import { Plus, Database } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { ServerConnectionCard } from "./connection/ServerConnectionCard";
 import { AddServerModal } from "./connection/AddServerModal";
+import { EditServerModal } from "./connection/EditServerModal";
 import { ServerFormData } from "@/lib/types";
 import { MCPIcon } from "./ui/mcp-icon";
 
@@ -15,6 +16,7 @@ interface ServersTabProps {
   onConnect: (formData: ServerFormData) => void;
   onDisconnect: (serverName: string) => void;
   onReconnect: (serverName: string) => void;
+  onUpdate: (originalServerName: string, formData: ServerFormData) => void;
 }
 
 export function ServersTab({
@@ -22,8 +24,11 @@ export function ServersTab({
   onConnect,
   onDisconnect,
   onReconnect,
+  onUpdate,
 }: ServersTabProps) {
   const [isAddingServer, setIsAddingServer] = useState(false);
+  const [isEditingServer, setIsEditingServer] = useState(false);
+  const [serverToEdit, setServerToEdit] = useState<ServerWithName | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [filterType, setFilterType] = useState<"all" | "stdio" | "http">("all");
 
@@ -50,6 +55,16 @@ export function ServersTab({
 
   const connectedCount = Object.keys(connectedServerConfigs).length;
 
+  const handleEditServer = (server: ServerWithName) => {
+    setServerToEdit(server);
+    setIsEditingServer(true);
+  };
+
+  const handleCloseEditModal = () => {
+    setIsEditingServer(false);
+    setServerToEdit(null);
+  };
+
   return (
     <div className="space-y-6 p-8">
       {/* Header Section */}
@@ -74,6 +89,7 @@ export function ServersTab({
               server={server}
               onDisconnect={onDisconnect}
               onReconnect={onReconnect}
+              onEdit={handleEditServer}
             />
           ))}
         </div>
@@ -114,6 +130,16 @@ export function ServersTab({
         onClose={() => setIsAddingServer(false)}
         onConnect={onConnect}
       />
+
+      {/* Edit Server Modal */}
+      {serverToEdit && (
+        <EditServerModal
+          isOpen={isEditingServer}
+          onClose={handleCloseEditModal}
+          onUpdate={onUpdate}
+          server={serverToEdit}
+        />
+      )}
     </div>
   );
 }

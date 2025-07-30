@@ -41,6 +41,7 @@ export default function Home() {
     handleConnect,
     handleDisconnect,
     handleReconnect,
+    handleUpdate,
     setSelectedServer,
     toggleServerSelection,
     selectedMCPConfigsMap,
@@ -105,6 +106,7 @@ export default function Home() {
               onConnect={handleConnect}
               onDisconnect={handleDisconnect}
               onReconnect={handleReconnect}
+              onUpdate={handleUpdate}
             />
           )}
 

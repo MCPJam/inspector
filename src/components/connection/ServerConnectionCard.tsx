@@ -23,6 +23,7 @@ import {
   Check,
   X,
   Wifi,
+  Edit,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { formatTimeRemaining, getTimeBreakdown } from "@/lib/utils";
@@ -31,12 +32,14 @@ interface ServerConnectionCardProps {
   server: ServerWithName;
   onDisconnect: (serverName: string) => void;
   onReconnect: (serverName: string) => void;
+  onEdit: (server: ServerWithName) => void;
 }
 
 export function ServerConnectionCard({
   server,
   onDisconnect,
   onReconnect,
+  onEdit,
 }: ServerConnectionCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isReconnecting, setIsReconnecting] = useState(false);
@@ -199,6 +202,13 @@ export function ServerConnectionCard({
                     )}
                     {isReconnecting ? "Reconnecting..." : "Reconnect"}
                   </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => onEdit(server)}
+                    className="text-xs cursor-pointer"
+                  >
+                    <Edit className="h-3 w-3 mr-2" />
+                    Edit
+                  </DropdownMenuItem>
                   <Separator />
                   <DropdownMenuItem
                     className="text-destructive text-xs cursor-pointer"
@@ -286,7 +296,7 @@ export function ServerConnectionCard({
                           onClick={() =>
                             copyToClipboard(
                               manualBearerToken,
-                              "manualBearerToken"
+                              "manualBearerToken",
                             )
                           }
                           className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
@@ -319,7 +329,7 @@ export function ServerConnectionCard({
                           onClick={() =>
                             copyToClipboard(
                               server.oauthTokens?.access_token || "",
-                              "accessToken"
+                              "accessToken",
                             )
                           }
                           className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
@@ -402,7 +412,7 @@ export function ServerConnectionCard({
                                 <span className="text-blue-600">{key}</span>=
                                 <span className="text-green-600">{value}</span>
                               </div>
-                            )
+                            ),
                           )}
                         </div>
                       </div>

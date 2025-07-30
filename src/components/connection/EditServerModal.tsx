@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
@@ -12,18 +12,21 @@ import {
   SelectValue,
 } from "../ui/select";
 import { ServerFormData } from "@/lib/types";
+import { ServerWithName } from "@/hooks/use-app-state";
 
-interface AddServerModalProps {
+interface EditServerModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onConnect: (formData: ServerFormData) => void;
+  onUpdate: (originalServerName: string, formData: ServerFormData) => void;
+  server: ServerWithName;
 }
 
-export function AddServerModal({
+export function EditServerModal({
   isOpen,
   onClose,
-  onConnect,
-}: AddServerModalProps) {
+  onUpdate,
+  server,
+}: EditServerModalProps) {
   const [serverFormData, setServerFormData] = useState<ServerFormData>({
     name: "",
     type: "stdio",
@@ -42,6 +45,83 @@ export function AddServerModal({
   const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>(
     [],
   );
+
+  // Convert ServerWithName to ServerFormData format
+  const convertServerConfig = (server: ServerWithName): ServerFormData => {
+    const config = server.config;
+    const isHttpServer = "url" in config;
+
+    if (isHttpServer) {
+      // Extract bearer token from headers if present
+      const headers =
+        (config.requestInit?.headers as Record<string, string>) || {};
+      const hasOAuth = server.oauthTokens != null;
+
+      return {
+        name: server.name,
+        type: "http",
+        url: config.url?.toString() || "",
+        headers: headers,
+        useOAuth: hasOAuth,
+        oauthScopes: server.oauthTokens?.scope?.split(" ") || ["mcp:*"],
+      };
+    } else {
+      // STDIO server
+      return {
+        name: server.name,
+        type: "stdio",
+        command: config.command || "",
+        args: config.args || [],
+        env: config.env || {},
+      };
+    }
+  };
+
+  // Initialize form with server data
+  useEffect(() => {
+    if (server && isOpen) {
+      const formData = convertServerConfig(server);
+      setServerFormData(formData);
+
+      // Set additional form state
+      if (formData.type === "stdio") {
+        const command = formData.command || "";
+        const args = formData.args || [];
+        setCommandInput([command, ...args].join(" "));
+
+        // Convert env object to key-value pairs
+        const envEntries = Object.entries(formData.env || {}).map(
+          ([key, value]) => ({
+            key,
+            value,
+          }),
+        );
+        setEnvVars(envEntries);
+      } else {
+        // HTTP server
+        const headers = formData.headers || {};
+        const authHeader = headers.Authorization;
+        const hasBearerToken = authHeader?.startsWith("Bearer ");
+        const hasOAuth = formData.useOAuth;
+
+        if (hasOAuth) {
+          setAuthType("oauth");
+          setOauthScopesInput(formData.oauthScopes?.join(" ") || "mcp:*");
+          // Ensure useOAuth is true when we have OAuth tokens
+          setServerFormData((prev) => ({ ...prev, useOAuth: true }));
+        } else if (hasBearerToken) {
+          setAuthType("bearer");
+          setBearerToken(authHeader.slice(7)); // Remove 'Bearer ' prefix
+          // Ensure useOAuth is false for bearer token
+          setServerFormData((prev) => ({ ...prev, useOAuth: false }));
+        } else {
+          setAuthType("none");
+          // Ensure useOAuth is false for no auth
+          setServerFormData((prev) => ({ ...prev, useOAuth: false }));
+        }
+      }
+    }
+  }, [server, isOpen]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -70,6 +150,7 @@ export function AddServerModal({
           finalFormData = {
             ...finalFormData,
             useOAuth: false,
+            headers: {}, // Clear any existing auth headers
           };
         } else if (authType === "bearer" && bearerToken) {
           finalFormData = {
@@ -80,46 +161,26 @@ export function AddServerModal({
             },
             useOAuth: false,
           };
-        } else if (
-          authType === "oauth" &&
-          serverFormData.useOAuth &&
-          oauthScopesInput
-        ) {
+        } else if (authType === "oauth" && oauthScopesInput) {
           const scopes = oauthScopesInput
             .split(" ")
             .filter((scope) => scope.trim());
-          finalFormData = { ...finalFormData, oauthScopes: scopes };
+          finalFormData = {
+            ...finalFormData,
+            useOAuth: true,
+            oauthScopes: scopes,
+            headers: {}, // Clear any existing auth headers for OAuth
+          };
         }
       }
 
-      onConnect(finalFormData);
-      resetForm();
+      onUpdate(server.name, finalFormData);
       onClose();
     }
   };
 
   const handleClose = () => {
-    resetForm();
     onClose();
-  };
-
-  const resetForm = () => {
-    setServerFormData({
-      name: "",
-      type: "stdio",
-      command: "",
-      args: [],
-      url: "",
-      headers: {},
-      env: {},
-      useOAuth: true,
-      oauthScopes: ["mcp:*"],
-    });
-    setCommandInput("");
-    setOauthScopesInput("");
-    setBearerToken("");
-    setAuthType("none");
-    setEnvVars([]);
   };
 
   const addEnvVar = () => {
@@ -145,7 +206,7 @@ export function AddServerModal({
       <DialogContent className="max-w-md sm:max-w-lg">
         <DialogHeader className="space-y-2">
           <DialogTitle className="text-xl font-semibold">
-            Add MCP Server
+            Edit MCP Server
           </DialogTitle>
         </DialogHeader>
 
@@ -277,7 +338,7 @@ export function AddServerModal({
                         onClick={() => removeEnvVar(index)}
                         className="h-8 px-2 text-xs"
                       >
-                        ×
+                        �
                       </Button>
                     </div>
                   ))}
@@ -299,7 +360,13 @@ export function AddServerModal({
                       id="none"
                       name="authType"
                       checked={authType === "none"}
-                      onChange={() => setAuthType("none")}
+                      onChange={() => {
+                        setAuthType("none");
+                        setServerFormData((prev) => ({
+                          ...prev,
+                          useOAuth: false,
+                        }));
+                      }}
                       className="w-4 h-4 cursor-pointer"
                     />
                     <label htmlFor="none" className="text-sm cursor-pointer">
@@ -312,7 +379,13 @@ export function AddServerModal({
                       id="oauth"
                       name="authType"
                       checked={authType === "oauth"}
-                      onChange={() => setAuthType("oauth")}
+                      onChange={() => {
+                        setAuthType("oauth");
+                        setServerFormData((prev) => ({
+                          ...prev,
+                          useOAuth: true,
+                        }));
+                      }}
                       className="w-4 h-4 cursor-pointer"
                     />
                     <label htmlFor="oauth" className="text-sm cursor-pointer">
@@ -325,7 +398,13 @@ export function AddServerModal({
                       id="bearer"
                       name="authType"
                       checked={authType === "bearer"}
-                      onChange={() => setAuthType("bearer")}
+                      onChange={() => {
+                        setAuthType("bearer");
+                        setServerFormData((prev) => ({
+                          ...prev,
+                          useOAuth: false,
+                        }));
+                      }}
                       className="w-4 h-4 cursor-pointer"
                     />
                     <label htmlFor="bearer" className="text-sm cursor-pointer">
@@ -376,7 +455,7 @@ export function AddServerModal({
 
           <div className="flex gap-3 pt-6 border-t">
             <Button type="submit" className="flex-1 cursor-pointer">
-              Connect Server
+              Update Server
             </Button>
             <Button
               type="button"

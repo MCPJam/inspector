@@ -153,6 +153,7 @@ export function useAppState() {
   const handleConnect = useCallback(
     async (formData: ServerFormData) => {
       // Validate form data first
+      console.log("handleConnectFormData", formData);
       if (formData.type === "stdio") {
         if (!formData.command || formData.command.trim() === "") {
           toast.error("Command is required for STDIO connections");
@@ -755,6 +756,107 @@ export function useAppState() {
     });
   }, []);
 
+  const handleUpdate = useCallback(
+    async (originalServerName: string, formData: ServerFormData) => {
+      console.log("handleUpdateFormData", formData);
+
+      const originalServer = appState.servers[originalServerName];
+      const hadOAuthTokens = originalServer?.oauthTokens != null;
+
+      // For OAuth servers, preserve the tokens if the server name and URL haven't changed
+      // and the user is still using OAuth authentication
+      const shouldPreserveOAuth =
+        hadOAuthTokens &&
+        formData.useOAuth &&
+        formData.name === originalServerName &&
+        formData.type === "http" &&
+        formData.url === originalServer.config.url?.toString();
+
+      if (shouldPreserveOAuth) {
+        // Update server config without disconnecting to preserve OAuth tokens
+        const mcpConfig = convertFormToMCPConfig(formData);
+
+        // Update the server configuration in place
+        setAppState((prev) => ({
+          ...prev,
+          servers: {
+            ...prev.servers,
+            [originalServerName]: {
+              ...prev.servers[originalServerName],
+              config: mcpConfig,
+              connectionStatus: "connecting" as const,
+            },
+          },
+        }));
+
+        // Test connection with existing OAuth tokens
+        try {
+          const response = await fetch("/api/mcp/connect", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              serverConfig: originalServer.config, // Use original config with OAuth tokens
+            }),
+          });
+
+          const result = await response.json();
+
+          if (result.success) {
+            setAppState((prev) => ({
+              ...prev,
+              servers: {
+                ...prev.servers,
+                [originalServerName]: {
+                  ...prev.servers[originalServerName],
+                  config: mcpConfig, // Now update to new config
+                  connectionStatus: "connected" as const,
+                  lastConnectionTime: new Date(),
+                  retryCount: 0,
+                  lastError: undefined,
+                },
+              },
+            }));
+            toast.success("Server configuration updated successfully!");
+            return;
+          } else {
+            // Connection failed, fall back to full reconnect
+            console.warn(
+              "OAuth connection test failed, falling back to full reconnect",
+            );
+          }
+        } catch (error) {
+          console.warn(
+            "OAuth connection test error, falling back to full reconnect",
+            error,
+          );
+        }
+      }
+
+      // Full disconnect and reconnect for non-OAuth or when preservation fails
+      // First, disconnect the original server
+      await handleDisconnect(originalServerName);
+
+      // Then connect with the new configuration
+      await handleConnect(formData);
+
+      // If the server name changed, update selected server
+      if (
+        appState.selectedServer === originalServerName &&
+        formData.name !== originalServerName
+      ) {
+        setSelectedServer(formData.name);
+      }
+    },
+    [
+      appState.servers,
+      appState.selectedServer,
+      convertFormToMCPConfig,
+      handleDisconnect,
+      handleConnect,
+      setSelectedServer,
+    ],
+  );
+
   return {
     // State
     appState,
@@ -782,6 +884,7 @@ export function useAppState() {
     handleConnect,
     handleDisconnect,
     handleReconnect,
+    handleUpdate,
     setSelectedServer,
     setSelectedMCPConfigs,
     toggleMultiSelectMode,
