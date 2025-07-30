@@ -40,7 +40,7 @@ export function AddServerModal({
   const [bearerToken, setBearerToken] = useState("");
   const [authType, setAuthType] = useState<"oauth" | "bearer" | "none">("none");
   const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>(
-    [],
+    []
   );
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -60,7 +60,7 @@ export function AddServerModal({
             if (key && value) acc[key] = value;
             return acc;
           },
-          {} as Record<string, string>,
+          {} as Record<string, string>
         );
         finalFormData = { ...finalFormData, env: envObj };
       }
@@ -94,22 +94,12 @@ export function AddServerModal({
 
       onConnect(finalFormData);
       resetForm();
-      setCommandInput("");
-      setOauthScopesInput("");
-      setBearerToken("");
-      setAuthType("none");
-      setEnvVars([]);
       onClose();
     }
   };
 
   const handleClose = () => {
     resetForm();
-    setCommandInput("");
-    setOauthScopesInput("");
-    setBearerToken("");
-    setAuthType("oauth");
-    setEnvVars([]);
     onClose();
   };
 
@@ -125,6 +115,11 @@ export function AddServerModal({
       useOAuth: true,
       oauthScopes: ["mcp:*"],
     });
+    setCommandInput("");
+    setOauthScopesInput("");
+    setBearerToken("");
+    setAuthType("none");
+    setEnvVars([]);
   };
 
   const addEnvVar = () => {
@@ -138,7 +133,7 @@ export function AddServerModal({
   const updateEnvVar = (
     index: number,
     field: "key" | "value",
-    value: string,
+    value: string
   ) => {
     const updated = [...envVars];
     updated[index][field] = value;
