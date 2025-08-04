@@ -1,30 +1,130 @@
-import { useState } from 'react'
+import { useState } from "react";
 
-function App() {
-  const [count, setCount] = useState(0)
+import { ServersTab } from "./components/ServersTab";
+import { ToolsTab } from "./components/ToolsTab";
+import { ResourcesTab } from "./components/ResourcesTab";
+import { PromptsTab } from "./components/PromptsTab";
+import { ChatTab } from "./components/ChatTab";
+import { SettingsTab } from "./components/SettingsTab";
+import { TracingTab } from "./components/TracingTab";
+import { MCPSidebar } from "./components/mcp-sidebar";
+import { ActiveServerSelector } from "./components/ActiveServerSelector";
+import {
+  SidebarInset,
+  SidebarProvider,
+  SidebarTrigger,
+} from "./components/ui/sidebar";
+import { ThemeSwitcher } from "./components/sidebar/theme-switcher";
+import { useAppState } from "./hooks/use-app-state";
+import { PreferencesStoreProvider } from "./stores/preferences/preferences-provider";
+import { Toaster } from "./components/ui/sonner";
+
+// Import global styles
+import "./index.css";
+
+export default function App() {
+  const [activeTab, setActiveTab] = useState("servers");
+
+  const {
+    appState,
+    isLoading,
+    connectedServerConfigs,
+    selectedMCPConfig,
+    handleConnect,
+    handleDisconnect,
+    handleReconnect,
+    handleUpdate,
+    setSelectedServer,
+    toggleServerSelection,
+    selectedMCPConfigsMap,
+    setSelectedMultipleServersToAllServers,
+  } = useAppState();
+
+  const handleNavigate = (section: string) => {
+    setActiveTab(section);
+    if (section === "chat") {
+      setSelectedMultipleServersToAllServers();
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+          <p className="mt-4 text-muted-foreground">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <div className="container mx-auto px-4 py-8">
-        <h1 className="text-4xl font-bold mb-8">MCP Inspector</h1>
-        <div className="card">
-          <button 
-            onClick={() => setCount((count) => count + 1)}
-            className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90"
-          >
-            count is {count}
-          </button>
-          <p className="mt-4 text-muted-foreground">
-            Click the button to test React functionality
-          </p>
-        </div>
-        <p className="mt-8 text-sm text-muted-foreground">
-          Phase 1 Migration: Hono + Vite foundation is ready!<br/>
-          Frontend: http://localhost:8080 | Backend: http://localhost:8001
-        </p>
-      </div>
-    </div>
-  )
-}
+    <PreferencesStoreProvider themeMode="light" themePreset="default">
+      <SidebarProvider defaultOpen={true}>
+        <MCPSidebar onNavigate={handleNavigate} activeTab={activeTab} />
+        <SidebarInset className="flex flex-col">
+          <header className="flex h-12 shrink-0 items-center gap-2 border-b transition-[width,height] ease-linear">
+            <div className="flex w-full items-center justify-between px-4 lg:px-6">
+              <div className="flex items-center gap-1 lg:gap-2">
+                <SidebarTrigger className="-ml-1" />
+              </div>
+              <div className="flex items-center gap-2">
+                <ThemeSwitcher />
+              </div>
+            </div>
+          </header>
 
-export default App
+          <div className="flex-1">
+            {/* Active Server Selector - Only show on Tools, Resources, and Prompts pages */}
+            {(activeTab === "tools" ||
+              activeTab === "resources" ||
+              activeTab === "prompts" ||
+              activeTab === "chat") && (
+              <ActiveServerSelector
+                connectedServerConfigs={connectedServerConfigs}
+                selectedServer={appState.selectedServer}
+                onServerChange={setSelectedServer}
+                onConnect={handleConnect}
+                isMultiSelectEnabled={activeTab === "chat"}
+                onMultiServerToggle={toggleServerSelection}
+                selectedMultipleServers={appState.selectedMultipleServers}
+              />
+            )}
+
+            {/* Content Areas */}
+            {activeTab === "servers" && (
+              <ServersTab
+                connectedServerConfigs={connectedServerConfigs}
+                onConnect={handleConnect}
+                onDisconnect={handleDisconnect}
+                onReconnect={handleReconnect}
+                onUpdate={handleUpdate}
+              />
+            )}
+
+            {activeTab === "tools" && (
+              <ToolsTab serverConfig={selectedMCPConfig} />
+            )}
+
+            {activeTab === "resources" && (
+              <ResourcesTab serverConfig={selectedMCPConfig} />
+            )}
+
+            {activeTab === "prompts" && (
+              <PromptsTab serverConfig={selectedMCPConfig} />
+            )}
+
+            {activeTab === "chat" && (
+              <ChatTab serverConfigs={selectedMCPConfigsMap} />
+            )}
+
+            {activeTab === "tracing" && <TracingTab />}
+
+            {activeTab === "settings" && <SettingsTab />}
+          </div>
+        </SidebarInset>
+      </SidebarProvider>
+      <Toaster />
+    </PreferencesStoreProvider>
+  );
+}
