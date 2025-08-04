@@ -5,7 +5,7 @@ import { logger } from 'hono/logger'
 import { serveStatic } from '@hono/node-server/serve-static'
 
 // Import routes
-import mcpRoutes from './routes/mcp/index.js'
+import mcpRoutes from './routes/mcp/index'
 
 const app = new Hono()
 
@@ -51,6 +51,7 @@ if (process.env.NODE_ENV !== 'production') {
 serve({
   fetch: app.fetch,
   port,
+  hostname: '127.0.0.1'  // Fix: explicitly bind to localhost
 })
 
 export default app
