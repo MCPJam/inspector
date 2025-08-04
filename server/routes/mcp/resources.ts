@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { validateServerConfig, createMCPClient } from '../../utils/mcp-utils'
+import { ContentfulStatusCode } from 'hono/utils/http-status'
 
 const resources = new Hono()
 
@@ -10,7 +11,7 @@ resources.post('/list', async (c) => {
 
     const validation = validateServerConfig(serverConfig)
     if (!validation.success) {
-      return c.json({ success: false, error: validation.error!.message }, validation.error!.status)
+      return c.json({ success: false, error: validation.error!.message }, validation.error!.status as ContentfulStatusCode)
     }
 
     const client = createMCPClient(
@@ -45,7 +46,7 @@ resources.post('/read', async (c) => {
 
     const validation = validateServerConfig(serverConfig)
     if (!validation.success) {
-      return c.json({ success: false, error: validation.error!.message }, validation.error!.status)
+      return c.json({ success: false, error: validation.error!.message }, validation.error!.status as ContentfulStatusCode)
     }
 
     if (!uri) {

@@ -9,6 +9,7 @@ import { createOpenAI } from '@ai-sdk/openai'
 import { createOllama } from 'ollama-ai-provider'
 import { ChatMessage, ModelDefinition } from '../../../shared/types'
 import { MCPClient } from '@mastra/mcp'
+import { ContentfulStatusCode } from 'hono/utils/http-status'
 
 const chat = new Hono()
 
@@ -85,7 +86,7 @@ chat.post('/', async (c) => {
           success: false, 
           error: validation.error!.message,
           details: validation.errors 
-        }, validation.error!.status)
+        }, validation.error!.status as ContentfulStatusCode)
       }
 
       client = createMCPClientWithMultipleConnections(validation.validConfigs!)
