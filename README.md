@@ -1,9 +1,9 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="./public/mcp_jam_dark.png">
-  <source media="(prefers-color-scheme: light)" srcset="./public/mcp_jam_light.png">
-  <img width="250" alt="MCPJam Inspector V1 logo" src="./public/mcp_jam_light.png">
+  <source media="(prefers-color-scheme: dark)" srcset="./client/public/mcp_jam_dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="./client/public/mcp_jam_light.png">
+  <img width="250" alt="MCPJam Inspector V1 logo" src="./client/public/mcp_jam_light.png">
 </picture>
 
 <br/>
