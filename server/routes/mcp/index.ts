@@ -3,6 +3,7 @@ import connect from './connect'
 import tools from './tools'
 import resources from './resources'
 import prompts from './prompts'
+import chat from './chat'
 
 const mcp = new Hono()
 
@@ -15,13 +16,8 @@ mcp.get('/health', (c) => {
   })
 })
 
-// Chat endpoint placeholder
-mcp.post('/chat', (c) => {
-  return c.json({ 
-    message: 'Chat endpoint - will be implemented in Phase 3',
-    status: 'placeholder'
-  })
-})
+// Chat endpoint - REAL IMPLEMENTATION  
+mcp.route('/chat', chat)
 
 // Connect endpoint - REAL IMPLEMENTATION
 mcp.route('/connect', connect)
