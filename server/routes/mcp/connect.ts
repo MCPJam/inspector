@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { validateServerConfig, createMCPClient } from '../../utils/mcp-utils'
+import { ContentfulStatusCode } from 'hono/utils/http-status'
 
 const connect = new Hono()
 
@@ -15,7 +16,7 @@ connect.post('/', async (c) => {
           success: false,
           error: error.message,
         },
-        error.status,
+        error.status as ContentfulStatusCode,
       )
     }
 

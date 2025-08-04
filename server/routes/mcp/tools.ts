@@ -3,6 +3,7 @@ import { validateServerConfig, createMCPClient } from '../../utils/mcp-utils'
 import type { Tool } from '@mastra/core/tools'
 import { z } from 'zod'
 import { zodToJsonSchema } from 'zod-to-json-schema'
+import { ContentfulStatusCode } from 'hono/utils/http-status'
 
 const tools = new Hono()
 
@@ -61,7 +62,7 @@ tools.post('/', async (c) => {
 
     const validation = validateServerConfig(serverConfig)
     if (!validation.success) {
-      return c.json({ success: false, error: validation.error!.message }, validation.error!.status)
+      return c.json({ success: false, error: validation.error!.message }, validation.error!.status as ContentfulStatusCode)
     }
 
     encoder = new TextEncoder()
