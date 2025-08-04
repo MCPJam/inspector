@@ -26,16 +26,26 @@ app.get('/health', (c) => {
 
 // Static file serving (for production)
 if (process.env.NODE_ENV === 'production') {
+  // Serve static assets (JS, CSS, images, etc.)
   app.use('/*', serveStatic({ root: './dist/client' }))
-  // SPA fallback
-  app.get('*', serveStatic({ path: './dist/client/index.html' }))
+  
+  // SPA fallback - serve index.html for all non-API routes
+  app.get('*', (c) => {
+    const path = c.req.path
+    // Don't intercept API routes
+    if (path.startsWith('/api/')) {
+      return c.notFound()
+    }
+    // Return index.html for SPA routes
+    return serveStatic({ path: './dist/client/index.html' })(c)
+  })
 } else {
   // Development mode - just API
   app.get('/', (c) => {
     return c.json({ 
       message: 'MCP Inspector API Server', 
       environment: 'development',
-      frontend: 'http://localhost:5173'
+      frontend: 'http://localhost:8080'
     })
   })
 }

@@ -1,27 +1,28 @@
-import { Hono } from 'hono'
-import { validateServerConfig, createMCPClient } from '../../utils/mcp-utils'
+import { Hono } from "hono";
+import { validateServerConfig, createMCPClient } from "../../utils/mcp-utils";
+import { ContentfulStatusCode } from "hono/utils/http-status";
 
-const connect = new Hono()
+const connect = new Hono();
 
-connect.post('/', async (c) => {
+connect.post("/", async (c) => {
   try {
-    const { serverConfig } = await c.req.json()
+    const { serverConfig } = await c.req.json();
 
-    const validation = validateServerConfig(serverConfig)
+    const validation = validateServerConfig(serverConfig);
     if (!validation.success) {
-      const error = validation.error!
+      const error = validation.error!;
       return c.json(
         {
           success: false,
           error: error.message,
         },
-        error.status,
-      )
+        error.status as ContentfulStatusCode
+      );
     }
 
-    let client
+    let client;
     try {
-      client = createMCPClient(validation.config!, `test-${Date.now()}`)
+      client = createMCPClient(validation.config!, `test-${Date.now()}`);
     } catch (error) {
       return c.json(
         {
@@ -29,16 +30,16 @@ connect.post('/', async (c) => {
           error: `Failed to create a MCP client. Please double check your server configuration: ${JSON.stringify(serverConfig)}`,
           details: error instanceof Error ? error.message : "Unknown error",
         },
-        500,
-      )
+        500
+      );
     }
 
     try {
-      await client.getTools()
-      await client.disconnect()
+      await client.getTools();
+      await client.disconnect();
       return c.json({
         success: true,
-      })
+      });
     } catch (error) {
       return c.json(
         {
@@ -46,8 +47,8 @@ connect.post('/', async (c) => {
           error: `MCP configuration is invalid. Please double check your server configuration: ${JSON.stringify(serverConfig)}`,
           details: error instanceof Error ? error.message : "Unknown error",
         },
-        500,
-      )
+        500
+      );
     }
   } catch (error) {
     return c.json(
@@ -56,9 +57,9 @@ connect.post('/', async (c) => {
         error: "Failed to parse request body",
         details: error instanceof Error ? error.message : "Unknown error",
       },
-      400,
-    )
+      400
+    );
   }
-})
+});
 
-export default connect
+export default connect;
