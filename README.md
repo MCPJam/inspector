@@ -15,7 +15,7 @@
 [![Discord](https://img.shields.io/badge/Discord-Join%20Server-5865F2.svg?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/JEnDtz8X6z)
 
 <a href="https://www.opencoreventures.com/" target="_blank">
-  <img width="150" alt="Catalyst Logo" src="./public/catalyst.png" style="margin: -10px">
+  <img width="150" alt="Catalyst Logo" src="./client/public/catalyst.png" style="margin: -10px">
 </a>
 
 </div>
