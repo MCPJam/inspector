@@ -25,7 +25,16 @@
     "start": "NODE_ENV=production node dist/server/index.cjs",
     "publish": "npm run build && npm publish --access public",
     "prettier-fix": "prettier --write .",
-    "install:deps": "cd server && npm install && cd ../client && npm install"
+    "install:deps": "cd server && npm install && cd ../client && npm install",
+    "docker:build": "docker build -t mcpjam/mcp-inspector:latest .",
+    "docker:build:dev": "docker build -f Dockerfile.dev -t mcpjam/mcp-inspector:dev .",
+    "docker:run": "docker run -p 3001:3001 mcpjam/mcp-inspector:latest",
+    "docker:run:dev": "docker run -p 3001:3001 -p 5173:5173 mcpjam/mcp-inspector:dev",
+    "docker:up": "docker-compose up -d",
+    "docker:up:dev": "docker-compose --profile dev up -d",
+    "docker:down": "docker-compose down",
+    "docker:logs": "docker-compose logs -f",
+    "docker:clean": "docker-compose down -v --rmi all"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^1.2.12",
