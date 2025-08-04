@@ -5,6 +5,7 @@ import { spawn } from "child_process";
 import { fileURLToPath } from "url";
 import { createServer } from "net";
 import { execSync } from "child_process";
+import { existsSync } from "fs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -175,7 +176,8 @@ Get ready to discover the power of MCP integration.`;
 async function showServerInfo(port) {
   const serverInfo = `Server URL: http://localhost:${port}
 Environment: Production
-Framework: Next.js
+Framework: Hono + Vite
+Architecture: Single Server (API + Static)
 Status: Starting up...`;
 
   logBox(serverInfo, "🌐 Server Configuration");
@@ -459,19 +461,35 @@ async function main() {
   });
 
   try {
-    logStep("1", "Initializing Next.js production server");
-    await delay(1000);
+    const distServerPath = resolve(projectRoot, "dist", "server", "index.cjs");
+    
+    // Check if production build exists
+    if (!existsSync(distServerPath)) {
+      logStep("1", "Production build not found, building now...");
+      logProgress("Building client and server for production...");
+      
+      await spawnPromise("npm", ["run", "build:migration"], {
+        env: process.env,
+        cwd: projectRoot,
+        signal: abort.signal,
+        echoOutput: false,
+      });
+      
+      logSuccess("Build completed successfully");
+      await delay(500);
+    } else {
+      logStep("1", "Using existing production build");
+      await delay(500);
+    }
 
-    logStep("2", "Building application for production");
-    logProgress("This may take a few moments...");
-    await delay(500);
+    logStep("2", "Starting Hono server on port " + PORT);
+    logProgress("Server handles both API and static files...");
 
-    logStep("3", "Starting server on port " + PORT);
-
-    await spawnPromise("npm", ["run", "start"], {
+    await spawnPromise("node", [distServerPath], {
       env: {
         ...process.env,
         ...envVars,
+        NODE_ENV: "production",
         PORT: PORT,
       },
       cwd: projectRoot,
