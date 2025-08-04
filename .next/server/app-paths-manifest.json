@@ -1,0 +1,4 @@
+{
+  "/api/mcp/connect/route": "app/api/mcp/connect/route.js",
+  "/page": "app/page.js"
+}

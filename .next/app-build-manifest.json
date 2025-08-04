@@ -1,0 +1,36 @@
+{
+  "pages": {
+    "/page": [
+      "static/chunks/node_modules_next_dist_01fcdebf._.js",
+      "static/chunks/src_app_favicon_ico_mjs_f9cadd25._.js",
+      "static/chunks/[root-of-the-server]__8ebb6d4b._.css",
+      "static/chunks/_f0c0d45b._.js",
+      "static/chunks/src_app_layout_tsx_68b267f5._.js",
+      "static/chunks/node_modules_next_dist_client_components_builtin_global-error_a9914ad6.js",
+      "static/chunks/src_components_33a1168f._.js",
+      "static/chunks/src_20262aa7._.js",
+      "static/chunks/public_6214d46d._.js",
+      "static/chunks/node_modules_tailwind-merge_dist_bundle-mjs_mjs_b854acb4._.js",
+      "static/chunks/node_modules_motion-dom_dist_es_27804559._.js",
+      "static/chunks/node_modules_framer-motion_dist_es_906fdbc6._.js",
+      "static/chunks/node_modules_next_d35cd0df._.js",
+      "static/chunks/node_modules_micromark-core-commonmark_dev_lib_36a4b45d._.js",
+      "static/chunks/node_modules_zod_v3_209a51fb._.js",
+      "static/chunks/node_modules_@modelcontextprotocol_sdk_dist_esm_4d01879d._.js",
+      "static/chunks/node_modules_@radix-ui_1f95e236._.js",
+      "static/chunks/node_modules_@floating-ui_9ec1fa39._.js",
+      "static/chunks/node_modules_74e9b254._.js",
+      "static/chunks/node_modules_react18-json-view_src_fa6ed376._.css",
+      "static/chunks/src_app_page_tsx_a9914ad6._.js",
+      "static/chunks/[turbopack]_browser_dev_hmr-client_hmr-client_ts_6aaa83c7._.js",
+      "static/chunks/node_modules_next_dist_compiled_react-dom_1f56dc06._.js",
+      "static/chunks/node_modules_next_dist_compiled_next-devtools_index_d575f738.js",
+      "static/chunks/node_modules_next_dist_compiled_0f1b9fd4._.js",
+      "static/chunks/node_modules_next_dist_client_20b209c9._.js",
+      "static/chunks/node_modules_next_dist_445d8acf._.js",
+      "static/chunks/node_modules_@swc_helpers_cjs_8e433861._.js",
+      "static/chunks/_e69f0d32._.js",
+      "static/chunks/_01f48b92._.js"
+    ]
+  }
+}
