@@ -34,19 +34,19 @@ A developer tool for testing, debugging Model Context Protocol (MCP) servers. Te
 
 ## 📸 Screenshots
 
-<img alt="MCPJam Inspector Demo" src="./public/demo_1.png">
+<img alt="MCPJam Inspector Demo" src="./client/public/demo_1.png">
 
 <details>
 <summary><strong>LLM Playground</strong></summary>
 
-<img alt="LLM Chat Demo" src="./public/demo_2.png">
+<img alt="LLM Chat Demo" src="./client/public/demo_2.png">
 
 </details>
 
 <details>
 <summary><strong>Connect to any server</strong></summary>
 
-<img alt="MCPJam Connection Demo" src="./public/demo_3.png">
+<img alt="MCPJam Connection Demo" src="./client/public/demo_3.png">
 
 </details>
 
