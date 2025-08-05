@@ -4,7 +4,6 @@ import tools from './tools'
 import resources from './resources'
 import prompts from './prompts'
 import chat from './chat'
-import oauth from './oauth'
 
 const mcp = new Hono()
 
@@ -32,7 +31,5 @@ mcp.route('/resources', resources)
 // Prompts endpoints - REAL IMPLEMENTATION
 mcp.route('/prompts', prompts)
 
-// OAuth endpoints - Proxy to avoid CORS issues
-mcp.route('/oauth', oauth)
 
 export default mcp
