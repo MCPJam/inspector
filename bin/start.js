@@ -461,7 +461,7 @@ async function main() {
   });
 
   try {
-    const distServerPath = resolve(projectRoot, "dist", "server", "index.cjs");
+    const distServerPath = resolve(projectRoot, "dist", "server", "index.js");
 
     // Check if production build exists
     if (!existsSync(distServerPath)) {
