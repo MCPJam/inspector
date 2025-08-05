@@ -31,5 +31,4 @@ mcp.route('/resources', resources)
 // Prompts endpoints - REAL IMPLEMENTATION
 mcp.route('/prompts', prompts)
 
-
 export default mcp
