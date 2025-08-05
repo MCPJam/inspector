@@ -11,9 +11,13 @@ const app = new Hono()
 
 // Middleware
 app.use('*', logger())
+// Global CORS settings
 app.use('*', cors({
   origin: ['http://localhost:8080', 'http://localhost:3000'],
   credentials: true,
+  allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  exposeHeaders: ['Content-Length', 'Content-Type']
 }))
 
 // API Routes
@@ -36,17 +40,27 @@ if (process.env.NODE_ENV === 'production') {
     if (path.startsWith('/api/')) {
       return c.notFound()
     }
+    // Specifically handle OAuth callback routes to ensure they work with SPA
+    if (path.startsWith('/oauth/callback')) {
+      console.log('OAuth callback detected, serving index.html for SPA routing')
+    }
     // Return index.html for SPA routes
     return serveStatic({ path: './dist/client/index.html' })(c)
   })
 } else {
-  // Development mode - just API
+  // Development mode - API and SPA routes support
   app.get('/', (c) => {
     return c.json({ 
       message: 'MCP Inspector API Server', 
       environment: 'development',
-      frontend: 'http://localhost:8080'
+      frontend: 'http://localhost:3000'
     })
+  })
+  
+  // Support SPA routing for OAuth in development mode
+  app.get('/oauth/*', (c) => {
+    console.log(`Development mode: Detected OAuth route ${c.req.path}, redirecting to frontend`)
+    return c.redirect('http://localhost:3000' + c.req.path + c.req.query)
   })
 }
 
