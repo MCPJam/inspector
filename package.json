@@ -1,6 +1,6 @@
 {
-  "name": "@mcpjam/inspector",
-  "version": "0.8.2",
+  "name": "@mcpjam/inspector-vite",
+  "version": "1.0.0",
   "type": "module",
   "description": "MCPJam Inspector",
   "license": "Apache-2.0",
@@ -8,7 +8,7 @@
   "homepage": "https://mcpjam.com",
   "bugs": "https://github.com/mcpjam/inspector/issues",
   "bin": {
-    "inspector-v1": "bin/start.js"
+    "inspector-vite": "bin/start.js"
   },
   "files": [
     "bin",
