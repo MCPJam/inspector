@@ -1,4 +1,3 @@
-
 import { useRef, useEffect, useState } from "react";
 import { MessageCircle } from "lucide-react";
 import { MastraMCPServerDefinition } from "@/lib/types";

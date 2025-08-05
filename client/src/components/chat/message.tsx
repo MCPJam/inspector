@@ -1,4 +1,3 @@
-
 import { memo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { formatTimestamp, sanitizeText } from "@/lib/chat-utils";

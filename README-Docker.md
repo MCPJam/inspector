@@ -29,21 +29,22 @@ npm run docker:run
 
 ## Available Docker Commands
 
-| Command | Description |
-|---------|-------------|
-| `npm run docker:build` | Build production Docker image |
-| `npm run docker:build:dev` | Build development Docker image |
-| `npm run docker:run` | Run production container |
-| `npm run docker:run:dev` | Run development container |
-| `npm run docker:up` | Start production services with docker-compose |
-| `npm run docker:up:dev` | Start development services with docker-compose |
-| `npm run docker:down` | Stop all services |
-| `npm run docker:logs` | View container logs |
-| `npm run docker:clean` | Clean up containers, volumes, and images |
+| Command                    | Description                                    |
+| -------------------------- | ---------------------------------------------- |
+| `npm run docker:build`     | Build production Docker image                  |
+| `npm run docker:build:dev` | Build development Docker image                 |
+| `npm run docker:run`       | Run production container                       |
+| `npm run docker:run:dev`   | Run development container                      |
+| `npm run docker:up`        | Start production services with docker-compose  |
+| `npm run docker:up:dev`    | Start development services with docker-compose |
+| `npm run docker:down`      | Stop all services                              |
+| `npm run docker:logs`      | View container logs                            |
+| `npm run docker:clean`     | Clean up containers, volumes, and images       |
 
 ## Docker Compose Profiles
 
 ### Development Profile
+
 ```bash
 # Start development environment with hot-reloading
 docker-compose --profile dev up -d
@@ -53,6 +54,7 @@ docker-compose logs -f mcp-inspector-dev
 ```
 
 ### Production Profile
+
 ```bash
 # Start production environment
 docker-compose --profile production up -d
@@ -65,10 +67,10 @@ docker-compose -f docker-compose.prod.yml up -d
 
 ### Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable   | Default      | Description      |
+| ---------- | ------------ | ---------------- |
 | `NODE_ENV` | `production` | Environment mode |
-| `PORT` | `3001` | Server port |
+| `PORT`     | `3001`       | Server port      |
 
 ### Volumes
 
@@ -94,21 +96,23 @@ The project includes GitHub Actions workflows for:
 
 Add these secrets to your GitHub repository:
 
-| Secret | Description |
-|--------|-------------|
-| `DOCKER_USERNAME` | Docker Hub username |
+| Secret            | Description               |
+| ----------------- | ------------------------- |
+| `DOCKER_USERNAME` | Docker Hub username       |
 | `DOCKERHUB_TOKEN` | Docker Hub password/token |
-| `SNYK_TOKEN` | Snyk API token (optional) |
+| `SNYK_TOKEN`      | Snyk API token (optional) |
 
 ## Multi-Architecture Support
 
 The Docker images support multiple architectures:
+
 - `linux/amd64` (Intel/AMD processors)
 - `linux/arm64` (ARM processors, including Apple Silicon)
 
 ## Health Checks
 
 Both development and production containers include health checks:
+
 - Endpoint: `http://localhost:3001/health`
 - Interval: 30 seconds
 - Timeout: 10 seconds
@@ -126,28 +130,31 @@ Both development and production containers include health checks:
 ### Common Issues
 
 1. **Port already in use**
+
    ```bash
    # Check what's using port 3001
    lsof -i :3001
-   
+
    # Use different port
    docker run -p 3002:3001 mcpjam/mcp-inspector:latest
    ```
 
 2. **Permission issues**
+
    ```bash
    # Check container logs
    docker logs <container_name>
-   
+
    # Ensure proper ownership
    docker exec -it <container_name> ls -la /app
    ```
 
 3. **Build failures**
+
    ```bash
    # Clean Docker cache
    docker system prune -a
-   
+
    # Rebuild without cache
    docker build --no-cache -t mcpjam/mcp-inspector:latest .
    ```
@@ -179,4 +186,4 @@ For production deployment, consider:
 
 - [Docker Hub Repository](https://hub.docker.com/r/mcpjam/mcp-inspector)
 - [Project Repository](https://github.com/mcpjam/inspector)
-- [MCP Jam Website](https://mcpjam.com) 
+- [MCP Jam Website](https://mcpjam.com)

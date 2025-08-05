@@ -151,9 +151,9 @@ export const validateMultipleServerConfigs = (
     return {
       success: false,
       error: {
-        message: 'At least one server configuration is required',
-        status: 400
-      }
+        message: "At least one server configuration is required",
+        status: 400,
+      },
     };
   }
 
@@ -164,12 +164,12 @@ export const validateMultipleServerConfigs = (
   // Validate each server configuration
   for (const [serverName, serverConfig] of Object.entries(serverConfigs)) {
     const validationResult = validateServerConfig(serverConfig);
-    
+
     if (validationResult.success && validationResult.config) {
       validConfigs[serverName] = validationResult.config;
     } else {
       hasErrors = true;
-      let errorMessage = 'Configuration validation failed';
+      let errorMessage = "Configuration validation failed";
       if (validationResult.error) {
         errorMessage = validationResult.error.message;
       }
@@ -199,9 +199,9 @@ export const validateMultipleServerConfigs = (
     success: false,
     errors,
     error: {
-      message: 'All server configurations failed validation',
-      status: 400
-    }
+      message: "All server configurations failed validation",
+      status: 400,
+    },
   };
 };
 
