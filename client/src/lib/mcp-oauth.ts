@@ -39,7 +39,7 @@ class MCPOAuthProvider implements OAuthClientProvider {
   get clientMetadata() {
     return {
       client_name: `MCP Inspector - ${this.serverName}`,
-      client_uri: "https://github.com/modelcontextprotocol/inspector",
+      client_uri: window.location.origin,
       redirect_uris: [this.redirectUri],
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
@@ -112,6 +112,49 @@ class MCPOAuthProvider implements OAuthClientProvider {
 }
 
 /**
+ * Custom fetch function that proxies OAuth metadata requests through our server
+ */
+function createOAuthProxyFetch(originalFetch: typeof fetch) {
+  return async (input: Request | URL | string, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    
+    // Check if this is an OAuth metadata request
+    if (url.includes('.well-known/oauth-authorization-server')) {
+      console.log('Proxying OAuth metadata request:', url);
+      
+      // Extract the server URL (everything before /.well-known/oauth-authorization-server)
+      const serverUrl = url.split('/.well-known/oauth-authorization-server')[0];
+      const encodedServerUrl = encodeURIComponent(serverUrl);
+      
+      // Route through our server proxy
+      const proxyUrl = `/api/mcp/oauth/metadata/${encodedServerUrl}`;
+      
+      try {
+        const response = await originalFetch(proxyUrl, {
+          method: 'GET',
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+          }
+        });
+        
+        if (!response.ok) {
+          throw new Error(`Proxy request failed: ${response.status}`);
+        }
+        
+        return response;
+      } catch (error) {
+        console.error('OAuth metadata proxy failed:', error);
+        throw error;
+      }
+    }
+    
+    // For all other requests, use the original fetch
+    return originalFetch(input, init);
+  };
+}
+
+/**
  * Initiates OAuth flow for an MCP server
  */
 export async function initiateOAuth(
@@ -127,32 +170,42 @@ export async function initiateOAuth(
     );
     localStorage.setItem("mcp-oauth-pending", options.serverName);
 
-    const result = await auth(provider, {
-      serverUrl: options.serverUrl,
-      scope: options.scopes?.join(" ") || "mcp:*",
-    });
+    // Temporarily override fetch to proxy OAuth metadata requests
+    const originalFetch = window.fetch;
+    const proxyFetch = createOAuthProxyFetch(originalFetch);
+    window.fetch = proxyFetch;
 
-    if (result === "REDIRECT") {
-      return {
-        success: true,
-      };
-    }
+    try {
+      const result = await auth(provider, {
+        serverUrl: options.serverUrl,
+        scope: options.scopes?.join(" ") || "mcp:*",
+      });
 
-    if (result === "AUTHORIZED") {
-      const tokens = provider.tokens();
-      if (tokens) {
-        const serverConfig = createServerConfig(options.serverUrl, tokens);
+      if (result === "REDIRECT") {
         return {
           success: true,
-          serverConfig,
         };
       }
-    }
 
-    return {
-      success: false,
-      error: "OAuth flow failed",
-    };
+      if (result === "AUTHORIZED") {
+        const tokens = provider.tokens();
+        if (tokens) {
+          const serverConfig = createServerConfig(options.serverUrl, tokens);
+          return {
+            success: true,
+            serverConfig,
+          };
+        }
+      }
+
+      return {
+        success: false,
+        error: "OAuth flow failed",
+      };
+    } finally {
+      // Always restore the original fetch
+      window.fetch = originalFetch;
+    }
   } catch (error) {
     return {
       success: false,
@@ -182,31 +235,41 @@ export async function handleOAuthCallback(
 
     const provider = new MCPOAuthProvider(serverName);
 
-    const result = await auth(provider, {
-      serverUrl,
-      authorizationCode,
-      scope: "mcp:*",
-    });
+    // Apply the same fetch override for callback handling
+    const originalFetch = window.fetch;
+    const proxyFetch = createOAuthProxyFetch(originalFetch);
+    window.fetch = proxyFetch;
 
-    if (result === "AUTHORIZED") {
-      const tokens = provider.tokens();
-      if (tokens) {
-        // Clean up pending state
-        localStorage.removeItem("mcp-oauth-pending");
+    try {
+      const result = await auth(provider, {
+        serverUrl,
+        authorizationCode,
+        scope: "mcp:*",
+      });
 
-        const serverConfig = createServerConfig(serverUrl, tokens);
-        return {
-          success: true,
-          serverConfig,
-          serverName, // Return server name so caller doesn't need to look it up
-        };
+      if (result === "AUTHORIZED") {
+        const tokens = provider.tokens();
+        if (tokens) {
+          // Clean up pending state
+          localStorage.removeItem("mcp-oauth-pending");
+
+          const serverConfig = createServerConfig(serverUrl, tokens);
+          return {
+            success: true,
+            serverConfig,
+            serverName, // Return server name so caller doesn't need to look it up
+          };
+        }
       }
-    }
 
-    return {
-      success: false,
-      error: "Token exchange failed",
-    };
+      return {
+        success: false,
+        error: "Token exchange failed",
+      };
+    } finally {
+      // Always restore the original fetch
+      window.fetch = originalFetch;
+    }
   } catch (error) {
     return {
       success: false,
