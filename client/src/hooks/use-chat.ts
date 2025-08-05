@@ -1,4 +1,3 @@
-
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { ChatMessage, ChatState, Attachment } from "@/lib/chat-types";
 import { createMessage } from "@/lib/chat-utils";
@@ -51,7 +50,8 @@ export function useChat(options: UseChatOptions = {}) {
   const [model, setModel] = useState<ModelDefinition | null>(null);
   const [ollamaModels, setOllamaModels] = useState<ModelDefinition[]>([]);
   const [isOllamaRunning, setIsOllamaRunning] = useState(false);
-  const [elicitationRequest, setElicitationRequest] = useState<ElicitationRequest | null>(null);
+  const [elicitationRequest, setElicitationRequest] =
+    useState<ElicitationRequest | null>(null);
   const [elicitationLoading, setElicitationLoading] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesRef = useRef(state.messages);
@@ -539,7 +539,7 @@ export function useChat(options: UseChatOptions = {}) {
         const errorMessage =
           err instanceof Error ? err.message : "Unknown error";
         console.error("Error responding to elicitation request:", errorMessage);
-        
+
         if (onError) {
           onError("Error responding to elicitation request");
         }

@@ -22,10 +22,7 @@
       "@/shared/*": ["../shared/*"]
     }
   },
-  "include": [
-    "src",
-    "../shared/**/*.ts"
-  ],
+  "include": ["src", "../shared/**/*.ts"],
   "references": [
     {
       "path": "./tsconfig.node.json"

@@ -462,19 +462,19 @@ async function main() {
 
   try {
     const distServerPath = resolve(projectRoot, "dist", "server", "index.cjs");
-    
+
     // Check if production build exists
     if (!existsSync(distServerPath)) {
       logStep("1", "Production build not found, building now...");
       logProgress("Building client and server for production...");
-      
+
       await spawnPromise("npm", ["run", "build:migration"], {
         env: process.env,
         cwd: projectRoot,
         signal: abort.signal,
         echoOutput: false,
       });
-      
+
       logSuccess("Build completed successfully");
       await delay(500);
     } else {

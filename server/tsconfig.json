@@ -24,13 +24,6 @@
     },
     "types": ["node"]
   },
-  "include": [
-    "**/*.ts",
-    "**/*.tsx",
-    "../shared/**/*.ts"
-  ],
-  "exclude": [
-    "node_modules",
-    "dist"
-  ]
+  "include": ["**/*.ts", "**/*.tsx", "../shared/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
 }

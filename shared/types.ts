@@ -7,31 +7,31 @@ import type { ClientCapabilities } from "@modelcontextprotocol/sdk/types.js";
 
 // Legacy server config (keeping for compatibility)
 export interface ServerConfig {
-  id: string
-  name: string
-  command: string
-  args?: string[]
-  env?: Record<string, string>
-  cwd?: string
+  id: string;
+  name: string;
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
 }
 
 // Chat and messaging types
 export interface ChatMessage {
-  id: string
-  role: 'user' | 'assistant' | 'system'
-  content: string
-  timestamp: Date
-  toolCalls?: ToolCall[]
+  id: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  timestamp: Date;
+  toolCalls?: ToolCall[];
 }
 
 export interface ToolCall {
-  id: string | number
-  name: string
-  parameters: any
-  timestamp: Date
-  status: 'executing' | 'completed' | 'error'
-  result?: any
-  error?: string
+  id: string | number;
+  name: string;
+  parameters: any;
+  timestamp: Date;
+  status: "executing" | "completed" | "error";
+  result?: any;
+  error?: string;
 }
 
 // Model definitions
@@ -172,63 +172,69 @@ export interface OauthTokens {
 
 // MCP Resource and Tool types
 export interface MCPResource {
-  uri: string
-  name: string
-  description?: string
-  mimeType?: string
+  uri: string;
+  name: string;
+  description?: string;
+  mimeType?: string;
 }
 
 export interface MCPTool {
-  name: string
-  description?: string
-  inputSchema: any
+  name: string;
+  description?: string;
+  inputSchema: any;
 }
 
 export interface MCPPrompt {
-  name: string
-  description?: string
+  name: string;
+  description?: string;
   arguments?: Array<{
-    name: string
-    description?: string
-    required?: boolean
-  }>
+    name: string;
+    description?: string;
+    required?: boolean;
+  }>;
 }
 
 // API Response types
 export interface ApiResponse<T = any> {
-  success: boolean
-  data?: T
-  error?: string
-  message?: string
+  success: boolean;
+  data?: T;
+  error?: string;
+  message?: string;
 }
 
 export interface ConnectionTestResponse {
-  success: boolean
-  error?: string
-  details?: string
+  success: boolean;
+  error?: string;
+  details?: string;
 }
 
 export interface ChatStreamEvent {
-  type: 'text' | 'tool_call' | 'tool_result' | 'elicitation_request' | 'elicitation_complete' | 'error'
-  content?: string
-  toolCall?: ToolCall
+  type:
+    | "text"
+    | "tool_call"
+    | "tool_result"
+    | "elicitation_request"
+    | "elicitation_complete"
+    | "error";
+  content?: string;
+  toolCall?: ToolCall;
   toolResult?: {
-    id: string | number
-    toolCallId: string | number
-    result?: any
-    error?: string
-    timestamp: Date
-  }
-  requestId?: string
-  message?: string
-  schema?: any
-  error?: string
-  timestamp?: Date
+    id: string | number;
+    toolCallId: string | number;
+    result?: any;
+    error?: string;
+    timestamp: Date;
+  };
+  requestId?: string;
+  message?: string;
+  schema?: any;
+  error?: string;
+  timestamp?: Date;
 }
 
 // Server status types
 export interface ServerStatus {
-  status: 'ok' | 'error'
-  timestamp: string
-  service?: string
+  status: "ok" | "error";
+  timestamp: string;
+  service?: string;
 }

@@ -1,4 +1,3 @@
-
 import { useState, useRef, useEffect, useCallback } from "react";
 import { cn } from "@/lib/chat-utils";
 import { Attachment } from "@/lib/chat-types";

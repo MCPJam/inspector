@@ -1,4 +1,3 @@
-
 import { useState, useRef, useEffect } from "react";
 import { ChatMessage } from "@/lib/chat-types";
 import { Button } from "../ui/button";

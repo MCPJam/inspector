@@ -8,32 +8,43 @@ import {
 } from "@modelcontextprotocol/sdk/client/auth.js";
 import { HttpServerDefinition } from "./types";
 
-// Store original fetch for restoration  
+// Store original fetch for restoration
 const originalFetch = window.fetch;
 
 /**
  * Custom fetch interceptor that proxies OAuth metadata requests through our server
  */
 function createOAuthFetchInterceptor(): typeof fetch {
-  return async function interceptedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
-    
+  return async function interceptedFetch(
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ): Promise<Response> {
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+
     // Check if this is an OAuth metadata request
-    if (url.includes('/.well-known/oauth-authorization-server')) {
+    if (url.includes("/.well-known/oauth-authorization-server")) {
       try {
         // Proxy through our server to avoid CORS
         const proxyUrl = `/api/mcp/oauth/metadata?url=${encodeURIComponent(url)}`;
         return await originalFetch(proxyUrl, {
           ...init,
-          method: 'GET', // Always GET for metadata
+          method: "GET", // Always GET for metadata
         });
       } catch (error) {
-        console.error('OAuth metadata proxy failed, falling back to direct fetch:', error);
+        console.error(
+          "OAuth metadata proxy failed, falling back to direct fetch:",
+          error,
+        );
         // Fallback to original fetch if proxy fails
         return await originalFetch(input, init);
       }
     }
-    
+
     // For all other requests, use original fetch
     return await originalFetch(input, init);
   };
@@ -87,7 +98,7 @@ class MCPOAuthProvider implements OAuthClientProvider {
   async saveClientInformation(clientInformation: any) {
     localStorage.setItem(
       `mcp-client-${this.serverName}`,
-      JSON.stringify(clientInformation)
+      JSON.stringify(clientInformation),
     );
   }
 
@@ -99,7 +110,7 @@ class MCPOAuthProvider implements OAuthClientProvider {
   async saveTokens(tokens: any) {
     localStorage.setItem(
       `mcp-tokens-${this.serverName}`,
-      JSON.stringify(tokens)
+      JSON.stringify(tokens),
     );
   }
 
@@ -146,19 +157,19 @@ class MCPOAuthProvider implements OAuthClientProvider {
  * Initiates OAuth flow for an MCP server
  */
 export async function initiateOAuth(
-  options: MCPOAuthOptions
+  options: MCPOAuthOptions,
 ): Promise<OAuthResult> {
   // Install fetch interceptor for OAuth metadata requests
   const interceptedFetch = createOAuthFetchInterceptor();
   window.fetch = interceptedFetch;
-  
+
   try {
     const provider = new MCPOAuthProvider(options.serverName);
 
     // Store server URL for callback recovery
     localStorage.setItem(
       `mcp-serverUrl-${options.serverName}`,
-      options.serverUrl
+      options.serverUrl,
     );
     localStorage.setItem("mcp-oauth-pending", options.serverName);
 
@@ -203,12 +214,12 @@ export async function initiateOAuth(
  * Handles OAuth callback and completes the flow
  */
 export async function handleOAuthCallback(
-  authorizationCode: string
+  authorizationCode: string,
 ): Promise<OAuthResult & { serverName?: string }> {
   // Install fetch interceptor for OAuth metadata requests
   const interceptedFetch = createOAuthFetchInterceptor();
   window.fetch = interceptedFetch;
-  
+
   try {
     // Get pending server name from localStorage
     const serverName = localStorage.getItem("mcp-oauth-pending");
@@ -273,7 +284,7 @@ export function getStoredTokens(serverName: string): any {
  */
 export async function waitForTokens(
   serverName: string,
-  timeoutMs: number = 5000
+  timeoutMs: number = 5000,
 ): Promise<any> {
   const startTime = Date.now();
 
@@ -292,12 +303,12 @@ export async function waitForTokens(
  * Refreshes OAuth tokens for a server using the refresh token
  */
 export async function refreshOAuthTokens(
-  serverName: string
+  serverName: string,
 ): Promise<OAuthResult> {
   // Install fetch interceptor for OAuth metadata requests
   const interceptedFetch = createOAuthFetchInterceptor();
   window.fetch = interceptedFetch;
-  
+
   try {
     const provider = new MCPOAuthProvider(serverName);
     const existingTokens = provider.tokens();
@@ -364,7 +375,7 @@ export function clearOAuthData(serverName: string): void {
  */
 function createServerConfig(
   serverUrl: string,
-  tokens: any
+  tokens: any,
 ): HttpServerDefinition {
   return {
     url: new URL(serverUrl),

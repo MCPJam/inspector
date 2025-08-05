@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { Card } from "../ui/card";
@@ -147,12 +146,12 @@ export function ServerConnectionCard({
                     server.connectionStatus === "connected"
                       ? "#10b981"
                       : server.connectionStatus === "connecting"
-                      ? "#3b82f6"
-                      : server.connectionStatus === "oauth-flow"
-                      ? "#a855f7"
-                      : server.connectionStatus === "failed"
-                      ? "#ef4444"
-                      : "#9ca3af",
+                        ? "#3b82f6"
+                        : server.connectionStatus === "oauth-flow"
+                          ? "#a855f7"
+                          : server.connectionStatus === "failed"
+                            ? "#ef4444"
+                            : "#9ca3af",
                 }}
               />
               <div className="min-w-0 flex-1">
@@ -243,8 +242,8 @@ export function ServerConnectionCard({
                 {isErrorExpanded
                   ? server.lastError
                   : server.lastError.length > 100
-                  ? `${server.lastError.substring(0, 100)}...`
-                  : server.lastError}
+                    ? `${server.lastError.substring(0, 100)}...`
+                    : server.lastError}
               </div>
               {server.lastError.length > 100 && (
                 <button
@@ -295,7 +294,7 @@ export function ServerConnectionCard({
                           onClick={() =>
                             copyToClipboard(
                               manualBearerToken,
-                              "manualBearerToken"
+                              "manualBearerToken",
                             )
                           }
                           className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
@@ -328,7 +327,7 @@ export function ServerConnectionCard({
                           onClick={() =>
                             copyToClipboard(
                               server.oauthTokens?.access_token || "",
-                              "accessToken"
+                              "accessToken",
                             )
                           }
                           className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
@@ -353,7 +352,7 @@ export function ServerConnectionCard({
                           onClick={() =>
                             copyToClipboard(
                               server.oauthTokens?.refresh_token || "N/A",
-                              "refreshToken"
+                              "refreshToken",
                             )
                           }
                           className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
@@ -388,8 +387,8 @@ export function ServerConnectionCard({
                           tokenStatus.isExpired
                             ? "text-red-500"
                             : tokenStatus.isExpiringSoon
-                            ? "text-yellow-500"
-                            : "text-green-500"
+                              ? "text-yellow-500"
+                              : "text-green-500"
                         }`}
                       >
                         {formatTimeRemaining(tokenStatus.timeLeft)}
@@ -436,7 +435,7 @@ export function ServerConnectionCard({
                                 <span className="text-blue-600">{key}</span>=
                                 <span className="text-green-600">{value}</span>
                               </div>
-                            )
+                            ),
                           )}
                         </div>
                       </div>
