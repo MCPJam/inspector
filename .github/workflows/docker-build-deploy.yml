@@ -1,49 +1,17 @@
-name: Build and Deploy Docker Image
+name: Build and Push to Docker Hub
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main ]
     tags: [ 'v*' ]
   pull_request:
     branches: [ main ]
 
 env:
-  DOCKER_REGISTRY: docker.io
   DOCKER_REPOSITORY: mcpjam/mcp-inspector
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: |
-          npm ci
-          cd client && npm install
-          cd ../server && npm install
-
-      - name: Run tests
-        run: |
-          # Add your test commands here
-          # npm test
-          echo "Tests completed successfully"
-
-      - name: Build client
-        run: cd client && npm run build
-
-      - name: Build server
-        run: cd server && npm run build
-
   build-and-push:
-    needs: test
     runs-on: ubuntu-latest
     if: github.event_name != 'pull_request'
     
@@ -67,7 +35,6 @@ jobs:
           images: ${{ env.DOCKER_REPOSITORY }}
           tags: |
             type=ref,event=branch
-            type=ref,event=pr
             type=sha,prefix={{branch}}-
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -83,34 +50,4 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          platforms: linux/amd64,linux/arm64
-
-  deploy-staging:
-    needs: build-and-push
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/develop'
-    environment: staging
-    
-    steps:
-      - name: Deploy to staging
-        run: |
-          echo "Deploying to staging environment"
-          # Add your staging deployment commands here
-          # For example:
-          # docker-compose -f docker-compose.staging.yml pull
-          # docker-compose -f docker-compose.staging.yml up -d
-
-  deploy-production:
-    needs: build-and-push
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    environment: production
-    
-    steps:
-      - name: Deploy to production
-        run: |
-          echo "Deploying to production environment"
-          # Add your production deployment commands here
-          # For example:
-          # docker-compose -f docker-compose.prod.yml pull
-          # docker-compose -f docker-compose.prod.yml up -d 
+          platforms: linux/amd64,linux/arm64 
