@@ -97,7 +97,7 @@ Add these secrets to your GitHub repository:
 | Secret | Description |
 |--------|-------------|
 | `DOCKER_USERNAME` | Docker Hub username |
-| `DOCKER_PASSWORD` | Docker Hub password/token |
+| `DOCKERHUB_TOKEN` | Docker Hub password/token |
 | `SNYK_TOKEN` | Snyk API token (optional) |
 
 ## Multi-Architecture Support
