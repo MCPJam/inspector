@@ -19,17 +19,6 @@ app.use('*', cors({
 // API Routes
 app.route('/api/mcp', mcpRoutes)
 
-// OAuth callback route - ensure this works for SPA routing
-app.get('/oauth/callback', (c) => {
-  // For SPA, we need to serve the main app and let client-side routing handle it
-  if (process.env.NODE_ENV === 'production') {
-    return serveStatic({ path: './dist/client/index.html' })(c)
-  } else {
-    // In development, redirect to the development server
-    return c.redirect('http://localhost:8080/oauth/callback' + c.req.url.split('?')[1] ? '?' + c.req.url.split('?')[1] : '')
-  }
-})
-
 // Health check
 app.get('/health', (c) => {
   return c.json({ status: 'ok', timestamp: new Date().toISOString() })
