@@ -12,17 +12,7 @@ const app = new Hono()
 // Middleware
 app.use('*', logger())
 app.use('*', cors({
-  origin: (origin) => {
-    // Allow same-origin requests (no origin header)
-    if (!origin) return true
-    
-    // Allow localhost in development
-    if (origin.includes('localhost')) return true
-    
-    // Allow production domains (add your domains here)
-    const allowedDomains = ['mcpjam.com', 'github.io']
-    return allowedDomains.some(domain => origin.includes(domain))
-  },
+  origin: ['http://localhost:8080', 'http://localhost:3000'],
   credentials: true,
 }))
 
