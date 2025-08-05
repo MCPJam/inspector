@@ -468,7 +468,7 @@ async function main() {
       logStep("1", "Production build not found, building now...");
       logProgress("Building client and server for production...");
       
-      await spawnPromise("npm", ["run", "build:migration"], {
+      await spawnPromise("npm", ["run", "build"], {
         env: process.env,
         cwd: projectRoot,
         signal: abort.signal,
