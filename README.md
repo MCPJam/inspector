@@ -68,6 +68,20 @@ npx @mcpjam/inspector@latest --port 4000
 npx @mcpjam/inspector@latest --ollama llama3.2
 ```
 
+## 🐳 Docker
+
+Run MCPJam Inspector using Docker:
+
+```bash
+# Run the latest version from Docker Hub
+docker run -p 3001:3001 mcpjam/mcp-inspector:latest
+
+# Or run in the background
+docker run -d -p 3001:3001 --name mcp-inspector mcpjam/mcp-inspector:latest
+```
+
+The application will be available at `http://localhost:3001`.
+
 ## Requirements
 
 [![Node.js](https://img.shields.io/badge/Node.js-20+-green.svg?style=for-the-badge&logo=node.js)](https://nodejs.org/)
