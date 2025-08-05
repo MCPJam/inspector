@@ -7,7 +7,11 @@
   "author": "MCPJam (https://mcpjam.com)",
   "homepage": "https://mcpjam.com",
   "bugs": "https://github.com/mcpjam/inspector/issues",
-  "main": "dist/main/index.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MCPJam/inspector.git"
+  },
+  "main": "dist/main/main.cjs",
   "bin": {
     "inspector-v1": "bin/start.js"
   },
