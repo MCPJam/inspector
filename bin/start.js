@@ -165,42 +165,17 @@ function spawnPromise(command, args, options) {
   });
 }
 
-async function showWelcomeMessage() {
-  console.clear();
-  log(MCP_BANNER, colors.cyan);
-
-  logDivider();
-
-  const welcomeText = `Welcome to the MCP Inspector! 
-This tool helps you explore and interact with Model Context Protocol servers.
-Get ready to discover the power of MCP integration.`;
-
-  logBox(welcomeText, "🎯 Getting Started");
-
-  logDivider();
-}
-
-async function showServerInfo(port) {
-  const serverInfo = `Server URL: http://localhost:${port}
-Environment: Production
-Framework: Hono + Vite
-Architecture: Single Server (API + Static)
-Status: Starting up...`;
-
-  logBox(serverInfo, "🌐 Server Configuration");
-}
-
 async function showSuccessMessage(port) {
   logDivider();
 
   const successText = `🎉 MCP Inspector is now running successfully!
 
-📱 Access your application at: ${colors.bright}${colors.green}http://localhost:${port}${colors.reset}
-🔧 Server is ready to handle MCP connections
+📱 Access your application at: http://localhost:${port}
+🔧 Unified server ready to handle MCP connections
 📊 Monitor your MCP tools and resources
 💬 Start chatting with your MCP-enabled AI
 
-${colors.dim}Press Ctrl+C to stop the server${colors.reset}`;
+Press Ctrl+C to stop the server`;
 
   logBox(successText, "🚀 Ready to Go!");
 
@@ -348,7 +323,10 @@ async function setupOllamaInSingleTerminal(model) {
 }
 
 async function main() {
-  await showWelcomeMessage();
+  // Show MCP banner at startup
+  console.clear();
+  log(MCP_BANNER, colors.cyan);
+  logDivider();
 
   // Parse command line arguments
   const args = process.argv.slice(2);
@@ -372,7 +350,6 @@ async function main() {
     if (parsingFlags && arg === "--port" && i + 1 < args.length) {
       const port = args[++i];
       envVars.PORT = port;
-      envVars.NEXT_PUBLIC_BASE_URL = `http://localhost:${port}`;
       envVars.BASE_URL = `http://localhost:${port}`;
       continue;
     }
@@ -429,8 +406,6 @@ async function main() {
   let PORT;
 
   try {
-    logStep("0", "Configuring server port...");
-
     // Check if user explicitly set a port via --port flag
     const hasExplicitPort = envVars.PORT !== undefined;
 
@@ -464,15 +439,12 @@ async function main() {
 
     // Update environment variables with the final port
     envVars.PORT = PORT;
-    envVars.NEXT_PUBLIC_BASE_URL = `http://localhost:${PORT}`;
     envVars.BASE_URL = `http://localhost:${PORT}`;
     Object.assign(process.env, envVars);
   } catch (error) {
     logError(`Port configuration failed: ${error.message}`);
     throw error;
   }
-
-  await showServerInfo(PORT);
 
   const abort = new AbortController();
 
@@ -493,7 +465,6 @@ async function main() {
 
     // Check if production build exists
     if (!existsSync(distServerPath)) {
-      logStep("1", "Production build not found, building now...");
       logProgress("Building client and server for production...");
 
       await spawnPromise("npm", ["run", "build"], {
@@ -506,17 +477,12 @@ async function main() {
       logSuccess("Build completed successfully");
       await delay(500);
     } else {
-      logStep("1", "Using existing production build");
       await delay(500);
     }
-
-    logStep("2", "Starting Hono server on port " + PORT);
-    logProgress("Server handles both API and static files...");
 
     await spawnPromise("node", [distServerPath], {
       env: {
         ...process.env,
-        ...envVars,
         NODE_ENV: "production",
         PORT: PORT,
       },

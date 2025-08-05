@@ -6,6 +6,47 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { readFileSync } from "fs";
 import { join } from "path";
 
+// ANSI color codes for console output
+const colors = {
+  reset: "\x1b[0m",
+  bright: "\x1b[1m",
+  dim: "\x1b[2m",
+  red: "\x1b[31m",
+  green: "\x1b[32m",
+  yellow: "\x1b[33m",
+  blue: "\x1b[34m",
+  magenta: "\x1b[35m",
+  cyan: "\x1b[36m",
+  white: "\x1b[37m",
+};
+
+// Utility function to create a boxed console output
+function logBox(content: string, title?: string) {
+  const lines = content.split("\n");
+  const maxLength = Math.max(...lines.map((line) => line.length));
+  const width = maxLength + 4;
+
+  console.log("┌" + "─".repeat(width) + "┐");
+  if (title) {
+    const titlePadding = Math.floor((width - title.length - 2) / 2);
+    console.log(
+      "│" +
+        " ".repeat(titlePadding) +
+        title +
+        " ".repeat(width - title.length - titlePadding) +
+        "│"
+    );
+    console.log("├" + "─".repeat(width) + "┤");
+  }
+
+  lines.forEach((line) => {
+    const padding = width - line.length - 2;
+    console.log("│ " + line + " ".repeat(padding) + " │");
+  });
+
+  console.log("└" + "─".repeat(width) + "┘");
+}
+
 // Import routes
 import mcpRoutes from "./routes/mcp/index";
 
@@ -67,11 +108,8 @@ if (process.env.NODE_ENV === "production") {
 
 const port = parseInt(process.env.PORT || "3001");
 
-console.log(`🚀 MCP Inspector Server starting on port ${port}`);
-console.log(`📡 API available at: http://localhost:${port}/api`);
-if (process.env.NODE_ENV !== "production") {
-  console.log(`🎨 Frontend dev server: http://localhost:${serverPort}`);
-}
+// Display the localhost URL in a box
+logBox(`http://localhost:${port}`, "🚀 Inspector Launched");
 
 // Graceful shutdown handling
 const server = serve({
@@ -82,12 +120,14 @@ const server = serve({
 
 // Handle graceful shutdown
 process.on("SIGINT", () => {
-  console.log("\n⚠️  Received SIGINT, shutting down gracefully...");
+  console.log("\n🛑 Shutting down gracefully...");
+  server.close();
   process.exit(0);
 });
 
 process.on("SIGTERM", () => {
-  console.log("\n⚠️  Received SIGTERM, shutting down gracefully...");
+  console.log("\n🛑 Shutting down gracefully...");
+  server.close();
   process.exit(0);
 });
 
