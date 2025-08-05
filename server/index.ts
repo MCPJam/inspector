@@ -50,7 +50,7 @@ if (process.env.NODE_ENV === 'production') {
   })
 }
 
-const port = parseInt(process.env.PORT || '8001')
+const port = parseInt(process.env.PORT || '3001')
 
 console.log(`🚀 MCP Inspector Server starting on port ${port}`)
 console.log(`📡 API available at: http://localhost:${port}/api`)
@@ -62,7 +62,7 @@ if (process.env.NODE_ENV !== 'production') {
 const server = serve({
   fetch: app.fetch,
   port,
-  hostname: '127.0.0.1'  // Fix: explicitly bind to localhost
+  hostname: '0.0.0.0'  // Bind to all interfaces for Docker
 })
 
 // Handle graceful shutdown

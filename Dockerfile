@@ -2,7 +2,7 @@
 # Multi-stage build for client and server
 
 # Stage 1: Build client
-FROM node:18-alpine AS client-builder
+FROM node:20-alpine AS client-builder
 WORKDIR /app
 COPY client/package*.json ./client/
 RUN cd client && npm install --include=dev
@@ -11,7 +11,7 @@ COPY shared/ ./shared/
 RUN cd client && npm run build
 
 # Stage 2: Build server
-FROM node:18-alpine AS server-builder
+FROM node:20-alpine AS server-builder
 WORKDIR /app
 COPY server/package*.json ./server/
 RUN cd server && npm install --include=dev
@@ -20,7 +20,7 @@ COPY shared/ ./shared/
 RUN cd server && npm run build
 
 # Stage 3: Production image - extend existing or create new
-FROM node:18-alpine AS production
+FROM node:20-alpine AS production
 
 # Install dumb-init for proper signal handling
 RUN apk add --no-cache dumb-init
@@ -31,14 +31,15 @@ WORKDIR /app
 # Copy built applications
 COPY --from=client-builder /app/dist/client ./dist/client
 COPY --from=server-builder /app/dist/server ./dist/server
-COPY --from=server-builder /app/server/node_modules ./server/node_modules
-COPY --from=server-builder /app/server/package.json ./server/package.json
+
+# Copy server package.json and install production dependencies at root
+COPY --from=server-builder /app/server/package.json ./package.json
+RUN npm install --production
 
 # Copy shared types
 COPY shared/ ./shared/
 
-# Copy root package.json and any startup scripts
-COPY package.json ./
+# Copy any startup scripts
 COPY bin/ ./bin/
 
 # Create non-root user
@@ -59,5 +60,5 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 # Use dumb-init to handle signals properly
 ENTRYPOINT ["dumb-init", "--"]
 
-# Start the application
-CMD ["node", "dist/server/index.js"] 
+# Start the application with production environment
+CMD ["sh", "-c", "NODE_ENV=production node dist/server/index.cjs"] 
