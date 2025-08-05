@@ -1,5 +1,5 @@
 /**
- * Clean OAuth implementation using only the official MCP SDK
+ * Clean OAuth implementation using only the official MCP SDK with CORS proxy support
  */
 
 import {
@@ -7,6 +7,37 @@ import {
   OAuthClientProvider,
 } from "@modelcontextprotocol/sdk/client/auth.js";
 import { HttpServerDefinition } from "./types";
+
+// Store original fetch for restoration  
+const originalFetch = window.fetch;
+
+/**
+ * Custom fetch interceptor that proxies OAuth metadata requests through our server
+ */
+function createOAuthFetchInterceptor(): typeof fetch {
+  return async function interceptedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    
+    // Check if this is an OAuth metadata request
+    if (url.includes('/.well-known/oauth-authorization-server')) {
+      try {
+        // Proxy through our server to avoid CORS
+        const proxyUrl = `/api/mcp/oauth/metadata?url=${encodeURIComponent(url)}`;
+        return await originalFetch(proxyUrl, {
+          ...init,
+          method: 'GET', // Always GET for metadata
+        });
+      } catch (error) {
+        console.error('OAuth metadata proxy failed, falling back to direct fetch:', error);
+        // Fallback to original fetch if proxy fails
+        return await originalFetch(input, init);
+      }
+    }
+    
+    // For all other requests, use original fetch
+    return await originalFetch(input, init);
+  };
+}
 
 export interface MCPOAuthOptions {
   serverName: string;
@@ -117,6 +148,10 @@ class MCPOAuthProvider implements OAuthClientProvider {
 export async function initiateOAuth(
   options: MCPOAuthOptions
 ): Promise<OAuthResult> {
+  // Install fetch interceptor for OAuth metadata requests
+  const interceptedFetch = createOAuthFetchInterceptor();
+  window.fetch = interceptedFetch;
+  
   try {
     const provider = new MCPOAuthProvider(options.serverName);
 
@@ -158,6 +193,9 @@ export async function initiateOAuth(
       success: false,
       error: error instanceof Error ? error.message : "Unknown OAuth error",
     };
+  } finally {
+    // Restore original fetch
+    window.fetch = originalFetch;
   }
 }
 
@@ -167,6 +205,10 @@ export async function initiateOAuth(
 export async function handleOAuthCallback(
   authorizationCode: string
 ): Promise<OAuthResult & { serverName?: string }> {
+  // Install fetch interceptor for OAuth metadata requests
+  const interceptedFetch = createOAuthFetchInterceptor();
+  window.fetch = interceptedFetch;
+  
   try {
     // Get pending server name from localStorage
     const serverName = localStorage.getItem("mcp-oauth-pending");
@@ -212,6 +254,9 @@ export async function handleOAuthCallback(
       success: false,
       error: error instanceof Error ? error.message : "Unknown callback error",
     };
+  } finally {
+    // Restore original fetch
+    window.fetch = originalFetch;
   }
 }
 
@@ -249,6 +294,10 @@ export async function waitForTokens(
 export async function refreshOAuthTokens(
   serverName: string
 ): Promise<OAuthResult> {
+  // Install fetch interceptor for OAuth metadata requests
+  const interceptedFetch = createOAuthFetchInterceptor();
+  window.fetch = interceptedFetch;
+  
   try {
     const provider = new MCPOAuthProvider(serverName);
     const existingTokens = provider.tokens();
@@ -294,6 +343,9 @@ export async function refreshOAuthTokens(
       success: false,
       error: error instanceof Error ? error.message : "Unknown refresh error",
     };
+  } finally {
+    // Restore original fetch
+    window.fetch = originalFetch;
   }
 }
 
