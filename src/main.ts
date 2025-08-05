@@ -46,6 +46,10 @@ async function findAvailablePort(startPort = 3001): Promise<number> {
 async function startHonoServer(): Promise<number> {
   try {
     const port = await findAvailablePort(3001);
+    
+    // Set environment variable to tell the server it's running in Electron
+    process.env.ELECTRON_APP = 'true';
+    
     const honoApp = createHonoApp();
     
     server = serve({
@@ -83,11 +87,10 @@ function createMainWindow(serverUrl: string): BrowserWindow {
   registerListeners(window);
 
   // Load the app
+  window.loadURL(serverUrl);
+  
   if (isDev) {
-    window.loadURL('http://localhost:8080');
     window.webContents.openDevTools();
-  } else {
-    window.loadURL(serverUrl);
   }
 
   // Show window when ready

@@ -12,7 +12,7 @@ export function createHonoApp() {
   // Middleware
   app.use('*', logger())
   app.use('*', cors({
-    origin: ['http://localhost:8080', 'http://localhost:3000'],
+    origin: ['http://localhost:8080', 'http://localhost:3000', 'http://localhost:3001'],
     credentials: true,
   }))
 
@@ -24,8 +24,9 @@ export function createHonoApp() {
     return c.json({ status: 'ok', timestamp: new Date().toISOString() })
   })
 
-  // Static file serving (for production)
-  if (process.env.NODE_ENV === 'production') {
+  // Static file serving (for production OR when running in Electron)
+  const isElectron = process.env.ELECTRON_APP === 'true'
+  if (process.env.NODE_ENV === 'production' || isElectron) {
     // Serve static assets (JS, CSS, images, etc.)
     app.use('/*', serveStatic({ root: './dist/client' }))
     
