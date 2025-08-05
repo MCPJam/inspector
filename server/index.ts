@@ -3,6 +3,8 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { serveStatic } from "@hono/node-server/serve-static";
+import { readFileSync } from "fs";
+import { join } from "path";
 
 // Import routes
 import mcpRoutes from "./routes/mcp/index";
@@ -11,12 +13,20 @@ const app = new Hono();
 
 // Middleware
 app.use("*", logger());
+// Dynamic CORS origin based on PORT environment variable
+const serverPort = process.env.PORT || "3001";
+const corsOrigins = [
+  `http://localhost:${serverPort}`,
+  "http://localhost:3000", // Keep for development
+  "http://localhost:3001", // Keep for development
+];
+
 app.use(
   "*",
   cors({
-    origin: ["http://localhost:3000", "http://localhost:3001"],
+    origin: corsOrigins,
     credentials: true,
-  }),
+  })
 );
 
 // API Routes
@@ -33,14 +43,16 @@ if (process.env.NODE_ENV === "production") {
   app.use("/*", serveStatic({ root: "./dist/client" }));
 
   // SPA fallback - serve index.html for all non-API routes
-  app.get("*", (c) => {
+  app.get("*", async (c) => {
     const path = c.req.path;
     // Don't intercept API routes
     if (path.startsWith("/api/")) {
       return c.notFound();
     }
     // Return index.html for SPA routes
-    return serveStatic({ path: "./dist/client/index.html" })(c);
+    const indexPath = join(process.cwd(), "dist", "client", "index.html");
+    const htmlContent = readFileSync(indexPath, "utf-8");
+    return c.html(htmlContent);
   });
 } else {
   // Development mode - just API
@@ -48,7 +60,7 @@ if (process.env.NODE_ENV === "production") {
     return c.json({
       message: "MCP Inspector API Server",
       environment: "development",
-      frontend: "http://localhost:3000",
+      frontend: `http://localhost:${serverPort}`,
     });
   });
 }
@@ -58,7 +70,7 @@ const port = parseInt(process.env.PORT || "3001");
 console.log(`🚀 MCP Inspector Server starting on port ${port}`);
 console.log(`📡 API available at: http://localhost:${port}/api`);
 if (process.env.NODE_ENV !== "production") {
-  console.log(`🎨 Frontend dev server: http://localhost:3000`);
+  console.log(`🎨 Frontend dev server: http://localhost:${serverPort}`);
 }
 
 // Graceful shutdown handling

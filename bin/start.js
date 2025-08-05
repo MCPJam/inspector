@@ -62,7 +62,7 @@ function logError(message) {
 function logStep(step, message) {
   log(
     `\n${colors.cyan}${colors.bright}[${step}]${colors.reset} ${message}`,
-    colors.white,
+    colors.white
   );
 }
 
@@ -88,7 +88,7 @@ function logBox(content, title = null) {
         title +
         " ".repeat(width - title.length - titlePadding) +
         "│",
-      colors.cyan,
+      colors.cyan
     );
     log("├" + "─".repeat(width) + "┤", colors.cyan);
   }
@@ -122,14 +122,21 @@ function isPortAvailable(port) {
   });
 }
 
-async function findAvailablePort(startPort = 3000, maxPort = 3100) {
+async function findAvailablePort(startPort = 3000, maxPort = 65535) {
+  logProgress(`Scanning for available ports starting from ${startPort}...`);
+
   for (let port = startPort; port <= maxPort; port++) {
     if (await isPortAvailable(port)) {
       return port;
     }
+
+    // Show progress every 10 ports to avoid spam
+    if (port % 10 === 0) {
+      logProgress(`Checked port ${port}, continuing search...`);
+    }
   }
   throw new Error(
-    `No available ports found between ${startPort} and ${maxPort}`,
+    `No available ports found between ${startPort} and ${maxPort}`
   );
 }
 
@@ -275,7 +282,7 @@ async function openTerminalWithMultipleCommands(commands, title) {
     await spawnPromise(
       terminalCmd[0],
       [...terminalCmd.slice(1), "bash", "-c", fullCommand],
-      { echoOutput: false },
+      { echoOutput: false }
     );
   }
 }
@@ -289,11 +296,11 @@ async function setupOllamaInSingleTerminal(model) {
 
     await openTerminalWithMultipleCommands(
       commands,
-      `Ollama: Pull ${model} & Serve`,
+      `Ollama: Pull ${model} & Serve`
     );
     logSuccess("Ollama pull and serve started in same terminal");
     logProgress(
-      "Waiting for model download to complete and server to start...",
+      "Waiting for model download to complete and server to start..."
     );
 
     // Wait a bit for the model pull to start
@@ -322,7 +329,7 @@ async function setupOllamaInSingleTerminal(model) {
       await delay(10000); // Wait 10 seconds between checks
       if (i % 3 === 0) {
         logProgress(
-          `Still waiting for model ${model} to be ready and server to start...`,
+          `Still waiting for model ${model} to be ready and server to start...`
         );
       }
     }
@@ -331,7 +338,7 @@ async function setupOllamaInSingleTerminal(model) {
       logSuccess(`Model ${model} is ready and Ollama server is running`);
     } else {
       logWarning(
-        `Setup may still be in progress. Please check the terminal window.`,
+        `Setup may still be in progress. Please check the terminal window.`
       );
     }
   } catch (error) {
@@ -392,7 +399,7 @@ async function main() {
     if (!isOllamaInstalled) {
       logError("Ollama is not installed. Please install Ollama first:");
       logInfo(
-        "Visit https://ollama.ai/download to download and install Ollama",
+        "Visit https://ollama.ai/download to download and install Ollama"
       );
       process.exit(1);
     }
@@ -417,30 +424,51 @@ async function main() {
   // Apply parsed environment variables to process.env first
   Object.assign(process.env, envVars);
 
-  // Get requested port and find available port
+  // Port discovery and configuration
   const requestedPort = parseInt(process.env.PORT ?? "3000", 10);
   let PORT;
 
   try {
-    logStep("0", "Checking port availability...");
+    logStep("0", "Configuring server port...");
 
-    if (await isPortAvailable(requestedPort)) {
-      PORT = requestedPort.toString();
-      logSuccess(`Port ${requestedPort} is available`);
+    // Check if user explicitly set a port via --port flag
+    const hasExplicitPort = envVars.PORT !== undefined;
+
+    if (hasExplicitPort) {
+      logInfo(`Using explicitly requested port: ${requestedPort}`);
+      if (await isPortAvailable(requestedPort)) {
+        PORT = requestedPort.toString();
+        logSuccess(`Port ${requestedPort} is available and ready`);
+      } else {
+        logError(`Explicitly requested port ${requestedPort} is not available`);
+        logInfo(
+          "Use a different port with --port <number> or let the system find one automatically"
+        );
+        throw new Error(`Port ${requestedPort} is already in use`);
+      }
     } else {
-      logWarning(`Port ${requestedPort} is in use, finding alternative...`);
-      const availablePort = await findAvailablePort(requestedPort + 1);
-      PORT = availablePort.toString();
-      logSuccess(`Using available port ${availablePort}`);
-
-      // Update environment variables with the new port
-      envVars.PORT = PORT;
-      envVars.NEXT_PUBLIC_BASE_URL = `http://localhost:${PORT}`;
-      envVars.BASE_URL = `http://localhost:${PORT}`;
-      Object.assign(process.env, envVars);
+      // Dynamic port discovery
+      logInfo("No specific port requested, using dynamic port discovery");
+      if (await isPortAvailable(requestedPort)) {
+        PORT = requestedPort.toString();
+        logSuccess(`Default port ${requestedPort} is available`);
+      } else {
+        logWarning(
+          `Default port ${requestedPort} is in use, searching for next available port...`
+        );
+        const availablePort = await findAvailablePort(requestedPort + 1);
+        PORT = availablePort.toString();
+        logSuccess(`Found available port: ${availablePort}`);
+      }
     }
+
+    // Update environment variables with the final port
+    envVars.PORT = PORT;
+    envVars.NEXT_PUBLIC_BASE_URL = `http://localhost:${PORT}`;
+    envVars.BASE_URL = `http://localhost:${PORT}`;
+    Object.assign(process.env, envVars);
   } catch (error) {
-    logError(`Failed to find available port: ${error.message}`);
+    logError(`Port configuration failed: ${error.message}`);
     throw error;
   }
 
@@ -468,7 +496,7 @@ async function main() {
       logStep("1", "Production build not found, building now...");
       logProgress("Building client and server for production...");
 
-      await spawnPromise("npm", ["run", "build:migration"], {
+      await spawnPromise("npm", ["run", "build"], {
         env: process.env,
         cwd: projectRoot,
         signal: abort.signal,
