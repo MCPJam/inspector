@@ -294,7 +294,7 @@ export function ServerConnectionCard({
                           onClick={() =>
                             copyToClipboard(
                               manualBearerToken,
-                              "manualBearerToken"
+                              "manualBearerToken",
                             )
                           }
                           className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
@@ -327,7 +327,7 @@ export function ServerConnectionCard({
                           onClick={() =>
                             copyToClipboard(
                               server.oauthTokens?.client_id || "",
-                              "clientId"
+                              "clientId",
                             )
                           }
                           className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
@@ -352,7 +352,7 @@ export function ServerConnectionCard({
                           onClick={() =>
                             copyToClipboard(
                               server.oauthTokens?.access_token || "",
-                              "accessToken"
+                              "accessToken",
                             )
                           }
                           className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
@@ -377,7 +377,7 @@ export function ServerConnectionCard({
                           onClick={() =>
                             copyToClipboard(
                               server.oauthTokens?.refresh_token || "N/A",
-                              "refreshToken"
+                              "refreshToken",
                             )
                           }
                           className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
@@ -460,7 +460,7 @@ export function ServerConnectionCard({
                                 <span className="text-blue-600">{key}</span>=
                                 <span className="text-green-600">{value}</span>
                               </div>
-                            )
+                            ),
                           )}
                         </div>
                       </div>

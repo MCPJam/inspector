@@ -3,13 +3,15 @@
 ## Current Architecture Analysis
 
 **Current Setup:**
+
 - **Client**: React app using Vite dev server (port 8080) with Tailwind CSS, shadcn/ui components
-- **Server**: Hono-based API server (port 3001) handling MCP connections and AI chat functionality  
+- **Server**: Hono-based API server (port 3001) handling MCP connections and AI chat functionality
 - **Build**: Client builds to `dist/client`, server builds to `dist/server`
 - **Production**: Single server serves both API and static client files
 - **Deployment**: NPX command (`npx @mcpjam/inspector`) for easy access
 
 **Key Components:**
+
 - MCP server connection management via WebSocket/IPC
 - AI chat integration with multiple providers (OpenAI, Anthropic, Ollama)
 - Resource/tool inspection interface
@@ -20,11 +22,13 @@
 ### 1. Dual Deployment Strategy
 
 **Preserving NPX Usage:**
+
 ```bash
 npx @mcpjam/inspector  # Current workflow remains unchanged
 ```
 
 **Adding Electron Option:**
+
 - Native desktop app download and installation
 - Same functionality with enhanced desktop UX
 - Shared codebase for both deployment methods
@@ -32,11 +36,12 @@ npx @mcpjam/inspector  # Current workflow remains unchanged
 ### 2. Main Process Design (Learnings from Summon)
 
 **Recommended Structure (Based on Electron Forge + Vite):**
+
 ```
 mcpjam-inspector/
 ├── forge.config.ts             # Electron Forge configuration
 ├── vite.main.config.ts         # Main process Vite config
-├── vite.preload.config.ts      # Preload Vite config  
+├── vite.preload.config.ts      # Preload Vite config
 ├── vite.renderer.config.mts    # Renderer Vite config
 ├── src/
 │   ├── main.ts                 # Main process entry
@@ -53,6 +58,7 @@ mcpjam-inspector/
 ```
 
 **Main Process Responsibilities (Inspired by Summon):**
+
 - Embed Hono server in main process with dynamic port allocation
 - Handle single instance lock to prevent multiple app instances
 - Manage MCP server lifecycle and file watchers
@@ -63,34 +69,37 @@ mcpjam-inspector/
 ### 3. Shared Server Module Strategy
 
 **Extract Hono App for Dual Usage:**
+
 ```javascript
 // server/app.ts - Shared module
 export const createHonoApp = () => {
-  const app = new Hono()
+  const app = new Hono();
   // ... existing routes and middleware
-  return app
-}
+  return app;
+};
 
 // bin/start.js - NPX entry (preserves current behavior)
-import { createHonoApp } from '../server/app.js'
-const app = createHonoApp()
-serve({ fetch: app.fetch, port: 3001 })
+import { createHonoApp } from "../server/app.js";
+const app = createHonoApp();
+serve({ fetch: app.fetch, port: 3001 });
 
-// src/main.ts - Electron entry  
-import { createHonoApp } from '../server/app.js'
-const app = createHonoApp()
-const server = serve({ fetch: app.fetch, port: 0 }) // dynamic port
-createWindow(`http://localhost:${server.address().port}`)
+// src/main.ts - Electron entry
+import { createHonoApp } from "../server/app.js";
+const app = createHonoApp();
+const server = serve({ fetch: app.fetch, port: 0 }); // dynamic port
+createWindow(`http://localhost:${server.address().port}`);
 ```
 
 ### 4. Technology Stack (Aligned with Summon)
 
 **Build System:**
+
 - **Electron Forge** instead of electron-vite for better ecosystem support
 - **Separate Vite configs** for main, preload, and renderer processes
 - **Auto-updater** with proper release management
 
 **Development Tools:**
+
 - **TypeScript** throughout the application
 - **ESLint + Prettier** for code quality
 - **Vitest** for unit testing
@@ -99,6 +108,7 @@ createWindow(`http://localhost:${server.address().port}`)
 ### 5. Configuration Strategy
 
 **forge.config.ts:**
+
 ```typescript
 import type { ForgeConfig } from "@electron-forge/shared-types";
 import { VitePlugin } from "@electron-forge/plugin-vite";
@@ -112,11 +122,11 @@ const config: ForgeConfig = {
     icon: "assets/icon", // Platform-specific icons
   },
   makers: [
-    new MakerSquirrel({}),  // Windows
+    new MakerSquirrel({}), // Windows
     new MakerZIP({}, ["darwin", "linux"]),
-    new MakerDMG({}),       // macOS
-    new MakerDeb({}),       // Linux
-    new MakerRpm({})        // Linux
+    new MakerDMG({}), // macOS
+    new MakerDeb({}), // Linux
+    new MakerRpm({}), // Linux
   ],
   plugins: [
     new VitePlugin({
@@ -127,7 +137,7 @@ const config: ForgeConfig = {
           target: "main",
         },
         {
-          entry: "src/preload.ts", 
+          entry: "src/preload.ts",
           config: "vite.preload.config.ts",
           target: "preload",
         },
@@ -152,6 +162,7 @@ const config: ForgeConfig = {
 ### 6. IPC Architecture (Following Summon's Patterns)
 
 **Organized IPC Structure:**
+
 ```typescript
 // src/ipc/listeners-register.ts
 export default function registerListeners(mainWindow: BrowserWindow) {
@@ -162,54 +173,58 @@ export default function registerListeners(mainWindow: BrowserWindow) {
 
 // src/ipc/mcp/mcp-listeners.ts
 export function registerMcpListeners(mainWindow: BrowserWindow) {
-  ipcMain.handle('mcp:connect', handleMcpConnect);
-  ipcMain.handle('mcp:disconnect', handleMcpDisconnect);
-  ipcMain.handle('mcp:list-servers', handleListServers);
+  ipcMain.handle("mcp:connect", handleMcpConnect);
+  ipcMain.handle("mcp:disconnect", handleMcpDisconnect);
+  ipcMain.handle("mcp:list-servers", handleListServers);
 }
 ```
 
 **Preload Context Exposure:**
+
 ```typescript
 // src/preload.ts
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer } from "electron";
 
 const electronAPI = {
   // MCP operations
   mcp: {
-    connect: (config) => ipcRenderer.invoke('mcp:connect', config),
-    disconnect: (id) => ipcRenderer.invoke('mcp:disconnect', id),
-    listServers: () => ipcRenderer.invoke('mcp:list-servers'),
+    connect: (config) => ipcRenderer.invoke("mcp:connect", config),
+    disconnect: (id) => ipcRenderer.invoke("mcp:disconnect", id),
+    listServers: () => ipcRenderer.invoke("mcp:list-servers"),
   },
   // File operations
   files: {
-    openDialog: () => ipcRenderer.invoke('dialog:open'),
-    saveDialog: (data) => ipcRenderer.invoke('dialog:save', data),
+    openDialog: () => ipcRenderer.invoke("dialog:open"),
+    saveDialog: (data) => ipcRenderer.invoke("dialog:save", data),
   },
   // App metadata
   app: {
-    getVersion: () => ipcRenderer.invoke('app:version'),
-  }
+    getVersion: () => ipcRenderer.invoke("app:version"),
+  },
 };
 
-contextBridge.exposeInMainWorld('electronAPI', electronAPI);
+contextBridge.exposeInMainWorld("electronAPI", electronAPI);
 ```
 
 ### 7. Migration Plan
 
 **Phase 1: Forge Setup & Basic Shell**
+
 1. Install Electron Forge and configure build system
 2. Create separate Vite configs for main/preload/renderer
-3. Extract shared Hono server module 
+3. Extract shared Hono server module
 4. Implement basic main process with embedded server
 5. Ensure NPX command still works unchanged
 
 **Phase 2: Desktop Integration**
+
 1. Add native app menus and keyboard shortcuts
 2. Implement file dialogs for MCP server configuration
 3. Add proper window state management
 4. Setup auto-updater infrastructure
 
-**Phase 3: Enhanced Features** 
+**Phase 3: Enhanced Features**
+
 1. System tray integration for background operation
 2. Native notifications for server status
 3. Protocol handler for `mcpjam://` URLs
@@ -218,11 +233,12 @@ contextBridge.exposeInMainWorld('electronAPI', electronAPI);
 ### 8. Dependencies Update
 
 **Key New Dependencies:**
+
 ```json
 {
   "devDependencies": {
     "@electron-forge/cli": "^7.8.1",
-    "@electron-forge/maker-deb": "^7.8.1", 
+    "@electron-forge/maker-deb": "^7.8.1",
     "@electron-forge/maker-dmg": "^7.8.1",
     "@electron-forge/maker-rpm": "^7.8.1",
     "@electron-forge/maker-squirrel": "^7.8.1",
@@ -242,11 +258,12 @@ contextBridge.exposeInMainWorld('electronAPI', electronAPI);
 ```
 
 **Updated Scripts:**
+
 ```json
 {
   "scripts": {
     "start": "electron-forge start",
-    "package": "electron-forge package", 
+    "package": "electron-forge package",
     "make": "electron-forge make",
     "publish": "electron-forge publish",
     "dev:electron": "electron-forge start",
@@ -260,6 +277,7 @@ contextBridge.exposeInMainWorld('electronAPI', electronAPI);
 ### 9. Security & Production Considerations
 
 **Security Features (Following Summon's Approach):**
+
 - Context isolation enabled by default
 - Node integration disabled in renderer
 - Secure IPC patterns with proper validation
@@ -267,6 +285,7 @@ contextBridge.exposeInMainWorld('electronAPI', electronAPI);
 - Proper fuse configuration for production hardening
 
 **Production Features:**
+
 - Auto-updater with GitHub releases
 - Crash reporting and telemetry (optional)
 - Code signing for macOS and Windows

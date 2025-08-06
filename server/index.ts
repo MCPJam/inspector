@@ -34,7 +34,7 @@ function logBox(content: string, title?: string) {
         " ".repeat(titlePadding) +
         title +
         " ".repeat(width - title.length - titlePadding) +
-        "│"
+        "│",
     );
     console.log("├" + "─".repeat(width) + "┤");
   }
@@ -67,7 +67,7 @@ app.use(
   cors({
     origin: corsOrigins,
     credentials: true,
-  })
+  }),
 );
 
 // API Routes

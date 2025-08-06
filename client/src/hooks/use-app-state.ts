@@ -89,8 +89,8 @@ export function useAppState() {
                   ? new Date(server.lastConnectionTime)
                   : new Date(),
               },
-            ]
-          )
+            ],
+          ),
         );
         setAppState({
           servers: updatedServers,
@@ -151,7 +151,7 @@ export function useAppState() {
         } as HttpServerDefinition;
       }
     },
-    []
+    [],
   );
 
   const handleConnect = useCallback(
@@ -262,7 +262,7 @@ export function useAppState() {
                     },
                   }));
                   toast.error(
-                    `OAuth succeeded but connection failed: ${connectionResult.error}`
+                    `OAuth succeeded but connection failed: ${connectionResult.error}`,
                   );
                 }
               } catch (error) {
@@ -280,14 +280,14 @@ export function useAppState() {
                   },
                 }));
                 toast.error(
-                  `OAuth succeeded but connection test threw error: ${errorMessage}`
+                  `OAuth succeeded but connection test threw error: ${errorMessage}`,
                 );
               }
               return;
             } else {
               // Redirect needed - keep oauth-flow status
               toast.success(
-                "OAuth flow initiated. You will be redirected to authorize access."
+                "OAuth flow initiated. You will be redirected to authorize access.",
               );
               return;
             }
@@ -384,7 +384,7 @@ export function useAppState() {
         toast.error(`Network error: ${errorMessage}`);
       }
     },
-    [convertFormToMCPConfig]
+    [convertFormToMCPConfig],
   );
 
   const handleOAuthCallbackComplete = useCallback(
@@ -467,7 +467,7 @@ export function useAppState() {
 
               logger.info("OAuth connection successful", { serverName });
               toast.success(
-                `OAuth connection successful! Connected to ${serverName}.`
+                `OAuth connection successful! Connected to ${serverName}.`,
               );
             } else {
               setAppState((prev) => ({
@@ -489,7 +489,7 @@ export function useAppState() {
                 error: connectionResult.error,
               });
               toast.error(
-                `OAuth succeeded but connection test failed: ${connectionResult.error}`
+                `OAuth succeeded but connection test failed: ${connectionResult.error}`,
               );
             }
           } catch (connectionError) {
@@ -515,7 +515,7 @@ export function useAppState() {
               error: errorMessage,
             });
             toast.error(
-              `OAuth succeeded but connection test failed: ${errorMessage}`
+              `OAuth succeeded but connection test failed: ${errorMessage}`,
             );
           }
         } else {
@@ -528,7 +528,7 @@ export function useAppState() {
         logger.error("OAuth callback failed", { error: errorMessage });
       }
     },
-    [appState.servers, logger]
+    [appState.servers, logger],
   );
 
   const getValidAccessToken = useCallback(
@@ -541,7 +541,7 @@ export function useAppState() {
       // The SDK handles token refresh automatically
       return server.oauthTokens.access_token || null;
     },
-    [appState.servers]
+    [appState.servers],
   );
 
   const handleDisconnect = useCallback(async (serverName: string) => {
@@ -561,7 +561,7 @@ export function useAppState() {
         selectedServer:
           prev.selectedServer === serverName ? "none" : prev.selectedServer,
         selectedMultipleServers: prev.selectedMultipleServers.filter(
-          (name) => name !== serverName
+          (name) => name !== serverName,
         ),
       };
     });
@@ -618,7 +618,7 @@ export function useAppState() {
               {
                 serverName,
                 error: refreshResult.error,
-              }
+              },
             );
           }
         }
@@ -698,7 +698,7 @@ export function useAppState() {
         throw error;
       }
     },
-    [appState.servers]
+    [appState.servers],
   );
 
   // Effect to handle cleanup of reconnection timeouts (automatic retries disabled)
@@ -826,13 +826,13 @@ export function useAppState() {
           } else {
             // Connection failed, fall back to full reconnect
             console.warn(
-              "OAuth connection test failed, falling back to full reconnect"
+              "OAuth connection test failed, falling back to full reconnect",
             );
           }
         } catch (error) {
           console.warn(
             "OAuth connection test error, falling back to full reconnect",
-            error
+            error,
           );
         }
       }
@@ -859,7 +859,7 @@ export function useAppState() {
       handleDisconnect,
       handleConnect,
       setSelectedServer,
-    ]
+    ],
   );
 
   return {
@@ -881,7 +881,7 @@ export function useAppState() {
         }
         return acc;
       },
-      {} as Record<string, MastraMCPServerDefinition>
+      {} as Record<string, MastraMCPServerDefinition>,
     ),
     isMultiSelectMode: appState.isMultiSelectMode,
 

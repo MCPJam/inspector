@@ -17,7 +17,7 @@ const originalFetch = window.fetch;
 function createOAuthFetchInterceptor(): typeof fetch {
   return async function interceptedFetch(
     input: RequestInfo | URL,
-    init?: RequestInit
+    init?: RequestInit,
   ): Promise<Response> {
     const url =
       typeof input === "string"
@@ -38,7 +38,7 @@ function createOAuthFetchInterceptor(): typeof fetch {
       } catch (error) {
         console.error(
           "OAuth metadata proxy failed, falling back to direct fetch:",
-          error
+          error,
         );
         // Fallback to original fetch if proxy fails
         return await originalFetch(input, init);
@@ -118,7 +118,7 @@ class MCPOAuthProvider implements OAuthClientProvider {
   async saveClientInformation(clientInformation: any) {
     localStorage.setItem(
       `mcp-client-${this.serverName}`,
-      JSON.stringify(clientInformation)
+      JSON.stringify(clientInformation),
     );
   }
 
@@ -130,7 +130,7 @@ class MCPOAuthProvider implements OAuthClientProvider {
   async saveTokens(tokens: any) {
     localStorage.setItem(
       `mcp-tokens-${this.serverName}`,
-      JSON.stringify(tokens)
+      JSON.stringify(tokens),
     );
   }
 
@@ -177,7 +177,7 @@ class MCPOAuthProvider implements OAuthClientProvider {
  * Initiates OAuth flow for an MCP server
  */
 export async function initiateOAuth(
-  options: MCPOAuthOptions
+  options: MCPOAuthOptions,
 ): Promise<OAuthResult> {
   // Install fetch interceptor for OAuth metadata requests
   const interceptedFetch = createOAuthFetchInterceptor();
@@ -189,14 +189,14 @@ export async function initiateOAuth(
     // Store server URL for callback recovery
     localStorage.setItem(
       `mcp-serverUrl-${options.serverName}`,
-      options.serverUrl
+      options.serverUrl,
     );
     localStorage.setItem("mcp-oauth-pending", options.serverName);
 
     // Store custom client ID if provided, so it can be retrieved during callback
     if (options.clientId) {
       const existingClientInfo = localStorage.getItem(
-        `mcp-client-${options.serverName}`
+        `mcp-client-${options.serverName}`,
       );
       const existingJson = existingClientInfo
         ? JSON.parse(existingClientInfo)
@@ -207,7 +207,7 @@ export async function initiateOAuth(
         JSON.stringify({
           ...existingJson,
           client_id: options.clientId,
-        })
+        }),
       );
     }
 
@@ -238,9 +238,30 @@ export async function initiateOAuth(
       error: "OAuth flow failed",
     };
   } catch (error) {
+    let errorMessage = "Unknown OAuth error";
+
+    if (error instanceof Error) {
+      errorMessage = error.message;
+
+      // Provide more helpful error messages for common client ID issues
+      if (
+        errorMessage.includes("invalid_client") ||
+        errorMessage.includes("client_id")
+      ) {
+        errorMessage =
+          "Invalid client ID. Please verify the client ID is correctly registered with the OAuth provider.";
+      } else if (errorMessage.includes("unauthorized_client")) {
+        errorMessage =
+          "Client not authorized. The client ID may not be registered for this server or scope.";
+      } else if (errorMessage.includes("invalid_request")) {
+        errorMessage =
+          "OAuth request invalid. Please check your client ID and try again.";
+      }
+    }
+
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Unknown OAuth error",
+      error: errorMessage,
     };
   } finally {
     // Restore original fetch
@@ -252,7 +273,7 @@ export async function initiateOAuth(
  * Handles OAuth callback and completes the flow
  */
 export async function handleOAuthCallback(
-  authorizationCode: string
+  authorizationCode: string,
 ): Promise<OAuthResult & { serverName?: string }> {
   // Install fetch interceptor for OAuth metadata requests
   const interceptedFetch = createOAuthFetchInterceptor();
@@ -305,9 +326,30 @@ export async function handleOAuthCallback(
       error: "Token exchange failed",
     };
   } catch (error) {
+    let errorMessage = "Unknown callback error";
+
+    if (error instanceof Error) {
+      errorMessage = error.message;
+
+      // Provide more helpful error messages for common client ID issues
+      if (
+        errorMessage.includes("invalid_client") ||
+        errorMessage.includes("client_id")
+      ) {
+        errorMessage =
+          "Invalid client ID during token exchange. Please verify the client ID is correctly registered.";
+      } else if (errorMessage.includes("unauthorized_client")) {
+        errorMessage =
+          "Client not authorized for token exchange. The client ID may not match the one used for authorization.";
+      } else if (errorMessage.includes("invalid_grant")) {
+        errorMessage =
+          "Authorization code invalid or expired. Please try the OAuth flow again.";
+      }
+    }
+
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Unknown callback error",
+      error: errorMessage,
     };
   } finally {
     // Restore original fetch
@@ -339,7 +381,7 @@ export function getStoredTokens(serverName: string): any {
  */
 export async function waitForTokens(
   serverName: string,
-  timeoutMs: number = 5000
+  timeoutMs: number = 5000,
 ): Promise<any> {
   const startTime = Date.now();
 
@@ -358,7 +400,7 @@ export async function waitForTokens(
  * Refreshes OAuth tokens for a server using the refresh token
  */
 export async function refreshOAuthTokens(
-  serverName: string
+  serverName: string,
 ): Promise<OAuthResult> {
   // Install fetch interceptor for OAuth metadata requests
   const interceptedFetch = createOAuthFetchInterceptor();
@@ -411,9 +453,30 @@ export async function refreshOAuthTokens(
       error: "Token refresh failed",
     };
   } catch (error) {
+    let errorMessage = "Unknown refresh error";
+
+    if (error instanceof Error) {
+      errorMessage = error.message;
+
+      // Provide more helpful error messages for common client ID issues during refresh
+      if (
+        errorMessage.includes("invalid_client") ||
+        errorMessage.includes("client_id")
+      ) {
+        errorMessage =
+          "Invalid client ID during token refresh. The stored client ID may be incorrect.";
+      } else if (errorMessage.includes("invalid_grant")) {
+        errorMessage =
+          "Refresh token invalid or expired. Please re-authenticate with the OAuth provider.";
+      } else if (errorMessage.includes("unauthorized_client")) {
+        errorMessage =
+          "Client not authorized for token refresh. Please re-authenticate.";
+      }
+    }
+
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Unknown refresh error",
+      error: errorMessage,
     };
   } finally {
     // Restore original fetch
@@ -436,7 +499,7 @@ export function clearOAuthData(serverName: string): void {
  */
 function createServerConfig(
   serverUrl: string,
-  tokens: any
+  tokens: any,
 ): HttpServerDefinition {
   return {
     url: new URL(serverUrl),

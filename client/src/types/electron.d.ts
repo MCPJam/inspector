@@ -4,14 +4,14 @@ export interface ElectronAPI {
     getVersion: () => Promise<string>;
     getPlatform: () => Promise<string>;
   };
-  
+
   // File operations
   files: {
     openDialog: (options?: any) => Promise<string[] | undefined>;
     saveDialog: (data: any) => Promise<string | undefined>;
     showMessageBox: (options: any) => Promise<any>;
   };
-  
+
   // Window operations
   window: {
     minimize: () => void;
@@ -19,7 +19,7 @@ export interface ElectronAPI {
     close: () => void;
     isMaximized: () => Promise<boolean>;
   };
-  
+
   // MCP operations (for future use)
   mcp: {
     connect: (config: any) => Promise<any>;
