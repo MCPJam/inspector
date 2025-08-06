@@ -50,6 +50,23 @@ function logBox(content: string, title?: string) {
 // Import routes
 import mcpRoutes from "./routes/mcp/index";
 
+// Utility function to extract MCP server config from environment variables
+function getMCPConfigFromEnv() {
+  const command = process.env.MCP_SERVER_COMMAND;
+  if (!command) {
+    return null;
+  }
+
+  const argsString = process.env.MCP_SERVER_ARGS;
+  const args = argsString ? JSON.parse(argsString) : [];
+
+  return {
+    command,
+    args,
+    name: "CLI Server", // Default name for CLI-provided servers
+  };
+}
+
 const app = new Hono();
 
 // Middleware
@@ -78,6 +95,12 @@ app.get("/health", (c) => {
   return c.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
+// API endpoint to get MCP CLI config (for development mode)
+app.get("/api/mcp-cli-config", (c) => {
+  const mcpConfig = getMCPConfigFromEnv();
+  return c.json({ config: mcpConfig });
+});
+
 // Static file serving (for production)
 if (process.env.NODE_ENV === "production") {
   // Serve static assets (JS, CSS, images, etc.)
@@ -92,7 +115,15 @@ if (process.env.NODE_ENV === "production") {
     }
     // Return index.html for SPA routes
     const indexPath = join(process.cwd(), "dist", "client", "index.html");
-    const htmlContent = readFileSync(indexPath, "utf-8");
+    let htmlContent = readFileSync(indexPath, "utf-8");
+    
+    // Inject MCP server config if provided via CLI
+    const mcpConfig = getMCPConfigFromEnv();
+    if (mcpConfig) {
+      const configScript = `<script>window.MCP_CLI_CONFIG = ${JSON.stringify(mcpConfig)};</script>`;
+      htmlContent = htmlContent.replace('</head>', `${configScript}</head>`);
+    }
+    
     return c.html(htmlContent);
   });
 } else {

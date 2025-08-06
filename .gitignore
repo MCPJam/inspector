@@ -39,5 +39,10 @@ yarn-error.log*
 .env*
 
 
+# next.js
+/.next/
+/out/
+next-env.d.ts
+
 # typescript
 *.tsbuildinfo

@@ -334,6 +334,8 @@ async function main() {
   const envVars = {};
   let parsingFlags = true;
   let ollamaModel = null;
+  let mcpServerCommand = null;
+  let mcpServerArgs = [];
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -366,7 +368,29 @@ async function main() {
       } else {
         envVars[envVar] = "";
       }
+      continue;
     }
+
+    // If we encounter a non-flag argument, treat it as MCP server command
+    if (parsingFlags && !arg.startsWith("-")) {
+      mcpServerCommand = arg;
+      // Collect all remaining arguments as server arguments
+      mcpServerArgs = args.slice(i + 1);
+      break;
+    }
+  }
+
+  // Handle MCP server configuration if provided
+  if (mcpServerCommand) {
+    logStep("MCP Server", `Configuring auto-connection to: ${mcpServerCommand} ${mcpServerArgs.join(' ')}`);
+    
+    // Pass MCP server config via environment variables
+    envVars.MCP_SERVER_COMMAND = mcpServerCommand;
+    if (mcpServerArgs.length > 0) {
+      envVars.MCP_SERVER_ARGS = JSON.stringify(mcpServerArgs);
+    }
+    
+    logSuccess(`MCP server will auto-connect on startup`);
   }
 
   // Handle Ollama setup if requested

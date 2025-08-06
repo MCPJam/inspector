@@ -107,6 +107,7 @@ export function useAppState() {
     setIsLoading(false);
   }, []);
 
+
   // Save state to localStorage whenever it changes
   useEffect(() => {
     if (!isLoading) {
@@ -386,6 +387,50 @@ export function useAppState() {
     },
     [convertFormToMCPConfig],
   );
+
+  // Auto-connect to CLI-provided MCP server on mount
+  useEffect(() => {
+    if (!isLoading) {
+      // First try window config (production mode)
+      const windowCliConfig = (window as any).MCP_CLI_CONFIG;
+      if (windowCliConfig && windowCliConfig.command) {
+        logger.info("Auto-connecting to CLI-provided MCP server (from window)", { cliConfig: windowCliConfig });
+        
+        const formData: ServerFormData = {
+          name: windowCliConfig.name || "CLI Server",
+          type: "stdio" as const,
+          command: windowCliConfig.command,
+          args: windowCliConfig.args || [],
+        };
+        
+        handleConnect(formData);
+        return;
+      }
+
+      // If no window config, try API config (development mode)
+      fetch("/api/mcp-cli-config")
+        .then(response => response.json())
+        .then(data => {
+          const cliConfig = data.config;
+          if (cliConfig && cliConfig.command) {
+            logger.info("Auto-connecting to CLI-provided MCP server (from API)", { cliConfig });
+            
+            const formData: ServerFormData = {
+              name: cliConfig.name || "CLI Server",
+              type: "stdio" as const,
+              command: cliConfig.command,
+              args: cliConfig.args || [],
+            };
+            
+            handleConnect(formData);
+          }
+        })
+        .catch(error => {
+          // Ignore errors - just means no CLI config available
+          logger.debug("No CLI config available", { error });
+        });
+    }
+  }, [isLoading, handleConnect, logger]);
 
   const handleOAuthCallbackComplete = useCallback(
     async (code: string) => {
