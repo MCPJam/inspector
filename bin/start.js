@@ -467,7 +467,6 @@ async function main() {
     // Check if production build exists
     if (!existsSync(distServerPath)) {
       logProgress("Building client and server for production...");
-
       await spawnPromise("npm", ["run", "build"], {
         env: process.env,
         cwd: projectRoot,

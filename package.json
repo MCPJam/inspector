@@ -7,12 +7,18 @@
   "author": "MCPJam (https://mcpjam.com)",
   "homepage": "https://mcpjam.com",
   "bugs": "https://github.com/mcpjam/inspector/issues",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MCPJam/inspector.git"
+  },
+  "main": "dist/main/main.cjs",
   "bin": {
     "inspector-vite": "bin/start.js"
   },
   "files": [
     "bin",
     "dist",
+    "out",
     "package.json"
   ],
   "scripts": {
@@ -34,7 +40,14 @@
     "docker:up:dev": "docker-compose --profile dev up -d",
     "docker:down": "docker-compose down",
     "docker:logs": "docker-compose logs -f",
-    "docker:clean": "docker-compose down -v --rmi all"
+    "docker:clean": "docker-compose down -v --rmi all",
+    "electron:start": "electron-forge start",
+    "electron:package": "electron-forge package",
+    "electron:make": "electron-forge make",
+    "electron:publish": "electron-forge publish",
+    "electron:dev": "electron-forge start",
+    "test": "vitest run",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^1.2.12",
@@ -57,8 +70,10 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "date-fns": "^3.6.0",
+    "electron-log": "^5.4.2",
     "embla-carousel-react": "^8.6.0",
     "fast-deep-equal": "^3.1.3",
+    "fix-path": "^4.0.0",
     "framer-motion": "^12.23.6",
     "hono": "^4.6.11",
     "input-otp": "^1.4.2",
@@ -79,13 +94,24 @@
     "simple-icons": "^15.6.0",
     "sonner": "^2.0.6",
     "tailwind-merge": "^3.3.1",
+    "update-electron-app": "^3.1.1",
     "vaul": "^1.1.2",
     "zod": "^3.25.76",
     "zod-to-json-schema": "^3.24.6",
     "zustand": "^5.0.6"
   },
   "devDependencies": {
+    "@electron-forge/cli": "^7.8.2",
+    "@electron-forge/maker-deb": "^7.8.2",
+    "@electron-forge/maker-dmg": "^7.8.2",
+    "@electron-forge/maker-rpm": "^7.8.2",
+    "@electron-forge/maker-squirrel": "^7.8.2",
+    "@electron-forge/maker-zip": "^7.8.2",
+    "@electron-forge/plugin-fuses": "^7.8.2",
+    "@electron-forge/plugin-vite": "^7.8.2",
+    "@electron-forge/publisher-github": "^7.8.2",
     "@eslint/eslintrc": "^3",
+    "@playwright/test": "^1.54.2",
     "@tailwindcss/postcss": "^4.1.11",
     "@types/node": "^20",
     "@types/react": "^19",
@@ -93,12 +119,14 @@
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.21",
     "concurrently": "^9.1.0",
+    "electron": "^37.2.5",
     "eslint": "^9",
     "tailwindcss": "^4.1.11",
     "tsup": "^8.3.5",
     "tsx": "^4.19.2",
     "tw-animate-css": "^1.3.5",
     "typescript": "^5",
-    "vite": "^6.0.7"
+    "vite": "^6.0.7",
+    "vitest": "^3.2.4"
   }
 }
