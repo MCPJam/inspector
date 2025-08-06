@@ -24,6 +24,7 @@ import "react18-json-view/src/style.css";
 import type { MCPToolType } from "@mastra/core/mcp";
 import { MastraMCPServerDefinition } from "@/lib/types";
 import { ElicitationDialog } from "./ElicitationDialog";
+import { TruncatedText } from "@/components/ui/truncated-text";
 
 interface Tool {
   name: string;
@@ -648,9 +649,11 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                     {/* Description */}
                     {tools[selectedTool]?.description && (
                       <div className="px-6 py-4 bg-muted/50 border-b border-border">
-                        <p className="text-xs text-muted-foreground leading-relaxed font-medium">
-                          {tools[selectedTool].description}
-                        </p>
+                        <TruncatedText
+                          text={tools[selectedTool].description}
+                          title={tools[selectedTool].name}
+                          maxLength={400}
+                        />
                       </div>
                     )}
 
