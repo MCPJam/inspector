@@ -124,6 +124,7 @@ export interface ServerFormData {
   env?: Record<string, string>;
   useOAuth?: boolean;
   oauthScopes?: string[];
+  clientId?: string;
 }
 
 export type MastraMCPServerDefinition =

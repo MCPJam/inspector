@@ -32,13 +32,15 @@ export function AddServerModal({
     env: {},
     useOAuth: true,
     oauthScopes: ["mcp:*"],
+    clientId: "",
   });
   const [commandInput, setCommandInput] = useState("");
   const [oauthScopesInput, setOauthScopesInput] = useState("");
+  const [clientId, setClientId] = useState("");
   const [bearerToken, setBearerToken] = useState("");
   const [authType, setAuthType] = useState<"oauth" | "bearer" | "none">("none");
   const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>(
-    [],
+    []
   );
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -58,7 +60,7 @@ export function AddServerModal({
             if (key && value) acc[key] = value;
             return acc;
           },
-          {} as Record<string, string>,
+          {} as Record<string, string>
         );
         finalFormData = { ...finalFormData, env: envObj };
       }
@@ -86,7 +88,11 @@ export function AddServerModal({
           const scopes = oauthScopesInput
             .split(" ")
             .filter((scope) => scope.trim());
-          finalFormData = { ...finalFormData, oauthScopes: scopes };
+          finalFormData = {
+            ...finalFormData,
+            oauthScopes: scopes,
+            clientId: clientId.trim() || undefined,
+          };
         }
       }
 
@@ -112,9 +118,11 @@ export function AddServerModal({
       env: {},
       useOAuth: true,
       oauthScopes: ["mcp:*"],
+      clientId: "",
     });
     setCommandInput("");
     setOauthScopesInput("");
+    setClientId("");
     setBearerToken("");
     setAuthType("none");
     setEnvVars([]);
@@ -131,7 +139,7 @@ export function AddServerModal({
   const updateEnvVar = (
     index: number,
     field: "key" | "value",
-    value: string,
+    value: string
   ) => {
     const updated = [...envVars];
     updated[index][field] = value;
@@ -334,20 +342,37 @@ export function AddServerModal({
               </div>
 
               {authType === "oauth" && (
-                <div className="space-y-2">
-                  <label className="block text-sm font-medium text-foreground">
-                    OAuth Scopes
-                  </label>
-                  <Input
-                    value={oauthScopesInput}
-                    onChange={(e) => setOauthScopesInput(e.target.value)}
-                    placeholder="mcp:* mcp:tools mcp:resources"
-                    className="h-10"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Space-separated OAuth scopes. Use &apos;mcp:*&apos; for full
-                    access.
-                  </p>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-foreground">
+                      OAuth Scopes
+                    </label>
+                    <Input
+                      value={oauthScopesInput}
+                      onChange={(e) => setOauthScopesInput(e.target.value)}
+                      placeholder="mcp:* mcp:tools mcp:resources"
+                      className="h-10"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Space-separated OAuth scopes. Use &apos;mcp:*&apos; for
+                      full access.
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-foreground">
+                      Client ID (Optional)
+                    </label>
+                    <Input
+                      value={clientId}
+                      onChange={(e) => setClientId(e.target.value)}
+                      placeholder="Leave empty for dynamic registration"
+                      className="h-10"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      If provided, uses this client ID instead of dynamic
+                      registration.
+                    </p>
+                  </div>
                 </div>
               )}
 

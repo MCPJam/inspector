@@ -17,7 +17,7 @@ const originalFetch = window.fetch;
 function createOAuthFetchInterceptor(): typeof fetch {
   return async function interceptedFetch(
     input: RequestInfo | URL,
-    init?: RequestInit,
+    init?: RequestInit
   ): Promise<Response> {
     const url =
       typeof input === "string"
@@ -38,7 +38,7 @@ function createOAuthFetchInterceptor(): typeof fetch {
       } catch (error) {
         console.error(
           "OAuth metadata proxy failed, falling back to direct fetch:",
-          error,
+          error
         );
         // Fallback to original fetch if proxy fails
         return await originalFetch(input, init);
@@ -54,6 +54,7 @@ export interface MCPOAuthOptions {
   serverName: string;
   serverUrl: string;
   scopes?: string[];
+  clientId?: string;
 }
 
 export interface OAuthResult {
@@ -68,10 +69,12 @@ export interface OAuthResult {
 class MCPOAuthProvider implements OAuthClientProvider {
   private serverName: string;
   private redirectUri: string;
+  private customClientId?: string;
 
-  constructor(serverName: string) {
+  constructor(serverName: string, customClientId?: string) {
     this.serverName = serverName;
     this.redirectUri = `${window.location.origin}/oauth/callback`;
+    this.customClientId = customClientId;
   }
 
   get redirectUrl(): string {
@@ -81,7 +84,7 @@ class MCPOAuthProvider implements OAuthClientProvider {
   get clientMetadata() {
     return {
       client_name: `MCP Inspector - ${this.serverName}`,
-      client_uri: "https://github.com/modelcontextprotocol/inspector",
+      client_uri: "https://github.com/mcpjam/inspector",
       redirect_uris: [this.redirectUri],
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
@@ -92,13 +95,30 @@ class MCPOAuthProvider implements OAuthClientProvider {
 
   clientInformation() {
     const stored = localStorage.getItem(`mcp-client-${this.serverName}`);
-    return stored ? JSON.parse(stored) : undefined;
+    const storedJson = stored ? JSON.parse(stored) : undefined;
+
+    // If custom client ID is provided, use it
+    if (this.customClientId) {
+      if (storedJson) {
+        // If there's stored information, merge with custom client ID
+        return {
+          ...storedJson,
+          client_id: this.customClientId,
+        };
+      } else {
+        // If no stored information, create a minimal client info with custom client ID
+        return {
+          client_id: this.customClientId,
+        };
+      }
+    }
+    return storedJson;
   }
 
   async saveClientInformation(clientInformation: any) {
     localStorage.setItem(
       `mcp-client-${this.serverName}`,
-      JSON.stringify(clientInformation),
+      JSON.stringify(clientInformation)
     );
   }
 
@@ -110,7 +130,7 @@ class MCPOAuthProvider implements OAuthClientProvider {
   async saveTokens(tokens: any) {
     localStorage.setItem(
       `mcp-tokens-${this.serverName}`,
-      JSON.stringify(tokens),
+      JSON.stringify(tokens)
     );
   }
 
@@ -157,21 +177,39 @@ class MCPOAuthProvider implements OAuthClientProvider {
  * Initiates OAuth flow for an MCP server
  */
 export async function initiateOAuth(
-  options: MCPOAuthOptions,
+  options: MCPOAuthOptions
 ): Promise<OAuthResult> {
   // Install fetch interceptor for OAuth metadata requests
   const interceptedFetch = createOAuthFetchInterceptor();
   window.fetch = interceptedFetch;
 
   try {
-    const provider = new MCPOAuthProvider(options.serverName);
+    const provider = new MCPOAuthProvider(options.serverName, options.clientId);
 
     // Store server URL for callback recovery
     localStorage.setItem(
       `mcp-serverUrl-${options.serverName}`,
-      options.serverUrl,
+      options.serverUrl
     );
     localStorage.setItem("mcp-oauth-pending", options.serverName);
+
+    // Store custom client ID if provided, so it can be retrieved during callback
+    if (options.clientId) {
+      const existingClientInfo = localStorage.getItem(
+        `mcp-client-${options.serverName}`
+      );
+      const existingJson = existingClientInfo
+        ? JSON.parse(existingClientInfo)
+        : {};
+
+      localStorage.setItem(
+        `mcp-client-${options.serverName}`,
+        JSON.stringify({
+          ...existingJson,
+          client_id: options.clientId,
+        })
+      );
+    }
 
     const result = await auth(provider, {
       serverUrl: options.serverUrl,
@@ -214,7 +252,7 @@ export async function initiateOAuth(
  * Handles OAuth callback and completes the flow
  */
 export async function handleOAuthCallback(
-  authorizationCode: string,
+  authorizationCode: string
 ): Promise<OAuthResult & { serverName?: string }> {
   // Install fetch interceptor for OAuth metadata requests
   const interceptedFetch = createOAuthFetchInterceptor();
@@ -233,7 +271,13 @@ export async function handleOAuthCallback(
       throw new Error("Server URL not found for OAuth callback");
     }
 
-    const provider = new MCPOAuthProvider(serverName);
+    // Get stored client ID if any
+    const storedClientInfo = localStorage.getItem(`mcp-client-${serverName}`);
+    const customClientId = storedClientInfo
+      ? JSON.parse(storedClientInfo).client_id
+      : undefined;
+
+    const provider = new MCPOAuthProvider(serverName, customClientId);
 
     const result = await auth(provider, {
       serverUrl,
@@ -272,11 +316,22 @@ export async function handleOAuthCallback(
 }
 
 /**
- * Gets stored tokens for a server
+ * Gets stored tokens for a server, including client_id from client information
  */
 export function getStoredTokens(serverName: string): any {
-  const stored = localStorage.getItem(`mcp-tokens-${serverName}`);
-  return stored ? JSON.parse(stored) : undefined;
+  const tokens = localStorage.getItem(`mcp-tokens-${serverName}`);
+  const clientInfo = localStorage.getItem(`mcp-client-${serverName}`);
+  // TODO: Maybe we should move clientID away from the token info? Not sure if clientID is bonded to token
+  if (!tokens) return undefined;
+
+  const tokensJson = JSON.parse(tokens);
+  const clientJson = clientInfo ? JSON.parse(clientInfo) : {};
+
+  // Merge tokens with client_id from client information
+  return {
+    ...tokensJson,
+    client_id: clientJson.client_id || tokensJson.client_id,
+  };
 }
 
 /**
@@ -284,7 +339,7 @@ export function getStoredTokens(serverName: string): any {
  */
 export async function waitForTokens(
   serverName: string,
-  timeoutMs: number = 5000,
+  timeoutMs: number = 5000
 ): Promise<any> {
   const startTime = Date.now();
 
@@ -303,14 +358,20 @@ export async function waitForTokens(
  * Refreshes OAuth tokens for a server using the refresh token
  */
 export async function refreshOAuthTokens(
-  serverName: string,
+  serverName: string
 ): Promise<OAuthResult> {
   // Install fetch interceptor for OAuth metadata requests
   const interceptedFetch = createOAuthFetchInterceptor();
   window.fetch = interceptedFetch;
 
   try {
-    const provider = new MCPOAuthProvider(serverName);
+    // Get stored client ID if any
+    const storedClientInfo = localStorage.getItem(`mcp-client-${serverName}`);
+    const customClientId = storedClientInfo
+      ? JSON.parse(storedClientInfo).client_id
+      : undefined;
+
+    const provider = new MCPOAuthProvider(serverName, customClientId);
     const existingTokens = provider.tokens();
 
     if (!existingTokens?.refresh_token) {
@@ -375,7 +436,7 @@ export function clearOAuthData(serverName: string): void {
  */
 function createServerConfig(
   serverUrl: string,
-  tokens: any,
+  tokens: any
 ): HttpServerDefinition {
   return {
     url: new URL(serverUrl),
