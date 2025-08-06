@@ -16,51 +16,40 @@ const config: ForgeConfig = {
     executableName: 'mcpjam-inspector',
     // icon: 'assets/icon', // Add icon files later
     out: 'out',
-    ignore: [
-      /^\/src\//,
-      /^\/client\//,
-      /^\/server\//,
-      /\.ts$/,
-      /\.tsx$/,
-      /\.map$/,
-      /tsconfig\.json$/,
-      /vite\.config\.ts$/,
-      /\.git/,
-      /node_modules\/\.cache/,
-    ],
+    // Let Vite plugin handle ignore configuration automatically
   },
   rebuildConfig: {},
   makers: [
-    new MakerSquirrel({}),
-    new MakerZIP({}, ['darwin', 'linux']),
+    // Only build DMG for faster iteration on macOS
     new MakerDMG({
       format: 'ULFO',
-      name: 'MCPJam Inspector',
+      name: 'MCPJam',
     }),
-    new MakerDeb({
-      options: {
-        maintainer: 'MCPJam',
-        homepage: 'https://mcpjam.com',
-        description: 'MCPJam Inspector - Explore and interact with Model Context Protocol servers',
-        categories: ['Development'],
-      },
-    }),
-    new MakerRpm({
-      options: {
-        maintainer: 'MCPJam',
-        homepage: 'https://mcpjam.com',
-        description: 'MCPJam Inspector - Explore and interact with Model Context Protocol servers',
-        categories: ['Development'],
-      },
-    }),
+    // Uncomment others when needed for distribution
+    // new MakerSquirrel({}),
+    // new MakerZIP({}, ['darwin', 'linux']),
+    // new MakerDeb({
+    //   options: {
+    //     maintainer: 'MCPJam',
+    //     homepage: 'https://mcpjam.com',
+    //     description: 'MCPJam Inspector - Explore and interact with Model Context Protocol servers',
+    //     categories: ['Development'],
+    //   },
+    // }),
+    // new MakerRpm({
+    //   options: {
+    //     maintainer: 'MCPJam',
+    //     homepage: 'https://mcpjam.com',
+    //     description: 'MCPJam Inspector - Explore and interact with Model Context Protocol servers',
+    //     categories: ['Development'],
+    //   },
+    // }),
   ],
   plugins: [
     new VitePlugin({
       // `build` can specify multiple entry builds, which can be Main process, Preload scripts, Worker process, etc.
-      // If you are familiar with Vite configuration, it will look really familiar.
       build: [
         {
-          // `entry` is just an alias for `build.lib.entry` in the corresponding file of `config`.
           entry: 'src/main.ts',
           config: 'vite.main.config.ts',
           target: 'main',

@@ -1,14 +1,24 @@
 import { app, BrowserWindow, shell, Menu } from 'electron';
 import { serve } from '@hono/node-server';
 import path from 'path';
-import { createHonoApp } from '../server/app.js';
+import { Hono } from 'hono';
+import { cors } from 'hono/cors';
+import { logger } from 'hono/logger';
+import { serveStatic } from '@hono/node-server/serve-static';
 import log from 'electron-log';
 import { updateElectronApp } from 'update-electron-app';
 import { registerListeners } from './ipc/listeners-register.js';
 
 // Configure logging
-log.transports.file.level = 'info';
+log.transports.file.level = 'debug';
 log.transports.console.level = 'debug';
+
+// Log to both file and console for better debugging
+log.info('=== MCPJam Inspector Starting ===');
+log.info(`Platform: ${process.platform}`);
+log.info(`Node version: ${process.version}`);
+log.info(`Electron version: ${process.versions.electron}`);
+log.info(`App packaged: ${app.isPackaged}`);
 
 // Enable auto-updater
 updateElectronApp();
@@ -23,6 +33,72 @@ let server: any = null;
 let serverPort: number = 0;
 
 const isDev = process.env.NODE_ENV === 'development';
+
+function createSimpleHonoApp() {
+  const app = new Hono();
+
+  // Middleware
+  app.use("*", logger());
+  app.use("*", cors({
+    origin: [
+      "http://localhost:8080",
+      "http://localhost:3000",
+      "http://localhost:3001",
+      "http://127.0.0.1:3001",
+      "http://127.0.0.1:3000",
+    ],
+    credentials: true,
+  }));
+
+  // Health check
+  app.get("/health", (c) => {
+    return c.json({ status: "ok", timestamp: new Date().toISOString() });
+  });
+
+  // Debug endpoint - for development debugging
+  app.get("/debug/info", (c) => {
+    return c.json({
+      status: "ok",
+      timestamp: new Date().toISOString(),
+      environment: {
+        isPackaged: app.isPackaged,
+        nodeEnv: process.env.NODE_ENV,
+        platform: process.platform,
+        electronVersion: process.versions.electron,
+        nodeVersion: process.versions.node
+      }
+    });
+  });
+
+  // Static file serving - only in development
+  // In production, renderer is loaded via Electron's loadFile()
+  if (!app.isPackaged) {
+    const clientPath = "./dist/renderer";
+    console.log(`[DEBUG] Dev mode: serving static files from: ${clientPath}`);
+    app.use("/*", serveStatic({ root: clientPath }));
+
+    // SPA fallback for development
+    app.get("*", (c) => {
+      const requestPath = c.req.path;
+      if (requestPath.startsWith("/api/") || requestPath.startsWith("/debug/")) {
+        return c.notFound();
+      }
+      return serveStatic({ path: "./dist/renderer/index.html" })(c);
+    });
+  } else {
+    // In packaged app, only serve API routes - renderer handled by Electron
+    console.log(`[DEBUG] Packaged mode: server only handles API routes`);
+    app.get("*", (c) => {
+      const requestPath = c.req.path;
+      if (requestPath.startsWith("/api/") || requestPath.startsWith("/debug/") || requestPath.startsWith("/health")) {
+        return c.notFound(); // Let other routes handle these
+      }
+      return c.json({ message: "API server - renderer loaded via Electron loadFile" });
+    });
+  }
+
+  return app;
+}
 
 async function findAvailablePort(startPort = 3001): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -50,7 +126,9 @@ async function startHonoServer(): Promise<number> {
     // Set environment variable to tell the server it's running in Electron
     process.env.ELECTRON_APP = 'true';
     
-    const honoApp = createHonoApp();
+    log.info('Creating Hono app...');
+    const honoApp = createSimpleHonoApp();
+    log.info('Successfully created Hono app');
     
     server = serve({
       fetch: honoApp.fetch,
@@ -62,6 +140,9 @@ async function startHonoServer(): Promise<number> {
     return port;
   } catch (error) {
     log.error('Failed to start Hono server:', error);
+    log.error('Error stack:', error instanceof Error ? error.stack : 'No stack trace');
+    log.error('Error name:', error instanceof Error ? error.name : 'Unknown');
+    log.error('Error message:', error instanceof Error ? error.message : String(error));
     throw error;
   }
 }
@@ -77,7 +158,7 @@ function createMainWindow(serverUrl: string): BrowserWindow {
       nodeIntegration: false,
       contextIsolation: true,
       enableRemoteModule: false,
-      preload: path.join(__dirname, '../preload/index.js'),
+      preload: path.join(__dirname, '../build/preload.js'),
     },
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     show: false, // Don't show until ready
@@ -86,9 +167,35 @@ function createMainWindow(serverUrl: string): BrowserWindow {
   // Register IPC listeners
   registerListeners(window);
 
-  // Load the app
-  window.loadURL(serverUrl);
+  // Load the app with hybrid approach: try Electron loadFile first, fallback to server
+  const MAIN_WINDOW_VITE_DEV_SERVER_URL = process.env.MAIN_WINDOW_VITE_DEV_SERVER_URL;
+  const MAIN_WINDOW_VITE_NAME = process.env.MAIN_WINDOW_VITE_NAME || 'main_window';
   
+  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+    // In development, load from Vite dev server
+    window.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
+  } else {
+    // In production, try Electron's loadFile first, fallback to embedded server
+    const rendererPath = path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`);
+    
+    try {
+      const fs = require('fs');
+      if (fs.existsSync(rendererPath)) {
+        // Renderer files found - use Electron's built-in file loading
+        window.loadFile(rendererPath);
+      } else {
+        // Renderer files not found - fallback to embedded server
+        log.info('Renderer files not in expected location, using embedded server');
+        window.loadURL(serverUrl);
+      }
+    } catch (error) {
+      // Error checking files - fallback to embedded server
+      log.warn('Error checking renderer files, using embedded server:', error.message);
+      window.loadURL(serverUrl);
+    }
+  }
+  
+  // Open DevTools only in development
   if (isDev) {
     window.webContents.openDevTools();
   }
