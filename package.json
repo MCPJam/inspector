@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/inspector-vite",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "description": "MCPJam Inspector",
   "license": "Apache-2.0",

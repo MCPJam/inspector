@@ -110,13 +110,14 @@ function isPortAvailable(port) {
     const server = createServer();
 
     server.listen(port, () => {
-      server.once("close", () => {
+      // Port is available, close the server and resolve true
+      server.close(() => {
         resolve(true);
       });
-      server.close();
     });
 
     server.on("error", () => {
+      // Port is not available
       resolve(false);
     });
   });
@@ -402,7 +403,7 @@ async function main() {
   Object.assign(process.env, envVars);
 
   // Port discovery and configuration
-  const requestedPort = parseInt(process.env.PORT ?? "3000", 10);
+  const requestedPort = parseInt(process.env.PORT ?? "6274", 10);
   let PORT;
 
   try {
