@@ -9,15 +9,16 @@ export default defineConfig({
   },
   build: {
     ssr: true,
+    target: 'node18',
     minify: process.env.NODE_ENV === 'production',
-    outDir: 'dist/main',
     rollupOptions: {
       external: [
         'electron',
-        '@hono/node-server',
-        'hono',
-        // Add other external dependencies as needed
+        // Only keep Electron as external - bundle everything else
       ],
     },
+  },
+  ssr: {
+    noExternal: true, // Bundle ALL dependencies
   },
 });

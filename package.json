@@ -11,7 +11,7 @@
     "type": "git",
     "url": "https://github.com/MCPJam/inspector.git"
   },
-  "main": "dist/main/main.cjs",
+  "main": ".vite/build/main.cjs",
   "bin": {
     "inspector-vite": "bin/start.js"
   },
@@ -44,6 +44,7 @@
     "electron:start": "electron-forge start",
     "electron:package": "electron-forge package",
     "electron:make": "electron-forge make",
+    "electron:make:fast": "npm run build && electron-forge package",
     "electron:publish": "electron-forge publish",
     "electron:dev": "electron-forge start",
     "test": "vitest run",
