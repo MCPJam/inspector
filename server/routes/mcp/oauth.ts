@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { ContentfulStatusCode } from "hono/utils/http-status";
 
 const oauth = new Hono();
 
@@ -39,7 +40,7 @@ oauth.get("/metadata", async (c) => {
         {
           error: `Failed to fetch OAuth metadata: ${response.status} ${response.statusText}`,
         },
-        response.status,
+        response.status as ContentfulStatusCode,
       );
     }
 

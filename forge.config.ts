@@ -1,21 +1,20 @@
-import type { ForgeConfig } from '@electron-forge/shared-types';
-import { MakerSquirrel } from '@electron-forge/maker-squirrel';
-import { MakerZIP } from '@electron-forge/maker-zip';
-import { MakerDeb } from '@electron-forge/maker-deb';
-import { MakerRpm } from '@electron-forge/maker-rpm';
-import { MakerDMG } from '@electron-forge/maker-dmg';
-import { VitePlugin } from '@electron-forge/plugin-vite';
-import { FusesPlugin } from '@electron-forge/plugin-fuses';
-import { FuseV1Options, FuseVersion } from '@electron/fuses';
+import type { ForgeConfig } from "@electron-forge/shared-types";
+import { MakerSquirrel } from "@electron-forge/maker-squirrel";
+import { MakerZIP } from "@electron-forge/maker-zip";
+import { MakerDeb } from "@electron-forge/maker-deb";
+import { MakerRpm } from "@electron-forge/maker-rpm";
+import { MakerDMG } from "@electron-forge/maker-dmg";
+import { VitePlugin } from "@electron-forge/plugin-vite";
+import { FusesPlugin } from "@electron-forge/plugin-fuses";
+import { FuseV1Options, FuseVersion } from "@electron/fuses";
 
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
-    appBundleId: 'com.mcpjam.inspector',
-    appCategoryType: 'public.app-category.developer-tools',
-    executableName: 'mcpjam-inspector',
+    appBundleId: "com.mcpjam.inspector",
+    appCategoryType: "public.app-category.developer-tools",
+    executableName: "mcpjam-inspector",
     // icon: 'assets/icon', // Add icon files later
-    out: 'out',
     ignore: [
       /^\/src\//,
       /^\/client\//,
@@ -32,25 +31,26 @@ const config: ForgeConfig = {
   rebuildConfig: {},
   makers: [
     new MakerSquirrel({}),
-    new MakerZIP({}, ['darwin', 'linux']),
+    new MakerZIP({}, ["darwin", "linux"]),
     new MakerDMG({
-      format: 'ULFO',
-      name: 'MCPJam Inspector',
+      format: "ULFO",
+      name: "MCPJam Inspector",
     }),
     new MakerDeb({
       options: {
-        maintainer: 'MCPJam',
-        homepage: 'https://mcpjam.com',
-        description: 'MCPJam Inspector - Explore and interact with Model Context Protocol servers',
-        categories: ['Development'],
+        maintainer: "MCPJam",
+        homepage: "https://mcpjam.com",
+        description:
+          "MCPJam Inspector - Explore and interact with Model Context Protocol servers",
+        categories: ["Development"],
       },
     }),
     new MakerRpm({
       options: {
-        maintainer: 'MCPJam',
-        homepage: 'https://mcpjam.com',
-        description: 'MCPJam Inspector - Explore and interact with Model Context Protocol servers',
-        categories: ['Development'],
+        homepage: "https://mcpjam.com",
+        description:
+          "MCPJam Inspector - Explore and interact with Model Context Protocol servers",
+        categories: ["Development"],
       },
     }),
   ],
@@ -61,20 +61,20 @@ const config: ForgeConfig = {
       build: [
         {
           // `entry` is just an alias for `build.lib.entry` in the corresponding file of `config`.
-          entry: 'src/main.ts',
-          config: 'vite.main.config.ts',
-          target: 'main',
+          entry: "src/main.ts",
+          config: "vite.main.config.ts",
+          target: "main",
         },
         {
-          entry: 'src/preload.ts',
-          config: 'vite.preload.config.ts',
-          target: 'preload',
+          entry: "src/preload.ts",
+          config: "vite.preload.config.ts",
+          target: "preload",
         },
       ],
       renderer: [
         {
-          name: 'main_window',
-          config: 'vite.renderer.config.mts',
+          name: "main_window",
+          config: "vite.renderer.config.mts",
         },
       ],
     }),

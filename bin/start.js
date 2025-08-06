@@ -62,7 +62,7 @@ function logError(message) {
 function logStep(step, message) {
   log(
     `\n${colors.cyan}${colors.bright}[${step}]${colors.reset} ${message}`,
-    colors.white
+    colors.white,
   );
 }
 
@@ -88,7 +88,7 @@ function logBox(content, title = null) {
         title +
         " ".repeat(width - title.length - titlePadding) +
         "│",
-      colors.cyan
+      colors.cyan,
     );
     log("├" + "─".repeat(width) + "┤", colors.cyan);
   }
@@ -137,7 +137,7 @@ async function findAvailablePort(startPort = 3000, maxPort = 65535) {
     }
   }
   throw new Error(
-    `No available ports found between ${startPort} and ${maxPort}`
+    `No available ports found between ${startPort} and ${maxPort}`,
   );
 }
 
@@ -258,7 +258,7 @@ async function openTerminalWithMultipleCommands(commands, title) {
     await spawnPromise(
       terminalCmd[0],
       [...terminalCmd.slice(1), "bash", "-c", fullCommand],
-      { echoOutput: false }
+      { echoOutput: false },
     );
   }
 }
@@ -272,11 +272,11 @@ async function setupOllamaInSingleTerminal(model) {
 
     await openTerminalWithMultipleCommands(
       commands,
-      `Ollama: Pull ${model} & Serve`
+      `Ollama: Pull ${model} & Serve`,
     );
     logSuccess("Ollama pull and serve started in same terminal");
     logProgress(
-      "Waiting for model download to complete and server to start..."
+      "Waiting for model download to complete and server to start...",
     );
 
     // Wait a bit for the model pull to start
@@ -305,7 +305,7 @@ async function setupOllamaInSingleTerminal(model) {
       await delay(10000); // Wait 10 seconds between checks
       if (i % 3 === 0) {
         logProgress(
-          `Still waiting for model ${model} to be ready and server to start...`
+          `Still waiting for model ${model} to be ready and server to start...`,
         );
       }
     }
@@ -314,7 +314,7 @@ async function setupOllamaInSingleTerminal(model) {
       logSuccess(`Model ${model} is ready and Ollama server is running`);
     } else {
       logWarning(
-        `Setup may still be in progress. Please check the terminal window.`
+        `Setup may still be in progress. Please check the terminal window.`,
       );
     }
   } catch (error) {
@@ -377,7 +377,7 @@ async function main() {
     if (!isOllamaInstalled) {
       logError("Ollama is not installed. Please install Ollama first:");
       logInfo(
-        "Visit https://ollama.ai/download to download and install Ollama"
+        "Visit https://ollama.ai/download to download and install Ollama",
       );
       process.exit(1);
     }
@@ -418,7 +418,7 @@ async function main() {
       } else {
         logError(`Explicitly requested port ${requestedPort} is not available`);
         logInfo(
-          "Use a different port with --port <number> or let the system find one automatically"
+          "Use a different port with --port <number> or let the system find one automatically",
         );
         throw new Error(`Port ${requestedPort} is already in use`);
       }
@@ -430,7 +430,7 @@ async function main() {
         logSuccess(`Default port ${requestedPort} is available`);
       } else {
         logWarning(
-          `Default port ${requestedPort} is in use, searching for next available port...`
+          `Default port ${requestedPort} is in use, searching for next available port...`,
         );
         const availablePort = await findAvailablePort(requestedPort + 1);
         PORT = availablePort.toString();

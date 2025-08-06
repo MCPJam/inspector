@@ -1,34 +1,34 @@
-import { defineConfig } from 'tsup'
+import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: ['index.ts'],
-  format: ['esm'],
-  target: 'node18',
-  outDir: '../dist/server',
+  entry: ["index.ts"],
+  format: ["esm"],
+  target: "node18",
+  outDir: "../dist/server",
   clean: true,
   bundle: true,
   minify: false,
   sourcemap: true,
   external: [
     // External packages that should not be bundled
-    '@hono/node-server',
-    'hono',
-    '@mastra/mcp',
-    '@mastra/core',
-    '@modelcontextprotocol/sdk',
-    'ai',
-    '@ai-sdk/anthropic',
-    '@ai-sdk/openai',
-    'ollama-ai-provider',
-    'zod',
-    'zod-to-json-schema'
+    "@hono/node-server",
+    "hono",
+    "@mastra/mcp",
+    "@mastra/core",
+    "@modelcontextprotocol/sdk",
+    "ai",
+    "@ai-sdk/anthropic",
+    "@ai-sdk/openai",
+    "ollama-ai-provider",
+    "zod",
+    "zod-to-json-schema",
   ],
   noExternal: [
     // Force bundling of problematic packages
-    'exit-hook'
+    "exit-hook",
   ],
   esbuildOptions(options) {
-    options.platform = 'node'
-    options.mainFields = ['module', 'main']
-  }
-}) 
+    options.platform = "node";
+    options.mainFields = ["module", "main"];
+  },
+});

@@ -6,6 +6,7 @@ import {
   getStoredTokens,
   clearOAuthData,
   refreshOAuthTokens,
+  MCPOAuthOptions,
 } from "@/lib/mcp-oauth";
 import {
   MastraMCPServerDefinition,
@@ -47,6 +48,7 @@ export interface ServerFormData {
   env?: Record<string, string>;
   useOAuth?: boolean;
   oauthScopes?: string[];
+  clientId?: string;
 }
 
 const STORAGE_KEY = "mcp-inspector-state";
@@ -60,6 +62,8 @@ export function useAppState() {
     selectedMultipleServers: [],
     isMultiSelectMode: false,
   });
+
+  console.log("appState", appState);
 
   const [isLoading, setIsLoading] = useState(true);
   const [reconnectionTimeouts, setReconnectionTimeouts] = useState<
@@ -211,7 +215,8 @@ export function useAppState() {
             serverName: formData.name,
             serverUrl: formData.url,
             scopes: formData.oauthScopes || ["mcp:*"],
-          });
+            clientId: formData.clientId,
+          } as MCPOAuthOptions);
 
           if (oauthResult.success) {
             if (oauthResult.serverConfig) {

@@ -54,6 +54,7 @@ export interface MCPOAuthOptions {
   serverName: string;
   serverUrl: string;
   scopes?: string[];
+  clientId?: string;
 }
 
 export interface OAuthResult {
@@ -68,10 +69,12 @@ export interface OAuthResult {
 class MCPOAuthProvider implements OAuthClientProvider {
   private serverName: string;
   private redirectUri: string;
+  private customClientId?: string;
 
-  constructor(serverName: string) {
+  constructor(serverName: string, customClientId?: string) {
     this.serverName = serverName;
     this.redirectUri = `${window.location.origin}/oauth/callback`;
+    this.customClientId = customClientId;
   }
 
   get redirectUrl(): string {
@@ -81,7 +84,7 @@ class MCPOAuthProvider implements OAuthClientProvider {
   get clientMetadata() {
     return {
       client_name: `MCP Inspector - ${this.serverName}`,
-      client_uri: "https://github.com/modelcontextprotocol/inspector",
+      client_uri: "https://github.com/mcpjam/inspector",
       redirect_uris: [this.redirectUri],
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
@@ -92,7 +95,24 @@ class MCPOAuthProvider implements OAuthClientProvider {
 
   clientInformation() {
     const stored = localStorage.getItem(`mcp-client-${this.serverName}`);
-    return stored ? JSON.parse(stored) : undefined;
+    const storedJson = stored ? JSON.parse(stored) : undefined;
+
+    // If custom client ID is provided, use it
+    if (this.customClientId) {
+      if (storedJson) {
+        // If there's stored information, merge with custom client ID
+        return {
+          ...storedJson,
+          client_id: this.customClientId,
+        };
+      } else {
+        // If no stored information, create a minimal client info with custom client ID
+        return {
+          client_id: this.customClientId,
+        };
+      }
+    }
+    return storedJson;
   }
 
   async saveClientInformation(clientInformation: any) {
@@ -164,7 +184,7 @@ export async function initiateOAuth(
   window.fetch = interceptedFetch;
 
   try {
-    const provider = new MCPOAuthProvider(options.serverName);
+    const provider = new MCPOAuthProvider(options.serverName, options.clientId);
 
     // Store server URL for callback recovery
     localStorage.setItem(
@@ -172,6 +192,24 @@ export async function initiateOAuth(
       options.serverUrl,
     );
     localStorage.setItem("mcp-oauth-pending", options.serverName);
+
+    // Store custom client ID if provided, so it can be retrieved during callback
+    if (options.clientId) {
+      const existingClientInfo = localStorage.getItem(
+        `mcp-client-${options.serverName}`,
+      );
+      const existingJson = existingClientInfo
+        ? JSON.parse(existingClientInfo)
+        : {};
+
+      localStorage.setItem(
+        `mcp-client-${options.serverName}`,
+        JSON.stringify({
+          ...existingJson,
+          client_id: options.clientId,
+        }),
+      );
+    }
 
     const result = await auth(provider, {
       serverUrl: options.serverUrl,
@@ -200,9 +238,30 @@ export async function initiateOAuth(
       error: "OAuth flow failed",
     };
   } catch (error) {
+    let errorMessage = "Unknown OAuth error";
+
+    if (error instanceof Error) {
+      errorMessage = error.message;
+
+      // Provide more helpful error messages for common client ID issues
+      if (
+        errorMessage.includes("invalid_client") ||
+        errorMessage.includes("client_id")
+      ) {
+        errorMessage =
+          "Invalid client ID. Please verify the client ID is correctly registered with the OAuth provider.";
+      } else if (errorMessage.includes("unauthorized_client")) {
+        errorMessage =
+          "Client not authorized. The client ID may not be registered for this server or scope.";
+      } else if (errorMessage.includes("invalid_request")) {
+        errorMessage =
+          "OAuth request invalid. Please check your client ID and try again.";
+      }
+    }
+
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Unknown OAuth error",
+      error: errorMessage,
     };
   } finally {
     // Restore original fetch
@@ -233,7 +292,13 @@ export async function handleOAuthCallback(
       throw new Error("Server URL not found for OAuth callback");
     }
 
-    const provider = new MCPOAuthProvider(serverName);
+    // Get stored client ID if any
+    const storedClientInfo = localStorage.getItem(`mcp-client-${serverName}`);
+    const customClientId = storedClientInfo
+      ? JSON.parse(storedClientInfo).client_id
+      : undefined;
+
+    const provider = new MCPOAuthProvider(serverName, customClientId);
 
     const result = await auth(provider, {
       serverUrl,
@@ -261,9 +326,30 @@ export async function handleOAuthCallback(
       error: "Token exchange failed",
     };
   } catch (error) {
+    let errorMessage = "Unknown callback error";
+
+    if (error instanceof Error) {
+      errorMessage = error.message;
+
+      // Provide more helpful error messages for common client ID issues
+      if (
+        errorMessage.includes("invalid_client") ||
+        errorMessage.includes("client_id")
+      ) {
+        errorMessage =
+          "Invalid client ID during token exchange. Please verify the client ID is correctly registered.";
+      } else if (errorMessage.includes("unauthorized_client")) {
+        errorMessage =
+          "Client not authorized for token exchange. The client ID may not match the one used for authorization.";
+      } else if (errorMessage.includes("invalid_grant")) {
+        errorMessage =
+          "Authorization code invalid or expired. Please try the OAuth flow again.";
+      }
+    }
+
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Unknown callback error",
+      error: errorMessage,
     };
   } finally {
     // Restore original fetch
@@ -272,11 +358,22 @@ export async function handleOAuthCallback(
 }
 
 /**
- * Gets stored tokens for a server
+ * Gets stored tokens for a server, including client_id from client information
  */
 export function getStoredTokens(serverName: string): any {
-  const stored = localStorage.getItem(`mcp-tokens-${serverName}`);
-  return stored ? JSON.parse(stored) : undefined;
+  const tokens = localStorage.getItem(`mcp-tokens-${serverName}`);
+  const clientInfo = localStorage.getItem(`mcp-client-${serverName}`);
+  // TODO: Maybe we should move clientID away from the token info? Not sure if clientID is bonded to token
+  if (!tokens) return undefined;
+
+  const tokensJson = JSON.parse(tokens);
+  const clientJson = clientInfo ? JSON.parse(clientInfo) : {};
+
+  // Merge tokens with client_id from client information
+  return {
+    ...tokensJson,
+    client_id: clientJson.client_id || tokensJson.client_id,
+  };
 }
 
 /**
@@ -310,7 +407,13 @@ export async function refreshOAuthTokens(
   window.fetch = interceptedFetch;
 
   try {
-    const provider = new MCPOAuthProvider(serverName);
+    // Get stored client ID if any
+    const storedClientInfo = localStorage.getItem(`mcp-client-${serverName}`);
+    const customClientId = storedClientInfo
+      ? JSON.parse(storedClientInfo).client_id
+      : undefined;
+
+    const provider = new MCPOAuthProvider(serverName, customClientId);
     const existingTokens = provider.tokens();
 
     if (!existingTokens?.refresh_token) {
@@ -350,9 +453,30 @@ export async function refreshOAuthTokens(
       error: "Token refresh failed",
     };
   } catch (error) {
+    let errorMessage = "Unknown refresh error";
+
+    if (error instanceof Error) {
+      errorMessage = error.message;
+
+      // Provide more helpful error messages for common client ID issues during refresh
+      if (
+        errorMessage.includes("invalid_client") ||
+        errorMessage.includes("client_id")
+      ) {
+        errorMessage =
+          "Invalid client ID during token refresh. The stored client ID may be incorrect.";
+      } else if (errorMessage.includes("invalid_grant")) {
+        errorMessage =
+          "Refresh token invalid or expired. Please re-authenticate with the OAuth provider.";
+      } else if (errorMessage.includes("unauthorized_client")) {
+        errorMessage =
+          "Client not authorized for token refresh. Please re-authenticate.";
+      }
+    }
+
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Unknown refresh error",
+      error: errorMessage,
     };
   } finally {
     // Restore original fetch
