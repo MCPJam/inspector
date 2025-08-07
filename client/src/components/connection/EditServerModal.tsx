@@ -203,8 +203,8 @@ export function EditServerModal({
     <Dialog open={isOpen} onOpenChange={handleClose}>
       <DialogContent className="max-w-md sm:max-w-lg">
         <DialogHeader className="space-y-2">
-          <DialogTitle className="text-xl font-semibold">
-            Edit MCP Server
+          <DialogTitle className="flex text-xl font-semibold">
+            <img src="/mcp.svg" alt="MCP" className="mr-2"/> Edit MCP Server
           </DialogTitle>
         </DialogHeader>
 
