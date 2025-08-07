@@ -1,11 +1,14 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { AlertCircle, RefreshCw } from "lucide-react";
 import { AuthSettings, DEFAULT_AUTH_SETTINGS, StatusMessage } from "../lib/auth-types";
 import { MastraMCPServerDefinition } from "../lib/types";
 import { Card, CardContent } from "./ui/card";
-import { initiateOAuth, refreshOAuthTokens, getStoredTokens, clearOAuthData, MCPOAuthOptions } from "../lib/mcp-oauth";
+import { initiateOAuth, refreshOAuthTokens, getStoredTokens, clearOAuthData, MCPOAuthOptions, MCPOAuthProvider } from "../lib/mcp-oauth";
 import { ServerWithName } from "../hooks/use-app-state";
+import { OAuthFlowState, EMPTY_OAUTH_FLOW_STATE } from "../lib/oauth-flow-types";
+import { OAuthFlowProgress } from "./OAuthFlowProgress";
+import { OAuthStateMachine } from "../lib/oauth-state-machine";
 
 interface StatusMessageProps {
   message: StatusMessage;
@@ -53,9 +56,15 @@ interface AuthTabProps {
 
 export const AuthTab = ({ serverConfig, serverEntry, serverName }: AuthTabProps) => {
   const [authSettings, setAuthSettings] = useState<AuthSettings>(DEFAULT_AUTH_SETTINGS);
+  const [oauthFlowState, setOAuthFlowState] = useState<OAuthFlowState>(EMPTY_OAUTH_FLOW_STATE);
+  const [showGuidedFlow, setShowGuidedFlow] = useState(false);
 
   const updateAuthSettings = useCallback((updates: Partial<AuthSettings>) => {
     setAuthSettings((prev) => ({ ...prev, ...updates }));
+  }, []);
+
+  const updateOAuthFlowState = useCallback((updates: Partial<OAuthFlowState>) => {
+    setOAuthFlowState((prev) => ({ ...prev, ...updates }));
   }, []);
 
   // Update auth settings when server config changes
@@ -223,6 +232,49 @@ export const AuthTab = ({ serverConfig, serverEntry, serverName }: AuthTabProps)
       });
     }
   }, [serverConfig, authSettings.serverUrl, serverName, updateAuthSettings]);
+
+  // Initialize OAuth state machine
+  const oauthStateMachine = useMemo(() => {
+    if (!serverConfig || !serverName || !authSettings.serverUrl) return null;
+    
+    const provider = new MCPOAuthProvider(serverName);
+    return new OAuthStateMachine({
+      state: oauthFlowState,
+      serverUrl: authSettings.serverUrl,
+      serverName,
+      provider,
+      updateState: updateOAuthFlowState,
+    });
+  }, [serverConfig, serverName, authSettings.serverUrl, oauthFlowState, updateOAuthFlowState]);
+
+  const startGuidedFlow = useCallback(() => {
+    console.log("Starting guided flow with:", {
+      serverUrl: authSettings.serverUrl,
+      serverName,
+      serverConfig: serverConfig?.url?.toString(),
+    });
+    setShowGuidedFlow(true);
+    updateOAuthFlowState(EMPTY_OAUTH_FLOW_STATE);
+    if (oauthStateMachine) {
+      oauthStateMachine.proceedToNextStep();
+    }
+  }, [oauthStateMachine, updateOAuthFlowState, authSettings.serverUrl, serverName, serverConfig]);
+
+  const proceedToNextStep = useCallback(async () => {
+    if (oauthStateMachine) {
+      await oauthStateMachine.proceedToNextStep();
+    }
+  }, [oauthStateMachine]);
+
+  const exitGuidedFlow = useCallback(() => {
+    setShowGuidedFlow(false);
+    updateOAuthFlowState(EMPTY_OAUTH_FLOW_STATE);
+    // Refresh tokens after guided flow completion
+    if (serverName) {
+      const updatedTokens = getStoredTokens(serverName);
+      updateAuthSettings({ tokens: updatedTokens });
+    }
+  }, [serverName, updateAuthSettings, updateOAuthFlowState]);
 
   const handleClearTokens = useCallback(() => {
     if (serverConfig && authSettings.serverUrl && serverName) {
@@ -475,6 +527,14 @@ export const AuthTab = ({ serverConfig, serverEntry, serverName }: AuthTabProps)
                   >
                     Clear Tokens
                   </Button>
+
+                  <Button 
+                    variant="secondary" 
+                    onClick={startGuidedFlow}
+                    disabled={authSettings.isAuthenticating || !serverConfig}
+                  >
+                    Guided OAuth Flow
+                  </Button>
                 </div>
 
                 <p className="text-xs text-muted-foreground">
@@ -485,6 +545,28 @@ export const AuthTab = ({ serverConfig, serverEntry, serverName }: AuthTabProps)
                       : "Use Quick OAuth to authenticate with the server and get tokens."}
                 </p>
               </div>
+
+              {/* OAuth Flow Progress */}
+              {showGuidedFlow && authSettings.serverUrl && (
+                <OAuthFlowProgress
+                  serverUrl={authSettings.serverUrl}
+                  flowState={oauthFlowState}
+                  updateFlowState={updateOAuthFlowState}
+                  proceedToNextStep={proceedToNextStep}
+                />
+              )}
+
+              {/* Exit Guided Flow Button */}
+              {showGuidedFlow && (
+                <div className="mt-4">
+                  <Button 
+                    variant="outline" 
+                    onClick={exitGuidedFlow}
+                  >
+                    Exit Guided Flow
+                  </Button>
+                </div>
+              )}
             </div>
           </div>
         </div>

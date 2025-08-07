@@ -66,7 +66,7 @@ export interface OAuthResult {
 /**
  * Simple localStorage-based OAuth provider for MCP
  */
-class MCPOAuthProvider implements OAuthClientProvider {
+export class MCPOAuthProvider implements OAuthClientProvider {
   private serverName: string;
   private redirectUri: string;
   private customClientId?: string;
