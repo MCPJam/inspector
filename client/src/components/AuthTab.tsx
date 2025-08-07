@@ -378,7 +378,7 @@ export const AuthTab = ({ serverConfig, serverEntry, serverName }: AuthTabProps)
                 <p className="text-sm text-muted-foreground mb-2">
                   {hasOAuthConfigured 
                     ? "Manage OAuth authentication for this server."
-                    : "This server may support OAuth authentication. Try initiating OAuth to check if it's available."
+                    : "This server supports OAuth authentication. Use Quick OAuth to authenticate and get tokens."
                   }
                 </p>
 
