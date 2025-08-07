@@ -5,6 +5,7 @@ import { AuthSettings, DEFAULT_AUTH_SETTINGS, StatusMessage } from "../lib/auth-
 import { MastraMCPServerDefinition } from "../lib/types";
 import { Card, CardContent } from "./ui/card";
 import { initiateOAuth, refreshOAuthTokens, getStoredTokens, clearOAuthData, MCPOAuthOptions } from "../lib/mcp-oauth";
+import { ServerWithName } from "../hooks/use-app-state";
 
 interface StatusMessageProps {
   message: StatusMessage;
@@ -46,10 +47,11 @@ const StatusMessageComponent = ({ message }: StatusMessageProps) => {
 
 interface AuthTabProps {
   serverConfig?: MastraMCPServerDefinition;
+  serverEntry?: ServerWithName;
   serverName?: string;
 }
 
-export const AuthTab = ({ serverConfig, serverName }: AuthTabProps) => {
+export const AuthTab = ({ serverConfig, serverEntry, serverName }: AuthTabProps) => {
   const [authSettings, setAuthSettings] = useState<AuthSettings>(DEFAULT_AUTH_SETTINGS);
 
   const updateAuthSettings = useCallback((updates: Partial<AuthSettings>) => {
@@ -152,6 +154,76 @@ export const AuthTab = ({ serverConfig, serverName }: AuthTabProps) => {
     }
   }, [serverConfig, authSettings.serverUrl, authSettings.tokens, serverName, updateAuthSettings]);
 
+  const handleNewOAuth = useCallback(async () => {
+    if (!serverConfig || !authSettings.serverUrl || !serverName) {
+      updateAuthSettings({
+        statusMessage: {
+          type: "error",
+          message: "Please select a server before starting OAuth",
+        },
+      });
+      return;
+    }
+
+    updateAuthSettings({ 
+      isAuthenticating: true, 
+      error: null, 
+      statusMessage: null 
+    });
+
+    try {
+      // Clear existing tokens first to force a fresh OAuth flow
+      clearOAuthData(serverName);
+      
+      // Always initiate new OAuth flow (fresh start)
+      const oauthOptions: MCPOAuthOptions = {
+        serverName: serverName,
+        serverUrl: authSettings.serverUrl,
+        scopes: ["mcp:*"],
+      };
+      const result = await initiateOAuth(oauthOptions);
+
+      if (result.success) {
+        // Check for updated tokens
+        const updatedTokens = getStoredTokens(serverName);
+        
+        updateAuthSettings({
+          tokens: updatedTokens,
+          isAuthenticating: false,
+          statusMessage: {
+            type: "success",
+            message: result.serverConfig 
+              ? "OAuth authentication completed!"
+              : "OAuth flow initiated. You will be redirected to authorize access.",
+          },
+        });
+
+        // Clear success message after 3 seconds
+        setTimeout(() => {
+          updateAuthSettings({ statusMessage: null });
+        }, 3000);
+      } else {
+        updateAuthSettings({
+          isAuthenticating: false,
+          error: result.error || "OAuth authentication failed",
+          statusMessage: {
+            type: "error",
+            message: `Failed: ${result.error || "OAuth authentication failed"}`,
+          },
+        });
+      }
+    } catch (error) {
+      updateAuthSettings({
+        isAuthenticating: false,
+        error: error instanceof Error ? error.message : String(error),
+        statusMessage: {
+          type: "error",
+          message: `Failed: ${error instanceof Error ? error.message : String(error)}`,
+        },
+      });
+    }
+  }, [serverConfig, authSettings.serverUrl, serverName, updateAuthSettings]);
+
   const handleClearTokens = useCallback(() => {
     if (serverConfig && authSettings.serverUrl && serverName) {
       // Use the real OAuth system to clear tokens
@@ -173,6 +245,18 @@ export const AuthTab = ({ serverConfig, serverName }: AuthTabProps) => {
     }
   }, [serverConfig, authSettings.serverUrl, serverName, updateAuthSettings]);
 
+  // Check if server supports OAuth
+  // Only HTTP servers support OAuth (STDIO servers use process-based auth)
+  const isHttpServer = serverConfig && 'url' in serverConfig;
+  const supportsOAuth = isHttpServer;
+  
+  // Check if OAuth is currently configured/in-use
+  const hasOAuthConfigured = serverName && (
+    serverEntry?.oauthTokens || 
+    getStoredTokens(serverName) || 
+    serverEntry?.connectionStatus === "oauth-flow"
+  );
+
   if (!serverConfig) {
     return (
       <Card>
@@ -182,6 +266,74 @@ export const AuthTab = ({ serverConfig, serverName }: AuthTabProps) => {
           </p>
         </CardContent>
       </Card>
+    );
+  }
+
+  if (!supportsOAuth) {
+    return (
+      <div className="h-[calc(100vh-120px)] flex flex-col">
+        <div className="h-full flex flex-col bg-background">
+          {/* Header */}
+          <div className="flex items-center justify-between px-6 py-5 border-b border-border bg-background">
+            <div className="space-y-2">
+              <div className="flex items-center gap-3">
+                <RefreshCw className="h-4 w-4 text-muted-foreground" />
+                <h1 className="text-lg font-semibold text-foreground">Authentication</h1>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Manage OAuth authentication for the selected server
+              </p>
+            </div>
+          </div>
+
+          {/* Content */}
+          <div className="flex-1 overflow-auto px-6 py-6">
+            <div className="space-y-6 max-w-2xl">
+              {/* Server Info */}
+              <div className="rounded-md border p-4 space-y-2">
+                <h3 className="text-sm font-medium">Selected Server</h3>
+                <div className="text-xs text-muted-foreground">
+                  <div>Name: {serverEntry?.name || 'Unknown'}</div>
+                  {isHttpServer && (
+                    <div>URL: {(serverConfig as any).url.toString()}</div>
+                  )}
+                  {!isHttpServer && (
+                    <div>Command: {(serverConfig as any).command}</div>
+                  )}
+                  <div>Type: {isHttpServer ? "HTTP Server" : "STDIO Server"}</div>
+                </div>
+              </div>
+
+              {/* No OAuth Support Message */}
+              <Card>
+                <CardContent className="pt-6">
+                  <div className="text-center space-y-4">
+                    <div className="mx-auto w-12 h-12 bg-muted rounded-full flex items-center justify-center">
+                      <RefreshCw className="h-6 w-6 text-muted-foreground" />
+                    </div>
+                    <div className="space-y-2">
+                      <h3 className="text-lg font-medium">
+                        {!isHttpServer ? "No OAuth Support" : "No Authentication Required"}
+                      </h3>
+                      <p className="text-sm text-muted-foreground max-w-md mx-auto">
+                        {!isHttpServer 
+                          ? "STDIO servers don't support OAuth authentication."
+                          : `The HTTP server "${serverEntry?.name || 'Unknown'}" is connected without OAuth authentication.`
+                        }
+                      </p>
+                      {isHttpServer && (
+                        <p className="text-xs text-muted-foreground max-w-md mx-auto mt-2">
+                          If this server supports OAuth, you can reconnect it with OAuth enabled from the Servers tab.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        </div>
+      </div>
     );
   }
 
@@ -206,25 +358,29 @@ export const AuthTab = ({ serverConfig, serverName }: AuthTabProps) => {
           <div className="space-y-6 max-w-2xl">
 
             {/* Server Info */}
-            {serverConfig.url && (
-              <div className="rounded-md border p-4 space-y-2">
-                <h3 className="text-sm font-medium">Selected Server</h3>
-                <div className="text-xs text-muted-foreground">
-                  <div>URL: {serverConfig.url.toString()}</div>
-                  <div>Type: HTTP Server</div>
-                </div>
+            <div className="rounded-md border p-4 space-y-2">
+              <h3 className="text-sm font-medium">Selected Server</h3>
+              <div className="text-xs text-muted-foreground">
+                <div>Name: {serverEntry?.name || 'Unknown'}</div>
+                {isHttpServer && (
+                  <div>URL: {(serverConfig as any).url.toString()}</div>
+                )}
+                <div>Type: HTTP Server</div>
               </div>
-            )}
+            </div>
 
-            {/* OAuth Authentication */}
-            <div className="rounded-md border p-6 space-y-6">
-              <div className="flex items-center gap-2">
-                <RefreshCw className="h-5 w-5" />
-                <h3 className="text-lg font-medium">OAuth Authentication</h3>
-              </div>
-              <p className="text-sm text-muted-foreground mb-2">
-                Use OAuth to securely authenticate with the MCP server.
-              </p>
+                          {/* OAuth Authentication */}
+              <div className="rounded-md border p-6 space-y-6">
+                <div className="flex items-center gap-2">
+                  <RefreshCw className="h-5 w-5" />
+                  <h3 className="text-lg font-medium">OAuth Authentication</h3>
+                </div>
+                <p className="text-sm text-muted-foreground mb-2">
+                  {hasOAuthConfigured 
+                    ? "Manage OAuth authentication for this server."
+                    : "This server may support OAuth authentication. Try initiating OAuth to check if it's available."
+                  }
+                </p>
 
               {authSettings.statusMessage && (
                 <StatusMessageComponent message={authSettings.statusMessage} />
@@ -273,9 +429,10 @@ export const AuthTab = ({ serverConfig, serverName }: AuthTabProps) => {
 
                 <div className="flex gap-4">
                   <Button
-                    onClick={handleQuickRefresh}
+                    onClick={authSettings.tokens ? handleQuickRefresh : handleNewOAuth}
                     disabled={authSettings.isAuthenticating || !serverConfig}
                     className="flex items-center gap-2"
+                    variant={authSettings.tokens ? "outline" : "default"}
                   >
                     {authSettings.isAuthenticating ? (
                       <>
@@ -290,6 +447,27 @@ export const AuthTab = ({ serverConfig, serverName }: AuthTabProps) => {
                     )}
                   </Button>
 
+                  {authSettings.tokens && (
+                    <Button
+                      onClick={handleNewOAuth}
+                      disabled={authSettings.isAuthenticating || !serverConfig}
+                      className="flex items-center gap-2"
+                      variant="default"
+                    >
+                      {authSettings.isAuthenticating ? (
+                        <>
+                          <RefreshCw className="h-4 w-4 animate-spin" />
+                          Authenticating...
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw className="h-4 w-4" />
+                          Quick OAuth
+                        </>
+                      )}
+                    </Button>
+                  )}
+
                   <Button 
                     variant="outline" 
                     onClick={handleClearTokens} 
@@ -303,7 +481,7 @@ export const AuthTab = ({ serverConfig, serverName }: AuthTabProps) => {
                   {!serverConfig
                     ? "Select a server to manage its OAuth authentication."
                     : authSettings.tokens
-                      ? "Use Quick Refresh to renew your authentication tokens."
+                      ? "Use Quick Refresh to renew existing tokens, or Quick OAuth to start a fresh authentication flow."
                       : "Use Quick OAuth to authenticate with the server and get tokens."}
                 </p>
               </div>

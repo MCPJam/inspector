@@ -118,7 +118,8 @@ export default function App() {
 
             {activeTab === "auth" && (
               <AuthTab 
-                serverConfig={selectedMCPConfig} 
+                serverConfig={selectedMCPConfig}
+                serverEntry={appState.servers[appState.selectedServer]}
                 serverName={appState.selectedServer}
               />
             )}
