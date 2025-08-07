@@ -116,7 +116,12 @@ export default function App() {
               <PromptsTab serverConfig={selectedMCPConfig} />
             )}
 
-            {activeTab === "auth" && <AuthTab serverConfig={selectedMCPConfig} />}
+            {activeTab === "auth" && (
+              <AuthTab 
+                serverConfig={selectedMCPConfig} 
+                serverName={appState.selectedServer}
+              />
+            )}
 
             {activeTab === "chat" && (
               <ChatTab serverConfigs={selectedMCPConfigsMap} />

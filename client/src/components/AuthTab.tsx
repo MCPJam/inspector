@@ -2,9 +2,9 @@ import { useState, useCallback, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { AlertCircle, RefreshCw } from "lucide-react";
 import { AuthSettings, DEFAULT_AUTH_SETTINGS, StatusMessage } from "../lib/auth-types";
-import { SimpleOAuthClient } from "../lib/auth-client";
 import { MastraMCPServerDefinition } from "../lib/types";
 import { Card, CardContent } from "./ui/card";
+import { initiateOAuth, refreshOAuthTokens, getStoredTokens, clearOAuthData, MCPOAuthOptions } from "../lib/mcp-oauth";
 
 interface StatusMessageProps {
   message: StatusMessage;
@@ -46,9 +46,10 @@ const StatusMessageComponent = ({ message }: StatusMessageProps) => {
 
 interface AuthTabProps {
   serverConfig?: MastraMCPServerDefinition;
+  serverName?: string;
 }
 
-export const AuthTab = ({ serverConfig }: AuthTabProps) => {
+export const AuthTab = ({ serverConfig, serverName }: AuthTabProps) => {
   const [authSettings, setAuthSettings] = useState<AuthSettings>(DEFAULT_AUTH_SETTINGS);
 
   const updateAuthSettings = useCallback((updates: Partial<AuthSettings>) => {
@@ -57,12 +58,11 @@ export const AuthTab = ({ serverConfig }: AuthTabProps) => {
 
   // Update auth settings when server config changes
   useEffect(() => {
-    if (serverConfig && serverConfig.url) {
+    if (serverConfig && serverConfig.url && serverName) {
       const serverUrl = serverConfig.url.toString();
-      // For now, we'll check localStorage for tokens based on server URL
-      // In a full implementation, this would be integrated with the server's OAuth tokens
-      const client = new SimpleOAuthClient(serverUrl);
-      const existingTokens = client.getStoredTokens();
+      
+      // Check for existing tokens using the real OAuth system
+      const existingTokens = getStoredTokens(serverName);
       
       updateAuthSettings({
         serverUrl,
@@ -73,10 +73,10 @@ export const AuthTab = ({ serverConfig }: AuthTabProps) => {
     } else {
       updateAuthSettings(DEFAULT_AUTH_SETTINGS);
     }
-  }, [serverConfig, updateAuthSettings]);
+  }, [serverConfig, serverName, updateAuthSettings]);
 
   const handleQuickRefresh = useCallback(async () => {
-    if (!serverConfig || !authSettings.serverUrl) {
+    if (!serverConfig || !authSettings.serverUrl || !serverName) {
       updateAuthSettings({
         statusMessage: {
           type: "error",
@@ -93,28 +93,53 @@ export const AuthTab = ({ serverConfig }: AuthTabProps) => {
     });
 
     try {
-      const client = new SimpleOAuthClient(authSettings.serverUrl);
+      let result;
       
-      // If no tokens exist, initiate OAuth, otherwise refresh
-      const tokens = authSettings.tokens 
-        ? await client.quickRefresh()
-        : await client.initiateOAuth();
+      if (authSettings.tokens) {
+        // If tokens exist, try to refresh them
+        result = await refreshOAuthTokens(serverName);
+      } else {
+        // If no tokens exist, initiate new OAuth flow
+        const oauthOptions: MCPOAuthOptions = {
+          serverName: serverName,
+          serverUrl: authSettings.serverUrl,
+          scopes: ["mcp:*"],
+        };
+        result = await initiateOAuth(oauthOptions);
+      }
 
-      updateAuthSettings({
-        tokens,
-        isAuthenticating: false,
-        statusMessage: {
-          type: "success",
-          message: authSettings.tokens 
-            ? "Tokens refreshed successfully!" 
-            : "OAuth authentication completed!",
-        },
-      });
+      if (result.success) {
+        // Check for updated tokens
+        const updatedTokens = getStoredTokens(serverName);
+        
+        updateAuthSettings({
+          tokens: updatedTokens,
+          isAuthenticating: false,
+          statusMessage: {
+            type: "success",
+            message: authSettings.tokens 
+              ? "Tokens refreshed successfully!" 
+              : result.serverConfig 
+                ? "OAuth authentication completed!"
+                : "OAuth flow initiated. You will be redirected to authorize access.",
+          },
+        });
 
-      // Clear success message after 3 seconds
-      setTimeout(() => {
-        updateAuthSettings({ statusMessage: null });
-      }, 3000);
+        // If redirect is needed, the browser will redirect automatically
+        // Clear success message after 3 seconds
+        setTimeout(() => {
+          updateAuthSettings({ statusMessage: null });
+        }, 3000);
+      } else {
+        updateAuthSettings({
+          isAuthenticating: false,
+          error: result.error || "OAuth operation failed",
+          statusMessage: {
+            type: "error",
+            message: `Failed: ${result.error || "OAuth operation failed"}`,
+          },
+        });
+      }
     } catch (error) {
       updateAuthSettings({
         isAuthenticating: false,
@@ -125,12 +150,13 @@ export const AuthTab = ({ serverConfig }: AuthTabProps) => {
         },
       });
     }
-  }, [serverConfig, authSettings.serverUrl, authSettings.tokens, updateAuthSettings]);
+  }, [serverConfig, authSettings.serverUrl, authSettings.tokens, serverName, updateAuthSettings]);
 
   const handleClearTokens = useCallback(() => {
-    if (serverConfig && authSettings.serverUrl) {
-      const client = new SimpleOAuthClient(authSettings.serverUrl);
-      client.clearTokens();
+    if (serverConfig && authSettings.serverUrl && serverName) {
+      // Use the real OAuth system to clear tokens
+      clearOAuthData(serverName);
+      
       updateAuthSettings({
         tokens: null,
         error: null,
@@ -145,7 +171,7 @@ export const AuthTab = ({ serverConfig }: AuthTabProps) => {
         updateAuthSettings({ statusMessage: null });
       }, 3000);
     }
-  }, [serverConfig, authSettings.serverUrl, updateAuthSettings]);
+  }, [serverConfig, authSettings.serverUrl, serverName, updateAuthSettings]);
 
   if (!serverConfig) {
     return (
