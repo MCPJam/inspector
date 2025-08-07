@@ -7,6 +7,7 @@ import { PromptsTab } from "./components/PromptsTab";
 import { ChatTab } from "./components/ChatTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { TracingTab } from "./components/TracingTab";
+import { AuthTab } from "./components/AuthTab";
 import { MCPSidebar } from "./components/mcp-sidebar";
 import { ActiveServerSelector } from "./components/ActiveServerSelector";
 import {
@@ -75,10 +76,11 @@ export default function App() {
           </header>
 
           <div className="flex-1">
-            {/* Active Server Selector - Only show on Tools, Resources, and Prompts pages */}
+            {/* Active Server Selector - Only show on Tools, Resources, Prompts, and Auth pages */}
             {(activeTab === "tools" ||
               activeTab === "resources" ||
               activeTab === "prompts" ||
+              activeTab === "auth" ||
               activeTab === "chat") && (
               <ActiveServerSelector
                 connectedServerConfigs={connectedServerConfigs}
@@ -112,6 +114,14 @@ export default function App() {
 
             {activeTab === "prompts" && (
               <PromptsTab serverConfig={selectedMCPConfig} />
+            )}
+
+            {activeTab === "auth" && (
+              <AuthTab 
+                serverConfig={selectedMCPConfig}
+                serverEntry={appState.servers[appState.selectedServer]}
+                serverName={appState.selectedServer}
+              />
             )}
 
             {activeTab === "chat" && (
