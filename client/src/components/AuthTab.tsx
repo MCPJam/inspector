@@ -4,7 +4,8 @@ import { AlertCircle, RefreshCw } from "lucide-react";
 import { AuthSettings, DEFAULT_AUTH_SETTINGS, StatusMessage } from "../lib/auth-types";
 import { MastraMCPServerDefinition } from "../lib/types";
 import { Card, CardContent } from "./ui/card";
-import { initiateOAuth, refreshOAuthTokens, getStoredTokens, clearOAuthData, MCPOAuthOptions, MCPOAuthProvider } from "../lib/mcp-oauth";
+import { initiateOAuth, refreshOAuthTokens, getStoredTokens, clearOAuthData, MCPOAuthOptions } from "../lib/mcp-oauth";
+import { DebugMCPOAuthClientProvider } from "../lib/debug-oauth-provider";
 import { ServerWithName } from "../hooks/use-app-state";
 import { OAuthFlowState, EMPTY_OAUTH_FLOW_STATE } from "../lib/oauth-flow-types";
 import { OAuthFlowProgress } from "./OAuthFlowProgress";
@@ -237,7 +238,7 @@ export const AuthTab = ({ serverConfig, serverEntry, serverName }: AuthTabProps)
   const oauthStateMachine = useMemo(() => {
     if (!serverConfig || !serverName || !authSettings.serverUrl) return null;
     
-    const provider = new MCPOAuthProvider(serverName);
+    const provider = new DebugMCPOAuthClientProvider(authSettings.serverUrl);
     return new OAuthStateMachine({
       state: oauthFlowState,
       serverUrl: authSettings.serverUrl,

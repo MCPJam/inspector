@@ -83,7 +83,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
 
   get clientMetadata() {
     return {
-      client_name: `MCP Inspector - ${this.serverName}`,
+      client_name: `MCPJam - ${this.serverName}`,
       client_uri: "https://github.com/mcpjam/inspector",
       redirect_uris: [this.redirectUri],
       grant_types: ["authorization_code", "refresh_token"],

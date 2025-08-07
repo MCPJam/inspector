@@ -60,7 +60,7 @@ async function startHonoServer(): Promise<number> {
       hostname: "127.0.0.1",
     });
 
-    log.info(`🚀 MCP Inspector Server started on port ${port}`);
+    log.info(`🚀 MCPJam Server started on port ${port}`);
     return port;
   } catch (error) {
     log.error("Failed to start Hono server:", error);
@@ -213,7 +213,7 @@ app.whenReady().then(async () => {
     createAppMenu();
     mainWindow = createMainWindow(serverUrl);
 
-    log.info("MCP Inspector Electron app ready");
+    log.info("MCPJam Electron app ready");
   } catch (error) {
     log.error("Failed to initialize app:", error);
     app.quit();

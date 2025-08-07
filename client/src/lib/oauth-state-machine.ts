@@ -6,13 +6,13 @@ import {
   exchangeAuthorization,
   discoverOAuthProtectedResourceMetadata,
 } from "@modelcontextprotocol/sdk/client/auth.js";
-import { MCPOAuthProvider, initiateOAuth, MCPOAuthOptions } from "./mcp-oauth";
+import { DebugMCPOAuthClientProvider } from "./debug-oauth-provider";
 
 export interface StateMachineContext {
   state: OAuthFlowState;
   serverUrl: string;
   serverName: string;
-  provider: MCPOAuthProvider;
+  provider: DebugMCPOAuthClientProvider;
   updateState: (updates: Partial<OAuthFlowState>) => void;
 }
 
@@ -107,32 +107,39 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
           throw new Error("OAuth metadata not available");
         }
 
-        // Use the working initiateOAuth function instead of registerClient directly
-        const oauthOptions: MCPOAuthOptions = {
-          serverName: context.serverName,
-          serverUrl: context.serverUrl,
-          scopes: ["mcp:*"],
-        };
-
-        const result = await initiateOAuth(oauthOptions);
+        // Try to use the proper MCP SDK registerClient function
+        let clientInfo;
         
-        if (result.success) {
-          // Extract authorization URL from the redirect or stored state
-          // For now, we'll simulate the client registration step as successful
-          context.updateState({
-            oauthClientInfo: {
-              client_id: `client_${context.serverName}`,
-              client_secret: "simulated_secret", // This would normally come from registration
-            },
-            oauthStep: "authorization_redirect",
-            statusMessage: {
-              type: "success",
-              message: "Client registration completed. You should have been redirected to authorize.",
-            },
+        try {
+          clientInfo = await registerClient(context.serverUrl, {
+            metadata: context.state.oauthMetadata,
+            clientMetadata: context.provider.clientMetadata,
           });
-        } else {
-          throw new Error(result.error || "OAuth initiation failed");
+        } catch (registrationError) {
+          console.warn("Dynamic client registration failed, using static client metadata:", registrationError);
+          
+          // Fallback to using static client metadata if dynamic registration fails
+          const existingClientInfo = await context.provider.clientInformation();
+          if (existingClientInfo) {
+            clientInfo = existingClientInfo;
+          } else {
+            // Create a mock client info based on the provider's metadata
+            clientInfo = {
+              client_id: `static_client_${Date.now()}`,
+              ...context.provider.clientMetadata,
+            };
+            context.provider.saveClientInformation(clientInfo);
+          }
         }
+
+        context.updateState({
+          oauthClientInfo: clientInfo,
+          oauthStep: "authorization_redirect",
+          statusMessage: {
+            type: "success",
+            message: "Client registration completed successfully.",
+          },
+        });
       } catch (error) {
         const errorObj = error instanceof Error ? error : new Error(String(error));
         console.error("Client registration error:", {
@@ -140,6 +147,9 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
           serverUrl: context.serverUrl,
           serverName: context.serverName,
           hasOAuthMetadata: !!context.state.oauthMetadata,
+          oauthMetadata: context.state.oauthMetadata,
+          providerRedirectUrl: context.provider.redirectUrl,
+          providerClientMetadata: context.provider.clientMetadata,
         });
         context.updateState({
           latestError: errorObj,
@@ -163,16 +173,18 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
           throw new Error("OAuth metadata or client info not available");
         }
 
-        const authResult = await startAuthorization(
-          context.state.oauthMetadata,
-          context.provider,
-          {
-            scope: "mcp:*",
-          },
-        );
+        const authResult = await startAuthorization(context.serverUrl, {
+          metadata: context.state.oauthMetadata,
+          clientInformation: context.state.oauthClientInfo,
+          redirectUrl: context.provider.redirectUrl,
+          scope: "mcp:*",
+        });
 
+        // Save the code verifier for later use in token exchange
+        context.provider.saveCodeVerifier(authResult.codeVerifier);
+        
         context.updateState({
-          authorizationUrl: authResult.authorizationUrl,
+          authorizationUrl: authResult.authorizationUrl.toString(),
           oauthStep: "authorization_code",
           statusMessage: {
             type: "info",
@@ -225,15 +237,17 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
       try {
         context.updateState({ latestError: null });
         
-        if (!context.state.oauthMetadata || !context.state.authorizationCode.trim()) {
-          throw new Error("OAuth metadata or authorization code not available");
+        if (!context.state.oauthMetadata || !context.state.authorizationCode.trim() || !context.state.oauthClientInfo) {
+          throw new Error("OAuth metadata, authorization code, or client info not available");
         }
 
-        const tokens = await exchangeAuthorization(
-          context.state.oauthMetadata,
-          context.provider,
-          context.state.authorizationCode,
-        );
+        const tokens = await exchangeAuthorization(context.serverUrl, {
+          metadata: context.state.oauthMetadata,
+          clientInformation: context.state.oauthClientInfo,
+          authorizationCode: context.state.authorizationCode,
+          codeVerifier: context.provider.codeVerifier(),
+          redirectUri: context.provider.redirectUrl,
+        });
 
         context.updateState({
           oauthTokens: tokens,
