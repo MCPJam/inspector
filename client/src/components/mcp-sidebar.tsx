@@ -6,6 +6,7 @@ import {
   MessageCircle,
   Settings,
   Glasses,
+  Key,
 } from "lucide-react";
 
 import { NavMain } from "@/components/sidebar/nav-main";
@@ -57,6 +58,11 @@ const navigationSections = [
         title: "Prompts",
         url: "#prompts",
         icon: Brain,
+      },
+      {
+        title: "Auth",
+        url: "#auth",
+        icon: Key,
       },
     ],
   },
