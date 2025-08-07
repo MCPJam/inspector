@@ -243,7 +243,7 @@ export function AddServerModal({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="stdio">STDIO</SelectItem>
-                    <SelectItem value="http">HTTP</SelectItem>
+                    <SelectItem value="http">HTTP/SSE</SelectItem>
                   </SelectContent>
                 </Select>
                 <Input
