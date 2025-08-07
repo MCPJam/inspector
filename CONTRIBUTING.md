@@ -10,9 +10,18 @@ First off, thank you for considering contributing to MCPJam Inspector! It's peop
 
 ## Getting Started
 
+Before you get started, please consider giving the project a star ⭐. It helps grow the project and gives your contributions more recognition.
+
+Also join our [Discord channel](https://discord.com/invite/JEnDtz8X6z). That's where the community and other open source contributors communicate on.
+
 ### Prerequisites
 
-Before you begin, ensure you have the following installed:
+Make sure to have the following:
+
+- [Node.js](https://nodejs.org/) (LTS version recommended)
+- [npm](https://www.npmjs.com/) (comes with Node.js)
+
+Also make sure to
 
 - [Node.js](https://nodejs.org/) (LTS version recommended)
 - [npm](https://www.npmjs.com/) (comes with Node.js)
