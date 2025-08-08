@@ -10,7 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
-import { ServerFormData } from "@/lib/types";
+import { ServerFormData } from "@/shared/types.js";
 import { ServerWithName } from "@/hooks/use-app-state";
 
 interface EditServerModalProps {
@@ -267,7 +267,7 @@ export function EditServerModal({
       <DialogContent className="max-w-md sm:max-w-lg">
         <DialogHeader className="space-y-2">
           <DialogTitle className="flex text-xl font-semibold">
-            <img src="/mcp.svg" alt="MCP" className="mr-2"/> Edit MCP Server
+            <img src="/mcp.svg" alt="MCP" className="mr-2" /> Edit MCP Server
           </DialogTitle>
         </DialogHeader>
 

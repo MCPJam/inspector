@@ -6,7 +6,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
-import { Model, ModelDefinition } from "@/lib/types";
+import { Model, ModelDefinition } from "@/shared/types.js";
 import { ProviderLogo } from "./provider-logo";
 
 interface ModelSelectorProps {

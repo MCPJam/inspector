@@ -22,7 +22,7 @@ import { Wrench, Play, RefreshCw, ChevronRight } from "lucide-react";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import type { MCPToolType } from "@mastra/core/mcp";
-import { MastraMCPServerDefinition } from "@/lib/types";
+import { MastraMCPServerDefinition } from "@/shared/types.js";
 import { ElicitationDialog } from "./ElicitationDialog";
 import { TruncatedText } from "@/components/ui/truncated-text";
 

@@ -1,4 +1,4 @@
-import { OAuthTokens } from "./auth-types";
+import { OAuthTokens } from "@/shared/types.js";
 
 export class SimpleOAuthClient {
   private serverUrl: string;
@@ -20,7 +20,10 @@ export class SimpleOAuthClient {
 
   // Save tokens to localStorage
   saveTokens(tokens: OAuthTokens): void {
-    localStorage.setItem(`oauth-tokens-${this.serverUrl}`, JSON.stringify(tokens));
+    localStorage.setItem(
+      `oauth-tokens-${this.serverUrl}`,
+      JSON.stringify(tokens),
+    );
   }
 
   // Clear stored tokens
@@ -31,7 +34,7 @@ export class SimpleOAuthClient {
   // Quick refresh using existing tokens (simplified for now)
   async quickRefresh(): Promise<OAuthTokens> {
     const existingTokens = this.getStoredTokens();
-    
+
     if (!existingTokens) {
       throw new Error("No existing tokens found for refresh");
     }
@@ -42,8 +45,8 @@ export class SimpleOAuthClient {
 
     // For now, simulate a refresh by returning the existing tokens
     // In a real implementation, this would make an API call to refresh the tokens
-    await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate API call
-    
+    await new Promise((resolve) => setTimeout(resolve, 1000)); // Simulate API call
+
     // Simulate updated tokens
     const refreshedTokens: OAuthTokens = {
       ...existingTokens,
@@ -62,7 +65,7 @@ export class SimpleOAuthClient {
     }
 
     // Simulate OAuth flow
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await new Promise((resolve) => setTimeout(resolve, 2000));
 
     const tokens: OAuthTokens = {
       access_token: `token_${Date.now()}`,

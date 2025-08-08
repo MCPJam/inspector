@@ -382,14 +382,17 @@ async function main() {
 
   // Handle MCP server configuration if provided
   if (mcpServerCommand) {
-    logStep("MCP Server", `Configuring auto-connection to: ${mcpServerCommand} ${mcpServerArgs.join(' ')}`);
-    
+    logStep(
+      "MCP Server",
+      `Configuring auto-connection to: ${mcpServerCommand} ${mcpServerArgs.join(" ")}`,
+    );
+
     // Pass MCP server config via environment variables
     envVars.MCP_SERVER_COMMAND = mcpServerCommand;
     if (mcpServerArgs.length > 0) {
       envVars.MCP_SERVER_ARGS = JSON.stringify(mcpServerArgs);
     }
-    
+
     logSuccess(`MCP server will auto-connect on startup`);
   }
 

@@ -10,7 +10,7 @@ import { MessageEditor } from "./message-editor";
 import { ToolCallDisplay } from "./tool-call";
 import { getProviderLogoFromModel } from "./chat-helpers";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { ModelDefinition } from "@/lib/types";
+import { ModelDefinition } from "@/shared/types.js";
 
 interface MessageProps {
   message: ChatMessage;
