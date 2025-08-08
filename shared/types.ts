@@ -123,6 +123,7 @@ export enum Model {
   GPT_4 = "gpt-4",
   GPT_3_5_TURBO = "gpt-3.5-turbo",
   O1 = "o1",
+  GPT_5 = "gpt-5",
 }
 
 export const SUPPORTED_MODELS: ModelDefinition[] = [
@@ -163,6 +164,7 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
   { id: Model.GPT_4, name: "GPT-4", provider: "openai" },
   { id: Model.GPT_3_5_TURBO, name: "GPT-3.5 Turbo", provider: "openai" },
   { id: Model.O1, name: "O1", provider: "openai" },
+  { id: Model.GPT_5, name: "GPT-5", provider: "openai" },
 ];
 
 // Helper functions for models
