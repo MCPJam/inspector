@@ -32,7 +32,7 @@ export function AddServerModal({
     headers: {},
     env: {},
     useOAuth: true,
-    oauthScopes: ["mcp:*"],
+    oauthScopes: [],
     clientId: "",
   });
   const [commandInput, setCommandInput] = useState("");
@@ -108,6 +108,8 @@ export function AddServerModal({
             ...finalFormData,
             useOAuth: false,
           };
+          // Remove any stale OAuth fields
+          delete (finalFormData as any).oauthScopes;
         } else if (authType === "bearer" && bearerToken) {
           finalFormData = {
             ...finalFormData,
@@ -117,21 +119,23 @@ export function AddServerModal({
             },
             useOAuth: false,
           };
-        } else if (
-          authType === "oauth" &&
-          serverFormData.useOAuth &&
-          oauthScopesInput
-        ) {
-          const scopes = oauthScopesInput
+          // Remove any stale OAuth fields
+          delete (finalFormData as any).oauthScopes;
+        } else if (authType === "oauth" && serverFormData.useOAuth) {
+          const scopes = (oauthScopesInput || "")
             .split(" ")
-            .filter((scope) => scope.trim());
+            .map((s) => s.trim())
+            .filter(Boolean);
           finalFormData = {
             ...finalFormData,
-            oauthScopes: scopes,
-            clientId: useCustomClientId
-              ? clientId.trim() || undefined
-              : undefined,
+            useOAuth: true,
+            clientId: useCustomClientId ? clientId.trim() || undefined : undefined,
           };
+          if (scopes.length > 0) {
+            (finalFormData as any).oauthScopes = scopes;
+          } else {
+            delete (finalFormData as any).oauthScopes;
+          }
         }
       }
 
@@ -156,7 +160,7 @@ export function AddServerModal({
       headers: {},
       env: {},
       useOAuth: true,
-      oauthScopes: ["mcp:*"],
+      oauthScopes: [],
       clientId: "",
     });
     setCommandInput("");

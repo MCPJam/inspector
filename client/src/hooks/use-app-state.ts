@@ -131,7 +131,10 @@ export function useAppState() {
       if (code) {
         handleOAuthCallbackComplete(code);
       } else if (error) {
+        // Show the error toast (do not suppress), then clean up the URL
         toast.error(`OAuth authorization failed: ${error}`);
+        localStorage.removeItem("mcp-oauth-pending");
+        window.history.replaceState({}, document.title, window.location.pathname);
       }
     }
   }, [isLoading]);
@@ -211,12 +214,17 @@ export function useAppState() {
             },
           }));
 
-          const oauthResult = await initiateOAuth({
+          const oauthOptions: MCPOAuthOptions = {
             serverName: formData.name,
             serverUrl: formData.url,
-            scopes: formData.oauthScopes || ["mcp:*"],
             clientId: formData.clientId,
-          } as MCPOAuthOptions);
+          } as MCPOAuthOptions;
+          // Only pass scopes if the user explicitly provided them
+          if (formData.oauthScopes && formData.oauthScopes.length > 0) {
+            oauthOptions.scopes = formData.oauthScopes;
+          }
+
+          const oauthResult = await initiateOAuth(oauthOptions);
 
           if (oauthResult.success) {
             if (oauthResult.serverConfig) {
