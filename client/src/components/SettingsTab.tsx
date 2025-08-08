@@ -1,11 +1,19 @@
-import { useState } from "react";
-import { Settings, Key, Eye, EyeOff, Check, X, Server } from "lucide-react";
-import { Button } from "./ui/button";
-import { Input } from "./ui/input";
-import { Label } from "./ui/label";
-import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
+import { Settings } from "lucide-react";
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
-import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { useState } from "react";
+import { ProvidersTable } from "./setting/ProvidersTable";
+import { ProviderConfigDialog } from "./setting/ProviderConfigDialog";
+import { OllamaConfigDialog } from "./setting/OllamaConfigDialog";
+
+interface ProviderConfig {
+  id: string;
+  name: string;
+  logo: string;
+  logoAlt: string;
+  description: string;
+  placeholder: string;
+  getApiKeyUrl: string;
+}
 
 export function SettingsTab() {
   const {
@@ -16,227 +24,148 @@ export function SettingsTab() {
     getOllamaBaseUrl,
     setOllamaBaseUrl,
   } = useAiProviderKeys();
-  const [showAnthropicKey, setShowAnthropicKey] = useState(false);
-  const [showOpenAIKey, setShowOpenAIKey] = useState(false);
-  const themeMode = usePreferencesStore((s) => s.themeMode);
 
-  const handleClearToken = (provider: "anthropic" | "openai") => {
-    clearToken(provider);
+  const [editingValue, setEditingValue] = useState("");
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [selectedProvider, setSelectedProvider] =
+    useState<ProviderConfig | null>(null);
+  const [ollamaDialogOpen, setOllamaDialogOpen] = useState(false);
+  const [ollamaUrl, setOllamaUrl] = useState("");
+
+  const providerConfigs: ProviderConfig[] = [
+    {
+      id: "openai",
+      name: "OpenAI",
+      logo: "/openai_logo.png",
+      logoAlt: "OpenAI",
+      description: "GPT models for general-purpose AI tasks",
+      placeholder: "sk-...",
+      getApiKeyUrl: "https://platform.openai.com/api-keys",
+    },
+    {
+      id: "anthropic",
+      name: "Anthropic",
+      logo: "/claude_logo.png",
+      logoAlt: "Claude",
+      description: "Claude AI models for advanced reasoning",
+      placeholder: "sk-ant-...",
+      getApiKeyUrl: "https://console.anthropic.com/",
+    },
+  ];
+
+  const handleEdit = (providerId: string) => {
+    const provider = providerConfigs.find((p) => p.id === providerId);
+    if (provider) {
+      setSelectedProvider(provider);
+      setEditingValue(tokens[providerId as keyof typeof tokens] || "");
+      setDialogOpen(true);
+    }
   };
 
-  const handleResetOllamaUrl = () => {
-    setOllamaBaseUrl("http://localhost:11434");
+  const handleSave = () => {
+    if (selectedProvider) {
+      setToken(selectedProvider.id as keyof typeof tokens, editingValue);
+      // Store timestamp when API key is saved
+      const timestamp = new Date().toLocaleString();
+      localStorage.setItem(`${selectedProvider.id}_timestamp`, timestamp);
+      setDialogOpen(false);
+      setSelectedProvider(null);
+      setEditingValue("");
+    }
   };
 
-  const maskToken = (token: string) => {
-    if (!token) return "";
-    if (token.length <= 8) return "*".repeat(token.length);
-    return token.slice(0, 4) + "*".repeat(token.length - 8) + token.slice(-4);
+  const handleCancel = () => {
+    setDialogOpen(false);
+    setSelectedProvider(null);
+    setEditingValue("");
+  };
+
+  const handleDelete = (providerId: string) => {
+    clearToken(providerId as keyof typeof tokens);
+    // Remove timestamp when API key is deleted
+    localStorage.removeItem(`${providerId}_timestamp`);
+  };
+
+  const handleOllamaEdit = () => {
+    setOllamaUrl(getOllamaBaseUrl());
+    setOllamaDialogOpen(true);
+  };
+
+  const handleOllamaSave = () => {
+    setOllamaBaseUrl(ollamaUrl);
+    setOllamaDialogOpen(false);
+    setOllamaUrl("");
+  };
+
+  const handleOllamaCancel = () => {
+    setOllamaDialogOpen(false);
+    setOllamaUrl("");
+  };
+
+  const maskApiKey = (key: string) => {
+    if (!key || key.length <= 8) return key;
+    return `****${key.slice(-4)}`;
+  };
+
+  const getCreatedDate = (providerId: string) => {
+    if (hasToken(providerId as keyof typeof tokens)) {
+      const timestamp = localStorage.getItem(`${providerId}_timestamp`);
+      return timestamp || "N/A";
+    }
+    return "N/A";
   };
 
   return (
-    <div className="container mx-auto p-6 max-w-2xl">
+    <div className="container mx-auto p-6 max-w-6xl space-y-8">
       <div className="flex items-center gap-3 mb-6">
         <Settings className="h-6 w-6" />
         <h1 className="text-2xl font-bold">Settings</h1>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Key className="h-5 w-5" />
-            API Keys
-          </CardTitle>
-          <p className="text-sm text-muted-foreground">
-            Configure your LLM provider API keys. Keys are stored locally in
-            your browser.
+      <div className="space-y-4">
+        <div>
+          <h3 className="text-lg font-semibold">AI Providers</h3>
+          <p className="text-muted-foreground">
+            Click the + button next to any provider to configure it. The
+            credentials are securely encrypted on your local machine.
           </p>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          {/* Anthropic API Key */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <Label htmlFor="anthropic-key" className="text-base font-medium">
-                Anthropic API Key
-              </Label>
-              {hasToken("anthropic") && (
-                <div className="flex items-center gap-2">
-                  <Check className="h-4 w-4 text-green-500" />
-                  <span className="text-xs text-green-600">Configured</span>
-                </div>
-              )}
-            </div>
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <Input
-                  id="anthropic-key"
-                  type={showAnthropicKey ? "text" : "password"}
-                  value={
-                    showAnthropicKey
-                      ? tokens.anthropic
-                      : maskToken(tokens.anthropic)
-                  }
-                  onChange={(e) => setToken("anthropic", e.target.value)}
-                  placeholder="sk-ant-..."
-                  className="pr-10"
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
-                  onClick={() => setShowAnthropicKey(!showAnthropicKey)}
-                >
-                  {showAnthropicKey ? (
-                    <EyeOff className="h-4 w-4" />
-                  ) : (
-                    <Eye className="h-4 w-4" />
-                  )}
-                </Button>
-              </div>
-              {hasToken("anthropic") && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleClearToken("anthropic")}
-                >
-                  <X className="h-4 w-4" />
-                </Button>
-              )}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Get your API key from{" "}
-              <a
-                href="https://console.anthropic.com/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-blue-500 hover:underline"
-              >
-                Anthropic Console
-              </a>
-            </p>
-          </div>
+        </div>
 
-          {/* OpenAI API Key */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <Label htmlFor="openai-key" className="text-base font-medium">
-                OpenAI API Key
-              </Label>
-              {hasToken("openai") && (
-                <div className="flex items-center gap-2">
-                  <Check className="h-4 w-4 text-green-500" />
-                  <span className="text-xs text-green-600">Configured</span>
-                </div>
-              )}
-            </div>
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <Input
-                  id="openai-key"
-                  type={showOpenAIKey ? "text" : "password"}
-                  value={
-                    showOpenAIKey ? tokens.openai : maskToken(tokens.openai)
-                  }
-                  onChange={(e) => setToken("openai", e.target.value)}
-                  placeholder="sk-..."
-                  className="pr-10"
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
-                  onClick={() => setShowOpenAIKey(!showOpenAIKey)}
-                >
-                  {showOpenAIKey ? (
-                    <EyeOff className="h-4 w-4" />
-                  ) : (
-                    <Eye className="h-4 w-4" />
-                  )}
-                </Button>
-              </div>
-              {hasToken("openai") && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleClearToken("openai")}
-                >
-                  <X className="h-4 w-4" />
-                </Button>
-              )}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Get your API key from{" "}
-              <a
-                href="https://platform.openai.com/api-keys"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-blue-500 hover:underline"
-              >
-                OpenAI Platform
-              </a>
-            </p>
-          </div>
-        </CardContent>
-      </Card>
+        <ProvidersTable
+          providerConfigs={providerConfigs}
+          hasToken={(providerId) => hasToken(providerId as keyof typeof tokens)}
+          getToken={(providerId) =>
+            tokens[providerId as keyof typeof tokens] || ""
+          }
+          getCreatedDate={getCreatedDate}
+          maskApiKey={maskApiKey}
+          onEditProvider={handleEdit}
+          onDeleteProvider={handleDelete}
+          ollamaBaseUrl={getOllamaBaseUrl()}
+          onEditOllama={handleOllamaEdit}
+        />
+      </div>
 
-      {/* Ollama Configuration */}
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <img
-              src={
-                themeMode === "dark" ? "/ollama_dark.png" : "/ollama_logo.svg"
-              }
-              alt="Ollama"
-              className="h-5 w-5"
-            />
-            Ollama Configuration
-          </CardTitle>
-          <p className="text-sm text-muted-foreground">
-            Configure your local Ollama server settings.
-          </p>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <Label htmlFor="ollama-url" className="text-base font-medium">
-                Base URL
-              </Label>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground">
-                  Default: http://localhost:11434
-                </span>
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <Input
-                id="ollama-url"
-                type="text"
-                value={getOllamaBaseUrl()}
-                onChange={(e) => setOllamaBaseUrl(e.target.value)}
-                placeholder="http://localhost:11434"
-                className="flex-1"
-              />
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleResetOllamaUrl}
-              >
-                Reset
-              </Button>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Configure the base URL for your Ollama server. This is typically{" "}
-              <code className="text-xs bg-muted px-1 py-0.5 rounded">
-                http://localhost:11434
-              </code>{" "}
-              for local installations.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
+      {/* API Key Configuration Dialog */}
+      <ProviderConfigDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        provider={selectedProvider}
+        value={editingValue}
+        onValueChange={setEditingValue}
+        onSave={handleSave}
+        onCancel={handleCancel}
+      />
+
+      {/* Ollama URL Configuration Dialog */}
+      <OllamaConfigDialog
+        open={ollamaDialogOpen}
+        onOpenChange={setOllamaDialogOpen}
+        value={ollamaUrl}
+        onValueChange={setOllamaUrl}
+        onSave={handleOllamaSave}
+        onCancel={handleOllamaCancel}
+      />
     </div>
   );
 }
