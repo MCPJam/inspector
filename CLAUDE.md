@@ -2,7 +2,38 @@
 
 ## Project Overview
 
-MCPJam Inspector is a developer tool for testing and debugging Model Context Protocol (MCP) servers. It ensures your MCP server implementation complies with the latest specifications.
+MCPJam Inspector is a developer tool for testing and debugging Model Context Protocol (MCP) servers. Built with Electron, it combines a Vite+React frontend and Hono.js backend to provide a comprehensive development environment for MCP server implementations.
+
+## Quick Start
+
+```bash
+# Install dependencies
+npm install
+
+# Start development
+npm run dev
+
+# Build for production
+npm run build
+
+# Start production
+npm start
+```
+
+## Project Structure
+
+```
+/inspector
+  /client        # Vite + React frontend
+    /src         # UI components, hooks, stores
+    /public      # Static assets
+  /server        # Hono.js backend
+    /routes      # API endpoints, MCP handlers
+    /utils       # Server utilities
+  /src           # Electron main process
+    /ipc         # Inter-process communication
+  /shared        # Common types, utilities
+```
 
 ## Core Features
 

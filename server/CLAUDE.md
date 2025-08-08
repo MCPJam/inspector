@@ -5,11 +5,10 @@
 The backend is built with modern technologies:
 - Hono.js for API routing and middleware
 - TypeScript for type safety
-- Mastra framework (@mastra/core, @mastra/mcp)
-- AI SDK integrations (OpenAI, Anthropic, Ollama)
+- Mastra framework (@mastra/core, @mastra/mcp) for MCP protocol implementation
+- AI SDK integrations (OpenAI, Anthropic, Ollama) for LLM support
 
 ## Core Features
-##
 1. **MCP Server Testing**
    - Full spec validation
      - Tool schema validation

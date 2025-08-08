@@ -3,11 +3,10 @@
 ## Architecture Overview
 
 The frontend is built with modern web technologies:
-- Next.js 15.4 with App Router
-- React 19 for UI components
-- Tailwind CSS 4.x with Radix UI
-- Zustand for state management
-- AI SDK integrations
+- Vite + React for fast development and optimized builds
+- Tailwind CSS with Radix UI for consistent, accessible components
+- Zustand for lightweight, flexible state management
+- AI SDK integrations for LLM support
 
 ## Core Features
 
