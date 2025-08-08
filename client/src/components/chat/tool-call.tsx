@@ -12,6 +12,7 @@ import { ToolCall, ToolResult } from "@/lib/chat-types";
 import { cn } from "@/lib/utils";
 import React from "react"; // Added missing import for React
 import { MCPIcon } from "../ui/mcp-icon";
+import { UIResourceRenderer } from "@mcp-ui/client";
 
 interface ToolCallDisplayProps {
   toolCall: ToolCall;
@@ -295,13 +296,45 @@ export function ToolCallDisplay({
                       </span>
                     </div>
                     <div className="p-4">
-                      {typeof toolResult.result === "object" ? (
-                        <JsonDisplay data={toolResult.result} />
-                      ) : (
-                        <div className="text-sm text-foreground bg-muted/30 p-3 rounded border">
-                          {String(toolResult.result)}
-                        </div>
-                      )}
+                      {(() => {
+                        const uiRes = (toolResult.result as any)?.resource;
+                        if (
+                          uiRes &&
+                          typeof uiRes === "object" &&
+                          typeof uiRes.uri === "string" &&
+                          uiRes.uri.startsWith("ui://")
+                        ) {
+                          return (
+                            <UIResourceRenderer
+                              resource={uiRes}
+                              onUIAction={(evt) => {
+                                if (evt.type === "tool" && evt.payload?.toolName) {
+                                  // In chat view, UI-triggered tool can be handled by emitting a fetch; upstream chat loop may not capture it, but keeps UX coherent
+                                  fetch("/api/mcp/tools", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({
+                                      action: "execute",
+                                      toolName: evt.payload.toolName,
+                                      parameters: evt.payload.params || {},
+                                      // Chat path lacks serverConfig context per message; this UI is within a tool result so we cannot infer reliably
+                                    }),
+                                  }).catch(() => {});
+                                } else if (evt.type === "link" && evt.payload?.url) {
+                                  window.open(evt.payload.url, "_blank", "noopener,noreferrer");
+                                }
+                              }}
+                            />
+                          );
+                        }
+                        return typeof toolResult.result === "object" ? (
+                          <JsonDisplay data={toolResult.result} />
+                        ) : (
+                          <div className="text-sm text-foreground bg-muted/30 p-3 rounded border">
+                            {String(toolResult.result)}
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
                 )}
