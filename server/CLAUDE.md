@@ -1,81 +1,236 @@
-# Claude AI Backend Guidelines
+# MCPJam Inspector Backend Guidelines
 
-This document provides specific guidelines for using Claude AI in backend development.
+## Architecture Overview
 
-## Backend Development
+The backend is built with modern technologies:
+- Hono.js for API routing and middleware
+- TypeScript for type safety
+- Mastra framework (@mastra/core, @mastra/mcp)
+- AI SDK integrations (OpenAI, Anthropic, Ollama)
 
-Claude can assist with:
-- API development and documentation
-- Database schema design
-- Server optimization
-- Security implementation
-- Testing strategies
+## Core Features
 
-## Code Guidelines
+1. **MCP Server Testing**
+   - Full spec validation
+     - Tool schema validation
+     - Resource definition checks
+     - Parameter constraints
+     - Response format validation
+   - OAuth 2.0 testing
+     - Token validation flow
+     - Scope verification
+     - Refresh mechanisms
+     - Error simulation
+   - Prompt verification
+     - Context validation
+     - Token limits
+     - Format checking
+     - Stream validation
+   - Resource validation
+     - Schema compliance
+     - Type checking
+     - Required fields
+     - Custom validators
 
-1. **API Design**
-   - Follow RESTful principles
-   - Implement proper error handling
-   - Use consistent response formats
-   - Document endpoints thoroughly
+2. **Transport Protocols**
+   - STDIO transport
+     - Process spawning
+     - Stream handling
+     - Buffer management
+     - Error recovery
+   - Server-Sent Events (SSE)
+     - Event streaming
+     - Connection handling
+     - Reconnection logic
+     - Message formatting
+   - Streamable HTTP
+     - Chunked encoding
+     - Connection pools
+     - Stream management
+     - Timeout handling
+   - Connection management
+     - Health checks
+     - Load balancing
+     - Circuit breakers
+     - Auto-recovery
 
-2. **Database**
-   - Optimize database queries
-   - Follow schema best practices
-   - Implement proper indexing
-   - Handle migrations carefully
+3. **LLM Integration**
+   - OpenAI integration
+     - API client setup
+     - Model management
+     - Stream processing
+     - Error handling
+   - Claude implementation
+     - Authentication
+     - Request handling
+     - Response streaming
+     - Rate limiting
+   - Ollama support
+     - Local setup
+     - Model loading
+     - Inference config
+     - Resource mgmt
+   - Response handling
+     - Stream processing
+     - Token counting
+     - Format validation
+     - Safety checks
 
-3. **Security**
-   - Implement authentication/authorization
-   - Follow security best practices
-   - Protect sensitive data
-   - Regular security audits
+## Project Structure
+```
+/server
+  /routes           # API endpoints
+    /mcp            # MCP protocol handlers
+      /tools        # Tool validation
+      /resources    # Resource handlers
+      /prompts      # Prompt processing
+    /llm            # LLM integrations
+      /openai       # OpenAI handlers
+      /claude       # Claude handlers
+      /ollama       # Ollama setup
+    /transport      # Transport protocols
+      /stdio        # STDIO handlers
+      /sse          # SSE implementation
+      /http         # HTTP streaming
+  /utils            # Utility functions
+    /mcp-utils.ts   # MCP helpers
+    /validation.ts  # Schema validation
+    /transform.ts   # Data transformers
+  /types            # TypeScript types
+    /mcp.ts         # MCP types
+    /transport.ts   # Transport types
+    /llm.ts         # LLM types
+  app.ts            # Hono app setup
+  index.ts          # Server entry
+```
 
-## Testing
+## Development
 
-1. **Unit Testing**
-   - Test individual components
-   - Mock external dependencies
-   - Cover edge cases
+### Setup
+```bash
+# Install dependencies
+npm install
 
-2. **Integration Testing**
-   - Test API endpoints
-   - Verify database operations
-   - Test authentication flows
+# Start development server
+npm run dev
 
-## Performance
+# Build for production
+npm run build
 
-1. **Optimization**
-   - Implement caching strategies
-   - Optimize database queries
-   - Monitor server resources
-   - Handle concurrent requests
+# Start production server
+npm start
+```
 
-2. **Best Practices**
-   - Follow Node.js best practices
-   - Implement proper logging
-   - Monitor performance metrics
+## MCP Implementation
 
-## Development Workflow
+1. **Protocol Handlers**
+   - Tool validation
+     - Schema checking
+     - Parameter validation
+     - Response format
+     - Error handling
+   - Resource management
+     - CRUD operations
+     - Schema validation
+     - Access control
+     - Caching
+   - Prompt processing
+     - Context handling
+     - Token management
+     - Format validation
+     - Stream control
+   - Elicitation support
+     - Query handling
+     - Response format
+     - Validation rules
+     - Error states
 
-1. **Version Control**
-   - Follow Git workflow
-   - Write clear commit messages
-   - Keep PRs focused
+2. **Transport Layer**
+   - STDIO protocol
+     - Process control
+     - Stream handling
+     - Buffer mgmt
+     - Error recovery
+   - SSE implementation
+     - Event streaming
+     - Connection mgmt
+     - Reconnection
+     - Message format
+   - HTTP streaming
+     - Chunk encoding
+     - Connection pools
+     - Stream control
+     - Timeout mgmt
+   - Connection pooling
+     - Pool config
+     - Connection limits
+     - Timeout handling
+     - Error recovery
 
-2. **Documentation**
-   - Maintain API documentation
-   - Document setup procedures
-   - Keep deployment guides updated
+3. **OAuth Integration**
+   - Authentication flows
+     - Grant types
+     - Token exchange
+     - Scope handling
+     - Error states
+   - Token management
+     - Storage
+     - Refresh logic
+     - Validation
+     - Revocation
+   - Scope validation
+     - Permission check
+     - Role mapping
+     - Access control
+     - Audit logs
+   - Session handling
+     - State management
+     - Timeout config
+     - Cleanup tasks
+     - Security checks
 
-## Using Claude
+## LLM Features
 
-1. **Code Generation**
-   - Request API implementations
-   - Get database query help
-   - Generate test cases
+1. **Model Support**
+   - OpenAI integration
+     - API setup
+     - Model config
+     - Stream handling
+     - Error recovery
+   - Claude implementation
+     - Auth flow
+     - Request format
+     - Response stream
+     - Rate limits
+   - Ollama compatibility
+     - Setup process
+     - Model mgmt
+     - Config options
+     - Resource ctrl
+   - Response streaming
+     - Token process
+     - Format check
+     - Error handle
+     - Safety rules
 
-2. **Code Review**
-   - Review security implications
-   - Check performance impacts
-   - Verify best practices
+2. **Testing**
+   - MCP Testing
+     - Spec compliance
+     - Tool validation
+     - Resource check
+     - Error cases
+   - Transport testing
+     - Protocol verify
+     - Connection test
+     - Stream checks
+     - Error handling
+   - Integration tests
+     - API endpoints
+     - Auth flows
+     - LLM connect
+     - Error states
+   - Performance tests
+     - Response time
+     - Throughput
+     - Resource use
+     - Bottlenecks
