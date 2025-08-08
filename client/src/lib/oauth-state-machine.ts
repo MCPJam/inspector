@@ -5,6 +5,7 @@ import {
   startAuthorization,
   exchangeAuthorization,
   discoverOAuthProtectedResourceMetadata,
+  selectResourceURL,
 } from "@modelcontextprotocol/sdk/client/auth.js";
 import { DebugMCPOAuthClientProvider } from "./debug-oauth-provider";
 
@@ -72,9 +73,20 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
         // Discover OAuth metadata from the authorization server
         const oauthMetadata = await discoverOAuthMetadata(authServerUrl.toString());
 
+        // Optionally select a protected resource URL (if server provides resource metadata)
+        let resource: URL | null = null;
+        try {
+          const selected = await selectResourceURL(serverUrl, context.provider, resourceMetadata ?? undefined);
+          resource = selected ?? null;
+        } catch (e) {
+          // Non-fatal; continue without resource
+          console.warn("selectResourceURL failed or not provided:", e);
+        }
+
         context.updateState({
           resourceMetadata,
           resourceMetadataError,
+          resource,
           authServerUrl,
           oauthMetadata,
           oauthStep: "client_registration",
@@ -111,9 +123,18 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
         let clientInfo;
         
         try {
+          // Prepare client metadata, including supported scopes if advertised
+          const clientMetadata = { ...context.provider.clientMetadata } as any;
+          const scopesSupported =
+            context.state.resourceMetadata?.scopes_supported ||
+            context.state.oauthMetadata.scopes_supported;
+          if (scopesSupported && scopesSupported.length > 0) {
+            clientMetadata.scope = scopesSupported.join(" ");
+          }
+
           clientInfo = await registerClient(context.serverUrl, {
             metadata: context.state.oauthMetadata,
-            clientMetadata: context.provider.clientMetadata,
+            clientMetadata,
           });
         } catch (registrationError) {
           console.warn("Dynamic client registration failed, using static client metadata:", registrationError);
@@ -173,11 +194,26 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
           throw new Error("OAuth metadata or client info not available");
         }
 
+        // Compute scope based on advertised scopes if available
+        const scopesSupported =
+          context.state.resourceMetadata?.scopes_supported ||
+          context.state.oauthMetadata.scopes_supported;
+        const scope = scopesSupported && scopesSupported.length > 0
+          ? scopesSupported.join(" ")
+          : undefined;
+
+        // Generate a random state for CSRF protection
+        const array = new Uint8Array(32);
+        crypto.getRandomValues(array);
+        const state = Array.from(array, (byte) => byte.toString(16).padStart(2, "0")).join("");
+
         const authResult = await startAuthorization(context.serverUrl, {
           metadata: context.state.oauthMetadata,
           clientInformation: context.state.oauthClientInfo,
           redirectUrl: context.provider.redirectUrl,
-          scope: "mcp:*",
+          scope,
+          state,
+          resource: context.state.resource ?? undefined,
         });
 
         // Save the code verifier for later use in token exchange

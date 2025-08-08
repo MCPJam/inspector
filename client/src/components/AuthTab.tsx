@@ -115,7 +115,6 @@ export const AuthTab = ({ serverConfig, serverEntry, serverName }: AuthTabProps)
         const oauthOptions: MCPOAuthOptions = {
           serverName: serverName,
           serverUrl: authSettings.serverUrl,
-          scopes: ["mcp:*"],
         };
         result = await initiateOAuth(oauthOptions);
       }
@@ -189,7 +188,6 @@ export const AuthTab = ({ serverConfig, serverEntry, serverName }: AuthTabProps)
       const oauthOptions: MCPOAuthOptions = {
         serverName: serverName,
         serverUrl: authSettings.serverUrl,
-        scopes: ["mcp:*"],
       };
       const result = await initiateOAuth(oauthOptions);
 
@@ -255,6 +253,15 @@ export const AuthTab = ({ serverConfig, serverEntry, serverName }: AuthTabProps)
       serverConfig: serverConfig?.url?.toString(),
     });
     setShowGuidedFlow(true);
+    // Clear any debug OAuth artifacts to avoid stale client info/scope
+    if (authSettings.serverUrl) {
+      try {
+        const provider = new DebugMCPOAuthClientProvider(authSettings.serverUrl);
+        provider.clear();
+      } catch (e) {
+        console.warn("Failed to clear debug OAuth provider state:", e);
+      }
+    }
     updateOAuthFlowState(EMPTY_OAUTH_FLOW_STATE);
     if (oauthStateMachine) {
       oauthStateMachine.proceedToNextStep();

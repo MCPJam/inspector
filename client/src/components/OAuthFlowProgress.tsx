@@ -3,6 +3,7 @@ import { CheckCircle2, Circle, ExternalLink } from "lucide-react";
 import { Button } from "./ui/button";
 import { useEffect, useMemo, useState } from "react";
 import { OAuthClientInformation } from "@modelcontextprotocol/sdk/shared/auth.js";
+import { DebugMCPOAuthClientProvider } from "@/lib/debug-oauth-provider";
 
 interface OAuthStepProps {
   label: string;
@@ -70,6 +71,10 @@ export const OAuthFlowProgress = ({
   updateFlowState,
   proceedToNextStep,
 }: OAuthFlowProgressProps) => {
+  const provider = useMemo(
+    () => new DebugMCPOAuthClientProvider(serverUrl),
+    [serverUrl],
+  );
   const [clientInfo, setClientInfo] = useState<OAuthClientInformation | null>(
     null,
   );
@@ -77,10 +82,30 @@ export const OAuthFlowProgress = ({
   const currentStepIdx = steps.findIndex((s) => s === flowState.oauthStep);
 
   useEffect(() => {
-    if (flowState.oauthClientInfo) {
-      setClientInfo(flowState.oauthClientInfo);
+    const fetchClientInfo = async () => {
+      if (flowState.oauthClientInfo) {
+        setClientInfo(flowState.oauthClientInfo);
+      } else {
+        try {
+          const info = await provider.clientInformation();
+          if (info) {
+            setClientInfo(info);
+          }
+        } catch (error) {
+          console.error("Failed to fetch client information:", error);
+        }
+      }
+    };
+
+    if (currentStepIdx > steps.indexOf("client_registration")) {
+      fetchClientInfo();
     }
-  }, [flowState.oauthClientInfo]);
+  }, [
+    provider,
+    flowState.oauthStep,
+    flowState.oauthClientInfo,
+    currentStepIdx,
+  ]);
 
   // Helper to get step props
   const getStepProps = (stepName: OAuthStep) => ({

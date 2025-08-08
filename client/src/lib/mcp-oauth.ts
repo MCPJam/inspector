@@ -89,7 +89,6 @@ export class MCPOAuthProvider implements OAuthClientProvider {
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
       token_endpoint_auth_method: "client_secret_post",
-      scope: "mcp:*",
     };
   }
 
@@ -211,10 +210,11 @@ export async function initiateOAuth(
       );
     }
 
-    const result = await auth(provider, {
-      serverUrl: options.serverUrl,
-      scope: options.scopes?.join(" ") || "mcp:*",
-    });
+    const authArgs: any = { serverUrl: options.serverUrl };
+    if (options.scopes && options.scopes.length > 0) {
+      authArgs.scope = options.scopes.join(" ");
+    }
+    const result = await auth(provider, authArgs);
 
     if (result === "REDIRECT") {
       return {
@@ -303,7 +303,6 @@ export async function handleOAuthCallback(
     const result = await auth(provider, {
       serverUrl,
       authorizationCode,
-      scope: "mcp:*",
     });
 
     if (result === "AUTHORIZED") {
@@ -432,10 +431,7 @@ export async function refreshOAuthTokens(
       };
     }
 
-    const result = await auth(provider, {
-      serverUrl,
-      scope: "mcp:*",
-    });
+    const result = await auth(provider, { serverUrl });
 
     if (result === "AUTHORIZED") {
       const tokens = provider.tokens();
