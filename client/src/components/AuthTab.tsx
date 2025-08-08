@@ -68,6 +68,22 @@ export const AuthTab = ({ serverConfig, serverEntry, serverName }: AuthTabProps)
     setOAuthFlowState((prev) => ({ ...prev, ...updates }));
   }, []);
 
+  const resetOAuthFlow = useCallback(() => {
+    // Reset the guided flow state
+    setShowGuidedFlow(false);
+    updateOAuthFlowState(EMPTY_OAUTH_FLOW_STATE);
+    
+    // Clear any debug OAuth artifacts to avoid stale client info/scope
+    if (authSettings.serverUrl) {
+      try {
+        const provider = new DebugMCPOAuthClientProvider(authSettings.serverUrl);
+        provider.clear();
+      } catch (e) {
+        console.warn("Failed to clear debug OAuth provider state:", e);
+      }
+    }
+  }, [authSettings.serverUrl, updateOAuthFlowState]);
+
   // Update auth settings when server config changes
   useEffect(() => {
     if (serverConfig && serverConfig.url && serverName) {
@@ -86,6 +102,12 @@ export const AuthTab = ({ serverConfig, serverEntry, serverName }: AuthTabProps)
       updateAuthSettings(DEFAULT_AUTH_SETTINGS);
     }
   }, [serverConfig, serverName, updateAuthSettings]);
+
+  // Reset OAuth flow when component mounts or server changes
+  useEffect(() => {
+    // Reset the guided flow state when switching tabs or servers
+    resetOAuthFlow();
+  }, [serverName, resetOAuthFlow]);
 
   const handleQuickRefresh = useCallback(async () => {
     if (!serverConfig || !authSettings.serverUrl || !serverName) {
@@ -252,21 +274,17 @@ export const AuthTab = ({ serverConfig, serverEntry, serverName }: AuthTabProps)
       serverName,
       serverConfig: serverConfig?.url?.toString(),
     });
+    
+    // First reset any existing flow state
+    resetOAuthFlow();
+    
+    // Then start the new guided flow
     setShowGuidedFlow(true);
-    // Clear any debug OAuth artifacts to avoid stale client info/scope
-    if (authSettings.serverUrl) {
-      try {
-        const provider = new DebugMCPOAuthClientProvider(authSettings.serverUrl);
-        provider.clear();
-      } catch (e) {
-        console.warn("Failed to clear debug OAuth provider state:", e);
-      }
-    }
     updateOAuthFlowState(EMPTY_OAUTH_FLOW_STATE);
     if (oauthStateMachine) {
       oauthStateMachine.proceedToNextStep();
     }
-  }, [oauthStateMachine, updateOAuthFlowState, authSettings.serverUrl, serverName, serverConfig]);
+  }, [oauthStateMachine, updateOAuthFlowState, authSettings.serverUrl, serverName, serverConfig, resetOAuthFlow]);
 
   const proceedToNextStep = useCallback(async () => {
     if (oauthStateMachine) {
