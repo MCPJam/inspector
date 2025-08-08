@@ -26,6 +26,7 @@ import { MastraMCPServerDefinition } from "@/shared/types.js";
 import { ElicitationDialog } from "./ElicitationDialog";
 import { TruncatedText } from "@/components/ui/truncated-text";
 import { SearchInput } from "@/components/ui/search-input";
+import { UIResourceRenderer } from "@mcp-ui/client";
 
 interface Tool {
   name: string;
@@ -857,23 +858,58 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
               ) : result ? (
                 <ScrollArea className="h-full">
                   <div className="p-4">
-                    <JsonView
-                      src={result}
-                      dark={true}
-                      theme="atom"
-                      enableClipboard={true}
-                      displaySize={false}
-                      collapseStringsAfterLength={100}
-                      style={{
-                        fontSize: "12px",
-                        fontFamily:
-                          "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                        backgroundColor: "hsl(var(--background))",
-                        padding: "16px",
-                        borderRadius: "8px",
-                        border: "1px solid hsl(var(--border))",
-                      }}
-                    />
+                    {(() => {
+                      const uiRes = (result as any)?.resource;
+                      if (
+                        uiRes &&
+                        typeof uiRes === "object" &&
+                        typeof uiRes.uri === "string" &&
+                        uiRes.uri.startsWith("ui://")
+                      ) {
+                        return (
+                          <UIResourceRenderer
+                            resource={uiRes}
+                            onUIAction={(evt) => {
+                              if (evt.type === "tool" && evt.payload?.toolName) {
+                                // Fire-and-forget: execute the referenced tool with provided params
+                                // Reuse existing endpoint; ignore errors here to avoid blocking UI
+                                fetch("/api/mcp/tools", {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({
+                                    action: "execute",
+                                    toolName: evt.payload.toolName,
+                                    parameters: evt.payload.params || {},
+                                    serverConfig: getServerConfig(),
+                                  }),
+                                }).catch(() => {});
+                              } else if (evt.type === "link" && evt.payload?.url) {
+                                window.open(evt.payload.url, "_blank", "noopener,noreferrer");
+                              }
+                            }}
+                          />
+                        );
+                      }
+                      return (
+                        <JsonView
+                          src={result}
+                          dark={true}
+                          theme="atom"
+                          enableClipboard={true}
+                          displaySize={false}
+                          collapseStringsAfterLength={100}
+                          style={{
+                            fontSize: "12px",
+                            fontFamily:
+                              "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                            backgroundColor: "hsl(var(--background))",
+                            padding: "16px",
+                            borderRadius: "8px",
+                            border: "1px solid hsl(var(--border))",
+                          }}
+                        />
+                      );
+                    })()}
                   </div>
                 </ScrollArea>
               ) : (
