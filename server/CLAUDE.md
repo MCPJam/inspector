@@ -9,7 +9,7 @@ The backend is built with modern technologies:
 - AI SDK integrations (OpenAI, Anthropic, Ollama)
 
 ## Core Features
-
+##
 1. **MCP Server Testing**
    - Full spec validation
      - Tool schema validation
