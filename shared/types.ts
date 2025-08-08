@@ -21,17 +21,79 @@ export interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
   timestamp: Date;
+  attachments?: Attachment[];
   toolCalls?: ToolCall[];
+  toolResults?: ToolResult[];
+  metadata?: MessageMetadata;
 }
 
 export interface ToolCall {
   id: string | number;
   name: string;
-  parameters: any;
+  parameters: Record<string, any>;
   timestamp: Date;
-  status: "executing" | "completed" | "error";
+  status: "pending" | "executing" | "completed" | "error";
   result?: any;
   error?: string;
+}
+
+export interface Attachment {
+  id: string;
+  name: string;
+  url: string;
+  contentType: string;
+  size?: number;
+}
+
+export interface ToolResult {
+  id: string;
+  toolCallId: string;
+  result: any;
+  error?: string;
+  timestamp: Date;
+}
+
+export interface MessageMetadata {
+  createdAt: string;
+  editedAt?: string;
+  regenerated?: boolean;
+  tokens?: {
+    input: number;
+    output: number;
+  };
+}
+
+export interface ChatState {
+  messages: ChatMessage[];
+  isLoading: boolean;
+  error?: string;
+  connectionStatus: "connected" | "disconnected" | "connecting";
+}
+
+export interface ChatActions {
+  sendMessage: (content: string, attachments?: Attachment[]) => Promise<void>;
+  editMessage: (messageId: string, newContent: string) => Promise<void>;
+  regenerateMessage: (messageId: string) => Promise<void>;
+  deleteMessage: (messageId: string) => void;
+  clearChat: () => void;
+  stopGeneration: () => void;
+}
+
+export interface MCPToolCall extends ToolCall {
+  serverId: string;
+  serverName: string;
+}
+
+export interface MCPToolResult extends ToolResult {
+  serverId: string;
+}
+
+export type ChatStatus = "idle" | "typing" | "streaming" | "error";
+
+export interface StreamingMessage {
+  id: string;
+  content: string;
+  isComplete: boolean;
 }
 
 // Model definitions
@@ -155,6 +217,7 @@ export interface ServerFormData {
   env?: Record<string, string>;
   useOAuth?: boolean;
   oauthScopes?: string[];
+  clientId?: string;
 }
 
 export type MastraMCPServerDefinition =
@@ -169,6 +232,35 @@ export interface OauthTokens {
   expires_in: number;
   scope: string;
 }
+
+export interface OAuthTokens {
+  access_token: string;
+  refresh_token?: string;
+  token_type: string;
+  expires_in?: number;
+  scope?: string;
+}
+
+export interface AuthSettings {
+  serverUrl: string;
+  tokens: OAuthTokens | null;
+  isAuthenticating: boolean;
+  error: string | null;
+  statusMessage: StatusMessage | null;
+}
+
+export interface StatusMessage {
+  type: "success" | "error" | "info";
+  message: string;
+}
+
+export const DEFAULT_AUTH_SETTINGS: AuthSettings = {
+  serverUrl: "",
+  tokens: null,
+  isAuthenticating: false,
+  error: null,
+  statusMessage: null,
+};
 
 // MCP Resource and Tool types
 export interface MCPResource {

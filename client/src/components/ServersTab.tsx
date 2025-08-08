@@ -6,7 +6,7 @@ import { ServerWithName } from "@/hooks/use-app-state";
 import { ServerConnectionCard } from "./connection/ServerConnectionCard";
 import { AddServerModal } from "./connection/AddServerModal";
 import { EditServerModal } from "./connection/EditServerModal";
-import { ServerFormData } from "@/lib/types";
+import { ServerFormData } from "@/shared/types.js";
 import { MCPIcon } from "./ui/mcp-icon";
 
 interface ServersTabProps {

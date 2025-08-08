@@ -1,4 +1,4 @@
-import { ModelDefinition } from "@/lib/types";
+import { ModelDefinition } from "@/shared/types.js";
 import claudeLogo from "/claude_logo.png";
 import openaiLogo from "/openai_logo.png";
 import ollamaLogo from "/ollama_logo.svg";

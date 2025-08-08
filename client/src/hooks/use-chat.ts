@@ -6,7 +6,7 @@ import {
   Model,
   ModelDefinition,
   SUPPORTED_MODELS,
-} from "@/lib/types";
+} from "@/shared/types.js";
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
 import { detectOllamaModels } from "@/lib/ollama-utils";
 

@@ -7,7 +7,7 @@ import { ArrowUp, Paperclip, Square } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowDown } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
-import { Model, ModelDefinition } from "@/lib/types";
+import { Model, ModelDefinition } from "@/shared/types.js";
 import { ModelSelector } from "./model-selector";
 
 interface ChatInputProps {
