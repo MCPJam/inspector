@@ -1,12 +1,12 @@
 import * as React from "react";
 import {
-  Brain,
-  FolderOpen,
   Hammer,
   MessageCircle,
   Settings,
   Glasses,
   Key,
+  MessageSquareCode,
+  BookOpen,
 } from "lucide-react";
 
 import { NavMain } from "@/components/sidebar/nav-main";
@@ -52,12 +52,12 @@ const navigationSections = [
       {
         title: "Resources",
         url: "#resources",
-        icon: FolderOpen,
+        icon: BookOpen,
       },
       {
         title: "Prompts",
         url: "#prompts",
-        icon: Brain,
+        icon: MessageSquareCode,
       },
       {
         title: "Auth",

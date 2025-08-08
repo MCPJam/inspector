@@ -116,14 +116,14 @@ if (process.env.NODE_ENV === "production") {
     // Return index.html for SPA routes
     const indexPath = join(process.cwd(), "dist", "client", "index.html");
     let htmlContent = readFileSync(indexPath, "utf-8");
-    
+
     // Inject MCP server config if provided via CLI
     const mcpConfig = getMCPConfigFromEnv();
     if (mcpConfig) {
       const configScript = `<script>window.MCP_CLI_CONFIG = ${JSON.stringify(mcpConfig)};</script>`;
-      htmlContent = htmlContent.replace('</head>', `${configScript}</head>`);
+      htmlContent = htmlContent.replace("</head>", `${configScript}</head>`);
     }
-    
+
     return c.html(htmlContent);
   });
 } else {

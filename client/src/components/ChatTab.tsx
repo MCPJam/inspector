@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState } from "react";
 import { MessageCircle } from "lucide-react";
-import { MastraMCPServerDefinition } from "@/lib/types";
+import { MastraMCPServerDefinition } from "@/shared/types.js";
 import { useChat } from "@/hooks/use-chat";
 import { Message } from "./chat/message";
 import { ChatInput } from "./chat/chat-input";

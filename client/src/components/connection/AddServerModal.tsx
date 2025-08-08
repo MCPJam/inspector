@@ -10,7 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
-import { ServerFormData } from "@/lib/types";
+import { ServerFormData } from "@/shared/types.js";
 
 interface AddServerModalProps {
   isOpen: boolean;
@@ -199,8 +199,8 @@ export function AddServerModal({
     <Dialog open={isOpen} onOpenChange={handleClose}>
       <DialogContent className="max-w-md sm:max-w-lg">
         <DialogHeader className="space-y-2">
-          <DialogTitle className="text-xl font-semibold">
-            Add MCP Server
+          <DialogTitle className="flex text-xl font-semibold">
+            <img src="/mcp.svg" alt="MCP" className="mr-2" /> Add MCP Server
           </DialogTitle>
         </DialogHeader>
 
@@ -243,7 +243,7 @@ export function AddServerModal({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="stdio">STDIO</SelectItem>
-                    <SelectItem value="http">HTTP</SelectItem>
+                    <SelectItem value="http">HTTP/SSE</SelectItem>
                   </SelectContent>
                 </Select>
                 <Input
