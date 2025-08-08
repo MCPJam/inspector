@@ -35,7 +35,7 @@ export function EditServerModal({
     headers: {},
     env: {},
     useOAuth: true,
-    oauthScopes: ["mcp:*"],
+    oauthScopes: [],
     clientId: "",
   });
   const [commandInput, setCommandInput] = useState("");
@@ -66,7 +66,7 @@ export function EditServerModal({
         url: config.url?.toString() || "",
         headers: headers,
         useOAuth: hasOAuth,
-        oauthScopes: server.oauthTokens?.scope?.split(" ") || ["mcp:*"],
+        oauthScopes: server.oauthTokens?.scope?.split(" ") || [],
         clientId:
           "clientId" in config
             ? typeof config.clientId === "string"
@@ -207,21 +207,16 @@ export function EditServerModal({
             },
             useOAuth: false,
           };
-        } else if (
-          authType === "oauth" &&
-          serverFormData.useOAuth &&
-          oauthScopesInput
-        ) {
-          const scopes = oauthScopesInput
+        } else if (authType === "oauth" && serverFormData.useOAuth) {
+          const scopes = (oauthScopesInput || "")
             .split(" ")
-            .filter((scope) => scope.trim());
+            .map((s) => s.trim())
+            .filter(Boolean);
           finalFormData = {
             ...finalFormData,
             useOAuth: true,
-            oauthScopes: scopes,
-            clientId: useCustomClientId
-              ? clientId.trim() || undefined
-              : undefined,
+            ...(scopes.length > 0 ? { oauthScopes: scopes } : {}),
+            clientId: useCustomClientId ? clientId.trim() || undefined : undefined,
             headers: {}, // Clear any existing auth headers for OAuth
           };
         }
