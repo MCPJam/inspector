@@ -126,8 +126,7 @@ export function SettingsTab() {
         <div>
           <h3 className="text-lg font-semibold">AI Providers</h3>
           <p className="text-muted-foreground">
-            Click the + button next to any provider to configure it. The
-            credentials are securely encrypted on your local machine.
+            Click the + button next to any provider to configure it.
           </p>
         </div>
 
