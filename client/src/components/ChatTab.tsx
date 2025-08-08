@@ -41,7 +41,7 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
       toast.error(error);
     },
   });
-  console.log("availableModels", availableModels);
+
   const hasMessages = messages.length > 0;
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -66,7 +66,7 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
   const handleCopyMessage = (content: string) => {
     navigator.clipboard.writeText(content);
   };
-  console.log(availableModels);
+
   // Empty state - centered input
   if (!hasMessages) {
     return (

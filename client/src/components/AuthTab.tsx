@@ -269,11 +269,7 @@ export const AuthTab = ({ serverConfig, serverEntry, serverName }: AuthTabProps)
   }, [serverConfig, serverName, authSettings.serverUrl, oauthFlowState, updateOAuthFlowState]);
 
   const startGuidedFlow = useCallback(() => {
-    console.log("Starting guided flow with:", {
-      serverUrl: authSettings.serverUrl,
-      serverName,
-      serverConfig: serverConfig?.url?.toString(),
-    });
+
     
     // First reset any existing flow state
     resetOAuthFlow();

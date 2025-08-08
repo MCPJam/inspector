@@ -20,7 +20,7 @@ export class DebugMCPOAuthClientProvider implements OAuthClientProvider {
     // For debugging, we can also try using a simpler redirect URL
     // or fall back to a localhost URL if the current origin has issues
     const origin = window.location.origin;
-    console.log("Debug OAuth redirect URL origin:", origin);
+
     return `${origin}/oauth/callback/debug`;
   }
 
@@ -65,7 +65,7 @@ export class DebugMCPOAuthClientProvider implements OAuthClientProvider {
 
   redirectToAuthorization(authorizationUrl: URL): void {
     // For debugging, we'll show the URL instead of redirecting
-    console.log("Authorization URL:", authorizationUrl.href);
+
     // In a real debug environment, we might want to copy to clipboard or show in UI
   }
 

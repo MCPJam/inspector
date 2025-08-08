@@ -49,7 +49,7 @@ export function ChatInput({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [uploadQueue, setUploadQueue] = useState<string[]>([]);
-  console.log(currentModel);
+  
   // Get current model data
   const currentModelData = currentModel;
 

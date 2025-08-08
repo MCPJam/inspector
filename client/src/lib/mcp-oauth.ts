@@ -135,7 +135,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
 
   async redirectToAuthorization(authorizationUrl: URL) {
     // Store server name for callback recovery
-    console.log("Setting mcp-oauth-pending to:", this.serverName);
+
     localStorage.setItem("mcp-oauth-pending", this.serverName);
     window.location.href = authorizationUrl.toString();
   }
