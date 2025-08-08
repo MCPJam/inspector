@@ -25,6 +25,7 @@ import type { MCPToolType } from "@mastra/core/mcp";
 import { MastraMCPServerDefinition } from "@/shared/types.js";
 import { ElicitationDialog } from "./ElicitationDialog";
 import { TruncatedText } from "@/components/ui/truncated-text";
+import { SearchInput } from "@/components/ui/search-input";
 
 interface Tool {
   name: string;
@@ -70,6 +71,7 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
   const [elicitationRequest, setElicitationRequest] =
     useState<ElicitationRequest | null>(null);
   const [elicitationLoading, setElicitationLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState<string>("");
 
   useEffect(() => {
     if (serverConfig) {
@@ -502,6 +504,13 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
   };
 
   const toolNames = Object.keys(tools);
+  const filteredToolNames = searchQuery.trim()
+    ? toolNames.filter((name) => {
+        const tool = tools[name];
+        const haystack = `${name} ${tool?.description || ""}`.toLowerCase();
+        return haystack.includes(searchQuery.trim().toLowerCase());
+      })
+    : toolNames;
 
   if (!serverConfig) {
     return (
@@ -525,26 +534,33 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
             <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
               <div className="h-full flex flex-col border-r border-border bg-background">
                 {/* Header */}
-                <div className="flex items-center justify-between px-4 py-4 border-b border-border bg-background">
-                  <div className="flex items-center gap-3">
-                    <Wrench className="h-3 w-3 text-muted-foreground" />
-                    <h2 className="text-xs font-semibold text-foreground">
-                      Tools
-                    </h2>
-                    <Badge variant="secondary" className="text-xs font-mono">
-                      {toolNames.length}
-                    </Badge>
+                <div className="px-4 py-4 border-b border-border bg-background space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <Wrench className="h-3 w-3 text-muted-foreground" />
+                      <h2 className="text-xs font-semibold text-foreground">
+                        Tools
+                      </h2>
+                      <Badge variant="secondary" className="text-xs font-mono">
+                        {toolNames.length}
+                      </Badge>
+                    </div>
+                    <Button
+                      onClick={fetchTools}
+                      variant="ghost"
+                      size="sm"
+                      disabled={fetchingTools}
+                    >
+                      <RefreshCw
+                        className={`h-3 w-3 ${fetchingTools ? "animate-spin" : ""} cursor-pointer`}
+                      />
+                    </Button>
                   </div>
-                  <Button
-                    onClick={fetchTools}
-                    variant="ghost"
-                    size="sm"
-                    disabled={fetchingTools}
-                  >
-                    <RefreshCw
-                      className={`h-3 w-3 ${fetchingTools ? "animate-spin" : ""} cursor-pointer`}
-                    />
-                  </Button>
+                  <SearchInput
+                    value={searchQuery}
+                    onValueChange={setSearchQuery}
+                    placeholder="Search tools by name or description"
+                  />
                 </div>
 
                 {/* Tools List */}
@@ -563,15 +579,17 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                             Fetching available tools from server
                           </p>
                         </div>
-                      ) : toolNames.length === 0 ? (
+                      ) : filteredToolNames.length === 0 ? (
                         <div className="text-center py-8">
                           <p className="text-sm text-muted-foreground">
-                            No tools available
+                            {toolNames.length === 0
+                              ? "No tools available"
+                              : "No tools match your search"}
                           </p>
                         </div>
                       ) : (
                         <div className="space-y-1">
-                          {toolNames.map((name) => (
+                          {filteredToolNames.map((name) => (
                             <div
                               key={name}
                               className={`cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${

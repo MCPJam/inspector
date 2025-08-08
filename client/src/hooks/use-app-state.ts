@@ -63,7 +63,7 @@ export function useAppState() {
     isMultiSelectMode: false,
   });
 
-  console.log("appState", appState);
+  
 
   const [isLoading, setIsLoading] = useState(true);
   const [reconnectionTimeouts, setReconnectionTimeouts] = useState<
@@ -131,7 +131,10 @@ export function useAppState() {
       if (code) {
         handleOAuthCallbackComplete(code);
       } else if (error) {
+        // Show the error toast (do not suppress), then clean up the URL
         toast.error(`OAuth authorization failed: ${error}`);
+        localStorage.removeItem("mcp-oauth-pending");
+        window.history.replaceState({}, document.title, window.location.pathname);
       }
     }
   }, [isLoading]);
@@ -157,7 +160,7 @@ export function useAppState() {
   const handleConnect = useCallback(
     async (formData: ServerFormData) => {
       // Validate form data first
-      console.log("handleConnectFormData", formData);
+      
       if (formData.type === "stdio") {
         if (!formData.command || formData.command.trim() === "") {
           toast.error("Command is required for STDIO connections");
@@ -211,12 +214,17 @@ export function useAppState() {
             },
           }));
 
-          const oauthResult = await initiateOAuth({
+          const oauthOptions: MCPOAuthOptions = {
             serverName: formData.name,
             serverUrl: formData.url,
-            scopes: formData.oauthScopes || ["mcp:*"],
             clientId: formData.clientId,
-          } as MCPOAuthOptions);
+          } as MCPOAuthOptions;
+          // Only pass scopes if the user explicitly provided them
+          if (formData.oauthScopes && formData.oauthScopes.length > 0) {
+            oauthOptions.scopes = formData.oauthScopes;
+          }
+
+          const oauthResult = await initiateOAuth(oauthOptions);
 
           if (oauthResult.success) {
             if (oauthResult.serverConfig) {
@@ -444,7 +452,7 @@ export function useAppState() {
 
       try {
         const result = await handleOAuthCallback(code);
-        console.log("OAuth callback result:", result);
+        
 
         if (result.success && result.serverConfig && result.serverName) {
           const serverName = result.serverName;
@@ -813,7 +821,7 @@ export function useAppState() {
 
   const handleUpdate = useCallback(
     async (originalServerName: string, formData: ServerFormData) => {
-      console.log("handleUpdateFormData", formData);
+      
 
       const originalServer = appState.servers[originalServerName];
       const hadOAuthTokens = originalServer?.oauthTokens != null;
