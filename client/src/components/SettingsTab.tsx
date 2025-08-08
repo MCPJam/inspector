@@ -466,6 +466,7 @@ export function SettingsTab() {
             </CardContent>
           </Card>
 
+
           {/* Ollama Configuration Section */}
           <Card className="shadow-xl border-0">
             <CardHeader className="bg-gradient-to-r from-green-600 to-teal-600 text-white">
