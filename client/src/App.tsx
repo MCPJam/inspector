@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
@@ -8,6 +8,7 @@ import { ChatTab } from "./components/ChatTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
+import OAuthDebugCallback from "./components/OAuthDebugCallback";
 import { MCPSidebar } from "./components/mcp-sidebar";
 import { ActiveServerSelector } from "./components/ActiveServerSelector";
 import {
@@ -25,6 +26,10 @@ import "./index.css";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
+  const isDebugCallback = useMemo(
+    () => window.location.pathname.startsWith("/oauth/callback/debug"),
+    [],
+  );
 
   const {
     appState,
@@ -47,6 +52,10 @@ export default function App() {
       setSelectedMultipleServersToAllServers();
     }
   };
+
+  if (isDebugCallback) {
+    return <OAuthDebugCallback />;
+  }
 
   if (isLoading) {
     return (

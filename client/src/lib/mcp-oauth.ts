@@ -66,7 +66,7 @@ export interface OAuthResult {
 /**
  * Simple localStorage-based OAuth provider for MCP
  */
-class MCPOAuthProvider implements OAuthClientProvider {
+export class MCPOAuthProvider implements OAuthClientProvider {
   private serverName: string;
   private redirectUri: string;
   private customClientId?: string;
@@ -83,13 +83,12 @@ class MCPOAuthProvider implements OAuthClientProvider {
 
   get clientMetadata() {
     return {
-      client_name: `MCP Inspector - ${this.serverName}`,
+      client_name: `MCPJam - ${this.serverName}`,
       client_uri: "https://github.com/mcpjam/inspector",
       redirect_uris: [this.redirectUri],
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
       token_endpoint_auth_method: "client_secret_post",
-      scope: "mcp:*",
     };
   }
 
@@ -136,7 +135,7 @@ class MCPOAuthProvider implements OAuthClientProvider {
 
   async redirectToAuthorization(authorizationUrl: URL) {
     // Store server name for callback recovery
-    console.log("Setting mcp-oauth-pending to:", this.serverName);
+
     localStorage.setItem("mcp-oauth-pending", this.serverName);
     window.location.href = authorizationUrl.toString();
   }
@@ -211,10 +210,11 @@ export async function initiateOAuth(
       );
     }
 
-    const result = await auth(provider, {
-      serverUrl: options.serverUrl,
-      scope: options.scopes?.join(" ") || "mcp:*",
-    });
+    const authArgs: any = { serverUrl: options.serverUrl };
+    if (options.scopes && options.scopes.length > 0) {
+      authArgs.scope = options.scopes.join(" ");
+    }
+    const result = await auth(provider, authArgs);
 
     if (result === "REDIRECT") {
       return {
@@ -303,7 +303,6 @@ export async function handleOAuthCallback(
     const result = await auth(provider, {
       serverUrl,
       authorizationCode,
-      scope: "mcp:*",
     });
 
     if (result === "AUTHORIZED") {
@@ -432,10 +431,7 @@ export async function refreshOAuthTokens(
       };
     }
 
-    const result = await auth(provider, {
-      serverUrl,
-      scope: "mcp:*",
-    });
+    const result = await auth(provider, { serverUrl });
 
     if (result === "AUTHORIZED") {
       const tokens = provider.tokens();
