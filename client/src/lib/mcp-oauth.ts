@@ -6,7 +6,7 @@ import {
   auth,
   OAuthClientProvider,
 } from "@modelcontextprotocol/sdk/client/auth.js";
-import { HttpServerDefinition } from "./types";
+import { HttpServerDefinition } from "@/shared/types.js";
 
 // Store original fetch for restoration
 const originalFetch = window.fetch;
@@ -497,8 +497,13 @@ function createServerConfig(
   serverUrl: string,
   tokens: any,
 ): HttpServerDefinition {
+  // Normalize the URL to avoid leaking query/hash (e.g., ?login) into MCP base URL
+  const normalizedUrl = new URL(serverUrl);
+  normalizedUrl.search = "";
+  normalizedUrl.hash = "";
+
   return {
-    url: new URL(serverUrl),
+    url: normalizedUrl,
     requestInit: {
       headers: tokens.access_token
         ? {
