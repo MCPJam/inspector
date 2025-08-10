@@ -13,11 +13,13 @@ import { cn } from "@/lib/utils";
 import React from "react"; // Added missing import for React
 import { MCPIcon } from "../ui/mcp-icon";
 import { UIResourceRenderer } from "@mcp-ui/client";
+import type { MastraMCPServerDefinition } from "@/shared/types.js";
 
 interface ToolCallDisplayProps {
   toolCall: ToolCall;
   toolResult?: ToolResult;
   className?: string;
+  serverConfigs?: Record<string, MastraMCPServerDefinition>;
 }
 
 // JSON syntax highlighting component
@@ -158,6 +160,7 @@ export function ToolCallDisplay({
   toolCall,
   toolResult,
   className,
+  serverConfigs,
 }: ToolCallDisplayProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [showJsonTree, setShowJsonTree] = useState(false);
@@ -309,7 +312,19 @@ export function ToolCallDisplay({
                               resource={uiRes}
                               onUIAction={(evt) => {
                                 if (evt.type === "tool" && evt.payload?.toolName) {
-                                  // In chat view, UI-triggered tool can be handled by emitting a fetch; upstream chat loop may not capture it, but keeps UX coherent
+                                  // Prefer executing against a single selected server when available
+                                  const serverConfigToUse = ((): MastraMCPServerDefinition | undefined => {
+                                    if (
+                                      serverConfigs &&
+                                      typeof serverConfigs === "object" &&
+                                      Object.keys(serverConfigs).length === 1
+                                    ) {
+                                      const onlyKey = Object.keys(serverConfigs)[0];
+                                      return serverConfigs[onlyKey];
+                                    }
+                                    return undefined;
+                                  })();
+
                                   fetch("/api/mcp/tools", {
                                     method: "POST",
                                     headers: { "Content-Type": "application/json" },
@@ -317,7 +332,9 @@ export function ToolCallDisplay({
                                       action: "execute",
                                       toolName: evt.payload.toolName,
                                       parameters: evt.payload.params || {},
-                                      // Chat path lacks serverConfig context per message; this UI is within a tool result so we cannot infer reliably
+                                      ...(serverConfigToUse
+                                        ? { serverConfig: serverConfigToUse }
+                                        : {}),
                                     }),
                                   }).catch(() => {});
                                 } else if (evt.type === "link" && evt.payload?.url) {

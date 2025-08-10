@@ -166,6 +166,7 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
                     onRegenerate={regenerateMessage}
                     onCopy={handleCopyMessage}
                     showActions={true}
+                    serverConfigs={serverConfigs}
                   />
                 </motion.div>
               ))}
