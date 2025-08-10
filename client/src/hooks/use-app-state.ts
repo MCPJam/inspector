@@ -13,7 +13,7 @@ import {
   StdioServerDefinition,
   HttpServerDefinition,
   OauthTokens,
-} from "@/lib/types";
+} from "@/shared/types.js";
 import { useLogger } from "./use-logger";
 
 export interface ServerWithName {
@@ -63,7 +63,7 @@ export function useAppState() {
     isMultiSelectMode: false,
   });
 
-  console.log("appState", appState);
+  
 
   const [isLoading, setIsLoading] = useState(true);
   const [reconnectionTimeouts, setReconnectionTimeouts] = useState<
@@ -107,7 +107,6 @@ export function useAppState() {
     setIsLoading(false);
   }, []);
 
-
   // Save state to localStorage whenever it changes
   useEffect(() => {
     if (!isLoading) {
@@ -132,7 +131,10 @@ export function useAppState() {
       if (code) {
         handleOAuthCallbackComplete(code);
       } else if (error) {
+        // Show the error toast (do not suppress), then clean up the URL
         toast.error(`OAuth authorization failed: ${error}`);
+        localStorage.removeItem("mcp-oauth-pending");
+        window.history.replaceState({}, document.title, window.location.pathname);
       }
     }
   }, [isLoading]);
@@ -158,7 +160,7 @@ export function useAppState() {
   const handleConnect = useCallback(
     async (formData: ServerFormData) => {
       // Validate form data first
-      console.log("handleConnectFormData", formData);
+      
       if (formData.type === "stdio") {
         if (!formData.command || formData.command.trim() === "") {
           toast.error("Command is required for STDIO connections");
@@ -212,12 +214,17 @@ export function useAppState() {
             },
           }));
 
-          const oauthResult = await initiateOAuth({
+          const oauthOptions: MCPOAuthOptions = {
             serverName: formData.name,
             serverUrl: formData.url,
-            scopes: formData.oauthScopes || ["mcp:*"],
             clientId: formData.clientId,
-          } as MCPOAuthOptions);
+          } as MCPOAuthOptions;
+          // Only pass scopes if the user explicitly provided them
+          if (formData.oauthScopes && formData.oauthScopes.length > 0) {
+            oauthOptions.scopes = formData.oauthScopes;
+          }
+
+          const oauthResult = await initiateOAuth(oauthOptions);
 
           if (oauthResult.success) {
             if (oauthResult.serverConfig) {
@@ -394,38 +401,44 @@ export function useAppState() {
       // First try window config (production mode)
       const windowCliConfig = (window as any).MCP_CLI_CONFIG;
       if (windowCliConfig && windowCliConfig.command) {
-        logger.info("Auto-connecting to CLI-provided MCP server (from window)", { cliConfig: windowCliConfig });
-        
+        logger.info(
+          "Auto-connecting to CLI-provided MCP server (from window)",
+          { cliConfig: windowCliConfig },
+        );
+
         const formData: ServerFormData = {
           name: windowCliConfig.name || "CLI Server",
           type: "stdio" as const,
           command: windowCliConfig.command,
           args: windowCliConfig.args || [],
         };
-        
+
         handleConnect(formData);
         return;
       }
 
       // If no window config, try API config (development mode)
       fetch("/api/mcp-cli-config")
-        .then(response => response.json())
-        .then(data => {
+        .then((response) => response.json())
+        .then((data) => {
           const cliConfig = data.config;
           if (cliConfig && cliConfig.command) {
-            logger.info("Auto-connecting to CLI-provided MCP server (from API)", { cliConfig });
-            
+            logger.info(
+              "Auto-connecting to CLI-provided MCP server (from API)",
+              { cliConfig },
+            );
+
             const formData: ServerFormData = {
               name: cliConfig.name || "CLI Server",
               type: "stdio" as const,
               command: cliConfig.command,
               args: cliConfig.args || [],
             };
-            
+
             handleConnect(formData);
           }
         })
-        .catch(error => {
+        .catch((error) => {
           // Ignore errors - just means no CLI config available
           logger.debug("No CLI config available", { error });
         });
@@ -439,7 +452,7 @@ export function useAppState() {
 
       try {
         const result = await handleOAuthCallback(code);
-        console.log("OAuth callback result:", result);
+        
 
         if (result.success && result.serverConfig && result.serverName) {
           const serverName = result.serverName;
@@ -808,7 +821,7 @@ export function useAppState() {
 
   const handleUpdate = useCallback(
     async (originalServerName: string, formData: ServerFormData) => {
-      console.log("handleUpdateFormData", formData);
+      
 
       const originalServer = appState.servers[originalServerName];
       const hadOAuthTokens = originalServer?.oauthTokens != null;

@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { toast } from "sonner";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
@@ -9,7 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
-import { ServerFormData } from "@/lib/types";
+import { ServerFormData } from "@/shared/types.js";
 import { ServerWithName } from "@/hooks/use-app-state";
 
 interface EditServerModalProps {
@@ -34,12 +35,16 @@ export function EditServerModal({
     headers: {},
     env: {},
     useOAuth: true,
-    oauthScopes: ["mcp:*"],
+    oauthScopes: [],
+    clientId: "",
   });
   const [commandInput, setCommandInput] = useState("");
   const [oauthScopesInput, setOauthScopesInput] = useState("");
+  const [clientId, setClientId] = useState("");
   const [bearerToken, setBearerToken] = useState("");
   const [authType, setAuthType] = useState<"oauth" | "bearer" | "none">("none");
+  const [useCustomClientId, setUseCustomClientId] = useState(false);
+  const [clientIdError, setClientIdError] = useState<string | null>(null);
   const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>(
     [],
   );
@@ -61,7 +66,13 @@ export function EditServerModal({
         url: config.url?.toString() || "",
         headers: headers,
         useOAuth: hasOAuth,
-        oauthScopes: server.oauthTokens?.scope?.split(" ") || ["mcp:*"],
+        oauthScopes: server.oauthTokens?.scope?.split(" ") || [],
+        clientId:
+          "clientId" in config
+            ? typeof config.clientId === "string"
+              ? config.clientId
+              : ""
+            : "",
       };
     } else {
       // STDIO server
@@ -105,6 +116,9 @@ export function EditServerModal({
         if (hasOAuth) {
           setAuthType("oauth");
           setOauthScopesInput(formData.oauthScopes?.join(" ") || "mcp:*");
+          // Initialize clientId and useCustomClientId
+          setClientId(formData.clientId || "");
+          setUseCustomClientId(!!formData.clientId);
           // Ensure useOAuth is true when we have OAuth tokens
           setServerFormData((prev) => ({ ...prev, useOAuth: true }));
         } else if (hasBearerToken) {
@@ -121,8 +135,42 @@ export function EditServerModal({
     }
   }, [server, isOpen]);
 
+  // Basic client ID validation
+  const validateClientId = (id: string): string | null => {
+    if (!id.trim()) {
+      return "Client ID is required when using manual configuration";
+    }
+
+    // Basic format validation - most OAuth providers use alphanumeric with hyphens/underscores
+    const validPattern =
+      /^[a-zA-Z0-9][a-zA-Z0-9._-]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$/;
+    if (!validPattern.test(id.trim())) {
+      return "Client ID should contain only letters, numbers, dots, hyphens, and underscores";
+    }
+
+    if (id.trim().length < 3) {
+      return "Client ID must be at least 3 characters long";
+    }
+
+    if (id.trim().length > 100) {
+      return "Client ID must be less than 100 characters long";
+    }
+
+    return null;
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Validate Client ID if using custom configuration
+    if (authType === "oauth" && useCustomClientId) {
+      const clientIdError = validateClientId(clientId);
+      if (clientIdError) {
+        toast.error(clientIdError);
+        return;
+      }
+    }
+
     if (serverFormData.name) {
       let finalFormData = { ...serverFormData };
 
@@ -159,14 +207,16 @@ export function EditServerModal({
             },
             useOAuth: false,
           };
-        } else if (authType === "oauth" && oauthScopesInput) {
-          const scopes = oauthScopesInput
+        } else if (authType === "oauth" && serverFormData.useOAuth) {
+          const scopes = (oauthScopesInput || "")
             .split(" ")
-            .filter((scope) => scope.trim());
+            .map((s) => s.trim())
+            .filter(Boolean);
           finalFormData = {
             ...finalFormData,
             useOAuth: true,
-            oauthScopes: scopes,
+            ...(scopes.length > 0 ? { oauthScopes: scopes } : {}),
+            clientId: useCustomClientId ? clientId.trim() || undefined : undefined,
             headers: {}, // Clear any existing auth headers for OAuth
           };
         }
@@ -199,12 +249,20 @@ export function EditServerModal({
     setEnvVars(updated);
   };
 
+  const handleClientIdChange = (value: string) => {
+    setClientId(value);
+    // Clear error when user starts typing
+    if (clientIdError) {
+      setClientIdError(null);
+    }
+  };
+
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
       <DialogContent className="max-w-md sm:max-w-lg">
         <DialogHeader className="space-y-2">
-          <DialogTitle className="text-xl font-semibold">
-            Edit MCP Server
+          <DialogTitle className="flex text-xl font-semibold">
+            <img src="/mcp.svg" alt="MCP" className="mr-2" /> Edit MCP Server
           </DialogTitle>
         </DialogHeader>
 
@@ -247,7 +305,7 @@ export function EditServerModal({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="stdio">STDIO</SelectItem>
-                    <SelectItem value="http">HTTP</SelectItem>
+                    <SelectItem value="http">HTTP/SSE</SelectItem>
                   </SelectContent>
                 </Select>
                 <Input
@@ -413,20 +471,94 @@ export function EditServerModal({
               </div>
 
               {authType === "oauth" && (
-                <div className="space-y-2">
-                  <label className="block text-sm font-medium text-foreground">
-                    OAuth Scopes
-                  </label>
-                  <Input
-                    value={oauthScopesInput}
-                    onChange={(e) => setOauthScopesInput(e.target.value)}
-                    placeholder="mcp:* mcp:tools mcp:resources"
-                    className="h-10"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Space-separated OAuth scopes. Use &apos;mcp:*&apos; for full
-                    access.
-                  </p>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-foreground">
+                      OAuth Scopes
+                    </label>
+                    <Input
+                      value={oauthScopesInput}
+                      onChange={(e) => setOauthScopesInput(e.target.value)}
+                      placeholder="mcp:* mcp:tools mcp:resources"
+                      className="h-10"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Space-separated OAuth scopes. Use &apos;mcp:*&apos; for
+                      full access.
+                    </p>
+                  </div>
+                  <div className="space-y-3">
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-foreground">
+                        Client Registration Method
+                      </label>
+                      <div className="flex items-center space-x-6">
+                        <div className="flex items-center space-x-2">
+                          <input
+                            type="radio"
+                            id="dynamic-registration"
+                            name="clientRegistration"
+                            checked={!useCustomClientId}
+                            onChange={() => setUseCustomClientId(false)}
+                            className="w-4 h-4 cursor-pointer"
+                          />
+                          <label
+                            htmlFor="dynamic-registration"
+                            className="text-sm cursor-pointer"
+                          >
+                            Dynamic Registration
+                          </label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <input
+                            type="radio"
+                            id="manual-client-id"
+                            name="clientRegistration"
+                            checked={useCustomClientId}
+                            onChange={() => setUseCustomClientId(true)}
+                            className="w-4 h-4 cursor-pointer"
+                          />
+                          <label
+                            htmlFor="manual-client-id"
+                            className="text-sm cursor-pointer"
+                          >
+                            Manual Client ID
+                          </label>
+                        </div>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Dynamic registration lets the server automatically
+                        assign a client ID. Manual configuration allows you to
+                        specify a pre-registered client ID.
+                      </p>
+                    </div>
+
+                    {useCustomClientId && (
+                      <div className="space-y-2">
+                        <label className="block text-sm font-medium text-foreground">
+                          Client ID <span className="text-red-500">*</span>
+                        </label>
+                        <Input
+                          value={clientId}
+                          onChange={(e) => handleClientIdChange(e.target.value)}
+                          placeholder="your-registered-client-id"
+                          className={`h-10 ${clientIdError ? "border-red-500 focus:border-red-500" : ""}`}
+                          required={useCustomClientId}
+                        />
+                        {clientIdError ? (
+                          <p className="text-xs text-red-600">
+                            {clientIdError}
+                          </p>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">
+                            Enter the client ID that was pre-registered with the
+                            OAuth provider. This must match exactly what was
+                            configured on the server.
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 

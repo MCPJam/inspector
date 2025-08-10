@@ -11,7 +11,7 @@ import {
 import { FolderOpen, File, RefreshCw, ChevronRight, Eye } from "lucide-react";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
-import { MastraMCPServerDefinition } from "@/lib/types";
+import { MastraMCPServerDefinition } from "@/shared/types.js";
 
 interface Resource {
   uri: string;

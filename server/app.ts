@@ -53,7 +53,7 @@ export function createHonoApp() {
     // Development mode - just API
     app.get("/", (c) => {
       return c.json({
-        message: "MCP Inspector API Server",
+        message: "MCPJam API Server",
         environment: "development",
         frontend: "http://localhost:8080",
       });

@@ -20,7 +20,7 @@ import {
 import { MessageSquare, Play, RefreshCw, ChevronRight } from "lucide-react";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
-import { MastraMCPServerDefinition } from "@/lib/types";
+import { MastraMCPServerDefinition } from "@/shared/types.js";
 
 interface Prompt {
   name: string;
@@ -94,7 +94,7 @@ export function PromptsTab({ serverConfig }: PromptsTabProps) {
       });
 
       const data = await response.json();
-      console.log("bigData", data);
+      
       if (response.ok) {
         setPrompts(data.prompts || {});
       } else {
