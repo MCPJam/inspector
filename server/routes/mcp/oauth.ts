@@ -40,7 +40,7 @@ oauth.get("/metadata", async (c) => {
         {
           error: `Failed to fetch OAuth metadata: ${response.status} ${response.statusText}`,
         },
-        response.status as ContentfulStatusCode
+        response.status as ContentfulStatusCode,
       );
     }
 
@@ -55,7 +55,7 @@ oauth.get("/metadata", async (c) => {
         error:
           error instanceof Error ? error.message : "Unknown error occurred",
       },
-      500
+      500,
     );
   }
 });

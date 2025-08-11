@@ -41,8 +41,12 @@ const OAuthStepDetails = ({
       {/* Display error if current step and an error exists */}
       {isCurrent && error && (
         <div className="ml-7 mt-2 p-3 border border-red-300 bg-red-50 dark:bg-red-950/50 rounded-md">
-          <p className="text-sm font-medium text-red-700 dark:text-red-400">Error:</p>
-          <p className="text-xs text-red-600 dark:text-red-500 mt-1">{error.message}</p>
+          <p className="text-sm font-medium text-red-700 dark:text-red-400">
+            Error:
+          </p>
+          <p className="text-xs text-red-600 dark:text-red-500 mt-1">
+            {error.message}
+          </p>
         </div>
       )}
     </div>
@@ -178,7 +182,7 @@ export const OAuthFlowProgress = ({
                   </p>
                   <p className="text-xs text-blue-600 dark:text-blue-500 mt-1">
                     Resource metadata was added in the{" "}
-                    <a 
+                    <a
                       href="https://modelcontextprotocol.io/specification/draft/basic/authorization#2-3-1-authorization-server-location"
                       target="_blank"
                       rel="noopener noreferrer"

@@ -36,7 +36,7 @@ tools.post("/", async (c) => {
           success: false,
           error: "Action must be 'list', 'execute', or 'respond'",
         },
-        400
+        400,
       );
     }
 
@@ -48,7 +48,7 @@ tools.post("/", async (c) => {
             success: false,
             error: "requestId is required for respond action",
           },
-          400
+          400,
         );
       }
 
@@ -59,7 +59,7 @@ tools.post("/", async (c) => {
             success: false,
             error: "No pending elicitation found for this requestId",
           },
-          404
+          404,
         );
       }
 
@@ -74,7 +74,7 @@ tools.post("/", async (c) => {
     if (!validation.success) {
       return c.json(
         { success: false, error: validation.error!.message },
-        validation.error!.status as ContentfulStatusCode
+        validation.error!.status as ContentfulStatusCode,
       );
     }
 
@@ -94,8 +94,8 @@ tools.post("/", async (c) => {
                 `data: ${JSON.stringify({
                   type: "tools_loading",
                   message: "Fetching tools from server...",
-                })}\n\n`
-              )
+                })}\n\n`,
+              ),
             );
 
             const tools: Record<string, Tool> = await client.getTools();
@@ -108,11 +108,11 @@ tools.post("/", async (c) => {
                   {
                     ...tool,
                     inputSchema: zodToJsonSchema(
-                      tool.inputSchema as unknown as z.ZodType<any>
+                      tool.inputSchema as unknown as z.ZodType<any>,
                     ),
                   },
                 ];
-              })
+              }),
             );
 
             controller.enqueue(
@@ -120,8 +120,8 @@ tools.post("/", async (c) => {
                 `data: ${JSON.stringify({
                   type: "tools_list",
                   tools: toolsWithJsonSchema,
-                })}\n\n`
-              )
+                })}\n\n`,
+              ),
             );
           } else if (action === "execute") {
             // Stream tool execution
@@ -131,8 +131,8 @@ tools.post("/", async (c) => {
                   `data: ${JSON.stringify({
                     type: "tool_error",
                     error: "Tool name is required for execution",
-                  })}\n\n`
-                )
+                  })}\n\n`,
+                ),
               );
               return;
             }
@@ -144,8 +144,8 @@ tools.post("/", async (c) => {
                   toolName,
                   parameters: parameters || {},
                   message: "Executing tool...",
-                })}\n\n`
-              )
+                })}\n\n`,
+              ),
             );
 
             const tools = await client.getTools();
@@ -157,8 +157,8 @@ tools.post("/", async (c) => {
                   `data: ${JSON.stringify({
                     type: "tool_error",
                     error: `Tool '${toolName}' not found`,
-                  })}\n\n`
-                )
+                  })}\n\n`,
+                ),
               );
               return;
             }
@@ -180,8 +180,8 @@ tools.post("/", async (c) => {
                       message: elicitationRequest.message,
                       schema: elicitationRequest.requestedSchema,
                       timestamp: new Date(),
-                    })}\n\n`
-                  )
+                    })}\n\n`,
+                  ),
                 );
               }
 
@@ -215,8 +215,8 @@ tools.post("/", async (c) => {
                   type: "tool_result",
                   toolName,
                   result,
-                })}\n\n`
-              )
+                })}\n\n`,
+              ),
             );
 
             // Stream elicitation completion if there were any
@@ -225,8 +225,8 @@ tools.post("/", async (c) => {
                 `data: ${JSON.stringify({
                   type: "elicitation_complete",
                   toolName,
-                })}\n\n`
-              )
+                })}\n\n`,
+              ),
             );
           }
 
@@ -240,8 +240,8 @@ tools.post("/", async (c) => {
               `data: ${JSON.stringify({
                 type: "tool_error",
                 error: errorMsg,
-              })}\n\n`
-            )
+              })}\n\n`,
+            ),
           );
         } finally {
           if (client) {
@@ -276,7 +276,7 @@ tools.post("/", async (c) => {
         success: false,
         error: errorMsg,
       },
-      500
+      500,
     );
   }
 });

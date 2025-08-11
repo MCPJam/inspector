@@ -216,7 +216,9 @@ export function EditServerModal({
             ...finalFormData,
             useOAuth: true,
             ...(scopes.length > 0 ? { oauthScopes: scopes } : {}),
-            clientId: useCustomClientId ? clientId.trim() || undefined : undefined,
+            clientId: useCustomClientId
+              ? clientId.trim() || undefined
+              : undefined,
             headers: {}, // Clear any existing auth headers for OAuth
           };
         }
