@@ -1,6 +1,7 @@
 import { ModelDefinition } from "@/shared/types.js";
 import claudeLogo from "/claude_logo.png";
 import openaiLogo from "/openai_logo.png";
+import deepseekLogo from "/deepseek_logo.svg";
 import ollamaLogo from "/ollama_logo.svg";
 import ollamaDarkLogo from "/ollama_dark.png";
 
@@ -13,6 +14,8 @@ export const getProviderLogoFromProvider = (
       return claudeLogo;
     case "openai":
       return openaiLogo;
+    case "deepseek":
+      return deepseekLogo;
     case "ollama":
       // Return dark logo when in dark mode
       if (themeMode === "dark") {
@@ -43,6 +46,10 @@ export const getProviderColor = (provider: string) => {
       return "text-orange-600 dark:text-orange-400";
     case "openai":
       return "text-green-600 dark:text-green-400";
+    case "deepseek":
+      return "text-blue-600 dark:text-blue-400";
+    case "ollama":
+      return "text-gray-600 dark:text-gray-400";
     default:
       return "text-blue-600 dark:text-blue-400";
   }

@@ -8,7 +8,12 @@ import { ElicitationDialog } from "./ElicitationDialog";
 import { TooltipProvider } from "./ui/tooltip";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "./ui/accordion";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "./ui/accordion";
 import { Textarea } from "./ui/textarea";
 import { Button } from "./ui/button";
 
@@ -24,10 +29,13 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
   const [isPromptExpanded, setIsPromptExpanded] = useState(false);
   const [draftPrompt, setDraftPrompt] = useState(systemPrompt);
 
-  const handleTogglePrompt = useCallback((open: boolean) => {
-    setIsPromptExpanded(open);
-    if (open) setDraftPrompt(systemPromptState);
-  }, [systemPromptState]);
+  const handleTogglePrompt = useCallback(
+    (open: boolean) => {
+      setIsPromptExpanded(open);
+      if (open) setDraftPrompt(systemPromptState);
+    },
+    [systemPromptState],
+  );
 
   const handleSavePrompt = useCallback(() => {
     setSystemPromptState(draftPrompt);
@@ -48,7 +56,8 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
             <div className="w-full flex items-center justify-between gap-3">
               <span className="text-sm font-medium">System prompt</span>
               <span className="text-xs text-muted-foreground truncate max-w-[65%]">
-                {systemPromptState || "You are a helpful assistant with access to MCP tools."}
+                {systemPromptState ||
+                  "You are a helpful assistant with access to MCP tools."}
               </span>
             </div>
           </AccordionTrigger>

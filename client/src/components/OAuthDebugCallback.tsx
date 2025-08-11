@@ -24,7 +24,9 @@ export default function OAuthDebugCallback() {
           </>
         ) : (
           <>
-            <p className="mb-2 text-sm font-medium">No authorization code found</p>
+            <p className="mb-2 text-sm font-medium">
+              No authorization code found
+            </p>
             <div className="text-xs text-muted-foreground">
               <div>Error: {error || "unknown"}</div>
               {errorDescription && (

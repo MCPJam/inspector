@@ -92,6 +92,11 @@ npm start
      - Context handling
      - Response streaming
      - Error handling
+   - DeepSeek AI integration
+     - DeepSeek Chat/Reasoner support
+     - Coding-optimized models
+     - Reasoning capabilities
+     - Context management
    - Ollama model compatibility
      - Local model support
      - Custom model loading
@@ -143,6 +148,7 @@ npm start
 ## Development Setup
 
 ### Quick Start
+
 ```bash
 # Install dependencies
 npm install
@@ -158,6 +164,7 @@ npm start
 ```
 
 ### Docker Support
+
 ```bash
 # Run latest version
 docker run -p 3001:3001 mcpjam/mcp-inspector:latest

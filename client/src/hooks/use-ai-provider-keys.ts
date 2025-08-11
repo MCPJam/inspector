@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from "react";
 export interface ProviderTokens {
   anthropic: string;
   openai: string;
+  deepseek: string;
   ollama: string;
   ollamaBaseUrl: string;
 }
@@ -23,6 +24,7 @@ const STORAGE_KEY = "mcp-inspector-provider-tokens";
 const defaultTokens: ProviderTokens = {
   anthropic: "",
   openai: "",
+  deepseek: "",
   ollama: "local", // Ollama runs locally, no API key needed
   ollamaBaseUrl: "http://localhost:11434",
 };
