@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, useCallback } from "react";
 import { MessageCircle } from "lucide-react";
 import { MastraMCPServerDefinition } from "@/shared/types.js";
 import { useChat } from "@/hooks/use-chat";
@@ -8,6 +8,9 @@ import { ElicitationDialog } from "./ElicitationDialog";
 import { TooltipProvider } from "./ui/tooltip";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "./ui/accordion";
+import { Textarea } from "./ui/textarea";
+import { Button } from "./ui/button";
 
 interface ChatTabProps {
   serverConfigs?: Record<string, MastraMCPServerDefinition>;
@@ -17,6 +20,65 @@ interface ChatTabProps {
 export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
+  const [systemPromptState, setSystemPromptState] = useState(systemPrompt);
+  const [isPromptExpanded, setIsPromptExpanded] = useState(false);
+  const [draftPrompt, setDraftPrompt] = useState(systemPrompt);
+
+  const handleTogglePrompt = useCallback((open: boolean) => {
+    setIsPromptExpanded(open);
+    if (open) setDraftPrompt(systemPromptState);
+  }, [systemPromptState]);
+
+  const handleSavePrompt = useCallback(() => {
+    setSystemPromptState(draftPrompt);
+    setIsPromptExpanded(false);
+    toast.success("System prompt updated");
+  }, [draftPrompt]);
+
+  const SystemPromptEditor = (
+    <div className="mb-2 rounded-md border bg-background/80 backdrop-blur-sm">
+      <Accordion
+        type="single"
+        collapsible
+        value={isPromptExpanded ? "prompt" : ""}
+        onValueChange={(val) => handleTogglePrompt(val === "prompt")}
+      >
+        <AccordionItem value="prompt">
+          <AccordionTrigger className="px-3 py-2">
+            <div className="w-full flex items-center justify-between gap-3">
+              <span className="text-sm font-medium">System prompt</span>
+              <span className="text-xs text-muted-foreground truncate max-w-[65%]">
+                {systemPromptState || "You are a helpful assistant with access to MCP tools."}
+              </span>
+            </div>
+          </AccordionTrigger>
+          <AccordionContent>
+            <Textarea
+              value={draftPrompt}
+              onChange={(e) => setDraftPrompt(e.target.value)}
+              placeholder="You are a helpful assistant with access to MCP tools."
+              className="min-h-[140px]"
+            />
+            <div className="flex justify-end gap-2 mt-2">
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setIsPromptExpanded(false);
+                  setDraftPrompt(systemPromptState);
+                }}
+                className="cursor-pointer"
+              >
+                Cancel
+              </Button>
+              <Button onClick={handleSavePrompt} className="cursor-pointer">
+                Save
+              </Button>
+            </div>
+          </AccordionContent>
+        </AccordionItem>
+      </Accordion>
+    </div>
+  );
 
   const {
     messages,
@@ -36,7 +98,7 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
     handleElicitationResponse,
   } = useChat({
     serverConfigs: serverConfigs,
-    systemPrompt,
+    systemPrompt: systemPromptState,
     onError: (error) => {
       toast.error(error);
     },
@@ -100,6 +162,7 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
             transition={{ duration: 0.5, delay: 0.1 }}
             className="w-full max-w-3xl"
           >
+            {SystemPromptEditor}
             <ChatInput
               value={input}
               onChange={setInput}
@@ -115,6 +178,7 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
               onClearChat={clearChat}
               hasMessages={false}
             />
+            {/* System prompt editor shown inline above input */}
             {availableModels.length === 0 && (
               <motion.p
                 initial={{ opacity: 0 }}
@@ -218,6 +282,7 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
         {/* Fixed Bottom Input - Absolute positioned */}
         <div className="absolute bottom-0 left-0 right-0 border-t border-border/50 bg-background/80 backdrop-blur-sm">
           <div className="max-w-4xl mx-auto p-4">
+            {SystemPromptEditor}
             <ChatInput
               value={input}
               onChange={setInput}
