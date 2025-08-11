@@ -94,7 +94,7 @@ export function PromptsTab({ serverConfig }: PromptsTabProps) {
       });
 
       const data = await response.json();
-      
+
       if (response.ok) {
         setPrompts(data.prompts || {});
       } else {

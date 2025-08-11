@@ -29,7 +29,7 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
     execute: async (context) => {
       try {
         context.updateState({ latestError: null });
-        
+
         // Validate server URL first
         if (!context.serverUrl) {
           throw new Error("Server URL is required");
@@ -43,26 +43,32 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
         } catch (e) {
           throw new Error(`Invalid server URL: ${context.serverUrl}`);
         }
-        
+
         // Default to discovering from the server's URL
         let authServerUrl: URL;
         try {
           authServerUrl = new URL("/", serverUrl);
         } catch (e) {
-          throw new Error(`Failed to create base URL from server URL: ${serverUrl}`);
+          throw new Error(
+            `Failed to create base URL from server URL: ${serverUrl}`,
+          );
         }
 
         let resourceMetadata = null;
         let resourceMetadataError = null;
-        
+
         try {
-          resourceMetadata = await discoverOAuthProtectedResourceMetadata(serverUrl);
+          resourceMetadata =
+            await discoverOAuthProtectedResourceMetadata(serverUrl);
           if (resourceMetadata?.authorization_servers?.length) {
-            const authServerUrlString = resourceMetadata.authorization_servers[0];
+            const authServerUrlString =
+              resourceMetadata.authorization_servers[0];
             try {
               authServerUrl = new URL(authServerUrlString);
             } catch (e) {
-              console.warn(`Invalid authorization server URL: ${authServerUrlString}, using default`);
+              console.warn(
+                `Invalid authorization server URL: ${authServerUrlString}, using default`,
+              );
               // Keep the default authServerUrl
             }
           }
@@ -71,12 +77,18 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
         }
 
         // Discover OAuth metadata from the authorization server
-        const oauthMetadata = await discoverOAuthMetadata(authServerUrl.toString());
+        const oauthMetadata = await discoverOAuthMetadata(
+          authServerUrl.toString(),
+        );
 
         // Optionally select a protected resource URL (if server provides resource metadata)
         let resource: URL | null = null;
         try {
-          const selected = await selectResourceURL(serverUrl, context.provider, resourceMetadata ?? undefined);
+          const selected = await selectResourceURL(
+            serverUrl,
+            context.provider,
+            resourceMetadata ?? undefined,
+          );
           resource = selected ?? null;
         } catch (e) {
           // Non-fatal; continue without resource
@@ -92,7 +104,8 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
           oauthStep: "client_registration",
         });
       } catch (error) {
-        const errorObj = error instanceof Error ? error : new Error(String(error));
+        const errorObj =
+          error instanceof Error ? error : new Error(String(error));
         console.error("Metadata discovery error:", {
           error: errorObj,
           serverUrl: context.serverUrl,
@@ -114,14 +127,14 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
     execute: async (context) => {
       try {
         context.updateState({ latestError: null });
-        
+
         if (!context.state.oauthMetadata) {
           throw new Error("OAuth metadata not available");
         }
 
         // Try to use the proper MCP SDK registerClient function
         let clientInfo;
-        
+
         try {
           // Prepare client metadata, including supported scopes if advertised
           const clientMetadata = { ...context.provider.clientMetadata } as any;
@@ -137,8 +150,11 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
             clientMetadata,
           });
         } catch (registrationError) {
-          console.warn("Dynamic client registration failed, using static client metadata:", registrationError);
-          
+          console.warn(
+            "Dynamic client registration failed, using static client metadata:",
+            registrationError,
+          );
+
           // Fallback to using static client metadata if dynamic registration fails
           const existingClientInfo = await context.provider.clientInformation();
           if (existingClientInfo) {
@@ -162,7 +178,8 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
           },
         });
       } catch (error) {
-        const errorObj = error instanceof Error ? error : new Error(String(error));
+        const errorObj =
+          error instanceof Error ? error : new Error(String(error));
         console.error("Client registration error:", {
           error: errorObj,
           serverUrl: context.serverUrl,
@@ -184,12 +201,12 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
   },
 
   authorization_redirect: {
-    canTransition: async (context) => 
+    canTransition: async (context) =>
       !!context.state.oauthMetadata && !!context.state.oauthClientInfo,
     execute: async (context) => {
       try {
         context.updateState({ latestError: null });
-        
+
         if (!context.state.oauthMetadata || !context.state.oauthClientInfo) {
           throw new Error("OAuth metadata or client info not available");
         }
@@ -198,14 +215,17 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
         const scopesSupported =
           context.state.resourceMetadata?.scopes_supported ||
           context.state.oauthMetadata.scopes_supported;
-        const scope = scopesSupported && scopesSupported.length > 0
-          ? scopesSupported.join(" ")
-          : undefined;
+        const scope =
+          scopesSupported && scopesSupported.length > 0
+            ? scopesSupported.join(" ")
+            : undefined;
 
         // Generate a random state for CSRF protection
         const array = new Uint8Array(32);
         crypto.getRandomValues(array);
-        const state = Array.from(array, (byte) => byte.toString(16).padStart(2, "0")).join("");
+        const state = Array.from(array, (byte) =>
+          byte.toString(16).padStart(2, "0"),
+        ).join("");
 
         const authResult = await startAuthorization(context.serverUrl, {
           metadata: context.state.oauthMetadata,
@@ -218,17 +238,19 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
 
         // Save the code verifier for later use in token exchange
         context.provider.saveCodeVerifier(authResult.codeVerifier);
-        
+
         context.updateState({
           authorizationUrl: authResult.authorizationUrl.toString(),
           oauthStep: "authorization_code",
           statusMessage: {
             type: "info",
-            message: "Authorization URL generated. Please complete authorization in your browser.",
+            message:
+              "Authorization URL generated. Please complete authorization in your browser.",
           },
         });
       } catch (error) {
-        const errorObj = error instanceof Error ? error : new Error(String(error));
+        const errorObj =
+          error instanceof Error ? error : new Error(String(error));
         context.updateState({
           latestError: errorObj,
           statusMessage: {
@@ -241,12 +263,11 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
   },
 
   authorization_code: {
-    canTransition: async (context) => 
-      !!context.state.authorizationCode.trim(),
+    canTransition: async (context) => !!context.state.authorizationCode.trim(),
     execute: async (context) => {
       try {
         context.updateState({ latestError: null, validationError: null });
-        
+
         if (!context.state.authorizationCode.trim()) {
           context.updateState({
             validationError: "Authorization code is required",
@@ -256,7 +277,8 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
 
         context.updateState({ oauthStep: "token_request" });
       } catch (error) {
-        const errorObj = error instanceof Error ? error : new Error(String(error));
+        const errorObj =
+          error instanceof Error ? error : new Error(String(error));
         context.updateState({
           latestError: errorObj,
           validationError: errorObj.message,
@@ -266,15 +288,20 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
   },
 
   token_request: {
-    canTransition: async (context) => 
-      !!context.state.authorizationCode.trim() && 
-      !!context.state.oauthMetadata,
+    canTransition: async (context) =>
+      !!context.state.authorizationCode.trim() && !!context.state.oauthMetadata,
     execute: async (context) => {
       try {
         context.updateState({ latestError: null });
-        
-        if (!context.state.oauthMetadata || !context.state.authorizationCode.trim() || !context.state.oauthClientInfo) {
-          throw new Error("OAuth metadata, authorization code, or client info not available");
+
+        if (
+          !context.state.oauthMetadata ||
+          !context.state.authorizationCode.trim() ||
+          !context.state.oauthClientInfo
+        ) {
+          throw new Error(
+            "OAuth metadata, authorization code, or client info not available",
+          );
         }
 
         const tokens = await exchangeAuthorization(context.serverUrl, {
@@ -294,7 +321,8 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
           },
         });
       } catch (error) {
-        const errorObj = error instanceof Error ? error : new Error(String(error));
+        const errorObj =
+          error instanceof Error ? error : new Error(String(error));
         context.updateState({
           latestError: errorObj,
           statusMessage: {
@@ -315,9 +343,7 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
 };
 
 export class OAuthStateMachine {
-  constructor(
-    private context: StateMachineContext,
-  ) {}
+  constructor(private context: StateMachineContext) {}
 
   async proceedToNextStep(): Promise<boolean> {
     const currentStep = this.context.state.oauthStep;
@@ -330,7 +356,7 @@ export class OAuthStateMachine {
 
     try {
       this.context.updateState({ isInitiatingAuth: true });
-      
+
       const canTransition = await transition.canTransition(this.context);
       if (!canTransition) {
         console.warn("Cannot transition from step:", currentStep);
@@ -341,7 +367,8 @@ export class OAuthStateMachine {
       return true;
     } catch (error) {
       console.error("Error during state transition:", error);
-      const errorObj = error instanceof Error ? error : new Error(String(error));
+      const errorObj =
+        error instanceof Error ? error : new Error(String(error));
       this.context.updateState({
         latestError: errorObj,
         statusMessage: {

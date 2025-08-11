@@ -3,6 +3,7 @@
 ## Architecture Overview
 
 The frontend is built with modern web technologies:
+
 - Vite + React for fast development and optimized builds
 - Tailwind CSS with Radix UI for consistent, accessible components
 - Zustand for lightweight, flexible state management
@@ -72,6 +73,7 @@ The frontend is built with modern web technologies:
      - Bottleneck detection
 
 ## Project Structure
+
 ```
 /client
   /src
