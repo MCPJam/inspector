@@ -40,11 +40,11 @@ oauth.get("/metadata", async (c) => {
         {
           error: `Failed to fetch OAuth metadata: ${response.status} ${response.statusText}`,
         },
-        response.status as ContentfulStatusCode,
+        response.status as ContentfulStatusCode
       );
     }
 
-    const metadata = await response.json();
+    const metadata = (await response.json()) as Record<string, unknown>;
 
     // Return the metadata with proper CORS headers
     return c.json(metadata);
@@ -55,7 +55,7 @@ oauth.get("/metadata", async (c) => {
         error:
           error instanceof Error ? error.message : "Unknown error occurred",
       },
-      500,
+      500
     );
   }
 });

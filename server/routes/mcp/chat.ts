@@ -10,6 +10,7 @@ import { createOllama } from "ollama-ai-provider";
 import { ChatMessage, ModelDefinition } from "../../../shared/types";
 import { MCPClient } from "@mastra/mcp";
 import { ContentfulStatusCode } from "hono/utils/http-status";
+import { TextEncoder } from "util";
 
 const chat = new Hono();
 
@@ -56,7 +57,7 @@ chat.post("/", async (c) => {
             success: false,
             error: "requestId is required for elicitation_response action",
           },
-          400,
+          400
         );
       }
 
@@ -67,7 +68,7 @@ chat.post("/", async (c) => {
             success: false,
             error: "No pending elicitation found for this requestId",
           },
-          404,
+          404
         );
       }
 
@@ -84,7 +85,7 @@ chat.post("/", async (c) => {
           success: false,
           error: "model (with id), apiKey, and messages are required",
         },
-        400,
+        400
       );
     }
 
@@ -97,7 +98,7 @@ chat.post("/", async (c) => {
             error: validation.error!.message,
             details: validation.errors,
           },
-          validation.error!.status as ContentfulStatusCode,
+          validation.error!.status as ContentfulStatusCode
         );
       }
 
@@ -133,8 +134,8 @@ chat.post("/", async (c) => {
               message: elicitationRequest.message,
               schema: elicitationRequest.requestedSchema,
               timestamp: new Date(),
-            })}\n\n`,
-          ),
+            })}\n\n`
+          )
         );
       }
 
@@ -192,8 +193,8 @@ chat.post("/", async (c) => {
                     timestamp: new Date(),
                     status: "executing",
                   },
-                })}\n\n`,
-              ),
+                })}\n\n`
+              )
             );
           }
 
@@ -212,8 +213,8 @@ chat.post("/", async (c) => {
                       result,
                       timestamp: new Date(),
                     },
-                  })}\n\n`,
-                ),
+                  })}\n\n`
+                )
               );
             }
 
@@ -232,8 +233,8 @@ chat.post("/", async (c) => {
                         error instanceof Error ? error.message : String(error),
                       timestamp: new Date(),
                     },
-                  })}\n\n`,
-                ),
+                  })}\n\n`
+                )
               );
             }
             throw error;
@@ -272,8 +273,8 @@ chat.post("/", async (c) => {
               hasContent = true;
               controller.enqueue(
                 encoder!.encode(
-                  `data: ${JSON.stringify({ type: "text", content: chunk })}\n\n`,
-                ),
+                  `data: ${JSON.stringify({ type: "text", content: chunk })}\n\n`
+                )
               );
             }
           }
@@ -282,8 +283,8 @@ chat.post("/", async (c) => {
           if (!hasContent) {
             controller.enqueue(
               encoder!.encode(
-                `data: ${JSON.stringify({ type: "text", content: "I apologize, but I couldn't generate a response. Please try again." })}\n\n`,
-              ),
+                `data: ${JSON.stringify({ type: "text", content: "I apologize, but I couldn't generate a response. Please try again." })}\n\n`
+              )
             );
           }
 
@@ -292,8 +293,8 @@ chat.post("/", async (c) => {
             encoder!.encode(
               `data: ${JSON.stringify({
                 type: "elicitation_complete",
-              })}\n\n`,
-            ),
+              })}\n\n`
+            )
           );
 
           controller.enqueue(encoder!.encode(`data: [DONE]\n\n`));
@@ -304,8 +305,8 @@ chat.post("/", async (c) => {
               `data: ${JSON.stringify({
                 type: "error",
                 error: error instanceof Error ? error.message : "Unknown error",
-              })}\n\n`,
-            ),
+              })}\n\n`
+            )
           );
         } finally {
           if (client) {
@@ -314,7 +315,7 @@ chat.post("/", async (c) => {
             } catch (cleanupError) {
               console.warn(
                 "Error cleaning up MCP client after streaming:",
-                cleanupError,
+                cleanupError
               );
             }
           }
@@ -347,7 +348,7 @@ chat.post("/", async (c) => {
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
       },
-      500,
+      500
     );
   }
 });
@@ -355,11 +356,11 @@ chat.post("/", async (c) => {
 const getLlmModel = (
   modelDefinition: ModelDefinition,
   apiKey: string,
-  ollamaBaseUrl?: string,
+  ollamaBaseUrl?: string
 ) => {
   if (!modelDefinition || !modelDefinition.id || !modelDefinition.provider) {
     throw new Error(
-      `Invalid model definition: ${JSON.stringify(modelDefinition)}`,
+      `Invalid model definition: ${JSON.stringify(modelDefinition)}`
     );
   }
 
@@ -377,7 +378,7 @@ const getLlmModel = (
       });
     default:
       throw new Error(
-        `Unsupported provider: ${modelDefinition.provider} for model: ${modelDefinition.id}`,
+        `Unsupported provider: ${modelDefinition.provider} for model: ${modelDefinition.id}`
       );
   }
 };
