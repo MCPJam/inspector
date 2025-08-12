@@ -44,7 +44,7 @@ oauth.get("/metadata", async (c) => {
       );
     }
 
-    const metadata = await response.json();
+    const metadata = (await response.json()) as Record<string, unknown>;
 
     // Return the metadata with proper CORS headers
     return c.json(metadata);

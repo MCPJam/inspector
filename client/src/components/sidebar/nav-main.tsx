@@ -1,3 +1,4 @@
+import React from "react";
 import {
   SidebarGroup,
   SidebarGroupContent,
@@ -25,9 +26,7 @@ export function NavMain({ items, onItemClick }: NavMainProps) {
     }
   };
 
-  const isItemActive = (item: NavMainItem) => {
-    return item.isActive || false;
-  };
+  const isItemActive = (item: NavMainItem) => item.isActive || false;
 
   return (
     <SidebarGroup>

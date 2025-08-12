@@ -50,7 +50,7 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
           authServerUrl = new URL("/", serverUrl);
         } catch (e) {
           throw new Error(
-            `Failed to create base URL from server URL: ${serverUrl}`,
+            `Failed to create base URL from server URL: ${serverUrl}`
           );
         }
 
@@ -67,7 +67,7 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
               authServerUrl = new URL(authServerUrlString);
             } catch (e) {
               console.warn(
-                `Invalid authorization server URL: ${authServerUrlString}, using default`,
+                `Invalid authorization server URL: ${authServerUrlString}, using default`
               );
               // Keep the default authServerUrl
             }
@@ -78,7 +78,7 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
 
         // Discover OAuth metadata from the authorization server
         const oauthMetadata = await discoverOAuthMetadata(
-          authServerUrl.toString(),
+          authServerUrl.toString()
         );
 
         // Optionally select a protected resource URL (if server provides resource metadata)
@@ -87,7 +87,7 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
           const selected = await selectResourceURL(
             serverUrl,
             context.provider,
-            resourceMetadata ?? undefined,
+            resourceMetadata ?? undefined
           );
           resource = selected ?? null;
         } catch (e) {
@@ -144,15 +144,23 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
           if (scopesSupported && scopesSupported.length > 0) {
             clientMetadata.scope = scopesSupported.join(" ");
           }
-
-          clientInfo = await registerClient(context.serverUrl, {
-            metadata: context.state.oauthMetadata,
-            clientMetadata,
-          });
+          try {
+            clientInfo = await registerClient(context.serverUrl, {
+              metadata: context.state.oauthMetadata,
+              clientMetadata,
+            });
+            context.provider.saveClientInformation(clientInfo);
+          } catch (dcrError) {
+            // DCR failed, fallback to preregistered client
+            clientInfo = await context.provider.clientInformation();
+            if (!clientInfo) {
+              throw dcrError;
+            }
+          }
         } catch (registrationError) {
           console.warn(
             "Dynamic client registration failed, using static client metadata:",
-            registrationError,
+            registrationError
           );
 
           // Fallback to using static client metadata if dynamic registration fails
@@ -224,7 +232,7 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
         const array = new Uint8Array(32);
         crypto.getRandomValues(array);
         const state = Array.from(array, (byte) =>
-          byte.toString(16).padStart(2, "0"),
+          byte.toString(16).padStart(2, "0")
         ).join("");
 
         const authResult = await startAuthorization(context.serverUrl, {
@@ -300,7 +308,7 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
           !context.state.oauthClientInfo
         ) {
           throw new Error(
-            "OAuth metadata, authorization code, or client info not available",
+            "OAuth metadata, authorization code, or client info not available"
           );
         }
 
