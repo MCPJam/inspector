@@ -65,7 +65,6 @@ export class DebugMCPOAuthClientProvider implements OAuthClientProvider {
 
   redirectToAuthorization(authorizationUrl: URL): void {
     // For debugging, we'll show the URL instead of redirecting
-
     // In a real debug environment, we might want to copy to clipboard or show in UI
   }
 
@@ -105,7 +104,7 @@ export class DebugMCPOAuthClientProvider implements OAuthClientProvider {
       `debug-verifier-${this.serverUrl}`,
       `debug-server-metadata-${this.serverUrl}`,
     ];
-    
-    keys.forEach(key => sessionStorage.removeItem(key));
+
+    keys.forEach((key) => sessionStorage.removeItem(key));
   }
 }

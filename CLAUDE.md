@@ -143,6 +143,7 @@ npm start
 ## Development Setup
 
 ### Quick Start
+
 ```bash
 # Install dependencies
 npm install
@@ -158,6 +159,7 @@ npm start
 ```
 
 ### Docker Support
+
 ```bash
 # Run latest version
 docker run -p 3001:3001 mcpjam/mcp-inspector:latest

@@ -49,6 +49,7 @@ export interface ServerFormData {
   useOAuth?: boolean;
   oauthScopes?: string[];
   clientId?: string;
+  clientSecret?: string;
 }
 
 const STORAGE_KEY = "mcp-inspector-state";
@@ -62,8 +63,6 @@ export function useAppState() {
     selectedMultipleServers: [],
     isMultiSelectMode: false,
   });
-
-  
 
   const [isLoading, setIsLoading] = useState(true);
   const [reconnectionTimeouts, setReconnectionTimeouts] = useState<
@@ -134,7 +133,11 @@ export function useAppState() {
         // Show the error toast (do not suppress), then clean up the URL
         toast.error(`OAuth authorization failed: ${error}`);
         localStorage.removeItem("mcp-oauth-pending");
-        window.history.replaceState({}, document.title, window.location.pathname);
+        window.history.replaceState(
+          {},
+          document.title,
+          window.location.pathname,
+        );
       }
     }
   }, [isLoading]);
@@ -160,7 +163,7 @@ export function useAppState() {
   const handleConnect = useCallback(
     async (formData: ServerFormData) => {
       // Validate form data first
-      
+
       if (formData.type === "stdio") {
         if (!formData.command || formData.command.trim() === "") {
           toast.error("Command is required for STDIO connections");
@@ -218,6 +221,7 @@ export function useAppState() {
             serverName: formData.name,
             serverUrl: formData.url,
             clientId: formData.clientId,
+            clientSecret: formData.clientSecret,
           } as MCPOAuthOptions;
           // Only pass scopes if the user explicitly provided them
           if (formData.oauthScopes && formData.oauthScopes.length > 0) {
@@ -452,7 +456,6 @@ export function useAppState() {
 
       try {
         const result = await handleOAuthCallback(code);
-        
 
         if (result.success && result.serverConfig && result.serverName) {
           const serverName = result.serverName;
@@ -821,8 +824,6 @@ export function useAppState() {
 
   const handleUpdate = useCallback(
     async (originalServerName: string, formData: ServerFormData) => {
-      
-
       const originalServer = appState.servers[originalServerName];
       const hadOAuthTokens = originalServer?.oauthTokens != null;
 
