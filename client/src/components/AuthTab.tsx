@@ -17,7 +17,10 @@ import {
 } from "../lib/mcp-oauth";
 import { DebugMCPOAuthClientProvider } from "../lib/debug-oauth-provider";
 import { ServerWithName } from "../hooks/use-app-state";
-import { OAuthFlowState, EMPTY_OAUTH_FLOW_STATE } from "../lib/oauth-flow-types";
+import {
+  OAuthFlowState,
+  EMPTY_OAUTH_FLOW_STATE,
+} from "../lib/oauth-flow-types";
 import { OAuthFlowProgress } from "./OAuthFlowProgress";
 import { OAuthStateMachine } from "../lib/oauth-state-machine";
 
@@ -75,26 +78,33 @@ export const AuthTab = ({
   const [authSettings, setAuthSettings] = useState<AuthSettings>(
     DEFAULT_AUTH_SETTINGS,
   );
-  const [oauthFlowState, setOAuthFlowState] = useState<OAuthFlowState>(EMPTY_OAUTH_FLOW_STATE);
+  const [oauthFlowState, setOAuthFlowState] = useState<OAuthFlowState>(
+    EMPTY_OAUTH_FLOW_STATE,
+  );
   const [showGuidedFlow, setShowGuidedFlow] = useState(false);
 
   const updateAuthSettings = useCallback((updates: Partial<AuthSettings>) => {
     setAuthSettings((prev) => ({ ...prev, ...updates }));
   }, []);
 
-  const updateOAuthFlowState = useCallback((updates: Partial<OAuthFlowState>) => {
-    setOAuthFlowState((prev) => ({ ...prev, ...updates }));
-  }, []);
+  const updateOAuthFlowState = useCallback(
+    (updates: Partial<OAuthFlowState>) => {
+      setOAuthFlowState((prev) => ({ ...prev, ...updates }));
+    },
+    [],
+  );
 
   const resetOAuthFlow = useCallback(() => {
     // Reset the guided flow state
     setShowGuidedFlow(false);
     updateOAuthFlowState(EMPTY_OAUTH_FLOW_STATE);
-    
+
     // Clear any debug OAuth artifacts to avoid stale client info/scope
     if (authSettings.serverUrl) {
       try {
-        const provider = new DebugMCPOAuthClientProvider(authSettings.serverUrl);
+        const provider = new DebugMCPOAuthClientProvider(
+          authSettings.serverUrl,
+        );
         provider.clear();
       } catch (e) {
         console.warn("Failed to clear debug OAuth provider state:", e);
@@ -281,7 +291,7 @@ export const AuthTab = ({
   // Initialize OAuth state machine
   const oauthStateMachine = useMemo(() => {
     if (!serverConfig || !serverName || !authSettings.serverUrl) return null;
-    
+
     const provider = new DebugMCPOAuthClientProvider(authSettings.serverUrl);
     return new OAuthStateMachine({
       state: oauthFlowState,
@@ -290,21 +300,32 @@ export const AuthTab = ({
       provider,
       updateState: updateOAuthFlowState,
     });
-  }, [serverConfig, serverName, authSettings.serverUrl, oauthFlowState, updateOAuthFlowState]);
+  }, [
+    serverConfig,
+    serverName,
+    authSettings.serverUrl,
+    oauthFlowState,
+    updateOAuthFlowState,
+  ]);
 
   const startGuidedFlow = useCallback(() => {
-
-    
     // First reset any existing flow state
     resetOAuthFlow();
-    
+
     // Then start the new guided flow
     setShowGuidedFlow(true);
     updateOAuthFlowState(EMPTY_OAUTH_FLOW_STATE);
     if (oauthStateMachine) {
       oauthStateMachine.proceedToNextStep();
     }
-  }, [oauthStateMachine, updateOAuthFlowState, authSettings.serverUrl, serverName, serverConfig, resetOAuthFlow]);
+  }, [
+    oauthStateMachine,
+    updateOAuthFlowState,
+    authSettings.serverUrl,
+    serverName,
+    serverConfig,
+    resetOAuthFlow,
+  ]);
 
   const proceedToNextStep = useCallback(async () => {
     if (oauthStateMachine) {
@@ -591,8 +612,8 @@ export const AuthTab = ({
                     Clear Tokens
                   </Button>
 
-                  <Button 
-                    variant="secondary" 
+                  <Button
+                    variant="secondary"
                     onClick={startGuidedFlow}
                     disabled={authSettings.isAuthenticating || !serverConfig}
                   >
@@ -622,10 +643,7 @@ export const AuthTab = ({
               {/* Exit Guided Flow Button */}
               {showGuidedFlow && (
                 <div className="mt-4">
-                  <Button 
-                    variant="outline" 
-                    onClick={exitGuidedFlow}
-                  >
+                  <Button variant="outline" onClick={exitGuidedFlow}>
                     Exit Guided Flow
                   </Button>
                 </div>

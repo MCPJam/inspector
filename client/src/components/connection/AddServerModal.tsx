@@ -129,7 +129,9 @@ export function AddServerModal({
           finalFormData = {
             ...finalFormData,
             useOAuth: true,
-            clientId: useCustomClientId ? clientId.trim() || undefined : undefined,
+            clientId: useCustomClientId
+              ? clientId.trim() || undefined
+              : undefined,
           };
           if (scopes.length > 0) {
             (finalFormData as any).oauthScopes = scopes;
