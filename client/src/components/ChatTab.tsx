@@ -25,7 +25,10 @@ interface ChatTabProps {
 export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
-  const [systemPromptState, setSystemPromptState] = useState(systemPrompt);
+
+  const [systemPromptState, setSystemPromptState] = useState(
+    systemPrompt || "You are a helpful assistant with access to MCP tools."
+  );
   const [isPromptExpanded, setIsPromptExpanded] = useState(false);
   const [draftPrompt, setDraftPrompt] = useState(systemPrompt);
 
@@ -56,8 +59,7 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
             <div className="w-full flex items-center justify-between gap-3">
               <span className="text-sm font-medium">System prompt</span>
               <span className="text-xs text-muted-foreground truncate max-w-[65%]">
-                {systemPromptState ||
-                  "You are a helpful assistant with access to MCP tools."}
+                {systemPromptState}
               </span>
             </div>
           </AccordionTrigger>
@@ -87,7 +89,6 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
         </AccordionItem>
       </Accordion>
     </div>
-  );
 
   const {
     messages,
@@ -171,7 +172,6 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
             transition={{ duration: 0.5, delay: 0.1 }}
             className="w-full max-w-3xl"
           >
-            {SystemPromptEditor}
             <ChatInput
               value={input}
               onChange={setInput}
@@ -186,6 +186,8 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
               onModelChange={setModel}
               onClearChat={clearChat}
               hasMessages={false}
+              systemPrompt={systemPromptState}
+              onSystemPromptChange={setSystemPromptState}
             />
             {/* System prompt editor shown inline above input */}
             {availableModels.length === 0 && (
@@ -291,7 +293,6 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
         {/* Fixed Bottom Input - Absolute positioned */}
         <div className="absolute bottom-0 left-0 right-0 border-t border-border/50 bg-background/80 backdrop-blur-sm">
           <div className="max-w-4xl mx-auto p-4">
-            {SystemPromptEditor}
             <ChatInput
               value={input}
               onChange={setInput}
@@ -306,6 +307,8 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
               onModelChange={setModel}
               onClearChat={clearChat}
               hasMessages={hasMessages}
+              systemPrompt={systemPromptState}
+              onSystemPromptChange={setSystemPromptState}
             />
           </div>
         </div>

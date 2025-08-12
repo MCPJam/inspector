@@ -144,11 +144,19 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
           if (scopesSupported && scopesSupported.length > 0) {
             clientMetadata.scope = scopesSupported.join(" ");
           }
-
-          clientInfo = await registerClient(context.serverUrl, {
-            metadata: context.state.oauthMetadata,
-            clientMetadata,
-          });
+          try {
+            clientInfo = await registerClient(context.serverUrl, {
+              metadata: context.state.oauthMetadata,
+              clientMetadata,
+            });
+            context.provider.saveClientInformation(clientInfo);
+          } catch (dcrError) {
+            // DCR failed, fallback to preregistered client
+            clientInfo = await context.provider.clientInformation();
+            if (!clientInfo) {
+              throw dcrError;
+            }
+          }
         } catch (registrationError) {
           console.warn(
             "Dynamic client registration failed, using static client metadata:",

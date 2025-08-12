@@ -70,6 +70,11 @@ const navigationSections = [
     id: "settings",
     items: [
       {
+        title: "Feedback",
+        url: "https://github.com/MCPJam/inspector/issues/new",
+        icon: MessageCircle,
+      },
+      {
         title: "Settings",
         url: "#settings",
         icon: Settings,
@@ -93,6 +98,8 @@ export function MCPSidebar({
   const handleNavClick = (url: string) => {
     if (onNavigate && url.startsWith("#")) {
       onNavigate(url.slice(1));
+    } else {
+      window.open(url, "_blank");
     }
   };
 

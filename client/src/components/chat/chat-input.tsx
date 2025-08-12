@@ -9,6 +9,7 @@ import { ArrowDown } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { Model, ModelDefinition } from "@/shared/types.js";
 import { ModelSelector } from "./model-selector";
+import { SystemPromptSelector } from "./system-prompt-selector";
 
 interface ChatInputProps {
   value: string;
@@ -28,6 +29,9 @@ interface ChatInputProps {
   // Clear chat functionality
   onClearChat?: () => void;
   hasMessages?: boolean;
+  // System prompt props
+  systemPrompt?: string;
+  onSystemPromptChange?: (prompt: string) => void;
 }
 
 export function ChatInput({
@@ -44,6 +48,8 @@ export function ChatInput({
   currentModel,
   availableModels,
   onModelChange,
+  systemPrompt,
+  onSystemPromptChange,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -293,6 +299,18 @@ export function ChatInput({
             currentModel={currentModelData}
             availableModels={availableModels}
             onModelChange={onModelChange}
+            disabled={disabled}
+            isLoading={isLoading}
+          />
+        )}
+        {/* System Prompt Selector */}
+        {onSystemPromptChange && (
+          <SystemPromptSelector
+            systemPrompt={
+              systemPrompt ||
+              "You are a helpful assistant with access to MCP tools."
+            }
+            onSystemPromptChange={onSystemPromptChange}
             disabled={disabled}
             isLoading={isLoading}
           />

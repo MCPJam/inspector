@@ -4,6 +4,7 @@ import type { Tool } from "@mastra/core/tools";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { ContentfulStatusCode } from "hono/utils/http-status";
+import { TextEncoder } from "util";
 
 const tools = new Hono();
 
