@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { ToolCall, ToolResult } from "@/lib/chat-types";
 import { cn } from "@/lib/utils";
-import React from "react"; // Added missing import for React
+// React import is not required due to automatic JSX runtime
 import { MCPIcon } from "../ui/mcp-icon";
 import { UIResourceRenderer } from "@mcp-ui/client";
 import type { MastraMCPServerDefinition } from "@/shared/types.js";
@@ -291,7 +291,7 @@ export function ToolCallDisplay({
                     </div>
                   </div>
                 ) : (
-                  <div className="bg-green-50/30 dark:bg-green-950/20 border border-green-200/50 dark:border-green-800/50 rounded-lg overflow-hidden">
+                  <div className="bg-green-50/30 dark:bg-green-950/20 border border-green-200/50 dark:border-green-800/50 rounded-lg">
                     <div className="flex items-center gap-2 px-4 py-2 bg-green-100/30 dark:bg-green-900/20 border-b border-green-200/50 dark:border-green-800/50">
                       <CheckCircle className="h-4 w-4 text-green-600/70 dark:text-green-400/70" />
                       <span className="text-sm font-medium text-foreground">
@@ -332,7 +332,11 @@ export function ToolCallDisplay({
                           return (
                             <UIResourceRenderer
                               resource={uiRes}
-                              onUIAction={(evt) => {
+                              htmlProps={{
+                                autoResizeIframe: true,
+                                style: { width: "100%", overflow: "visible" },
+                              }}
+                              onUIAction={async (evt) => {
                                 if (evt.type === "tool" && evt.payload?.toolName) {
                                   const serverConfigToUse = ((): MastraMCPServerDefinition | undefined => {
                                     if (
@@ -361,6 +365,7 @@ export function ToolCallDisplay({
                                 } else if (evt.type === "link" && evt.payload?.url) {
                                   window.open(evt.payload.url, "_blank", "noopener,noreferrer");
                                 }
+                                return { status: "handled" } as any;
                               }}
                             />
                           );

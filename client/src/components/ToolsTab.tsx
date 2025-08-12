@@ -887,14 +887,18 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                   </div>
                 </div>
               ) : result ? (
-                <ScrollArea className="h-full">
+                <div className="h-full overflow-hidden">
                   <div className="p-4">
-                      {(() => {
-                       const uiRes = getUIResourceFromResult(result as any);
-                       if (uiRes) {
-                         return (
+                    {(() => {
+                      const uiRes = getUIResourceFromResult(result as any);
+                      if (uiRes) {
+                        return (
                           <UIResourceRenderer
                             resource={uiRes}
+                            htmlProps={{
+                              autoResizeIframe: true,
+                              style: { width: "100%", overflow: "visible" },
+                            }}
                             onUIAction={async (evt) => {
                               if (evt.type === "tool" && evt.payload?.toolName) {
                                 try {
@@ -916,30 +920,32 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                               }
                             }}
                           />
-                         );
-                       }
-                       return (
-                        <JsonView
-                          src={result}
-                          dark={true}
-                          theme="atom"
-                          enableClipboard={true}
-                          displaySize={false}
-                          collapseStringsAfterLength={100}
-                          style={{
-                            fontSize: "12px",
-                            fontFamily:
-                              "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                            backgroundColor: "hsl(var(--background))",
-                            padding: "16px",
-                            borderRadius: "8px",
-                            border: "1px solid hsl(var(--border))",
-                          }}
-                        />
+                        );
+                      }
+                      return (
+                        <ScrollArea className="h-full">
+                          <JsonView
+                            src={result}
+                            dark={true}
+                            theme="atom"
+                            enableClipboard={true}
+                            displaySize={false}
+                            collapseStringsAfterLength={100}
+                            style={{
+                              fontSize: "12px",
+                              fontFamily:
+                                "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                              backgroundColor: "hsl(var(--background))",
+                              padding: "16px",
+                              borderRadius: "8px",
+                              border: "1px solid hsl(var(--border))",
+                            }}
+                          />
+                        </ScrollArea>
                       );
                     })()}
                   </div>
-                </ScrollArea>
+                </div>
               ) : (
                 <div className="flex items-center justify-center h-full">
                   <p className="text-xs text-muted-foreground font-medium">
