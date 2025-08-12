@@ -26,6 +26,7 @@ import { MastraMCPServerDefinition } from "@/shared/types.js";
 import { ElicitationDialog } from "./ElicitationDialog";
 import { TruncatedText } from "@/components/ui/truncated-text";
 import { SearchInput } from "@/components/ui/search-input";
+import { UIResourceRenderer } from "@mcp-ui/client";
 
 interface Tool {
   name: string;
@@ -204,6 +205,37 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
     } finally {
       setFetchingTools(false);
     }
+  };
+
+  // Attempt to extract an MCP-UI resource from a tool result in various shapes
+  const getUIResourceFromResult = (rawResult: any): any | null => {
+    if (!rawResult) return null;
+    // Direct resource shape: { resource: {...} }
+    const direct = (rawResult as any)?.resource;
+    if (
+      direct &&
+      typeof direct === "object" &&
+      typeof direct.uri === "string" &&
+      direct.uri.startsWith("ui://")
+    ) {
+      return direct;
+    }
+    // MCP content array shape: { content: [{ type: 'resource', resource: {...}}] }
+    const content = (rawResult as any)?.content;
+    if (Array.isArray(content)) {
+      for (const item of content) {
+        if (
+          item &&
+          item.type === "resource" &&
+          item.resource &&
+          typeof item.resource.uri === "string" &&
+          item.resource.uri.startsWith("ui://")
+        ) {
+          return item.resource;
+        }
+      }
+    }
+    return null;
   };
 
   const generateFormFields = (schema: any) => {
@@ -855,27 +887,65 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                   </div>
                 </div>
               ) : result ? (
-                <ScrollArea className="h-full">
+                <div className="h-full overflow-hidden">
                   <div className="p-4">
-                    <JsonView
-                      src={result}
-                      dark={true}
-                      theme="atom"
-                      enableClipboard={true}
-                      displaySize={false}
-                      collapseStringsAfterLength={100}
-                      style={{
-                        fontSize: "12px",
-                        fontFamily:
-                          "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                        backgroundColor: "hsl(var(--background))",
-                        padding: "16px",
-                        borderRadius: "8px",
-                        border: "1px solid hsl(var(--border))",
-                      }}
-                    />
+                    {(() => {
+                      const uiRes = getUIResourceFromResult(result as any);
+                      if (uiRes) {
+                        return (
+                          <UIResourceRenderer
+                            resource={uiRes}
+                            htmlProps={{
+                              autoResizeIframe: true,
+                              style: { width: "100%", overflow: "visible" },
+                            }}
+                            onUIAction={async (evt) => {
+                              if (evt.type === "tool" && evt.payload?.toolName) {
+                                try {
+                                  await fetch("/api/mcp/tools", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({
+                                      action: "execute",
+                                      toolName: evt.payload.toolName,
+                                      parameters: evt.payload.params || {},
+                                      serverConfig: getServerConfig(),
+                                    }),
+                                  });
+                                } catch {
+                                  // ignore
+                                }
+                              } else if (evt.type === "link" && evt.payload?.url) {
+                                window.open(evt.payload.url, "_blank", "noopener,noreferrer");
+                              }
+                            }}
+                          />
+                        );
+                      }
+                      return (
+                        <ScrollArea className="h-full">
+                          <JsonView
+                            src={result}
+                            dark={true}
+                            theme="atom"
+                            enableClipboard={true}
+                            displaySize={false}
+                            collapseStringsAfterLength={100}
+                            style={{
+                              fontSize: "12px",
+                              fontFamily:
+                                "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                              backgroundColor: "hsl(var(--background))",
+                              padding: "16px",
+                              borderRadius: "8px",
+                              border: "1px solid hsl(var(--border))",
+                            }}
+                          />
+                        </ScrollArea>
+                      );
+                    })()}
                   </div>
-                </ScrollArea>
+                </div>
               ) : (
                 <div className="flex items-center justify-center h-full">
                   <p className="text-xs text-muted-foreground font-medium">

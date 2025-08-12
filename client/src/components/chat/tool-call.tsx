@@ -10,13 +10,16 @@ import {
 } from "lucide-react";
 import { ToolCall, ToolResult } from "@/lib/chat-types";
 import { cn } from "@/lib/utils";
-import React from "react"; // Added missing import for React
+// React import is not required due to automatic JSX runtime
 import { MCPIcon } from "../ui/mcp-icon";
+import { UIResourceRenderer } from "@mcp-ui/client";
+import type { MastraMCPServerDefinition } from "@/shared/types.js";
 
 interface ToolCallDisplayProps {
   toolCall: ToolCall;
   toolResult?: ToolResult;
   className?: string;
+  serverConfigs?: Record<string, MastraMCPServerDefinition>;
 }
 
 // JSON syntax highlighting component
@@ -157,6 +160,7 @@ export function ToolCallDisplay({
   toolCall,
   toolResult,
   className,
+  serverConfigs,
 }: ToolCallDisplayProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [showJsonTree, setShowJsonTree] = useState(false);
@@ -287,7 +291,7 @@ export function ToolCallDisplay({
                     </div>
                   </div>
                 ) : (
-                  <div className="bg-green-50/30 dark:bg-green-950/20 border border-green-200/50 dark:border-green-800/50 rounded-lg overflow-hidden">
+                  <div className="bg-green-50/30 dark:bg-green-950/20 border border-green-200/50 dark:border-green-800/50 rounded-lg">
                     <div className="flex items-center gap-2 px-4 py-2 bg-green-100/30 dark:bg-green-900/20 border-b border-green-200/50 dark:border-green-800/50">
                       <CheckCircle className="h-4 w-4 text-green-600/70 dark:text-green-400/70" />
                       <span className="text-sm font-medium text-foreground">
@@ -295,13 +299,85 @@ export function ToolCallDisplay({
                       </span>
                     </div>
                     <div className="p-4">
-                      {typeof toolResult.result === "object" ? (
-                        <JsonDisplay data={toolResult.result} />
-                      ) : (
-                        <div className="text-sm text-foreground bg-muted/30 p-3 rounded border">
-                          {String(toolResult.result)}
-                        </div>
-                      )}
+                      {(() => {
+                        const extractUIResource = (payload: any): any | null => {
+                          if (!payload) return null;
+                          const direct = payload?.resource;
+                          if (
+                            direct &&
+                            typeof direct === "object" &&
+                            typeof direct.uri === "string" &&
+                            direct.uri.startsWith("ui://")
+                          ) {
+                            return direct;
+                          }
+                          const content = payload?.content;
+                          if (Array.isArray(content)) {
+                            for (const item of content) {
+                              if (
+                                item?.type === "resource" &&
+                                item?.resource?.uri &&
+                                typeof item.resource.uri === "string" &&
+                                item.resource.uri.startsWith("ui://")
+                              ) {
+                                return item.resource;
+                              }
+                            }
+                          }
+                          return null;
+                        };
+
+                        const uiRes = extractUIResource((toolResult as any)?.result);
+                        if (uiRes) {
+                          return (
+                            <UIResourceRenderer
+                              resource={uiRes}
+                              htmlProps={{
+                                autoResizeIframe: true,
+                                style: { width: "100%", overflow: "visible" },
+                              }}
+                              onUIAction={async (evt) => {
+                                if (evt.type === "tool" && evt.payload?.toolName) {
+                                  const serverConfigToUse = ((): MastraMCPServerDefinition | undefined => {
+                                    if (
+                                      serverConfigs &&
+                                      typeof serverConfigs === "object" &&
+                                      Object.keys(serverConfigs).length === 1
+                                    ) {
+                                      const onlyKey = Object.keys(serverConfigs)[0];
+                                      return serverConfigs[onlyKey];
+                                    }
+                                    return undefined;
+                                  })();
+
+                                  fetch("/api/mcp/tools", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({
+                                      action: "execute",
+                                      toolName: evt.payload.toolName,
+                                      parameters: evt.payload.params || {},
+                                      ...(serverConfigToUse
+                                        ? { serverConfig: serverConfigToUse }
+                                        : {}),
+                                    }),
+                                  }).catch(() => {});
+                                } else if (evt.type === "link" && evt.payload?.url) {
+                                  window.open(evt.payload.url, "_blank", "noopener,noreferrer");
+                                }
+                                return { status: "handled" } as any;
+                              }}
+                            />
+                          );
+                        }
+                        return typeof toolResult.result === "object" ? (
+                          <JsonDisplay data={toolResult.result} />
+                        ) : (
+                          <div className="text-sm text-foreground bg-muted/30 p-3 rounded border">
+                            {String(toolResult.result)}
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
                 )}
