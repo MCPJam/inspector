@@ -70,6 +70,12 @@ const navigationSections = [
     id: "settings",
     items: [
       {
+        title: "Feedback",
+        url: "https://github.com/MCPJam/inspector/issues/new",
+        icon: MessageCircle,
+        external: true,
+      },
+      {
         title: "Settings",
         url: "#settings",
         icon: Settings,
