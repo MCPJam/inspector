@@ -82,17 +82,6 @@ const navigationSections = [
       },
     ],
   },
-  {
-    id: "feedback",
-    items: [
-      {
-        title: "Give feedback",
-        url: "https://github.com/MCPJam/inspector/issues/new",
-        icon: MessageCircle,
-        external: true,
-      },
-    ],
-  },
 ];
 
 interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
