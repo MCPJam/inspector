@@ -10,6 +10,7 @@ import { createOllama } from "ollama-ai-provider";
 import { ChatMessage, ModelDefinition } from "../../../shared/types";
 import { MCPClient } from "@mastra/mcp";
 import { ContentfulStatusCode } from "hono/utils/http-status";
+import { TextEncoder } from "util";
 
 const chat = new Hono();
 
