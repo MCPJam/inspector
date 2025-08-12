@@ -37,9 +37,12 @@ export function validateServerConfig(serverConfig: any): ValidationResult {
   // Validate and convert URL if provided
   if (config.url) {
     try {
-      // Convert string URL to URL object if needed
+      // Convert string URL to URL object if needed and strip query/hash
       if (typeof config.url === "string") {
-        config.url = new URL(config.url);
+        const parsed = new URL(config.url);
+        parsed.search = "";
+        parsed.hash = "";
+        config.url = parsed;
       } else if (typeof config.url === "object" && !config.url.href) {
         return {
           success: false,

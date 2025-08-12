@@ -300,19 +300,40 @@ export function ToolCallDisplay({
                     </div>
                     <div className="p-4">
                       {(() => {
-                        const uiRes = (toolResult.result as any)?.resource;
-                        if (
-                          uiRes &&
-                          typeof uiRes === "object" &&
-                          typeof uiRes.uri === "string" &&
-                          uiRes.uri.startsWith("ui://")
-                        ) {
+                        const extractUIResource = (payload: any): any | null => {
+                          if (!payload) return null;
+                          const direct = payload?.resource;
+                          if (
+                            direct &&
+                            typeof direct === "object" &&
+                            typeof direct.uri === "string" &&
+                            direct.uri.startsWith("ui://")
+                          ) {
+                            return direct;
+                          }
+                          const content = payload?.content;
+                          if (Array.isArray(content)) {
+                            for (const item of content) {
+                              if (
+                                item?.type === "resource" &&
+                                item?.resource?.uri &&
+                                typeof item.resource.uri === "string" &&
+                                item.resource.uri.startsWith("ui://")
+                              ) {
+                                return item.resource;
+                              }
+                            }
+                          }
+                          return null;
+                        };
+
+                        const uiRes = extractUIResource((toolResult as any)?.result);
+                        if (uiRes) {
                           return (
                             <UIResourceRenderer
                               resource={uiRes}
                               onUIAction={(evt) => {
                                 if (evt.type === "tool" && evt.payload?.toolName) {
-                                  // Prefer executing against a single selected server when available
                                   const serverConfigToUse = ((): MastraMCPServerDefinition | undefined => {
                                     if (
                                       serverConfigs &&

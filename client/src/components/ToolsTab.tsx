@@ -207,6 +207,37 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
     }
   };
 
+  // Attempt to extract an MCP-UI resource from a tool result in various shapes
+  const getUIResourceFromResult = (rawResult: any): any | null => {
+    if (!rawResult) return null;
+    // Direct resource shape: { resource: {...} }
+    const direct = (rawResult as any)?.resource;
+    if (
+      direct &&
+      typeof direct === "object" &&
+      typeof direct.uri === "string" &&
+      direct.uri.startsWith("ui://")
+    ) {
+      return direct;
+    }
+    // MCP content array shape: { content: [{ type: 'resource', resource: {...}}] }
+    const content = (rawResult as any)?.content;
+    if (Array.isArray(content)) {
+      for (const item of content) {
+        if (
+          item &&
+          item.type === "resource" &&
+          item.resource &&
+          typeof item.resource.uri === "string" &&
+          item.resource.uri.startsWith("ui://")
+        ) {
+          return item.resource;
+        }
+      }
+    }
+    return null;
+  };
+
   const generateFormFields = (schema: any) => {
     if (!schema || !schema.properties) {
       setFormFields([]);
@@ -858,39 +889,36 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
               ) : result ? (
                 <ScrollArea className="h-full">
                   <div className="p-4">
-                    {(() => {
-                      const uiRes = (result as any)?.resource;
-                      if (
-                        uiRes &&
-                        typeof uiRes === "object" &&
-                        typeof uiRes.uri === "string" &&
-                        uiRes.uri.startsWith("ui://")
-                      ) {
-                        return (
+                      {(() => {
+                       const uiRes = getUIResourceFromResult(result as any);
+                       if (uiRes) {
+                         return (
                           <UIResourceRenderer
                             resource={uiRes}
-                            onUIAction={(evt) => {
+                            onUIAction={async (evt) => {
                               if (evt.type === "tool" && evt.payload?.toolName) {
-                                // Fire-and-forget: execute the referenced tool with provided params
-                                // Reuse existing endpoint; ignore errors here to avoid blocking UI
-                                fetch("/api/mcp/tools", {
-                                  method: "POST",
-                                  headers: { "Content-Type": "application/json" },
-                                  body: JSON.stringify({
-                                    action: "execute",
-                                    toolName: evt.payload.toolName,
-                                    parameters: evt.payload.params || {},
-                                    serverConfig: getServerConfig(),
-                                  }),
-                                }).catch(() => {});
+                                try {
+                                  await fetch("/api/mcp/tools", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({
+                                      action: "execute",
+                                      toolName: evt.payload.toolName,
+                                      parameters: evt.payload.params || {},
+                                      serverConfig: getServerConfig(),
+                                    }),
+                                  });
+                                } catch {
+                                  // ignore
+                                }
                               } else if (evt.type === "link" && evt.payload?.url) {
                                 window.open(evt.payload.url, "_blank", "noopener,noreferrer");
                               }
                             }}
                           />
-                        );
-                      }
-                      return (
+                         );
+                       }
+                       return (
                         <JsonView
                           src={result}
                           dark={true}
