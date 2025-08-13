@@ -65,6 +65,7 @@
     "@tanstack/react-table": "^8.21.3",
     "@uiw/react-json-view": "^2.0.0-alpha.33",
     "ai": "^4.3.19",
+    "ajv": "^8.17.1",
     "class-variance-authority": "^0.7.1",
     "classnames": "^2.5.1",
     "clsx": "^2.1.1",

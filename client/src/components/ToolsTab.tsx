@@ -18,14 +18,16 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "./ui/resizable";
-import { Wrench, Play, RefreshCw, ChevronRight } from "lucide-react";
+import { Wrench, Play, RefreshCw, ChevronRight, CheckCircle, XCircle } from "lucide-react";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import type { MCPToolType } from "@mastra/core/mcp";
 import { MastraMCPServerDefinition } from "@/shared/types.js";
 import { ElicitationDialog } from "./ElicitationDialog";
 import { TruncatedText } from "@/components/ui/truncated-text";
+import { validateToolOutput } from "@/lib/schema-utils";
 import { SearchInput } from "@/components/ui/search-input";
+
 
 interface Tool {
   name: string;
@@ -64,6 +66,12 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
   const [selectedTool, setSelectedTool] = useState<string>("");
   const [formFields, setFormFields] = useState<FormField[]>([]);
   const [result, setResult] = useState<Record<string, unknown> | null>(null);
+  const [showStructured, setShowStructured] = useState(false);
+  const [structuredResult, setStructuredResult] = useState<Record<string, unknown> | null>(null);
+  const [validationErrors, setValidationErrors] = useState<any[] | null | undefined>(undefined);
+  const [unstructuredValidationResult, setUnstructuredValidationResult] = useState<
+    'not_applicable' | 'valid' | 'invalid_json' | 'schema_mismatch'
+  >('not_applicable');
   const [loading, setLoading] = useState(false);
   const [fetchingTools, setFetchingTools] = useState(false);
   const [error, setError] = useState<string>("");
@@ -169,6 +177,7 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
               if (parsed.type === "tools_list") {
                 toolCount = Object.keys(parsed.tools || {}).length;
                 setTools(parsed.tools || {});
+                // console.log(parsed.tools, "parsed tools")
                 const fetchDuration = Date.now() - fetchStartTime;
                 logger.info("Tools fetch completed successfully", {
                   serverConfig: config,
@@ -324,6 +333,10 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
     setLoading(true);
     setError("");
     setResult(null);
+    setStructuredResult(null);
+    setShowStructured(false);
+    setValidationErrors(undefined);
+    setUnstructuredValidationResult('not_applicable');
 
     const executionStartTime = Date.now();
 
@@ -395,6 +408,30 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                   result: result,
                 });
                 setResult(result);
+                if (result.structuredContent) {
+                  setStructuredResult(result.structuredContent as Record<string, unknown>);
+                  setShowStructured(true);
+                }
+
+                const currentTool = tools[selectedTool];
+                console.log("currentTool", currentTool)
+
+                if (currentTool && currentTool.outputSchema) {
+                  const outputSchema = currentTool.outputSchema;
+
+                  const validationReport = validateToolOutput(result, outputSchema);
+                  setValidationErrors(validationReport.structuredErrors);
+                  setUnstructuredValidationResult(validationReport.unstructuredStatus);
+
+                  if (validationReport.structuredErrors) {
+                    logger.warn("Schema validation failed for structuredContent", {
+                      errors: validationReport.structuredErrors,
+                    });
+                  }
+                  if (validationReport.unstructuredStatus === 'invalid_json' || validationReport.unstructuredStatus === 'schema_mismatch') {
+                    logger.warn(`Validation failed for raw content: ${validationReport.unstructuredStatus}`);
+                  }
+                }
               } else if (parsed.type === "tool_error") {
                 logger.error("Tool execution error from server", {
                   toolName: selectedTool,
@@ -592,11 +629,10 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                           {filteredToolNames.map((name) => (
                             <div
                               key={name}
-                              className={`cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${
-                                selectedTool === name
-                                  ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
-                                  : "hover:shadow-sm"
-                              }`}
+                              className={`cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${selectedTool === name
+                                ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
+                                : "hover:shadow-sm"
+                                }`}
                               onClick={() => {
                                 setSelectedTool(name);
                               }}
@@ -772,10 +808,10 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                                           typeof field.value === "string"
                                             ? field.value
                                             : JSON.stringify(
-                                                field.value,
-                                                null,
-                                                2,
-                                              )
+                                              field.value,
+                                              null,
+                                              2,
+                                            )
                                         }
                                         onChange={(e) =>
                                           updateFieldValue(
@@ -790,7 +826,7 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                                       <Input
                                         type={
                                           field.type === "number" ||
-                                          field.type === "integer"
+                                            field.type === "integer"
                                             ? "number"
                                             : "text"
                                         }
@@ -841,27 +877,52 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
           <div className="h-full flex flex-col border-t border-border bg-background">
             {/* Header */}
             <div className="flex items-center justify-between p-4 border-b border-border">
-              <h2 className="text-xs font-semibold text-foreground">
-                Response
-              </h2>
+              <div className="flex items-center gap-4">
+                <h2 className="text-xs font-semibold text-foreground">
+                  Response
+                </h2>
+                {showStructured && validationErrors !== undefined && (
+                  validationErrors === null ? (
+                    <Badge variant="default" className="bg-green-600 hover:bg-green-700">
+                      <CheckCircle className="h-3 w-3 mr-1.5" />
+                      Valid
+                    </Badge>
+                  ) : (
+                    <Badge variant="destructive">
+                      <XCircle className="h-3 w-3 mr-1.5" />
+                      Invalid
+                    </Badge>
+                  )
+                )}
+              </div>
+
+              {structuredResult && (
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant={!showStructured ? "default" : "outline"}
+                    onClick={() => setShowStructured(false)}
+                  >
+                    Raw Output
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={showStructured ? "default" : "outline"}
+                    onClick={() => setShowStructured(true)}
+                  >
+                    Structured Output
+                  </Button>
+                </div>
+              )}
             </div>
 
             {/* Content */}
             <div className="flex-1 overflow-hidden">
-              {error ? (
+              {showStructured && validationErrors && (
                 <div className="p-4">
-                  <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
-                    {error}
-                  </div>
-                </div>
-              ) : result ? (
-                <ScrollArea className="h-full">
-                  <div className="p-4">
-                    <JsonView
-                      src={result}
-                      dark={true}
-                      theme="atom"
-                      enableClipboard={true}
+                  <h3 className="text-sm font-semibold text-destructive mb-2">Validation Errors</h3>
+                  <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-md">
+                    <JsonView src={structuredResult} theme="atom" dark={true} enableClipboard={true}
                       displaySize={false}
                       collapseStringsAfterLength={100}
                       style={{
@@ -872,17 +933,89 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                         padding: "16px",
                         borderRadius: "8px",
                         border: "1px solid hsl(var(--border))",
-                      }}
-                    />
+                      }} />
+                    <span className="text-sm font-semibold text-destructive mb-2">{`${validationErrors[0].instancePath.slice(1)} ${validationErrors[0].message}`}</span>
+
                   </div>
-                </ScrollArea>
-              ) : (
-                <div className="flex items-center justify-center h-full">
-                  <p className="text-xs text-muted-foreground font-medium">
-                    Execute a tool to see results here
-                  </p>
                 </div>
               )}
+              {error ? (
+                <div className="p-4">
+                  <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
+                    {error}
+                  </div>
+                </div>
+              )
+                : showStructured && structuredResult && validationErrors === null ? (
+                  <ScrollArea className="h-full">
+                    <div className="p-4">
+                      <JsonView
+                        src={structuredResult}
+                        dark={true}
+                        theme="atom"
+                        enableClipboard={true}
+                        displaySize={false}
+                        collapseStringsAfterLength={100}
+                        style={{
+                          fontSize: "12px",
+                          fontFamily:
+                            "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                          backgroundColor: "hsl(var(--background))",
+                          padding: "16px",
+                          borderRadius: "8px",
+                          border: "1px solid hsl(var(--border))",
+                        }}
+                      />
+                    </div>
+                  </ScrollArea>
+                )
+                  : result && !showStructured ? (
+                    <ScrollArea className="h-full">
+                      <div className="p-4">
+                        {unstructuredValidationResult === 'valid' && (
+                          <Badge variant="default" className="bg-green-600 hover:bg-green-700 mb-4">
+                            <CheckCircle className="h-3 w-3 mr-1.5" />
+                            Success: Content matches the output schema.
+                          </Badge>
+                        )}
+                        {unstructuredValidationResult === 'schema_mismatch' && (
+                          <Badge variant="destructive" className="mb-4">
+                            <XCircle className="h-3 w-3 mr-1.5" />
+                            Error: Content does not match the output schema.
+                          </Badge>
+                        )}
+                        {unstructuredValidationResult === 'invalid_json' && (
+                          <Badge variant="destructive" className="bg-amber-600 hover:bg-amber-700 mb-4">
+                            <XCircle className="h-3 w-3 mr-1.5" />
+                            Warning: Output schema provided by the tool is invalid.
+                          </Badge>
+                        )}
+                        <JsonView
+                          src={result}
+                          dark={true}
+                          theme="atom"
+                          enableClipboard={true}
+                          displaySize={false}
+                          collapseStringsAfterLength={100}
+                          style={{
+                            fontSize: "12px",
+                            fontFamily:
+                              "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                            backgroundColor: "hsl(var(--background))",
+                            padding: "16px",
+                            borderRadius: "8px",
+                            border: "1px solid hsl(var(--border))",
+                          }}
+                        />
+                      </div>
+                    </ScrollArea>
+                  ) : (
+                    <div className="flex items-center justify-center h-full">
+                      <p className="text-xs text-muted-foreground font-medium">
+                        Execute a tool to see results here
+                      </p>
+                    </div>
+                  )}
             </div>
           </div>
         </ResizablePanel>
