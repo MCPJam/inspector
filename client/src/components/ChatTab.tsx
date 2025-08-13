@@ -89,6 +89,7 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
         </AccordionItem>
       </Accordion>
     </div>
+  );
 
   const {
     messages,

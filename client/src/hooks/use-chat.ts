@@ -97,6 +97,11 @@ export function useChat(options: UseChatOptions = {}) {
           (m) => m.id === Model.CLAUDE_3_5_SONNET_LATEST,
         );
         if (claudeModel) setModel(claudeModel);
+      } else if (hasToken("deepseek")) {
+        const deepseekModel = SUPPORTED_MODELS.find(
+          (m) => m.id === Model.DEEPSEEK_CHAT,
+        );
+        if (deepseekModel) setModel(deepseekModel);
       } else if (hasToken("openai")) {
         const gptModel = SUPPORTED_MODELS.find((m) => m.id === Model.GPT_4O);
         if (gptModel) setModel(gptModel);
@@ -141,6 +146,8 @@ export function useChat(options: UseChatOptions = {}) {
       if (model.provider === "anthropic" && hasToken("anthropic")) {
         availableModelsList.push(model);
       } else if (model.provider === "openai" && hasToken("openai")) {
+        availableModelsList.push(model);
+      } else if (model.provider === "deepseek" && hasToken("deepseek")) {
         availableModelsList.push(model);
       }
     }

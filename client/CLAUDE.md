@@ -23,7 +23,7 @@ The frontend is built with modern web technologies:
      - Response streaming UI
      - Error state handling
    - DeepSeek AI integration
-     - DeepSeek Chat/Reasoner support
+     - DeepSeek R1 support
      - Coding-optimized models
      - Reasoning capabilities
      - Context management
