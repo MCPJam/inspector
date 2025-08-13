@@ -900,11 +900,16 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                               style: { width: "100%", overflow: "visible" },
                             }}
                             onUIAction={async (evt) => {
-                              if (evt.type === "tool" && evt.payload?.toolName) {
+                              if (
+                                evt.type === "tool" &&
+                                evt.payload?.toolName
+                              ) {
                                 try {
                                   await fetch("/api/mcp/tools", {
                                     method: "POST",
-                                    headers: { "Content-Type": "application/json" },
+                                    headers: {
+                                      "Content-Type": "application/json",
+                                    },
                                     body: JSON.stringify({
                                       action: "execute",
                                       toolName: evt.payload.toolName,
@@ -915,8 +920,15 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                                 } catch {
                                   // ignore
                                 }
-                              } else if (evt.type === "link" && evt.payload?.url) {
-                                window.open(evt.payload.url, "_blank", "noopener,noreferrer");
+                              } else if (
+                                evt.type === "link" &&
+                                evt.payload?.url
+                              ) {
+                                window.open(
+                                  evt.payload.url,
+                                  "_blank",
+                                  "noopener,noreferrer",
+                                );
                               }
                             }}
                           />
