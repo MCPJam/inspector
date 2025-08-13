@@ -82,6 +82,29 @@ docker run -d -p 3001:3001 --name mcp-inspector mcpjam/mcp-inspector:latest
 
 The application will be available at `http://localhost:3001`.
 
+## Connecting to MCP servers
+
+### STDIO
+
+Note: Always use global file paths
+
+```
+# Local FastMCP STDIO example
+npx @mcpjam/inspector@latest uv run fastmcp run /Users/matt8p/demo/src/server.py
+# Local Node example
+npx @mcpjam/inspector@latest npx -y /Users/matt8p/demo-ts/dist/index.js
+```
+
+### SSE / Streamable HTTP
+
+Spin up the MCPJam inspector
+
+```
+npx @mcpjam/inspector@latest
+```
+
+In the UI "MCP Servers" tab, click add server, select HTTP, then paste in your server URL
+
 ## Requirements
 
 [![Node.js](https://img.shields.io/badge/Node.js-20+-green.svg?style=for-the-badge&logo=node.js)](https://nodejs.org/)
