@@ -10,7 +10,7 @@ import { MessageEditor } from "./message-editor";
 import { ToolCallDisplay } from "./tool-call";
 import { getProviderLogoFromModel } from "./chat-helpers";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { ModelDefinition } from "@/shared/types.js";
+import { MastraMCPServerDefinition, ModelDefinition } from "@/shared/types.js";
 
 interface MessageProps {
   message: ChatMessage;
@@ -21,6 +21,7 @@ interface MessageProps {
   isReadonly?: boolean;
   showActions?: boolean;
   model: ModelDefinition | null;
+  serverConfigs?: Record<string, MastraMCPServerDefinition>;
 }
 
 // Thinking indicator component
@@ -44,6 +45,7 @@ const PureMessage = ({
   isReadonly = false,
   showActions = true,
   model,
+  serverConfigs,
 }: MessageProps) => {
   const [mode, setMode] = useState<"view" | "edit">("view");
   const [isHovered, setIsHovered] = useState(false);
@@ -134,6 +136,7 @@ const PureMessage = ({
                         key={toolCall.id}
                         toolCall={toolCall}
                         toolResult={toolResult}
+                        serverConfigs={serverConfigs}
                       />
                     );
                   })}

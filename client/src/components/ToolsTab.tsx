@@ -27,6 +27,7 @@ import { ElicitationDialog } from "./ElicitationDialog";
 import { TruncatedText } from "@/components/ui/truncated-text";
 import { validateToolOutput } from "@/lib/schema-utils";
 import { SearchInput } from "@/components/ui/search-input";
+import { UIResourceRenderer } from "@mcp-ui/client";
 
 
 interface Tool {
@@ -213,6 +214,37 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
     } finally {
       setFetchingTools(false);
     }
+  };
+
+  // Attempt to extract an MCP-UI resource from a tool result in various shapes
+  const getUIResourceFromResult = (rawResult: any): any | null => {
+    if (!rawResult) return null;
+    // Direct resource shape: { resource: {...} }
+    const direct = (rawResult as any)?.resource;
+    if (
+      direct &&
+      typeof direct === "object" &&
+      typeof direct.uri === "string" &&
+      direct.uri.startsWith("ui://")
+    ) {
+      return direct;
+    }
+    // MCP content array shape: { content: [{ type: 'resource', resource: {...}}] }
+    const content = (rawResult as any)?.content;
+    if (Array.isArray(content)) {
+      for (const item of content) {
+        if (
+          item &&
+          item.type === "resource" &&
+          item.resource &&
+          typeof item.resource.uri === "string" &&
+          item.resource.uri.startsWith("ui://")
+        ) {
+          return item.resource;
+        }
+      }
+    }
+    return null;
   };
 
   const generateFormFields = (schema: any) => {
@@ -918,11 +950,17 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
 
             {/* Content */}
             <div className="flex-1 overflow-hidden">
-              {showStructured && validationErrors && (
+              {error ? (
+                <div className="p-4">
+                  <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
+                    {error}
+                  </div>
+                </div>
+              ) : showStructured && validationErrors ? (
                 <div className="p-4">
                   <h3 className="text-sm font-semibold text-destructive mb-2">Validation Errors</h3>
                   <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-md">
-                    <JsonView src={structuredResult} theme="atom" dark={true} enableClipboard={true}
+                    <JsonView src={validationErrors} theme="atom" dark={true} enableClipboard={true}
                       displaySize={false}
                       collapseStringsAfterLength={100}
                       style={{
@@ -935,61 +973,85 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                         border: "1px solid hsl(var(--border))",
                       }} />
                     <span className="text-sm font-semibold text-destructive mb-2">{`${validationErrors[0].instancePath.slice(1)} ${validationErrors[0].message}`}</span>
-
                   </div>
                 </div>
-              )}
-              {error ? (
-                <div className="p-4">
-                  <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
-                    {error}
+              ) : showStructured && structuredResult && validationErrors === null ? (
+                <ScrollArea className="h-full">
+                  <div className="p-4">
+                    <JsonView
+                      src={structuredResult}
+                      dark={true}
+                      theme="atom"
+                      enableClipboard={true}
+                      displaySize={false}
+                      collapseStringsAfterLength={100}
+                      style={{
+                        fontSize: "12px",
+                        fontFamily:
+                          "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                        backgroundColor: "hsl(var(--background))",
+                        padding: "16px",
+                        borderRadius: "8px",
+                        border: "1px solid hsl(var(--border))",
+                      }}
+                    />
                   </div>
-                </div>
-              )
-                : showStructured && structuredResult && validationErrors === null ? (
-                  <ScrollArea className="h-full">
-                    <div className="p-4">
-                      <JsonView
-                        src={structuredResult}
-                        dark={true}
-                        theme="atom"
-                        enableClipboard={true}
-                        displaySize={false}
-                        collapseStringsAfterLength={100}
-                        style={{
-                          fontSize: "12px",
-                          fontFamily:
-                            "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                          backgroundColor: "hsl(var(--background))",
-                          padding: "16px",
-                          borderRadius: "8px",
-                          border: "1px solid hsl(var(--border))",
-                        }}
-                      />
-                    </div>
-                  </ScrollArea>
-                )
-                  : result && !showStructured ? (
-                    <ScrollArea className="h-full">
-                      <div className="p-4">
-                        {unstructuredValidationResult === 'valid' && (
-                          <Badge variant="default" className="bg-green-600 hover:bg-green-700 mb-4">
-                            <CheckCircle className="h-3 w-3 mr-1.5" />
-                            Success: Content matches the output schema.
-                          </Badge>
-                        )}
-                        {unstructuredValidationResult === 'schema_mismatch' && (
-                          <Badge variant="destructive" className="mb-4">
-                            <XCircle className="h-3 w-3 mr-1.5" />
-                            Error: Content does not match the output schema.
-                          </Badge>
-                        )}
-                        {unstructuredValidationResult === 'invalid_json' && (
-                          <Badge variant="destructive" className="bg-amber-600 hover:bg-amber-700 mb-4">
-                            <XCircle className="h-3 w-3 mr-1.5" />
-                            Warning: Output schema provided by the tool is invalid.
-                          </Badge>
-                        )}
+                </ScrollArea>
+              ) : result && !showStructured ? (
+                <ScrollArea className="h-full">
+                  <div className="p-4">
+                    {unstructuredValidationResult === 'valid' && (
+                      <Badge variant="default" className="bg-green-600 hover:bg-green-700 mb-4">
+                        <CheckCircle className="h-3 w-3 mr-1.5" />
+                        Success: Content matches the output schema.
+                      </Badge>
+                    )}
+                    {unstructuredValidationResult === 'schema_mismatch' && (
+                      <Badge variant="destructive" className="mb-4">
+                        <XCircle className="h-3 w-3 mr-1.5" />
+                        Error: Content does not match the output schema.
+                      </Badge>
+                    )}
+                    {unstructuredValidationResult === 'invalid_json' && (
+                      <Badge variant="destructive" className="bg-amber-600 hover:bg-amber-700 mb-4">
+                        <XCircle className="h-3 w-3 mr-1.5" />
+                        Warning: Output schema provided by the tool is invalid.
+                      </Badge>
+                    )}
+                    {(() => {
+                      const uiRes = getUIResourceFromResult(result as any);
+                      if (uiRes) {
+                        return (
+                          <UIResourceRenderer
+                            resource={uiRes}
+                            htmlProps={{
+                              autoResizeIframe: true,
+                              style: { width: "100%", overflow: "visible" },
+                            }}
+                            onUIAction={async (evt) => {
+                              if (evt.type === "tool" && evt.payload?.toolName) {
+                                try {
+                                  await fetch("/api/mcp/tools", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({
+                                      action: "execute",
+                                      toolName: evt.payload.toolName,
+                                      parameters: evt.payload.params || {},
+                                      serverConfig: getServerConfig(),
+                                    }),
+                                  });
+                                } catch {
+                                  // ignore
+                                }
+                              } else if (evt.type === "link" && evt.payload?.url) {
+                                window.open(evt.payload.url, "_blank", "noopener,noreferrer");
+                              }
+                            }}
+                          />
+                        );
+                      }
+                      return (
                         <JsonView
                           src={result}
                           dark={true}
@@ -1007,15 +1069,17 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                             border: "1px solid hsl(var(--border))",
                           }}
                         />
-                      </div>
-                    </ScrollArea>
-                  ) : (
-                    <div className="flex items-center justify-center h-full">
-                      <p className="text-xs text-muted-foreground font-medium">
-                        Execute a tool to see results here
-                      </p>
-                    </div>
-                  )}
+                      );
+                    })()}
+                  </div>
+                </ScrollArea>
+              ) : (
+                <div className="flex items-center justify-center h-full">
+                  <p className="text-xs text-muted-foreground font-medium">
+                    Execute a tool to see results here
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         </ResizablePanel>
