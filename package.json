@@ -11,15 +11,17 @@
     "type": "git",
     "url": "https://github.com/MCPJam/inspector.git"
   },
-  "main": "dist/main/main.cjs",
+  "main": "bin/start.js",
   "bin": {
     "inspector-vite": "bin/start.js"
   },
   "files": [
     "bin",
-    "dist",
-    "out",
-    "package.json"
+    "dist/client",
+    "dist/server",
+    "package.json",
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
