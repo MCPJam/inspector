@@ -956,7 +956,7 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                     {error}
                   </div>
                 </div>
-              ) : showStructured && validationErrors && (
+              ) : showStructured && validationErrors ? (
                 <div className="p-4">
                   <h3 className="text-sm font-semibold text-destructive mb-2">Validation Errors</h3>
                   <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-md">
