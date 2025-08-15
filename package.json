@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/inspector",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "type": "module",
   "description": "MCPJam Inspector",
   "license": "Apache-2.0",
@@ -11,15 +11,17 @@
     "type": "git",
     "url": "https://github.com/MCPJam/inspector.git"
   },
-  "main": "dist/main/main.cjs",
+  "main": "bin/start.js",
   "bin": {
     "inspector-vite": "bin/start.js"
   },
   "files": [
     "bin",
-    "dist",
-    "out",
-    "package.json"
+    "dist/client",
+    "dist/server",
+    "package.json",
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
@@ -29,7 +31,7 @@
     "build:client": "cd client && npm run build",
     "build:server": "cd server && npm run build",
     "start": "NODE_ENV=production node bin/start.js",
-    "publish": "npm run build && npm publish --access public",
+    "publish": "node -e \"console.error('Use npm publish directly.'); process.exit(1)\"",
     "prettier-fix": "prettier --write .",
     "install:deps": "cd server && npm install && cd ../client && npm install",
     "docker:build": "docker build -t mcpjam/mcp-inspector:latest .",
@@ -62,11 +64,12 @@
     "@hookform/resolvers": "^3.10.0",
     "@mastra/core": "^0.10.6",
     "@mastra/mcp": "^0.10.6",
-    "@modelcontextprotocol/sdk": "^1.17.1",
+    "@modelcontextprotocol/sdk": "^1.17.3",
     "@tanstack/react-query": "^5.83.0",
     "@tanstack/react-table": "^8.21.3",
     "@uiw/react-json-view": "^2.0.0-alpha.33",
     "ai": "^5.0.11",
+    "ajv": "^8.17.1",
     "class-variance-authority": "^0.7.1",
     "classnames": "^2.5.1",
     "clsx": "^2.1.1",

@@ -226,6 +226,7 @@ export interface ServerFormData {
   useOAuth?: boolean;
   oauthScopes?: string[];
   clientId?: string;
+  clientSecret?: string;
 }
 
 export type MastraMCPServerDefinition =
