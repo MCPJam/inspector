@@ -93,7 +93,7 @@ npm start
      - Response streaming
      - Error handling
    - DeepSeek AI integration
-     - DeepSeek Chat/Reasoner support
+     - DeepSeek R1 Support
      - Coding-optimized models
      - Reasoning capabilities
      - Context management
