@@ -22,6 +22,11 @@ The frontend is built with modern web technologies:
      - Context window management
      - Response streaming UI
      - Error state handling
+   - DeepSeek AI integration
+     - DeepSeek R1 Support
+     - Coding-optimized models
+     - Reasoning capabilities
+     - Context management
    - Ollama model compatibility
      - Local model configuration
      - Model download interface

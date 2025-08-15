@@ -511,6 +511,10 @@ const getLlmModel = (
       return createAnthropic({ apiKey })(modelDefinition.id);
     case "openai":
       return createOpenAI({ apiKey })(modelDefinition.id);
+    case "deepseek":
+      return createOpenAI({ apiKey, baseURL: "https://api.deepseek.com/v1" })(
+        modelDefinition.id,
+      );
     case "ollama":
       const baseUrl = ollamaBaseUrl || "http://localhost:11434";
       return createOllama({

@@ -97,7 +97,7 @@ export interface StreamingMessage {
 }
 
 // Model definitions
-export type ModelProvider = "anthropic" | "openai" | "ollama";
+export type ModelProvider = "anthropic" | "openai" | "ollama" | "deepseek";
 
 export interface ModelDefinition {
   id: Model | string;
@@ -123,6 +123,8 @@ export enum Model {
   GPT_4 = "gpt-4",
   GPT_3_5_TURBO = "gpt-3.5-turbo",
   O1 = "o1",
+  DEEPSEEK_CHAT = "deepseek-chat",
+  DEEPSEEK_REASONER = "deepseek-reasoner",
 }
 
 export const SUPPORTED_MODELS: ModelDefinition[] = [
@@ -163,6 +165,12 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
   { id: Model.GPT_4, name: "GPT-4", provider: "openai" },
   { id: Model.GPT_3_5_TURBO, name: "GPT-3.5 Turbo", provider: "openai" },
   { id: Model.O1, name: "O1", provider: "openai" },
+  { id: Model.DEEPSEEK_CHAT, name: "DeepSeek Chat", provider: "deepseek" },
+  {
+    id: Model.DEEPSEEK_REASONER,
+    name: "DeepSeek Reasoner",
+    provider: "deepseek",
+  },
 ];
 
 // Helper functions for models

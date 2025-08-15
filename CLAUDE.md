@@ -92,6 +92,11 @@ npm start
      - Context handling
      - Response streaming
      - Error handling
+   - DeepSeek AI integration
+     - DeepSeek R1 Support
+     - Coding-optimized models
+     - Reasoning capabilities
+     - Context management
    - Ollama model compatibility
      - Local model support
      - Custom model loading

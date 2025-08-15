@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback } from "react";
+import { useRef, useEffect, useState } from "react";
 import { MessageCircle } from "lucide-react";
 import { MastraMCPServerDefinition } from "@/shared/types.js";
 import { useChat } from "@/hooks/use-chat";
@@ -8,6 +8,7 @@ import { ElicitationDialog } from "./ElicitationDialog";
 import { TooltipProvider } from "./ui/tooltip";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
+ 
 
 interface ChatTabProps {
   serverConfigs?: Record<string, MastraMCPServerDefinition>;
@@ -17,9 +18,11 @@ interface ChatTabProps {
 export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
+
   const [systemPromptState, setSystemPromptState] = useState(
-    systemPrompt || "You are a helpful assistant with access to MCP tools.",
+    systemPrompt || "You are a helpful assistant with access to MCP tools."
   );
+ 
 
   const {
     messages,

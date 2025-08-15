@@ -51,6 +51,15 @@ export function SettingsTab() {
       placeholder: "sk-ant-...",
       getApiKeyUrl: "https://console.anthropic.com/",
     },
+    {
+      id: "deepseek",
+      name: "DeepSeek",
+      logo: "/deepseek_logo.svg",
+      logoAlt: "DeepSeek",
+      description: "DeepSeek AI models for coding and reasoning",
+      placeholder: "sk-...",
+      getApiKeyUrl: "https://platform.deepseek.com/api_keys",
+    },
   ];
 
   const handleEdit = (providerId: string) => {

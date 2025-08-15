@@ -19,6 +19,7 @@ export default defineConfig({
     "ai",
     "@ai-sdk/anthropic",
     "@ai-sdk/openai",
+    "@ai-sdk/deepseek",
     "ollama-ai-provider",
     "zod",
     "zod-to-json-schema",
