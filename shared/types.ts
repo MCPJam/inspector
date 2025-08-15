@@ -97,7 +97,7 @@ export interface StreamingMessage {
 }
 
 // Model definitions
-export type ModelProvider = "anthropic" | "openai" | "ollama" | "deepseek";
+export type ModelProvider = "anthropic" | "openai" | "ollama" | "deepseek" | "web-llm";
 
 export interface ModelDefinition {
   id: Model | string;
@@ -170,6 +170,27 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     id: Model.DEEPSEEK_REASONER,
     name: "DeepSeek Reasoner",
     provider: "deepseek",
+  },
+  // WebLLM local models (run in-browser via WebGPU)
+  {
+    id: "Llama-3.1-8B-Instruct-q4f32_1-MLC",
+    name: "Llama 3.1 8B Instruct (WebLLM)",
+    provider: "web-llm",
+  },
+  {
+    id: "Llama-3.2-3B-Instruct-q4f16_1-MLC",
+    name: "Llama 3.2 3B Instruct (WebLLM)",
+    provider: "web-llm",
+  },
+  {
+    id: "Phi-3-mini-4k-instruct-q4f16_1-MLC",
+    name: "Phi-3 Mini 4K Instruct (WebLLM)",
+    provider: "web-llm",
+  },
+  {
+    id: "gemma-2-2b-it-q4f16_1-MLC",
+    name: "Gemma 2 2B Instruct (WebLLM)",
+    provider: "web-llm",
   },
 ];
 

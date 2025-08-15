@@ -9,6 +9,7 @@ import {
 } from "@/shared/types.js";
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
 import { detectOllamaModels } from "@/lib/ollama-utils";
+import { CreateMLCEngine } from "@mlc-ai/web-llm";
 
 interface ElicitationRequest {
   requestId: string;
@@ -53,12 +54,39 @@ export function useChat(options: UseChatOptions = {}) {
   const [elicitationRequest, setElicitationRequest] =
     useState<ElicitationRequest | null>(null);
   const [elicitationLoading, setElicitationLoading] = useState(false);
+  const [webGpuSupported, setWebGpuSupported] = useState<boolean | null>(null);
+  const [webLlmEngine, setWebLlmEngine] = useState<any | null>(null);
+  const [webLlmLoading, setWebLlmLoading] = useState(false);
+  const [webLlmToolsCache, setWebLlmToolsCache] = useState<
+    | null
+    | {
+        tools: any[];
+        serverKeyByPrefixedName: Record<string, { serverKey: string; toolName: string }>;
+      }
+  >(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesRef = useRef(state.messages);
   console.log("model", model);
   useEffect(() => {
     messagesRef.current = state.messages;
   }, [state.messages]);
+
+  // Detect WebGPU support
+  useEffect(() => {
+    const checkWebGpu = async () => {
+      if (typeof navigator !== "undefined" && (navigator as any).gpu) {
+        try {
+          const adapter = await (navigator as any).gpu.requestAdapter();
+          setWebGpuSupported(!!adapter);
+        } catch {
+          setWebGpuSupported(false);
+        }
+      } else {
+        setWebGpuSupported(false);
+      }
+    };
+    checkWebGpu();
+  }, []);
 
   // Check for Ollama models on mount and periodically
   useEffect(() => {
@@ -105,11 +133,16 @@ export function useChat(options: UseChatOptions = {}) {
           (m) => m.id === Model.DEEPSEEK_CHAT,
         );
         if (deepseekModel) setModel(deepseekModel);
+      } else if (webGpuSupported) {
+        const webLlmDefault = SUPPORTED_MODELS.find(
+          (m) => m.provider === "web-llm",
+        );
+        if (webLlmDefault) setModel(webLlmDefault);
       } else {
         setModel(null);
       }
     }
-  }, [tokens, ollamaModels, isOllamaRunning, hasToken, model]);
+  }, [tokens, ollamaModels, isOllamaRunning, hasToken, model, webGpuSupported]);
 
   const currentApiKey = useMemo(() => {
     if (model) {
@@ -121,6 +154,9 @@ export function useChat(options: UseChatOptions = {}) {
           )
           ? "local"
           : "";
+      } else if (model.provider === "web-llm") {
+        // WebLLM runs locally in browser; no API key needed
+        return "local";
       }
       return getToken(model.provider);
     }
@@ -149,6 +185,8 @@ export function useChat(options: UseChatOptions = {}) {
         availableModelsList.push(model);
       } else if (model.provider === "deepseek" && hasToken("deepseek")) {
         availableModelsList.push(model);
+      } else if (model.provider === "web-llm" && webGpuSupported) {
+        availableModelsList.push(model);
       }
     }
 
@@ -158,7 +196,7 @@ export function useChat(options: UseChatOptions = {}) {
     }
 
     return availableModelsList;
-  }, [isOllamaRunning, ollamaModels, hasToken]);
+  }, [isOllamaRunning, ollamaModels, hasToken, webGpuSupported]);
 
   const handleStreamingEvent = useCallback(
     (
@@ -265,8 +303,398 @@ export function useChat(options: UseChatOptions = {}) {
     [],
   );
 
+  // Initialize WebLLM engine for the given model id
+  const initializeWebLlmEngine = useCallback(
+    async (modelId: string) => {
+      if (webLlmEngine || webLlmLoading) return webLlmEngine;
+      setWebLlmLoading(true);
+      try {
+        const engine = await CreateMLCEngine(modelId, {
+          initProgressCallback: (p: any) => {
+            console.log("[WebLLM] init progress", p);
+          },
+        });
+        setWebLlmEngine(engine);
+        return engine;
+      } finally {
+        setWebLlmLoading(false);
+      }
+    },
+    [webLlmEngine, webLlmLoading],
+  );
+
+  // Fetch tools for a single server (returns JSON schema tools)
+  const fetchServerTools = useCallback(
+    async (serverKey: string, serverConfig: MastraMCPServerDefinition) => {
+      const response = await fetch("/api/mcp/tools", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "list", serverConfig }),
+      });
+      if (!response.ok) throw new Error("Failed to list tools");
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      if (!reader) throw new Error("No SSE body when listing tools");
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const data = line.slice(6);
+            if (data === "[DONE]") break;
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.type === "tools_list") {
+                return parsed.tools as Record<string, any>;
+              }
+            } catch {}
+          }
+        }
+      }
+      return {} as Record<string, any>;
+    },
+    [],
+  );
+
+  // Build WebLLM tools array combining all configured servers
+  const buildWebLlmTools = useCallback(async () => {
+    if (!serverConfigs || Object.keys(serverConfigs).length === 0) {
+      return { tools: [], serverKeyByPrefixedName: {} as Record<string, { serverKey: string; toolName: string }> };
+    }
+    if (webLlmToolsCache) return webLlmToolsCache;
+    const serverEntries = Object.entries(serverConfigs);
+    const serverKeyByPrefixedName: Record<string, { serverKey: string; toolName: string }> = {};
+    const toolsArray: any[] = [];
+    // Fetch all servers in parallel
+    const toolsByServer = await Promise.all(
+      serverEntries.map(async ([key, cfg]) => {
+        try {
+          const tools = await fetchServerTools(key, cfg);
+          return { key, tools } as const;
+        } catch (e) {
+          console.warn("Failed to fetch tools for server", key, e);
+          return { key, tools: {} } as const;
+        }
+      }),
+    );
+    for (const { key, tools } of toolsByServer) {
+      for (const [toolName, toolDef] of Object.entries(tools)) {
+        const prefixed = `${key}__${toolName}`;
+        serverKeyByPrefixedName[prefixed] = { serverKey: key, toolName };
+        toolsArray.push({
+          type: "function",
+          function: {
+            name: prefixed,
+            description: (toolDef as any).description || undefined,
+            parameters: (toolDef as any).inputSchema || { type: "object", properties: {} },
+          },
+        });
+      }
+    }
+    const built = { tools: toolsArray, serverKeyByPrefixedName };
+    setWebLlmToolsCache(built);
+    return built;
+  }, [serverConfigs, webLlmToolsCache, fetchServerTools]);
+
+  const executeToolOnServer = useCallback(
+    async (
+      serverKey: string,
+      serverConfig: MastraMCPServerDefinition,
+      toolName: string,
+      parameters: Record<string, any>,
+    ) => {
+      const response = await fetch("/api/mcp/tools", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "execute",
+          serverConfig,
+          toolName,
+          parameters,
+        }),
+      });
+      if (!response.ok) throw new Error(`Tool execution failed (${serverKey}/${toolName})`);
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      if (!reader) return null;
+      let result: any = null;
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const data = line.slice(6);
+            if (data === "[DONE]") break;
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.type === "tool_result") {
+                result = parsed.result;
+              }
+            } catch {}
+          }
+        }
+      }
+      return result;
+    },
+    [],
+  );
+
+  const sendWebLlmRequest = useCallback(
+    async (userMessage: ChatMessage) => {
+      if (!model || model.provider !== "web-llm") {
+        throw new Error("Invalid WebLLM model");
+      }
+      const engine = (await initializeWebLlmEngine(String(model.id))) as any;
+      if (!engine) throw new Error("Failed to initialize WebLLM engine");
+
+      const assistantMessage = createMessage("assistant", "");
+      setState((prev) => ({
+        ...prev,
+        messages: [...prev.messages, assistantMessage],
+      }));
+
+      const messages = messagesRef.current.concat(userMessage).map((m) => ({
+        role: m.role,
+        content: m.content,
+      }));
+      if (systemPrompt) {
+        messages.unshift({ role: "system", content: systemPrompt } as any);
+      }
+
+      // Prepare tools
+      const { tools, serverKeyByPrefixedName } = await buildWebLlmTools();
+
+      // Local states for UI streaming updates
+      const assistantContent = { current: "" };
+      const toolCalls = { current: [] as any[] };
+      const toolResults = { current: [] as any[] };
+
+      // Round-based tool calling until no more tool calls
+      const maxRounds = 6;
+      let round = 0;
+      let conversation = [...messages];
+      while (round < maxRounds) {
+        round++;
+        const response = await engine.chat.completions.create({
+          messages: conversation,
+          tools: tools.length ? tools : undefined,
+          tool_choice: tools.length ? "auto" : undefined,
+          stream: false,
+        });
+        const choice = response?.choices?.[0];
+        const msg = choice?.message || {};
+        const contentText = (msg as any).content || "";
+        if (contentText) {
+          assistantContent.current += contentText;
+          setState((prev) => ({
+            ...prev,
+            messages: prev.messages.map((m) =>
+              m.id === assistantMessage.id
+                ? { ...m, content: assistantContent.current }
+                : m,
+            ),
+          }));
+        }
+
+        // Normalize tool calls across possible shapes
+        const tc =
+          (msg as any).tool_calls ||
+          (msg as any).toolCalls ||
+          ((msg as any).function_call
+            ? [
+                {
+                  id: (msg as any).id || `call_${Date.now()}`,
+                  type: "function",
+                  function: {
+                    name: (msg as any).function_call?.name,
+                    arguments: (msg as any).function_call?.arguments,
+                  },
+                },
+              ]
+            : []);
+
+        if (tc && Array.isArray(tc) && tc.length > 0) {
+          // For each tool call, execute against MCP server
+          for (const call of tc) {
+            const callId = call.id || `call_${Date.now()}_${Math.random()}`;
+            const rawName = call.function?.name || (call as any).name;
+            const argsRaw = call.function?.arguments || (call as any).arguments || "{}";
+            let args: Record<string, any> = {};
+            try {
+              args = typeof argsRaw === "string" ? JSON.parse(argsRaw) : argsRaw;
+            } catch {
+              args = {};
+            }
+
+            // Track tool_call event
+            const toolCallEvent = {
+              id: callId,
+              name: rawName,
+              parameters: args,
+              timestamp: new Date(),
+              status: "executing" as const,
+            };
+            toolCalls.current = [...toolCalls.current, toolCallEvent];
+            setState((prev) => ({
+              ...prev,
+              messages: prev.messages.map((m) =>
+                m.id === assistantMessage.id
+                  ? { ...m, toolCalls: [...toolCalls.current] }
+                  : m,
+              ),
+            }));
+
+            // Route to server and execute
+            const mapping = rawName ? serverKeyByPrefixedName[rawName] : undefined;
+            if (!mapping) {
+              // Mark error if unknown mapping
+              const errResult = {
+                id: callId,
+                toolCallId: callId,
+                error: `Unknown tool: ${rawName}`,
+                timestamp: new Date(),
+              };
+              toolResults.current = [...toolResults.current, errResult];
+              setState((prev) => ({
+                ...prev,
+                messages: prev.messages.map((m) =>
+                  m.id === assistantMessage.id
+                    ? {
+                        ...m,
+                        toolResults: [...toolResults.current],
+                        toolCalls: toolCalls.current.map((tc) =>
+                          tc.id === callId ? { ...tc, status: "error" } : tc,
+                        ),
+                      }
+                    : m,
+                ),
+              }));
+              continue;
+            }
+
+            const { serverKey, toolName } = mapping;
+            const serverConfig = serverConfigs?.[serverKey];
+            let result: any = null;
+            try {
+              result = await executeToolOnServer(serverKey, serverConfig!, toolName, args);
+            } catch (e) {
+              const err = e instanceof Error ? e.message : String(e);
+              const toolResEvent = {
+                id: callId,
+                toolCallId: callId,
+                error: err,
+                timestamp: new Date(),
+              };
+              toolResults.current = [...toolResults.current, toolResEvent];
+              setState((prev) => ({
+                ...prev,
+                messages: prev.messages.map((m) =>
+                  m.id === assistantMessage.id
+                    ? {
+                        ...m,
+                        toolResults: [...toolResults.current],
+                        toolCalls: toolCalls.current.map((tc) =>
+                          tc.id === callId ? { ...tc, status: "error" } : tc,
+                        ),
+                      }
+                    : m,
+                ),
+              }));
+              // Append tool message so model can recover
+              conversation.push({
+                role: "tool",
+                tool_call_id: callId,
+                content: JSON.stringify({ error: err }),
+              } as any);
+              continue;
+            }
+
+            const toolResEvent = {
+              id: callId,
+              toolCallId: callId,
+              result,
+              timestamp: new Date(),
+            };
+            toolResults.current = [...toolResults.current, toolResEvent];
+            // Mark completed
+            toolCalls.current = toolCalls.current.map((tc) =>
+              tc.id === callId ? { ...tc, status: "completed" } : tc,
+            );
+            setState((prev) => ({
+              ...prev,
+              messages: prev.messages.map((m) =>
+                m.id === assistantMessage.id
+                  ? {
+                      ...m,
+                      toolCalls: [...toolCalls.current],
+                      toolResults: [...toolResults.current],
+                    }
+                  : m,
+              ),
+            }));
+
+            // Provide result back to LLM
+            conversation.push({
+              role: "tool",
+              tool_call_id: callId,
+              content: typeof result === "string" ? result : JSON.stringify(result),
+            } as any);
+          }
+          // After executing tools, ask the model again for the final answer in a streaming pass
+          const stream = await engine.chat.completions.create({
+            messages: conversation,
+            stream: true,
+          });
+          for await (const chunk of stream as any) {
+            const delta = chunk?.choices?.[0]?.delta?.content || "";
+            if (delta) {
+              assistantContent.current += delta;
+              setState((prev) => ({
+                ...prev,
+                messages: prev.messages.map((m) =>
+                  m.id === assistantMessage.id
+                    ? { ...m, content: assistantContent.current }
+                    : m,
+                ),
+              }));
+            }
+          }
+          break;
+        } else {
+          // No tool calls; we are done
+          break;
+        }
+      }
+
+      setState((prev) => ({
+        ...prev,
+        isLoading: false,
+      }));
+
+      if (onMessageReceived) {
+        const finalMessage = {
+          ...assistantMessage,
+          content: assistantContent.current,
+        };
+        onMessageReceived(finalMessage);
+      }
+    },
+    [model, initializeWebLlmEngine, buildWebLlmTools, executeToolOnServer, systemPrompt, onMessageReceived, serverConfigs],
+  );
+
   const sendChatRequest = useCallback(
     async (userMessage: ChatMessage) => {
+      if (model && model.provider === "web-llm") {
+        return sendWebLlmRequest(userMessage);
+      }
       if (!serverConfigs || !model || !currentApiKey) {
         throw new Error(
           "Missing required configuration: serverConfig, model, and apiKey are required",
@@ -388,6 +816,7 @@ export function useChat(options: UseChatOptions = {}) {
       onMessageReceived,
       handleStreamingEvent,
       getOllamaBaseUrl,
+      sendWebLlmRequest,
     ],
   );
 
@@ -577,7 +1006,8 @@ export function useChat(options: UseChatOptions = {}) {
     setInput,
     model,
     availableModels,
-    hasValidApiKey: Boolean(currentApiKey),
+    hasValidApiKey:
+      Boolean(currentApiKey) || (model?.provider === "web-llm" && !!webGpuSupported),
     elicitationRequest,
     elicitationLoading,
 
