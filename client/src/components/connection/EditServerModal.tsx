@@ -48,10 +48,10 @@ export function EditServerModal({
   const [useCustomClientId, setUseCustomClientId] = useState(false);
   const [clientIdError, setClientIdError] = useState<string | null>(null);
   const [clientSecretError, setClientSecretError] = useState<string | null>(
-    null
+    null,
   );
   const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>(
-    []
+    [],
   );
 
   // Convert ServerWithName to ServerFormData format
@@ -121,7 +121,7 @@ export function EditServerModal({
           ([key, value]) => ({
             key,
             value,
-          })
+          }),
         );
         setEnvVars(envEntries);
       } else {
@@ -236,7 +236,7 @@ export function EditServerModal({
             if (key && value) acc[key] = value;
             return acc;
           },
-          {} as Record<string, string>
+          {} as Record<string, string>,
         );
         finalFormData = { ...finalFormData, env: envObj };
       }
@@ -297,7 +297,7 @@ export function EditServerModal({
   const updateEnvVar = (
     index: number,
     field: "key" | "value",
-    value: string
+    value: string,
   ) => {
     const updated = [...envVars];
     updated[index][field] = value;

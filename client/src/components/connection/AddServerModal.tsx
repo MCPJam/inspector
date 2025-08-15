@@ -44,10 +44,10 @@ export function AddServerModal({
   const [useCustomClientId, setUseCustomClientId] = useState(false);
   const [clientIdError, setClientIdError] = useState<string | null>(null);
   const [clientSecretError, setClientSecretError] = useState<string | null>(
-    null
+    null,
   );
   const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>(
-    []
+    [],
   );
 
   // Basic client ID validation
@@ -129,7 +129,7 @@ export function AddServerModal({
             if (key && value) acc[key] = value;
             return acc;
           },
-          {} as Record<string, string>
+          {} as Record<string, string>,
         );
         finalFormData = { ...finalFormData, env: envObj };
       }
@@ -223,7 +223,7 @@ export function AddServerModal({
   const updateEnvVar = (
     index: number,
     field: "key" | "value",
-    value: string
+    value: string,
   ) => {
     const updated = [...envVars];
     updated[index][field] = value;

@@ -18,7 +18,14 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "./ui/resizable";
-import { Wrench, Play, RefreshCw, ChevronRight, CheckCircle, XCircle } from "lucide-react";
+import {
+  Wrench,
+  Play,
+  RefreshCw,
+  ChevronRight,
+  CheckCircle,
+  XCircle,
+} from "lucide-react";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import type { MCPToolType } from "@mastra/core/mcp";
@@ -28,7 +35,6 @@ import { TruncatedText } from "@/components/ui/truncated-text";
 import { validateToolOutput } from "@/lib/schema-utils";
 import { SearchInput } from "@/components/ui/search-input";
 import { UIResourceRenderer } from "@mcp-ui/client";
-
 
 interface Tool {
   name: string;
@@ -68,11 +74,17 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
   const [formFields, setFormFields] = useState<FormField[]>([]);
   const [result, setResult] = useState<Record<string, unknown> | null>(null);
   const [showStructured, setShowStructured] = useState(false);
-  const [structuredResult, setStructuredResult] = useState<Record<string, unknown> | null>(null);
-  const [validationErrors, setValidationErrors] = useState<any[] | null | undefined>(undefined);
-  const [unstructuredValidationResult, setUnstructuredValidationResult] = useState<
-    'not_applicable' | 'valid' | 'invalid_json' | 'schema_mismatch'
-  >('not_applicable');
+  const [structuredResult, setStructuredResult] = useState<Record<
+    string,
+    unknown
+  > | null>(null);
+  const [validationErrors, setValidationErrors] = useState<
+    any[] | null | undefined
+  >(undefined);
+  const [unstructuredValidationResult, setUnstructuredValidationResult] =
+    useState<"not_applicable" | "valid" | "invalid_json" | "schema_mismatch">(
+      "not_applicable",
+    );
   const [loading, setLoading] = useState(false);
   const [fetchingTools, setFetchingTools] = useState(false);
   const [error, setError] = useState<string>("");
@@ -368,7 +380,7 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
     setStructuredResult(null);
     setShowStructured(false);
     setValidationErrors(undefined);
-    setUnstructuredValidationResult('not_applicable');
+    setUnstructuredValidationResult("not_applicable");
 
     const executionStartTime = Date.now();
 
@@ -441,27 +453,42 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                 });
                 setResult(result);
                 if (result.structuredContent) {
-                  setStructuredResult(result.structuredContent as Record<string, unknown>);
+                  setStructuredResult(
+                    result.structuredContent as Record<string, unknown>,
+                  );
                   setShowStructured(true);
                 }
 
                 const currentTool = tools[selectedTool];
-                console.log("currentTool", currentTool)
+                console.log("currentTool", currentTool);
 
                 if (currentTool && currentTool.outputSchema) {
                   const outputSchema = currentTool.outputSchema;
 
-                  const validationReport = validateToolOutput(result, outputSchema);
+                  const validationReport = validateToolOutput(
+                    result,
+                    outputSchema,
+                  );
                   setValidationErrors(validationReport.structuredErrors);
-                  setUnstructuredValidationResult(validationReport.unstructuredStatus);
+                  setUnstructuredValidationResult(
+                    validationReport.unstructuredStatus,
+                  );
 
                   if (validationReport.structuredErrors) {
-                    logger.warn("Schema validation failed for structuredContent", {
-                      errors: validationReport.structuredErrors,
-                    });
+                    logger.warn(
+                      "Schema validation failed for structuredContent",
+                      {
+                        errors: validationReport.structuredErrors,
+                      },
+                    );
                   }
-                  if (validationReport.unstructuredStatus === 'invalid_json' || validationReport.unstructuredStatus === 'schema_mismatch') {
-                    logger.warn(`Validation failed for raw content: ${validationReport.unstructuredStatus}`);
+                  if (
+                    validationReport.unstructuredStatus === "invalid_json" ||
+                    validationReport.unstructuredStatus === "schema_mismatch"
+                  ) {
+                    logger.warn(
+                      `Validation failed for raw content: ${validationReport.unstructuredStatus}`,
+                    );
                   }
                 }
               } else if (parsed.type === "tool_error") {
@@ -661,10 +688,11 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                           {filteredToolNames.map((name) => (
                             <div
                               key={name}
-                              className={`cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${selectedTool === name
-                                ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
-                                : "hover:shadow-sm"
-                                }`}
+                              className={`cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${
+                                selectedTool === name
+                                  ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
+                                  : "hover:shadow-sm"
+                              }`}
                               onClick={() => {
                                 setSelectedTool(name);
                               }}
@@ -840,10 +868,10 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                                           typeof field.value === "string"
                                             ? field.value
                                             : JSON.stringify(
-                                              field.value,
-                                              null,
-                                              2,
-                                            )
+                                                field.value,
+                                                null,
+                                                2,
+                                              )
                                         }
                                         onChange={(e) =>
                                           updateFieldValue(
@@ -858,7 +886,7 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                                       <Input
                                         type={
                                           field.type === "number" ||
-                                            field.type === "integer"
+                                          field.type === "integer"
                                             ? "number"
                                             : "text"
                                         }
@@ -913,9 +941,13 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                 <h2 className="text-xs font-semibold text-foreground">
                   Response
                 </h2>
-                {showStructured && validationErrors !== undefined && (
-                  validationErrors === null ? (
-                    <Badge variant="default" className="bg-green-600 hover:bg-green-700">
+                {showStructured &&
+                  validationErrors !== undefined &&
+                  (validationErrors === null ? (
+                    <Badge
+                      variant="default"
+                      className="bg-green-600 hover:bg-green-700"
+                    >
                       <CheckCircle className="h-3 w-3 mr-1.5" />
                       Valid
                     </Badge>
@@ -924,8 +956,7 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                       <XCircle className="h-3 w-3 mr-1.5" />
                       Invalid
                     </Badge>
-                  )
-                )}
+                  ))}
               </div>
 
               {structuredResult && (
@@ -958,9 +989,15 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                 </div>
               ) : showStructured && validationErrors ? (
                 <div className="p-4">
-                  <h3 className="text-sm font-semibold text-destructive mb-2">Validation Errors</h3>
+                  <h3 className="text-sm font-semibold text-destructive mb-2">
+                    Validation Errors
+                  </h3>
                   <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-md">
-                    <JsonView src={validationErrors} theme="atom" dark={true} enableClipboard={true}
+                    <JsonView
+                      src={validationErrors}
+                      theme="atom"
+                      dark={true}
+                      enableClipboard={true}
                       displaySize={false}
                       collapseStringsAfterLength={100}
                       style={{
@@ -971,11 +1008,14 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                         padding: "16px",
                         borderRadius: "8px",
                         border: "1px solid hsl(var(--border))",
-                      }} />
+                      }}
+                    />
                     <span className="text-sm font-semibold text-destructive mb-2">{`${validationErrors[0].instancePath.slice(1)} ${validationErrors[0].message}`}</span>
                   </div>
                 </div>
-              ) : showStructured && structuredResult && validationErrors === null ? (
+              ) : showStructured &&
+                structuredResult &&
+                validationErrors === null ? (
                 <ScrollArea className="h-full">
                   <div className="p-4">
                     <JsonView
@@ -1000,20 +1040,26 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
               ) : result && !showStructured ? (
                 <ScrollArea className="h-full">
                   <div className="p-4">
-                    {unstructuredValidationResult === 'valid' && (
-                      <Badge variant="default" className="bg-green-600 hover:bg-green-700 mb-4">
+                    {unstructuredValidationResult === "valid" && (
+                      <Badge
+                        variant="default"
+                        className="bg-green-600 hover:bg-green-700 mb-4"
+                      >
                         <CheckCircle className="h-3 w-3 mr-1.5" />
                         Success: Content matches the output schema.
                       </Badge>
                     )}
-                    {unstructuredValidationResult === 'schema_mismatch' && (
+                    {unstructuredValidationResult === "schema_mismatch" && (
                       <Badge variant="destructive" className="mb-4">
                         <XCircle className="h-3 w-3 mr-1.5" />
                         Error: Content does not match the output schema.
                       </Badge>
                     )}
-                    {unstructuredValidationResult === 'invalid_json' && (
-                      <Badge variant="destructive" className="bg-amber-600 hover:bg-amber-700 mb-4">
+                    {unstructuredValidationResult === "invalid_json" && (
+                      <Badge
+                        variant="destructive"
+                        className="bg-amber-600 hover:bg-amber-700 mb-4"
+                      >
                         <XCircle className="h-3 w-3 mr-1.5" />
                         Warning: Output schema provided by the tool is invalid.
                       </Badge>
@@ -1029,11 +1075,16 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                               style: { width: "100%", overflow: "visible" },
                             }}
                             onUIAction={async (evt) => {
-                              if (evt.type === "tool" && evt.payload?.toolName) {
+                              if (
+                                evt.type === "tool" &&
+                                evt.payload?.toolName
+                              ) {
                                 try {
                                   await fetch("/api/mcp/tools", {
                                     method: "POST",
-                                    headers: { "Content-Type": "application/json" },
+                                    headers: {
+                                      "Content-Type": "application/json",
+                                    },
                                     body: JSON.stringify({
                                       action: "execute",
                                       toolName: evt.payload.toolName,
@@ -1044,8 +1095,15 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                                 } catch {
                                   // ignore
                                 }
-                              } else if (evt.type === "link" && evt.payload?.url) {
-                                window.open(evt.payload.url, "_blank", "noopener,noreferrer");
+                              } else if (
+                                evt.type === "link" &&
+                                evt.payload?.url
+                              ) {
+                                window.open(
+                                  evt.payload.url,
+                                  "_blank",
+                                  "noopener,noreferrer",
+                                );
                               }
                             }}
                           />
