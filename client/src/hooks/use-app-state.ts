@@ -49,6 +49,7 @@ export interface ServerFormData {
   useOAuth?: boolean;
   oauthScopes?: string[];
   clientId?: string;
+  clientSecret?: string;
 }
 
 const STORAGE_KEY = "mcp-inspector-state";
@@ -220,6 +221,7 @@ export function useAppState() {
             serverName: formData.name,
             serverUrl: formData.url,
             clientId: formData.clientId,
+            clientSecret: formData.clientSecret,
           } as MCPOAuthOptions;
           // Only pass scopes if the user explicitly provided them
           if (formData.oauthScopes && formData.oauthScopes.length > 0) {

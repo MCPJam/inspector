@@ -38,10 +38,14 @@ export function AddServerModal({
   const [commandInput, setCommandInput] = useState("");
   const [oauthScopesInput, setOauthScopesInput] = useState("");
   const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
   const [bearerToken, setBearerToken] = useState("");
   const [authType, setAuthType] = useState<"oauth" | "bearer" | "none">("none");
   const [useCustomClientId, setUseCustomClientId] = useState(false);
   const [clientIdError, setClientIdError] = useState<string | null>(null);
+  const [clientSecretError, setClientSecretError] = useState<string | null>(
+    null,
+  );
   const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>(
     [],
   );
@@ -70,6 +74,28 @@ export function AddServerModal({
     return null;
   };
 
+  // Basic client secret validation following OAuth 2.0 spec flexibility
+  const validateClientSecret = (secret: string): string | null => {
+    // OAuth 2.0 spec doesn't mandate specific format requirements
+    // but we implement basic security guidelines
+    if (secret && secret.trim().length > 0) {
+      if (secret.trim().length < 8) {
+        return "Client secret should be at least 8 characters long for security";
+      }
+
+      if (secret.trim().length > 512) {
+        return "Client secret must be less than 512 characters long";
+      }
+
+      // Check for common security issues
+      if (secret === secret.toLowerCase() && secret.length < 16) {
+        return "Client secret should contain mixed case or be longer for security";
+      }
+    }
+
+    return null;
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -79,6 +105,15 @@ export function AddServerModal({
       if (clientIdError) {
         toast.error(clientIdError);
         return;
+      }
+
+      // Validate Client Secret if provided
+      if (clientSecret) {
+        const clientSecretError = validateClientSecret(clientSecret);
+        if (clientSecretError) {
+          toast.error(clientSecretError);
+          return;
+        }
       }
     }
 
@@ -132,6 +167,9 @@ export function AddServerModal({
             clientId: useCustomClientId
               ? clientId.trim() || undefined
               : undefined,
+            clientSecret: useCustomClientId
+              ? clientSecret.trim() || undefined
+              : undefined,
           };
           if (scopes.length > 0) {
             (finalFormData as any).oauthScopes = scopes;
@@ -168,10 +206,12 @@ export function AddServerModal({
     setCommandInput("");
     setOauthScopesInput("");
     setClientId("");
+    setClientSecret("");
     setBearerToken("");
     setAuthType("none");
     setUseCustomClientId(false);
     setClientIdError(null);
+    setClientSecretError(null);
     setEnvVars([]);
   };
 
@@ -198,6 +238,14 @@ export function AddServerModal({
     // Clear error when user starts typing
     if (clientIdError) {
       setClientIdError(null);
+    }
+  };
+
+  const handleClientSecretChange = (value: string) => {
+    setClientSecret(value);
+    // Clear error when user starts typing
+    if (clientSecretError) {
+      setClientSecretError(null);
     }
   };
 
@@ -448,40 +496,69 @@ export function AddServerModal({
                             htmlFor="manual-client-id"
                             className="text-sm cursor-pointer"
                           >
-                            Manual Client ID
+                            Manual Client Credentials
                           </label>
                         </div>
                       </div>
                       <p className="text-xs text-muted-foreground">
                         Dynamic registration lets the server automatically
                         assign a client ID. Manual configuration allows you to
-                        specify a pre-registered client ID.
+                        specify a pre-registered client credentials.
                       </p>
                     </div>
 
                     {useCustomClientId && (
-                      <div className="space-y-2">
-                        <label className="block text-sm font-medium text-foreground">
-                          Client ID <span className="text-red-500">*</span>
-                        </label>
-                        <Input
-                          value={clientId}
-                          onChange={(e) => handleClientIdChange(e.target.value)}
-                          placeholder="your-registered-client-id"
-                          className={`h-10 ${clientIdError ? "border-red-500 focus:border-red-500" : ""}`}
-                          required={useCustomClientId}
-                        />
-                        {clientIdError ? (
-                          <p className="text-xs text-red-600">
-                            {clientIdError}
-                          </p>
-                        ) : (
-                          <p className="text-xs text-muted-foreground">
-                            Enter the client ID that was pre-registered with the
-                            OAuth provider. This must match exactly what was
-                            configured on the server.
-                          </p>
-                        )}
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <label className="block text-sm font-medium text-foreground">
+                            Client ID <span className="text-red-500">*</span>
+                          </label>
+                          <Input
+                            value={clientId}
+                            onChange={(e) =>
+                              handleClientIdChange(e.target.value)
+                            }
+                            placeholder="your-registered-client-id"
+                            className={`h-10 ${clientIdError ? "border-red-500 focus:border-red-500" : ""}`}
+                            required={useCustomClientId}
+                          />
+                          {clientIdError ? (
+                            <p className="text-xs text-red-600">
+                              {clientIdError}
+                            </p>
+                          ) : (
+                            <p className="text-xs text-muted-foreground">
+                              Enter the client ID that was pre-registered with
+                              the OAuth provider. This must match exactly what
+                              was configured on the server.
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="block text-sm font-medium text-foreground">
+                            Client Secret
+                          </label>
+                          <Input
+                            type="password"
+                            value={clientSecret}
+                            onChange={(e) =>
+                              handleClientSecretChange(e.target.value)
+                            }
+                            placeholder="your-client-secret"
+                            className={`h-10 ${clientSecretError ? "border-red-500 focus:border-red-500" : ""}`}
+                          />
+                          {clientSecretError ? (
+                            <p className="text-xs text-red-600">
+                              {clientSecretError}
+                            </p>
+                          ) : (
+                            <p className="text-xs text-muted-foreground">
+                              Optional. Enter the client secret if your OAuth
+                              provider requires it for authentication.
+                            </p>
+                          )}
+                        </div>
                       </div>
                     )}
                   </div>
