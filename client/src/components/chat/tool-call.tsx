@@ -300,7 +300,9 @@ export function ToolCallDisplay({
                     </div>
                     <div className="p-4">
                       {(() => {
-                        const extractUIResource = (payload: any): any | null => {
+                        const extractUIResource = (
+                          payload: any,
+                        ): any | null => {
                           if (!payload) return null;
                           const direct = payload?.resource;
                           if (
@@ -327,7 +329,9 @@ export function ToolCallDisplay({
                           return null;
                         };
 
-                        const uiRes = extractUIResource((toolResult as any)?.result);
+                        const uiRes = extractUIResource(
+                          (toolResult as any)?.result,
+                        );
                         if (uiRes) {
                           return (
                             <UIResourceRenderer
@@ -337,14 +341,20 @@ export function ToolCallDisplay({
                                 style: { width: "100%", overflow: "visible" },
                               }}
                               onUIAction={async (evt) => {
-                                if (evt.type === "tool" && evt.payload?.toolName) {
-                                  const serverConfigToUse = ((): MastraMCPServerDefinition | undefined => {
+                                if (
+                                  evt.type === "tool" &&
+                                  evt.payload?.toolName
+                                ) {
+                                  const serverConfigToUse = (():
+                                    | MastraMCPServerDefinition
+                                    | undefined => {
                                     if (
                                       serverConfigs &&
                                       typeof serverConfigs === "object" &&
                                       Object.keys(serverConfigs).length === 1
                                     ) {
-                                      const onlyKey = Object.keys(serverConfigs)[0];
+                                      const onlyKey =
+                                        Object.keys(serverConfigs)[0];
                                       return serverConfigs[onlyKey];
                                     }
                                     return undefined;
@@ -352,7 +362,9 @@ export function ToolCallDisplay({
 
                                   fetch("/api/mcp/tools", {
                                     method: "POST",
-                                    headers: { "Content-Type": "application/json" },
+                                    headers: {
+                                      "Content-Type": "application/json",
+                                    },
                                     body: JSON.stringify({
                                       action: "execute",
                                       toolName: evt.payload.toolName,
@@ -362,8 +374,15 @@ export function ToolCallDisplay({
                                         : {}),
                                     }),
                                   }).catch(() => {});
-                                } else if (evt.type === "link" && evt.payload?.url) {
-                                  window.open(evt.payload.url, "_blank", "noopener,noreferrer");
+                                } else if (
+                                  evt.type === "link" &&
+                                  evt.payload?.url
+                                ) {
+                                  window.open(
+                                    evt.payload.url,
+                                    "_blank",
+                                    "noopener,noreferrer",
+                                  );
                                 }
                                 return { status: "handled" } as any;
                               }}

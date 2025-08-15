@@ -9,8 +9,42 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createOllama } from "ollama-ai-provider";
 import { ChatMessage, ModelDefinition } from "../../../shared/types";
 import { MCPClient } from "@mastra/mcp";
-import { ContentfulStatusCode } from "hono/utils/http-status";
 import { TextEncoder } from "util";
+
+// Types for better organization
+interface StreamEvent {
+  type:
+    | "text"
+    | "tool_call"
+    | "tool_result"
+    | "elicitation_request"
+    | "elicitation_complete"
+    | "error";
+  [key: string]: any;
+}
+
+interface ToolCallInfo {
+  id: number;
+  name: string;
+  parameters: any;
+  timestamp: Date;
+  status: "executing" | "completed" | "error";
+}
+
+interface ToolResultInfo {
+  id: number;
+  toolCallId: number;
+  result?: any;
+  error?: string;
+  timestamp: Date;
+}
+
+interface ElicitationInfo {
+  requestId: string;
+  message: string;
+  schema: any;
+  timestamp: Date;
+}
 
 const chat = new Hono();
 
@@ -33,6 +67,286 @@ const pendingElicitations = new Map<
     reject: (error: any) => void;
   }
 >();
+
+// Stream Manager Class
+class StreamManager {
+  private controller: ReadableStreamDefaultController | null = null;
+  private encoder: TextEncoder;
+  private toolCallCounter = 0;
+  private toolCallMap = new Map<string, number>(); // Maps tool call identifiers to IDs
+
+  constructor() {
+    this.encoder = new TextEncoder();
+  }
+
+  setController(controller: ReadableStreamDefaultController) {
+    this.controller = controller;
+  }
+
+  private enqueue(event: StreamEvent) {
+    if (this.controller) {
+      this.controller.enqueue(
+        this.encoder.encode(`data: ${JSON.stringify(event)}\n\n`),
+      );
+    }
+  }
+
+  streamText(content: string) {
+    this.enqueue({ type: "text", content });
+  }
+
+  streamToolCall(
+    toolCall: Omit<ToolCallInfo, "id">,
+    identifier?: string,
+  ): number {
+    const id = ++this.toolCallCounter;
+    const toolCallWithId: ToolCallInfo = { ...toolCall, id };
+    this.enqueue({ type: "tool_call", toolCall: toolCallWithId });
+
+    // Store mapping if identifier provided
+    if (identifier) {
+      this.toolCallMap.set(identifier, id);
+    }
+
+    return id;
+  }
+
+  streamToolResult(
+    toolResult: Omit<ToolResultInfo, "id" | "toolCallId">,
+    identifier?: string,
+  ) {
+    const toolCallId = identifier
+      ? this.toolCallMap.get(identifier) || this.toolCallCounter
+      : this.toolCallCounter;
+    const toolResultWithIds: ToolResultInfo = {
+      ...toolResult,
+      id: toolCallId,
+      toolCallId,
+    };
+    this.enqueue({ type: "tool_result", toolResult: toolResultWithIds });
+  }
+
+  streamElicitationRequest(elicitation: ElicitationInfo) {
+    this.enqueue({ type: "elicitation_request", ...elicitation });
+  }
+
+  streamElicitationComplete() {
+    this.enqueue({ type: "elicitation_complete" });
+  }
+
+  streamError(error: string) {
+    this.enqueue({ type: "error", error });
+  }
+
+  streamDone() {
+    if (this.controller) {
+      this.controller.enqueue(this.encoder.encode(`data: [DONE]\n\n`));
+    }
+  }
+
+  close() {
+    if (this.controller) {
+      this.controller.close();
+    }
+  }
+
+  getCurrentToolCallId(): number {
+    return this.toolCallCounter;
+  }
+}
+
+// Elicitation Handler Factory
+function createElicitationHandler(streamManager: StreamManager) {
+  return async (elicitationRequest: any) => {
+    const requestId = `elicit_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+
+    streamManager.streamElicitationRequest({
+      requestId,
+      message: elicitationRequest.message,
+      schema: elicitationRequest.requestedSchema,
+      timestamp: new Date(),
+    });
+
+    dbg("Elicitation requested", { requestId });
+
+    return new Promise<{
+      action: "accept" | "decline" | "cancel";
+      content?: { [x: string]: unknown };
+      _meta?: { [x: string]: unknown };
+    }>((resolve, reject) => {
+      pendingElicitations.set(requestId, { resolve, reject });
+
+      setTimeout(() => {
+        if (pendingElicitations.has(requestId)) {
+          pendingElicitations.delete(requestId);
+          reject(new Error("Elicitation timeout"));
+        }
+      }, 300000); // 5 minute timeout
+    });
+  };
+}
+
+// MCP Client Factory
+function createMCPClientInstance(serverConfigs?: Record<string, any>) {
+  if (serverConfigs && Object.keys(serverConfigs).length > 0) {
+    const validation = validateMultipleServerConfigs(serverConfigs);
+    if (!validation.success) {
+      throw new Error(
+        validation.error?.message || "Server config validation failed",
+      );
+    }
+    return createMCPClientWithMultipleConnections(validation.validConfigs!);
+  } else {
+    return new MCPClient({
+      id: `chat-${Date.now()}`,
+      servers: {},
+    });
+  }
+}
+
+// Agent Setup Helper
+function setupAgentWithStreaming(
+  client: MCPClient,
+  model: any,
+  systemPrompt: string,
+  streamManager: StreamManager,
+) {
+  const agent = new Agent({
+    name: "MCP Chat Agent",
+    instructions:
+      systemPrompt || "You are a helpful assistant with access to MCP tools.",
+    model,
+  });
+
+  const stepFinishHandler = ({ toolCalls, toolResults }: any) => {
+    try {
+      // Only handle tool calls and results, not text
+      // Text will be handled by the main streaming loop
+
+      // Handle tool calls
+      const tcList = toolCalls as any[] | undefined;
+      if (tcList && Array.isArray(tcList)) {
+        for (const call of tcList) {
+          streamManager.streamToolCall(
+            {
+              name: call.name || call.toolName,
+              parameters: call.params || call.args || {},
+              timestamp: new Date(),
+              status: "executing",
+            },
+            call.name || call.toolName,
+          );
+        }
+      }
+
+      // Handle tool results
+      const trList = toolResults as any[] | undefined;
+      if (trList && Array.isArray(trList)) {
+        for (const result of trList) {
+          streamManager.streamToolResult({
+            result: result.result,
+            error: (result as any).error,
+            timestamp: new Date(),
+          });
+        }
+      }
+    } catch (err) {
+      dbg("stepFinishHandler error", err);
+    }
+  };
+
+  const finishHandler = () => {
+    dbg("finishHandler called");
+    // No text streaming here - handled by main loop
+  };
+
+  return { agent, stepFinishHandler, finishHandler };
+}
+
+// Main Chat Generation Handler
+async function handleChatGeneration(
+  client: MCPClient,
+  agent: Agent,
+  messages: any[],
+  streamManager: StreamManager,
+  stepFinishHandler: any,
+  finishHandler: any,
+  serverConfigs?: Record<string, any>,
+) {
+  const toolsets = serverConfigs ? await client.getToolsets() : undefined;
+
+  dbg("Streaming start", {
+    toolsetServers: toolsets ? Object.keys(toolsets) : [],
+    messageCount: messages.length,
+  });
+
+  const stream = await agent.stream(messages, {
+    maxSteps: 10,
+    toolsets,
+    onStepFinish: stepFinishHandler,
+    onFinish: finishHandler,
+  });
+
+  let hasContent = false;
+  let chunkCount = 0;
+  let accumulatedText = "";
+
+  for await (const chunk of stream.textStream) {
+    if (chunk && chunk.trim()) {
+      hasContent = true;
+      chunkCount++;
+
+      // Accumulate text and stream in larger chunks to reduce frequency
+      accumulatedText += chunk;
+
+      // Stream accumulated text when it reaches a reasonable size or contains sentence endings
+      if (
+        accumulatedText.length >= 50 ||
+        /[.!?]\s/.test(accumulatedText) ||
+        accumulatedText.includes("\n")
+      ) {
+        streamManager.streamText(accumulatedText);
+        accumulatedText = "";
+      }
+    }
+  }
+
+  // Stream any remaining accumulated text
+  if (accumulatedText.trim()) {
+    streamManager.streamText(accumulatedText);
+  }
+
+  dbg("Streaming finished", { hasContent, chunkCount });
+
+  // Fallback if no content was streamed
+  if (!hasContent) {
+    dbg("No content from textStream; falling back to generate()");
+    try {
+      const gen = await agent.generate(messages, {
+        maxSteps: 10,
+        toolsets,
+      });
+      const finalText = gen.text || "";
+      if (finalText) {
+        streamManager.streamText(finalText);
+      } else {
+        streamManager.streamText(
+          "I apologize, but I couldn't generate a response. Please try again.",
+        );
+      }
+    } catch (fallbackErr) {
+      console.error("[mcp/chat] Fallback generate() error:", fallbackErr);
+      streamManager.streamError(
+        fallbackErr instanceof Error
+          ? fallbackErr.message
+          : String(fallbackErr),
+      );
+    }
+  }
+
+  streamManager.streamElicitationComplete();
+  streamManager.streamDone();
+}
 
 chat.post("/", async (c) => {
   let client: MCPClient | null = null;
@@ -90,6 +404,7 @@ chat.post("/", async (c) => {
       return c.json({ success: true });
     }
 
+    // Validate required parameters
     if (!model || !model.id || !apiKey || !messages) {
       return c.json(
         {
@@ -107,86 +422,41 @@ chat.post("/", async (c) => {
       serverCount: serverConfigs ? Object.keys(serverConfigs).length : 0,
     });
 
-    if (serverConfigs && Object.keys(serverConfigs).length > 0) {
-      const validation = validateMultipleServerConfigs(serverConfigs);
-      if (!validation.success) {
-        dbg("Server config validation failed", validation.errors || validation.error);
-        return c.json(
-          {
-            success: false,
-            error: validation.error!.message,
-            details: validation.errors,
-          },
-          validation.error!.status as ContentfulStatusCode,
-        );
-      }
-
-      client = createMCPClientWithMultipleConnections(validation.validConfigs!);
-      dbg("Created MCP client with servers", Object.keys(validation.validConfigs!));
-    } else {
-      client = new MCPClient({
-        id: `chat-${Date.now()}`,
-        servers: {},
+    // Create MCP client
+    try {
+      client = createMCPClientInstance(serverConfigs);
+      dbg("Created MCP client", {
+        hasServers: Boolean(
+          serverConfigs && Object.keys(serverConfigs).length > 0,
+        ),
       });
-      dbg("Created MCP client without servers");
+    } catch (clientError) {
+      dbg("MCP client creation failed", clientError);
+      return c.json(
+        {
+          success: false,
+          error:
+            clientError instanceof Error
+              ? clientError.message
+              : "Failed to create MCP client",
+        },
+        500,
+      );
     }
 
-    // If we have server tools, we will request toolsets at stream-time per Mastra docs
-
+    // Initialize LLM model
     const llmModel = getLlmModel(model, apiKey, ollamaBaseUrl);
     dbg("LLM model initialized", { provider: model.provider, id: model.id });
 
-    // Create a custom event emitter for streaming tool events
-    let toolCallId = 0;
-    let streamController: ReadableStreamDefaultController | null = null;
-    let encoder: TextEncoder | null = null;
-    // Tracks the most recent emitted tool_call id so subsequent tool_result
-    // events in the same step can be correlated with the proper call
-    let lastEmittedToolCallId: number | null = null;
+    // Create stream manager
+    const streamManager = new StreamManager();
 
     // Set up elicitation handler
-    const elicitationHandler = async (elicitationRequest: any) => {
-      const requestId = `elicit_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
-
-      // Stream elicitation request to client
-      if (streamController && encoder) {
-        streamController.enqueue(
-          encoder.encode(
-            `data: ${JSON.stringify({
-              type: "elicitation_request",
-              requestId,
-              message: elicitationRequest.message,
-              schema: elicitationRequest.requestedSchema,
-              timestamp: new Date(),
-            })}\n\n`,
-          ),
-        );
-      }
-      dbg("Elicitation requested", { requestId });
-
-      // Return a promise that will be resolved when user responds
-      return new Promise<{
-        action: "accept" | "decline" | "cancel";
-        content?: { [x: string]: unknown };
-        _meta?: { [x: string]: unknown };
-      }>((resolve, reject) => {
-        pendingElicitations.set(requestId, { resolve, reject });
-
-        // Set a timeout to clean up if no response
-        setTimeout(() => {
-          if (pendingElicitations.has(requestId)) {
-            pendingElicitations.delete(requestId);
-            reject(new Error("Elicitation timeout"));
-          }
-        }, 300000); // 5 minute timeout
-      });
-    };
+    const elicitationHandler = createElicitationHandler(streamManager);
 
     // Register elicitation handler with the client for all servers
     if (client.elicitation && client.elicitation.onRequest && serverConfigs) {
-      // Register elicitation handler for each server
       for (const serverName of Object.keys(serverConfigs)) {
-        // Normalize server name to match MCPClient's internal naming
         const normalizedName = serverName
           .toLowerCase()
           .replace(/[\s\-]+/g, "_")
@@ -196,259 +466,38 @@ chat.post("/", async (c) => {
       }
     }
 
-    // Wrap tools to capture tool calls and results when statically resolved
-    const tools = await client.getTools();
-    const originalTools = tools && Object.keys(tools).length > 0 ? tools : {};
-    const wrappedTools: Record<string, any> = {};
-
-    for (const [name, tool] of Object.entries(originalTools)) {
-      wrappedTools[name] = {
-        ...(tool as any),
-        execute: async (params: any) => {
-          const currentToolCallId = ++toolCallId;
-          const startedAt = Date.now();
-
-          // Stream tool call event immediately
-          if (streamController && encoder) {
-            streamController.enqueue(
-              encoder.encode(
-                `data: ${JSON.stringify({
-                  type: "tool_call",
-                  toolCall: {
-                    id: currentToolCallId,
-                    name,
-                    parameters: params,
-                    timestamp: new Date(),
-                    status: "executing",
-                  },
-                })}\n\n`,
-              ),
-            );
-          }
-          dbg("Tool executing", { name, currentToolCallId, params });
-
-          try {
-            const result = await (tool as any).execute(params);
-            dbg("Tool result", { name, currentToolCallId, ms: Date.now() - startedAt });
-
-            // Stream tool result event immediately
-            if (streamController && encoder) {
-              streamController.enqueue(
-                encoder.encode(
-                  `data: ${JSON.stringify({
-                    type: "tool_result",
-                    toolResult: {
-                      id: currentToolCallId,
-                      toolCallId: currentToolCallId,
-                      result,
-                      timestamp: new Date(),
-                    },
-                  })}\n\n`,
-                ),
-              );
-            }
-
-            return result;
-          } catch (error) {
-            dbg("Tool error", { name, currentToolCallId, error: error instanceof Error ? error.message : String(error) });
-            // Stream tool error event immediately
-            if (streamController && encoder) {
-              streamController.enqueue(
-                encoder.encode(
-                  `data: ${JSON.stringify({
-                    type: "tool_result",
-                    toolResult: {
-                      id: currentToolCallId,
-                      toolCallId: currentToolCallId,
-                      error:
-                        error instanceof Error ? error.message : String(error),
-                      timestamp: new Date(),
-                    },
-                  })}\n\n`,
-                ),
-              );
-            }
-            throw error;
-          }
-        },
-      };
-    }
-
-    const agent = new Agent({
-      name: "MCP Chat Agent",
-      instructions:
-        systemPrompt || "You are a helpful assistant with access to MCP tools.",
-      model: llmModel,
-      tools: Object.keys(wrappedTools).length > 0 ? wrappedTools : undefined,
-    });
+    // Set up agent and handlers
+    const { agent, stepFinishHandler, finishHandler } = setupAgentWithStreaming(
+      client,
+      llmModel,
+      systemPrompt || "You are a helpful assistant with access to MCP tools.",
+      streamManager,
+    );
 
     const formattedMessages = messages.map((msg: ChatMessage) => ({
       role: msg.role,
       content: msg.content,
     }));
 
-    // Start streaming; prefer dynamic toolsets so tools are resolved at call-time
-    const toolsets = serverConfigs ? await client.getToolsets() : undefined;
-    dbg("Streaming start", {
-      toolsetServers: toolsets ? Object.keys(toolsets) : [],
-      messageCount: formattedMessages.length,
-    });
-    let streamedAnyText = false;
-    const stream = await agent.stream(formattedMessages, {
-      maxSteps: 10, // Allow up to 10 steps for tool usage
-      toolsets,
-      onStepFinish: ({ text, toolCalls, toolResults }) => {
-        try {
-          if (text && streamController && encoder) {
-            streamedAnyText = true;
-            streamController.enqueue(
-              encoder.encode(
-                `data: ${JSON.stringify({ type: "text", content: text })}\n\n`,
-              ),
-            );
-          }
-
-          const tcList = toolCalls as any[] | undefined;
-          if (tcList && Array.isArray(tcList)) {
-            for (const call of tcList) {
-              const currentToolCallId = ++toolCallId;
-              lastEmittedToolCallId = currentToolCallId;
-              if (streamController && encoder) {
-                streamController.enqueue(
-                  encoder.encode(
-                    `data: ${JSON.stringify({
-                      type: "tool_call",
-                      toolCall: {
-                        id: currentToolCallId,
-                        name: call.name || call.toolName,
-                        parameters: call.params || call.args || {},
-                        timestamp: new Date(),
-                        status: "executing",
-                      },
-                    })}\n\n`,
-                  ),
-                );
-              }
-            }
-          }
-
-          const trList = toolResults as any[] | undefined;
-          if (trList && Array.isArray(trList)) {
-            for (const result of trList) {
-              const currentToolCallId =
-                lastEmittedToolCallId != null ? lastEmittedToolCallId : ++toolCallId;
-              if (streamController && encoder) {
-                streamController.enqueue(
-                  encoder.encode(
-                    `data: ${JSON.stringify({
-                      type: "tool_result",
-                      toolResult: {
-                        id: currentToolCallId,
-                        toolCallId: currentToolCallId,
-                        result: result.result,
-                        error: (result as any).error,
-                        timestamp: new Date(),
-                      },
-                    })}\n\n`,
-                  ),
-                );
-              }
-            }
-          }
-        } catch (err) {
-          dbg("onStepFinish error", err);
-        }
-      },
-      onFinish: ({ text, finishReason }) => {
-        dbg("onFinish called", { finishReason, hasText: Boolean(text) });
-        try {
-          if (text && streamController && encoder) {
-            streamedAnyText = true;
-            streamController.enqueue(
-              encoder.encode(
-                `data: ${JSON.stringify({ type: "text", content: text })}\n\n`,
-              ),
-            );
-          }
-        } catch (err) {
-          dbg("onFinish enqueue error", err);
-        }
-      },
-    });
-
-    encoder = new TextEncoder();
+    // Create readable stream for response
     const readableStream = new ReadableStream({
       async start(controller) {
-        streamController = controller;
+        streamManager.setController(controller);
 
         try {
-          let hasContent = false;
-          let chunkCount = 0;
-          for await (const chunk of stream.textStream) {
-            if (chunk && chunk.trim()) {
-              hasContent = true;
-              chunkCount++;
-              controller.enqueue(
-                encoder!.encode(
-                  `data: ${JSON.stringify({ type: "text", content: chunk })}\n\n`,
-                ),
-              );
-            }
-          }
-          dbg("Streaming finished", { hasContent, chunkCount });
-
-          // If no content was streamed, send a fallback message
-          if (!hasContent && !streamedAnyText) {
-            dbg("No content from textStream/callbacks; falling back to generate()");
-            try {
-              const gen = await agent.generate(formattedMessages, {
-                maxSteps: 10,
-                toolsets,
-              });
-              const finalText = gen.text || "";
-              if (finalText) {
-                controller.enqueue(
-                  encoder!.encode(
-                    `data: ${JSON.stringify({ type: "text", content: finalText })}\n\n`,
-                  ),
-                );
-              } else {
-                dbg("generate() also returned empty text");
-                controller.enqueue(
-                  encoder!.encode(
-                    `data: ${JSON.stringify({ type: "text", content: "I apologize, but I couldn't generate a response. Please try again." })}\n\n`,
-                  ),
-                );
-              }
-            } catch (fallbackErr) {
-              console.error("[mcp/chat] Fallback generate() error:", fallbackErr);
-              controller.enqueue(
-                encoder!.encode(
-                  `data: ${JSON.stringify({ type: "error", error: fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr) })}\n\n`,
-                ),
-              );
-            }
-          }
-
-          // Stream elicitation completion if there were any
-          controller.enqueue(
-            encoder!.encode(
-              `data: ${JSON.stringify({
-                type: "elicitation_complete",
-              })}\n\n`,
-            ),
+          await handleChatGeneration(
+            client!,
+            agent,
+            formattedMessages,
+            streamManager,
+            stepFinishHandler,
+            finishHandler,
+            serverConfigs,
           );
-
-          controller.enqueue(encoder!.encode(`data: [DONE]\n\n`));
         } catch (error) {
           console.error("[mcp/chat] Streaming error:", error);
-          controller.enqueue(
-            encoder!.encode(
-              `data: ${JSON.stringify({
-                type: "error",
-                error: error instanceof Error ? error.message : "Unknown error",
-              })}\n\n`,
-            ),
+          streamManager.streamError(
+            error instanceof Error ? error.message : "Unknown error",
           );
         } finally {
           if (client) {
@@ -461,7 +510,7 @@ chat.post("/", async (c) => {
               );
             }
           }
-          controller.close();
+          streamManager.close();
         }
       },
     });
@@ -495,11 +544,11 @@ chat.post("/", async (c) => {
   }
 });
 
-const getLlmModel = (
+function getLlmModel(
   modelDefinition: ModelDefinition,
   apiKey: string,
   ollamaBaseUrl?: string,
-) => {
+) {
   if (!modelDefinition || !modelDefinition.id || !modelDefinition.provider) {
     throw new Error(
       `Invalid model definition: ${JSON.stringify(modelDefinition)}`,
@@ -518,16 +567,15 @@ const getLlmModel = (
     case "ollama":
       const baseUrl = ollamaBaseUrl || "http://localhost:11434";
       return createOllama({
-        // The provider expects the root Ollama URL; it internally targets the /api endpoints
-        baseURL: `${baseUrl}`,
+        baseURL: baseUrl,
       })(modelDefinition.id, {
-        simulateStreaming: true, // Enable streaming for Ollama models
+        simulateStreaming: true,
       });
     default:
       throw new Error(
         `Unsupported provider: ${modelDefinition.provider} for model: ${modelDefinition.id}`,
       );
   }
-};
+}
 
 export default chat;
