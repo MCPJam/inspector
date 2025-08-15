@@ -24,6 +24,7 @@ client/node_modules/
 cli/node_modules/
 server/node_modules/
 mcp-chat-client/node_modules/
+temp/
 
 # misc
 .DS_Store
