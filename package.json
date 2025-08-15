@@ -62,7 +62,7 @@
     "@hookform/resolvers": "^3.10.0",
     "@mastra/core": "^0.10.6",
     "@mastra/mcp": "^0.10.6",
-    "@modelcontextprotocol/sdk": "^1.17.1",
+    "@modelcontextprotocol/sdk": "^1.17.3",
     "@tanstack/react-query": "^5.83.0",
     "@tanstack/react-table": "^8.21.3",
     "@uiw/react-json-view": "^2.0.0-alpha.33",
