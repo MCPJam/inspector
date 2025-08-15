@@ -10,6 +10,31 @@ import {
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
 import { detectOllamaModels } from "@/lib/ollama-utils";
 
+// Types for streaming events
+interface StreamingEvent {
+  type:
+    | "text"
+    | "tool_call"
+    | "tool_result"
+    | "elicitation_request"
+    | "elicitation_complete"
+    | "error";
+  content?: string;
+  toolCall?: any;
+  toolResult?: any;
+  error?: string;
+  requestId?: string;
+  message?: string;
+  schema?: any;
+  timestamp?: string;
+}
+
+interface MessageUpdateRefs {
+  content: { current: string };
+  toolCalls: { current: any[] };
+  toolResults: { current: any[] };
+}
+
 interface ElicitationRequest {
   requestId: string;
   message: string;
@@ -160,60 +185,61 @@ export function useChat(options: UseChatOptions = {}) {
     return availableModelsList;
   }, [isOllamaRunning, ollamaModels, hasToken]);
 
-  const handleStreamingEvent = useCallback(
-    (
-      parsed: any,
-      assistantMessage: ChatMessage,
-      assistantContent: { current: string },
-      toolCalls: { current: any[] },
-      toolResults: { current: any[] },
-    ) => {
-      // Handle text content
-      if (
-        (parsed.type === "text" || (!parsed.type && parsed.content)) &&
-        parsed.content
-      ) {
-        assistantContent.current += parsed.content;
+  // Event parsers and handlers
+  const parseStreamingEvent = useCallback(
+    (data: string): StreamingEvent | null => {
+      try {
+        return JSON.parse(data);
+      } catch (parseError) {
+        console.warn("Failed to parse SSE data:", data, parseError);
+        return null;
+      }
+    },
+    [],
+  );
+
+  const handleTextEvent = useCallback(
+    (event: StreamingEvent, messageId: string, refs: MessageUpdateRefs) => {
+      if (event.content) {
+        refs.content.current += event.content;
         setState((prev) => ({
           ...prev,
           messages: prev.messages.map((msg) =>
-            msg.id === assistantMessage.id
-              ? { ...msg, content: assistantContent.current }
+            msg.id === messageId
+              ? { ...msg, content: refs.content.current }
               : msg,
           ),
         }));
-        return;
       }
+    },
+    [],
+  );
 
-      // Handle tool calls
-      if (
-        (parsed.type === "tool_call" || (!parsed.type && parsed.toolCall)) &&
-        parsed.toolCall
-      ) {
-        const toolCall = parsed.toolCall;
-        toolCalls.current = [...toolCalls.current, toolCall];
+  const handleToolCallEvent = useCallback(
+    (event: StreamingEvent, messageId: string, refs: MessageUpdateRefs) => {
+      if (event.toolCall) {
+        refs.toolCalls.current = [...refs.toolCalls.current, event.toolCall];
         setState((prev) => ({
           ...prev,
           messages: prev.messages.map((msg) =>
-            msg.id === assistantMessage.id
-              ? { ...msg, toolCalls: [...toolCalls.current] }
+            msg.id === messageId
+              ? { ...msg, toolCalls: [...refs.toolCalls.current] }
               : msg,
           ),
         }));
-        return;
       }
+    },
+    [],
+  );
 
-      // Handle tool results
-      if (
-        (parsed.type === "tool_result" ||
-          (!parsed.type && parsed.toolResult)) &&
-        parsed.toolResult
-      ) {
-        const toolResult = parsed.toolResult;
-        toolResults.current = [...toolResults.current, toolResult];
+  const handleToolResultEvent = useCallback(
+    (event: StreamingEvent, messageId: string, refs: MessageUpdateRefs) => {
+      if (event.toolResult) {
+        const toolResult = event.toolResult;
+        refs.toolResults.current = [...refs.toolResults.current, toolResult];
 
         // Update the corresponding tool call status
-        toolCalls.current = toolCalls.current.map((tc) =>
+        refs.toolCalls.current = refs.toolCalls.current.map((tc) =>
           tc.id === toolResult.toolCallId
             ? {
                 ...tc,
@@ -225,44 +251,74 @@ export function useChat(options: UseChatOptions = {}) {
         setState((prev) => ({
           ...prev,
           messages: prev.messages.map((msg) =>
-            msg.id === assistantMessage.id
+            msg.id === messageId
               ? {
                   ...msg,
-                  toolCalls: [...toolCalls.current],
-                  toolResults: [...toolResults.current],
+                  toolCalls: [...refs.toolCalls.current],
+                  toolResults: [...refs.toolResults.current],
                 }
               : msg,
           ),
         }));
-        return;
-      }
-
-      // Handle elicitation requests
-      if (parsed.type === "elicitation_request") {
-        setElicitationRequest({
-          requestId: parsed.requestId,
-          message: parsed.message,
-          schema: parsed.schema,
-          timestamp: parsed.timestamp,
-        });
-        return;
-      }
-
-      // Handle elicitation completion
-      if (parsed.type === "elicitation_complete") {
-        setElicitationRequest(null);
-        return;
-      }
-
-      // Handle errors
-      if (
-        (parsed.type === "error" || (!parsed.type && parsed.error)) &&
-        parsed.error
-      ) {
-        throw new Error(parsed.error);
       }
     },
     [],
+  );
+
+  const handleElicitationEvent = useCallback((event: StreamingEvent) => {
+    if (event.type === "elicitation_request") {
+      setElicitationRequest({
+        requestId: event.requestId!,
+        message: event.message!,
+        schema: event.schema,
+        timestamp: event.timestamp!,
+      });
+    } else if (event.type === "elicitation_complete") {
+      setElicitationRequest(null);
+    }
+  }, []);
+
+  const handleStreamingEvent = useCallback(
+    (event: StreamingEvent, messageId: string, refs: MessageUpdateRefs) => {
+      switch (event.type) {
+        case "text":
+          handleTextEvent(event, messageId, refs);
+          break;
+        case "tool_call":
+          handleToolCallEvent(event, messageId, refs);
+          break;
+        case "tool_result":
+          handleToolResultEvent(event, messageId, refs);
+          break;
+        case "elicitation_request":
+        case "elicitation_complete":
+          handleElicitationEvent(event);
+          break;
+        case "error":
+          if (event.error) {
+            throw new Error(event.error);
+          }
+          break;
+        default:
+          // Handle legacy events without explicit type
+          if (event.content) {
+            handleTextEvent(event, messageId, refs);
+          } else if (event.toolCall) {
+            handleToolCallEvent(event, messageId, refs);
+          } else if (event.toolResult) {
+            handleToolResultEvent(event, messageId, refs);
+          } else if (event.error) {
+            throw new Error(event.error);
+          }
+          break;
+      }
+    },
+    [
+      handleTextEvent,
+      handleToolCallEvent,
+      handleToolResultEvent,
+      handleElicitationEvent,
+    ],
   );
 
   const sendChatRequest = useCallback(
@@ -312,9 +368,11 @@ export function useChat(options: UseChatOptions = {}) {
         // Handle streaming response
         const reader = response.body?.getReader();
         const decoder = new TextDecoder();
-        const assistantContent = { current: "" };
-        const toolCalls = { current: [] as any[] };
-        const toolResults = { current: [] as any[] };
+        const refs: MessageUpdateRefs = {
+          content: { current: "" },
+          toolCalls: { current: [] as any[] },
+          toolResults: { current: [] as any[] },
+        };
         let buffer = "";
         let isDone = false;
 
@@ -342,17 +400,9 @@ export function useChat(options: UseChatOptions = {}) {
                 }
 
                 if (data) {
-                  try {
-                    const parsed = JSON.parse(data);
-                    handleStreamingEvent(
-                      parsed,
-                      assistantMessage,
-                      assistantContent,
-                      toolCalls,
-                      toolResults,
-                    );
-                  } catch (parseError) {
-                    console.warn("Failed to parse SSE data:", data, parseError);
+                  const event = parseStreamingEvent(data);
+                  if (event) {
+                    handleStreamingEvent(event, assistantMessage.id, refs);
                   }
                 }
               }
@@ -361,14 +411,14 @@ export function useChat(options: UseChatOptions = {}) {
         }
 
         // Ensure we have some content, even if empty
-        if (!assistantContent.current && !toolCalls.current.length) {
+        if (!refs.content.current && !refs.toolCalls.current.length) {
           console.warn("No content received from stream");
         }
 
         if (onMessageReceived) {
           const finalMessage = {
             ...assistantMessage,
-            content: assistantContent.current,
+            content: refs.content.current,
           };
           onMessageReceived(finalMessage);
         }
@@ -386,6 +436,7 @@ export function useChat(options: UseChatOptions = {}) {
       currentApiKey,
       systemPrompt,
       onMessageReceived,
+      parseStreamingEvent,
       handleStreamingEvent,
       getOllamaBaseUrl,
     ],

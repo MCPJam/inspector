@@ -8,7 +8,6 @@ import { ElicitationDialog } from "./ElicitationDialog";
 import { TooltipProvider } from "./ui/tooltip";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
- 
 
 interface ChatTabProps {
   serverConfigs?: Record<string, MastraMCPServerDefinition>;
@@ -20,9 +19,8 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
   const [isAtBottom, setIsAtBottom] = useState(true);
 
   const [systemPromptState, setSystemPromptState] = useState(
-    systemPrompt || "You are a helpful assistant with access to MCP tools."
+    systemPrompt || "You are a helpful assistant with access to MCP tools.",
   );
- 
 
   const {
     messages,
