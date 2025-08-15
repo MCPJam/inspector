@@ -9,10 +9,17 @@ export default defineConfig({
     alias: {
       "@/shared": path.resolve(__dirname, "../shared"),
       "@": path.resolve(__dirname, "./src"),
+      // Force React resolution to prevent conflicts with @mcp-ui/client
       react: path.resolve(__dirname, "node_modules/react"),
       "react-dom": path.resolve(__dirname, "node_modules/react-dom"),
     },
     dedupe: ["react", "react-dom"],
+  },
+  optimizeDeps: {
+    // Explicitly include React runtimes to ensure proper resolution
+    include: ["react", "react-dom", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    // Force re-optimization to clear any cached conflicts
+    force: process.env.FORCE_OPTIMIZE === "true",
   },
   server: {
     proxy: {

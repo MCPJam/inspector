@@ -5,7 +5,9 @@
   "private": true,
   "scripts": {
     "dev": "vite --port 3000",
+    "dev:clean": "rm -rf node_modules/.vite && FORCE_OPTIMIZE=true vite --port 3000",
     "build": "vite build --outDir ../dist/client",
+    "build:clean": "rm -rf node_modules/.vite && FORCE_OPTIMIZE=true vite build --outDir ../dist/client",
     "preview": "vite preview"
   },
   "dependencies": {
