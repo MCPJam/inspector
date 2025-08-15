@@ -28,6 +28,8 @@ export const getProviderLogoFromProvider = (
       }
       // Default to light logo for light mode or when themeMode is not provided
       return ollamaLogo;
+    case "web-llm":
+      return null; // fallback to colored square
     default:
       return null;
   }
@@ -50,6 +52,8 @@ export const getProviderColor = (provider: string) => {
       return "text-blue-600 dark:text-blue-400";
     case "ollama":
       return "text-gray-600 dark:text-gray-400";
+    case "web-llm":
+      return "text-purple-600 dark:text-purple-400";
     default:
       return "text-blue-600 dark:text-blue-400";
   }
