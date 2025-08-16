@@ -155,7 +155,7 @@ export function EditServerModal({
   }, [server, isOpen]);
 
   // Basic client ID validation
-  const validateClientId = (id: string): string | null => {
+  const maybeClientIdError = (id: string): string | null => {
     if (!id.trim()) {
       return "Client ID is required when using manual configuration";
     }
@@ -179,7 +179,7 @@ export function EditServerModal({
   };
 
   // Basic client secret validation following OAuth 2.0 spec flexibility
-  const validateClientSecret = (secret: string): string | null => {
+  const maybeClientSecretError = (secret: string): string | null => {
     // OAuth 2.0 spec doesn't mandate specific format requirements
     // but we implement basic security guidelines
     if (secret && secret.trim().length > 0) {
@@ -205,7 +205,7 @@ export function EditServerModal({
 
     // Validate Client ID if using custom configuration
     if (authType === "oauth" && useCustomClientId) {
-      const clientIdError = validateClientId(clientId);
+      const clientIdError = maybeClientIdError(clientId);
       if (clientIdError) {
         toast.error(clientIdError);
         return;
@@ -213,7 +213,7 @@ export function EditServerModal({
 
       // Validate Client Secret if provided
       if (clientSecret) {
-        const clientSecretError = validateClientSecret(clientSecret);
+        const clientSecretError = maybeClientSecretError(clientSecret);
         if (clientSecretError) {
           toast.error(clientSecretError);
           return;
