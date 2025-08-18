@@ -299,14 +299,7 @@ chat.post("/", async (c) => {
       toolsets,
       onStepFinish: ({ text, toolCalls, toolResults }) => {
         try {
-          if (text && streamController && encoder) {
-            streamedAnyText = true;
-            streamController.enqueue(
-              encoder.encode(
-                `data: ${JSON.stringify({ type: "text", content: text })}\n\n`,
-              ),
-            );
-          }
+          // Remove text streaming here to avoid duplication - handled by main textStream loop
 
           const tcList = toolCalls as any[] | undefined;
           if (tcList && Array.isArray(tcList)) {
@@ -362,14 +355,7 @@ chat.post("/", async (c) => {
       onFinish: ({ text, finishReason }) => {
         dbg("onFinish called", { finishReason, hasText: Boolean(text) });
         try {
-          if (text && streamController && encoder) {
-            streamedAnyText = true;
-            streamController.enqueue(
-              encoder.encode(
-                `data: ${JSON.stringify({ type: "text", content: text })}\n\n`,
-              ),
-            );
-          }
+          // Remove text streaming here to avoid duplication - handled by main textStream loop
         } catch (err) {
           dbg("onFinish enqueue error", err);
         }

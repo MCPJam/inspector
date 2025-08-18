@@ -165,8 +165,18 @@ export function ToolCallDisplay({
   const [isExpanded, setIsExpanded] = useState(false);
   const [showJsonTree, setShowJsonTree] = useState(false);
 
+  // Determine the effective status based on toolResult presence
+  const getEffectiveStatus = () => {
+    if (toolResult) {
+      return toolResult.error ? "error" : "completed";
+    }
+    return toolCall.status;
+  };
+
+  const effectiveStatus = getEffectiveStatus();
+
   const getStatusIcon = () => {
-    switch (toolCall.status) {
+    switch (effectiveStatus) {
       case "completed":
         return (
           <div className="relative">
@@ -203,11 +213,11 @@ export function ToolCallDisplay({
     <div
       className={cn(
         "border rounded-lg bg-gradient-to-br from-muted/20 to-muted/40 backdrop-blur-sm shadow-sm hover:shadow-md transition-all duration-200",
-        toolCall.status === "completed" &&
+        effectiveStatus === "completed" &&
           "border-green-200/50 dark:border-green-800/50",
-        toolCall.status === "error" &&
+        effectiveStatus === "error" &&
           "border-red-200/50 dark:border-red-800/50",
-        toolCall.status === "executing" &&
+        effectiveStatus === "executing" &&
           "border-blue-200/50 dark:border-blue-800/50",
         className,
       )}
