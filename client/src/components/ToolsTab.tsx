@@ -460,8 +460,6 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                 }
 
                 const currentTool = tools[selectedTool];
-                console.log("currentTool", currentTool);
-
                 if (currentTool && currentTool.outputSchema) {
                   const outputSchema = currentTool.outputSchema;
 
