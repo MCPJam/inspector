@@ -17,7 +17,12 @@ export default defineConfig({
   },
   optimizeDeps: {
     // Explicitly include React runtimes to ensure proper resolution
-    include: ["react", "react-dom", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    include: [
+      "react",
+      "react-dom",
+      "react/jsx-runtime",
+      "react/jsx-dev-runtime",
+    ],
     // Force re-optimization to clear any cached conflicts
     force: process.env.FORCE_OPTIMIZE === "true",
   },
