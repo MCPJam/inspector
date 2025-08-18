@@ -35,6 +35,7 @@ import { TruncatedText } from "@/components/ui/truncated-text";
 import { validateToolOutput } from "@/lib/schema-utils";
 import { SearchInput } from "@/components/ui/search-input";
 import { UIResourceRenderer } from "@mcp-ui/client";
+import SaveRequestDialog from "./SaveRequestDialog";
 import { listSavedRequests, saveRequest, deleteRequest, duplicateRequest, updateRequestMeta } from "@/lib/request-storage";
 import type { SavedRequest } from "@/lib/request-types";
 import { Save as SaveIcon, Trash2, Copy, Edit2 } from "lucide-react";
@@ -112,9 +113,9 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
     }
   }, [serverConfig]);
   const [savedRequests, setSavedRequests] = useState<SavedRequest[]>([]);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editingTitle, setEditingTitle] = useState<string>("");
-  const [editingDescription, setEditingDescription] = useState<string>("");
+  const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
+  const [editingRequestId, setEditingRequestId] = useState<string | null>(null);
+  const [dialogDefaults, setDialogDefaults] = useState<{ title: string; description?: string }>({ title: "" });
 
   useEffect(() => {
     if (serverConfig) {
@@ -577,21 +578,9 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
 
   const handleSaveCurrent = () => {
     if (!selectedTool) return;
-    const params = buildParameters();
-    const title = `${selectedTool}`;
-    const description = "";
-    const saved = saveRequest(serverKey, {
-      title,
-      description: description || undefined,
-      toolName: selectedTool,
-      parameters: params,
-    });
-    setSavedRequests(listSavedRequests(serverKey));
-    logger.info("Saved request", { id: saved.id, title: saved.title });
-    // Enter inline edit mode immediately
-    setEditingId(saved.id);
-    setEditingTitle(saved.title);
-    setEditingDescription(saved.description || "");
+    setEditingRequestId(null);
+    setDialogDefaults({ title: `${selectedTool}`, description: "" });
+    setIsSaveDialogOpen(true);
   };
 
   const handleLoadRequest = (req: SavedRequest) => {
@@ -611,9 +600,9 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
   };
 
   const handleRenameRequest = (req: SavedRequest) => {
-    setEditingId(req.id);
-    setEditingTitle(req.title);
-    setEditingDescription(req.description || "");
+    setEditingRequestId(req.id);
+    setDialogDefaults({ title: req.title, description: req.description });
+    setIsSaveDialogOpen(true);
   };
 
   // removed favorite feature
@@ -739,21 +728,10 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                                     <div className="flex items-center gap-2">
                                       <code className="font-mono text-[10px] bg-muted px-1.5 py-0.5 rounded border border-border">{request.toolName}</code>
                                     </div>
-                                    {editingId === request.id ? (
-                                      <div className="mt-1 space-y-1" onClick={(e) => e.stopPropagation()}>
-                                        <input value={editingTitle} onChange={(e) => setEditingTitle(e.target.value)} className="w-full text-xs px-2 py-1 rounded border border-border bg-background" />
-                                        <input value={editingDescription} onChange={(e) => setEditingDescription(e.target.value)} placeholder="Description" className="w-full text-[10px] px-2 py-1 rounded border border-border bg-background" />
-                                        <div className="flex gap-2 mt-1">
-                                          <Button size="sm" className="h-6 px-2" onClick={() => { updateRequestMeta(serverKey, request.id, { title: editingTitle, description: editingDescription || undefined }); setSavedRequests(listSavedRequests(serverKey)); setEditingId(null); }}>Save</Button>
-                                          <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => setEditingId(null)}>Cancel</Button>
-                                        </div>
-                                      </div>
-                                    ) : (
-                                      <div>
-                                        <div className="text-xs font-medium truncate">{request.title}</div>
-                                        {request.description && <div className="text-[10px] text-muted-foreground truncate">{request.description}</div>}
-                                      </div>
-                                    )}
+                                    <div>
+                                      <div className="text-xs font-medium truncate">{request.title}</div>
+                                      {request.description && <div className="text-[10px] text-muted-foreground truncate">{request.description}</div>}
+                                    </div>
                                   </div>
                                   <div className="flex gap-1">
                                     <Button onClick={(e) => { e.stopPropagation(); handleRenameRequest(request); }} size="sm" variant="ghost" className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100"><Edit2 className="w-3 h-3"/></Button>
@@ -1296,6 +1274,31 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
         elicitationRequest={elicitationRequest}
         onResponse={handleElicitationResponse}
         loading={elicitationLoading}
+      />
+
+      <SaveRequestDialog
+        open={isSaveDialogOpen}
+        defaultTitle={dialogDefaults.title}
+        defaultDescription={dialogDefaults.description}
+        onCancel={() => setIsSaveDialogOpen(false)}
+        onSave={({ title, description }) => {
+          if (editingRequestId) {
+            updateRequestMeta(serverKey, editingRequestId, { title, description });
+            setSavedRequests(listSavedRequests(serverKey));
+            setEditingRequestId(null);
+            setIsSaveDialogOpen(false);
+            return;
+          }
+          const params = buildParameters();
+          saveRequest(serverKey, {
+            title,
+            description,
+            toolName: selectedTool,
+            parameters: params,
+          });
+          setSavedRequests(listSavedRequests(serverKey));
+          setIsSaveDialogOpen(false);
+        }}
       />
     </div>
   );
