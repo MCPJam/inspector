@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useLogger } from "@/hooks/use-logger";
 import { Card, CardContent } from "./ui/card";
 import { Button } from "./ui/button";
@@ -35,6 +35,10 @@ import { TruncatedText } from "@/components/ui/truncated-text";
 import { validateToolOutput } from "@/lib/schema-utils";
 import { SearchInput } from "@/components/ui/search-input";
 import { UIResourceRenderer } from "@mcp-ui/client";
+import SaveRequestDialog from "./SaveRequestDialog";
+import { listSavedRequests, saveRequest, deleteRequest, duplicateRequest, updateRequestMeta } from "@/lib/request-storage";
+import type { SavedRequest } from "@/lib/request-types";
+import { Save as SaveIcon, Trash2, Copy, Edit2 } from "lucide-react";
 
 interface Tool {
   name: string;
@@ -93,6 +97,25 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
     useState<ElicitationRequest | null>(null);
   const [elicitationLoading, setElicitationLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const serverKey = useMemo(() => {
+    if (!serverConfig) return "none";
+    try {
+      if ((serverConfig as any).url) {
+        return `http:${(serverConfig as any).url}`;
+      }
+      if ((serverConfig as any).command) {
+        const args = ((serverConfig as any).args || []).join(" ");
+        return `stdio:${(serverConfig as any).command} ${args}`.trim();
+      }
+      return JSON.stringify(serverConfig);
+    } catch {
+      return "unknown";
+    }
+  }, [serverConfig]);
+  const [savedRequests, setSavedRequests] = useState<SavedRequest[]>([]);
+  const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
+  const [editingRequestId, setEditingRequestId] = useState<string | null>(null);
+  const [dialogDefaults, setDialogDefaults] = useState<{ title: string; description?: string }>({ title: "" });
 
   useEffect(() => {
     if (serverConfig) {
@@ -106,6 +129,11 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
       }
     };
   }, [serverConfig, logger]);
+
+  useEffect(() => {
+    if (!serverConfig) return;
+    setSavedRequests(listSavedRequests(serverKey));
+  }, [serverKey, serverConfig]);
 
   useEffect(() => {
     if (selectedTool && tools[selectedTool]) {
@@ -311,6 +339,21 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
       prev.map((field) =>
         field.name === fieldName ? { ...field, value } : field,
       ),
+    );
+  };
+
+  const applyParametersToFields = (params: Record<string, any>) => {
+    setFormFields((prev) =>
+      prev.map((field) => {
+        if (Object.prototype.hasOwnProperty.call(params, field.name)) {
+          const raw = params[field.name];
+          if (field.type === "array" || field.type === "object") {
+            return { ...field, value: JSON.stringify(raw, null, 2) };
+          }
+          return { ...field, value: raw };
+        }
+        return field;
+      }),
     );
   };
 
@@ -533,6 +576,37 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
     }
   };
 
+  const handleSaveCurrent = () => {
+    if (!selectedTool) return;
+    setEditingRequestId(null);
+    setDialogDefaults({ title: `${selectedTool}`, description: "" });
+    setIsSaveDialogOpen(true);
+  };
+
+  const handleLoadRequest = (req: SavedRequest) => {
+    setSelectedTool(req.toolName);
+    // allow form fields to regenerate for the tool, then apply params
+    setTimeout(() => applyParametersToFields(req.parameters), 50);
+  };
+
+  const handleDeleteRequest = (id: string) => {
+    deleteRequest(serverKey, id);
+    setSavedRequests(listSavedRequests(serverKey));
+  };
+
+  const handleDuplicateRequest = (req: SavedRequest) => {
+    duplicateRequest(serverKey, req.id);
+    setSavedRequests(listSavedRequests(serverKey));
+  };
+
+  const handleRenameRequest = (req: SavedRequest) => {
+    setEditingRequestId(req.id);
+    setDialogDefaults({ title: req.title, description: req.description });
+    setIsSaveDialogOpen(true);
+  };
+
+  // removed favorite feature
+
   const handleElicitationResponse = async (
     action: "accept" | "decline" | "cancel",
     parameters?: Record<string, any>,
@@ -624,99 +698,148 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
         {/* Top Section - Tools and Parameters */}
         <ResizablePanel defaultSize={70} minSize={30}>
           <ResizablePanelGroup direction="horizontal" className="h-full">
-            {/* Left Panel - Tools List */}
-            <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
-              <div className="h-full flex flex-col border-r border-border bg-background">
-                {/* Header */}
-                <div className="px-4 py-4 border-b border-border bg-background space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <Wrench className="h-3 w-3 text-muted-foreground" />
-                      <h2 className="text-xs font-semibold text-foreground">
-                        Tools
-                      </h2>
-                      <Badge variant="secondary" className="text-xs font-mono">
-                        {toolNames.length}
-                      </Badge>
+            {/* Left Panel - Saved Requests + Tools List */}
+            <ResizablePanel defaultSize={35} minSize={20} maxSize={55}>
+              <div className="h-full border-r border-border bg-background">
+                <ResizablePanelGroup direction="vertical" className="h-full">
+                  <ResizablePanel defaultSize={30} minSize={15} maxSize={60}>
+                    {/* Saved Requests */}
+                    <div className="px-4 py-4 border-b border-border bg-background space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <h2 className="text-xs font-semibold text-foreground">Saved Requests</h2>
+                          <Badge variant="secondary" className="text-xs font-mono">{savedRequests.length}</Badge>
+                        </div>
+                      </div>
                     </div>
-                    <Button
-                      onClick={fetchTools}
-                      variant="ghost"
-                      size="sm"
-                      disabled={fetchingTools}
-                    >
-                      <RefreshCw
-                        className={`h-3 w-3 ${fetchingTools ? "animate-spin" : ""} cursor-pointer`}
-                      />
-                    </Button>
-                  </div>
-                  <SearchInput
-                    value={searchQuery}
-                    onValueChange={setSearchQuery}
-                    placeholder="Search tools by name or description"
-                  />
-                </div>
-
-                {/* Tools List */}
-                <div className="flex-1 overflow-hidden">
-                  <ScrollArea className="h-full">
-                    <div className="p-2">
-                      {fetchingTools ? (
-                        <div className="flex flex-col items-center justify-center py-16 text-center">
-                          <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center mb-3">
-                            <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin cursor-pointer" />
-                          </div>
-                          <p className="text-xs text-muted-foreground font-semibold mb-1">
-                            Loading tools...
-                          </p>
-                          <p className="text-xs text-muted-foreground/70">
-                            Fetching available tools from server
-                          </p>
-                        </div>
-                      ) : filteredToolNames.length === 0 ? (
-                        <div className="text-center py-8">
-                          <p className="text-sm text-muted-foreground">
-                            {toolNames.length === 0
-                              ? "No tools available"
-                              : "No tools match your search"}
-                          </p>
-                        </div>
-                      ) : (
-                        <div className="space-y-1">
-                          {filteredToolNames.map((name) => (
-                            <div
-                              key={name}
-                              className={`cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${
-                                selectedTool === name
-                                  ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
-                                  : "hover:shadow-sm"
-                              }`}
-                              onClick={() => {
-                                setSelectedTool(name);
-                              }}
-                            >
-                              <div className="flex items-start gap-3">
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2 mb-1">
-                                    <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border">
-                                      {name}
-                                    </code>
-                                  </div>
-                                  {tools[name]?.description && (
-                                    <p className="text-xs mt-2 line-clamp-2 leading-relaxed text-muted-foreground">
-                                      {tools[name].description}
-                                    </p>
-                                  )}
-                                </div>
-                                <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0 mt-1" />
-                              </div>
+                    <div className="h-[calc(100%-48px)] overflow-hidden">
+                      <ScrollArea className="h-full">
+                        <div className="p-2 space-y-1">
+                          {savedRequests.length === 0 ? (
+                            <div className="text-center py-6">
+                              <p className="text-xs text-muted-foreground">No saved requests</p>
                             </div>
-                          ))}
+                          ) : (
+                            savedRequests.map((request) => (
+                              <div key={request.id} className="group p-2 rounded hover:bg-muted/40 mx-2 cursor-pointer"
+                                   onClick={() => handleLoadRequest(request)}>
+                                <div className="flex items-start justify-between">
+                                  <div className="min-w-0 pr-2">
+                                    <div className="flex items-center gap-2">
+                                      <code className="font-mono text-[10px] bg-muted px-1.5 py-0.5 rounded border border-border">{request.toolName}</code>
+                                    </div>
+                                    <div>
+                                      <div className="text-xs font-medium truncate">{request.title}</div>
+                                      {request.description && <div className="text-[10px] text-muted-foreground truncate">{request.description}</div>}
+                                    </div>
+                                  </div>
+                                  <div className="flex gap-1">
+                                    <Button onClick={(e) => { e.stopPropagation(); handleRenameRequest(request); }} size="sm" variant="ghost" className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100"><Edit2 className="w-3 h-3"/></Button>
+                                    <Button onClick={(e) => { e.stopPropagation(); handleDuplicateRequest(request); }} size="sm" variant="ghost" className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100"><Copy className="w-3 h-3"/></Button>
+                                    <Button onClick={(e) => { e.stopPropagation(); handleDeleteRequest(request.id); }} size="sm" variant="ghost" className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100"><Trash2 className="w-3 h-3"/></Button>
+                                  </div>
+                                </div>
+                              </div>
+                            ))
+                          )}
                         </div>
-                      )}
+                      </ScrollArea>
                     </div>
-                  </ScrollArea>
-                </div>
+                  </ResizablePanel>
+                  <ResizableHandle withHandle />
+                  <ResizablePanel defaultSize={70} minSize={40}>
+                    {/* Tools Header */}
+                    <div className="px-4 py-4 border-b border-border bg-background space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <Wrench className="h-3 w-3 text-muted-foreground" />
+                          <h2 className="text-xs font-semibold text-foreground">
+                            Tools
+                          </h2>
+                          <Badge variant="secondary" className="text-xs font-mono">
+                            {toolNames.length}
+                          </Badge>
+                        </div>
+                        <Button
+                          onClick={fetchTools}
+                          variant="ghost"
+                          size="sm"
+                          disabled={fetchingTools}
+                        >
+                          <RefreshCw
+                            className={`h-3 w-3 ${fetchingTools ? "animate-spin" : ""} cursor-pointer`}
+                          />
+                        </Button>
+                      </div>
+                      <SearchInput
+                        value={searchQuery}
+                        onValueChange={setSearchQuery}
+                        placeholder="Search tools by name or description"
+                      />
+                    </div>
+
+                    {/* Tools List */}
+                    <div className="h-[calc(100%-88px)] overflow-hidden">
+                      <ScrollArea className="h-full">
+                        <div className="p-2">
+                          {fetchingTools ? (
+                            <div className="flex flex-col items-center justify-center py-16 text-center">
+                              <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center mb-3">
+                                <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin cursor-pointer" />
+                              </div>
+                              <p className="text-xs text-muted-foreground font-semibold mb-1">
+                                Loading tools...
+                              </p>
+                              <p className="text-xs text-muted-foreground/70">
+                                Fetching available tools from server
+                              </p>
+                            </div>
+                          ) : filteredToolNames.length === 0 ? (
+                            <div className="text-center py-8">
+                              <p className="text-sm text-muted-foreground">
+                                {toolNames.length === 0
+                                  ? "No tools available"
+                                  : "No tools match your search"}
+                              </p>
+                            </div>
+                          ) : (
+                            <div className="space-y-1">
+                              {filteredToolNames.map((name) => (
+                                <div
+                                  key={name}
+                                  className={`cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${
+                                    selectedTool === name
+                                      ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
+                                      : "hover:shadow-sm"
+                                  }`}
+                                  onClick={() => {
+                                    setSelectedTool(name);
+                                  }}
+                                >
+                                  <div className="flex items-start gap-3">
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-2 mb-1">
+                                        <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border">
+                                          {name}
+                                        </code>
+                                      </div>
+                                      {tools[name]?.description && (
+                                        <p className="text-xs mt-2 line-clamp-2 leading-relaxed text-muted-foreground">
+                                          {tools[name].description}
+                                        </p>
+                                      )}
+                                    </div>
+                                    <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0 mt-1" />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </ScrollArea>
+                    </div>
+                  </ResizablePanel>
+                </ResizablePanelGroup>
               </div>
             </ResizablePanel>
 
@@ -736,26 +859,32 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                           </code>
                         </div>
                       </div>
-                      <Button
-                        onClick={executeTool}
-                        disabled={loading || !selectedTool}
-                        className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm transition-all duration-200 cursor-pointer"
-                        size="sm"
-                      >
-                        {loading ? (
-                          <>
-                            <RefreshCw className="h-3 w-3 mr-1.5 animate-spin cursor-pointer" />
-                            <span className="font-mono text-xs">
-                              {elicitationRequest ? "Waiting..." : "Running"}
-                            </span>
-                          </>
-                        ) : (
-                          <>
-                            <Play className="h-3 w-3 mr-1.5 cursor-pointer" />
-                            <span className="font-mono text-xs">Execute</span>
-                          </>
-                        )}
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          onClick={executeTool}
+                          disabled={loading || !selectedTool}
+                          className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm transition-all duration-200 cursor-pointer"
+                          size="sm"
+                        >
+                          {loading ? (
+                            <>
+                              <RefreshCw className="h-3 w-3 mr-1.5 animate-spin cursor-pointer" />
+                              <span className="font-mono text-xs">
+                                {elicitationRequest ? "Waiting..." : "Running"}
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              <Play className="h-3 w-3 mr-1.5 cursor-pointer" />
+                              <span className="font-mono text-xs">Execute</span>
+                            </>
+                          )}
+                        </Button>
+                        <Button onClick={handleSaveCurrent} variant="outline" size="sm" disabled={!selectedTool}>
+                          <SaveIcon className="h-3 w-3 mr-1" />
+                          <span className="font-mono text-xs">Save</span>
+                        </Button>
+                      </div>
                     </div>
 
                     {/* Description */}
@@ -1145,6 +1274,31 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
         elicitationRequest={elicitationRequest}
         onResponse={handleElicitationResponse}
         loading={elicitationLoading}
+      />
+
+      <SaveRequestDialog
+        open={isSaveDialogOpen}
+        defaultTitle={dialogDefaults.title}
+        defaultDescription={dialogDefaults.description}
+        onCancel={() => setIsSaveDialogOpen(false)}
+        onSave={({ title, description }) => {
+          if (editingRequestId) {
+            updateRequestMeta(serverKey, editingRequestId, { title, description });
+            setSavedRequests(listSavedRequests(serverKey));
+            setEditingRequestId(null);
+            setIsSaveDialogOpen(false);
+            return;
+          }
+          const params = buildParameters();
+          saveRequest(serverKey, {
+            title,
+            description,
+            toolName: selectedTool,
+            parameters: params,
+          });
+          setSavedRequests(listSavedRequests(serverKey));
+          setIsSaveDialogOpen(false);
+        }}
       />
     </div>
   );
