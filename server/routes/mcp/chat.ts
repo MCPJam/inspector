@@ -68,7 +68,7 @@ chat.post("/", async (c) => {
             success: false,
             error: "requestId is required for elicitation_response action",
           },
-          400,
+          400
         );
       }
 
@@ -79,7 +79,7 @@ chat.post("/", async (c) => {
             success: false,
             error: "No pending elicitation found for this requestId",
           },
-          404,
+          404
         );
       }
 
@@ -96,7 +96,7 @@ chat.post("/", async (c) => {
           success: false,
           error: "model (with id), apiKey, and messages are required",
         },
-        400,
+        400
       );
     }
 
@@ -112,7 +112,7 @@ chat.post("/", async (c) => {
       if (!validation.success) {
         dbg(
           "Server config validation failed",
-          validation.errors || validation.error,
+          validation.errors || validation.error
         );
         return c.json(
           {
@@ -120,14 +120,14 @@ chat.post("/", async (c) => {
             error: validation.error!.message,
             details: validation.errors,
           },
-          validation.error!.status as ContentfulStatusCode,
+          validation.error!.status as ContentfulStatusCode
         );
       }
 
       client = createMCPClientWithMultipleConnections(validation.validConfigs!);
       dbg(
         "Created MCP client with servers",
-        Object.keys(validation.validConfigs!),
+        Object.keys(validation.validConfigs!)
       );
     } else {
       client = new MCPClient({
@@ -164,8 +164,8 @@ chat.post("/", async (c) => {
               message: elicitationRequest.message,
               schema: elicitationRequest.requestedSchema,
               timestamp: new Date(),
-            })}\n\n`,
-          ),
+            })}\n\n`
+          )
         );
       }
       dbg("Elicitation requested", { requestId });
@@ -189,18 +189,18 @@ chat.post("/", async (c) => {
     };
 
     // Register elicitation handler with the client for all servers
-    if (client.elicitation && client.elicitation.onRequest && serverConfigs) {
-      // Register elicitation handler for each server
-      for (const serverName of Object.keys(serverConfigs)) {
-        // Normalize server name to match MCPClient's internal naming
-        const normalizedName = serverName
-          .toLowerCase()
-          .replace(/[\s\-]+/g, "_")
-          .replace(/[^a-z0-9_]/g, "");
-        client.elicitation.onRequest(normalizedName, elicitationHandler);
-        dbg("Registered elicitation handler", { serverName, normalizedName });
-      }
-    }
+    // if (client.elicitation && client.elicitation.onRequest && serverConfigs) {
+    //   // Register elicitation handler for each server
+    //   for (const serverName of Object.keys(serverConfigs)) {
+    //     // Normalize server name to match MCPClient's internal naming
+    //     const normalizedName = serverName
+    //       .toLowerCase()
+    //       .replace(/[\s\-]+/g, "_")
+    //       .replace(/[^a-z0-9_]/g, "");
+    //     client.elicitation.onRequest(normalizedName, elicitationHandler);
+    //     dbg("Registered elicitation handler", { serverName, normalizedName });
+    //   }
+    // }
 
     // Wrap tools to capture tool calls and results when statically resolved
     const tools = await client.getTools();
@@ -227,8 +227,8 @@ chat.post("/", async (c) => {
                     timestamp: new Date(),
                     status: "executing",
                   },
-                })}\n\n`,
-              ),
+                })}\n\n`
+              )
             );
           }
           dbg("Tool executing", { name, currentToolCallId, params });
@@ -253,8 +253,8 @@ chat.post("/", async (c) => {
                       result,
                       timestamp: new Date(),
                     },
-                  })}\n\n`,
-                ),
+                  })}\n\n`
+                )
               );
             }
 
@@ -278,8 +278,8 @@ chat.post("/", async (c) => {
                         error instanceof Error ? error.message : String(error),
                       timestamp: new Date(),
                     },
-                  })}\n\n`,
-                ),
+                  })}\n\n`
+                )
               );
             }
             throw error;
@@ -332,8 +332,8 @@ chat.post("/", async (c) => {
                         timestamp: new Date(),
                         status: "executing",
                       },
-                    })}\n\n`,
-                  ),
+                    })}\n\n`
+                  )
                 );
               }
             }
@@ -358,8 +358,8 @@ chat.post("/", async (c) => {
                         error: (result as any).error,
                         timestamp: new Date(),
                       },
-                    })}\n\n`,
-                  ),
+                    })}\n\n`
+                  )
                 );
               }
             }
@@ -392,8 +392,8 @@ chat.post("/", async (c) => {
               chunkCount++;
               controller.enqueue(
                 encoder!.encode(
-                  `data: ${JSON.stringify({ type: "text", content: chunk })}\n\n`,
-                ),
+                  `data: ${JSON.stringify({ type: "text", content: chunk })}\n\n`
+                )
               );
             }
           }
@@ -402,7 +402,7 @@ chat.post("/", async (c) => {
           // If no content was streamed, send a fallback message
           if (!hasContent && !streamedAnyText) {
             dbg(
-              "No content from textStream/callbacks; falling back to generate()",
+              "No content from textStream/callbacks; falling back to generate()"
             );
             try {
               const gen = await agent.generate(formattedMessages, {
@@ -413,26 +413,26 @@ chat.post("/", async (c) => {
               if (finalText) {
                 controller.enqueue(
                   encoder!.encode(
-                    `data: ${JSON.stringify({ type: "text", content: finalText })}\n\n`,
-                  ),
+                    `data: ${JSON.stringify({ type: "text", content: finalText })}\n\n`
+                  )
                 );
               } else {
                 dbg("generate() also returned empty text");
                 controller.enqueue(
                   encoder!.encode(
-                    `data: ${JSON.stringify({ type: "text", content: "I apologize, but I couldn't generate a response. Please try again." })}\n\n`,
-                  ),
+                    `data: ${JSON.stringify({ type: "text", content: "I apologize, but I couldn't generate a response. Please try again." })}\n\n`
+                  )
                 );
               }
             } catch (fallbackErr) {
               console.error(
                 "[mcp/chat] Fallback generate() error:",
-                fallbackErr,
+                fallbackErr
               );
               controller.enqueue(
                 encoder!.encode(
-                  `data: ${JSON.stringify({ type: "error", error: fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr) })}\n\n`,
-                ),
+                  `data: ${JSON.stringify({ type: "error", error: fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr) })}\n\n`
+                )
               );
             }
           }
@@ -442,8 +442,8 @@ chat.post("/", async (c) => {
             encoder!.encode(
               `data: ${JSON.stringify({
                 type: "elicitation_complete",
-              })}\n\n`,
-            ),
+              })}\n\n`
+            )
           );
 
           controller.enqueue(encoder!.encode(`data: [DONE]\n\n`));
@@ -454,8 +454,8 @@ chat.post("/", async (c) => {
               `data: ${JSON.stringify({
                 type: "error",
                 error: error instanceof Error ? error.message : "Unknown error",
-              })}\n\n`,
-            ),
+              })}\n\n`
+            )
           );
         } finally {
           if (client) {
@@ -464,7 +464,7 @@ chat.post("/", async (c) => {
             } catch (cleanupError) {
               console.warn(
                 "[mcp/chat] Error cleaning up MCP client after streaming:",
-                cleanupError,
+                cleanupError
               );
             }
           }
@@ -497,7 +497,7 @@ chat.post("/", async (c) => {
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
       },
-      500,
+      500
     );
   }
 });
@@ -505,11 +505,11 @@ chat.post("/", async (c) => {
 const getLlmModel = (
   modelDefinition: ModelDefinition,
   apiKey: string,
-  ollamaBaseUrl?: string,
+  ollamaBaseUrl?: string
 ) => {
   if (!modelDefinition || !modelDefinition.id || !modelDefinition.provider) {
     throw new Error(
-      `Invalid model definition: ${JSON.stringify(modelDefinition)}`,
+      `Invalid model definition: ${JSON.stringify(modelDefinition)}`
     );
   }
 
@@ -520,7 +520,7 @@ const getLlmModel = (
       return createOpenAI({ apiKey })(modelDefinition.id);
     case "deepseek":
       return createOpenAI({ apiKey, baseURL: "https://api.deepseek.com/v1" })(
-        modelDefinition.id,
+        modelDefinition.id
       );
     case "ollama":
       const baseUrl = ollamaBaseUrl || "http://localhost:11434";
@@ -532,7 +532,7 @@ const getLlmModel = (
       });
     default:
       throw new Error(
-        `Unsupported provider: ${modelDefinition.provider} for model: ${modelDefinition.id}`,
+        `Unsupported provider: ${modelDefinition.provider} for model: ${modelDefinition.id}`
       );
   }
 };
