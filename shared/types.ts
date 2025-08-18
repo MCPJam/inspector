@@ -121,6 +121,7 @@ export enum Model {
   GPT_4O_MINI = "gpt-4o-mini",
   GPT_4_TURBO = "gpt-4-turbo",
   GPT_4 = "gpt-4",
+  GPT_5 = "gpt-5",
   GPT_3_5_TURBO = "gpt-3.5-turbo",
   O1 = "o1",
   DEEPSEEK_CHAT = "deepseek-chat",
@@ -171,6 +172,7 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     name: "DeepSeek Reasoner",
     provider: "deepseek",
   },
+  { id: Model.GPT_5, name: "GPT-5", provider: "openai" },
 ];
 
 // Helper functions for models
