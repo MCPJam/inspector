@@ -100,3 +100,20 @@ export function toggleFavorite(serverKey: string, id: string): SavedRequest | un
   });
 }
 
+export function updateRequestMeta(
+  serverKey: string,
+  id: string,
+  updates: Partial<Pick<SavedRequest, "title" | "description" | "isFavorite">>,
+): SavedRequest | undefined {
+  const existing = getRequest(serverKey, id);
+  if (!existing) return undefined;
+  return saveRequest(serverKey, {
+    id,
+    title: updates.title ?? existing.title,
+    description: updates.description ?? existing.description,
+    toolName: existing.toolName,
+    parameters: existing.parameters,
+    isFavorite: updates.isFavorite ?? existing.isFavorite,
+  });
+}
+
