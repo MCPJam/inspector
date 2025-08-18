@@ -55,7 +55,6 @@ export function useChat(options: UseChatOptions = {}) {
   const [elicitationLoading, setElicitationLoading] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesRef = useRef(state.messages);
-  console.log("model", model);
   useEffect(() => {
     messagesRef.current = state.messages;
   }, [state.messages]);
