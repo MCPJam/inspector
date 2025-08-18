@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useLogger } from "@/hooks/use-logger";
 import { Card, CardContent } from "./ui/card";
 import { Button } from "./ui/button";
@@ -35,6 +35,9 @@ import { TruncatedText } from "@/components/ui/truncated-text";
 import { validateToolOutput } from "@/lib/schema-utils";
 import { SearchInput } from "@/components/ui/search-input";
 import { UIResourceRenderer } from "@mcp-ui/client";
+import { listSavedRequests, saveRequest, deleteRequest, duplicateRequest, renameRequest, toggleFavorite } from "@/lib/request-storage";
+import type { SavedRequest } from "@/lib/request-types";
+import { Star, StarOff, Plus, Trash2, Copy, Edit2 } from "lucide-react";
 
 interface Tool {
   name: string;
@@ -93,6 +96,22 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
     useState<ElicitationRequest | null>(null);
   const [elicitationLoading, setElicitationLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const serverKey = useMemo(() => {
+    if (!serverConfig) return "none";
+    try {
+      if ((serverConfig as any).url) {
+        return `http:${(serverConfig as any).url}`;
+      }
+      if ((serverConfig as any).command) {
+        const args = ((serverConfig as any).args || []).join(" ");
+        return `stdio:${(serverConfig as any).command} ${args}`.trim();
+      }
+      return JSON.stringify(serverConfig);
+    } catch {
+      return "unknown";
+    }
+  }, [serverConfig]);
+  const [savedRequests, setSavedRequests] = useState<SavedRequest[]>([]);
 
   useEffect(() => {
     if (serverConfig) {
@@ -106,6 +125,11 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
       }
     };
   }, [serverConfig, logger]);
+
+  useEffect(() => {
+    if (!serverConfig) return;
+    setSavedRequests(listSavedRequests(serverKey));
+  }, [serverKey, serverConfig]);
 
   useEffect(() => {
     if (selectedTool && tools[selectedTool]) {
@@ -311,6 +335,21 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
       prev.map((field) =>
         field.name === fieldName ? { ...field, value } : field,
       ),
+    );
+  };
+
+  const applyParametersToFields = (params: Record<string, any>) => {
+    setFormFields((prev) =>
+      prev.map((field) => {
+        if (Object.prototype.hasOwnProperty.call(params, field.name)) {
+          const raw = params[field.name];
+          if (field.type === "array" || field.type === "object") {
+            return { ...field, value: JSON.stringify(raw, null, 2) };
+          }
+          return { ...field, value: raw };
+        }
+        return field;
+      }),
     );
   };
 
@@ -533,6 +572,51 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
     }
   };
 
+  const handleSaveCurrent = () => {
+    if (!selectedTool) return;
+    const params = buildParameters();
+    const defaultTitle = `${selectedTool}`;
+    const title = window.prompt("Save request title", defaultTitle);
+    if (!title) return;
+    const description = window.prompt("Optional description", "");
+    const saved = saveRequest(serverKey, {
+      title,
+      description: description || undefined,
+      toolName: selectedTool,
+      parameters: params,
+    });
+    setSavedRequests(listSavedRequests(serverKey));
+    logger.info("Saved request", { id: saved.id, title: saved.title });
+  };
+
+  const handleLoadRequest = (req: SavedRequest) => {
+    setSelectedTool(req.toolName);
+    // allow form fields to regenerate for the tool, then apply params
+    setTimeout(() => applyParametersToFields(req.parameters), 50);
+  };
+
+  const handleDeleteRequest = (id: string) => {
+    deleteRequest(serverKey, id);
+    setSavedRequests(listSavedRequests(serverKey));
+  };
+
+  const handleDuplicateRequest = (req: SavedRequest) => {
+    duplicateRequest(serverKey, req.id);
+    setSavedRequests(listSavedRequests(serverKey));
+  };
+
+  const handleRenameRequest = (req: SavedRequest) => {
+    const next = window.prompt("New name", req.title);
+    if (!next) return;
+    renameRequest(serverKey, req.id, next);
+    setSavedRequests(listSavedRequests(serverKey));
+  };
+
+  const handleToggleFavorite = (req: SavedRequest) => {
+    toggleFavorite(serverKey, req.id);
+    setSavedRequests(listSavedRequests(serverKey));
+  };
+
   const handleElicitationResponse = async (
     action: "accept" | "decline" | "cancel",
     parameters?: Record<string, any>,
@@ -624,10 +708,55 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
         {/* Top Section - Tools and Parameters */}
         <ResizablePanel defaultSize={70} minSize={30}>
           <ResizablePanelGroup direction="horizontal" className="h-full">
-            {/* Left Panel - Tools List */}
-            <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
+            {/* Left Panel - Saved Requests + Tools List */}
+            <ResizablePanel defaultSize={35} minSize={20} maxSize={55}>
               <div className="h-full flex flex-col border-r border-border bg-background">
-                {/* Header */}
+                {/* Saved Requests */}
+                <div className="px-4 py-4 border-b border-border bg-background space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <h2 className="text-xs font-semibold text-foreground">Saved Requests</h2>
+                      <Badge variant="secondary" className="text-xs font-mono">{savedRequests.length}</Badge>
+                    </div>
+                    <Button onClick={handleSaveCurrent} variant="ghost" size="sm" disabled={!selectedTool}>
+                      <Plus className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </div>
+                <div className="max-h-64 overflow-hidden border-b border-border">
+                  <ScrollArea className="h-64">
+                    <div className="p-2 space-y-1">
+                      {savedRequests.length === 0 ? (
+                        <div className="text-center py-6">
+                          <p className="text-xs text-muted-foreground">No saved requests</p>
+                        </div>
+                      ) : (
+                        savedRequests.map((request) => (
+                          <div key={request.id} className="group flex items-start justify-between p-2 rounded hover:bg-muted/40 cursor-pointer mx-2"
+                               onClick={() => handleLoadRequest(request)}>
+                            <div className="min-w-0 pr-2">
+                              <div className="flex items-center gap-2">
+                                <code className="font-mono text-[10px] bg-muted px-1.5 py-0.5 rounded border border-border">{request.toolName}</code>
+                                <button className="opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => { e.stopPropagation(); handleToggleFavorite(request); }} title={request.isFavorite ? "Unfavorite" : "Favorite"}>
+                                  {request.isFavorite ? <Star className="w-3 h-3 text-yellow-500"/> : <StarOff className="w-3 h-3 text-muted-foreground"/>}
+                                </button>
+                              </div>
+                              <div className="text-xs font-medium truncate">{request.title}</div>
+                              {request.description && <div className="text-[10px] text-muted-foreground truncate">{request.description}</div>}
+                            </div>
+                            <div className="flex gap-1">
+                              <Button onClick={(e) => { e.stopPropagation(); handleRenameRequest(request); }} size="sm" variant="ghost" className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100"><Edit2 className="w-3 h-3"/></Button>
+                              <Button onClick={(e) => { e.stopPropagation(); handleDuplicateRequest(request); }} size="sm" variant="ghost" className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100"><Copy className="w-3 h-3"/></Button>
+                              <Button onClick={(e) => { e.stopPropagation(); handleDeleteRequest(request.id); }} size="sm" variant="ghost" className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100"><Trash2 className="w-3 h-3"/></Button>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </ScrollArea>
+                </div>
+
+                {/* Tools Header */}
                 <div className="px-4 py-4 border-b border-border bg-background space-y-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
