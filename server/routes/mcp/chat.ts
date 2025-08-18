@@ -110,7 +110,10 @@ chat.post("/", async (c) => {
     if (serverConfigs && Object.keys(serverConfigs).length > 0) {
       const validation = validateMultipleServerConfigs(serverConfigs);
       if (!validation.success) {
-        dbg("Server config validation failed", validation.errors || validation.error);
+        dbg(
+          "Server config validation failed",
+          validation.errors || validation.error,
+        );
         return c.json(
           {
             success: false,
@@ -122,7 +125,10 @@ chat.post("/", async (c) => {
       }
 
       client = createMCPClientWithMultipleConnections(validation.validConfigs!);
-      dbg("Created MCP client with servers", Object.keys(validation.validConfigs!));
+      dbg(
+        "Created MCP client with servers",
+        Object.keys(validation.validConfigs!),
+      );
     } else {
       client = new MCPClient({
         id: `chat-${Date.now()}`,
@@ -229,7 +235,11 @@ chat.post("/", async (c) => {
 
           try {
             const result = await (tool as any).execute(params);
-            dbg("Tool result", { name, currentToolCallId, ms: Date.now() - startedAt });
+            dbg("Tool result", {
+              name,
+              currentToolCallId,
+              ms: Date.now() - startedAt,
+            });
 
             // Stream tool result event immediately
             if (streamController && encoder) {
@@ -250,7 +260,11 @@ chat.post("/", async (c) => {
 
             return result;
           } catch (error) {
-            dbg("Tool error", { name, currentToolCallId, error: error instanceof Error ? error.message : String(error) });
+            dbg("Tool error", {
+              name,
+              currentToolCallId,
+              error: error instanceof Error ? error.message : String(error),
+            });
             // Stream tool error event immediately
             if (streamController && encoder) {
               streamController.enqueue(
@@ -329,7 +343,9 @@ chat.post("/", async (c) => {
           if (trList && Array.isArray(trList)) {
             for (const result of trList) {
               const currentToolCallId =
-                lastEmittedToolCallId != null ? lastEmittedToolCallId : ++toolCallId;
+                lastEmittedToolCallId != null
+                  ? lastEmittedToolCallId
+                  : ++toolCallId;
               if (streamController && encoder) {
                 streamController.enqueue(
                   encoder.encode(
@@ -385,7 +401,9 @@ chat.post("/", async (c) => {
 
           // If no content was streamed, send a fallback message
           if (!hasContent && !streamedAnyText) {
-            dbg("No content from textStream/callbacks; falling back to generate()");
+            dbg(
+              "No content from textStream/callbacks; falling back to generate()",
+            );
             try {
               const gen = await agent.generate(formattedMessages, {
                 maxSteps: 10,
@@ -407,7 +425,10 @@ chat.post("/", async (c) => {
                 );
               }
             } catch (fallbackErr) {
-              console.error("[mcp/chat] Fallback generate() error:", fallbackErr);
+              console.error(
+                "[mcp/chat] Fallback generate() error:",
+                fallbackErr,
+              );
               controller.enqueue(
                 encoder!.encode(
                   `data: ${JSON.stringify({ type: "error", error: fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr) })}\n\n`,
