@@ -209,6 +209,6 @@ This project is licensed under the **Apache License 2.0** - see the [LICENSE](LI
 
 **MCPJam Inspector V1** • Built with Next.js and ❤️ for the MCP community
 
-[🌐 Website](https://mcpjam.com) • [📖 Docs](https://modelcontextprotocol.io/) • [🐛 Issues](https://github.com/mcpjam/inspector-v1/issues)
+[🌐 Website](https://mcpjam.com) • [📖 Docs](https://modelcontextprotocol.io/) • [🐛 Issues](https://github.com/MCPJam/inspector/issues)
 
 </div>
