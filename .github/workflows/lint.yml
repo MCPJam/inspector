@@ -1,4 +1,4 @@
-name: Prettier Check
+name: Lint and Build Check
 
 on:
   pull_request:
@@ -7,7 +7,7 @@ on:
     branches: [ main ]
 
 jobs:
-  prettier-check:
+  lint-and-build:
     runs-on: ubuntu-latest
     
     steps:
@@ -36,3 +36,9 @@ jobs:
           else
             echo "✅ All files are properly formatted!"
           fi
+
+      - name: Build project
+        run: |
+          echo "🏗️ Building project..."
+          npm run build
+          echo "✅ Build completed successfully!"
