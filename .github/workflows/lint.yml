@@ -1,15 +1,15 @@
-name: Lint and Build Check
+name: Prettier and Build Check
 
 on:
   pull_request:
-    branches: [ main ]
+    branches: [main]
   push:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
-  lint-and-build:
+  prettier-and-build:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -17,11 +17,23 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
-          cache: 'npm'
+          node-version: "18"
+          cache: "npm"
 
       - name: Install dependencies
-        run: npm install
+        run: |
+          # Clean npm cache
+          npm cache clean --force
+
+          # Remove lock files and node_modules to fix rollup binary issues
+          rm -rf package-lock.json node_modules
+          rm -rf client/package-lock.json client/node_modules
+          rm -rf server/package-lock.json server/node_modules
+
+          # Install dependencies
+          npm install
+          cd client && npm install
+          cd ../server && npm install
 
       - name: Check Prettier formatting
         run: |

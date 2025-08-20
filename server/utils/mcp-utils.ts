@@ -72,7 +72,7 @@ export function validateServerConfig(serverConfig: any): ValidationResult {
             // Add OAuth authorization header
             headers.set(
               "Authorization",
-              `Bearer ${config.oauth!.access_token}`
+              `Bearer ${config.oauth!.access_token}`,
             );
 
             // Copy other headers from requestInit
@@ -129,7 +129,7 @@ export function validateServerConfig(serverConfig: any): ValidationResult {
 
 export function createMCPClient(
   config: MastraMCPServerDefinition,
-  id: string
+  id: string,
 ): MCPClient {
   return new MCPClient({
     id,
@@ -147,7 +147,7 @@ export interface MultipleValidationResult {
 }
 
 export const validateMultipleServerConfigs = (
-  serverConfigs: Record<string, MastraMCPServerDefinition>
+  serverConfigs: Record<string, MastraMCPServerDefinition>,
 ): MultipleValidationResult => {
   if (!serverConfigs || Object.keys(serverConfigs).length === 0) {
     return {
@@ -208,7 +208,7 @@ export const validateMultipleServerConfigs = (
 };
 
 export function createMCPClientWithMultipleConnections(
-  serverConfigs: Record<string, MastraMCPServerDefinition>
+  serverConfigs: Record<string, MastraMCPServerDefinition>,
 ): MCPClient {
   // Normalize server config names
   const normalizedConfigs: Record<string, MastraMCPServerDefinition> = {};
@@ -234,7 +234,7 @@ export function normalizeServerConfigName(serverName: string): string {
 export function createErrorResponse(
   message: string,
   details?: string,
-  status: number = 500
+  status: number = 500,
 ): HonoErrorResponse {
   return {
     message: details ? `${message}: ${details}` : message,

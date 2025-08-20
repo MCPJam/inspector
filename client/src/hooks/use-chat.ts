@@ -72,7 +72,7 @@ export function useChat(options: UseChatOptions = {}) {
           id: modelName,
           name: modelName,
           provider: "ollama" as const,
-        })
+        }),
       );
 
       setOllamaModels(ollamaModelDefinitions);
@@ -93,7 +93,7 @@ export function useChat(options: UseChatOptions = {}) {
         setModel(ollamaModels[0]);
       } else if (hasToken("anthropic")) {
         const claudeModel = SUPPORTED_MODELS.find(
-          (m) => m.id === Model.CLAUDE_3_5_SONNET_LATEST
+          (m) => m.id === Model.CLAUDE_3_5_SONNET_LATEST,
         );
         if (claudeModel) setModel(claudeModel);
       } else if (hasToken("openai")) {
@@ -101,7 +101,7 @@ export function useChat(options: UseChatOptions = {}) {
         if (gptModel) setModel(gptModel);
       } else if (hasToken("deepseek")) {
         const deepseekModel = SUPPORTED_MODELS.find(
-          (m) => m.id === Model.DEEPSEEK_CHAT
+          (m) => m.id === Model.DEEPSEEK_CHAT,
         );
         if (deepseekModel) setModel(deepseekModel);
       } else {
@@ -116,7 +116,7 @@ export function useChat(options: UseChatOptions = {}) {
         // For Ollama, return "local" if it's running and the model is available
         return isOllamaRunning &&
           ollamaModels.some(
-            (om) => om.id === model.id || om.id.startsWith(`${model.id}:`)
+            (om) => om.id === model.id || om.id.startsWith(`${model.id}:`),
           )
           ? "local"
           : "";
@@ -133,7 +133,7 @@ export function useChat(options: UseChatOptions = {}) {
         onModelChange(newModel);
       }
     },
-    [onModelChange]
+    [onModelChange],
   );
 
   // Available models with API keys or local Ollama models
@@ -165,7 +165,7 @@ export function useChat(options: UseChatOptions = {}) {
       assistantMessage: ChatMessage,
       assistantContent: { current: string },
       toolCalls: { current: any[] },
-      toolResults: { current: any[] }
+      toolResults: { current: any[] },
     ) => {
       // Handle text content
       if (
@@ -178,7 +178,7 @@ export function useChat(options: UseChatOptions = {}) {
           messages: prev.messages.map((msg) =>
             msg.id === assistantMessage.id
               ? { ...msg, content: assistantContent.current }
-              : msg
+              : msg,
           ),
         }));
         return;
@@ -196,7 +196,7 @@ export function useChat(options: UseChatOptions = {}) {
           messages: prev.messages.map((msg) =>
             msg.id === assistantMessage.id
               ? { ...msg, toolCalls: [...toolCalls.current] }
-              : msg
+              : msg,
           ),
         }));
         return;
@@ -218,7 +218,7 @@ export function useChat(options: UseChatOptions = {}) {
                 ...tc,
                 status: toolResult.error ? "error" : "completed",
               }
-            : tc
+            : tc,
         );
 
         setState((prev) => ({
@@ -230,7 +230,7 @@ export function useChat(options: UseChatOptions = {}) {
                   toolCalls: [...toolCalls.current],
                   toolResults: [...toolResults.current],
                 }
-              : msg
+              : msg,
           ),
         }));
         return;
@@ -261,14 +261,14 @@ export function useChat(options: UseChatOptions = {}) {
         throw new Error(parsed.error);
       }
     },
-    []
+    [],
   );
 
   const sendChatRequest = useCallback(
     async (userMessage: ChatMessage) => {
       if (!serverConfigs || !model || !currentApiKey) {
         throw new Error(
-          "Missing required configuration: serverConfig, model, and apiKey are required"
+          "Missing required configuration: serverConfig, model, and apiKey are required",
         );
       }
 
@@ -349,7 +349,7 @@ export function useChat(options: UseChatOptions = {}) {
                       assistantMessage,
                       assistantContent,
                       toolCalls,
-                      toolResults
+                      toolResults,
                     );
                   } catch (parseError) {
                     console.warn("Failed to parse SSE data:", data, parseError);
@@ -388,7 +388,7 @@ export function useChat(options: UseChatOptions = {}) {
       onMessageReceived,
       handleStreamingEvent,
       getOllamaBaseUrl,
-    ]
+    ],
   );
 
   const sendMessage = useCallback(
@@ -429,7 +429,7 @@ export function useChat(options: UseChatOptions = {}) {
         }
       }
     },
-    [state.isLoading, onMessageSent, sendChatRequest, onError]
+    [state.isLoading, onMessageSent, sendChatRequest, onError],
   );
 
   const stopGeneration = useCallback(() => {
@@ -480,7 +480,7 @@ export function useChat(options: UseChatOptions = {}) {
         }
       }
     },
-    [sendChatRequest, onError]
+    [sendChatRequest, onError],
   );
 
   const deleteMessage = useCallback((messageId: string) => {
@@ -502,7 +502,7 @@ export function useChat(options: UseChatOptions = {}) {
   const handleElicitationResponse = useCallback(
     async (
       action: "accept" | "decline" | "cancel",
-      parameters?: Record<string, any>
+      parameters?: Record<string, any>,
     ) => {
       if (!elicitationRequest) {
         console.warn("Cannot handle elicitation response: no active request");
@@ -554,7 +554,7 @@ export function useChat(options: UseChatOptions = {}) {
         setElicitationLoading(false);
       }
     },
-    [elicitationRequest, onError]
+    [elicitationRequest, onError],
   );
 
   // Cleanup on unmount
