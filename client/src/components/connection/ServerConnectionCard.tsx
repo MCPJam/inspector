@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { Card } from "../ui/card";
 import { Button } from "../ui/button";
@@ -25,7 +25,7 @@ import {
   Edit,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
-import { formatTimeRemaining, getTimeBreakdown } from "@/lib/utils";
+import { formatTimeRemaining } from "@/lib/utils";
 
 interface ServerConnectionCardProps {
   server: ServerWithName;
@@ -156,20 +156,20 @@ export function ServerConnectionCard({
                 }}
               />
               <div className="min-w-0 flex-1">
-                <h3 className="font-medium text-sm text-foreground">
-                  {server.name}
-                </h3>
-                <div className="flex justify-between mt-1">
-                  <p className="text-xs text-muted-foreground">
-                    {isHttpServer ? "HTTP/SSE" : "STDIO"}
-                  </p>
-                  <div className="flex items-center gap-1 -mr-3">
+                <div className="flex items-center gap-2">
+                  <h3 className="font-medium text-sm text-foreground">
+                    {server.name}
+                  </h3>
+                  <div className="flex items-center gap-1">
                     {getConnectionStatusIcon()}
                     <p className="text-xs text-muted-foreground">
                       {getConnectionStatusText()}
                     </p>
                   </div>
                 </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {isHttpServer ? "HTTP/SSE" : "STDIO"}
+                </p>
               </div>
             </div>
 
