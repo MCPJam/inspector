@@ -1,0 +1,44 @@
+name: Lint and Build Check
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+jobs:
+  lint-and-build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Check Prettier formatting
+        run: |
+          if ! npx prettier --check .; then
+            echo "❌ Code is not properly formatted!"
+            echo ""
+            echo "To fix this, run:"
+            echo "  npm run prettier-fix"
+            echo ""
+            echo "Then commit and push the changes."
+            exit 1
+          else
+            echo "✅ All files are properly formatted!"
+          fi
+
+      - name: Build project
+        run: |
+          echo "🏗️ Building project..."
+          npm run build
+          echo "✅ Build completed successfully!"
