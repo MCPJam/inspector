@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  lint-and-build:
+  prettier-and-build:
     runs-on: ubuntu-latest
 
     steps:
@@ -22,8 +22,18 @@ jobs:
 
       - name: Install dependencies
         run: |
+          # Clean npm cache
           npm cache clean --force
-          npm ci
+          
+          # Remove lock files and node_modules to fix rollup binary issues
+          rm -rf package-lock.json node_modules
+          rm -rf client/package-lock.json client/node_modules
+          rm -rf server/package-lock.json server/node_modules
+          
+          # Install dependencies
+          npm install
+          cd client && npm install
+          cd ../server && npm install
 
       - name: Check Prettier formatting
         run: |
