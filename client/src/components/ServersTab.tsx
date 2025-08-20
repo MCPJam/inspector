@@ -15,6 +15,7 @@ interface ServersTabProps {
   onDisconnect: (serverName: string) => void;
   onReconnect: (serverName: string) => void;
   onUpdate: (originalServerName: string, formData: ServerFormData) => void;
+  onRemove: (serverName: string) => void;
 }
 
 export function ServersTab({
@@ -23,6 +24,7 @@ export function ServersTab({
   onDisconnect,
   onReconnect,
   onUpdate,
+  onRemove,
 }: ServersTabProps) {
   const [isAddingServer, setIsAddingServer] = useState(false);
   const [isEditingServer, setIsEditingServer] = useState(false);
@@ -91,6 +93,7 @@ export function ServersTab({
               onDisconnect={onDisconnect}
               onReconnect={onReconnect}
               onEdit={handleEditServer}
+              onRemove={onRemove}
             />
           ))}
         </div>
