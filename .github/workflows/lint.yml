@@ -24,12 +24,12 @@ jobs:
         run: |
           # Clean npm cache
           npm cache clean --force
-          
+
           # Remove lock files and node_modules to fix rollup binary issues
           rm -rf package-lock.json node_modules
           rm -rf client/package-lock.json client/node_modules
           rm -rf server/package-lock.json server/node_modules
-          
+
           # Install dependencies
           npm install
           cd client && npm install
