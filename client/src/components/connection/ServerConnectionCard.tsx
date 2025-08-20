@@ -1,9 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { Card } from "../ui/card";
 import { Button } from "../ui/button";
 import { Separator } from "../ui/separator";
 import { TooltipProvider } from "../ui/tooltip";
+import { Switch } from "../ui/switch";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,13 +25,14 @@ import {
   Edit,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
-import { formatTimeRemaining, getTimeBreakdown } from "@/lib/utils";
+import { formatTimeRemaining } from "@/lib/utils";
 
 interface ServerConnectionCardProps {
   server: ServerWithName;
   onDisconnect: (serverName: string) => void;
   onReconnect: (serverName: string) => void;
   onEdit: (server: ServerWithName) => void;
+  onRemove?: (serverName: string) => void;
 }
 
 export function ServerConnectionCard({
@@ -38,6 +40,7 @@ export function ServerConnectionCard({
   onDisconnect,
   onReconnect,
   onEdit,
+  onRemove,
 }: ServerConnectionCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isReconnecting, setIsReconnecting] = useState(false);
@@ -137,10 +140,10 @@ export function ServerConnectionCard({
       <Card className="border border-border/50 bg-card/50 backdrop-blur-sm hover:border-border transition-colors">
         <div className="p-4 space-y-3 py-0">
           {/* Header Row */}
-          <div className="flex items-start justify-between">
-            <div className="flex items-start gap-3 flex-1">
+          <div className="flex items-baseline justify-between">
+            <div className="flex items-baseline gap-3 flex-1">
               <div
-                className="h-2 w-2 rounded-full flex-shrink-0 mt-1.5"
+                className="h-2 w-2 rounded-full flex-shrink-0 mt-1"
                 style={{
                   backgroundColor:
                     server.connectionStatus === "connected"
@@ -155,24 +158,38 @@ export function ServerConnectionCard({
                 }}
               />
               <div className="min-w-0 flex-1">
-                <h3 className="font-medium text-sm text-foreground">
-                  {server.name}
-                </h3>
-                <div className="flex justify-between mt-1">
-                  <p className="text-xs text-muted-foreground">
-                    {isHttpServer ? "HTTP/SSE" : "STDIO"}
-                  </p>
-                  <div className="flex items-center gap-1 -mr-3">
+                <div className="flex items-center gap-2">
+                  <h3 className="font-medium text-sm text-foreground">
+                    {server.name}
+                  </h3>
+                  <div className="flex items-center gap-1 leading-none">
                     {getConnectionStatusIcon()}
-                    <p className="text-xs text-muted-foreground">
+                    <p className="text-xs text-muted-foreground leading-none">
                       {getConnectionStatusText()}
                     </p>
                   </div>
                 </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {isHttpServer ? "HTTP/SSE" : "STDIO"}
+                </p>
               </div>
             </div>
 
             <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 pr-2 text-xs text-muted-foreground leading-none">
+                <span className="leading-none">{server.enabled === false ? "Disabled" : "Enabled"}</span>
+                <Switch
+                  checked={server.enabled !== false}
+                  onCheckedChange={(checked) => {
+                    if (!checked) {
+                      onDisconnect(server.name);
+                    } else {
+                      handleReconnect();
+                    }
+                  }}
+                  className="cursor-pointer"
+                />
+              </div>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
@@ -210,10 +227,10 @@ export function ServerConnectionCard({
                   <Separator />
                   <DropdownMenuItem
                     className="text-destructive text-xs cursor-pointer"
-                    onClick={() => onDisconnect(server.name)}
+                    onClick={() => (onRemove ? onRemove(server.name) : onDisconnect(server.name))}
                   >
                     <Link2Off className="h-3 w-3 mr-2" />
-                    Disconnect
+                    Remove server
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>

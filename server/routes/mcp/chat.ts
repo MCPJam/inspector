@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import {
   validateMultipleServerConfigs,
   createMCPClientWithMultipleConnections,
+  normalizeServerConfigName,
 } from "../../utils/mcp-utils";
 import { Agent } from "@mastra/core/agent";
 import { createAnthropic } from "@ai-sdk/anthropic";
@@ -29,7 +30,11 @@ try {
 const pendingElicitations = new Map<
   string,
   {
-    resolve: (response: any) => void;
+    resolve: (response: {
+      action: "accept" | "decline" | "cancel";
+      content?: any;
+      _meta?: any;
+    }) => void;
     reject: (error: any) => void;
   }
 >();
@@ -68,7 +73,7 @@ chat.post("/", async (c) => {
             success: false,
             error: "requestId is required for elicitation_response action",
           },
-          400,
+          400
         );
       }
 
@@ -79,7 +84,7 @@ chat.post("/", async (c) => {
             success: false,
             error: "No pending elicitation found for this requestId",
           },
-          404,
+          404
         );
       }
 
@@ -96,15 +101,12 @@ chat.post("/", async (c) => {
           success: false,
           error: "model (with id), apiKey, and messages are required",
         },
-        400,
+        400
       );
     }
 
     dbg("Incoming chat request", {
-      provider: model?.provider,
-      modelId: model?.id,
-      messageCount: messages?.length,
-      serverCount: serverConfigs ? Object.keys(serverConfigs).length : 0,
+      requestData,
     });
 
     if (serverConfigs && Object.keys(serverConfigs).length > 0) {
@@ -112,7 +114,7 @@ chat.post("/", async (c) => {
       if (!validation.success) {
         dbg(
           "Server config validation failed",
-          validation.errors || validation.error,
+          validation.errors || validation.error
         );
         return c.json(
           {
@@ -120,41 +122,30 @@ chat.post("/", async (c) => {
             error: validation.error!.message,
             details: validation.errors,
           },
-          validation.error!.status as ContentfulStatusCode,
+          validation.error!.status as ContentfulStatusCode
         );
       }
-
       client = createMCPClientWithMultipleConnections(validation.validConfigs!);
-      dbg(
-        "Created MCP client with servers",
-        Object.keys(validation.validConfigs!),
-      );
     } else {
-      client = new MCPClient({
-        id: `chat-${Date.now()}`,
-        servers: {},
-      });
-      dbg("Created MCP client without servers");
+      return c.json(
+        {
+          success: false,
+          error: "No server configs provided",
+        },
+        400
+      );
     }
 
-    // If we have server tools, we will request toolsets at stream-time per Mastra docs
-
     const llmModel = getLlmModel(model, apiKey, ollamaBaseUrl);
-    dbg("LLM model initialized", { provider: model.provider, id: model.id });
 
     // Create a custom event emitter for streaming tool events
     let toolCallId = 0;
     let streamController: ReadableStreamDefaultController | null = null;
     let encoder: TextEncoder | null = null;
-    // Tracks the most recent emitted tool_call id so subsequent tool_result
-    // events in the same step can be correlated with the proper call
     let lastEmittedToolCallId: number | null = null;
-
-    // Set up elicitation handler
     const elicitationHandler = async (elicitationRequest: any) => {
-      const requestId = `elicit_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+      const requestId = `elicit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-      // Stream elicitation request to client
       if (streamController && encoder) {
         streamController.enqueue(
           encoder.encode(
@@ -164,21 +155,18 @@ chat.post("/", async (c) => {
               message: elicitationRequest.message,
               schema: elicitationRequest.requestedSchema,
               timestamp: new Date(),
-            })}\n\n`,
-          ),
+            })}\n\n`
+          )
         );
       }
-      dbg("Elicitation requested", { requestId });
 
       // Return a promise that will be resolved when user responds
       return new Promise<{
         action: "accept" | "decline" | "cancel";
-        content?: { [x: string]: unknown };
-        _meta?: { [x: string]: unknown };
+        content?: any;
+        _meta?: any;
       }>((resolve, reject) => {
         pendingElicitations.set(requestId, { resolve, reject });
-
-        // Set a timeout to clean up if no response
         setTimeout(() => {
           if (pendingElicitations.has(requestId)) {
             pendingElicitations.delete(requestId);
@@ -188,22 +176,18 @@ chat.post("/", async (c) => {
       });
     };
 
-    // Register elicitation handler with the client for all servers
-    // if (client.elicitation && client.elicitation.onRequest && serverConfigs) {
-    //   // Register elicitation handler for each server
-    //   for (const serverName of Object.keys(serverConfigs)) {
-    //     // Normalize server name to match MCPClient's internal naming
-    //     const normalizedName = serverName
-    //       .toLowerCase()
-    //       .replace(/[\s\-]+/g, "_")
-    //       .replace(/[^a-z0-9_]/g, "");
-    //     client.elicitation.onRequest(normalizedName, elicitationHandler);
-    //     dbg("Registered elicitation handler", { serverName, normalizedName });
-    //   }
-    // }
-
     // Wrap tools to capture tool calls and results when statically resolved
     const tools = await client.getTools();
+
+    // Register elicitation handler after client is connected
+    if (client.elicitation && client.elicitation.onRequest) {
+      // Use the normalized server names that were used when creating the client
+      for (const serverName of Object.keys(serverConfigs)) {
+        const normalizedName = normalizeServerConfigName(serverName);
+        client.elicitation.onRequest(normalizedName, elicitationHandler);
+      }
+    }
+
     const originalTools = tools && Object.keys(tools).length > 0 ? tools : {};
     const wrappedTools: Record<string, any> = {};
 
@@ -227,8 +211,8 @@ chat.post("/", async (c) => {
                     timestamp: new Date(),
                     status: "executing",
                   },
-                })}\n\n`,
-              ),
+                })}\n\n`
+              )
             );
           }
           dbg("Tool executing", { name, currentToolCallId, params });
@@ -253,8 +237,8 @@ chat.post("/", async (c) => {
                       result,
                       timestamp: new Date(),
                     },
-                  })}\n\n`,
-                ),
+                  })}\n\n`
+                )
               );
             }
 
@@ -278,8 +262,8 @@ chat.post("/", async (c) => {
                         error instanceof Error ? error.message : String(error),
                       timestamp: new Date(),
                     },
-                  })}\n\n`,
-                ),
+                  })}\n\n`
+                )
               );
             }
             throw error;
@@ -308,13 +292,12 @@ chat.post("/", async (c) => {
       messageCount: formattedMessages.length,
     });
     let streamedAnyText = false;
+
     const stream = await agent.stream(formattedMessages, {
       maxSteps: 10, // Allow up to 10 steps for tool usage
       toolsets,
       onStepFinish: ({ text, toolCalls, toolResults }) => {
         try {
-          // Remove text streaming here to avoid duplication - handled by main textStream loop
-
           const tcList = toolCalls as any[] | undefined;
           if (tcList && Array.isArray(tcList)) {
             for (const call of tcList) {
@@ -332,8 +315,8 @@ chat.post("/", async (c) => {
                         timestamp: new Date(),
                         status: "executing",
                       },
-                    })}\n\n`,
-                  ),
+                    })}\n\n`
+                  )
                 );
               }
             }
@@ -358,22 +341,14 @@ chat.post("/", async (c) => {
                         error: (result as any).error,
                         timestamp: new Date(),
                       },
-                    })}\n\n`,
-                  ),
+                    })}\n\n`
+                  )
                 );
               }
             }
           }
         } catch (err) {
           dbg("onStepFinish error", err);
-        }
-      },
-      onFinish: ({ text, finishReason }) => {
-        dbg("onFinish called", { finishReason, hasText: Boolean(text) });
-        try {
-          // Remove text streaming here to avoid duplication - handled by main textStream loop
-        } catch (err) {
-          dbg("onFinish enqueue error", err);
         }
       },
     });
@@ -392,8 +367,8 @@ chat.post("/", async (c) => {
               chunkCount++;
               controller.enqueue(
                 encoder!.encode(
-                  `data: ${JSON.stringify({ type: "text", content: chunk })}\n\n`,
-                ),
+                  `data: ${JSON.stringify({ type: "text", content: chunk })}\n\n`
+                )
               );
             }
           }
@@ -402,37 +377,23 @@ chat.post("/", async (c) => {
           // If no content was streamed, send a fallback message
           if (!hasContent && !streamedAnyText) {
             dbg(
-              "No content from textStream/callbacks; falling back to generate()",
+              "No content from textStream/callbacks; falling back to generate()"
             );
             try {
-              const gen = await agent.generate(formattedMessages, {
-                maxSteps: 10,
-                toolsets,
-              });
-              const finalText = gen.text || "";
-              if (finalText) {
-                controller.enqueue(
-                  encoder!.encode(
-                    `data: ${JSON.stringify({ type: "text", content: finalText })}\n\n`,
-                  ),
-                );
-              } else {
-                dbg("generate() also returned empty text");
-                controller.enqueue(
-                  encoder!.encode(
-                    `data: ${JSON.stringify({ type: "text", content: "I apologize, but I couldn't generate a response. Please try again." })}\n\n`,
-                  ),
-                );
-              }
+              controller.enqueue(
+                encoder!.encode(
+                  `data: ${JSON.stringify({ type: "text", content: "Failed to stream response. Please try again." })}\n\n`
+                )
+              );
             } catch (fallbackErr) {
               console.error(
                 "[mcp/chat] Fallback generate() error:",
-                fallbackErr,
+                fallbackErr
               );
               controller.enqueue(
                 encoder!.encode(
-                  `data: ${JSON.stringify({ type: "error", error: fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr) })}\n\n`,
-                ),
+                  `data: ${JSON.stringify({ type: "text", content: "Failed to stream response. Please try again." })}\n\n`
+                )
               );
             }
           }
@@ -442,8 +403,8 @@ chat.post("/", async (c) => {
             encoder!.encode(
               `data: ${JSON.stringify({
                 type: "elicitation_complete",
-              })}\n\n`,
-            ),
+              })}\n\n`
+            )
           );
 
           controller.enqueue(encoder!.encode(`data: [DONE]\n\n`));
@@ -454,8 +415,8 @@ chat.post("/", async (c) => {
               `data: ${JSON.stringify({
                 type: "error",
                 error: error instanceof Error ? error.message : "Unknown error",
-              })}\n\n`,
-            ),
+              })}\n\n`
+            )
           );
         } finally {
           if (client) {
@@ -464,7 +425,7 @@ chat.post("/", async (c) => {
             } catch (cleanupError) {
               console.warn(
                 "[mcp/chat] Error cleaning up MCP client after streaming:",
-                cleanupError,
+                cleanupError
               );
             }
           }
@@ -497,7 +458,7 @@ chat.post("/", async (c) => {
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
       },
-      500,
+      500
     );
   }
 });
@@ -505,11 +466,11 @@ chat.post("/", async (c) => {
 const getLlmModel = (
   modelDefinition: ModelDefinition,
   apiKey: string,
-  ollamaBaseUrl?: string,
+  ollamaBaseUrl?: string
 ) => {
   if (!modelDefinition || !modelDefinition.id || !modelDefinition.provider) {
     throw new Error(
-      `Invalid model definition: ${JSON.stringify(modelDefinition)}`,
+      `Invalid model definition: ${JSON.stringify(modelDefinition)}`
     );
   }
 
@@ -520,7 +481,7 @@ const getLlmModel = (
       return createOpenAI({ apiKey })(modelDefinition.id);
     case "deepseek":
       return createOpenAI({ apiKey, baseURL: "https://api.deepseek.com/v1" })(
-        modelDefinition.id,
+        modelDefinition.id
       );
     case "ollama":
       const baseUrl = ollamaBaseUrl || "http://localhost:11434";
@@ -532,7 +493,7 @@ const getLlmModel = (
       });
     default:
       throw new Error(
-        `Unsupported provider: ${modelDefinition.provider} for model: ${modelDefinition.id}`,
+        `Unsupported provider: ${modelDefinition.provider} for model: ${modelDefinition.id}`
       );
   }
 };
