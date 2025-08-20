@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { cn } from "@/lib/utils";
-import { AddServerModal } from "./connection/AddServerModal";
+import { ServerModal } from "./connection/ServerModal";
 import { ServerFormData } from "@/shared/types.js";
 import { Check } from "lucide-react";
 
@@ -136,10 +136,11 @@ export function ActiveServerSelector({
         </button>
       </div>
 
-      <AddServerModal
+      <ServerModal
+        mode="add"
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
-        onConnect={onConnect}
+        onSubmit={(formData) => onConnect(formData)}
       />
     </div>
   );
