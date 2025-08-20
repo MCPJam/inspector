@@ -55,7 +55,9 @@ export function ActiveServerSelector({
   onConnect,
 }: ActiveServerSelectorProps) {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const servers = Object.entries(connectedServerConfigs);
+  const servers = Object.entries(connectedServerConfigs).filter(
+    ([, server]) => server.enabled !== false,
+  );
   if (servers.length === 0) {
     return (
       <div className="mb-6 p-4 border rounded-lg bg-muted/30 text-center text-sm text-muted-foreground">
@@ -112,7 +114,6 @@ export function ActiveServerSelector({
               </span>
               <div className="text-xs opacity-70">
                 {serverConfig.config.command ? "STDIO" : "HTTP"}
-                {serverConfig.enabled === false ? " • disabled" : ""}
               </div>
             </button>
           );
