@@ -46,7 +46,7 @@ export function formatMessageDate(date: Date): string {
 export function createMessage(
   role: "user" | "assistant",
   content: string,
-  attachments?: any[]
+  attachments?: any[],
 ): ChatMessage {
   return {
     id: generateId(),
@@ -103,7 +103,7 @@ export function scrollToBottom(element?: Element | null) {
 
 export function debounce<T extends (...args: any[]) => any>(
   func: T,
-  wait: number
+  wait: number,
 ): (...args: Parameters<T>) => void {
   let timeout: NodeJS.Timeout;
   return (...args: Parameters<T>) => {

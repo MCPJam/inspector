@@ -84,11 +84,11 @@ const chat = new Hono();
 const createLlmModel = (
   modelDefinition: ModelDefinition,
   apiKey: string,
-  ollamaBaseUrl?: string
+  ollamaBaseUrl?: string,
 ) => {
   if (!modelDefinition?.id || !modelDefinition?.provider) {
     throw new Error(
-      `Invalid model definition: ${JSON.stringify(modelDefinition)}`
+      `Invalid model definition: ${JSON.stringify(modelDefinition)}`,
     );
   }
 
@@ -99,7 +99,7 @@ const createLlmModel = (
       return createOpenAI({ apiKey })(modelDefinition.id);
     case "deepseek":
       return createOpenAI({ apiKey, baseURL: "https://api.deepseek.com/v1" })(
-        modelDefinition.id
+        modelDefinition.id,
       );
     case "ollama":
       const baseUrl = ollamaBaseUrl || "http://localhost:11434";
@@ -110,7 +110,7 @@ const createLlmModel = (
       });
     default:
       throw new Error(
-        `Unsupported provider: ${modelDefinition.provider} for model: ${modelDefinition.id}`
+        `Unsupported provider: ${modelDefinition.provider} for model: ${modelDefinition.id}`,
       );
   }
 };
@@ -132,8 +132,8 @@ const createElicitationHandler = (streamingContext: StreamingContext) => {
             message: elicitationRequest.message,
             schema: elicitationRequest.requestedSchema,
             timestamp: new Date(),
-          })}\n\n`
-        )
+          })}\n\n`,
+        ),
       );
     }
 
@@ -157,7 +157,7 @@ const createElicitationHandler = (streamingContext: StreamingContext) => {
  */
 const wrapToolsWithStreaming = (
   tools: Record<string, any>,
-  streamingContext: StreamingContext
+  streamingContext: StreamingContext,
 ) => {
   const wrappedTools: Record<string, any> = {};
 
@@ -181,8 +181,8 @@ const wrapToolsWithStreaming = (
                   timestamp: new Date(),
                   status: "executing",
                 },
-              })}\n\n`
-            )
+              })}\n\n`,
+            ),
           );
         }
 
@@ -208,8 +208,8 @@ const wrapToolsWithStreaming = (
                     result,
                     timestamp: new Date(),
                   },
-                })}\n\n`
-              )
+                })}\n\n`,
+              ),
             );
           }
 
@@ -234,8 +234,8 @@ const wrapToolsWithStreaming = (
                       error instanceof Error ? error.message : String(error),
                     timestamp: new Date(),
                   },
-                })}\n\n`
-              )
+                })}\n\n`,
+              ),
             );
           }
           throw error;
@@ -254,7 +254,7 @@ const handleAgentStepFinish = (
   streamingContext: StreamingContext,
   text: string,
   toolCalls: any[] | undefined,
-  toolResults: any[] | undefined
+  toolResults: any[] | undefined,
 ) => {
   try {
     // Handle tool calls
@@ -275,8 +275,8 @@ const handleAgentStepFinish = (
                   timestamp: new Date(),
                   status: "executing",
                 },
-              })}\n\n`
-            )
+              })}\n\n`,
+            ),
           );
         }
       }
@@ -302,8 +302,8 @@ const handleAgentStepFinish = (
                   error: (result as any).error,
                   timestamp: new Date(),
                 },
-              })}\n\n`
-            )
+              })}\n\n`,
+            ),
           );
         }
       }
@@ -318,7 +318,7 @@ const handleAgentStepFinish = (
  */
 const streamAgentResponse = async (
   streamingContext: StreamingContext,
-  stream: any
+  stream: any,
 ) => {
   let hasContent = false;
   let chunkCount = 0;
@@ -329,8 +329,8 @@ const streamAgentResponse = async (
       chunkCount++;
       streamingContext.controller.enqueue(
         streamingContext.encoder!.encode(
-          `data: ${JSON.stringify({ type: "text", content: chunk })}\n\n`
-        )
+          `data: ${JSON.stringify({ type: "text", content: chunk })}\n\n`,
+        ),
       );
     }
   }
@@ -346,7 +346,7 @@ const fallbackToCompletion = async (
   agent: Agent,
   messages: any[],
   streamingContext: StreamingContext,
-  provider: ModelProvider
+  provider: ModelProvider,
 ) => {
   try {
     const result = await agent.generate(messages, {
@@ -358,8 +358,8 @@ const fallbackToCompletion = async (
           `data: ${JSON.stringify({
             type: "text",
             content: result.text,
-          })}\n\n`
-        )
+          })}\n\n`,
+        ),
       );
     }
   } catch (fallbackErr) {
@@ -372,8 +372,8 @@ const fallbackToCompletion = async (
             fallbackErr instanceof Error
               ? fallbackErr.message
               : "Unknown error",
-        })}\n\n`
-      )
+        })}\n\n`,
+      ),
     );
   }
 };
@@ -399,7 +399,7 @@ const createStreamingResponse = async (
   messages: any[],
   toolsets: any,
   streamingContext: StreamingContext,
-  provider: ModelProvider
+  provider: ModelProvider,
 ) => {
   const stream = await agent.stream(messages, {
     maxSteps: MAX_AGENT_STEPS,
@@ -423,13 +423,13 @@ const createStreamingResponse = async (
     streamingContext.encoder!.encode(
       `data: ${JSON.stringify({
         type: "elicitation_complete",
-      })}\n\n`
-    )
+      })}\n\n`,
+    ),
   );
 
   // End stream
   streamingContext.controller.enqueue(
-    streamingContext.encoder!.encode(`data: [DONE]\n\n`)
+    streamingContext.encoder!.encode(`data: [DONE]\n\n`),
   );
 };
 
@@ -460,7 +460,7 @@ chat.post("/", async (c) => {
             success: false,
             error: "requestId is required for elicitation_response action",
           },
-          400
+          400,
         );
       }
 
@@ -471,7 +471,7 @@ chat.post("/", async (c) => {
             success: false,
             error: "No pending elicitation found for this requestId",
           },
-          404
+          404,
         );
       }
 
@@ -487,7 +487,7 @@ chat.post("/", async (c) => {
           success: false,
           error: "model (with id), apiKey, and messages are required",
         },
-        400
+        400,
       );
     }
 
@@ -498,7 +498,7 @@ chat.post("/", async (c) => {
           success: false,
           error: "No server configs provided",
         },
-        400
+        400,
       );
     }
 
@@ -506,7 +506,7 @@ chat.post("/", async (c) => {
     if (!validation.success) {
       dbg(
         "Server config validation failed",
-        validation.errors || validation.error
+        validation.errors || validation.error,
       );
       return c.json(
         {
@@ -514,7 +514,7 @@ chat.post("/", async (c) => {
           error: validation.error!.message,
           details: validation.errors,
         },
-        validation.error!.status as ContentfulStatusCode
+        validation.error!.status as ContentfulStatusCode,
       );
     }
 
@@ -559,7 +559,7 @@ chat.post("/", async (c) => {
         // Create streaming-wrapped tools
         const streamingWrappedTools = wrapToolsWithStreaming(
           tools,
-          streamingContext
+          streamingContext,
         );
 
         // Create a new agent instance with streaming tools since tools property is read-only
@@ -590,7 +590,7 @@ chat.post("/", async (c) => {
               formattedMessages,
               toolsets,
               streamingContext,
-              provider
+              provider,
             );
           } else {
             throw new Error("MCP client is null");
@@ -601,8 +601,8 @@ chat.post("/", async (c) => {
               `data: ${JSON.stringify({
                 type: "error",
                 error: error instanceof Error ? error.message : "Unknown error",
-              })}\n\n`
-            )
+              })}\n\n`,
+            ),
           );
         } finally {
           await safeDisconnect(client);
@@ -627,7 +627,7 @@ chat.post("/", async (c) => {
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
       },
-      500
+      500,
     );
   }
 });
