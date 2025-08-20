@@ -633,6 +633,30 @@ export function useAppState() {
     }));
   }, []);
 
+  // Permanently remove a server: clear OAuth data and delete from state
+  const handleRemoveServer = useCallback(async (serverName: string) => {
+    logger.info("Removing server", { serverName });
+
+    // Clear OAuth data
+    clearOAuthData(serverName);
+
+    // Remove server from state (no API call needed for stateless architecture)
+    setAppState((prev: AppState) => {
+      const newServers = { ...prev.servers };
+      delete newServers[serverName];
+
+      return {
+        ...prev,
+        servers: newServers,
+        selectedServer:
+          prev.selectedServer === serverName ? "none" : prev.selectedServer,
+        selectedMultipleServers: prev.selectedMultipleServers.filter(
+          (name) => name !== serverName,
+        ),
+      };
+    });
+  }, []);
+
   const handleReconnect = useCallback(
     async (serverName: string) => {
       logger.info("Reconnecting to server", { serverName });
@@ -955,6 +979,7 @@ export function useAppState() {
     handleDisconnect,
     handleReconnect,
     handleUpdate,
+    handleRemoveServer,
     setSelectedServer,
     setSelectedMCPConfigs,
     toggleMultiSelectMode,

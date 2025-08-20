@@ -40,6 +40,7 @@ export default function App() {
     handleDisconnect,
     handleReconnect,
     handleUpdate,
+    handleRemoveServer,
     setSelectedServer,
     toggleServerSelection,
     selectedMCPConfigsMap,
@@ -110,6 +111,7 @@ export default function App() {
                 onDisconnect={handleDisconnect}
                 onReconnect={handleReconnect}
                 onUpdate={handleUpdate}
+                onRemove={handleRemoveServer}
               />
             )}
 

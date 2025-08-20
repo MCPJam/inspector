@@ -32,6 +32,7 @@ interface ServerConnectionCardProps {
   onDisconnect: (serverName: string) => void;
   onReconnect: (serverName: string) => void;
   onEdit: (server: ServerWithName) => void;
+  onRemove?: (serverName: string) => void;
 }
 
 export function ServerConnectionCard({
@@ -39,6 +40,7 @@ export function ServerConnectionCard({
   onDisconnect,
   onReconnect,
   onEdit,
+  onRemove,
 }: ServerConnectionCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isReconnecting, setIsReconnecting] = useState(false);
@@ -225,10 +227,10 @@ export function ServerConnectionCard({
                   <Separator />
                   <DropdownMenuItem
                     className="text-destructive text-xs cursor-pointer"
-                    onClick={() => onDisconnect(server.name)}
+                    onClick={() => (onRemove ? onRemove(server.name) : onDisconnect(server.name))}
                   >
                     <Link2Off className="h-3 w-3 mr-2" />
-                    Disconnect
+                    Remove server
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
