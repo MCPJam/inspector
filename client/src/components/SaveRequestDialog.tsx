@@ -38,10 +38,16 @@ export default function SaveRequestDialog({
 
   return (
     <Dialog open={open}>
-      <DialogContent className="sm:max-w-md" onEscapeKeyDown={onCancel} onPointerDownOutside={onCancel}>
+      <DialogContent
+        className="sm:max-w-md"
+        onEscapeKeyDown={onCancel}
+        onPointerDownOutside={onCancel}
+      >
         <DialogHeader>
           <DialogTitle>Save request</DialogTitle>
-          <DialogDescription>Give this request a memorable name and optional description.</DialogDescription>
+          <DialogDescription>
+            Give this request a memorable name and optional description.
+          </DialogDescription>
         </DialogHeader>
         <div className="space-y-3 py-2">
           <div className="space-y-1">
@@ -71,7 +77,10 @@ export default function SaveRequestDialog({
             onClick={() => {
               const trimmed = (title || "").trim();
               if (!trimmed) return;
-              onSave({ title: trimmed, description: description?.trim() || undefined });
+              onSave({
+                title: trimmed,
+                description: description?.trim() || undefined,
+              });
             }}
             size="sm"
           >
@@ -82,5 +91,3 @@ export default function SaveRequestDialog({
     </Dialog>
   );
 }
-
-
