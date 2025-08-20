@@ -1,4 +1,4 @@
-name: Lint and Build Check
+name: Prettier and Build Check
 
 on:
   pull_request:
