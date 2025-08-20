@@ -36,7 +36,13 @@ import { validateToolOutput } from "@/lib/schema-utils";
 import { SearchInput } from "@/components/ui/search-input";
 import { UIResourceRenderer } from "@mcp-ui/client";
 import SaveRequestDialog from "./SaveRequestDialog";
-import { listSavedRequests, saveRequest, deleteRequest, duplicateRequest, updateRequestMeta } from "@/lib/request-storage";
+import {
+  listSavedRequests,
+  saveRequest,
+  deleteRequest,
+  duplicateRequest,
+  updateRequestMeta,
+} from "@/lib/request-storage";
 import type { SavedRequest } from "@/lib/request-types";
 import { Save as SaveIcon, Trash2, Copy, Edit2 } from "lucide-react";
 
@@ -115,7 +121,10 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
   const [savedRequests, setSavedRequests] = useState<SavedRequest[]>([]);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
   const [editingRequestId, setEditingRequestId] = useState<string | null>(null);
-  const [dialogDefaults, setDialogDefaults] = useState<{ title: string; description?: string }>({ title: "" });
+  const [dialogDefaults, setDialogDefaults] = useState<{
+    title: string;
+    description?: string;
+  }>({ title: "" });
 
   useEffect(() => {
     if (serverConfig) {
@@ -707,8 +716,15 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                     <div className="px-4 py-4 border-b border-border bg-background space-y-3">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
-                          <h2 className="text-xs font-semibold text-foreground">Saved Requests</h2>
-                          <Badge variant="secondary" className="text-xs font-mono">{savedRequests.length}</Badge>
+                          <h2 className="text-xs font-semibold text-foreground">
+                            Saved Requests
+                          </h2>
+                          <Badge
+                            variant="secondary"
+                            className="text-xs font-mono"
+                          >
+                            {savedRequests.length}
+                          </Badge>
                         </div>
                       </div>
                     </div>
@@ -717,26 +733,69 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                         <div className="p-2 space-y-1">
                           {savedRequests.length === 0 ? (
                             <div className="text-center py-6">
-                              <p className="text-xs text-muted-foreground">No saved requests</p>
+                              <p className="text-xs text-muted-foreground">
+                                No saved requests
+                              </p>
                             </div>
                           ) : (
                             savedRequests.map((request) => (
-                              <div key={request.id} className="group p-2 rounded hover:bg-muted/40 mx-2 cursor-pointer"
-                                   onClick={() => handleLoadRequest(request)}>
+                              <div
+                                key={request.id}
+                                className="group p-2 rounded hover:bg-muted/40 mx-2 cursor-pointer"
+                                onClick={() => handleLoadRequest(request)}
+                              >
                                 <div className="flex items-start justify-between">
                                   <div className="min-w-0 pr-2">
                                     <div className="flex items-center gap-2">
-                                      <code className="font-mono text-[10px] bg-muted px-1.5 py-0.5 rounded border border-border">{request.toolName}</code>
+                                      <code className="font-mono text-[10px] bg-muted px-1.5 py-0.5 rounded border border-border">
+                                        {request.toolName}
+                                      </code>
                                     </div>
                                     <div>
-                                      <div className="text-xs font-medium truncate">{request.title}</div>
-                                      {request.description && <div className="text-[10px] text-muted-foreground truncate">{request.description}</div>}
+                                      <div className="text-xs font-medium truncate">
+                                        {request.title}
+                                      </div>
+                                      {request.description && (
+                                        <div className="text-[10px] text-muted-foreground truncate">
+                                          {request.description}
+                                        </div>
+                                      )}
                                     </div>
                                   </div>
                                   <div className="flex gap-1">
-                                    <Button onClick={(e) => { e.stopPropagation(); handleRenameRequest(request); }} size="sm" variant="ghost" className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100"><Edit2 className="w-3 h-3"/></Button>
-                                    <Button onClick={(e) => { e.stopPropagation(); handleDuplicateRequest(request); }} size="sm" variant="ghost" className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100"><Copy className="w-3 h-3"/></Button>
-                                    <Button onClick={(e) => { e.stopPropagation(); handleDeleteRequest(request.id); }} size="sm" variant="ghost" className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100"><Trash2 className="w-3 h-3"/></Button>
+                                    <Button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleRenameRequest(request);
+                                      }}
+                                      size="sm"
+                                      variant="ghost"
+                                      className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100"
+                                    >
+                                      <Edit2 className="w-3 h-3" />
+                                    </Button>
+                                    <Button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleDuplicateRequest(request);
+                                      }}
+                                      size="sm"
+                                      variant="ghost"
+                                      className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100"
+                                    >
+                                      <Copy className="w-3 h-3" />
+                                    </Button>
+                                    <Button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleDeleteRequest(request.id);
+                                      }}
+                                      size="sm"
+                                      variant="ghost"
+                                      className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100"
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </Button>
                                   </div>
                                 </div>
                               </div>
@@ -756,7 +815,10 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                           <h2 className="text-xs font-semibold text-foreground">
                             Tools
                           </h2>
-                          <Badge variant="secondary" className="text-xs font-mono">
+                          <Badge
+                            variant="secondary"
+                            className="text-xs font-mono"
+                          >
                             {toolNames.length}
                           </Badge>
                         </div>
@@ -880,7 +942,12 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                             </>
                           )}
                         </Button>
-                        <Button onClick={handleSaveCurrent} variant="outline" size="sm" disabled={!selectedTool}>
+                        <Button
+                          onClick={handleSaveCurrent}
+                          variant="outline"
+                          size="sm"
+                          disabled={!selectedTool}
+                        >
                           <SaveIcon className="h-3 w-3 mr-1" />
                           <span className="font-mono text-xs">Save</span>
                         </Button>
@@ -1283,7 +1350,10 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
         onCancel={() => setIsSaveDialogOpen(false)}
         onSave={({ title, description }) => {
           if (editingRequestId) {
-            updateRequestMeta(serverKey, editingRequestId, { title, description });
+            updateRequestMeta(serverKey, editingRequestId, {
+              title,
+              description,
+            });
             setSavedRequests(listSavedRequests(serverKey));
             setEditingRequestId(null);
             setIsSaveDialogOpen(false);

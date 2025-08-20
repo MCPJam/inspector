@@ -28,11 +28,11 @@ export interface SavedRequest {
   updatedAt: string; // ISO string
 }
 
-export type SavedRequestUpdate = Partial<Omit<SavedRequest, "id" | "serverKey" | "toolName">> & {
+export type SavedRequestUpdate = Partial<
+  Omit<SavedRequest, "id" | "serverKey" | "toolName">
+> & {
   parameters?: Record<string, any>;
   title?: string;
   description?: string;
   isFavorite?: boolean;
 };
-
-

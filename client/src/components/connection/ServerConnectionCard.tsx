@@ -177,7 +177,9 @@ export function ServerConnectionCard({
 
             <div className="flex items-center gap-2">
               <div className="flex items-center gap-2 pr-2 text-xs text-muted-foreground leading-none">
-                <span className="leading-none">{server.enabled === false ? "Disabled" : "Enabled"}</span>
+                <span className="leading-none">
+                  {server.enabled === false ? "Disabled" : "Enabled"}
+                </span>
                 <Switch
                   checked={server.enabled !== false}
                   onCheckedChange={(checked) => {
@@ -227,7 +229,11 @@ export function ServerConnectionCard({
                   <Separator />
                   <DropdownMenuItem
                     className="text-destructive text-xs cursor-pointer"
-                    onClick={() => (onRemove ? onRemove(server.name) : onDisconnect(server.name))}
+                    onClick={() =>
+                      onRemove
+                        ? onRemove(server.name)
+                        : onDisconnect(server.name)
+                    }
                   >
                     <Link2Off className="h-3 w-3 mr-2" />
                     Remove server
