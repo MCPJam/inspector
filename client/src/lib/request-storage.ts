@@ -17,7 +17,13 @@ export function listSavedRequests(serverKey: string): SavedRequest[] {
   }
 }
 
-export function saveRequest(serverKey: string, request: Omit<SavedRequest, "id" | "createdAt" | "updatedAt" | "serverKey"> & { id?: string }): SavedRequest {
+export function saveRequest(
+  serverKey: string,
+  request: Omit<
+    SavedRequest,
+    "id" | "createdAt" | "updatedAt" | "serverKey"
+  > & { id?: string },
+): SavedRequest {
   const now = new Date().toISOString();
   const existing = listSavedRequests(serverKey);
   let final: SavedRequest;
@@ -34,7 +40,8 @@ export function saveRequest(serverKey: string, request: Omit<SavedRequest, "id" 
       updatedAt: now,
     };
     const idx = existing.findIndex((r) => r.id === final.id);
-    if (idx >= 0) existing[idx] = final; else existing.push(final);
+    if (idx >= 0) existing[idx] = final;
+    else existing.push(final);
   } else {
     final = {
       id: crypto.randomUUID(),
@@ -58,11 +65,17 @@ export function deleteRequest(serverKey: string, id: string): void {
   localStorage.setItem(getKey(serverKey), JSON.stringify(existing));
 }
 
-export function getRequest(serverKey: string, id: string): SavedRequest | undefined {
+export function getRequest(
+  serverKey: string,
+  id: string,
+): SavedRequest | undefined {
   return listSavedRequests(serverKey).find((r) => r.id === id);
 }
 
-export function duplicateRequest(serverKey: string, id: string): SavedRequest | undefined {
+export function duplicateRequest(
+  serverKey: string,
+  id: string,
+): SavedRequest | undefined {
   const req = getRequest(serverKey, id);
   if (!req) return undefined;
   return saveRequest(serverKey, {
@@ -74,7 +87,11 @@ export function duplicateRequest(serverKey: string, id: string): SavedRequest | 
   });
 }
 
-export function renameRequest(serverKey: string, id: string, title: string): SavedRequest | undefined {
+export function renameRequest(
+  serverKey: string,
+  id: string,
+  title: string,
+): SavedRequest | undefined {
   const existing = getRequest(serverKey, id);
   if (!existing) return undefined;
   return saveRequest(serverKey, {
@@ -87,7 +104,10 @@ export function renameRequest(serverKey: string, id: string, title: string): Sav
   });
 }
 
-export function toggleFavorite(serverKey: string, id: string): SavedRequest | undefined {
+export function toggleFavorite(
+  serverKey: string,
+  id: string,
+): SavedRequest | undefined {
   const existing = getRequest(serverKey, id);
   if (!existing) return undefined;
   return saveRequest(serverKey, {
@@ -116,4 +136,3 @@ export function updateRequestMeta(
     isFavorite: updates.isFavorite ?? existing.isFavorite,
   });
 }
-
