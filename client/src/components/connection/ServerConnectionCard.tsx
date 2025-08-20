@@ -138,10 +138,10 @@ export function ServerConnectionCard({
       <Card className="border border-border/50 bg-card/50 backdrop-blur-sm hover:border-border transition-colors">
         <div className="p-4 space-y-3 py-0">
           {/* Header Row */}
-          <div className="flex items-start justify-between">
-            <div className="flex items-start gap-3 flex-1">
+          <div className="flex items-baseline justify-between">
+            <div className="flex items-baseline gap-3 flex-1">
               <div
-                className="h-2 w-2 rounded-full flex-shrink-0 mt-1.5"
+                className="h-2 w-2 rounded-full flex-shrink-0 mt-1"
                 style={{
                   backgroundColor:
                     server.connectionStatus === "connected"
@@ -160,9 +160,9 @@ export function ServerConnectionCard({
                   <h3 className="font-medium text-sm text-foreground">
                     {server.name}
                   </h3>
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-1 leading-none">
                     {getConnectionStatusIcon()}
-                    <p className="text-xs text-muted-foreground">
+                    <p className="text-xs text-muted-foreground leading-none">
                       {getConnectionStatusText()}
                     </p>
                   </div>
@@ -174,8 +174,8 @@ export function ServerConnectionCard({
             </div>
 
             <div className="flex items-center gap-2">
-              <div className="flex items-center gap-2 pr-2 text-xs text-muted-foreground">
-                <span>{server.enabled === false ? "Disabled" : "Enabled"}</span>
+              <div className="flex items-center gap-2 pr-2 text-xs text-muted-foreground leading-none">
+                <span className="leading-none">{server.enabled === false ? "Disabled" : "Enabled"}</span>
                 <Switch
                   checked={server.enabled !== false}
                   onCheckedChange={(checked) => {
