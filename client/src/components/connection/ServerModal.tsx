@@ -14,19 +14,21 @@ import { ServerFormData } from "@/shared/types.js";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { getStoredTokens } from "@/lib/mcp-oauth";
 
-interface EditServerModalProps {
+interface ServerModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onUpdate: (originalServerName: string, formData: ServerFormData) => void;
-  server: ServerWithName;
+  mode: "add" | "edit";
+  onSubmit: (formData: ServerFormData, originalServerName?: string) => void;
+  server?: ServerWithName; // Required for edit mode
 }
 
-export function EditServerModal({
+export function ServerModal({
   isOpen,
   onClose,
-  onUpdate,
+  mode,
+  onSubmit,
   server,
-}: EditServerModalProps) {
+}: ServerModalProps) {
   const [serverFormData, setServerFormData] = useState<ServerFormData>({
     name: "",
     type: "stdio",
@@ -60,12 +62,10 @@ export function EditServerModal({
     const isHttpServer = "url" in config;
 
     if (isHttpServer) {
-      // Extract bearer token from headers if present
       const headers =
         (config.requestInit?.headers as Record<string, string>) || {};
       const hasOAuth = server.oauthTokens != null;
 
-      // Get stored OAuth client credentials if available
       const storedTokens = hasOAuth ? getStoredTokens(server.name) : null;
       const storedClientInfo = hasOAuth
         ? localStorage.getItem(`mcp-client-${server.name}`)
@@ -93,7 +93,6 @@ export function EditServerModal({
             : clientInfo?.client_secret || "",
       };
     } else {
-      // STDIO server
       return {
         name: server.name,
         type: "stdio",
@@ -104,10 +103,27 @@ export function EditServerModal({
     }
   };
 
-  // Initialize form with server data
+  const getInitialFormData = (): ServerFormData => {
+    if (mode === "edit" && server) {
+      return convertServerConfig(server);
+    }
+    return {
+      name: "",
+      type: "stdio",
+      command: "",
+      args: [],
+      url: "",
+      headers: {},
+      env: {},
+      useOAuth: true,
+      oauthScopes: [],
+      clientId: "",
+    };
+  };
+
   useEffect(() => {
-    if (server && isOpen) {
-      const formData = convertServerConfig(server);
+    if (isOpen) {
+      const formData = getInitialFormData();
       setServerFormData(formData);
 
       // Set additional form state
@@ -120,7 +136,7 @@ export function EditServerModal({
         const envEntries = Object.entries(formData.env || {}).map(
           ([key, value]) => ({
             key,
-            value,
+            value: String(value),
           }),
         );
         setEnvVars(envEntries);
@@ -134,25 +150,25 @@ export function EditServerModal({
         if (hasOAuth) {
           setAuthType("oauth");
           setOauthScopesInput(formData.oauthScopes?.join(" ") || "mcp:*");
-          // Initialize clientId and useCustomClientId
+
           setClientId(formData.clientId || "");
           setClientSecret(formData.clientSecret || "");
           setUseCustomClientId(!!formData.clientId);
-          // Ensure useOAuth is true when we have OAuth tokens
+
           setServerFormData((prev) => ({ ...prev, useOAuth: true }));
         } else if (hasBearerToken) {
           setAuthType("bearer");
           setBearerToken(authHeader.slice(7)); // Remove 'Bearer ' prefix
-          // Ensure useOAuth is false for bearer token
+
           setServerFormData((prev) => ({ ...prev, useOAuth: false }));
         } else {
           setAuthType("none");
-          // Ensure useOAuth is false for no auth
+
           setServerFormData((prev) => ({ ...prev, useOAuth: false }));
         }
       }
     }
-  }, [server, isOpen]);
+  }, [mode, server, isOpen]);
 
   // Basic client ID validation
   const validateClientId = (id: string): string | null => {
@@ -160,7 +176,6 @@ export function EditServerModal({
       return "Client ID is required when using manual configuration";
     }
 
-    // Basic format validation - most OAuth providers use alphanumeric with hyphens/underscores
     const validPattern =
       /^[a-zA-Z0-9][a-zA-Z0-9._-]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$/;
     if (!validPattern.test(id.trim())) {
@@ -180,8 +195,6 @@ export function EditServerModal({
 
   // Basic client secret validation following OAuth 2.0 spec flexibility
   const validateClientSecret = (secret: string): string | null => {
-    // OAuth 2.0 spec doesn't mandate specific format requirements
-    // but we implement basic security guidelines
     if (secret && secret.trim().length > 0) {
       if (secret.trim().length < 8) {
         return "Client secret should be at least 8 characters long for security";
@@ -246,8 +259,9 @@ export function EditServerModal({
           finalFormData = {
             ...finalFormData,
             useOAuth: false,
-            headers: {}, // Clear any existing auth headers
+            headers: mode === "edit" ? {} : finalFormData.headers, // Clear headers for edit, preserve for add
           };
+          delete (finalFormData as any).oauthScopes;
         } else if (authType === "bearer" && bearerToken) {
           finalFormData = {
             ...finalFormData,
@@ -257,6 +271,7 @@ export function EditServerModal({
             },
             useOAuth: false,
           };
+          delete (finalFormData as any).oauthScopes;
         } else if (authType === "oauth" && serverFormData.useOAuth) {
           const scopes = (oauthScopesInput || "")
             .split(" ")
@@ -265,33 +280,65 @@ export function EditServerModal({
           finalFormData = {
             ...finalFormData,
             useOAuth: true,
-            ...(scopes.length > 0 ? { oauthScopes: scopes } : {}),
             clientId: useCustomClientId
               ? clientId.trim() || undefined
               : undefined,
             clientSecret: useCustomClientId
               ? clientSecret.trim() || undefined
               : undefined,
-            headers: {}, // Clear any existing auth headers for OAuth
+            headers: mode === "edit" ? {} : finalFormData.headers, // Clear headers for edit, preserve for add
           };
+          if (scopes.length > 0) {
+            (finalFormData as any).oauthScopes = scopes;
+          } else {
+            delete (finalFormData as any).oauthScopes;
+          }
         }
       }
 
-      onUpdate(server.name, finalFormData);
+      if (mode === "edit") {
+        onSubmit(finalFormData, server?.name);
+      } else {
+        onSubmit(finalFormData);
+      }
+
+      resetForm();
       onClose();
     }
   };
 
   const handleClose = () => {
+    resetForm();
     onClose();
+  };
+
+  const resetForm = () => {
+    setServerFormData({
+      name: "",
+      type: "stdio",
+      command: "",
+      args: [],
+      url: "",
+      headers: {},
+      env: {},
+      useOAuth: true,
+      oauthScopes: [],
+      clientId: "",
+    });
+    setCommandInput("");
+    setOauthScopesInput("");
+    setClientId("");
+    setClientSecret("");
+    setBearerToken("");
+    setAuthType("none");
+    setUseCustomClientId(false);
+    setClientIdError(null);
+    setClientSecretError(null);
+    setEnvVars([]);
   };
 
   const addEnvVar = () => {
     setEnvVars([...envVars, { key: "", value: "" }]);
-  };
-
-  const removeEnvVar = (index: number) => {
-    setEnvVars(envVars.filter((_, i) => i !== index));
   };
 
   const updateEnvVar = (
@@ -304,28 +351,18 @@ export function EditServerModal({
     setEnvVars(updated);
   };
 
-  const handleClientIdChange = (value: string) => {
-    setClientId(value);
-    // Clear error when user starts typing
-    if (clientIdError) {
-      setClientIdError(null);
-    }
+  const removeEnvVar = (index: number) => {
+    setEnvVars(envVars.filter((_, i) => i !== index));
   };
 
-  const handleClientSecretChange = (value: string) => {
-    setClientSecret(value);
-    // Clear error when user starts typing
-    if (clientSecretError) {
-      setClientSecretError(null);
-    }
-  };
+  const dialogTitle = mode === "add" ? "Add MCP Server" : "Edit MCP Server";
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
       <DialogContent className="max-w-md sm:max-w-lg">
         <DialogHeader className="space-y-2">
           <DialogTitle className="flex text-xl font-semibold">
-            <img src="/mcp.svg" alt="MCP" className="mr-2" /> Edit MCP Server
+            <img src="/mcp.svg" alt="MCP" className="mr-2" /> {dialogTitle}
           </DialogTitle>
         </DialogHeader>
 
@@ -408,16 +445,17 @@ export function EditServerModal({
                   }
                   placeholder="http://localhost:8080/mcp"
                   required
-                  className="flex-1 rounded-l-none text-sm"
+                  className="flex-1 rounded-l-none text-sm border-border"
                 />
               </div>
             )}
           </div>
 
+          {/* Environment Variables for STDIO */}
           {serverFormData.type === "stdio" && (
-            <div className="space-y-4 p-4 border rounded-lg bg-muted/30 border-border/50">
+            <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <label className="text-sm font-medium text-foreground">
+                <label className="block text-sm font-medium text-foreground">
                   Environment Variables
                 </label>
                 <Button
@@ -425,39 +463,39 @@ export function EditServerModal({
                   variant="outline"
                   size="sm"
                   onClick={addEnvVar}
-                  className="h-8 px-2 text-xs cursor-pointer"
+                  className="text-xs"
                 >
                   Add Variable
                 </Button>
               </div>
               {envVars.length > 0 && (
-                <div className="space-y-2">
+                <div className="space-y-2 max-h-32 overflow-y-auto">
                   {envVars.map((envVar, index) => (
-                    <div key={index} className="flex gap-2">
+                    <div key={index} className="flex gap-2 items-center">
                       <Input
-                        placeholder="key"
                         value={envVar.key}
                         onChange={(e) =>
                           updateEnvVar(index, "key", e.target.value)
                         }
-                        className="h-8 text-sm"
+                        placeholder="KEY"
+                        className="flex-1 text-xs"
                       />
                       <Input
-                        placeholder="value"
                         value={envVar.value}
                         onChange={(e) =>
                           updateEnvVar(index, "value", e.target.value)
                         }
-                        className="h-8 text-sm"
+                        placeholder="value"
+                        className="flex-1 text-xs"
                       />
                       <Button
                         type="button"
                         variant="outline"
                         size="sm"
                         onClick={() => removeEnvVar(index)}
-                        className="h-8 px-2 text-xs"
+                        className="px-2 text-xs"
                       >
-                        �
+                        ×
                       </Button>
                     </div>
                   ))}
@@ -466,193 +504,40 @@ export function EditServerModal({
             </div>
           )}
 
+          {/* Authentication for HTTP */}
           {serverFormData.type === "http" && (
-            <div className="space-y-4 p-4 border rounded-lg bg-muted/30 border-border/50">
-              <div className="space-y-3">
+            <div className="space-y-4">
+              <div className="space-y-2">
                 <label className="block text-sm font-medium text-foreground">
-                  Authentication Method
+                  Authentication
                 </label>
-                <div className="flex gap-4">
-                  <div className="flex items-center space-x-2">
-                    <input
-                      type="radio"
-                      id="none"
-                      name="authType"
-                      checked={authType === "none"}
-                      onChange={() => {
-                        setAuthType("none");
-                        setServerFormData((prev) => ({
-                          ...prev,
-                          useOAuth: false,
-                        }));
-                      }}
-                      className="w-4 h-4 cursor-pointer"
-                    />
-                    <label htmlFor="none" className="text-sm cursor-pointer">
-                      None
-                    </label>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <input
-                      type="radio"
-                      id="oauth"
-                      name="authType"
-                      checked={authType === "oauth"}
-                      onChange={() => {
-                        setAuthType("oauth");
-                        setServerFormData((prev) => ({
-                          ...prev,
-                          useOAuth: true,
-                        }));
-                      }}
-                      className="w-4 h-4 cursor-pointer"
-                    />
-                    <label htmlFor="oauth" className="text-sm cursor-pointer">
-                      OAuth 2.1
-                    </label>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <input
-                      type="radio"
-                      id="bearer"
-                      name="authType"
-                      checked={authType === "bearer"}
-                      onChange={() => {
-                        setAuthType("bearer");
-                        setServerFormData((prev) => ({
-                          ...prev,
-                          useOAuth: false,
-                        }));
-                      }}
-                      className="w-4 h-4 cursor-pointer"
-                    />
-                    <label htmlFor="bearer" className="text-sm cursor-pointer">
-                      Bearer Token
-                    </label>
-                  </div>
-                </div>
+                <Select
+                  value={authType}
+                  onValueChange={(value: "oauth" | "bearer" | "none") => {
+                    setAuthType(value);
+                    if (value === "oauth") {
+                      setServerFormData((prev) => ({
+                        ...prev,
+                        useOAuth: true,
+                      }));
+                    } else {
+                      setServerFormData((prev) => ({
+                        ...prev,
+                        useOAuth: false,
+                      }));
+                    }
+                  }}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No Authentication</SelectItem>
+                    <SelectItem value="bearer">Bearer Token</SelectItem>
+                    <SelectItem value="oauth">OAuth 2.0</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
-
-              {authType === "oauth" && (
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <label className="block text-sm font-medium text-foreground">
-                      OAuth Scopes
-                    </label>
-                    <Input
-                      value={oauthScopesInput}
-                      onChange={(e) => setOauthScopesInput(e.target.value)}
-                      placeholder="mcp:* mcp:tools mcp:resources"
-                      className="h-10"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Space-separated OAuth scopes. Use &apos;mcp:*&apos; for
-                      full access.
-                    </p>
-                  </div>
-                  <div className="space-y-3">
-                    <div className="space-y-2">
-                      <label className="block text-sm font-medium text-foreground">
-                        Client Registration Method
-                      </label>
-                      <div className="flex items-center space-x-6">
-                        <div className="flex items-center space-x-2">
-                          <input
-                            type="radio"
-                            id="dynamic-registration"
-                            name="clientRegistration"
-                            checked={!useCustomClientId}
-                            onChange={() => setUseCustomClientId(false)}
-                            className="w-4 h-4 cursor-pointer"
-                          />
-                          <label
-                            htmlFor="dynamic-registration"
-                            className="text-sm cursor-pointer"
-                          >
-                            Dynamic Registration
-                          </label>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <input
-                            type="radio"
-                            id="manual-client-id"
-                            name="clientRegistration"
-                            checked={useCustomClientId}
-                            onChange={() => setUseCustomClientId(true)}
-                            className="w-4 h-4 cursor-pointer"
-                          />
-                          <label
-                            htmlFor="manual-client-id"
-                            className="text-sm cursor-pointer"
-                          >
-                            Manual Client Credentials
-                          </label>
-                        </div>
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        Dynamic registration lets the server automatically
-                        assign a client ID. Manual configuration allows you to
-                        specify a pre-registered client credentials.
-                      </p>
-                    </div>
-
-                    {useCustomClientId && (
-                      <div className="space-y-4">
-                        <div className="space-y-2">
-                          <label className="block text-sm font-medium text-foreground">
-                            Client ID <span className="text-red-500">*</span>
-                          </label>
-                          <Input
-                            value={clientId}
-                            onChange={(e) =>
-                              handleClientIdChange(e.target.value)
-                            }
-                            placeholder="your-registered-client-id"
-                            className={`h-10 ${clientIdError ? "border-red-500 focus:border-red-500" : ""}`}
-                            required={useCustomClientId}
-                          />
-                          {clientIdError ? (
-                            <p className="text-xs text-red-600">
-                              {clientIdError}
-                            </p>
-                          ) : (
-                            <p className="text-xs text-muted-foreground">
-                              Enter the client ID that was pre-registered with
-                              the OAuth provider. This must match exactly what
-                              was configured on the server.
-                            </p>
-                          )}
-                        </div>
-
-                        <div className="space-y-2">
-                          <label className="block text-sm font-medium text-foreground">
-                            Client Secret
-                          </label>
-                          <Input
-                            type="password"
-                            value={clientSecret}
-                            onChange={(e) =>
-                              handleClientSecretChange(e.target.value)
-                            }
-                            placeholder="your-client-secret"
-                            className={`h-10 ${clientSecretError ? "border-red-500 focus:border-red-500" : ""}`}
-                          />
-                          {clientSecretError ? (
-                            <p className="text-xs text-red-600">
-                              {clientSecretError}
-                            </p>
-                          ) : (
-                            <p className="text-xs text-muted-foreground">
-                              Optional. Enter the client secret if your OAuth
-                              provider requires it for authentication.
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
 
               {authType === "bearer" && (
                 <div className="space-y-2">
@@ -666,26 +551,126 @@ export function EditServerModal({
                     placeholder="Enter your bearer token"
                     className="h-10"
                   />
-                  <p className="text-xs text-muted-foreground">
-                    Token will be sent as Authorization: Bearer &lt;token&gt;
-                    header
-                  </p>
+                </div>
+              )}
+
+              {authType === "oauth" && (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-foreground">
+                      OAuth Scopes
+                    </label>
+                    <Input
+                      value={oauthScopesInput}
+                      onChange={(e) => setOauthScopesInput(e.target.value)}
+                      placeholder="mcp:* or custom scopes separated by spaces"
+                      className="h-10"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Default: mcp:* (space-separated for multiple scopes)
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex items-center space-x-2">
+                      <input
+                        type="checkbox"
+                        id="useCustomClientId"
+                        checked={useCustomClientId}
+                        onChange={(e) => {
+                          setUseCustomClientId(e.target.checked);
+                          if (!e.target.checked) {
+                            setClientId("");
+                            setClientSecret("");
+                            setClientIdError(null);
+                            setClientSecretError(null);
+                          }
+                        }}
+                        className="rounded"
+                      />
+                      <label
+                        htmlFor="useCustomClientId"
+                        className="text-sm font-medium text-foreground"
+                      >
+                        Use custom OAuth credentials
+                      </label>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Leave unchecked to use the server's default OAuth flow
+                    </p>
+                  </div>
+
+                  {useCustomClientId && (
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <label className="block text-sm font-medium text-foreground">
+                          Client ID
+                        </label>
+                        <Input
+                          value={clientId}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setClientId(value);
+                            const error = validateClientId(value);
+                            setClientIdError(error);
+                          }}
+                          placeholder="Your OAuth Client ID"
+                          className={`h-10 ${
+                            clientIdError ? "border-red-500" : ""
+                          }`}
+                        />
+                        {clientIdError && (
+                          <p className="text-xs text-red-500">
+                            {clientIdError}
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="block text-sm font-medium text-foreground">
+                          Client Secret (Optional)
+                        </label>
+                        <Input
+                          type="password"
+                          value={clientSecret}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setClientSecret(value);
+                            const error = validateClientSecret(value);
+                            setClientSecretError(error);
+                          }}
+                          placeholder="Your OAuth Client Secret"
+                          className={`h-10 ${
+                            clientSecretError ? "border-red-500" : ""
+                          }`}
+                        />
+                        {clientSecretError && (
+                          <p className="text-xs text-red-500">
+                            {clientSecretError}
+                          </p>
+                        )}
+                        <p className="text-xs text-muted-foreground">
+                          Optional for public clients using PKCE
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
           )}
 
-          <div className="flex gap-3 pt-6 border-t">
-            <Button type="submit" className="flex-1 cursor-pointer">
-              Update Server
-            </Button>
+          <div className="flex justify-end space-x-2 pt-4">
             <Button
               type="button"
               variant="outline"
               onClick={handleClose}
-              className="flex-1 cursor-pointer"
+              className="px-4"
             >
               Cancel
+            </Button>
+            <Button type="submit" className="px-4">
+              {mode === "add" ? "Add Server" : "Update Server"}
             </Button>
           </div>
         </form>
