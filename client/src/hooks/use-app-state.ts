@@ -29,6 +29,7 @@ export interface ServerWithName {
     | "oauth-flow";
   retryCount: number;
   lastError?: string;
+  enabled?: boolean;
 }
 
 export interface AppState {
@@ -87,6 +88,7 @@ export function useAppState() {
                 lastConnectionTime: server.lastConnectionTime
                   ? new Date(server.lastConnectionTime)
                   : new Date(),
+                enabled: server.enabled !== false,
               },
             ],
           ),
@@ -116,7 +118,9 @@ export function useAppState() {
   const setSelectedMultipleServersToAllServers = useCallback(() => {
     setAppState((prev) => ({
       ...prev,
-      selectedMultipleServers: Object.keys(appState.servers),
+      selectedMultipleServers: Object.entries(appState.servers)
+        .filter(([, s]) => s.enabled !== false)
+        .map(([name]) => name),
     }));
   }, [appState.servers]);
 
@@ -197,6 +201,7 @@ export function useAppState() {
             lastConnectionTime: new Date(),
             connectionStatus: "connecting" as const,
             retryCount: 0,
+            enabled: true,
           },
         },
         selectedServer: formData.name,
@@ -607,6 +612,30 @@ export function useAppState() {
 
   const handleDisconnect = useCallback(async (serverName: string) => {
     logger.info("Disconnecting from server", { serverName });
+    // Mark server as disabled and disconnected, but keep config
+    setAppState((prev: AppState) => ({
+      ...prev,
+      servers: {
+        ...prev.servers,
+        [serverName]: prev.servers[serverName]
+          ? {
+              ...prev.servers[serverName],
+              connectionStatus: "disconnected" as const,
+              enabled: false,
+            }
+          : prev.servers[serverName],
+      },
+      selectedServer:
+        prev.selectedServer === serverName ? "none" : prev.selectedServer,
+      selectedMultipleServers: prev.selectedMultipleServers.filter(
+        (name) => name !== serverName,
+      ),
+    }));
+  }, []);
+
+  // Permanently remove a server: clear OAuth data and delete from state
+  const handleRemoveServer = useCallback(async (serverName: string) => {
+    logger.info("Removing server", { serverName });
 
     // Clear OAuth data
     clearOAuthData(serverName);
@@ -645,6 +674,7 @@ export function useAppState() {
           [serverName]: {
             ...server,
             connectionStatus: "connecting" as const,
+            enabled: true,
           },
         },
       }));
@@ -949,6 +979,7 @@ export function useAppState() {
     handleDisconnect,
     handleReconnect,
     handleUpdate,
+    handleRemoveServer,
     setSelectedServer,
     setSelectedMCPConfigs,
     toggleMultiSelectMode,

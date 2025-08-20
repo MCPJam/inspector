@@ -15,6 +15,7 @@ interface ServersTabProps {
   onDisconnect: (serverName: string) => void;
   onReconnect: (serverName: string) => void;
   onUpdate: (originalServerName: string, formData: ServerFormData) => void;
+  onRemove: (serverName: string) => void;
 }
 
 export function ServersTab({
@@ -23,6 +24,7 @@ export function ServersTab({
   onDisconnect,
   onReconnect,
   onUpdate,
+  onRemove,
 }: ServersTabProps) {
   const [isAddingServer, setIsAddingServer] = useState(false);
   const [isEditingServer, setIsEditingServer] = useState(false);
@@ -31,8 +33,10 @@ export function ServersTab({
   const [filterType, setFilterType] = useState<"all" | "stdio" | "http">("all");
 
   useEffect(() => {
-    Object.keys(connectedServerConfigs).forEach((serverName) => {
-      onReconnect(serverName);
+    Object.entries(connectedServerConfigs).forEach(([serverName, server]) => {
+      if (server.enabled !== false) {
+        onReconnect(serverName);
+      }
     });
   }, []);
 
@@ -47,6 +51,7 @@ export function ServersTab({
         filterType === "all" ||
         (filterType === "stdio" && "command" in server.config) ||
         (filterType === "http" && "url" in server.config);
+      const isEnabled = server.enabled !== false; // show disabled too, but keep for now
       return matchesSearch && matchesFilter;
     },
   );
@@ -88,6 +93,7 @@ export function ServersTab({
               onDisconnect={onDisconnect}
               onReconnect={onReconnect}
               onEdit={handleEditServer}
+              onRemove={onRemove}
             />
           ))}
         </div>
