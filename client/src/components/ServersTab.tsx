@@ -135,7 +135,9 @@ export function ServersTab({
           mode="edit"
           isOpen={isEditingServer}
           onClose={handleCloseEditModal}
-          onSubmit={(formData, originalName) => onUpdate(originalName!, formData)}
+          onSubmit={(formData, originalName) =>
+            onUpdate(originalName!, formData)
+          }
           server={serverToEdit}
         />
       )}

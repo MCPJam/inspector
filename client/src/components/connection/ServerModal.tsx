@@ -17,7 +17,7 @@ import { getStoredTokens } from "@/lib/mcp-oauth";
 interface ServerModalProps {
   isOpen: boolean;
   onClose: () => void;
-  mode: 'add' | 'edit';
+  mode: "add" | "edit";
   onSubmit: (formData: ServerFormData, originalServerName?: string) => void;
   server?: ServerWithName; // Required for edit mode
 }
@@ -104,7 +104,7 @@ export function ServerModal({
   };
 
   const getInitialFormData = (): ServerFormData => {
-    if (mode === 'edit' && server) {
+    if (mode === "edit" && server) {
       return convertServerConfig(server);
     }
     return {
@@ -150,20 +150,20 @@ export function ServerModal({
         if (hasOAuth) {
           setAuthType("oauth");
           setOauthScopesInput(formData.oauthScopes?.join(" ") || "mcp:*");
-          
+
           setClientId(formData.clientId || "");
           setClientSecret(formData.clientSecret || "");
           setUseCustomClientId(!!formData.clientId);
-          
+
           setServerFormData((prev) => ({ ...prev, useOAuth: true }));
         } else if (hasBearerToken) {
           setAuthType("bearer");
           setBearerToken(authHeader.slice(7)); // Remove 'Bearer ' prefix
-          
+
           setServerFormData((prev) => ({ ...prev, useOAuth: false }));
         } else {
           setAuthType("none");
-          
+
           setServerFormData((prev) => ({ ...prev, useOAuth: false }));
         }
       }
@@ -195,7 +195,6 @@ export function ServerModal({
 
   // Basic client secret validation following OAuth 2.0 spec flexibility
   const validateClientSecret = (secret: string): string | null => {
-    
     if (secret && secret.trim().length > 0) {
       if (secret.trim().length < 8) {
         return "Client secret should be at least 8 characters long for security";
@@ -260,7 +259,7 @@ export function ServerModal({
           finalFormData = {
             ...finalFormData,
             useOAuth: false,
-            headers: mode === 'edit' ? {} : finalFormData.headers, // Clear headers for edit, preserve for add
+            headers: mode === "edit" ? {} : finalFormData.headers, // Clear headers for edit, preserve for add
           };
           delete (finalFormData as any).oauthScopes;
         } else if (authType === "bearer" && bearerToken) {
@@ -287,7 +286,7 @@ export function ServerModal({
             clientSecret: useCustomClientId
               ? clientSecret.trim() || undefined
               : undefined,
-            headers: mode === 'edit' ? {} : finalFormData.headers, // Clear headers for edit, preserve for add
+            headers: mode === "edit" ? {} : finalFormData.headers, // Clear headers for edit, preserve for add
           };
           if (scopes.length > 0) {
             (finalFormData as any).oauthScopes = scopes;
@@ -297,12 +296,12 @@ export function ServerModal({
         }
       }
 
-      if (mode === 'edit') {
+      if (mode === "edit") {
         onSubmit(finalFormData, server?.name);
       } else {
         onSubmit(finalFormData);
       }
-      
+
       resetForm();
       onClose();
     }
@@ -342,7 +341,11 @@ export function ServerModal({
     setEnvVars([...envVars, { key: "", value: "" }]);
   };
 
-  const updateEnvVar = (index: number, field: "key" | "value", value: string) => {
+  const updateEnvVar = (
+    index: number,
+    field: "key" | "value",
+    value: string,
+  ) => {
     const updated = [...envVars];
     updated[index][field] = value;
     setEnvVars(updated);
@@ -352,7 +355,7 @@ export function ServerModal({
     setEnvVars(envVars.filter((_, i) => i !== index));
   };
 
-  const dialogTitle = mode === 'add' ? 'Add MCP Server' : 'Edit MCP Server';
+  const dialogTitle = mode === "add" ? "Add MCP Server" : "Edit MCP Server";
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
@@ -513,9 +516,15 @@ export function ServerModal({
                   onValueChange={(value: "oauth" | "bearer" | "none") => {
                     setAuthType(value);
                     if (value === "oauth") {
-                      setServerFormData((prev) => ({ ...prev, useOAuth: true }));
+                      setServerFormData((prev) => ({
+                        ...prev,
+                        useOAuth: true,
+                      }));
                     } else {
-                      setServerFormData((prev) => ({ ...prev, useOAuth: false }));
+                      setServerFormData((prev) => ({
+                        ...prev,
+                        useOAuth: false,
+                      }));
                     }
                   }}
                 >
@@ -611,7 +620,9 @@ export function ServerModal({
                           }`}
                         />
                         {clientIdError && (
-                          <p className="text-xs text-red-500">{clientIdError}</p>
+                          <p className="text-xs text-red-500">
+                            {clientIdError}
+                          </p>
                         )}
                       </div>
 
@@ -659,7 +670,7 @@ export function ServerModal({
               Cancel
             </Button>
             <Button type="submit" className="px-4">
-              {mode === 'add' ? 'Add Server' : 'Update Server'}
+              {mode === "add" ? "Add Server" : "Update Server"}
             </Button>
           </div>
         </form>
