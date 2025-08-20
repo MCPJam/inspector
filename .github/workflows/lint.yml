@@ -21,7 +21,9 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm install
+        run: |
+          npm cache clean --force
+          npm ci
 
       - name: Check Prettier formatting
         run: |
