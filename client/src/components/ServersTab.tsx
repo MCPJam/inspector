@@ -31,8 +31,10 @@ export function ServersTab({
   const [filterType, setFilterType] = useState<"all" | "stdio" | "http">("all");
 
   useEffect(() => {
-    Object.keys(connectedServerConfigs).forEach((serverName) => {
-      onReconnect(serverName);
+    Object.entries(connectedServerConfigs).forEach(([serverName, server]) => {
+      if (server.enabled !== false) {
+        onReconnect(serverName);
+      }
     });
   }, []);
 
@@ -47,6 +49,7 @@ export function ServersTab({
         filterType === "all" ||
         (filterType === "stdio" && "command" in server.config) ||
         (filterType === "http" && "url" in server.config);
+      const isEnabled = server.enabled !== false; // show disabled too, but keep for now
       return matchesSearch && matchesFilter;
     },
   );

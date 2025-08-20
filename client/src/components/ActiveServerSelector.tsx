@@ -112,6 +112,7 @@ export function ActiveServerSelector({
               </span>
               <div className="text-xs opacity-70">
                 {serverConfig.config.command ? "STDIO" : "HTTP"}
+                {serverConfig.enabled === false ? " • disabled" : ""}
               </div>
             </button>
           );

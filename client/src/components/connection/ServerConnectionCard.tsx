@@ -4,6 +4,7 @@ import { Card } from "../ui/card";
 import { Button } from "../ui/button";
 import { Separator } from "../ui/separator";
 import { TooltipProvider } from "../ui/tooltip";
+import { Switch } from "../ui/switch";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -173,6 +174,20 @@ export function ServerConnectionCard({
             </div>
 
             <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 pr-2 text-xs text-muted-foreground">
+                <span>{server.enabled === false ? "Disabled" : "Enabled"}</span>
+                <Switch
+                  checked={server.enabled !== false}
+                  onCheckedChange={(checked) => {
+                    if (!checked) {
+                      onDisconnect(server.name);
+                    } else {
+                      handleReconnect();
+                    }
+                  }}
+                  className="cursor-pointer"
+                />
+              </div>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
