@@ -3,11 +3,43 @@ import React, { memo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { CodeBlock } from "./code-block";
+import { useState } from "react";
 
 const components: Partial<Components> = {
   // @ts-expect-error - CodeBlock component doesn't match exact interface
   code: CodeBlock,
   pre: ({ children }) => <>{children}</>,
+  img: ({ src, alt, ...props }) => {
+    if (!src) return null;
+
+    const [isExpanded, setIsExpanded] = useState(false);
+    const [hasError, setHasError] = useState(false);
+
+    if (hasError) {
+      return (
+        <div className="my-4 p-4 bg-muted/50 rounded-lg border border-border/30 text-center text-muted-foreground">
+          Failed to load image: {alt || "Image"}
+        </div>
+      );
+    }
+
+    return (
+      <div className="my-4 flex justify-center">
+        <img
+          src={src}
+          alt={alt || "Image"}
+          className={`max-w-full h-auto rounded-lg border border-border/30 shadow-sm cursor-pointer transition-all hover:shadow-md ${
+            isExpanded ? "max-h-none" : "max-h-96"
+          }`}
+          loading="lazy"
+          onClick={() => setIsExpanded(!isExpanded)}
+          onError={() => setHasError(true)}
+          title={isExpanded ? "Click to collapse" : "Click to expand"}
+          {...props}
+        />
+      </div>
+    );
+  },
   ol: ({ children, ...props }) => {
     return (
       <ol className="list-decimal list-outside ml-4" {...props}>
@@ -102,7 +134,6 @@ const NonMemoizedMarkdown = ({ children }: { children: string }) => {
   );
 };
 
-export const Markdown = memo(
-  NonMemoizedMarkdown,
-  (prevProps, nextProps) => prevProps.children === nextProps.children,
-);
+// Note: We can't memoize this component because it contains stateful img components
+// The memoization would prevent the state from working properly
+export const Markdown = NonMemoizedMarkdown;

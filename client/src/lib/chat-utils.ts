@@ -46,7 +46,7 @@ export function formatMessageDate(date: Date): string {
 export function createMessage(
   role: "user" | "assistant",
   content: string,
-  attachments?: any[],
+  attachments?: any[]
 ): ChatMessage {
   return {
     id: generateId(),
@@ -78,6 +78,33 @@ export function isValidFileType(file: File): boolean {
   return allowedTypes.includes(file.type);
 }
 
+export function isImageFile(file: File): boolean {
+  return file.type.startsWith("image/");
+}
+
+export function isImageUrl(url: string): boolean {
+  const imageExtensions = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"];
+  const lowerUrl = url.toLowerCase();
+  return (
+    imageExtensions.some((ext) => lowerUrl.includes(ext)) ||
+    lowerUrl.includes("data:image/") ||
+    lowerUrl.includes("blob:")
+  );
+}
+
+export function getImageDimensions(
+  url: string
+): Promise<{ width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
 export function formatFileSize(bytes: number): string {
   if (bytes === 0) return "0 B";
 
@@ -103,7 +130,7 @@ export function scrollToBottom(element?: Element | null) {
 
 export function debounce<T extends (...args: any[]) => any>(
   func: T,
-  wait: number,
+  wait: number
 ): (...args: Parameters<T>) => void {
   let timeout: NodeJS.Timeout;
   return (...args: Parameters<T>) => {

@@ -1,6 +1,6 @@
 import { memo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { formatTimestamp, sanitizeText } from "@/lib/chat-utils";
+import { formatTimestamp, sanitizeText, isImageFile } from "@/lib/chat-utils";
 import { ChatMessage } from "@/lib/chat-types";
 import { Copy, CopyIcon, RotateCcw } from "lucide-react";
 import { Markdown } from "./markdown";
@@ -11,6 +11,51 @@ import { ToolCallDisplay } from "./tool-call";
 import { getProviderLogoFromModel } from "./chat-helpers";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { MastraMCPServerDefinition, ModelDefinition } from "@/shared/types.js";
+
+// Reusable Image Attachment Component
+const ImageAttachment = ({
+  attachment,
+  align = "left",
+}: {
+  attachment: any;
+  align?: "left" | "right";
+}) => {
+  const [imageError, setImageError] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  if (imageError) {
+    return (
+      <div
+        className={`px-3 py-2 bg-muted rounded-lg text-sm text-muted-foreground ${align === "right" ? "text-right" : ""}`}
+      >
+        Failed to load image: {attachment.name}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div
+        className={`text-xs text-muted-foreground font-medium ${align === "right" ? "text-right" : ""}`}
+      >
+        {attachment.name}
+      </div>
+      <div className="flex justify-center">
+        <img
+          src={attachment.url}
+          alt={attachment.name}
+          className={`max-w-full h-auto rounded-lg border border-border/30 shadow-sm cursor-pointer transition-all hover:shadow-md ${
+            isExpanded ? "max-h-none" : "max-h-96"
+          }`}
+          loading="lazy"
+          onClick={() => setIsExpanded(!isExpanded)}
+          onError={() => setImageError(true)}
+          title={isExpanded ? "Click to collapse" : "Click to expand"}
+        />
+      </div>
+    </div>
+  );
+};
 
 interface MessageProps {
   message: ChatMessage;
@@ -112,15 +157,37 @@ const PureMessage = ({
             <div className="flex flex-col gap-4 w-full min-w-0">
               {/* Attachments */}
               {message.attachments && message.attachments.length > 0 && (
-                <div className="flex flex-row gap-2">
-                  {message.attachments.map((attachment) => (
-                    <div
-                      key={attachment.id}
-                      className="px-3 py-2 bg-muted rounded-lg text-sm"
-                    >
-                      {attachment.name}
-                    </div>
-                  ))}
+                <div className="flex flex-col gap-3">
+                  {message.attachments.map((attachment) => {
+                    const isImage = isImageFile({
+                      type: attachment.contentType,
+                    } as File);
+
+                    if (isImage) {
+                      return (
+                        <ImageAttachment
+                          key={attachment.id}
+                          attachment={attachment}
+                        />
+                      );
+                    }
+
+                    // Non-image attachments
+                    return (
+                      <div
+                        key={attachment.id}
+                        className="px-3 py-2 bg-muted rounded-lg text-sm flex items-center gap-2"
+                      >
+                        <span>📎</span>
+                        <span>{attachment.name}</span>
+                        {attachment.size && (
+                          <span className="text-xs text-muted-foreground">
+                            ({(attachment.size / 1024).toFixed(1)} KB)
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
 
@@ -129,7 +196,7 @@ const PureMessage = ({
                 <div className="space-y-2">
                   {message.toolCalls.map((toolCall) => {
                     const toolResult = message.toolResults?.find(
-                      (tr) => tr.toolCallId === toolCall.id,
+                      (tr) => tr.toolCallId === toolCall.id
                     );
                     return (
                       <ToolCallDisplay
@@ -224,15 +291,38 @@ const PureMessage = ({
             <div className="flex flex-col gap-2 max-w-2xl">
               {/* User Attachments */}
               {message.attachments && message.attachments.length > 0 && (
-                <div className="flex flex-row justify-end gap-2">
-                  {message.attachments.map((attachment) => (
-                    <div
-                      key={attachment.id}
-                      className="px-3 py-2 bg-muted rounded-lg text-sm"
-                    >
-                      {attachment.name}
-                    </div>
-                  ))}
+                <div className="flex flex-col gap-3">
+                  {message.attachments.map((attachment) => {
+                    const isImage = isImageFile({
+                      type: attachment.contentType,
+                    } as File);
+
+                    if (isImage) {
+                      return (
+                        <ImageAttachment
+                          key={attachment.id}
+                          attachment={attachment}
+                          align="right"
+                        />
+                      );
+                    }
+
+                    // Non-image attachments
+                    return (
+                      <div
+                        key={attachment.id}
+                        className="px-3 py-2 bg-muted rounded-lg text-sm flex items-center gap-2 justify-end"
+                      >
+                        <span>{attachment.name}</span>
+                        <span>📎</span>
+                        {attachment.size && (
+                          <span className="text-xs text-muted-foreground">
+                            ({(attachment.size / 1024).toFixed(1)} KB)
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
 

@@ -7,7 +7,7 @@ mcp = FastMCP("nasa")
 
 # Constants
 NASA_API_BASE = "https://api.nasa.gov"
-NASA_API_KEY = "<YOUR_NASA_API_KEY>"
+NASA_API_KEY = "IdJt5uBCXHUeKDre3uBwmDMf8APpQMwdQ4CN27dC"
 
 async def make_nasa_request(url: str) -> dict[str, Any] | None:
     """Make a request to the NASA API with proper error handling."""
@@ -37,7 +37,10 @@ async def get_astronomy_picture_of_day(date: str = None) -> str:
     if not data:
         return "Unable to fetch APOD data from NASA API."
     
-    # Format the response
+    # Get the image URL (prefer HD if available)
+    image_url = data.get('hdurl') or data.get('url')
+    
+    # Format the response with markdown image
     result = f"""
 🌌 NASA Astronomy Picture of the Day
 
@@ -45,8 +48,8 @@ async def get_astronomy_picture_of_day(date: str = None) -> str:
 📝 Title: {data.get('title', 'Unknown')}
 👨‍🚀 Author: {data.get('copyright', 'NASA')}
 📖 Explanation: {data.get('explanation', 'No explanation available')}
-🔗 HD Image: {data.get('hdurl', 'Not available')}
-🔗 Standard Image: {data.get('url', 'Not available')}
+
+{image_url and f"![{data.get('title', 'NASA APOD')}]({image_url})" or "No image available"}
 """
     
     return result
