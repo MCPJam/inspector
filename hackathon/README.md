@@ -10,13 +10,13 @@
 
 # MCPJam Hackathon Projects
 
-Welcome to the MCPJam hackathon collection! This is a directory of fun hackathon projects to get people familiar with building MCP servers
+Welcome to the MCPJam hackathon collection! This is a directory of fun hackathon projects to get people familiar with building MCP servers. Designed for all skill levels. Each project takes less than 10 min. New projects added every week
 
 </div>
 
 ## Hackathon Projects
 
-### 🌌 NASA MCP Server (Python)
+### 🌌 (Week 1) - NASA MCP Server
 
 **Location:** `nasa-mcp-python/`
 
@@ -35,7 +35,7 @@ A Python-based MCP server that connects to NASA's API to fetch the Astronomy Pic
 
 [View Project →](nasa-mcp-python/README.md)
 
-### 🎵 Spotify MCP Server (Python)
+### 🎵 (Week 2) Spotify MCP Server [TBD]
 
 **Location:** `spotify-mcp-python/`
 
@@ -60,19 +60,11 @@ Have a great hackathon project? We'd love to feature it here! Submit your projec
 2. Following the project structure guidelines
 3. Including clear documentation and examples
 
-## 📞 Support
-
-- **Discord:** [Join our community](https://discord.gg/JEnDtz8X6z)
-- **GitHub Issues:** [Report bugs or request features](https://github.com/MCPJam/inspector/issues)
-- **Documentation:** [MCPJam Inspector docs](https://mcpjam.com)
-
 ---
 
 <div align="center">
 
-**Happy Hacking! 🎯**
-
-Built with ❤️ by the MCPJam community
+**Happy Hacking!**
 
 [🌐 Website](https://mcpjam.com) • [📖 Docs](https://github.com/MCPJam/inspector) • [🐛 Issues](https://github.com/MCPJam/inspector/issues)
 
