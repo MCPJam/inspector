@@ -7,7 +7,7 @@ mcp = FastMCP("nasa")
 
 # Constants
 NASA_API_BASE = "https://api.nasa.gov"
-NASA_API_KEY = "IdJt5uBCXHUeKDre3uBwmDMf8APpQMwdQ4CN27dC"
+NASA_API_KEY = "<NASA_API_TOKEN>"
 
 async def make_nasa_request(url: str) -> dict[str, Any] | None:
     """Make a request to the NASA API with proper error handling."""
