@@ -21,14 +21,16 @@ interface ModelSelectorProps {
 }
 
 // Helper function to group models by provider
-const groupModelsByProvider = (models: ModelDefinition[]): Map<ModelProvider, ModelDefinition[]> => {
+const groupModelsByProvider = (
+  models: ModelDefinition[],
+): Map<ModelProvider, ModelDefinition[]> => {
   const groupedModels = new Map<ModelProvider, ModelDefinition[]>();
-  
-  models.forEach(model => {
+
+  models.forEach((model) => {
     const existing = groupedModels.get(model.provider) || [];
     groupedModels.set(model.provider, [...existing, model]);
   });
-  
+
   return groupedModels;
 };
 
@@ -57,10 +59,10 @@ export function ModelSelector({
 }: ModelSelectorProps) {
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false);
   const currentModelData = currentModel;
-  
+
   // Group models by provider
   const groupedModels = groupModelsByProvider(availableModels);
-  
+
   // Get sorted provider keys for consistent ordering
   const sortedProviders = Array.from(groupedModels.keys()).sort();
 
@@ -88,20 +90,22 @@ export function ModelSelector({
         {sortedProviders.map((provider) => {
           const models = groupedModels.get(provider) || [];
           const modelCount = models.length;
-          
+
           return (
             <DropdownMenuSub key={provider}>
               <DropdownMenuSubTrigger className="flex items-center gap-3 text-sm cursor-pointer">
                 <ProviderLogo provider={provider} />
                 <div className="flex flex-col flex-1">
-                  <span className="font-medium">{getProviderDisplayName(provider)}</span>
+                  <span className="font-medium">
+                    {getProviderDisplayName(provider)}
+                  </span>
                   <span className="text-xs text-muted-foreground">
-                    {modelCount} model{modelCount !== 1 ? 's' : ''}
+                    {modelCount} model{modelCount !== 1 ? "s" : ""}
                   </span>
                 </div>
               </DropdownMenuSubTrigger>
-              
-              <DropdownMenuSubContent 
+
+              <DropdownMenuSubContent
                 className="min-w-[200px] max-h-[180px] overflow-y-auto"
                 avoidCollisions={true}
                 collisionPadding={8}
