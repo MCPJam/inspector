@@ -51,6 +51,7 @@ interface ChatRequest {
   systemPrompt?: string;
   messages?: ChatMessage[];
   ollamaBaseUrl?: string;
+  selectedTools?: string[];
   action?: string;
   requestId?: string;
   response?: any;
@@ -447,6 +448,7 @@ chat.post("/", async (c) => {
       systemPrompt,
       messages,
       ollamaBaseUrl,
+      selectedTools,
       action,
       requestId,
       response,
@@ -556,9 +558,20 @@ chat.post("/", async (c) => {
           lastEmittedToolCallId: null,
         };
 
-        // Create streaming-wrapped tools
+        // Create streaming-wrapped tools (respect selectedTools if provided)
+        const filteredTools = (() => {
+          try {
+            if (Array.isArray(selectedTools) && selectedTools.length > 0) {
+              return Object.fromEntries(
+                Object.entries(tools).filter(([name]) => selectedTools.includes(name)),
+              );
+            }
+          } catch {}
+          return tools;
+        })();
+
         const streamingWrappedTools = wrapToolsWithStreaming(
-          tools,
+          filteredTools,
           streamingContext,
         );
 
