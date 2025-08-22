@@ -177,9 +177,6 @@ export function ServerConnectionCard({
 
             <div className="flex items-center gap-2">
               <div className="flex items-center gap-2 pr-2 text-xs text-muted-foreground leading-none">
-                <span className="leading-none">
-                  {server.enabled === false ? "Disabled" : "Enabled"}
-                </span>
                 <Switch
                   checked={server.enabled !== false}
                   onCheckedChange={(checked) => {
@@ -189,7 +186,7 @@ export function ServerConnectionCard({
                       handleReconnect();
                     }
                   }}
-                  className="cursor-pointer"
+                  className="cursor-pointer scale-80"
                 />
               </div>
               <DropdownMenu>
