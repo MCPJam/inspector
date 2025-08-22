@@ -196,7 +196,7 @@ const PureMessage = ({
                 <div className="space-y-2">
                   {message.toolCalls.map((toolCall) => {
                     const toolResult = message.toolResults?.find(
-                      (tr) => tr.toolCallId === toolCall.id
+                      (tr) => tr.toolCallId === toolCall.id,
                     );
                     return (
                       <ToolCallDisplay

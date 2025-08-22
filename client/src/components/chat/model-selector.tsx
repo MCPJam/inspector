@@ -4,9 +4,12 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
-import { Model, ModelDefinition } from "@/shared/types.js";
+import { ModelDefinition, ModelProvider } from "@/shared/types.js";
 import { ProviderLogo } from "./provider-logo";
 
 interface ModelSelectorProps {
@@ -17,6 +20,36 @@ interface ModelSelectorProps {
   isLoading?: boolean;
 }
 
+// Helper function to group models by provider
+const groupModelsByProvider = (
+  models: ModelDefinition[],
+): Map<ModelProvider, ModelDefinition[]> => {
+  const groupedModels = new Map<ModelProvider, ModelDefinition[]>();
+
+  models.forEach((model) => {
+    const existing = groupedModels.get(model.provider) || [];
+    groupedModels.set(model.provider, [...existing, model]);
+  });
+
+  return groupedModels;
+};
+
+// Provider display names
+const getProviderDisplayName = (provider: ModelProvider): string => {
+  switch (provider) {
+    case "anthropic":
+      return "Anthropic";
+    case "openai":
+      return "OpenAI";
+    case "deepseek":
+      return "DeepSeek";
+    case "ollama":
+      return "Ollama";
+    default:
+      return provider;
+  }
+};
+
 export function ModelSelector({
   currentModel,
   availableModels,
@@ -26,6 +59,12 @@ export function ModelSelector({
 }: ModelSelectorProps) {
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false);
   const currentModelData = currentModel;
+
+  // Group models by provider
+  const groupedModels = groupModelsByProvider(availableModels);
+
+  // Get sorted provider keys for consistent ordering
+  const sortedProviders = Array.from(groupedModels.keys()).sort();
 
   return (
     <DropdownMenu
@@ -48,24 +87,50 @@ export function ModelSelector({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="min-w-[200px]">
-        {availableModels.map((model) => (
-          <DropdownMenuItem
-            key={model.id}
-            onClick={() => {
-              onModelChange(model);
-              setIsModelSelectorOpen(false);
-            }}
-            className="flex items-center gap-3 text-sm cursor-pointer"
-          >
-            <ProviderLogo provider={model.provider} />
-            <div className="flex flex-col">
-              <span className="font-medium">{model.name}</span>
-            </div>
-            {model.id === currentModel.id && (
-              <div className="ml-auto w-2 h-2 bg-primary rounded-full" />
-            )}
-          </DropdownMenuItem>
-        ))}
+        {sortedProviders.map((provider) => {
+          const models = groupedModels.get(provider) || [];
+          const modelCount = models.length;
+
+          return (
+            <DropdownMenuSub key={provider}>
+              <DropdownMenuSubTrigger className="flex items-center gap-3 text-sm cursor-pointer">
+                <ProviderLogo provider={provider} />
+                <div className="flex flex-col flex-1">
+                  <span className="font-medium">
+                    {getProviderDisplayName(provider)}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {modelCount} model{modelCount !== 1 ? "s" : ""}
+                  </span>
+                </div>
+              </DropdownMenuSubTrigger>
+
+              <DropdownMenuSubContent
+                className="min-w-[200px] max-h-[180px] overflow-y-auto"
+                avoidCollisions={true}
+                collisionPadding={8}
+              >
+                {models.map((model) => (
+                  <DropdownMenuItem
+                    key={model.id}
+                    onClick={() => {
+                      onModelChange(model);
+                      setIsModelSelectorOpen(false);
+                    }}
+                    className="flex items-center gap-3 text-sm cursor-pointer"
+                  >
+                    <div className="flex flex-col flex-1">
+                      <span className="font-medium">{model.name}</span>
+                    </div>
+                    {model.id === currentModel.id && (
+                      <div className="ml-auto w-2 h-2 bg-primary rounded-full" />
+                    )}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+          );
+        })}
       </DropdownMenuContent>
     </DropdownMenu>
   );
