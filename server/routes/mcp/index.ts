@@ -4,6 +4,7 @@ import tools from "./tools";
 import resources from "./resources";
 import prompts from "./prompts";
 import chat from "./chat";
+import tests from "./tests.ts";
 import oauth from "./oauth";
 
 const mcp = new Hono();
@@ -25,6 +26,9 @@ mcp.route("/connect", connect);
 
 // Tools endpoint - REAL IMPLEMENTATION
 mcp.route("/tools", tools);
+
+// Tests endpoint - generate per-test agents
+mcp.route("/tests", tests);
 
 // Resources endpoints - REAL IMPLEMENTATION
 mcp.route("/resources", resources);
