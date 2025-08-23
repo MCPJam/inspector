@@ -5,12 +5,12 @@ import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
 import { Badge } from "./ui/badge";
 import { ScrollArea } from "./ui/scroll-area";
-import { Save as SaveIcon, Play, RefreshCw, Trash2, Copy, Edit2, Plus } from "lucide-react";
+import { Save as SaveIcon, Play, RefreshCw, Trash2, Copy, Plus } from "lucide-react";
 import { ModelSelector } from "./chat/model-selector";
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
 import { detectOllamaModels } from "@/lib/ollama-utils";
 import { MastraMCPServerDefinition, ModelDefinition, SUPPORTED_MODELS, Model } from "@/shared/types.js";
-import { listSavedTests, saveTest, updateTestMeta, deleteTest, duplicateTest, type SavedTest } from "@/lib/test-storage";
+import { listSavedTests, saveTest, deleteTest, duplicateTest, type SavedTest } from "@/lib/test-storage";
 
 interface TestsTabProps {
   serverConfig?: MastraMCPServerDefinition;
@@ -426,14 +426,6 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
                         )}
                       </div>
                       <div className="flex gap-1">
-                        <Button
-                          onClick={(e) => { e.stopPropagation(); setEditingTestId(test.id); updateTestMeta(serverKey, test.id, { title: test.title }); setSavedTests(listSavedTests(serverKey)); }}
-                          size="sm"
-                          variant="ghost"
-                          className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100"
-                        >
-                          <Edit2 className="w-3 h-3" />
-                        </Button>
                         <Button
                           onClick={(e) => { e.stopPropagation(); handleDuplicate(test); }}
                           size="sm"
