@@ -5,280 +5,390 @@ import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { ContentfulStatusCode } from "hono/utils/http-status";
 import { TextEncoder } from "util";
+import { getMCPJamAgent } from "../../services/mcpjam-agent";
 
 const tools = new Hono();
 
 // Store for pending elicitation requests
 const pendingElicitations = new Map<
-  string,
-  {
-    resolve: (response: any) => void;
-    reject: (error: any) => void;
-  }
+	string,
+	{
+		resolve: (response: any) => void;
+		reject: (error: any) => void;
+	}
 >();
 
 tools.post("/", async (c) => {
-  let client: any = null;
-  let encoder: TextEncoder | null = null;
-  let streamController: ReadableStreamDefaultController | null = null;
-  let action: string | undefined;
-  let toolName: string | undefined;
+	let client: any = null;
+	let encoder: TextEncoder | null = null;
+	let streamController: ReadableStreamDefaultController | null = null;
+	let action: string | undefined;
+	let toolName: string | undefined;
 
-  try {
-    const requestData = await c.req.json();
-    action = requestData.action;
-    toolName = requestData.toolName;
-    const { serverConfig, parameters, requestId, response } = requestData;
+	const useCentral = process.env.MCP_CENTRAL_AGENT === "true";
 
-    if (!action || !["list", "execute", "respond"].includes(action)) {
-      return c.json(
-        {
-          success: false,
-          error: "Action must be 'list', 'execute', or 'respond'",
-        },
-        400,
-      );
-    }
+	try {
+		const requestData = await c.req.json();
+		action = requestData.action;
+		toolName = requestData.toolName;
+		const { serverConfig, parameters, requestId, response } = requestData;
 
-    // Handle elicitation response
-    if (action === "respond") {
-      if (!requestId) {
-        return c.json(
-          {
-            success: false,
-            error: "requestId is required for respond action",
-          },
-          400,
-        );
-      }
+		if (!action || !["list", "execute", "respond"].includes(action)) {
+			return c.json(
+				{
+					success: false,
+					error: "Action must be 'list', 'execute', or 'respond'",
+				},
+				400,
+			);
+		}
 
-      const pending = pendingElicitations.get(requestId);
-      if (!pending) {
-        return c.json(
-          {
-            success: false,
-            error: "No pending elicitation found for this requestId",
-          },
-          404,
-        );
-      }
+		// Handle elicitation response
+		if (action === "respond") {
+			if (!requestId) {
+				return c.json(
+					{
+						success: false,
+						error: "requestId is required for respond action",
+					},
+					400,
+				);
+			}
 
-      // Resolve the pending elicitation with user's response
-      pending.resolve(response);
-      pendingElicitations.delete(requestId);
+			const pending = pendingElicitations.get(requestId);
+			if (!pending) {
+				return c.json(
+					{
+						success: false,
+						error: "No pending elicitation found for this requestId",
+					},
+					404,
+				);
+			}
 
-      return c.json({ success: true });
-    }
+			// Resolve the pending elicitation with user's response
+			pending.resolve(response);
+			pendingElicitations.delete(requestId);
 
-    const validation = validateServerConfig(serverConfig);
-    if (!validation.success) {
-      return c.json(
-        { success: false, error: validation.error!.message },
-        validation.error!.status as ContentfulStatusCode,
-      );
-    }
+			return c.json({ success: true });
+		}
 
-    encoder = new TextEncoder();
-    const readableStream = new ReadableStream({
-      async start(controller) {
-        streamController = controller;
+		if (useCentral) {
+			// Centralized path: reuse MCPJamAgent
+			const encoderCentral = new TextEncoder();
+			const readableStreamCentral = new ReadableStream({
+				async start(controller) {
+					try {
+						if (!serverConfig) {
+							controller.enqueue(
+								encoderCentral.encode(
+									`data: ${JSON.stringify({ type: "tool_error", error: "serverConfig is required" })}\n\n`,
+								),
+							);
+							controller.enqueue(encoderCentral.encode(`data: [DONE]\n\n`));
+							controller.close();
+							return;
+						}
 
-        try {
-          const clientId = `tools-${action}-${Date.now()}`;
-          client = createMCPClient(validation.config!, clientId);
+						const agent = getMCPJamAgent();
+						// Use server name from config or default key
+						const serverId = (serverConfig as any).name || (serverConfig as any).id || "server";
+						await agent.connectToServer(serverId, serverConfig);
 
-          if (action === "list") {
-            // Stream tools list
-            controller.enqueue(
-              encoder!.encode(
-                `data: ${JSON.stringify({
-                  type: "tools_loading",
-                  message: "Fetching tools from server...",
-                })}\n\n`,
-              ),
-            );
+						if (action === "list") {
+							// Filter tools for this server
+							const allTools = agent.getAvailableTools().filter((t) => t.serverId === serverId.toLowerCase().replace(/[\s\-]+/g, "_").replace(/[^a-z0-9_]/g, ""));
+							const toolsWithJsonSchema: Record<string, any> = {};
+							for (const t of allTools) {
+								let inputSchema = t.inputSchema;
+								try {
+									// If original schemas are Zod, keep as-is. Otherwise pass through.
+									inputSchema = (zodToJsonSchema as any)(inputSchema as z.ZodType<any>);
+								} catch {
+									// ignore conversion errors and use existing schema shape
+								}
+								toolsWithJsonSchema[t.name] = {
+									name: t.name,
+									description: t.description,
+									inputSchema,
+									outputSchema: t.outputSchema,
+								};
+							}
+							controller.enqueue(
+								encoderCentral.encode(
+									`data: ${JSON.stringify({ type: "tools_list", tools: toolsWithJsonSchema })}\n\n`,
+								),
+							);
+							controller.enqueue(encoderCentral.encode(`data: [DONE]\n\n`));
+							controller.close();
+							return;
+						}
 
-            const tools: Record<string, Tool> = await client.getTools();
+						if (action === "execute") {
+							if (!toolName) {
+								controller.enqueue(
+									encoderCentral.encode(
+										`data: ${JSON.stringify({ type: "tool_error", error: "Tool name is required for execution" })}\n\n`,
+									),
+								);
+								controller.enqueue(encoderCentral.encode(`data: [DONE]\n\n`));
+								controller.close();
+								return;
+							}
 
-            // Convert from Zod to JSON Schema
-            const toolsWithJsonSchema: Record<string, any> = Object.fromEntries(
-              Object.entries(tools).map(([toolName, tool]) => {
-                return [
-                  toolName,
-                  {
-                    ...tool,
-                    inputSchema: zodToJsonSchema(
-                      tool.inputSchema as unknown as z.ZodType<any>,
-                    ),
-                  },
-                ];
-              }),
-            );
+							controller.enqueue(
+								encoderCentral.encode(
+									`data: ${JSON.stringify({ type: "tool_executing", toolName, parameters: parameters || {}, message: "Executing tool..." })}\n\n`,
+								),
+							);
 
-            controller.enqueue(
-              encoder!.encode(
-                `data: ${JSON.stringify({
-                  type: "tools_list",
-                  tools: toolsWithJsonSchema,
-                })}\n\n`,
-              ),
-            );
-          } else if (action === "execute") {
-            // Stream tool execution
-            if (!toolName) {
-              controller.enqueue(
-                encoder!.encode(
-                  `data: ${JSON.stringify({
-                    type: "tool_error",
-                    error: "Tool name is required for execution",
-                  })}\n\n`,
-                ),
-              );
-              return;
-            }
+							// Elicitation: not centrally handled yet for direct tool execution
+							const exec = await agent.executeToolDirect(toolName, parameters || {});
+							controller.enqueue(
+								encoderCentral.encode(
+									`data: ${JSON.stringify({ type: "tool_result", toolName, result: exec.result })}\n\n`,
+								),
+							);
+							controller.enqueue(
+								encoderCentral.encode(
+									`data: ${JSON.stringify({ type: "elicitation_complete", toolName })}\n\n`,
+								),
+							);
+							controller.enqueue(encoderCentral.encode(`data: [DONE]\n\n`));
+							controller.close();
+							return;
+						}
+					} catch (err) {
+						controller.enqueue(
+							encoderCentral.encode(
+								`data: ${JSON.stringify({ type: "tool_error", error: err instanceof Error ? err.message : String(err) })}\n\n`,
+							),
+						);
+						controller.enqueue(encoderCentral.encode(`data: [DONE]\n\n`));
+						controller.close();
+					}
+				},
+			});
 
-            controller.enqueue(
-              encoder!.encode(
-                `data: ${JSON.stringify({
-                  type: "tool_executing",
-                  toolName,
-                  parameters: parameters || {},
-                  message: "Executing tool...",
-                })}\n\n`,
-              ),
-            );
+			return new Response(readableStreamCentral, {
+				headers: {
+					"Content-Type": "text/event-stream",
+					"Cache-Control": "no-cache",
+					Connection: "keep-alive",
+				},
+			});
+		}
 
-            const tools = await client.getTools();
-            const tool = tools[toolName];
+		// Legacy per-request client path (backward compatible)
+		const validation = validateServerConfig(serverConfig);
+		if (!validation.success) {
+			return c.json(
+				{ success: false, error: validation.error!.message },
+				validation.error!.status as ContentfulStatusCode,
+			);
+		}
 
-            if (!tool) {
-              controller.enqueue(
-                encoder!.encode(
-                  `data: ${JSON.stringify({
-                    type: "tool_error",
-                    error: `Tool '${toolName}' not found`,
-                  })}\n\n`,
-                ),
-              );
-              return;
-            }
+		encoder = new TextEncoder();
+		const readableStream = new ReadableStream({
+			async start(controller) {
+				streamController = controller;
 
-            const toolArgs =
-              parameters && typeof parameters === "object" ? parameters : {};
+				try {
+					const clientId = `tools-${action}-${Date.now()}`;
+					client = createMCPClient(validation.config!, clientId);
 
-            // Set up elicitation handler
-            const elicitationHandler = async (elicitationRequest: any) => {
-              const requestId = `elicit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+					if (action === "list") {
+						// Stream tools list
+						controller.enqueue(
+							encoder!.encode(
+								`data: ${JSON.stringify({
+									type: "tools_loading",
+									message: "Fetching tools from server...",
+								})}\n\n`,
+							),
+						);
 
-              // Stream elicitation request to client
-              if (streamController && encoder) {
-                streamController.enqueue(
-                  encoder.encode(
-                    `data: ${JSON.stringify({
-                      type: "elicitation_request",
-                      requestId,
-                      message: elicitationRequest.message,
-                      schema: elicitationRequest.requestedSchema,
-                      timestamp: new Date(),
-                    })}\n\n`,
-                  ),
-                );
-              }
+						const tools: Record<string, Tool> = await client.getTools();
 
-              // Return a promise that will be resolved when user responds
-              return new Promise((resolve, reject) => {
-                pendingElicitations.set(requestId, { resolve, reject });
+						// Convert from Zod to JSON Schema
+						const toolsWithJsonSchema: Record<string, any> = Object.fromEntries(
+							Object.entries(tools).map(([toolName, tool]) => {
+								return [
+									toolName,
+									{
+										...tool,
+										inputSchema: zodToJsonSchema(
+											tool.inputSchema as unknown as z.ZodType<any>,
+										),
+									},
+								];
+							}),
+						);
 
-                // Set a timeout to clean up if no response
-                setTimeout(() => {
-                  if (pendingElicitations.has(requestId)) {
-                    pendingElicitations.delete(requestId);
-                    reject(new Error("Elicitation timeout"));
-                  }
-                }, 300000); // 5 minute timeout
-              });
-            };
+						controller.enqueue(
+							encoder!.encode(
+								`data: ${JSON.stringify({
+									type: "tools_list",
+									tools: toolsWithJsonSchema,
+								})}\n\n`,
+							),
+						);
+					} else if (action === "execute") {
+						// Stream tool execution
+						if (!toolName) {
+							controller.enqueue(
+								encoder!.encode(
+									`data: ${JSON.stringify({
+										type: "tool_error",
+										error: "Tool name is required for execution",
+									})}\n\n`,
+								),
+							);
+							return;
+						}
 
-            // Register elicitation handler with the client
-            if (client.elicitation && client.elicitation.onRequest) {
-              const serverName = "server"; // See createMCPClient() function. The name of the server is "server"
-              client.elicitation.onRequest(serverName, elicitationHandler);
-            }
+						controller.enqueue(
+							encoder!.encode(
+								`data: ${JSON.stringify({
+									type: "tool_executing",
+									toolName,
+									parameters: parameters || {},
+									message: "Executing tool...",
+								})}\n\n`,
+							),
+						);
 
-            const result = await tool.execute({
-              context: toolArgs,
-            });
+						const tools = await client.getTools();
+						const tool = tools[toolName];
 
-            controller.enqueue(
-              encoder!.encode(
-                `data: ${JSON.stringify({
-                  type: "tool_result",
-                  toolName,
-                  result,
-                })}\n\n`,
-              ),
-            );
+						if (!tool) {
+							controller.enqueue(
+								encoder!.encode(
+									`data: ${JSON.stringify({
+										type: "tool_error",
+										error: `Tool '${toolName}' not found`,
+									})}\n\n`,
+								),
+							);
+							return;
+						}
 
-            // Stream elicitation completion if there were any
-            controller.enqueue(
-              encoder!.encode(
-                `data: ${JSON.stringify({
-                  type: "elicitation_complete",
-                  toolName,
-                })}\n\n`,
-              ),
-            );
-          }
+						const toolArgs =
+							parameters && typeof parameters === "object" ? parameters : {};
 
-          controller.enqueue(encoder!.encode(`data: [DONE]\n\n`));
-        } catch (error) {
-          const errorMsg =
-            error instanceof Error ? error.message : "Unknown error";
+						// Set up elicitation handler
+						const elicitationHandler = async (elicitationRequest: any) => {
+							const requestId = `elicit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-          controller.enqueue(
-            encoder!.encode(
-              `data: ${JSON.stringify({
-                type: "tool_error",
-                error: errorMsg,
-              })}\n\n`,
-            ),
-          );
-        } finally {
-          if (client) {
-            await client.disconnect();
-          }
-          controller.close();
-        }
-      },
-    });
+							// Stream elicitation request to client
+							if (streamController && encoder) {
+								streamController.enqueue(
+									encoder.encode(
+										`data: ${JSON.stringify({
+											type: "elicitation_request",
+											requestId,
+											message: elicitationRequest.message,
+											schema: elicitationRequest.requestedSchema,
+											timestamp: new Date(),
+										})}\n\n`,
+									),
+								);
+							}
 
-    return new Response(readableStream, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      },
-    });
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : "Unknown error";
+							// Return a promise that will be resolved when user responds
+							return new Promise((resolve, reject) => {
+								pendingElicitations.set(requestId, { resolve, reject });
 
-    // Clean up client on error
-    if (client) {
-      try {
-        await client.disconnect();
-      } catch (cleanupError) {
-        // Ignore cleanup errors
-      }
-    }
+								// Set a timeout to clean up if no response
+								setTimeout(() => {
+									if (pendingElicitations.has(requestId)) {
+										pendingElicitations.delete(requestId);
+										reject(new Error("Elicitation timeout"));
+									}
+								}, 300000); // 5 minute timeout
+							});
+						};
 
-    return c.json(
-      {
-        success: false,
-        error: errorMsg,
-      },
-      500,
-    );
-  }
+						// Register elicitation handler with the client
+						if (client.elicitation && client.elicitation.onRequest) {
+							const serverName = "server"; // See createMCPClient() function. The name of the server is "server"
+							client.elicitation.onRequest(serverName, elicitationHandler);
+						}
+
+						const result = await tool.execute({
+							context: toolArgs,
+						});
+
+						controller.enqueue(
+							encoder!.encode(
+								`data: ${JSON.stringify({
+									type: "tool_result",
+									toolName,
+									result,
+								})}\n\n`,
+							),
+						);
+
+						// Stream elicitation completion if there were any
+						controller.enqueue(
+							encoder!.encode(
+								`data: ${JSON.stringify({
+									type: "elicitation_complete",
+									toolName,
+								})}\n\n`,
+							),
+						);
+					}
+
+					controller.enqueue(encoder!.encode(`data: [DONE]\n\n`));
+				} catch (error) {
+					const errorMsg =
+						error instanceof Error ? error.message : "Unknown error";
+
+					controller.enqueue(
+						encoder!.encode(
+							`data: ${JSON.stringify({
+								type: "tool_error",
+								error: errorMsg,
+							})}\n\n`,
+						),
+					);
+				} finally {
+					if (client) {
+						await client.disconnect();
+					}
+					controller.close();
+				}
+			},
+		});
+
+		return new Response(readableStream, {
+			headers: {
+				"Content-Type": "text/event-stream",
+				"Cache-Control": "no-cache",
+				Connection: "keep-alive",
+			},
+		});
+	} catch (error) {
+		const errorMsg = error instanceof Error ? error.message : "Unknown error";
+
+		// Clean up client on error
+		if (client) {
+			try {
+				await client.disconnect();
+			} catch (cleanupError) {
+				// Ignore cleanup errors
+			}
+		}
+
+		return c.json(
+			{
+				success: false,
+				error: errorMsg,
+			},
+			500,
+		);
+	}
 });
 
 export default tools;
