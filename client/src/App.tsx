@@ -89,7 +89,6 @@ export default function App() {
           <div className="flex-1">
             {/* Active Server Selector - Only show on Tools, Resources, Prompts, and Auth pages */}
             {(activeTab === "tools" ||
-              activeTab === "tests" ||
               activeTab === "resources" ||
               activeTab === "prompts" ||
               activeTab === "auth" ||
@@ -99,7 +98,7 @@ export default function App() {
                 selectedServer={appState.selectedServer}
                 onServerChange={setSelectedServer}
                 onConnect={handleConnect}
-                isMultiSelectEnabled={activeTab === "chat" || activeTab === "tests"}
+                isMultiSelectEnabled={activeTab === "chat"}
                 onMultiServerToggle={toggleServerSelection}
                 selectedMultipleServers={appState.selectedMultipleServers}
               />
