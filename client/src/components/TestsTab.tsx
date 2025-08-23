@@ -38,12 +38,27 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
   const [editingTestId, setEditingTestId] = useState<string | null>(null);
 
   const [runStatus, setRunStatus] = useState<TestRunStatus>("idle");
+  const [runAllStatus, setRunAllStatus] = useState<TestRunStatus>("idle");
   const [lastRunInfo, setLastRunInfo] = useState<{
     calledTools: string[];
     unexpectedTools: string[];
     missingTools: string[];
   } | null>(null);
   const [traceEvents, setTraceEvents] = useState<Array<{ step: number; text?: string; toolCalls?: any[]; toolResults?: any[] }>>([]);
+  const [lastRunAll, setLastRunAll] = useState<{
+    startedAt: number;
+    passed: boolean | null;
+    results: Array<{
+      testId: string;
+      title: string;
+      passed: boolean;
+      calledTools: string[];
+      missingTools: string[];
+      unexpectedTools: string[];
+    }>;
+    traces: Record<string, Array<{ step: number; text?: string; toolCalls?: any[]; toolResults?: any[] }>>;
+  } | null>(null);
+  const [leftTab, setLeftTab] = useState<"tests" | "runs">("tests");
 
   const serverKey = useMemo(() => {
     try {
@@ -352,6 +367,153 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
     }
   }, [serverConfig, serverConfigsMap, selectedServersForTest, currentModel, currentApiKey, prompt, expectedToolsInput, getOllamaBaseUrl]);
 
+  // Helper to resolve model+apiKey for a given modelId or fallback to current
+  const resolveModelAndApiKey = useCallback(
+    (modelId?: string | null): { model: ModelDefinition | null; apiKey: string } => {
+      let model: ModelDefinition | null = null;
+      if (modelId) {
+        model = availableModels.find((m) => m.id === modelId) || null;
+      }
+      if (!model) model = currentModel;
+      if (!model) return { model: null, apiKey: "" };
+      if (model.provider === "ollama") {
+        const isAvailable = isOllamaRunning && ollamaModels.some((om) => om.id === model!.id || om.id.startsWith(`${model!.id}:`));
+        return { model, apiKey: isAvailable ? "local" : "" };
+      }
+      return { model, apiKey: getToken(model.provider) };
+    },
+    [availableModels, currentModel, getToken, isOllamaRunning, ollamaModels],
+  );
+
+  // Run all saved tests in the current list; if any test fails, mark run failed and load first failing test details
+  const runAllTests = useCallback(async () => {
+    if (savedTests.length === 0) return;
+    setRunAllStatus("running");
+
+    // Prepare payload for server orchestrated run
+    const testsPayload = savedTests.map((t) => {
+      const { model } = resolveModelAndApiKey(t.modelId);
+      return {
+        id: t.id,
+        title: t.title,
+        prompt: t.prompt || "",
+        expectedTools: t.expectedTools || [],
+        model: model!,
+        selectedServers: t.selectedServers || [],
+      };
+    });
+    const providerApiKeys = {
+      anthropic: getToken("anthropic"),
+      openai: getToken("openai"),
+      deepseek: getToken("deepseek"),
+    } as any;
+
+    // Consolidate all servers map from props
+    const allServers = allServerConfigsMap || serverConfigsMap || (serverConfig ? { test: serverConfig } : {});
+
+    try {
+      const response = await fetch("/api/mcp/tests/run-all", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+        body: JSON.stringify({
+          tests: testsPayload,
+          allServers,
+          providerApiKeys,
+          ollamaBaseUrl: getOllamaBaseUrl(),
+          concurrency: 6,
+        }),
+      });
+      if (!response.ok) {
+        setRunAllStatus("failed");
+        return;
+      }
+      const runStartedAt = Date.now();
+      const resultsById: Record<string, { testId: string; title: string; passed: boolean; calledTools: string[]; missingTools: string[]; unexpectedTools: string[] }> = {};
+      const tracesById: Record<string, Array<{ step: number; text?: string; toolCalls?: any[]; toolResults?: any[] }>> = {};
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let doneStreaming = false;
+      if (reader) {
+        while (!doneStreaming) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              const data = line.slice(6).trim();
+              if (data === "[DONE]") {
+                doneStreaming = true;
+                break;
+              }
+              if (!data) continue;
+              try {
+                const parsed = JSON.parse(data);
+                if (parsed.type === "trace_step") {
+                  // When server streams trace per test, if current test is selected, append; otherwise ignore
+                  if (editingTestId && parsed.testId === editingTestId) {
+                    setTraceEvents((prev) => [
+                      ...prev,
+                      { step: parsed.step, text: parsed.text, toolCalls: parsed.toolCalls, toolResults: parsed.toolResults },
+                    ]);
+                  }
+                  if (!tracesById[parsed.testId]) tracesById[parsed.testId] = [];
+                  tracesById[parsed.testId].push({ step: parsed.step, text: parsed.text, toolCalls: parsed.toolCalls, toolResults: parsed.toolResults });
+                } else if (parsed.type === "result") {
+                  // If this result belongs to the selected test, reflect its result
+                  if (editingTestId && parsed.testId === editingTestId) {
+                    setLastRunInfo({
+                      calledTools: parsed.calledTools || [],
+                      missingTools: parsed.missingTools || [],
+                      unexpectedTools: parsed.unexpectedTools || [],
+                    });
+                  }
+                  if (parsed.passed === false && !editingTestId) {
+                    // Focus first failing test if none selected
+                    const t = savedTests.find((s) => s.id === parsed.testId);
+                    if (t) handleLoad(t);
+                  }
+                  const title = (savedTests.find((s) => s.id === parsed.testId)?.title) || parsed.testId;
+                  resultsById[parsed.testId] = {
+                    testId: parsed.testId,
+                    title,
+                    passed: !!parsed.passed,
+                    calledTools: parsed.calledTools || [],
+                    missingTools: parsed.missingTools || [],
+                    unexpectedTools: parsed.unexpectedTools || [],
+                  };
+                } else if (parsed.type === "run_complete") {
+                  setRunAllStatus(parsed.passed ? "success" : "failed");
+                  setLastRunAll({
+                    startedAt: runStartedAt,
+                    passed: !!parsed.passed,
+                    results: Object.values(resultsById),
+                    traces: tracesById,
+                  });
+                }
+              } catch {}
+            }
+          }
+        }
+      }
+    } catch {
+      setRunAllStatus("failed");
+    }
+  }, [savedTests, resolveModelAndApiKey, allServerConfigsMap, serverConfigsMap, serverConfig, getOllamaBaseUrl, getToken, editingTestId, handleLoad]);
+
+  const loadFromRunAll = useCallback((testId: string) => {
+    if (!lastRunAll) return;
+    const t = savedTests.find((s) => s.id === testId);
+    const r = lastRunAll.results.find((x) => x.testId === testId);
+    if (t && r) {
+      handleLoad(t);
+      setLastRunInfo({ calledTools: r.calledTools, missingTools: r.missingTools, unexpectedTools: r.unexpectedTools });
+      setTraceEvents(lastRunAll.traces[testId] || []);
+    }
+  }, [lastRunAll, savedTests, handleLoad]);
+
   if (!(serverConfig || (serverConfigsMap && Object.keys(serverConfigsMap).length > 0) || (allServerConfigsMap && Object.keys(allServerConfigsMap).length > 0))) {
     return (
       <Card>
@@ -376,6 +538,29 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
           >
             <Plus className="h-3 w-3 mr-1" />
             <span className="font-mono text-xs">New</span>
+          </Button>
+          <Button
+            onClick={runAllTests}
+            variant="outline"
+            size="sm"
+            disabled={runAllStatus === "running" || savedTests.length === 0}
+          >
+            {runAllStatus === "running" ? (
+              <>
+                <RefreshCw className="h-3 w-3 mr-1.5 animate-spin" />
+                <span className="font-mono text-xs">Run All</span>
+              </>
+            ) : (
+              <>
+                <span className="font-mono text-xs">Run All</span>
+                {runAllStatus === "success" && (
+                  <Badge className="ml-2 text-[10px] bg-green-600 hover:bg-green-700">Passed</Badge>
+                )}
+                {runAllStatus === "failed" && (
+                  <Badge variant="destructive" className="ml-2 text-[10px]">Failed</Badge>
+                )}
+              </>
+            )}
           </Button>
           <Button
             onClick={runTest}
@@ -409,15 +594,28 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
 
       {/* Content */}
       <div className="flex-1 grid grid-cols-12">
-        {/* Left: Saved Tests */}
+        {/* Left: Saved Tests / Previous Run Tabs */}
         <div className="col-span-4 border-r border-border overflow-hidden">
-          <div className="px-4 py-4 border-b border-border bg-background">
-            <h2 className="text-xs font-semibold text-foreground">Saved Tests</h2>
-            <Badge variant="secondary" className="text-xs font-mono ml-2">{savedTests.length}</Badge>
+          <div className="px-4 py-4 border-b border-border bg-background flex items-center gap-2">
+            <button
+              className={`text-xs font-semibold px-2 py-1 rounded ${leftTab === "tests" ? "bg-muted" : "hover:bg-muted/50"}`}
+              onClick={() => setLeftTab("tests")}
+            >
+              Saved Tests
+              <Badge variant="secondary" className="text-[10px] font-mono ml-2 align-middle">{savedTests.length}</Badge>
+            </button>
+            <button
+              className={`text-xs font-semibold px-2 py-1 rounded ${leftTab === "runs" ? "bg-muted" : "hover:bg-muted/50"}`}
+              onClick={() => setLeftTab("runs")}
+            >
+              Previous Run
+              <Badge variant="secondary" className="text-[10px] font-mono ml-2 align-middle">{lastRunAll?.results?.length || 0}</Badge>
+            </button>
           </div>
           <ScrollArea className="h-[calc(100%-48px)]">
             <div className="p-2 space-y-1">
-              {savedTests.length === 0 ? (
+              {leftTab === "tests" ? (
+                savedTests.length === 0 ? (
                 <div className="text-center py-6">
                   <p className="text-xs text-muted-foreground">No saved tests</p>
                 </div>
@@ -464,6 +662,42 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
                     </div>
                   </div>
                 ))
+                )
+              ) : (
+                !lastRunAll ? (
+                  <div className="text-center py-6">
+                    <p className="text-xs text-muted-foreground">No previous Run All. Click Run All to execute the suite.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="px-2 text-[10px] text-muted-foreground flex items-center gap-2">
+                      <span>Overall:</span>
+                      {lastRunAll.passed ? (
+                        <Badge className="text-[10px] bg-green-600 hover:bg-green-700">Passed</Badge>
+                      ) : (
+                        <Badge variant="destructive" className="text-[10px]">Failed</Badge>
+                      )}
+                      <span>{new Date(lastRunAll.startedAt).toLocaleString()}</span>
+                    </div>
+                    {lastRunAll.results.map((r) => (
+                      <div key={r.testId} className="group p-2 rounded hover:bg-muted/40 mx-2 cursor-pointer" onClick={() => loadFromRunAll(r.testId)}>
+                        <div className="flex items-center justify-between">
+                          <div className="min-w-0 pr-2">
+                            <div className="text-xs font-medium truncate">{r.title}</div>
+                            <div className="text-[10px] text-muted-foreground truncate">
+                              {r.passed ? "All expected tools called" : `Missing: ${r.missingTools.join(", ") || "-"} | Unexpected: ${r.unexpectedTools.join(", ") || "-"}`}
+                            </div>
+                          </div>
+                          {r.passed ? (
+                            <Badge className="text-[10px] bg-green-600 hover:bg-green-700">Passed</Badge>
+                          ) : (
+                            <Badge variant="destructive" className="text-[10px]">Failed</Badge>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )
               )}
             </div>
           </ScrollArea>
