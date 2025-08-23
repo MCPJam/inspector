@@ -7,6 +7,7 @@ export type SavedTest = {
   prompt: string;
   expectedTools: string[];
   modelId?: ModelDefinition["id"];
+  selectedServers?: string[]; // names of servers selected specifically for this test
   serverKey: string;
   createdAt: string;
   updatedAt: string;
@@ -46,6 +47,7 @@ export function saveTest(
       prompt: test.prompt,
       expectedTools: test.expectedTools,
       modelId: test.modelId,
+      selectedServers: test.selectedServers,
       serverKey,
       createdAt: existing.find((t) => t.id === test.id)?.createdAt || now,
       updatedAt: now,
@@ -61,6 +63,7 @@ export function saveTest(
       prompt: test.prompt,
       expectedTools: test.expectedTools,
       modelId: test.modelId,
+      selectedServers: test.selectedServers,
       serverKey,
       createdAt: now,
       updatedAt: now,
@@ -89,6 +92,7 @@ export function duplicateTest(serverKey: string, id: string): SavedTest | undefi
     prompt: t.prompt,
     expectedTools: t.expectedTools,
     modelId: t.modelId,
+    selectedServers: t.selectedServers,
   });
 }
 
@@ -106,9 +110,8 @@ export function updateTestMeta(
     prompt: existing.prompt,
     expectedTools: existing.expectedTools,
     modelId: existing.modelId,
+    selectedServers: existing.selectedServers,
   });
 }
 
-export type { SavedTest };
-
-
+// Re-export removed to avoid duplicate type export errors
