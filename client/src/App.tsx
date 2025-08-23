@@ -99,7 +99,7 @@ export default function App() {
                 selectedServer={appState.selectedServer}
                 onServerChange={setSelectedServer}
                 onConnect={handleConnect}
-                isMultiSelectEnabled={activeTab === "chat"}
+                isMultiSelectEnabled={activeTab === "chat" || activeTab === "tests"}
                 onMultiServerToggle={toggleServerSelection}
                 selectedMultipleServers={appState.selectedMultipleServers}
               />
@@ -121,7 +121,7 @@ export default function App() {
               <ToolsTab serverConfig={selectedMCPConfig} />
             )}
             {activeTab === "tests" && (
-              <TestsTab serverConfig={selectedMCPConfig} />
+              <TestsTab serverConfig={selectedMCPConfig} serverConfigsMap={selectedMCPConfigsMap} />
             )}
 
 

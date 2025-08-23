@@ -14,11 +14,12 @@ import { listSavedTests, saveTest, updateTestMeta, deleteTest, duplicateTest, ty
 
 interface TestsTabProps {
   serverConfig?: MastraMCPServerDefinition;
+  serverConfigsMap?: Record<string, MastraMCPServerDefinition>;
 }
 
 type TestRunStatus = "idle" | "running" | "success" | "failed";
 
-export function TestsTab({ serverConfig }: TestsTabProps) {
+export function TestsTab({ serverConfig, serverConfigsMap }: TestsTabProps) {
   const { hasToken, getToken, getOllamaBaseUrl } = useAiProviderKeys();
 
   const [isOllamaRunning, setIsOllamaRunning] = useState(false);
@@ -42,8 +43,12 @@ export function TestsTab({ serverConfig }: TestsTabProps) {
   } | null>(null);
 
   const serverKey = useMemo(() => {
-    if (!serverConfig) return "none";
     try {
+      if (serverConfigsMap && Object.keys(serverConfigsMap).length > 0) {
+        const names = Object.keys(serverConfigsMap).sort();
+        return `multi:${names.join(",")}`;
+      }
+      if (!serverConfig) return "none";
       if ((serverConfig as any).url) {
         return `http:${(serverConfig as any).url}`;
       }
@@ -55,7 +60,7 @@ export function TestsTab({ serverConfig }: TestsTabProps) {
     } catch {
       return "unknown";
     }
-  }, [serverConfig]);
+  }, [serverConfig, serverConfigsMap]);
 
   // Discover models (mirrors logic from useChat)
   useEffect(() => {
@@ -129,6 +134,31 @@ export function TestsTab({ serverConfig }: TestsTabProps) {
     });
     setSavedTests(listSavedTests(serverKey));
     setEditingTestId(null);
+    // Fire-and-forget: request backend to generate a @TestAgent file for this test
+    try {
+      const serversPayload = serverConfigsMap && Object.keys(serverConfigsMap).length > 0
+        ? serverConfigsMap
+        : serverConfig
+          ? { test: serverConfig }
+          : {};
+      if (Object.keys(serversPayload).length > 0 && currentModel) {
+        fetch("/api/mcp/tests/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            test: {
+              id: saved.id,
+              title: saved.title,
+              prompt: saved.prompt,
+              expectedTools: saved.expectedTools,
+              modelId: saved.modelId,
+            },
+            servers: serversPayload,
+            model: currentModel,
+          }),
+        }).catch(() => {});
+      }
+    } catch {}
     if (!editingTestId) {
       // Clear editor for next test
       setTitle("");
@@ -159,7 +189,8 @@ export function TestsTab({ serverConfig }: TestsTabProps) {
   };
 
   const runTest = useCallback(async () => {
-    if (!serverConfig || !currentModel || !currentApiKey || !prompt.trim()) return;
+    const hasServers = (serverConfigsMap && Object.keys(serverConfigsMap).length > 0) || serverConfig;
+    if (!hasServers || !currentModel || !currentApiKey || !prompt.trim()) return;
 
     setRunStatus("running");
     setLastRunInfo(null);
@@ -172,7 +203,7 @@ export function TestsTab({ serverConfig }: TestsTabProps) {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
         body: JSON.stringify({
-          serverConfigs: { test: serverConfig },
+          serverConfigs: serverConfigsMap && Object.keys(serverConfigsMap).length > 0 ? serverConfigsMap : { test: serverConfig },
           model: currentModel,
           provider: currentModel.provider,
           apiKey: currentApiKey,
@@ -234,13 +265,13 @@ export function TestsTab({ serverConfig }: TestsTabProps) {
     } catch {
       setRunStatus("failed");
     }
-  }, [serverConfig, currentModel, currentApiKey, prompt, expectedToolsInput, getOllamaBaseUrl]);
+  }, [serverConfig, serverConfigsMap, currentModel, currentApiKey, prompt, expectedToolsInput, getOllamaBaseUrl]);
 
-  if (!serverConfig) {
+  if (!(serverConfig || (serverConfigsMap && Object.keys(serverConfigsMap).length > 0))) {
     return (
       <Card>
         <CardContent className="pt-6">
-          <p className="text-center text-muted-foreground font-medium">Please select a server to run tests</p>
+          <p className="text-center text-muted-foreground font-medium">Please select one or more servers to run tests</p>
         </CardContent>
       </Card>
     );
