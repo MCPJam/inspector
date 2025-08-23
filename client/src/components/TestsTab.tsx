@@ -15,11 +15,12 @@ import { listSavedTests, saveTest, updateTestMeta, deleteTest, duplicateTest, ty
 interface TestsTabProps {
   serverConfig?: MastraMCPServerDefinition;
   serverConfigsMap?: Record<string, MastraMCPServerDefinition>;
+  allServerConfigsMap?: Record<string, MastraMCPServerDefinition>;
 }
 
 type TestRunStatus = "idle" | "running" | "success" | "failed";
 
-export function TestsTab({ serverConfig, serverConfigsMap }: TestsTabProps) {
+export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }: TestsTabProps) {
   const { hasToken, getToken, getOllamaBaseUrl } = useAiProviderKeys();
 
   const [isOllamaRunning, setIsOllamaRunning] = useState(false);
@@ -31,6 +32,7 @@ export function TestsTab({ serverConfig, serverConfigsMap }: TestsTabProps) {
   const [title, setTitle] = useState<string>("");
   const [prompt, setPrompt] = useState<string>("");
   const [expectedToolsInput, setExpectedToolsInput] = useState<string>("");
+  const [selectedServersForTest, setSelectedServersForTest] = useState<string[]>([]);
 
   const [savedTests, setSavedTests] = useState<SavedTest[]>([]);
   const [editingTestId, setEditingTestId] = useState<string | null>(null);
@@ -44,8 +46,9 @@ export function TestsTab({ serverConfig, serverConfigsMap }: TestsTabProps) {
 
   const serverKey = useMemo(() => {
     try {
-      if (serverConfigsMap && Object.keys(serverConfigsMap).length > 0) {
-        const names = Object.keys(serverConfigsMap).sort();
+      const activeMap = getServerSelectionMap();
+      if (activeMap && Object.keys(activeMap).length > 0) {
+        const names = Object.keys(activeMap).sort();
         return `multi:${names.join(",")}`;
       }
       if (!serverConfig) return "none";
@@ -60,7 +63,19 @@ export function TestsTab({ serverConfig, serverConfigsMap }: TestsTabProps) {
     } catch {
       return "unknown";
     }
-  }, [serverConfig, serverConfigsMap]);
+  }, [serverConfig, serverConfigsMap, selectedServersForTest]);
+
+  const getServerSelectionMap = () => {
+    // If the per-test picker has selections, use those. Otherwise, fall back to globally selected map.
+    if (selectedServersForTest.length > 0 && allServerConfigsMap) {
+      const map: Record<string, MastraMCPServerDefinition> = {};
+      for (const name of selectedServersForTest) {
+        if (allServerConfigsMap[name]) map[name] = allServerConfigsMap[name];
+      }
+      return map;
+    }
+    return serverConfigsMap;
+  };
 
   // Discover models (mirrors logic from useChat)
   useEffect(() => {
@@ -136,8 +151,9 @@ export function TestsTab({ serverConfig, serverConfigsMap }: TestsTabProps) {
     setEditingTestId(null);
     // Fire-and-forget: request backend to generate a @TestAgent file for this test
     try {
-      const serversPayload = serverConfigsMap && Object.keys(serverConfigsMap).length > 0
-        ? serverConfigsMap
+      const selectionMap = getServerSelectionMap();
+      const serversPayload = selectionMap && Object.keys(selectionMap).length > 0
+        ? selectionMap
         : serverConfig
           ? { test: serverConfig }
           : {};
@@ -189,7 +205,8 @@ export function TestsTab({ serverConfig, serverConfigsMap }: TestsTabProps) {
   };
 
   const runTest = useCallback(async () => {
-    const hasServers = (serverConfigsMap && Object.keys(serverConfigsMap).length > 0) || serverConfig;
+    const selectionMap = getServerSelectionMap();
+    const hasServers = (selectionMap && Object.keys(selectionMap).length > 0) || serverConfig;
     if (!hasServers || !currentModel || !currentApiKey || !prompt.trim()) return;
 
     setRunStatus("running");
@@ -203,7 +220,7 @@ export function TestsTab({ serverConfig, serverConfigsMap }: TestsTabProps) {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
         body: JSON.stringify({
-          serverConfigs: serverConfigsMap && Object.keys(serverConfigsMap).length > 0 ? serverConfigsMap : { test: serverConfig },
+          serverConfigs: selectionMap && Object.keys(selectionMap).length > 0 ? selectionMap : { test: serverConfig },
           model: currentModel,
           provider: currentModel.provider,
           apiKey: currentApiKey,
@@ -265,9 +282,9 @@ export function TestsTab({ serverConfig, serverConfigsMap }: TestsTabProps) {
     } catch {
       setRunStatus("failed");
     }
-  }, [serverConfig, serverConfigsMap, currentModel, currentApiKey, prompt, expectedToolsInput, getOllamaBaseUrl]);
+  }, [serverConfig, serverConfigsMap, selectedServersForTest, currentModel, currentApiKey, prompt, expectedToolsInput, getOllamaBaseUrl]);
 
-  if (!(serverConfig || (serverConfigsMap && Object.keys(serverConfigsMap).length > 0))) {
+  if (!(serverConfig || (serverConfigsMap && Object.keys(serverConfigsMap).length > 0) || (allServerConfigsMap && Object.keys(allServerConfigsMap).length > 0))) {
     return (
       <Card>
         <CardContent className="pt-6">
@@ -405,6 +422,35 @@ export function TestsTab({ serverConfig, serverConfigsMap }: TestsTabProps) {
                 <label className="text-[10px] text-muted-foreground font-semibold">Prompt</label>
                 <Textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Given this prompt..." className="mt-1 h-24 text-xs" />
               </div>
+              {allServerConfigsMap && Object.keys(allServerConfigsMap).length > 1 && (
+                <div className="col-span-6">
+                  <label className="text-[10px] text-muted-foreground font-semibold">Servers for this test</label>
+                  <div className="mt-1 flex flex-wrap gap-2">
+                    {Object.keys(allServerConfigsMap).map((name) => {
+                      const selected = selectedServersForTest.includes(name);
+                      return (
+                        <button
+                          key={name}
+                          type="button"
+                          onClick={() =>
+                            setSelectedServersForTest((prev) =>
+                              prev.includes(name)
+                                ? prev.filter((n) => n !== name)
+                                : [...prev, name],
+                            )
+                          }
+                          className={`px-2 py-1 rounded border text-[10px] font-mono ${selected ? "bg-primary text-primary-foreground border-primary" : "bg-muted text-foreground border-border"}`}
+                        >
+                          {name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="mt-1 text-[10px] text-muted-foreground">
+                    {selectedServersForTest.length === 0 ? "Using globally selected servers" : `Selected: ${selectedServersForTest.join(", ")}`}
+                  </div>
+                </div>
+              )}
               <div className="col-span-6">
                 <label className="text-[10px] text-muted-foreground font-semibold">Expected tools (comma-separated)</label>
                 <Input value={expectedToolsInput} onChange={(e) => setExpectedToolsInput(e.target.value)} placeholder="toolA, toolB" className="mt-1 text-xs" />

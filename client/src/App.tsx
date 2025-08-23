@@ -121,7 +121,16 @@ export default function App() {
               <ToolsTab serverConfig={selectedMCPConfig} />
             )}
             {activeTab === "tests" && (
-              <TestsTab serverConfig={selectedMCPConfig} serverConfigsMap={selectedMCPConfigsMap} />
+              <TestsTab
+                serverConfig={selectedMCPConfig}
+                serverConfigsMap={selectedMCPConfigsMap}
+                allServerConfigsMap={Object.fromEntries(
+                  Object.entries(connectedServerConfigs).map(([name, entry]) => [
+                    name,
+                    entry.config,
+                  ]),
+                )}
+              />
             )}
 
 
