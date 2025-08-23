@@ -41,6 +41,7 @@ interface StreamingContext {
   encoder: TextEncoder;
   toolCallId: number;
   lastEmittedToolCallId: number | null;
+  stepIndex: number;
 }
 
 interface ChatRequest {
@@ -308,6 +309,29 @@ const handleAgentStepFinish = (
         }
       }
     }
+
+    // Emit a consolidated trace step event for UI tracing panels
+    streamingContext.stepIndex = (streamingContext.stepIndex || 0) + 1;
+    if (streamingContext.controller && streamingContext.encoder) {
+      streamingContext.controller.enqueue(
+        streamingContext.encoder.encode(
+          `data: ${JSON.stringify({
+            type: "trace_step",
+            step: streamingContext.stepIndex,
+            text,
+            toolCalls: (toolCalls || []).map((c: any) => ({
+              name: c.name || c.toolName,
+              params: c.params || c.args || {},
+            })),
+            toolResults: (toolResults || []).map((r: any) => ({
+              result: r.result,
+              error: (r as any).error,
+            })),
+            timestamp: new Date(),
+          })}\n\n`,
+        ),
+      );
+    }
   } catch (err) {
     dbg("onStepFinish error", err);
   }
@@ -554,6 +578,7 @@ chat.post("/", async (c) => {
           encoder,
           toolCallId: 0,
           lastEmittedToolCallId: null,
+          stepIndex: 0,
         };
 
         // Create streaming-wrapped tools

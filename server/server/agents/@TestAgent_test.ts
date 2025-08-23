@@ -46,7 +46,7 @@ export const createTestAgent = async () => {
   const toolsets = await mcp.getToolsets();
   return new Agent({
     name: "test",
-    instructions: "test",
+    instructions: "list users",
     model: createModel(),
     tools: undefined,
     defaultGenerateOptions: { toolChoice: "auto" }

@@ -43,6 +43,7 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
     unexpectedTools: string[];
     missingTools: string[];
   } | null>(null);
+  const [traceEvents, setTraceEvents] = useState<Array<{ step: number; text?: string; toolCalls?: any[]; toolResults?: any[] }>>([]);
 
   const serverKey = useMemo(() => {
     try {
@@ -66,7 +67,7 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
   }, [serverConfig, serverConfigsMap, selectedServersForTest]);
 
   const getServerSelectionMap = () => {
-    // If the per-test picker has selections, use those. Otherwise, fall back to globally selected map.
+    // If the per-test picker has selections, use those.
     if (selectedServersForTest.length > 0 && allServerConfigsMap) {
       const map: Record<string, MastraMCPServerDefinition> = {};
       for (const name of selectedServersForTest) {
@@ -74,6 +75,11 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
       }
       return map;
     }
+    // Otherwise, default to ALL connected servers if available
+    if (allServerConfigsMap && Object.keys(allServerConfigsMap).length > 0) {
+      return allServerConfigsMap;
+    }
+    // Fallback to whatever was passed from app (may be a subset)
     return serverConfigsMap;
   };
 
@@ -261,6 +267,7 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
 
     setRunStatus("running");
     setLastRunInfo(null);
+    setTraceEvents([]);
 
     const expectedSet = new Set(parseExpectedTools(expectedToolsInput));
     const calledToolsSet = new Set<string>();
@@ -314,6 +321,17 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
                   const toolCall = parsed.toolCall;
                   if (toolCall?.name) calledToolsSet.add(toolCall.name);
                   if (toolCall?.toolName) calledToolsSet.add(toolCall.toolName);
+                }
+                if (parsed.type === "trace_step" && typeof parsed.step === "number") {
+                  setTraceEvents((prev) => [
+                    ...prev,
+                    {
+                      step: parsed.step,
+                      text: parsed.text,
+                      toolCalls: parsed.toolCalls,
+                      toolResults: parsed.toolResults,
+                    },
+                  ]);
                 }
               } catch {
                 // ignore malformed line
@@ -482,7 +500,9 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
                   <label className="text-[10px] text-muted-foreground font-semibold">Servers for this test</label>
                   <div className="mt-1 flex flex-wrap gap-2">
                     {Object.keys(allServerConfigsMap).map((name) => {
-                      const selected = selectedServersForTest.includes(name);
+                      const selected =
+                        selectedServersForTest.length === 0 ||
+                        selectedServersForTest.includes(name);
                       return (
                         <button
                           key={name}
@@ -502,7 +522,9 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
                     })}
                   </div>
                   <div className="mt-1 text-[10px] text-muted-foreground">
-                    {selectedServersForTest.length === 0 ? "Using globally selected servers" : `Selected: ${selectedServersForTest.join(", ")}`}
+                    {selectedServersForTest.length === 0
+                      ? "Selected: all servers"
+                      : `Selected: ${selectedServersForTest.join(", ")}`}
                   </div>
                 </div>
               )}
@@ -563,6 +585,56 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
               </div>
             ) : (
               <div className="text-xs text-muted-foreground">Run a test to see results here</div>
+            )}
+          </div>
+
+          {/* Tracing Panel */}
+          <div className="border-t border-border p-6">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-xs font-semibold">Trace</h3>
+              {traceEvents.length > 0 && (
+                <Badge variant="secondary" className="text-xs">{traceEvents.length} steps</Badge>
+              )}
+            </div>
+            {traceEvents.length === 0 ? (
+              <div className="text-xs text-muted-foreground">No trace yet. Run a test to see agent steps and tool activity.</div>
+            ) : (
+              <div className="space-y-3">
+                {traceEvents.map((evt) => (
+                  <div key={evt.step} className="rounded-md border border-border p-3 bg-background">
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="text-[10px] font-semibold">Step {evt.step}</div>
+                    </div>
+                    {evt.text && (
+                      <div className="text-xs mb-2 whitespace-pre-wrap">{evt.text}</div>
+                    )}
+                    {evt.toolCalls && evt.toolCalls.length > 0 && (
+                      <div className="mb-1">
+                        <div className="text-[10px] font-semibold mb-1">Tool Calls</div>
+                        <div className="flex flex-wrap gap-1">
+                          {evt.toolCalls.map((c, i) => (
+                            <code key={i} className="font-mono text-[10px] bg-muted px-1 py-0.5 rounded border border-border">
+                              {c.name}
+                            </code>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {evt.toolResults && evt.toolResults.length > 0 && (
+                      <div className="mt-2">
+                        <div className="text-[10px] font-semibold mb-1">Tool Results</div>
+                        <div className="flex flex-col gap-2">
+                          {evt.toolResults.map((r, i) => (
+                            <div key={i} className="text-[10px] text-muted-foreground truncate">
+                              {r.error ? `Error: ${r.error}` : "Result received"}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </div>
