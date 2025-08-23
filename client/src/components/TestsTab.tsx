@@ -5,7 +5,7 @@ import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
 import { Badge } from "./ui/badge";
 import { ScrollArea } from "./ui/scroll-area";
-import { Save as SaveIcon, Play, RefreshCw, Trash2, Copy, Edit2 } from "lucide-react";
+import { Save as SaveIcon, Play, RefreshCw, Trash2, Copy, Edit2, Plus } from "lucide-react";
 import { ModelSelector } from "./chat/model-selector";
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
 import { detectOllamaModels } from "@/lib/ollama-utils";
@@ -207,6 +207,53 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
     setSavedTests(listSavedTests(serverKey));
   };
 
+  const handleNew = () => {
+    try {
+      const selectionMap = getServerSelectionMap();
+      const serversPayload = selectionMap && Object.keys(selectionMap).length > 0
+        ? selectionMap
+        : serverConfig
+          ? { test: serverConfig }
+          : {};
+
+      // Create a placeholder saved test immediately so it appears in the left list
+      const saved = saveTest(serverKey, {
+        title: "Untitled test",
+        description: undefined,
+        prompt: "",
+        expectedTools: [],
+        modelId: currentModel?.id,
+        selectedServers: selectedServersForTest,
+      });
+
+      setSavedTests(listSavedTests(serverKey));
+      setEditingTestId(saved.id);
+      setTitle(saved.title);
+      setPrompt("");
+      setExpectedToolsInput("");
+      setSelectedServersForTest(saved.selectedServers || []);
+
+      // Best-effort: generate agent file for the new test as well
+      if (Object.keys(serversPayload).length > 0 && currentModel) {
+        fetch("/api/mcp/tests/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            test: {
+              id: saved.id,
+              title: saved.title,
+              prompt: "",
+              expectedTools: [],
+              modelId: saved.modelId,
+            },
+            servers: serversPayload,
+            model: currentModel,
+          }),
+        }).catch(() => {});
+      }
+    } catch {}
+  };
+
   const runTest = useCallback(async () => {
     const selectionMap = getServerSelectionMap();
     const hasServers = (selectionMap && Object.keys(selectionMap).length > 0) || serverConfig;
@@ -301,18 +348,17 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
     <div className="h-[calc(100vh-120px)] flex flex-col">
       {/* Header Controls */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-background">
+        <div className="flex items-center gap-2" />
         <div className="flex items-center gap-2">
-          {currentModel && availableModels.length > 0 ? (
-            <ModelSelector
-              currentModel={currentModel}
-              availableModels={availableModels}
-              onModelChange={(m) => setCurrentModel(m)}
-            />
-          ) : (
-            <Badge variant="secondary" className="text-xs">No model available</Badge>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
+          <Button
+            onClick={handleNew}
+            variant="ghost"
+            size="sm"
+            className="cursor-pointer"
+          >
+            <Plus className="h-3 w-3 mr-1" />
+            <span className="font-mono text-xs">New</span>
+          </Button>
           <Button
             onClick={runTest}
             disabled={!currentModel || !currentApiKey || !prompt.trim() || runStatus === "running"}
@@ -338,7 +384,7 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
             disabled={!title.trim() || !prompt.trim()}
           >
             <SaveIcon className="h-3 w-3 mr-1" />
-            <span className="font-mono text-xs">Save</span>
+            <span className="font-mono text-xs">{editingTestId ? "Update" : "Create"}</span>
           </Button>
         </div>
       </div>
@@ -420,6 +466,20 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
               <div className="col-span-6">
                 <label className="text-[10px] text-muted-foreground font-semibold">Title</label>
                 <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="My test case" className="mt-1 text-xs" />
+              </div>
+              <div className="col-span-6">
+                <label className="text-[10px] text-muted-foreground font-semibold">Model</label>
+                <div className="mt-1">
+                  {availableModels.length > 0 && currentModel ? (
+                    <ModelSelector
+                      currentModel={currentModel}
+                      availableModels={availableModels}
+                      onModelChange={(m) => setCurrentModel(m)}
+                    />
+                  ) : (
+                    <Badge variant="secondary" className="text-xs">No model available</Badge>
+                  )}
+                </div>
               </div>
               <div className="col-span-6">
                 <label className="text-[10px] text-muted-foreground font-semibold">Prompt</label>
