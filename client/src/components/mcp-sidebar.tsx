@@ -7,6 +7,7 @@ import {
   Key,
   MessageSquareCode,
   BookOpen,
+  FlaskConical,
 } from "lucide-react";
 
 import { NavMain } from "@/components/sidebar/nav-main";
@@ -49,11 +50,7 @@ const navigationSections = [
         url: "#tools",
         icon: Hammer,
       },
-      {
-        title: "Tests",
-        url: "#tests",
-        icon: Glasses,
-      },
+      // moved Evals to bottom; placeholder here removed
       {
         title: "Resources",
         url: "#resources",
@@ -68,6 +65,17 @@ const navigationSections = [
         title: "Auth",
         url: "#auth",
         icon: Key,
+      },
+    ],
+  },
+  // New bottom section with Evals (beta)
+  {
+    id: "evals",
+    items: [
+      {
+        title: "Evals (beta)",
+        url: "#tests",
+        icon: FlaskConical,
       },
     ],
   },
