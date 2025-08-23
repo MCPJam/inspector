@@ -5,32 +5,25 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createOllama } from "ollama-ai-provider";
 
 const servers = {
-  "linear": {
-    "url": "https://mcp.linear.app/mcp",
+  "https://mcp.asana.com/sse": {
+    "url": "https://mcp.asana.com/sse",
     "requestInit": {
       "headers": {
-        "Authorization": "Bearer 553ad7de-32b5-4275-a303-ca9de7bfe5e4:9WZ3nqLjZVfi1CuS:A4OkdFcE87OrYqZidSI5GtjXoJMWmPaG"
+        "Authorization": "Bearer 1201739145245840:pDnkBKMYoefHlFel:vOCCgLGnRi9FnIop3HfiGtVhbKsTHdHp"
       }
     },
     "oauth": {
-      "access_token": "553ad7de-32b5-4275-a303-ca9de7bfe5e4:9WZ3nqLjZVfi1CuS:A4OkdFcE87OrYqZidSI5GtjXoJMWmPaG",
+      "access_token": "1201739145245840:pDnkBKMYoefHlFel:vOCCgLGnRi9FnIop3HfiGtVhbKsTHdHp",
       "token_type": "bearer",
-      "expires_in": 604800,
+      "expires_in": 3600,
       "scope": "",
-      "refresh_token": "553ad7de-32b5-4275-a303-ca9de7bfe5e4:9WZ3nqLjZVfi1CuS:oF5pRBvL8WmZmk4vbi15R5eWMBBuappp"
+      "refresh_token": "1201739145245840:pDnkBKMYoefHlFel:CFZsHguXETBDacoPV9qQ4DX3r746tTd2"
     }
-  },
-  "everything": {
-    "command": "npx",
-    "args": [
-      "@modelcontextprotocol/server-everything"
-    ],
-    "env": {}
   }
 } as const;
 
 function createModel() {
-  const def = {"id":"o4-mini","name":"O4 Mini","provider":"openai"} as any;
+  const def = {"id":"claude-3-5-sonnet-latest","name":"Claude Sonnet 3.5","provider":"anthropic"} as any;
   if (!def) throw new Error("Model not provided by UI when generating test agent");
   switch (def.provider) {
     case "anthropic": return createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })(def.id);
@@ -45,8 +38,8 @@ export const createTestAgent = async () => {
   const mcp = new MCPClient({ servers });
   const toolsets = await mcp.getToolsets();
   return new Agent({
-    name: "test",
-    instructions: "test",
+    name: "hello",
+    instructions: "list_users",
     model: createModel(),
     tools: undefined,
     defaultGenerateOptions: { toolChoice: "auto" }
