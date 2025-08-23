@@ -212,6 +212,10 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
     setExpectedToolsInput(test.expectedTools.join(", "));
     // Restore per-test server selection
     setSelectedServersForTest(test.selectedServers || []);
+    // Reset per-test run UI state when switching tests
+    setRunStatus("idle");
+    setLastRunInfo(null);
+    setTraceEvents([]);
     if (test.modelId) {
       const target = availableModels.find((m) => m.id === test.modelId);
       if (target) setCurrentModel(target);
@@ -609,7 +613,6 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
               onClick={() => setLeftTab("runs")}
             >
               Previous Run
-              <Badge variant="secondary" className="text-[10px] font-mono ml-2 align-middle">{lastRunAll?.results?.length || 0}</Badge>
             </button>
           </div>
           <ScrollArea className="h-[calc(100%-48px)]">
