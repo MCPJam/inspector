@@ -146,6 +146,7 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
       prompt: prompt.trim(),
       expectedTools,
       modelId: currentModel?.id,
+      selectedServers: selectedServersForTest,
     });
     setSavedTests(listSavedTests(serverKey));
     setEditingTestId(null);
@@ -188,6 +189,8 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
     setTitle(test.title);
     setPrompt(test.prompt);
     setExpectedToolsInput(test.expectedTools.join(", "));
+    // Restore per-test server selection
+    setSelectedServersForTest(test.selectedServers || []);
     if (test.modelId) {
       const target = availableModels.find((m) => m.id === test.modelId);
       if (target) setCurrentModel(target);
