@@ -50,6 +50,11 @@ const navigationSections = [
         icon: Hammer,
       },
       {
+        title: "Tests",
+        url: "#tests",
+        icon: Glasses,
+      },
+      {
         title: "Resources",
         url: "#resources",
         icon: BookOpen,

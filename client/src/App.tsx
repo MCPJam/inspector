@@ -5,6 +5,7 @@ import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
 import { PromptsTab } from "./components/PromptsTab";
 import { ChatTab } from "./components/ChatTab";
+import { TestsTab } from "./components/TestsTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
@@ -88,6 +89,7 @@ export default function App() {
           <div className="flex-1">
             {/* Active Server Selector - Only show on Tools, Resources, Prompts, and Auth pages */}
             {(activeTab === "tools" ||
+              activeTab === "tests" ||
               activeTab === "resources" ||
               activeTab === "prompts" ||
               activeTab === "auth" ||
@@ -118,6 +120,10 @@ export default function App() {
             {activeTab === "tools" && (
               <ToolsTab serverConfig={selectedMCPConfig} />
             )}
+            {activeTab === "tests" && (
+              <TestsTab serverConfig={selectedMCPConfig} />
+            )}
+
 
             {activeTab === "resources" && (
               <ResourcesTab serverConfig={selectedMCPConfig} />
