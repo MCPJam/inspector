@@ -5,6 +5,11 @@ import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
 import { Badge } from "./ui/badge";
 import { ScrollArea } from "./ui/scroll-area";
+import {
+  ResizablePanelGroup,
+  ResizablePanel,
+  ResizableHandle,
+} from "./ui/resizable";
 import { Save as SaveIcon, Play, RefreshCw, Trash2, Copy, Plus } from "lucide-react";
 import { ModelSelector } from "./chat/model-selector";
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
@@ -669,10 +674,12 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
       </div>
 
       {/* Content */}
-      <div className="flex-1 grid grid-cols-12 min-h-0">
-        {/* Left: Saved Tests / Previous Run Tabs */}
-        <div className="col-span-4 border-r border-border overflow-hidden">
-          <div className="px-4 py-4 border-b border-border bg-background flex items-center gap-2">
+      <div className="flex-1 min-h-0">
+        <ResizablePanelGroup direction="horizontal" className="h-full">
+          {/* Left: Saved Tests / Previous Run Tabs */}
+          <ResizablePanel defaultSize={33} minSize={20} maxSize={50}>
+            <div className="h-full border-r border-border bg-background overflow-hidden">
+              <div className="px-4 py-4 border-b border-border bg-background flex items-center gap-2">
             <button
               className={`text-xs font-semibold px-2 py-1 rounded ${leftTab === "tests" ? "bg-muted" : "hover:bg-muted/50"}`}
               onClick={() => setLeftTab("tests")}
@@ -685,10 +692,10 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
               onClick={() => setLeftTab("runs")}
             >
               Previous Run
-            </button>
-          </div>
-          <ScrollArea className="h-[calc(100%-48px)]">
-            <div className="p-2 space-y-1">
+                </button>
+              </div>
+              <ScrollArea className="h-[calc(100%-48px)]">
+                <div className="p-2 space-y-1">
               {leftTab === "tests" ? (
                 savedTests.length === 0 ? (
                 <div className="text-center py-6">
@@ -774,13 +781,17 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
                   </div>
                 )
               )}
+                </div>
+              </ScrollArea>
             </div>
-          </ScrollArea>
-        </div>
+          </ResizablePanel>
 
-        {/* Right: Editor and Results */}
-        <div className="col-span-8 flex flex-col min-h-0 h-full overflow-y-auto">
-          <div className="px-6 py-5 border-b border-border bg-background">
+          <ResizableHandle withHandle />
+
+          {/* Right: Editor and Results */}
+          <ResizablePanel defaultSize={67} minSize={50}>
+            <div className="h-full flex flex-col min-h-0 overflow-y-auto">
+              <div className="px-6 py-5 border-b border-border bg-background">
             <div className="grid grid-cols-6 gap-4">
               <div className="col-span-6">
                 <label className="text-[10px] text-muted-foreground font-semibold">Title<span className="text-destructive ml-0.5"></span></label>
@@ -840,164 +851,166 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
               <div className="col-span-6">
                 <label className="text-[10px] text-muted-foreground font-semibold">Expected tools (comma-separated)</label>
                 <Input value={expectedToolsInput} onChange={(e) => setExpectedToolsInput(e.target.value)} placeholder="toolA, toolB" className="mt-1 text-xs" />
+                </div>
               </div>
-            </div>
-          </div>
-
-          <div className="flex-1 p-6">
-            {/* Config mode selector */}
-            <div className="flex items-center justify-end mb-3 gap-2">
-              <label className="text-[10px] text-muted-foreground font-semibold">Config</label>
-              <select
-                value={configMode}
-                onChange={(e) => setConfigMode(e.target.value as any)}
-                className="text-xs border border-border rounded px-2 py-1 bg-background"
-              >
-                <option value="basic">Basic</option>
-                <option value="advanced">Advanced</option>
-              </select>
-            </div>
-
-            {/* Advanced Config */}
-            {configMode === "advanced" && (
-            <div className="mb-6 border border-border rounded p-4">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-xs font-semibold">Advanced Config</h3>
               </div>
-              <div className="grid grid-cols-6 gap-4">
-                <div className="col-span-6">
-                  <label className="text-[10px] text-muted-foreground font-semibold">Instructions (system prompt override)</label>
-                  <Textarea value={advInstructions} onChange={(e) => setAdvInstructions(e.target.value)} placeholder="Optional override of agent instructions for this test" className="mt-1 h-20 text-xs" />
+
+              <div className="flex-1 p-6">
+                {/* Config mode selector */}
+                <div className="flex items-center justify-end mb-3 gap-2">
+                  <label className="text-[10px] text-muted-foreground font-semibold">Config</label>
+                  <select
+                    value={configMode}
+                    onChange={(e) => setConfigMode(e.target.value as any)}
+                    className="text-xs border border-border rounded px-2 py-1 bg-background"
+                  >
+                    <option value="basic">Basic</option>
+                    <option value="advanced">Advanced</option>
+                  </select>
                 </div>
-                <div className="col-span-2">
-                  <label className="text-[10px] text-muted-foreground font-semibold">Temperature</label>
-                  <Input value={advTemperature} onChange={(e) => setAdvTemperature(e.target.value)} placeholder="e.g. 0.2" className="mt-1 text-xs" />
+
+                {/* Advanced Config */}
+                {configMode === "advanced" && (
+                  <div className="mb-6 border border-border rounded p-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="text-xs font-semibold">Advanced Config</h3>
+                    </div>
+                    <div className="grid grid-cols-6 gap-4">
+                      <div className="col-span-6">
+                        <label className="text-[10px] text-muted-foreground font-semibold">Instructions (system prompt override)</label>
+                        <Textarea value={advInstructions} onChange={(e) => setAdvInstructions(e.target.value)} placeholder="Optional override of agent instructions for this test" className="mt-1 h-20 text-xs" />
+                      </div>
+                      <div className="col-span-2">
+                        <label className="text-[10px] text-muted-foreground font-semibold">Temperature</label>
+                        <Input value={advTemperature} onChange={(e) => setAdvTemperature(e.target.value)} placeholder="e.g. 0.2" className="mt-1 text-xs" />
+                      </div>
+                      <div className="col-span-2">
+                        <label className="text-[10px] text-muted-foreground font-semibold">Max Steps</label>
+                        <Input value={advMaxSteps} onChange={(e) => setAdvMaxSteps(e.target.value)} placeholder="e.g. 10" className="mt-1 text-xs" />
+                      </div>
+                      <div className="col-span-2">
+                        <label className="text-[10px] text-muted-foreground font-semibold">Tool Choice</label>
+                        <div className="mt-1 flex gap-2 text-xs">
+                          {(["auto", "none", "required"] as const).map((opt) => (
+                            <button
+                              key={opt}
+                              type="button"
+                              className={`px-2 py-1 rounded border ${advToolChoice === opt ? "bg-primary text-primary-foreground border-primary" : "bg-muted text-foreground border-border"}`}
+                              onClick={() => setAdvToolChoice(opt)}
+                            >
+                              {opt}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2 mb-4">
+                  <span className="text-xs font-semibold">Last Run</span>
+                  {runStatus === "idle" && <Badge variant="secondary" className="text-xs">Idle</Badge>}
+                  {runStatus === "running" && <Badge variant="secondary" className="text-xs">Running</Badge>}
+                  {runStatus === "success" && <Badge className="text-xs bg-green-600 hover:bg-green-700">Passed</Badge>}
+                  {runStatus === "failed" && <Badge variant="destructive" className="text-xs">Failed</Badge>}
                 </div>
-                <div className="col-span-2">
-                  <label className="text-[10px] text-muted-foreground font-semibold">Max Steps</label>
-                  <Input value={advMaxSteps} onChange={(e) => setAdvMaxSteps(e.target.value)} placeholder="e.g. 10" className="mt-1 text-xs" />
+
+                {lastRunInfo ? (
+                  <div className="space-y-4">
+                    <div>
+                      <div className="text-xs font-semibold mb-2">Called tools</div>
+                      <div className="flex gap-1 flex-wrap">
+                        {lastRunInfo.calledTools.length === 0 ? (
+                          <span className="text-xs text-muted-foreground">None</span>
+                        ) : (
+                          lastRunInfo.calledTools.map((t) => (
+                            <code key={t} className="font-mono text-[10px] bg-muted px-1 py-0.5 rounded border border-border">{t}</code>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold mb-2">Missing expected tools</div>
+                      <div className="flex gap-1 flex-wrap">
+                        {lastRunInfo.missingTools.length === 0 ? (
+                          <span className="text-xs text-muted-foreground">None</span>
+                        ) : (
+                          lastRunInfo.missingTools.map((t) => (
+                            <code key={t} className="font-mono text-[10px] bg-muted px-1 py-0.5 rounded border border-border">{t}</code>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold mb-2">Unexpected tools</div>
+                      <div className="flex gap-1 flex-wrap">
+                        {lastRunInfo.unexpectedTools.length === 0 ? (
+                          <span className="text-xs text-muted-foreground">None</span>
+                        ) : (
+                          lastRunInfo.unexpectedTools.map((t) => (
+                            <code key={t} className="font-mono text-[10px] bg-muted px-1 py-0.5 rounded border border-border">{t}</code>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-xs text-muted-foreground">Run a test to see results here</div>
+                )}
+              </div>
+
+              {/* Tracing Panel */}
+              <div className="border-t border-border p-6">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-xs font-semibold">Trace</h3>
+                  {traceEvents.length > 0 && (
+                    <Badge variant="secondary" className="text-xs">{traceEvents.length} steps</Badge>
+                  )}
                 </div>
-                <div className="col-span-2">
-                  <label className="text-[10px] text-muted-foreground font-semibold">Tool Choice</label>
-                  <div className="mt-1 flex gap-2 text-xs">
-                    {(["auto", "none", "required"] as const).map((opt) => (
-                      <button
-                        key={opt}
-                        type="button"
-                        className={`px-2 py-1 rounded border ${advToolChoice === opt ? "bg-primary text-primary-foreground border-primary" : "bg-muted text-foreground border-border"}`}
-                        onClick={() => setAdvToolChoice(opt)}
-                      >
-                        {opt}
-                      </button>
+                {traceEvents.length === 0 ? (
+                  <div className="text-xs text-muted-foreground">No trace yet. Run a test to see agent steps and tool activity.</div>
+                ) : (
+                  <div className="space-y-3">
+                    {traceEvents.map((evt) => (
+                      <div key={evt.step} className="rounded-md border border-border p-3 bg-background">
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="text-[10px] font-semibold">Step {evt.step}</div>
+                        </div>
+                        {evt.text && (
+                          <div className="text-xs mb-2 whitespace-pre-wrap">{evt.text}</div>
+                        )}
+                        {evt.toolCalls && evt.toolCalls.length > 0 && (
+                          <div className="mb-1">
+                            <div className="text-[10px] font-semibold mb-1">Tool Calls</div>
+                            <div className="flex flex-wrap gap-1">
+                              {evt.toolCalls.map((c, i) => (
+                                <code key={i} className="font-mono text-[10px] bg-muted px-1 py-0.5 rounded border border-border">
+                                  {c.name}
+                                </code>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {evt.toolResults && evt.toolResults.length > 0 && (
+                          <div className="mt-2">
+                            <div className="text-[10px] font-semibold mb-1">Tool Results</div>
+                            <div className="flex flex-col gap-2">
+                              {evt.toolResults.map((r, i) => (
+                                <div key={i} className="text-[10px] text-muted-foreground truncate">
+                                  {r.error ? `Error: ${r.error}` : "Result received"}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     ))}
                   </div>
-                </div>
+                )}
               </div>
             </div>
-            )}
-
-            <div className="flex items-center gap-2 mb-4">
-              <span className="text-xs font-semibold">Last Run</span>
-              {runStatus === "idle" && <Badge variant="secondary" className="text-xs">Idle</Badge>}
-              {runStatus === "running" && <Badge variant="secondary" className="text-xs">Running</Badge>}
-              {runStatus === "success" && <Badge className="text-xs bg-green-600 hover:bg-green-700">Passed</Badge>}
-              {runStatus === "failed" && <Badge variant="destructive" className="text-xs">Failed</Badge>}
-            </div>
-
-            {lastRunInfo ? (
-              <div className="space-y-4">
-                <div>
-                  <div className="text-xs font-semibold mb-2">Called tools</div>
-                  <div className="flex gap-1 flex-wrap">
-                    {lastRunInfo.calledTools.length === 0 ? (
-                      <span className="text-xs text-muted-foreground">None</span>
-                    ) : (
-                      lastRunInfo.calledTools.map((t) => (
-                        <code key={t} className="font-mono text-[10px] bg-muted px-1 py-0.5 rounded border border-border">{t}</code>
-                      ))
-                    )}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs font-semibold mb-2">Missing expected tools</div>
-                  <div className="flex gap-1 flex-wrap">
-                    {lastRunInfo.missingTools.length === 0 ? (
-                      <span className="text-xs text-muted-foreground">None</span>
-                    ) : (
-                      lastRunInfo.missingTools.map((t) => (
-                        <code key={t} className="font-mono text-[10px] bg-muted px-1 py-0.5 rounded border border-border">{t}</code>
-                      ))
-                    )}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs font-semibold mb-2">Unexpected tools</div>
-                  <div className="flex gap-1 flex-wrap">
-                    {lastRunInfo.unexpectedTools.length === 0 ? (
-                      <span className="text-xs text-muted-foreground">None</span>
-                    ) : (
-                      lastRunInfo.unexpectedTools.map((t) => (
-                        <code key={t} className="font-mono text-[10px] bg-muted px-1 py-0.5 rounded border border-border">{t}</code>
-                      ))
-                    )}
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="text-xs text-muted-foreground">Run a test to see results here</div>
-            )}
-          </div>
-
-          {/* Tracing Panel */}
-          <div className="border-t border-border p-6">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-xs font-semibold">Trace</h3>
-              {traceEvents.length > 0 && (
-                <Badge variant="secondary" className="text-xs">{traceEvents.length} steps</Badge>
-              )}
-            </div>
-            {traceEvents.length === 0 ? (
-              <div className="text-xs text-muted-foreground">No trace yet. Run a test to see agent steps and tool activity.</div>
-            ) : (
-              <div className="space-y-3">
-                {traceEvents.map((evt) => (
-                  <div key={evt.step} className="rounded-md border border-border p-3 bg-background">
-                    <div className="flex items-center justify-between mb-1">
-                      <div className="text-[10px] font-semibold">Step {evt.step}</div>
-                    </div>
-                    {evt.text && (
-                      <div className="text-xs mb-2 whitespace-pre-wrap">{evt.text}</div>
-                    )}
-                    {evt.toolCalls && evt.toolCalls.length > 0 && (
-                      <div className="mb-1">
-                        <div className="text-[10px] font-semibold mb-1">Tool Calls</div>
-                        <div className="flex flex-wrap gap-1">
-                          {evt.toolCalls.map((c, i) => (
-                            <code key={i} className="font-mono text-[10px] bg-muted px-1 py-0.5 rounded border border-border">
-                              {c.name}
-                            </code>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {evt.toolResults && evt.toolResults.length > 0 && (
-                      <div className="mt-2">
-                        <div className="text-[10px] font-semibold mb-1">Tool Results</div>
-                        <div className="flex flex-col gap-2">
-                          {evt.toolResults.map((r, i) => (
-                            <div key={i} className="text-[10px] text-muted-foreground truncate">
-                              {r.error ? `Error: ${r.error}` : "Result received"}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+          </ResizablePanel>
+        </ResizablePanelGroup>
       </div>
     </div>
   );
