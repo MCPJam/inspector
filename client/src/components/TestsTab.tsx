@@ -33,6 +33,11 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
   const [prompt, setPrompt] = useState<string>("");
   const [expectedToolsInput, setExpectedToolsInput] = useState<string>("");
   const [selectedServersForTest, setSelectedServersForTest] = useState<string[]>([]);
+  const [advInstructions, setAdvInstructions] = useState<string>("");
+  const [advTemperature, setAdvTemperature] = useState<string>("");
+  const [advMaxSteps, setAdvMaxSteps] = useState<string>("");
+  const [advToolChoice, setAdvToolChoice] = useState<"auto" | "none" | "required">("auto");
+  const [configMode, setConfigMode] = useState<"basic" | "advanced">("basic");
 
   const [savedTests, setSavedTests] = useState<SavedTest[]>([]);
   const [editingTestId, setEditingTestId] = useState<string | null>(null);
@@ -75,14 +80,20 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
       selectedA.length === selectedB.length &&
       selectedA.every((v, i) => v === selectedB[i]);
     const modelEqual = (saved.modelId || null) === (currentModel?.id || null);
+    const advEqual =
+      (saved.advancedConfig?.instructions || "") === (advInstructions || "") &&
+      (saved.advancedConfig?.temperature ?? "") === (advTemperature.trim() === "" ? "" : Number(advTemperature)) &&
+      (saved.advancedConfig?.maxSteps ?? "") === (advMaxSteps.trim() === "" ? "" : Number(advMaxSteps)) &&
+      (saved.advancedConfig?.toolChoice || "auto") === advToolChoice;
     return (
       saved.title !== title.trim() ||
       (saved.prompt || "") !== (prompt || "").trim() ||
       !toolsEqual ||
       !serversEqual ||
-      !modelEqual
+      !modelEqual ||
+      !advEqual
     );
-  }, [editingTestId, savedTests, title, prompt, expectedToolsInput, selectedServersForTest, currentModel]);
+  }, [editingTestId, savedTests, title, prompt, expectedToolsInput, selectedServersForTest, currentModel, advInstructions, advTemperature, advMaxSteps, advToolChoice]);
 
   const serverKey = useMemo(() => {
     try {
@@ -193,6 +204,12 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
       expectedTools,
       modelId: currentModel?.id,
       selectedServers: selectedServersForTest,
+      advancedConfig: {
+        instructions: advInstructions.trim() || undefined,
+        temperature: advTemperature.trim() === "" ? null : Number(advTemperature),
+        maxSteps: advMaxSteps.trim() === "" ? null : Number(advMaxSteps),
+        toolChoice: advToolChoice,
+      },
     });
     setSavedTests(listSavedTests(serverKey));
     // Keep editing the same test so dirty detection continues to work
@@ -228,6 +245,10 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
       setTitle("");
       setPrompt("");
       setExpectedToolsInput("");
+      setAdvInstructions("");
+      setAdvTemperature("");
+      setAdvMaxSteps("");
+      setAdvToolChoice("auto");
     }
   };
 
@@ -238,6 +259,19 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
     setExpectedToolsInput(test.expectedTools.join(", "));
     // Restore per-test server selection
     setSelectedServersForTest(test.selectedServers || []);
+    // Restore advanced config
+    setAdvInstructions(test.advancedConfig?.instructions || "");
+    setAdvTemperature(
+      typeof test.advancedConfig?.temperature === "number"
+        ? String(test.advancedConfig!.temperature)
+        : "",
+    );
+    setAdvMaxSteps(
+      typeof test.advancedConfig?.maxSteps === "number"
+        ? String(test.advancedConfig!.maxSteps)
+        : "",
+    );
+    setAdvToolChoice((test.advancedConfig?.toolChoice as any) || "auto");
     // Reset per-test run UI state when switching tests
     setRunStatus("idle");
     setLastRunInfo(null);
@@ -804,6 +838,57 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
           </div>
 
           <div className="flex-1 p-6">
+            {/* Config mode selector */}
+            <div className="flex items-center justify-end mb-3 gap-2">
+              <label className="text-[10px] text-muted-foreground font-semibold">Config</label>
+              <select
+                value={configMode}
+                onChange={(e) => setConfigMode(e.target.value as any)}
+                className="text-xs border border-border rounded px-2 py-1 bg-background"
+              >
+                <option value="basic">Basic</option>
+                <option value="advanced">Advanced</option>
+              </select>
+            </div>
+
+            {/* Advanced Config */}
+            {configMode === "advanced" && (
+            <div className="mb-6 border border-border rounded p-4">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-xs font-semibold">Advanced Config</h3>
+              </div>
+              <div className="grid grid-cols-6 gap-4">
+                <div className="col-span-6">
+                  <label className="text-[10px] text-muted-foreground font-semibold">Instructions (system prompt override)</label>
+                  <Textarea value={advInstructions} onChange={(e) => setAdvInstructions(e.target.value)} placeholder="Optional override of agent instructions for this test" className="mt-1 h-20 text-xs" />
+                </div>
+                <div className="col-span-2">
+                  <label className="text-[10px] text-muted-foreground font-semibold">Temperature</label>
+                  <Input value={advTemperature} onChange={(e) => setAdvTemperature(e.target.value)} placeholder="e.g. 0.2" className="mt-1 text-xs" />
+                </div>
+                <div className="col-span-2">
+                  <label className="text-[10px] text-muted-foreground font-semibold">Max Steps</label>
+                  <Input value={advMaxSteps} onChange={(e) => setAdvMaxSteps(e.target.value)} placeholder="e.g. 10" className="mt-1 text-xs" />
+                </div>
+                <div className="col-span-2">
+                  <label className="text-[10px] text-muted-foreground font-semibold">Tool Choice</label>
+                  <div className="mt-1 flex gap-2 text-xs">
+                    {(["auto", "none", "required"] as const).map((opt) => (
+                      <button
+                        key={opt}
+                        type="button"
+                        className={`px-2 py-1 rounded border ${advToolChoice === opt ? "bg-primary text-primary-foreground border-primary" : "bg-muted text-foreground border-border"}`}
+                        onClick={() => setAdvToolChoice(opt)}
+                      >
+                        {opt}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+            )}
+
             <div className="flex items-center gap-2 mb-4">
               <span className="text-xs font-semibold">Last Run</span>
               {runStatus === "idle" && <Badge variant="secondary" className="text-xs">Idle</Badge>}
