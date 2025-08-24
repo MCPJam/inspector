@@ -660,12 +660,6 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
             ) : (
               <>
                 <span className="font-mono text-xs">Run All</span>
-                {runAllStatus === "success" && (
-                  <Badge className="ml-2 text-[10px] bg-green-600 hover:bg-green-700">Passed</Badge>
-                )}
-                {runAllStatus === "failed" && (
-                  <Badge variant="destructive" className="ml-2 text-[10px]">Failed</Badge>
-                )}
               </>
             )}
           </Button>
@@ -724,6 +718,12 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
               onClick={() => setLeftTab("runs")}
             >
               Previous Run
+              {runAllStatus === "success" && (
+                <Badge className="ml-2 text-[10px] bg-green-600 hover:bg-green-700">Passed</Badge>
+              )}
+              {runAllStatus === "failed" && (
+                <Badge variant="destructive" className="ml-2 text-[10px]">Failed</Badge>
+              )}
                 </button>
               </div>
               <ScrollArea className="h-[calc(100%-48px)]">
