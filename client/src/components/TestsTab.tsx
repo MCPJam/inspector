@@ -278,6 +278,7 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
       });
 
       setSavedTests(listSavedTests(serverKey));
+      setLeftTab("tests");
       setEditingTestId(saved.id);
       setTitle(saved.title);
       setPrompt("");
