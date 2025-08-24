@@ -156,6 +156,19 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
     return serverConfigsMap;
   };
 
+  // Validate server availability for current test configuration
+  const validateServerAvailability = () => {
+    if (!allServerConfigsMap || selectedServersForTest.length === 0) return { isValid: true, missingServers: [] };
+    
+    const availableServers = Object.keys(allServerConfigsMap);
+    const missingServers = selectedServersForTest.filter(serverName => !availableServers.includes(serverName));
+    
+    return {
+      isValid: missingServers.length === 0,
+      missingServers
+    };
+  };
+
   // Discover models (mirrors logic from useChat)
   useEffect(() => {
     const checkOllama = async () => {
@@ -509,6 +522,34 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
     // Consolidate all servers map from props
     const allServers = allServerConfigsMap || serverConfigsMap || (serverConfig ? { test: serverConfig } : {});
 
+    // Validate server availability for batch tests
+    const availableServerNames = Object.keys(allServers);
+    const testsWithMissingServers = testsPayload
+      .filter(test => test.selectedServers && test.selectedServers.length > 0)
+      .map(test => ({
+        ...test,
+        missingServers: test.selectedServers!.filter(serverName => !availableServerNames.includes(serverName))
+      }))
+      .filter(test => test.missingServers.length > 0);
+
+    if (testsWithMissingServers.length > 0) {
+      const testNames = testsWithMissingServers.map(t => t.title || t.id);
+      const allMissingServers = [...new Set(testsWithMissingServers.flatMap(t => t.missingServers))];
+      
+      const proceed = confirm(
+        `Warning: ${testsWithMissingServers.length} test(s) have unavailable servers:\n\n` +
+        `Tests: ${testNames.join(', ')}\n` +
+        `Missing servers: ${allMissingServers.join(', ')}\n\n` +
+        `These tests will likely fail. Do you want to continue anyway?`
+      );
+      
+      if (!proceed) {
+        setRunAllStatus("idle");
+        setRunAllAbortController(null);
+        return;
+      }
+    }
+
     try {
       const response = await fetch("/api/mcp/tests/run-all", {
         method: "POST",
@@ -665,7 +706,7 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
           </Button>
           <Button
             onClick={runStatus === "running" ? handleCancelRun : runTest}
-            disabled={!currentModel || !currentApiKey || !prompt.trim()}
+            disabled={!currentModel || !currentApiKey || !prompt.trim() || !validateServerAvailability().isValid}
             variant={runStatus === "running" ? "secondary" : "default"}
             size="sm"
             className="cursor-pointer"
@@ -875,6 +916,34 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
                   </div>
                 </div>
               )}
+              
+              {/* Server availability validation warning */}
+              {(() => {
+                const validation = validateServerAvailability();
+                if (!validation.isValid && validation.missingServers.length > 0) {
+                  return (
+                    <div className="col-span-6">
+                      <div className="bg-yellow-50 border border-yellow-200 rounded p-3 text-xs">
+                        <div className="flex items-center gap-2 text-yellow-800">
+                          <div className="w-4 h-4 rounded-full bg-yellow-400 flex items-center justify-center">
+                            <span className="text-yellow-800 font-bold text-[10px]">!</span>
+                          </div>
+                          <span className="font-semibold">Server(s) unavailable</span>
+                        </div>
+                        <div className="mt-1 text-yellow-700">
+                          The following servers are selected for this test but not currently available: 
+                          <strong className="font-mono"> {validation.missingServers.join(', ')}</strong>
+                        </div>
+                        <div className="mt-1 text-yellow-600">
+                          This test will likely fail. Please check server connections or update server selection.
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
+              
               <div className="col-span-6">
                 <label className="text-[10px] text-muted-foreground font-semibold">Expected tools (comma-separated)</label>
                 <Input value={expectedToolsInput} onChange={(e) => setExpectedToolsInput(e.target.value)} placeholder="toolA, toolB" className="mt-1 text-xs" />
