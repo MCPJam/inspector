@@ -141,11 +141,11 @@ tests.post("/run-all", async (c) => {
               let serverConfigs: Record<string, MastraMCPServerDefinition> = {};
               if (test.selectedServers && test.selectedServers.length > 0) {
                 for (const name of test.selectedServers) {
-                  if (allServers[name]) serverConfigs[normalizeServerConfigName(name)] = allServers[name];
+                  if (allServers[name]) serverConfigs[name] = allServers[name];
                 }
               } else {
                 for (const [name, cfg] of Object.entries(allServers)) {
-                  serverConfigs[normalizeServerConfigName(name)] = cfg;
+                  serverConfigs[name] = cfg;
                 }
               }
 

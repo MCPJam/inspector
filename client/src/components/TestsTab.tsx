@@ -128,13 +128,16 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
       for (const name of selectedServersForTest) {
         if (allServerConfigsMap[name]) map[name] = allServerConfigsMap[name];
       }
+      console.log('[Frontend Debug] Selected server names:', Object.keys(map));
       return map;
     }
     // Otherwise, default to ALL connected servers if available
     if (allServerConfigsMap && Object.keys(allServerConfigsMap).length > 0) {
+      console.log('[Frontend Debug] All server names:', Object.keys(allServerConfigsMap));
       return allServerConfigsMap;
     }
     // Fallback to whatever was passed from app (may be a subset)
+    console.log('[Frontend Debug] Fallback server names:', Object.keys(serverConfigsMap || {}));
     return serverConfigsMap;
   };
 
