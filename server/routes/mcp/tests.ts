@@ -164,7 +164,7 @@ tests.post("/run-all", async (c) => {
               const model = createModel(test.model);
               const agent = new Agent({
                 name: `TestAgent-${test.id}`,
-                instructions: "You are a helpful assistant with access to MCP tools.",
+                instructions: "You are a helpful assistant with access to MCP tools",
                 model,
               });
               const toolsets = await client.getToolsets();
