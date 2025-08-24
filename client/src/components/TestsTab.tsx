@@ -662,7 +662,7 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
       </div>
 
       {/* Content */}
-      <div className="flex-1 grid grid-cols-12">
+      <div className="flex-1 grid grid-cols-12 min-h-0">
         {/* Left: Saved Tests / Previous Run Tabs */}
         <div className="col-span-4 border-r border-border overflow-hidden">
           <div className="px-4 py-4 border-b border-border bg-background flex items-center gap-2">
@@ -772,7 +772,7 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
         </div>
 
         {/* Right: Editor and Results */}
-        <div className="col-span-8 flex flex-col">
+        <div className="col-span-8 flex flex-col min-h-0 h-full overflow-y-auto">
           <div className="px-6 py-5 border-b border-border bg-background">
             <div className="grid grid-cols-6 gap-4">
               <div className="col-span-6">
