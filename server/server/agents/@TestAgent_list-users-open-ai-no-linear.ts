@@ -11,6 +11,21 @@ const servers = {
       "@modelcontextprotocol/server-everything"
     ],
     "env": {}
+  },
+  "linear": {
+    "url": "https://mcp.linear.app/mcp",
+    "requestInit": {
+      "headers": {
+        "Authorization": "Bearer 553ad7de-32b5-4275-a303-ca9de7bfe5e4:9WZ3nqLjZVfi1CuS:A4OkdFcE87OrYqZidSI5GtjXoJMWmPaG"
+      }
+    },
+    "oauth": {
+      "access_token": "553ad7de-32b5-4275-a303-ca9de7bfe5e4:9WZ3nqLjZVfi1CuS:A4OkdFcE87OrYqZidSI5GtjXoJMWmPaG",
+      "token_type": "bearer",
+      "expires_in": 604800,
+      "scope": "",
+      "refresh_token": "553ad7de-32b5-4275-a303-ca9de7bfe5e4:9WZ3nqLjZVfi1CuS:oF5pRBvL8WmZmk4vbi15R5eWMBBuappp"
+    }
   }
 } as const;
 
