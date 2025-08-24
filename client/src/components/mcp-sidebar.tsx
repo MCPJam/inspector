@@ -117,7 +117,7 @@ export function MCPSidebar({
   };
 
   return (
-    <Sidebar collapsible="offcanvas" {...props}>
+    <Sidebar collapsible="icon" {...props}>
       <SidebarHeader>
         <div className="flex items-center justify-center px-4 py-4">
           <img
