@@ -585,7 +585,7 @@ chat.post("/", async (c) => {
         Object.values(toolsets).forEach((serverTools: any) => {
           Object.assign(flattenedTools, serverTools);
         });
-        
+
         // Create streaming-wrapped tools
         const streamingWrappedTools = wrapToolsWithStreaming(
           flattenedTools,

@@ -91,7 +91,10 @@ export function getTest(serverKey: string, id: string): SavedTest | undefined {
   return listSavedTests(serverKey).find((t) => t.id === id);
 }
 
-export function duplicateTest(serverKey: string, id: string): SavedTest | undefined {
+export function duplicateTest(
+  serverKey: string,
+  id: string,
+): SavedTest | undefined {
   const t = getTest(serverKey, id);
   if (!t) return undefined;
   return saveTest(serverKey, {

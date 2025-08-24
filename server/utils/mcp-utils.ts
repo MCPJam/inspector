@@ -215,28 +215,28 @@ export function createMCPClientWithMultipleConnections(
     id: `chat-${Date.now()}`,
     servers: serverConfigs,
   });
-  
+
   // Override getTools method to fix double prefixing
   const originalGetTools = originalMCPClient.getTools.bind(originalMCPClient);
   originalMCPClient.getTools = async () => {
     const tools = await originalGetTools();
     const fixedTools: Record<string, any> = {};
-    
+
     for (const [toolName, toolConfig] of Object.entries(tools)) {
       // Check if tool name has double prefix pattern (serverName_serverName_actualTool)
-      const parts = toolName.split('_');
+      const parts = toolName.split("_");
       if (parts.length >= 3 && parts[0] === parts[1]) {
         // Remove the duplicate prefix: "asana_asana_list_workspaces" -> "asana_list_workspaces"
-        const fixedName = parts.slice(1).join('_');
+        const fixedName = parts.slice(1).join("_");
         fixedTools[fixedName] = toolConfig;
       } else {
         fixedTools[toolName] = toolConfig;
       }
     }
-    
+
     return fixedTools;
   };
-  
+
   return originalMCPClient;
 }
 

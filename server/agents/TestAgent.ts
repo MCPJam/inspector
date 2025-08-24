@@ -56,5 +56,3 @@ export class TestAgent extends Agent {
 }
 
 export default TestAgent;
-
-

@@ -125,15 +125,13 @@ export default function App() {
                 serverConfigsMap={selectedMCPConfigsMap}
                 allServerConfigsMap={Object.fromEntries(
                   Object.entries(connectedServerConfigs)
-                    .filter(([, entry]) => entry.connectionStatus === "connected")
-                    .map(([name, entry]) => [
-                      name,
-                      entry.config,
-                    ]),
+                    .filter(
+                      ([, entry]) => entry.connectionStatus === "connected",
+                    )
+                    .map(([name, entry]) => [name, entry.config]),
                 )}
               />
             )}
-
 
             {activeTab === "resources" && (
               <ResourcesTab serverConfig={selectedMCPConfig} />
