@@ -177,8 +177,10 @@ tests.post("/run-all", async (c) => {
                   step += 1;
                   // Accumulate tool names
                   (toolCalls || []).forEach((c: any) => {
-                    if (c?.name) calledTools.add(c.name);
-                    if (c?.toolName) calledTools.add(c.toolName);
+                    const toolName = c?.name || c?.toolName;
+                    if (toolName) {
+                      calledTools.add(toolName);
+                    }
                   });
                   controller.enqueue(
                     encoder.encode(
