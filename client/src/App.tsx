@@ -124,10 +124,12 @@ export default function App() {
                 serverConfig={selectedMCPConfig}
                 serverConfigsMap={selectedMCPConfigsMap}
                 allServerConfigsMap={Object.fromEntries(
-                  Object.entries(connectedServerConfigs).map(([name, entry]) => [
-                    name,
-                    entry.config,
-                  ]),
+                  Object.entries(connectedServerConfigs)
+                    .filter(([, entry]) => entry.connectionStatus === "connected")
+                    .map(([name, entry]) => [
+                      name,
+                      entry.config,
+                    ]),
                 )}
               />
             )}
