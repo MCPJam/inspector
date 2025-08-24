@@ -193,16 +193,33 @@ class MCPJamAgent {
 		// toolName may include server prefix "serverId:tool"
 		let serverId = "";
 		let name = toolName;
+		
 		if (toolName.includes(":")) {
 			const [sid, n] = toolName.split(":", 2);
 			serverId = normalizeServerId(sid);
 			name = n;
+		} else {
+			// Find which server has this tool
+			for (const [key, tool] of this.toolRegistry.entries()) {
+				if (tool.name === toolName) {
+					serverId = tool.serverId;
+					name = toolName;
+					break;
+				}
+			}
 		}
-		const client = serverId ? this.mcpClients.get(serverId) : this.pickAnyClient();
-		if (!client) throw new Error("No MCP client available");
+		
+		if (!serverId) {
+			throw new Error(`Tool not found in any connected server: ${toolName}`);
+		}
+		
+		const client = this.mcpClients.get(serverId);
+		if (!client) throw new Error(`No MCP client available for server: ${serverId}`);
+		
 		const tools = await client.getTools();
 		const tool = tools[name];
-		if (!tool) throw new Error(`Tool not found: ${toolName}`);
+		if (!tool) throw new Error(`Tool '${name}' not found in server '${serverId}'`);
+		
 		const result = await tool.execute({ context: parameters || {} });
 		return { result };
 	}
