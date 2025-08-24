@@ -8,6 +8,42 @@ import { TextEncoder } from "util";
 
 const tools = new Hono();
 
+// Helper: resolve a tool key from various name formats
+function resolveToolKey(
+  requestedName: string,
+  toolsMap: Record<string, any>,
+): string | null {
+  if (!requestedName) return null;
+
+  // 1) Exact match
+  if (toolsMap[requestedName]) return requestedName;
+
+  // 2) Handle "server:tool" -> "server_tool"
+  if (requestedName.includes(":")) {
+    const [sid, n] = requestedName.split(":", 2);
+    const candidate = `${sid}_${n}`;
+    if (toolsMap[candidate]) return candidate;
+  }
+
+  // 3) If the requested name has an underscore prefix already, try without it
+  //    i.e., find key that ends with _<name>
+  const endsWithMatch = Object.keys(toolsMap).find((k) =>
+    k.endsWith(`_${requestedName}`),
+  );
+  if (endsWithMatch) return endsWithMatch;
+
+  // 4) As a last resort, if the requestedName itself contains an underscore,
+  //    try splitting off the first segment and search again
+  if (requestedName.includes("_")) {
+    const parts = requestedName.split("_");
+    const withoutPrefix = parts.slice(1).join("_");
+    const candidate = Object.keys(toolsMap).find((k) => k.endsWith(`_${withoutPrefix}`));
+    if (candidate) return candidate;
+  }
+
+  return null;
+}
+
 // Store for pending elicitation requests
 const pendingElicitations = new Map<
   string,
@@ -149,7 +185,8 @@ tools.post("/", async (c) => {
             );
 
             const tools = await client.getTools();
-            const tool = tools[toolName];
+            const resolvedKey = resolveToolKey(toolName, tools);
+            const tool = resolvedKey ? tools[resolvedKey] : undefined;
 
             if (!tool) {
               controller.enqueue(

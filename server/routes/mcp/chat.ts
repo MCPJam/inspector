@@ -16,7 +16,19 @@ import {
 import { MCPClient } from "@mastra/mcp";
 import { ContentfulStatusCode } from "hono/utils/http-status";
 import { TextEncoder } from "util";
-import { getDefaultTemperatureByProvider } from "../../../client/src/lib/chat-utils";
+// Minimal local helper to avoid importing from client build deps
+function getDefaultTemperatureByProvider(provider: string): number {
+  switch (provider) {
+    case "anthropic":
+    case "openai":
+    case "deepseek":
+      return 0.7;
+    case "ollama":
+      return 0.2;
+    default:
+      return 0.7;
+  }
+}
 
 // Types
 interface ElicitationRequest {
