@@ -30,7 +30,7 @@ export const createTestAgent = async () => {
   const mcp = new MCPClient({ servers });
   const toolsets = await mcp.getToolsets();
   return new Agent({
-    name: "list users open ai no linear",
+    name: "list users open ai no linearfea",
     instructions: "list users",
     model: createModel(),
     tools: undefined,
