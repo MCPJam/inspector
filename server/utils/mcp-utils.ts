@@ -210,9 +210,6 @@ export const validateMultipleServerConfigs = (
 export function createMCPClientWithMultipleConnections(
   serverConfigs: Record<string, MastraMCPServerDefinition>,
 ): MCPClient {
-  // Debug: Log the server configuration names being passed
-  console.log('[MCP Debug] Server configs passed to MCPClient:', Object.keys(serverConfigs));
-  
   // Custom MCPClient wrapper to fix double prefixing issue
   const originalMCPClient = new MCPClient({
     id: `chat-${Date.now()}`,
@@ -231,7 +228,6 @@ export function createMCPClientWithMultipleConnections(
       if (parts.length >= 3 && parts[0] === parts[1]) {
         // Remove the duplicate prefix: "asana_asana_list_workspaces" -> "asana_list_workspaces"
         const fixedName = parts.slice(1).join('_');
-        console.log(`[MCP Debug] Fixed tool name: "${toolName}" -> "${fixedName}"`);
         fixedTools[fixedName] = toolConfig;
       } else {
         fixedTools[toolName] = toolConfig;
