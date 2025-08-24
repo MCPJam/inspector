@@ -15,7 +15,7 @@ import { ModelSelector } from "./chat/model-selector";
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
 import { detectOllamaModels } from "@/lib/ollama-utils";
 import { MastraMCPServerDefinition, ModelDefinition, SUPPORTED_MODELS, Model } from "@/shared/types.js";
-import { listSavedTests, saveTest, deleteTest, duplicateTest, isDynamicTest, type SavedTest, type DynamicTestConfig, type TestStep } from "@/lib/test-storage";
+import { listSavedTests, saveTest, deleteTest, duplicateTest, type SavedTest } from "@/lib/test-storage";
 
 interface TestsTabProps {
   serverConfig?: MastraMCPServerDefinition;
@@ -43,8 +43,6 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
   const [advMaxSteps, setAdvMaxSteps] = useState<string>("");
   const [advToolChoice, setAdvToolChoice] = useState<"auto" | "none" | "required">("auto");
   const [configMode, setConfigMode] = useState<"basic" | "advanced">("basic");
-  const [testMode, setTestMode] = useState<"basic" | "dynamic">("basic");
-  const [dynamicSteps, setDynamicSteps] = useState<TestStep[]>([]);
 
   const [savedTests, setSavedTests] = useState<SavedTest[]>([]);
   const [editingTestId, setEditingTestId] = useState<string | null>(null);
@@ -203,7 +201,6 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
   const handleSave = () => {
     if (!title.trim() || !prompt.trim()) return;
     const expectedTools = parseExpectedTools(expectedToolsInput);
-    const dynamicConfig = testMode === "dynamic" ? createDynamicConfig() : undefined;
     
     const saved = saveTest(serverKey, {
       id: editingTestId || undefined,
@@ -219,7 +216,6 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
         maxSteps: advMaxSteps.trim() === "" ? null : Number(advMaxSteps),
         toolChoice: advToolChoice,
       },
-      dynamicConfig,
     });
     setSavedTests(listSavedTests(serverKey));
     // Keep editing the same test so dirty detection continues to work
@@ -233,8 +229,6 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
       setAdvTemperature("");
       setAdvMaxSteps("");
       setAdvToolChoice("auto");
-      setTestMode("basic");
-      setDynamicSteps([]);
     }
   };
 
@@ -258,14 +252,6 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
         : "",
     );
     setAdvToolChoice((test.advancedConfig?.toolChoice as any) || "auto");
-    // Restore dynamic config
-    if (test.dynamicConfig && test.dynamicConfig.executionPlan.length > 0) {
-      setTestMode("dynamic");
-      setDynamicSteps(test.dynamicConfig.executionPlan);
-    } else {
-      setTestMode("basic");
-      setDynamicSteps([]);
-    }
     // Reset per-test run UI state when switching tests
     setRunStatus("idle");
     setLastRunInfo(null);
@@ -318,24 +304,12 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
   const runTest = useCallback(async () => {
     const selectionMap = getServerSelectionMap();
     const hasServers = (selectionMap && Object.keys(selectionMap).length > 0) || serverConfig;
-    if (!hasServers || !currentModel || !currentApiKey) return;
+    if (!hasServers || !currentModel || !currentApiKey || !prompt.trim()) return;
 
     setRunStatus("running");
     setLastRunInfo(null);
     setTraceEvents([]);
 
-    // For dynamic tests, execute steps sequentially
-    if (testMode === "dynamic" && dynamicSteps.length > 0) {
-      await executeDynamicTest(selectionMap);
-    } else {
-      // For basic tests, use the original single-prompt approach
-      await executeBasicTest(selectionMap);
-    }
-  }, [serverConfig, serverConfigsMap, allServerConfigsMap, selectedServersForTest, currentModel, currentApiKey, prompt, expectedToolsInput, getOllamaBaseUrl, testMode, dynamicSteps, advInstructions, advTemperature, advMaxSteps, advToolChoice]);
-
-  const executeBasicTest = async (selectionMap: any) => {
-    if (!prompt.trim()) return;
-    
     const expectedSet = new Set(parseExpectedTools(expectedToolsInput));
     const calledToolsSet = new Set<string>();
 
@@ -364,179 +338,96 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
         return;
       }
 
-      await processStreamResponse(response, calledToolsSet);
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let doneStreaming = false;
 
-      const calledTools = Array.from(calledToolsSet);
-      const missingTools = Array.from(expectedSet).filter((t) => !calledToolsSet.has(t));
-      const unexpectedTools = calledTools.filter((t) => !expectedSet.has(t));
-
-      setLastRunInfo({ calledTools, missingTools, unexpectedTools });
-      setRunStatus(missingTools.length === 0 && unexpectedTools.length === 0 ? "success" : "failed");
-    } catch (error) {
-      console.error("Basic test execution error:", error);
-      setRunStatus("failed");
-    }
-  };
-
-  const executeDynamicTest = async (selectionMap: any) => {
-    const calledToolsSet = new Set<string>();
-    let stepCount = 0;
-
-    try {
-      for (const step of dynamicSteps) {
-        stepCount++;
-        
-        if (step.type === 'prompt' && step.config.prompt?.trim()) {
-          const response = await fetch("/api/mcp/chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-            body: JSON.stringify({
-              serverConfigs: selectionMap && Object.keys(selectionMap).length > 0 ? selectionMap : { test: serverConfig },
-              model: currentModel,
-              provider: currentModel?.provider,
-              apiKey: currentApiKey,
-              systemPrompt: advInstructions.trim() || "You are a helpful assistant with access to MCP tools.",
-              messages: [
-                { id: crypto.randomUUID(), role: "user", content: step.config.prompt, timestamp: Date.now() },
-              ],
-              ollamaBaseUrl: getOllamaBaseUrl(),
-              temperature: advTemperature.trim() === "" ? undefined : Number(advTemperature),
-              maxSteps: advMaxSteps.trim() === "" ? undefined : Number(advMaxSteps),
-              toolChoice: advToolChoice,
-            }),
-          });
-
-          if (!response.ok) {
-            setRunStatus("failed");
-            return;
-          }
-
-          await processStreamResponse(response, calledToolsSet, stepCount);
-
-        } else if (step.type === 'wait' && step.config.waitTime) {
-          await new Promise(resolve => setTimeout(resolve, step.config.waitTime));
+      if (reader) {
+        while (!doneStreaming) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
           
-          setTraceEvents(prev => [...prev, {
-            step: stepCount,
-            text: `Waited ${step.config.waitTime}ms`,
-            toolCalls: [],
-            toolResults: []
-          }]);
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              const data = line.slice(6).trim();
+              if (data === "[DONE]") {
+                doneStreaming = true;
+                break;
+              }
+              if (!data) continue;
+              
+              try {
+                const parsed = JSON.parse(data);
+                
+                // Capture tool calls
+                if ((parsed.type === "tool_call" || (!parsed.type && parsed.toolCall)) && parsed.toolCall) {
+                  const toolCall = parsed.toolCall;
+                  if (toolCall?.name) calledToolsSet.add(toolCall.name);
+                  if (toolCall?.toolName) calledToolsSet.add(toolCall.toolName);
+                }
+                
+                // Capture trace events - handle multiple formats
+                if (parsed.type === "trace_step" && typeof parsed.step === "number") {
+                  setTraceEvents((prev) => [
+                    ...prev,
+                    {
+                      step: parsed.step,
+                      text: parsed.text,
+                      toolCalls: parsed.toolCalls,
+                      toolResults: parsed.toolResults,
+                    },
+                  ]);
+                } else if (parsed.type === "text" || parsed.type === "content") {
+                  // Capture text responses as trace events
+                  setTraceEvents((prev) => [
+                    ...prev,
+                    {
+                      step: prev.length + 1,
+                      text: parsed.text || parsed.content || JSON.stringify(parsed),
+                      toolCalls: [],
+                      toolResults: [],
+                    },
+                  ]);
+                } else if (!parsed.type && (parsed.text || parsed.content)) {
+                  // Capture any text content without explicit type
+                  setTraceEvents((prev) => [
+                    ...prev,
+                    {
+                      step: prev.length + 1,
+                      text: parsed.text || parsed.content,
+                      toolCalls: [],
+                      toolResults: [],
+                    },
+                  ]);
+                }
+                
+                // Debug: log all parsed events to console
+                if (parsed.type) {
+                  console.log('[Test Trace]', parsed.type, parsed);
+                }
+              } catch {
+                // ignore malformed line
+              }
+            }
+          }
         }
-        // Add more step type implementations as needed
       }
 
-      // Final validation
-      const expectedSet = new Set(parseExpectedTools(expectedToolsInput));
       const calledTools = Array.from(calledToolsSet);
       const missingTools = Array.from(expectedSet).filter((t) => !calledToolsSet.has(t));
       const unexpectedTools = calledTools.filter((t) => !expectedSet.has(t));
 
       setLastRunInfo({ calledTools, missingTools, unexpectedTools });
       setRunStatus(missingTools.length === 0 && unexpectedTools.length === 0 ? "success" : "failed");
-
     } catch (error) {
-      console.error("Dynamic test execution error:", error);
+      console.error("Test execution error:", error);
       setRunStatus("failed");
     }
-  };
-
-  const processStreamResponse = async (response: Response, calledToolsSet: Set<string>, stepNumber?: number) => {
-    const reader = response.body?.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let doneStreaming = false;
-
-    if (reader) {
-      while (!doneStreaming) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-        
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            const data = line.slice(6).trim();
-            if (data === "[DONE]") {
-              doneStreaming = true;
-              break;
-            }
-            if (!data) continue;
-            
-            try {
-              const parsed = JSON.parse(data);
-              
-              // Capture tool calls
-              if ((parsed.type === "tool_call" || (!parsed.type && parsed.toolCall)) && parsed.toolCall) {
-                const toolCall = parsed.toolCall;
-                if (toolCall?.name) calledToolsSet.add(toolCall.name);
-                if (toolCall?.toolName) calledToolsSet.add(toolCall.toolName);
-              }
-              
-              // Capture trace events - handle multiple formats
-              if (parsed.type === "trace_step" && typeof parsed.step === "number") {
-                setTraceEvents((prev) => [
-                  ...prev,
-                  {
-                    step: stepNumber ? (stepNumber * 1000 + parsed.step) : parsed.step,
-                    text: parsed.text,
-                    toolCalls: parsed.toolCalls,
-                    toolResults: parsed.toolResults,
-                  },
-                ]);
-              } else if (parsed.type === "text" || parsed.type === "content") {
-                // Capture text responses as trace events
-                setTraceEvents((prev) => [
-                  ...prev,
-                  {
-                    step: prev.length + 1,
-                    text: parsed.text || parsed.content || JSON.stringify(parsed),
-                    toolCalls: [],
-                    toolResults: [],
-                  },
-                ]);
-              } else if (!parsed.type && (parsed.text || parsed.content)) {
-                // Capture any text content without explicit type
-                setTraceEvents((prev) => [
-                  ...prev,
-                  {
-                    step: prev.length + 1,
-                    text: parsed.text || parsed.content,
-                    toolCalls: [],
-                    toolResults: [],
-                  },
-                ]);
-              }
-              
-              // Debug: log all parsed events to console
-              if (parsed.type) {
-                console.log('[Test Trace]', parsed.type, parsed);
-              }
-            } catch {
-              // ignore malformed line
-            }
-          }
-        }
-      }
-    }
-  };
-
-  const createDynamicConfig = useCallback((): DynamicTestConfig | undefined => {
-    if (testMode !== "dynamic" || dynamicSteps.length === 0) return undefined;
-
-    const expectedTools = parseExpectedTools(expectedToolsInput);
-    return {
-      agentType: 'multi-step',
-      executionPlan: dynamicSteps,
-      validationRules: expectedTools.map(tool => ({
-        id: `validate-${tool}`,
-        type: 'tool_called',
-        config: { toolName: tool }
-      })),
-      autoGenerated: false,
-    };
-  }, [testMode, dynamicSteps, expectedToolsInput]);
+  }, [serverConfig, serverConfigsMap, allServerConfigsMap, selectedServersForTest, currentModel, currentApiKey, prompt, expectedToolsInput, getOllamaBaseUrl, advInstructions, advTemperature, advMaxSteps, advToolChoice]);
 
   // Helper to resolve model+apiKey for a given modelId or fallback to current
   const resolveModelAndApiKey = useCallback(
@@ -772,7 +663,7 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
       <div className="flex-1 min-h-0">
         <ResizablePanelGroup direction="horizontal" className="h-full">
           {/* Left: Saved Tests / Previous Run Tabs */}
-          <ResizablePanel defaultSize={33} minSize={20} maxSize={50}>
+          <ResizablePanel defaultSize={25} minSize={20} maxSize={50}>
             <div className="h-full border-r border-border bg-background overflow-hidden">
               <div className="px-4 py-4 border-b border-border bg-background flex items-center gap-2">
             <button
@@ -805,18 +696,8 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
                   >
                     <div className="flex items-start justify-between">
                       <div className="min-w-0 pr-2">
-                        <div className="flex items-center gap-2">
-                          <div className="text-xs font-medium truncate">{test.title}</div>
-                          {isDynamicTest(test) && (
-                            <Badge variant="secondary" className="text-[8px] px-1 py-0 h-4">DYNAMIC</Badge>
-                          )}
-                        </div>
-                        <div className="text-[10px] text-muted-foreground truncate">
-                          Model: {test.modelId || "(current)"}
-                          {isDynamicTest(test) && test.dynamicConfig && (
-                            <span className="ml-2">• {test.dynamicConfig.executionPlan.length} steps</span>
-                          )}
-                        </div>
+                        <div className="text-xs font-medium truncate">{test.title}</div>
+                        <div className="text-[10px] text-muted-foreground truncate">Model: {test.modelId || "(current)"}</div>
                         {test.expectedTools.length > 0 && (
                           <div className="mt-1 flex gap-1 flex-wrap">
                             {test.expectedTools.slice(0, 3).map((t) => (
@@ -894,7 +775,7 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
           <ResizableHandle withHandle />
 
           {/* Right: Editor and Results */}
-          <ResizablePanel defaultSize={67} minSize={50}>
+          <ResizablePanel defaultSize={75} minSize={50}>
             <div className="h-full flex flex-col min-h-0 overflow-y-auto">
               <div className="px-6 py-5 border-b border-border bg-background">
             <div className="grid grid-cols-6 gap-4">
@@ -957,156 +838,17 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
 
               <div className="flex-1 p-6">
                 {/* Config mode selector */}
-                <div className="flex items-center justify-end mb-3 gap-4">
-                  <div className="flex items-center gap-2">
-                    <label className="text-[10px] text-muted-foreground font-semibold">Test Type</label>
-                    <select
-                      value={testMode}
-                      onChange={(e) => setTestMode(e.target.value as any)}
-                      className="text-xs border border-border rounded px-2 py-1 bg-background"
-                    >
-                      <option value="basic">Basic</option>
-                      <option value="dynamic">Dynamic</option>
-                    </select>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <label className="text-[10px] text-muted-foreground font-semibold">Config</label>
-                    <select
-                      value={configMode}
-                      onChange={(e) => setConfigMode(e.target.value as any)}
-                      className="text-xs border border-border rounded px-2 py-1 bg-background"
-                    >
-                      <option value="basic">Basic</option>
-                      <option value="advanced">Advanced</option>
-                    </select>
-                  </div>
+                <div className="flex items-center justify-end mb-3 gap-2">
+                  <label className="text-[10px] text-muted-foreground font-semibold">Config</label>
+                  <select
+                    value={configMode}
+                    onChange={(e) => setConfigMode(e.target.value as any)}
+                    className="text-xs border border-border rounded px-2 py-1 bg-background"
+                  >
+                    <option value="basic">Basic</option>
+                    <option value="advanced">Advanced</option>
+                  </select>
                 </div>
-
-                {/* Dynamic Test Builder */}
-                {testMode === "dynamic" && (
-                  <div className="mb-6 border border-border rounded p-4">
-                    <div className="flex items-center justify-between mb-3">
-                      <h3 className="text-xs font-semibold">Execution Plan</h3>
-                      <Button
-                        onClick={() => {
-                          const newStep: TestStep = {
-                            id: crypto.randomUUID(),
-                            type: 'prompt',
-                            config: { prompt: '' }
-                          };
-                          setDynamicSteps([...dynamicSteps, newStep]);
-                        }}
-                        size="sm"
-                        variant="outline"
-                        className="h-6"
-                      >
-                        <Plus className="h-3 w-3 mr-1" />
-                        Add Step
-                      </Button>
-                    </div>
-                    <div className="space-y-3">
-                      {dynamicSteps.map((step, index) => (
-                        <div key={step.id} className="border border-border rounded p-3 bg-muted/20">
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-xs font-semibold">Step {index + 1}</span>
-                            <div className="flex items-center gap-2">
-                              <select
-                                value={step.type}
-                                onChange={(e) => {
-                                  const newSteps = [...dynamicSteps];
-                                  newSteps[index] = { ...step, type: e.target.value as any };
-                                  setDynamicSteps(newSteps);
-                                }}
-                                className="text-xs border border-border rounded px-2 py-1 bg-background"
-                              >
-                                <option value="prompt">Prompt</option>
-                                <option value="tool_call">Wait for Tool</option>
-                                <option value="wait">Wait</option>
-                                <option value="validation">Validate</option>
-                              </select>
-                              <Button
-                                onClick={() => {
-                                  setDynamicSteps(dynamicSteps.filter(s => s.id !== step.id));
-                                }}
-                                size="sm"
-                                variant="ghost"
-                                className="h-6 w-6 p-0 text-destructive hover:text-destructive"
-                              >
-                                <Trash2 className="h-3 w-3" />
-                              </Button>
-                            </div>
-                          </div>
-                          {step.type === 'prompt' && (
-                            <Textarea
-                              value={step.config.prompt || ''}
-                              onChange={(e) => {
-                                const newSteps = [...dynamicSteps];
-                                newSteps[index] = { 
-                                  ...step, 
-                                  config: { ...step.config, prompt: e.target.value }
-                                };
-                                setDynamicSteps(newSteps);
-                              }}
-                              placeholder="Enter the prompt for this step..."
-                              className="text-xs h-20 resize-none"
-                            />
-                          )}
-                          {step.type === 'tool_call' && (
-                            <Input
-                              value={step.config.expectedTool || ''}
-                              onChange={(e) => {
-                                const newSteps = [...dynamicSteps];
-                                newSteps[index] = { 
-                                  ...step, 
-                                  config: { ...step.config, expectedTool: e.target.value }
-                                };
-                                setDynamicSteps(newSteps);
-                              }}
-                              placeholder="Tool name to wait for (e.g., list_files)"
-                              className="text-xs"
-                            />
-                          )}
-                          {step.type === 'wait' && (
-                            <Input
-                              type="number"
-                              value={step.config.waitTime || 1000}
-                              onChange={(e) => {
-                                const newSteps = [...dynamicSteps];
-                                newSteps[index] = { 
-                                  ...step, 
-                                  config: { ...step.config, waitTime: Number(e.target.value) }
-                                };
-                                setDynamicSteps(newSteps);
-                              }}
-                              placeholder="Wait time in milliseconds"
-                              className="text-xs"
-                            />
-                          )}
-                          {step.type === 'validation' && (
-                            <Input
-                              value={step.config.validationRule || ''}
-                              onChange={(e) => {
-                                const newSteps = [...dynamicSteps];
-                                newSteps[index] = { 
-                                  ...step, 
-                                  config: { ...step.config, validationRule: e.target.value }
-                                };
-                                setDynamicSteps(newSteps);
-                              }}
-                              placeholder="Validation rule"
-                              className="text-xs"
-                            />
-                          )}
-                        </div>
-                      ))}
-                      {dynamicSteps.length === 0 && (
-                        <div className="text-center py-4 text-xs text-muted-foreground">
-                          No steps defined. Click "Add Step" to create your first execution step.
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
 
                 {/* Advanced Config */}
                 {configMode === "advanced" && (
@@ -1256,5 +998,3 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
 }
 
 export default TestsTab;
-
-
