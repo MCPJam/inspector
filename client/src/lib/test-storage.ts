@@ -8,6 +8,12 @@ export type SavedTest = {
   expectedTools: string[];
   modelId?: ModelDefinition["id"];
   selectedServers?: string[]; // names of servers selected specifically for this test
+  advancedConfig?: {
+    instructions?: string;
+    temperature?: number | null;
+    maxSteps?: number | null;
+    toolChoice?: "auto" | "none" | "required";
+  };
   serverKey: string;
   createdAt: string;
   updatedAt: string;
@@ -48,6 +54,7 @@ export function saveTest(
       expectedTools: test.expectedTools,
       modelId: test.modelId,
       selectedServers: test.selectedServers,
+      advancedConfig: test.advancedConfig,
       serverKey,
       createdAt: existing.find((t) => t.id === test.id)?.createdAt || now,
       updatedAt: now,
@@ -64,6 +71,7 @@ export function saveTest(
       expectedTools: test.expectedTools,
       modelId: test.modelId,
       selectedServers: test.selectedServers,
+      advancedConfig: test.advancedConfig,
       serverKey,
       createdAt: now,
       updatedAt: now,
@@ -93,6 +101,7 @@ export function duplicateTest(serverKey: string, id: string): SavedTest | undefi
     expectedTools: t.expectedTools,
     modelId: t.modelId,
     selectedServers: t.selectedServers,
+    advancedConfig: t.advancedConfig,
   });
 }
 
@@ -111,6 +120,7 @@ export function updateTestMeta(
     expectedTools: existing.expectedTools,
     modelId: existing.modelId,
     selectedServers: existing.selectedServers,
+    advancedConfig: existing.advancedConfig,
   });
 }
 
