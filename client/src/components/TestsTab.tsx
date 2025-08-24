@@ -60,6 +60,30 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
   } | null>(null);
   const [leftTab, setLeftTab] = useState<"tests" | "runs">("tests");
 
+  // Determine if current editor state differs from the saved version of the selected test
+  const isEditingDirty = useMemo(() => {
+    if (!editingTestId) return false;
+    const saved = savedTests.find((t) => t.id === editingTestId);
+    if (!saved) return false;
+    const expectedToolsNow = parseExpectedTools(expectedToolsInput);
+    const toolsEqual =
+      expectedToolsNow.length === saved.expectedTools.length &&
+      expectedToolsNow.every((t) => saved.expectedTools.includes(t));
+    const selectedA = (saved.selectedServers || []).slice().sort();
+    const selectedB = (selectedServersForTest || []).slice().sort();
+    const serversEqual =
+      selectedA.length === selectedB.length &&
+      selectedA.every((v, i) => v === selectedB[i]);
+    const modelEqual = (saved.modelId || null) === (currentModel?.id || null);
+    return (
+      saved.title !== title.trim() ||
+      (saved.prompt || "") !== (prompt || "").trim() ||
+      !toolsEqual ||
+      !serversEqual ||
+      !modelEqual
+    );
+  }, [editingTestId, savedTests, title, prompt, expectedToolsInput, selectedServersForTest, currentModel]);
+
   const serverKey = useMemo(() => {
     try {
       const activeMap = getServerSelectionMap();
@@ -151,11 +175,12 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
     setSavedTests(listSavedTests(serverKey));
   }, [serverKey]);
 
-  const parseExpectedTools = (input: string): string[] =>
-    input
+  function parseExpectedTools(input: string): string[] {
+    return input
       .split(",")
       .map((s) => s.trim())
       .filter((s) => s.length > 0);
+  }
 
   const handleSave = () => {
     if (!title.trim() || !prompt.trim()) return;
@@ -543,6 +568,9 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
             <Plus className="h-3 w-3 mr-1" />
             <span className="font-mono text-xs">New</span>
           </Button>
+          {isEditingDirty && (
+            <div className="w-2 h-2 rounded-full bg-orange-500" title="Unsaved changes" />
+          )}
           <Button
             onClick={runAllTests}
             variant="outline"
