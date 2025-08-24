@@ -1,4 +1,5 @@
 import { MCPClient, MastraMCPServerDefinition } from "@mastra/mcp";
+import { validateServerConfig } from "../utils/mcp-utils";
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 
@@ -61,12 +62,27 @@ class MCPJamAgent {
 	private resourceRegistry: Map<string, DiscoveredResource> = new Map();
 	private promptRegistry: Map<string, DiscoveredPrompt> = new Map();
 
-	async connectToServer(serverId: string, serverConfig: MastraMCPServerDefinition): Promise<void> {
+	async connectToServer(serverId: string, serverConfig: any): Promise<void> {
 		const id = normalizeServerId(serverId);
-		this.configs.set(id, serverConfig);
-		if (this.mcpClients.has(id)) return; // already connected or connecting
+		
+		// Check if already connected
+		if (this.mcpClients.has(id)) return;
+		
+		// Validate server configuration
+		const validation = validateServerConfig(serverConfig);
+		if (!validation.success) {
+			this.statuses.set(id, "error");
+			throw new Error(validation.error!.message);
+		}
+		
+		this.configs.set(id, validation.config!);
 		this.statuses.set(id, "connecting");
-		const client = new MCPClient({ id: `mcpjam-${id}`, servers: { [id]: serverConfig } });
+		
+		const client = new MCPClient({ 
+			id: `mcpjam-${id}`, 
+			servers: { [id]: validation.config! }
+		});
+		
 		try {
 			// touch the server to verify connection
 			await client.getTools();
@@ -232,10 +248,6 @@ class MCPJamAgent {
 	}
 }
 
-let _singleton: MCPJamAgent | null = null;
-export function getMCPJamAgent(): MCPJamAgent {
-	if (!_singleton) _singleton = new MCPJamAgent();
-	return _singleton;
-}
-
+// Export the class directly instead of singleton
+export { MCPJamAgent };
 export default MCPJamAgent;
