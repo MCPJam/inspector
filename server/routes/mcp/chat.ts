@@ -564,10 +564,12 @@ chat.post("/", async (c) => {
 
     // Get toolsets for dynamic tool resolution
     const toolsets = await client.getToolsets();
+    const availableTools = await client.getTools();
     dbg("Streaming start", {
       toolsetServers: Object.keys(toolsets),
       messageCount: formattedMessages.length,
     });
+    console.log('[MCP Debug] Available tool names:', Object.keys(availableTools));
 
     // Create streaming response
     const encoder = new TextEncoder();
