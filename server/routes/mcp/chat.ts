@@ -546,7 +546,6 @@ chat.post("/", async (c) => {
 
     // Create LLM model
     const llmModel = createLlmModel(model, apiKey, ollamaBaseUrl);
-    const tools = await client.getTools();
 
     // Create agent without tools initially - we'll add them in the streaming context
     const agent = new Agent({
@@ -581,9 +580,15 @@ chat.post("/", async (c) => {
           stepIndex: 0,
         };
 
+        // Flatten toolsets into a single tools object for streaming wrapper
+        const flattenedTools: Record<string, any> = {};
+        Object.values(toolsets).forEach((serverTools: any) => {
+          Object.assign(flattenedTools, serverTools);
+        });
+        
         // Create streaming-wrapped tools
         const streamingWrappedTools = wrapToolsWithStreaming(
-          tools,
+          flattenedTools,
           streamingContext,
         );
 

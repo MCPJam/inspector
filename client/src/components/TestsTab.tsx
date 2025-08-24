@@ -10,7 +10,7 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "./ui/resizable";
-import { Save as SaveIcon, Play, RefreshCw, Trash2, Copy, Plus } from "lucide-react";
+import { Save as SaveIcon, Play, Trash2, Copy, Plus, X } from "lucide-react";
 import { ModelSelector } from "./chat/model-selector";
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
 import { detectOllamaModels } from "@/lib/ollama-utils";
@@ -49,6 +49,8 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
 
   const [runStatus, setRunStatus] = useState<TestRunStatus>("idle");
   const [runAllStatus, setRunAllStatus] = useState<TestRunStatus>("idle");
+  const [runAbortController, setRunAbortController] = useState<AbortController | null>(null);
+  const [runAllAbortController, setRunAllAbortController] = useState<AbortController | null>(null);
   const [lastRunInfo, setLastRunInfo] = useState<{
     calledTools: string[];
     unexpectedTools: string[];
@@ -120,6 +122,22 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
       return "unknown";
     }
   }, [serverConfig, serverConfigsMap, selectedServersForTest]);
+
+  const handleCancelRun = useCallback(() => {
+    if (runAbortController) {
+      runAbortController.abort();
+      setRunAbortController(null);
+      setRunStatus("idle");
+    }
+  }, [runAbortController]);
+
+  const handleCancelRunAll = useCallback(() => {
+    if (runAllAbortController) {
+      runAllAbortController.abort();
+      setRunAllAbortController(null);
+      setRunAllStatus("idle");
+    }
+  }, [runAllAbortController]);
 
   const getServerSelectionMap = () => {
     // If the per-test picker has selections, use those.
@@ -306,6 +324,9 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
     const hasServers = (selectionMap && Object.keys(selectionMap).length > 0) || serverConfig;
     if (!hasServers || !currentModel || !currentApiKey || !prompt.trim()) return;
 
+    // Create abort controller for this run
+    const abortController = new AbortController();
+    setRunAbortController(abortController);
     setRunStatus("running");
     setLastRunInfo(null);
     setTraceEvents([]);
@@ -317,6 +338,7 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
       const response = await fetch("/api/mcp/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+        signal: abortController.signal,
         body: JSON.stringify({
           serverConfigs: selectionMap && Object.keys(selectionMap).length > 0 ? selectionMap : { test: serverConfig },
           model: currentModel,
@@ -427,8 +449,15 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
       setLastRunInfo({ calledTools, missingTools, unexpectedTools });
       setRunStatus(missingTools.length === 0 && unexpectedTools.length === 0 ? "success" : "failed");
     } catch (error) {
-      console.error("Test execution error:", error);
-      setRunStatus("failed");
+      if (error instanceof Error && error.name === 'AbortError') {
+        console.log("Test run was cancelled");
+        setRunStatus("idle");
+      } else {
+        console.error("Test execution error:", error);
+        setRunStatus("failed");
+      }
+    } finally {
+      setRunAbortController(null);
     }
   }, [serverConfig, serverConfigsMap, allServerConfigsMap, selectedServersForTest, currentModel, currentApiKey, prompt, expectedToolsInput, getOllamaBaseUrl, advInstructions, advTemperature, advMaxSteps, advToolChoice]);
 
@@ -453,6 +482,10 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
   // Run all saved tests in the current list; if any test fails, mark run failed and load first failing test details
   const runAllTests = useCallback(async () => {
     if (savedTests.length === 0) return;
+    
+    // Create abort controller for this batch run
+    const abortController = new AbortController();
+    setRunAllAbortController(abortController);
     setRunAllStatus("running");
 
     // Prepare payload for server orchestrated run
@@ -480,6 +513,7 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
       const response = await fetch("/api/mcp/tests/run-all", {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+        signal: abortController.signal,
         body: JSON.stringify({
           tests: testsPayload,
           allServers,
@@ -563,8 +597,16 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
           }
         }
       }
-    } catch {
-      setRunAllStatus("failed");
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        console.log("Batch test run was cancelled");
+        setRunAllStatus("idle");
+      } else {
+        console.error("Batch test execution error:", error);
+        setRunAllStatus("failed");
+      }
+    } finally {
+      setRunAllAbortController(null);
     }
   }, [savedTests, resolveModelAndApiKey, allServerConfigsMap, serverConfigsMap, serverConfig, getOllamaBaseUrl, getToken, editingTestId, handleLoad]);
 
@@ -605,15 +647,15 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
             <span className="font-mono text-xs">New</span>
           </Button>
           <Button
-            onClick={runAllTests}
-            variant="outline"
+            onClick={runAllStatus === "running" ? handleCancelRunAll : runAllTests}
+            variant={runAllStatus === "running" ? "secondary" : "outline"}
             size="sm"
-            disabled={runAllStatus === "running" || savedTests.length === 0}
+            disabled={savedTests.length === 0}
           >
             {runAllStatus === "running" ? (
               <>
-                <RefreshCw className="h-3 w-3 mr-1.5 animate-spin" />
-                <span className="font-mono text-xs">Run All</span>
+                <X className="h-3 w-3 mr-1.5" />
+                <span className="font-mono text-xs">Cancel</span>
               </>
             ) : (
               <>
@@ -628,15 +670,16 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
             )}
           </Button>
           <Button
-            onClick={runTest}
-            disabled={!currentModel || !currentApiKey || !prompt.trim() || runStatus === "running"}
+            onClick={runStatus === "running" ? handleCancelRun : runTest}
+            disabled={!currentModel || !currentApiKey || !prompt.trim()}
+            variant={runStatus === "running" ? "secondary" : "default"}
             size="sm"
             className="cursor-pointer"
           >
             {runStatus === "running" ? (
               <>
-                <RefreshCw className="h-3 w-3 mr-1.5 animate-spin" />
-                <span className="font-mono text-xs">Running</span>
+                <X className="h-3 w-3 mr-1.5" />
+                <span className="font-mono text-xs">Cancel</span>
               </>
             ) : (
               <>
