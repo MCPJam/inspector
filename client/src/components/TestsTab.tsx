@@ -301,6 +301,13 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
           ? { test: serverConfig }
           : {};
 
+      // Default selection: explicitly select ALL available servers
+      const defaultSelectedServers: string[] = allServerConfigsMap
+        ? Object.keys(allServerConfigsMap)
+        : serverConfigsMap
+        ? Object.keys(serverConfigsMap)
+        : [];
+
       // Create a placeholder saved test immediately so it appears in the left list
       const saved = saveTest(serverKey, {
         title: "Untitled test",
@@ -308,7 +315,7 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
         prompt: "",
         expectedTools: [],
         modelId: currentModel?.id,
-        selectedServers: selectedServersForTest,
+        selectedServers: defaultSelectedServers,
       });
 
       setSavedTests(listSavedTests(serverKey));
@@ -317,7 +324,7 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
       setTitle(saved.title);
       setPrompt("");
       setExpectedToolsInput("");
-      setSelectedServersForTest(saved.selectedServers || []);
+      setSelectedServersForTest(defaultSelectedServers);
 
       // Best-effort: generate agent file for the new test as well
       if (Object.keys(serversPayload).length > 0 && currentModel) {
@@ -650,7 +657,7 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
             onClick={handleSave}
             variant="outline"
             size="sm"
-            disabled={!title.trim() || !prompt.trim()}
+            disabled={!prompt.trim() || !currentModel}
               aria-label="Save"
               title="Save"
               className="cursor-pointer"
@@ -776,11 +783,11 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
           <div className="px-6 py-5 border-b border-border bg-background">
             <div className="grid grid-cols-6 gap-4">
               <div className="col-span-6">
-                <label className="text-[10px] text-muted-foreground font-semibold">Title</label>
-                <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="My test case" className="mt-1 text-xs" />
+                <label className="text-[10px] text-muted-foreground font-semibold">Title<span className="text-destructive ml-0.5"></span></label>
+                <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="My test case" className="mt-1 text-xs" aria-required="true" required />
               </div>
               <div className="col-span-6">
-                <label className="text-[10px] text-muted-foreground font-semibold">Model</label>
+                <label className="text-[10px] text-muted-foreground font-semibold">Model<span className="text-destructive ml-0.5">*</span></label>
                 <div className="mt-1">
                   {availableModels.length > 0 && currentModel ? (
                     <ModelSelector
@@ -794,8 +801,8 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
                 </div>
               </div>
               <div className="col-span-6">
-                <label className="text-[10px] text-muted-foreground font-semibold">Prompt</label>
-                <Textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Given this prompt..." className="mt-1 h-24 text-xs" />
+                <label className="text-[10px] text-muted-foreground font-semibold">Prompt<span className="text-destructive ml-0.5">*</span></label>
+                <Textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Choose the prompt for this test..." className="mt-1 h-24 text-xs" aria-required="true" required />
               </div>
               {allServerConfigsMap && Object.keys(allServerConfigsMap).length > 1 && (
                 <div className="col-span-6">
