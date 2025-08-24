@@ -195,7 +195,8 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
       selectedServers: selectedServersForTest,
     });
     setSavedTests(listSavedTests(serverKey));
-    setEditingTestId(null);
+    // Keep editing the same test so dirty detection continues to work
+    setEditingTestId(saved.id);
     // Fire-and-forget: request backend to generate a @TestAgent file for this test
     try {
       const selectionMap = getServerSelectionMap();
@@ -568,9 +569,6 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
             <Plus className="h-3 w-3 mr-1" />
             <span className="font-mono text-xs">New</span>
           </Button>
-          {isEditingDirty && (
-            <div className="w-2 h-2 rounded-full bg-orange-500" title="Unsaved changes" />
-          )}
           <Button
             onClick={runAllTests}
             variant="outline"
@@ -612,15 +610,19 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
               </>
             )}
           </Button>
+          {isEditingDirty && (
           <Button
             onClick={handleSave}
             variant="outline"
             size="sm"
             disabled={!title.trim() || !prompt.trim()}
+              aria-label="Save"
+              title="Save"
+              className="cursor-pointer"
           >
-            <SaveIcon className="h-3 w-3 mr-1" />
-            <span className="font-mono text-xs">{editingTestId ? "Update" : "Create"}</span>
+              <SaveIcon className="h-3 w-3" />
           </Button>
+          )}
         </div>
       </div>
 
