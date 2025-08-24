@@ -366,8 +366,11 @@ export function TestsTab({ serverConfig, serverConfigsMap, allServerConfigsMap }
                 // Capture tool calls
                 if ((parsed.type === "tool_call" || (!parsed.type && parsed.toolCall)) && parsed.toolCall) {
                   const toolCall = parsed.toolCall;
-                  if (toolCall?.name) calledToolsSet.add(toolCall.name);
-                  if (toolCall?.toolName) calledToolsSet.add(toolCall.toolName);
+                  const toolName = toolCall?.name || toolCall?.toolName;
+                  if (toolName) {
+                    console.log(`[Individual Test Debug] Raw tool call: "${toolName}"`);
+                    calledToolsSet.add(toolName);
+                  }
                 }
                 
                 // Capture trace events - handle multiple formats
