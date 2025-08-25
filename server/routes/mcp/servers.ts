@@ -1,15 +1,16 @@
 import { Hono } from "hono";
 import "../../types/hono"; // Type extensions
+import MCPJamClientManager from "../../services/mcpjam-client-manager";
 
 const servers = new Hono();
 
 // List all connected servers with their status
 servers.get("/", async (c) => {
   try {
-    const agent = c.get("mcpAgent");
+    const mcpClientManager = c.get("mcpAgent") as MCPJamClientManager;
 
     // Get all server configurations and statuses
-    const connectedServers = agent.getConnectedServers();
+    const connectedServers = mcpClientManager.getConnectedServers();
 
     const serverList = Object.entries(connectedServers).map(
       ([serverId, serverInfo]) => ({
@@ -40,9 +41,9 @@ servers.get("/", async (c) => {
 servers.get("/status/:serverId", async (c) => {
   try {
     const serverId = c.req.param("serverId");
-    const agent = c.get("mcpAgent");
+    const mcpClientManager = c.get("mcpAgent") as MCPJamClientManager;
 
-    const status = agent.getConnectionStatus(serverId);
+    const status = mcpClientManager.getConnectionStatus(serverId);
 
     return c.json({
       success: true,
@@ -65,9 +66,9 @@ servers.get("/status/:serverId", async (c) => {
 servers.delete("/:serverId", async (c) => {
   try {
     const serverId = c.req.param("serverId");
-    const agent = c.get("mcpAgent");
+    const mcpClientManager = c.get("mcpAgent") as MCPJamClientManager;
 
-    await agent.disconnectFromServer(serverId);
+    await mcpClientManager.disconnectFromServer(serverId);
 
     return c.json({
       success: true,
@@ -100,13 +101,13 @@ servers.post("/reconnect", async (c) => {
       );
     }
 
-    const agent = c.get("mcpAgent");
+    const mcpClientManager = c.get("mcpAgent") as MCPJamClientManager;
 
     // Disconnect first, then reconnect
-    await agent.disconnectFromServer(serverId);
-    await agent.connectToServer(serverId, serverConfig);
+    await mcpClientManager.disconnectFromServer(serverId);
+    await mcpClientManager.connectToServer(serverId, serverConfig);
 
-    const status = agent.getConnectionStatus(serverId);
+    const status = mcpClientManager.getConnectionStatus(serverId);
 
     return c.json({
       success: true,

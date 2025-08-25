@@ -1,10 +1,9 @@
 import { Hono } from "hono";
-import type { Tool } from "@mastra/core/tools";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { ContentfulStatusCode } from "hono/utils/http-status";
 import { TextEncoder } from "util";
 import "../../types/hono"; // Type extensions
+import MCPJamClientManager from "../../services/mcpjam-client-manager";
 
 const tools = new Hono();
 
@@ -49,8 +48,11 @@ tools.post("/", async (c) => {
         );
       }
 
-      const agent = c.get("mcpAgent");
-      const success = agent.respondToElicitation(requestId, response);
+      const mcpClientManager = c.get("mcpAgent") as MCPJamClientManager;
+      const success = mcpClientManager.respondToElicitation(
+        requestId,
+        response,
+      );
 
       if (!success) {
         // Also check local pendingElicitations for backward compatibility
@@ -89,14 +91,14 @@ tools.post("/", async (c) => {
             return;
           }
 
-          const agent = c.get("mcpAgent");
+          const mcpClientManager = c.get("mcpAgent") as MCPJamClientManager;
           // Use server name from config or default key
           const serverId =
             (serverConfig as any).name || (serverConfig as any).id || "server";
-          await agent.connectToServer(serverId, serverConfig);
+          await mcpClientManager.connectToServer(serverId, serverConfig);
 
           // Set up elicitation callback for streaming context
-          agent.setElicitationCallback(async (request) => {
+          mcpClientManager.setElicitationCallback(async (request) => {
             const { requestId, message, schema } = request;
 
             // Stream elicitation request to client
@@ -139,7 +141,8 @@ tools.post("/", async (c) => {
           if (action === "list") {
             // Use existing connection through MCPJam Agent to get un-prefixed tools
             try {
-              const flattenedTools = await agent.getToolsetsForServer(serverId);
+              const flattenedTools =
+                await mcpClientManager.getToolsetsForServer(serverId);
 
               // Convert to the expected format with JSON schema conversion
               const toolsWithJsonSchema: Record<string, any> = {};
@@ -198,7 +201,7 @@ tools.post("/", async (c) => {
             );
 
             // Execute tool using centralized agent
-            const exec = await agent.executeToolDirect(
+            const exec = await mcpClientManager.executeToolDirect(
               toolName,
               parameters || {},
             );
@@ -226,8 +229,9 @@ tools.post("/", async (c) => {
           controller.close();
         } finally {
           // Clear the elicitation callback
-          if (c.get("mcpAgent")) {
-            c.get("mcpAgent").clearElicitationCallback();
+          const mcpClientManager = c.get("mcpAgent") as MCPJamClientManager;
+          if (mcpClientManager) {
+            mcpClientManager.clearElicitationCallback();
           }
         }
       },
