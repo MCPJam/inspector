@@ -49,8 +49,18 @@ tools.post("/", async (c) => {
 				);
 			}
 
-			const pending = pendingElicitations.get(requestId);
-			if (!pending) {
+			const agent = c.get('mcpAgent');
+			const success = agent.respondToElicitation(requestId, response);
+			
+			if (!success) {
+				// Also check local pendingElicitations for backward compatibility
+				const pending = pendingElicitations.get(requestId);
+				if (pending) {
+					pending.resolve(response);
+					pendingElicitations.delete(requestId);
+					return c.json({ success: true });
+				}
+				
 				return c.json(
 					{
 						success: false,
@@ -59,10 +69,6 @@ tools.post("/", async (c) => {
 					404,
 				);
 			}
-
-			// Resolve the pending elicitation with user's response
-			pending.resolve(response);
-			pendingElicitations.delete(requestId);
 
 			return c.json({ success: true });
 		}
@@ -87,6 +93,47 @@ tools.post("/", async (c) => {
 					// Use server name from config or default key
 					const serverId = (serverConfig as any).name || (serverConfig as any).id || "server";
 					await agent.connectToServer(serverId, serverConfig);
+
+					// Set up elicitation callback for streaming context
+					agent.setElicitationCallback(async (request) => {
+						const { requestId, message, schema } = request;
+						
+						// Stream elicitation request to client
+						controller.enqueue(
+							encoder.encode(
+								`data: ${JSON.stringify({ 
+									type: "elicitation_request", 
+									requestId, 
+									message, 
+									schema,
+									toolName: toolName || "unknown",
+									timestamp: new Date() 
+								})}\n\n`,
+							),
+						);
+						
+						// Return a promise that will be resolved by the respond endpoint
+						return new Promise((resolve, reject) => {
+							pendingElicitations.set(requestId, {
+								resolve: (response: any) => {
+									resolve(response);
+									pendingElicitations.delete(requestId);
+								},
+								reject: (error: any) => {
+									reject(error);
+									pendingElicitations.delete(requestId);
+								}
+							});
+							
+							// Set timeout
+							setTimeout(() => {
+								if (pendingElicitations.has(requestId)) {
+									pendingElicitations.delete(requestId);
+									reject(new Error("Elicitation timeout"));
+								}
+							}, 300000); // 5 minutes
+						});
+					});
 
 					if (action === "list") {
 						// Use existing connection through MCPJam Agent to get un-prefixed tools
@@ -173,6 +220,11 @@ tools.post("/", async (c) => {
 					);
 					controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
 					controller.close();
+				} finally {
+					// Clear the elicitation callback
+					if (c.get('mcpAgent')) {
+						c.get('mcpAgent').clearElicitationCallback();
+					}
 				}
 			},
 		});
