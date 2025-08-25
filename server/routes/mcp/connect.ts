@@ -18,7 +18,9 @@ connect.post("/", async (c) => {
       );
     }
 
-    const mcpJamClientManager = c.get("mcpJamClientManager") as MCPJamClientManager;
+    const mcpJamClientManager = c.get(
+      "mcpJamClientManager",
+    ) as MCPJamClientManager;
     const serverId =
       (serverConfig as any).name || (serverConfig as any).id || "server";
 

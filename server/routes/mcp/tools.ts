@@ -48,7 +48,9 @@ tools.post("/", async (c) => {
         );
       }
 
-      const mcpJamClientManager = c.get("mcpJamClientManager") as MCPJamClientManager;
+      const mcpJamClientManager = c.get(
+        "mcpJamClientManager",
+      ) as MCPJamClientManager;
       const success = mcpJamClientManager.respondToElicitation(
         requestId,
         response,
@@ -91,7 +93,9 @@ tools.post("/", async (c) => {
             return;
           }
 
-          const mcpJamClientManager = c.get("mcpJamClientManager") as MCPJamClientManager;
+          const mcpJamClientManager = c.get(
+            "mcpJamClientManager",
+          ) as MCPJamClientManager;
           // Use server name from config or default key
           const serverId =
             (serverConfig as any).name || (serverConfig as any).id || "server";
@@ -229,7 +233,9 @@ tools.post("/", async (c) => {
           controller.close();
         } finally {
           // Clear the elicitation callback
-          const mcpJamClientManager = c.get("mcpJamClientManager") as MCPJamClientManager;
+          const mcpJamClientManager = c.get(
+            "mcpJamClientManager",
+          ) as MCPJamClientManager;
           if (mcpJamClientManager) {
             mcpJamClientManager.clearElicitationCallback();
           }
