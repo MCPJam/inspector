@@ -18,16 +18,18 @@ connect.post("/", async (c) => {
       );
     }
 
-    const mcpClientManager = c.get("mcpAgent") as MCPJamClientManager;
+    const mcpJamClientManager = c.get(
+      "mcpJamClientManager",
+    ) as MCPJamClientManager;
     const serverId =
       (serverConfig as any).name || (serverConfig as any).id || "server";
 
     try {
-      // Test connection via centralized agent
-      await mcpClientManager.connectToServer(serverId, serverConfig);
+      // Test connection via centralized client manager
+      await mcpJamClientManager.connectToServer(serverId, serverConfig);
 
       // Check connection status
-      const status = mcpClientManager.getConnectionStatus(serverId);
+      const status = mcpJamClientManager.getConnectionStatus(serverId);
       if (status === "connected") {
         return c.json({
           success: true,
