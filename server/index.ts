@@ -76,7 +76,7 @@ const mcpAgent = new MCPJamClientManager();
 
 // Middleware to inject client manager into context
 app.use("*", async (c, next) => {
-  c.set('mcpAgent', mcpAgent);
+  c.set("mcpAgent", mcpAgent);
   await next();
 });
 

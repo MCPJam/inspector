@@ -10,22 +10,25 @@ resources.post("/list", async (c) => {
     const { serverConfig } = await c.req.json();
 
     if (!serverConfig) {
-      return c.json(
-        { success: false, error: "serverConfig is required" },
-        400,
-      );
+      return c.json({ success: false, error: "serverConfig is required" }, 400);
     }
 
-    const agent = c.get('mcpAgent');
-    const serverId = (serverConfig as any).name || (serverConfig as any).id || "server";
-    
+    const agent = c.get("mcpAgent");
+    const serverId =
+      (serverConfig as any).name || (serverConfig as any).id || "server";
+
     // Connect to server via centralized agent
     await agent.connectToServer(serverId, serverConfig);
-    
+
     // Get resources from agent's registry
     const allResources = agent.getAvailableResources();
-    const normalizedServerId = serverId.toLowerCase().replace(/[\s\-]+/g, "_").replace(/[^a-z0-9_]/g, "");
-    const serverResources = allResources.filter(r => r.serverId === normalizedServerId);
+    const normalizedServerId = serverId
+      .toLowerCase()
+      .replace(/[\s\-]+/g, "_")
+      .replace(/[^a-z0-9_]/g, "");
+    const serverResources = allResources.filter(
+      (r) => r.serverId === normalizedServerId,
+    );
 
     return c.json({ resources: { [serverId]: serverResources } });
   } catch (error) {
@@ -46,10 +49,7 @@ resources.post("/read", async (c) => {
     const { serverConfig, uri } = await c.req.json();
 
     if (!serverConfig) {
-      return c.json(
-        { success: false, error: "serverConfig is required" },
-        400,
-      );
+      return c.json({ success: false, error: "serverConfig is required" }, 400);
     }
 
     if (!uri) {
@@ -62,12 +62,13 @@ resources.post("/read", async (c) => {
       );
     }
 
-    const agent = c.get('mcpAgent');
-    const serverId = (serverConfig as any).name || (serverConfig as any).id || "server";
-    
+    const agent = c.get("mcpAgent");
+    const serverId =
+      (serverConfig as any).name || (serverConfig as any).id || "server";
+
     // Connect to server via centralized agent
     await agent.connectToServer(serverId, serverConfig);
-    
+
     // Use agent to get resource content
     const content = await agent.getResource(uri);
 

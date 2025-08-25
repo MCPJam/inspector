@@ -10,22 +10,25 @@ prompts.post("/list", async (c) => {
     const { serverConfig } = await c.req.json();
 
     if (!serverConfig) {
-      return c.json(
-        { success: false, error: "serverConfig is required" },
-        400,
-      );
+      return c.json({ success: false, error: "serverConfig is required" }, 400);
     }
 
-    const agent = c.get('mcpAgent');
-    const serverId = (serverConfig as any).name || (serverConfig as any).id || "server";
-    
+    const agent = c.get("mcpAgent");
+    const serverId =
+      (serverConfig as any).name || (serverConfig as any).id || "server";
+
     // Connect to server via centralized agent
     await agent.connectToServer(serverId, serverConfig);
-    
+
     // Get prompts from agent's registry
     const allPrompts = agent.getAvailablePrompts();
-    const normalizedServerId = serverId.toLowerCase().replace(/[\s\-]+/g, "_").replace(/[^a-z0-9_]/g, "");
-    const serverPrompts = allPrompts.filter(p => p.serverId === normalizedServerId);
+    const normalizedServerId = serverId
+      .toLowerCase()
+      .replace(/[\s\-]+/g, "_")
+      .replace(/[^a-z0-9_]/g, "");
+    const serverPrompts = allPrompts.filter(
+      (p) => p.serverId === normalizedServerId,
+    );
 
     return c.json({ prompts: { [serverId]: serverPrompts } });
   } catch (error) {
@@ -46,10 +49,7 @@ prompts.post("/get", async (c) => {
     const { serverConfig, name, args } = await c.req.json();
 
     if (!serverConfig) {
-      return c.json(
-        { success: false, error: "serverConfig is required" },
-        400,
-      );
+      return c.json({ success: false, error: "serverConfig is required" }, 400);
     }
 
     if (!name) {
@@ -62,12 +62,13 @@ prompts.post("/get", async (c) => {
       );
     }
 
-    const agent = c.get('mcpAgent');
-    const serverId = (serverConfig as any).name || (serverConfig as any).id || "server";
-    
+    const agent = c.get("mcpAgent");
+    const serverId =
+      (serverConfig as any).name || (serverConfig as any).id || "server";
+
     // Connect to server via centralized agent
     await agent.connectToServer(serverId, serverConfig);
-    
+
     // Use agent to get prompt content
     const content = await agent.getPrompt(name, args || {});
 
