@@ -66,7 +66,7 @@ servers.get("/status/:serverId", async (c) => {
 servers.delete("/:serverId", async (c) => {
   try {
     const serverId = c.req.param("serverId");
-    const mcpJamClientManager = c.get("mcpJamClientManager");
+    const mcpJamClientManager = c.get("mcpJamClientManager") as MCPJamClientManager;
 
     await mcpJamClientManager.disconnectFromServer(serverId);
 
