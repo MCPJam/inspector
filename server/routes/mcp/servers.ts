@@ -6,10 +6,10 @@ const servers = new Hono();
 // List all connected servers with their status
 servers.get("/", async (c) => {
   try {
-    const agent = c.get("mcpAgent");
+    const mcpJamClientManager = c.get("mcpJamClientManager");
 
     // Get all server configurations and statuses
-    const connectedServers = agent.getConnectedServers();
+    const connectedServers = mcpJamClientManager.getConnectedServers();
 
     const serverList = Object.entries(connectedServers).map(
       ([serverId, serverInfo]) => ({
@@ -40,9 +40,9 @@ servers.get("/", async (c) => {
 servers.get("/status/:serverId", async (c) => {
   try {
     const serverId = c.req.param("serverId");
-    const agent = c.get("mcpAgent");
+    const mcpJamClientManager = c.get("mcpJamClientManager");
 
-    const status = agent.getConnectionStatus(serverId);
+    const status = mcpJamClientManager.getConnectionStatus(serverId);
 
     return c.json({
       success: true,
@@ -65,9 +65,9 @@ servers.get("/status/:serverId", async (c) => {
 servers.delete("/:serverId", async (c) => {
   try {
     const serverId = c.req.param("serverId");
-    const agent = c.get("mcpAgent");
+    const mcpJamClientManager = c.get("mcpJamClientManager");
 
-    await agent.disconnectFromServer(serverId);
+    await mcpJamClientManager.disconnectFromServer(serverId);
 
     return c.json({
       success: true,
@@ -100,13 +100,13 @@ servers.post("/reconnect", async (c) => {
       );
     }
 
-    const agent = c.get("mcpAgent");
+    const mcpJamClientManager = c.get("mcpJamClientManager");
 
     // Disconnect first, then reconnect
-    await agent.disconnectFromServer(serverId);
-    await agent.connectToServer(serverId, serverConfig);
+    await mcpJamClientManager.disconnectFromServer(serverId);
+    await mcpJamClientManager.connectToServer(serverId, serverConfig);
 
-    const status = agent.getConnectionStatus(serverId);
+    const status = mcpJamClientManager.getConnectionStatus(serverId);
 
     return c.json({
       success: true,

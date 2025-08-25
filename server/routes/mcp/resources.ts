@@ -13,15 +13,15 @@ resources.post("/list", async (c) => {
       return c.json({ success: false, error: "serverConfig is required" }, 400);
     }
 
-    const agent = c.get("mcpAgent");
+    const mcpJamClientManager = c.get("mcpJamClientManager");
     const serverId =
       (serverConfig as any).name || (serverConfig as any).id || "server";
 
     // Connect to server via centralized agent
-    await agent.connectToServer(serverId, serverConfig);
+    await mcpJamClientManager.connectToServer(serverId, serverConfig);
 
     // Get resources from agent's registry
-    const allResources = agent.getAvailableResources();
+    const allResources = mcpJamClientManager.getAvailableResources();
     const normalizedServerId = serverId
       .toLowerCase()
       .replace(/[\s\-]+/g, "_")
@@ -62,15 +62,15 @@ resources.post("/read", async (c) => {
       );
     }
 
-    const agent = c.get("mcpAgent");
+    const mcpJamClientManager = c.get("mcpJamClientManager");
     const serverId =
       (serverConfig as any).name || (serverConfig as any).id || "server";
 
-    // Connect to server via centralized agent
-    await agent.connectToServer(serverId, serverConfig);
+    // Connect to server via centralized client manager
+    await mcpJamClientManager.connectToServer(serverId, serverConfig);
 
     // Use agent to get resource content
-    const content = await agent.getResource(uri);
+    const content = await mcpJamClientManager.getResource(uri);
 
     return c.json({ content });
   } catch (error) {
