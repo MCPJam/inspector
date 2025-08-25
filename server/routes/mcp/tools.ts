@@ -89,35 +89,46 @@ tools.post("/", async (c) => {
 					await agent.connectToServer(serverId, serverConfig);
 
 					if (action === "list") {
-						// Filter tools for this server
-						const normalizedServerId = serverId.toLowerCase().replace(/[\s\-]+/g, "_").replace(/[^a-z0-9_]/g, "");
-						const allTools = agent.getAvailableTools().filter((t) => t.serverId === normalizedServerId);
-						const toolsWithJsonSchema: Record<string, any> = {};
-						
-						for (const t of allTools) {
-							let inputSchema = t.inputSchema;
-							try {
-								// If original schemas are Zod, convert to JSON Schema. Otherwise pass through.
-								inputSchema = zodToJsonSchema(inputSchema as z.ZodType<any>);
-							} catch {
-								// ignore conversion errors and use existing schema shape
+						// Use existing connection through MCPJam Agent to get un-prefixed tools
+						try {
+							const flattenedTools = await agent.getToolsetsForServer(serverId);
+
+							// Convert to the expected format with JSON schema conversion
+							const toolsWithJsonSchema: Record<string, any> = {};
+							for (const [name, tool] of Object.entries(flattenedTools)) {
+								let inputSchema = (tool as any).inputSchema;
+								try {
+									// If original schemas are Zod, convert to JSON Schema. Otherwise pass through.
+									inputSchema = zodToJsonSchema(inputSchema as z.ZodType<any>);
+								} catch {
+									// ignore conversion errors and use existing schema shape
+								}
+								toolsWithJsonSchema[name] = {
+									name,
+									description: (tool as any).description,
+									inputSchema,
+									outputSchema: (tool as any).outputSchema,
+								};
 							}
-							toolsWithJsonSchema[t.name] = {
-								name: t.name,
-								description: t.description,
-								inputSchema,
-								outputSchema: t.outputSchema,
-							};
+							
+							controller.enqueue(
+								encoder.encode(
+									`data: ${JSON.stringify({ type: "tools_list", tools: toolsWithJsonSchema })}\n\n`,
+								),
+							);
+							controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
+							controller.close();
+							return;
+						} catch (err) {
+							controller.enqueue(
+								encoder.encode(
+									`data: ${JSON.stringify({ type: "tool_error", error: err instanceof Error ? err.message : String(err) })}\n\n`,
+								),
+							);
+							controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
+							controller.close();
+							return;
 						}
-						
-						controller.enqueue(
-							encoder.encode(
-								`data: ${JSON.stringify({ type: "tools_list", tools: toolsWithJsonSchema })}\n\n`,
-							),
-						);
-						controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
-						controller.close();
-						return;
 					}
 
 					if (action === "execute") {

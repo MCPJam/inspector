@@ -182,6 +182,25 @@ class MCPJamAgent {
 	getAvailableTools(): DiscoveredTool[] {
 		return Array.from(this.toolRegistry.values());
 	}
+
+	async getToolsetsForServer(serverId: string): Promise<Record<string, any>> {
+		const id = normalizeServerId(serverId);
+		const client = this.mcpClients.get(id);
+		if (!client) {
+			throw new Error(`No MCP client available for server: ${serverId}`);
+		}
+		
+		// Get toolsets like in the chat route - this gives us server-prefixed tools
+		const toolsets = await client.getToolsets();
+		
+		// Flatten toolsets to get un-prefixed tool names like in chat route
+		const flattenedTools: Record<string, any> = {};
+		Object.values(toolsets).forEach((serverTools: any) => {
+			Object.assign(flattenedTools, serverTools);
+		});
+		
+		return flattenedTools;
+	}
 	getAvailableResources(): DiscoveredResource[] {
 		return Array.from(this.resourceRegistry.values());
 	}
@@ -199,12 +218,34 @@ class MCPJamAgent {
 			serverId = normalizeServerId(sid);
 			name = n;
 		} else {
-			// Find which server has this tool
+			// Find which server has this tool by checking un-prefixed name
 			for (const [key, tool] of this.toolRegistry.entries()) {
 				if (tool.name === toolName) {
 					serverId = tool.serverId;
 					name = toolName;
 					break;
+				}
+			}
+		}
+		
+		// If not found in registry, try to find it using toolsets from all connected servers
+		if (!serverId) {
+			for (const [clientServerId, client] of this.mcpClients.entries()) {
+				try {
+					const toolsets = await client.getToolsets();
+					// Flatten toolsets to check for the tool
+					const flattenedTools: Record<string, any> = {};
+					Object.values(toolsets).forEach((serverTools: any) => {
+						Object.assign(flattenedTools, serverTools);
+					});
+					
+					if (flattenedTools[toolName]) {
+						serverId = clientServerId;
+						name = toolName;
+						break;
+					}
+				} catch {
+					// Continue to next server if this one fails
 				}
 			}
 		}
@@ -216,8 +257,14 @@ class MCPJamAgent {
 		const client = this.mcpClients.get(serverId);
 		if (!client) throw new Error(`No MCP client available for server: ${serverId}`);
 		
-		const tools = await client.getTools();
-		const tool = tools[name];
+		// Use toolsets to get the actual tool (since tools might be prefixed in getTools())
+		const toolsets = await client.getToolsets();
+		const flattenedTools: Record<string, any> = {};
+		Object.values(toolsets).forEach((serverTools: any) => {
+			Object.assign(flattenedTools, serverTools);
+		});
+		
+		const tool = flattenedTools[name];
 		if (!tool) throw new Error(`Tool '${name}' not found in server '${serverId}'`);
 		
 		const result = await tool.execute({ context: parameters || {} });
