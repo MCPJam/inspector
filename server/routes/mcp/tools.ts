@@ -49,8 +49,8 @@ tools.post("/", async (c) => {
         );
       }
 
-      const agent = c.get("mcpAgent");
-      const success = agent.respondToElicitation(requestId, response);
+      const mcpJamClientManager = c.get("mcpJamClientManager");
+      const success = mcpJamClientManager.respondToElicitation(requestId, response);
 
       if (!success) {
         // Also check local pendingElicitations for backward compatibility
@@ -89,14 +89,14 @@ tools.post("/", async (c) => {
             return;
           }
 
-          const agent = c.get("mcpAgent");
+          const mcpJamClientManager = c.get("mcpJamClientManager");
           // Use server name from config or default key
           const serverId =
             (serverConfig as any).name || (serverConfig as any).id || "server";
-          await agent.connectToServer(serverId, serverConfig);
+          await mcpJamClientManager.connectToServer(serverId, serverConfig);
 
           // Set up elicitation callback for streaming context
-          agent.setElicitationCallback(async (request) => {
+          mcpJamClientManager.setElicitationCallback(async (request) => {
             const { requestId, message, schema } = request;
 
             // Stream elicitation request to client
@@ -139,7 +139,7 @@ tools.post("/", async (c) => {
           if (action === "list") {
             // Use existing connection through MCPJam Agent to get un-prefixed tools
             try {
-              const flattenedTools = await agent.getToolsetsForServer(serverId);
+              const flattenedTools = await mcpJamClientManager.getToolsetsForServer(serverId);
 
               // Convert to the expected format with JSON schema conversion
               const toolsWithJsonSchema: Record<string, any> = {};
@@ -197,8 +197,8 @@ tools.post("/", async (c) => {
               ),
             );
 
-            // Execute tool using centralized agent
-            const exec = await agent.executeToolDirect(
+            // Execute tool using centralized client manager
+            const exec = await mcpJamClientManager.executeToolDirect(
               toolName,
               parameters || {},
             );
@@ -226,8 +226,8 @@ tools.post("/", async (c) => {
           controller.close();
         } finally {
           // Clear the elicitation callback
-          if (c.get("mcpAgent")) {
-            c.get("mcpAgent").clearElicitationCallback();
+          if (c.get("mcpJamClientManager")) {
+            c.get("mcpJamClientManager").clearElicitationCallback();
           }
         }
       },

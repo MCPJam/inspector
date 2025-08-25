@@ -13,15 +13,15 @@ prompts.post("/list", async (c) => {
       return c.json({ success: false, error: "serverConfig is required" }, 400);
     }
 
-    const agent = c.get("mcpAgent");
+    const mcpJamClientManager = c.get("mcpJamClientManager");
     const serverId =
       (serverConfig as any).name || (serverConfig as any).id || "server";
 
-    // Connect to server via centralized agent
-    await agent.connectToServer(serverId, serverConfig);
+    // Connect to server via centralized client manager
+    await mcpJamClientManager.connectToServer(serverId, serverConfig);
 
     // Get prompts from agent's registry
-    const allPrompts = agent.getAvailablePrompts();
+    const allPrompts = mcpJamClientManager.getAvailablePrompts();
     const normalizedServerId = serverId
       .toLowerCase()
       .replace(/[\s\-]+/g, "_")
@@ -62,15 +62,15 @@ prompts.post("/get", async (c) => {
       );
     }
 
-    const agent = c.get("mcpAgent");
+    const mcpJamClientManager = c.get("mcpJamClientManager");
     const serverId =
       (serverConfig as any).name || (serverConfig as any).id || "server";
 
-    // Connect to server via centralized agent
-    await agent.connectToServer(serverId, serverConfig);
+    // Connect to server via centralized client manager
+    await mcpJamClientManager.connectToServer(serverId, serverConfig);
 
-    // Use agent to get prompt content
-    const content = await agent.getPrompt(name, args || {});
+    // Use client manager to get prompt content
+    const content = await mcpJamClientManager.getPrompt(name, args || {});
 
     return c.json({ content });
   } catch (error) {
