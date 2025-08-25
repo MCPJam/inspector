@@ -790,10 +790,12 @@ export function useAppState() {
                 // Clear existing tokens first
                 clearOAuthData(serverName);
 
-                // Initiate new OAuth flow
+                // Initiate new OAuth flow with stored client credentials
                 const oauthOptions = {
                   serverName: serverName,
                   serverUrl: server.config.url.toString(),
+                  clientId: server.oauthTokens?.client_id,
+                  clientSecret: server.oauthTokens?.client_secret,
                 };
 
                 const oauthResult = await initiateOAuth(oauthOptions);
