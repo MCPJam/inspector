@@ -6,7 +6,7 @@ const connect = new Hono();
 
 connect.post("/", async (c) => {
   try {
-    const { serverConfig } = await c.req.json();
+    const { serverConfig, serverId } = await c.req.json();
 
     if (!serverConfig) {
       return c.json(
@@ -14,19 +14,24 @@ connect.post("/", async (c) => {
           success: false,
           error: "serverConfig is required",
         },
-        400,
+        400
+      );
+    }
+
+    if (!serverId) {
+      return c.json(
+        {
+          success: false,
+          error: "serverId is required",
+        },
+        400
       );
     }
 
     const mcpClientManager = c.get("mcpAgent") as MCPJamClientManager;
-    const serverId =
-      (serverConfig as any).name || (serverConfig as any).id || "server";
 
     try {
-      // Test connection via centralized agent
       await mcpClientManager.connectToServer(serverId, serverConfig);
-
-      // Check connection status
       const status = mcpClientManager.getConnectionStatus(serverId);
       if (status === "connected") {
         return c.json({
@@ -40,7 +45,7 @@ connect.post("/", async (c) => {
             error: "Connection failed",
             status,
           },
-          500,
+          500
         );
       }
     } catch (error) {
@@ -50,7 +55,7 @@ connect.post("/", async (c) => {
           error: `MCP configuration is invalid. Please double check your server configuration: ${JSON.stringify(serverConfig)}`,
           details: error instanceof Error ? error.message : "Unknown error",
         },
-        500,
+        500
       );
     }
   } catch (error) {
@@ -60,7 +65,7 @@ connect.post("/", async (c) => {
         error: "Failed to parse request body",
         details: error instanceof Error ? error.message : "Unknown error",
       },
-      400,
+      400
     );
   }
 });
