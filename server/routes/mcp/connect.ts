@@ -14,7 +14,7 @@ connect.post("/", async (c) => {
           success: false,
           error: "serverConfig is required",
         },
-        400
+        400,
       );
     }
 
@@ -24,12 +24,12 @@ connect.post("/", async (c) => {
           success: false,
           error: "serverId is required",
         },
-        400
+        400,
       );
     }
 
     const mcpClientManager = c.get(
-      "mcpJamClientManager"
+      "mcpJamClientManager",
     ) as MCPJamClientManager;
 
     try {
@@ -47,7 +47,7 @@ connect.post("/", async (c) => {
             error: "Connection failed",
             status,
           },
-          500
+          500,
         );
       }
     } catch (error) {
@@ -57,7 +57,7 @@ connect.post("/", async (c) => {
           error: `MCP configuration is invalid. Please double check your server configuration: ${JSON.stringify(serverConfig)}`,
           details: error instanceof Error ? error.message : "Unknown error",
         },
-        500
+        500,
       );
     }
   } catch (error) {
@@ -67,7 +67,7 @@ connect.post("/", async (c) => {
         error: "Failed to parse request body",
         details: error instanceof Error ? error.message : "Unknown error",
       },
-      400
+      400,
     );
   }
 });
