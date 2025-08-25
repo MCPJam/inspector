@@ -210,17 +210,34 @@ export const validateMultipleServerConfigs = (
 export function createMCPClientWithMultipleConnections(
   serverConfigs: Record<string, MastraMCPServerDefinition>,
 ): MCPClient {
-  // Normalize server config names
-  const normalizedConfigs: Record<string, MastraMCPServerDefinition> = {};
-  for (const [serverName, config] of Object.entries(serverConfigs)) {
-    const normalizedName = normalizeServerConfigName(serverName);
-    normalizedConfigs[normalizedName] = config;
-  }
-
-  return new MCPClient({
+  // Custom MCPClient wrapper to fix double prefixing issue
+  const originalMCPClient = new MCPClient({
     id: `chat-${Date.now()}`,
-    servers: normalizedConfigs,
+    servers: serverConfigs,
   });
+
+  // Override getTools method to fix double prefixing
+  const originalGetTools = originalMCPClient.getTools.bind(originalMCPClient);
+  originalMCPClient.getTools = async () => {
+    const tools = await originalGetTools();
+    const fixedTools: Record<string, any> = {};
+
+    for (const [toolName, toolConfig] of Object.entries(tools)) {
+      // Check if tool name has double prefix pattern (serverName_serverName_actualTool)
+      const parts = toolName.split("_");
+      if (parts.length >= 3 && parts[0] === parts[1]) {
+        // Remove the duplicate prefix: "asana_asana_list_workspaces" -> "asana_list_workspaces"
+        const fixedName = parts.slice(1).join("_");
+        fixedTools[fixedName] = toolConfig;
+      } else {
+        fixedTools[toolName] = toolConfig;
+      }
+    }
+
+    return fixedTools;
+  };
+
+  return originalMCPClient;
 }
 
 export function normalizeServerConfigName(serverName: string): string {
