@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import connect from "./connect";
+import servers from "./servers";
 import tools from "./tools";
 import resources from "./resources";
 import prompts from "./prompts";
@@ -23,6 +24,9 @@ mcp.route("/chat", chat);
 
 // Connect endpoint - REAL IMPLEMENTATION
 mcp.route("/connect", connect);
+
+// Servers management endpoints - REAL IMPLEMENTATION
+mcp.route("/servers", servers);
 
 // Tools endpoint - REAL IMPLEMENTATION
 mcp.route("/tools", tools);

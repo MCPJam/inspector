@@ -31,13 +31,14 @@ export function ServersTab({
   const [searchTerm, setSearchTerm] = useState("");
   const [filterType, setFilterType] = useState<"all" | "stdio" | "http">("all");
 
-  useEffect(() => {
-    Object.entries(connectedServerConfigs).forEach(([serverName, server]) => {
-      if (server.enabled !== false) {
-        onReconnect(serverName);
-      }
-    });
-  }, []);
+  // Removed automatic reconnection since centralized agent maintains persistent connections
+  // useEffect(() => {
+  //   Object.entries(connectedServerConfigs).forEach(([serverName, server]) => {
+  //     if (server.enabled !== false) {
+  //       onReconnect(serverName);
+  //     }
+  //   });
+  // }, []);
 
   // Filter and search servers
   // TODO: Search and filter is not implemented yet

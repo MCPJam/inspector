@@ -125,6 +125,19 @@ class MCPJamAgent {
 		return this.statuses.get(id) || "disconnected";
 	}
 
+	getConnectedServers(): Record<string, { status: ConnectionStatus; config?: any }> {
+		const servers: Record<string, { status: ConnectionStatus; config?: any }> = {};
+		
+		for (const [serverId, status] of this.statuses.entries()) {
+			servers[serverId] = {
+				status,
+				config: this.configs.get(serverId)
+			};
+		}
+		
+		return servers;
+	}
+
 	async discoverAllResources(): Promise<void> {
 		const serverIds = Array.from(this.mcpClients.keys());
 		await Promise.all(serverIds.map((id) => this.discoverServerResources(id)));
