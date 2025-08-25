@@ -13,7 +13,7 @@ resources.post("/list", async (c) => {
       return c.json({ success: false, error: "serverId is required" }, 400);
     }
     const mcpClientManager = c.get(
-      "mcpJamClientManager"
+      "mcpJamClientManager",
     ) as MCPJamClientManager;
     const serverResources = mcpClientManager.getResourcesForServer(serverId);
     return c.json({ resources: { [serverId]: serverResources } });
@@ -24,7 +24,7 @@ resources.post("/list", async (c) => {
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
       },
-      500
+      500,
     );
   }
 });
@@ -44,12 +44,12 @@ resources.post("/read", async (c) => {
           success: false,
           error: "Resource URI is required",
         },
-        400
+        400,
       );
     }
 
     const mcpClientManager = c.get(
-      "mcpJamClientManager"
+      "mcpJamClientManager",
     ) as MCPJamClientManager;
 
     const content = await mcpClientManager.getResource(uri, serverId);
@@ -62,7 +62,7 @@ resources.post("/read", async (c) => {
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
       },
-      500
+      500,
     );
   }
 });

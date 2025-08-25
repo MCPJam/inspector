@@ -278,7 +278,6 @@ class MCPJamClientManager {
 
   getResourcesForServer(serverId: string): DiscoveredResource[] {
     const id = normalizeServerId(serverId);
-    console.log("resources", this.getAvailableResources());
     return Array.from(this.resourceRegistry.values()).filter(
       (r) => r.serverId === id,
     );
@@ -286,6 +285,13 @@ class MCPJamClientManager {
 
   getAvailablePrompts(): DiscoveredPrompt[] {
     return Array.from(this.promptRegistry.values());
+  }
+
+  getPromptsForServer(serverId: string): DiscoveredPrompt[] {
+    const id = normalizeServerId(serverId);
+    return Array.from(this.promptRegistry.values()).filter(
+      (p) => p.serverId === id,
+    );
   }
 
   async executeToolDirect(
