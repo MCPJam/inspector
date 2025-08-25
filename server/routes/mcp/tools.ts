@@ -50,7 +50,10 @@ tools.post("/", async (c) => {
       }
 
       const mcpJamClientManager = c.get("mcpJamClientManager");
-      const success = mcpJamClientManager.respondToElicitation(requestId, response);
+      const success = mcpJamClientManager.respondToElicitation(
+        requestId,
+        response,
+      );
 
       if (!success) {
         // Also check local pendingElicitations for backward compatibility
@@ -139,7 +142,8 @@ tools.post("/", async (c) => {
           if (action === "list") {
             // Use existing connection through MCPJam Agent to get un-prefixed tools
             try {
-              const flattenedTools = await mcpJamClientManager.getToolsetsForServer(serverId);
+              const flattenedTools =
+                await mcpJamClientManager.getToolsetsForServer(serverId);
 
               // Convert to the expected format with JSON schema conversion
               const toolsWithJsonSchema: Record<string, any> = {};
