@@ -65,7 +65,7 @@ function normalizeServerId(serverId: string) {
 	return serverId.toLowerCase().replace(/[\s\-]+/g, "_").replace(/[^a-z0-9_]/g, "");
 }
 
-class MCPJamAgent {
+class MCPJamClientManager {
 	private mcpClients: Map<string, MCPClient> = new Map();
 	private statuses: Map<string, ConnectionStatus> = new Map();
 	private configs: Map<string, MastraMCPServerDefinition> = new Map();
@@ -421,5 +421,5 @@ class MCPJamAgent {
 }
 
 // Export the class directly instead of singleton
-export { MCPJamAgent };
-export default MCPJamAgent;
+export { MCPJamClientManager };
+export default MCPJamClientManager;
