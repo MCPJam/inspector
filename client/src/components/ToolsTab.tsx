@@ -130,6 +130,17 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   useEffect(() => {
     if (serverConfig) {
       fetchTools();
+    } else {
+      // Clear tools state when server is disconnected
+      setTools({});
+      setSelectedTool("");
+      setFormFields([]);
+      setResult(null);
+      setStructuredResult(null);
+      setShowStructured(false);
+      setValidationErrors(undefined);
+      setUnstructuredValidationResult("not_applicable");
+      setError("");
     }
 
     // Cleanup EventSource on unmount
@@ -173,9 +184,17 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       setEventSource(null);
     }
 
+    // Clear all tools-related state when switching servers
     setFetchingTools(true);
     setError("");
     setTools({});
+    setSelectedTool("");
+    setFormFields([]);
+    setResult(null);
+    setStructuredResult(null);
+    setShowStructured(false);
+    setValidationErrors(undefined);
+    setUnstructuredValidationResult("not_applicable");
 
     const fetchStartTime = Date.now();
 
