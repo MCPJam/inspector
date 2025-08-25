@@ -56,6 +56,7 @@ interface Tool {
 
 interface ToolsTabProps {
   serverConfig?: MastraMCPServerDefinition;
+  serverName?: string;
 }
 
 interface FormField {
@@ -77,7 +78,7 @@ interface ElicitationRequest {
   timestamp: string;
 }
 
-export function ToolsTab({ serverConfig }: ToolsTabProps) {
+export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   const logger = useLogger("ToolsTab");
   const [tools, setTools] = useState<Record<string, Tool>>({});
   const [selectedTool, setSelectedTool] = useState<string>("");
@@ -184,7 +185,7 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "list",
-          serverConfig: config,
+          serverConfig: { ...config, name: serverName },
         }),
       });
 
@@ -449,7 +450,7 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
         },
         body: JSON.stringify({
           action: "execute",
-          serverConfig: config,
+          serverConfig: { ...config, name: serverName },
           toolName: selectedTool,
           parameters: params,
         }),
@@ -1283,7 +1284,10 @@ export function ToolsTab({ serverConfig }: ToolsTabProps) {
                                       action: "execute",
                                       toolName: evt.payload.toolName,
                                       parameters: evt.payload.params || {},
-                                      serverConfig: getServerConfig(),
+                                      serverConfig: {
+                                        ...getServerConfig(),
+                                        name: serverName,
+                                      },
                                     }),
                                   });
                                 } catch {

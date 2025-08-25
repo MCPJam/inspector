@@ -117,7 +117,10 @@ export default function App() {
             )}
 
             {activeTab === "tools" && (
-              <ToolsTab serverConfig={selectedMCPConfig} />
+              <ToolsTab
+                serverConfig={selectedMCPConfig}
+                serverName={appState.selectedServer}
+              />
             )}
             {activeTab === "tests" && (
               <TestsTab

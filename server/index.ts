@@ -47,8 +47,10 @@ function logBox(content: string, title?: string) {
   console.log("└" + "─".repeat(width) + "┘");
 }
 
-// Import routes
+// Import routes and services
 import mcpRoutes from "./routes/mcp/index";
+import { MCPJamClientManager } from "./services/mcpjam-client-manager";
+import "./types/hono"; // Type extensions
 
 // Utility function to extract MCP server config from environment variables
 function getMCPConfigFromEnv() {
@@ -68,6 +70,15 @@ function getMCPConfigFromEnv() {
 }
 
 const app = new Hono();
+
+// Initialize centralized MCPJam Client Manager
+const mcpAgent = new MCPJamClientManager();
+
+// Middleware to inject client manager into context
+app.use("*", async (c, next) => {
+  c.set("mcpAgent", mcpAgent);
+  await next();
+});
 
 // Middleware
 app.use("*", logger());

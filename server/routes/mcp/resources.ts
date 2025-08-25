@@ -1,6 +1,6 @@
 import { Hono } from "hono";
-import { validateServerConfig, createMCPClient } from "../../utils/mcp-utils";
 import { ContentfulStatusCode } from "hono/utils/http-status";
+import "../../types/hono"; // Type extensions
 
 const resources = new Hono();
 
@@ -9,30 +9,28 @@ resources.post("/list", async (c) => {
   try {
     const { serverConfig } = await c.req.json();
 
-    const validation = validateServerConfig(serverConfig);
-    if (!validation.success) {
-      return c.json(
-        { success: false, error: validation.error!.message },
-        validation.error!.status as ContentfulStatusCode,
-      );
+    if (!serverConfig) {
+      return c.json({ success: false, error: "serverConfig is required" }, 400);
     }
 
-    const client = createMCPClient(
-      validation.config!,
-      `resources-list-${Date.now()}`,
+    const agent = c.get("mcpAgent");
+    const serverId =
+      (serverConfig as any).name || (serverConfig as any).id || "server";
+
+    // Connect to server via centralized agent
+    await agent.connectToServer(serverId, serverConfig);
+
+    // Get resources from agent's registry
+    const allResources = agent.getAvailableResources();
+    const normalizedServerId = serverId
+      .toLowerCase()
+      .replace(/[\s\-]+/g, "_")
+      .replace(/[^a-z0-9_]/g, "");
+    const serverResources = allResources.filter(
+      (r) => r.serverId === normalizedServerId,
     );
 
-    try {
-      const resources = await client.resources.list();
-
-      // Cleanup
-      await client.disconnect();
-
-      return c.json({ resources });
-    } catch (error) {
-      await client.disconnect();
-      throw error;
-    }
+    return c.json({ resources: { [serverId]: serverResources } });
   } catch (error) {
     console.error("Error fetching resources:", error);
     return c.json(
@@ -50,12 +48,8 @@ resources.post("/read", async (c) => {
   try {
     const { serverConfig, uri } = await c.req.json();
 
-    const validation = validateServerConfig(serverConfig);
-    if (!validation.success) {
-      return c.json(
-        { success: false, error: validation.error!.message },
-        validation.error!.status as ContentfulStatusCode,
-      );
+    if (!serverConfig) {
+      return c.json({ success: false, error: "serverConfig is required" }, 400);
     }
 
     if (!uri) {
@@ -68,22 +62,17 @@ resources.post("/read", async (c) => {
       );
     }
 
-    const client = createMCPClient(
-      validation.config!,
-      `resources-read-${Date.now()}`,
-    );
+    const agent = c.get("mcpAgent");
+    const serverId =
+      (serverConfig as any).name || (serverConfig as any).id || "server";
 
-    try {
-      const content = await client.resources.read("server", uri);
+    // Connect to server via centralized agent
+    await agent.connectToServer(serverId, serverConfig);
 
-      // Cleanup
-      await client.disconnect();
+    // Use agent to get resource content
+    const content = await agent.getResource(uri);
 
-      return c.json({ content });
-    } catch (error) {
-      await client.disconnect();
-      throw error;
-    }
+    return c.json({ content });
   } catch (error) {
     console.error("Error reading resource:", error);
     return c.json(

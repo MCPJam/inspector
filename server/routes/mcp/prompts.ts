@@ -1,6 +1,6 @@
 import { Hono } from "hono";
-import { validateServerConfig, createMCPClient } from "../../utils/mcp-utils";
 import { ContentfulStatusCode } from "hono/utils/http-status";
+import "../../types/hono"; // Type extensions
 
 const prompts = new Hono();
 
@@ -9,30 +9,28 @@ prompts.post("/list", async (c) => {
   try {
     const { serverConfig } = await c.req.json();
 
-    const validation = validateServerConfig(serverConfig);
-    if (!validation.success) {
-      return c.json(
-        { success: false, error: validation.error!.message },
-        validation.error!.status as ContentfulStatusCode,
-      );
+    if (!serverConfig) {
+      return c.json({ success: false, error: "serverConfig is required" }, 400);
     }
 
-    const client = createMCPClient(
-      validation.config!,
-      `prompts-list-${Date.now()}`,
+    const agent = c.get("mcpAgent");
+    const serverId =
+      (serverConfig as any).name || (serverConfig as any).id || "server";
+
+    // Connect to server via centralized agent
+    await agent.connectToServer(serverId, serverConfig);
+
+    // Get prompts from agent's registry
+    const allPrompts = agent.getAvailablePrompts();
+    const normalizedServerId = serverId
+      .toLowerCase()
+      .replace(/[\s\-]+/g, "_")
+      .replace(/[^a-z0-9_]/g, "");
+    const serverPrompts = allPrompts.filter(
+      (p) => p.serverId === normalizedServerId,
     );
 
-    try {
-      const prompts = await client.prompts.list();
-
-      // Cleanup
-      await client.disconnect();
-
-      return c.json({ prompts });
-    } catch (error) {
-      await client.disconnect();
-      throw error;
-    }
+    return c.json({ prompts: { [serverId]: serverPrompts } });
   } catch (error) {
     console.error("Error fetching prompts:", error);
     return c.json(
@@ -50,12 +48,8 @@ prompts.post("/get", async (c) => {
   try {
     const { serverConfig, name, args } = await c.req.json();
 
-    const validation = validateServerConfig(serverConfig);
-    if (!validation.success) {
-      return c.json(
-        { success: false, error: validation.error!.message },
-        validation.error!.status as ContentfulStatusCode,
-      );
+    if (!serverConfig) {
+      return c.json({ success: false, error: "serverConfig is required" }, 400);
     }
 
     if (!name) {
@@ -68,26 +62,17 @@ prompts.post("/get", async (c) => {
       );
     }
 
-    const client = createMCPClient(
-      validation.config!,
-      `prompts-get-${Date.now()}`,
-    );
+    const agent = c.get("mcpAgent");
+    const serverId =
+      (serverConfig as any).name || (serverConfig as any).id || "server";
 
-    try {
-      const content = await client.prompts.get({
-        serverName: "server",
-        name,
-        args: args || {},
-      });
+    // Connect to server via centralized agent
+    await agent.connectToServer(serverId, serverConfig);
 
-      // Cleanup
-      await client.disconnect();
+    // Use agent to get prompt content
+    const content = await agent.getPrompt(name, args || {});
 
-      return c.json({ content });
-    } catch (error) {
-      await client.disconnect();
-      throw error;
-    }
+    return c.json({ content });
   } catch (error) {
     console.error("Error getting prompt:", error);
     return c.json(

@@ -23,6 +23,8 @@ export default defineConfig({
     "ollama-ai-provider",
     "zod",
     "zod-to-json-schema",
+    "clsx",
+    "tailwind-merge",
   ],
   noExternal: [
     // Force bundling of problematic packages
