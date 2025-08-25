@@ -612,6 +612,27 @@ export function useAppState() {
 
   const handleDisconnect = useCallback(async (serverName: string) => {
     logger.info("Disconnecting from server", { serverName });
+    
+    try {
+      // Disconnect from centralized agent
+      const response = await fetch(`/api/mcp/servers/${encodeURIComponent(serverName)}`, {
+        method: "DELETE",
+      });
+      
+      const result = await response.json();
+      if (!result.success) {
+        logger.warn("Failed to disconnect from centralized agent", {
+          serverName,
+          error: result.error
+        });
+      }
+    } catch (error) {
+      logger.warn("Error disconnecting from centralized agent", {
+        serverName,
+        error: error instanceof Error ? error.message : "Unknown error"
+      });
+    }
+    
     // Mark server as disabled and disconnected, but keep config
     setAppState((prev: AppState) => ({
       ...prev,
@@ -814,6 +835,74 @@ export function useAppState() {
       Object.values(reconnectionTimeouts).forEach(clearTimeout);
     };
   }, [reconnectionTimeouts]);
+
+  // Sync with centralized agent status periodically
+  useEffect(() => {
+    if (isLoading) return;
+
+    const syncServerStatus = async () => {
+      try {
+        const response = await fetch("/api/mcp/servers");
+        if (response.ok) {
+          const result = await response.json();
+          if (result.success && result.servers) {
+            // Update local state with centralized agent status
+            setAppState((prev) => {
+              const updatedServers = { ...prev.servers };
+              
+              // Create a set of servers that are actually connected in the agent
+              const connectedInAgent = new Set(
+                result.servers
+                  .filter((s: any) => s.status === "connected")
+                  .map((s: any) => s.id)
+              );
+              
+              // Update status for all servers
+              for (const [serverName, server] of Object.entries(updatedServers)) {
+                // Find matching agent server
+                const agentServer = result.servers.find((s: any) => s.id === serverName);
+                
+                if (agentServer) {
+                  // Server exists in agent - update with agent status
+                  updatedServers[serverName] = {
+                    ...server,
+                    connectionStatus: agentServer.status,
+                  };
+                } else {
+                  // Server doesn't exist in agent but is enabled in UI - mark as disconnected
+                  if (server.enabled !== false && server.connectionStatus !== "disconnected") {
+                    updatedServers[serverName] = {
+                      ...server,
+                      connectionStatus: "disconnected",
+                      enabled: false, // Disable it since it's not in the agent
+                    };
+                  }
+                }
+              }
+              
+              return {
+                ...prev,
+                servers: updatedServers,
+              };
+            });
+          }
+        }
+      } catch (error) {
+        // Silently fail - this is just a background sync
+        logger.debug("Failed to sync server status", {
+          error: error instanceof Error ? error.message : "Unknown error"
+        });
+      }
+    };
+
+    // Sync immediately
+    syncServerStatus();
+    
+    // Sync every 30 seconds
+    const interval = setInterval(syncServerStatus, 30000);
+    
+    return () => clearInterval(interval);
+  }, [isLoading, logger]);
 
   const setSelectedServer = useCallback((serverName: string) => {
     setAppState((prev) => ({
