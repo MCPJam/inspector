@@ -786,7 +786,7 @@ export function useAppState() {
             if ("url" in server.config && server.config.url) {
               try {
                 logger.info("Initiating fresh OAuth flow", { serverName });
-                
+
                 // Clear existing tokens first
                 clearOAuthData(serverName);
 
@@ -795,7 +795,7 @@ export function useAppState() {
                   serverName: serverName,
                   serverUrl: server.config.url.toString(),
                 };
-                
+
                 const oauthResult = await initiateOAuth(oauthOptions);
 
                 if (oauthResult.success && oauthResult.serverConfig) {
