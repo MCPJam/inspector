@@ -12,7 +12,7 @@ resources.post("/list", async (c) => {
     if (!serverId) {
       return c.json({ success: false, error: "serverId is required" }, 400);
     }
-    const mcpClientManager = c.get("mcpAgent") as MCPJamClientManager;
+    const mcpClientManager = c.get("mcpJamClientManager") as MCPJamClientManager;
     const serverResources = mcpClientManager.getResourcesForServer(serverId);
     return c.json({ resources: { [serverId]: serverResources } });
   } catch (error) {
@@ -46,9 +46,23 @@ resources.post("/read", async (c) => {
       );
     }
 
+<<<<<<< HEAD
     const mcpClientManager = c.get("mcpAgent") as MCPJamClientManager;
 
     const content = await mcpClientManager.getResource(uri, serverId);
+=======
+    const mcpJamClientManager = c.get(
+      "mcpJamClientManager",
+    ) as MCPJamClientManager;
+    const serverId =
+      (serverConfig as any).name || (serverConfig as any).id || "server";
+
+    // Connect to server via centralized client manager
+    await mcpJamClientManager.connectToServer(serverId, serverConfig);
+
+    // Use agent to get resource content
+    const content = await mcpJamClientManager.getResource(uri);
+>>>>>>> main
 
     return c.json({ content });
   } catch (error) {

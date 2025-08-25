@@ -7,10 +7,12 @@ const servers = new Hono();
 // List all connected servers with their status
 servers.get("/", async (c) => {
   try {
-    const mcpClientManager = c.get("mcpAgent") as MCPJamClientManager;
+    const mcpJamClientManager = c.get(
+      "mcpJamClientManager",
+    ) as MCPJamClientManager;
 
     // Get all server configurations and statuses
-    const connectedServers = mcpClientManager.getConnectedServers();
+    const connectedServers = mcpJamClientManager.getConnectedServers();
 
     const serverList = Object.entries(connectedServers).map(
       ([serverId, serverInfo]) => ({
@@ -41,9 +43,11 @@ servers.get("/", async (c) => {
 servers.get("/status/:serverId", async (c) => {
   try {
     const serverId = c.req.param("serverId");
-    const mcpClientManager = c.get("mcpAgent") as MCPJamClientManager;
+    const mcpJamClientManager = c.get(
+      "mcpJamClientManager",
+    ) as MCPJamClientManager;
 
-    const status = mcpClientManager.getConnectionStatus(serverId);
+    const status = mcpJamClientManager.getConnectionStatus(serverId);
 
     return c.json({
       success: true,
@@ -66,9 +70,11 @@ servers.get("/status/:serverId", async (c) => {
 servers.delete("/:serverId", async (c) => {
   try {
     const serverId = c.req.param("serverId");
-    const mcpClientManager = c.get("mcpAgent") as MCPJamClientManager;
+    const mcpJamClientManager = c.get(
+      "mcpJamClientManager",
+    ) as MCPJamClientManager;
 
-    await mcpClientManager.disconnectFromServer(serverId);
+    await mcpJamClientManager.disconnectFromServer(serverId);
 
     return c.json({
       success: true,
@@ -101,13 +107,15 @@ servers.post("/reconnect", async (c) => {
       );
     }
 
-    const mcpClientManager = c.get("mcpAgent") as MCPJamClientManager;
+    const mcpJamClientManager = c.get(
+      "mcpJamClientManager",
+    ) as MCPJamClientManager;
 
     // Disconnect first, then reconnect
-    await mcpClientManager.disconnectFromServer(serverId);
-    await mcpClientManager.connectToServer(serverId, serverConfig);
+    await mcpJamClientManager.disconnectFromServer(serverId);
+    await mcpJamClientManager.connectToServer(serverId, serverConfig);
 
-    const status = mcpClientManager.getConnectionStatus(serverId);
+    const status = mcpJamClientManager.getConnectionStatus(serverId);
 
     return c.json({
       success: true,
