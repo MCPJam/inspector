@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import "../../types/hono"; // Type extensions
-import MCPJamClientManager from "../../services/mcpjam-client-manager";
 
 const connect = new Hono();
 
@@ -28,9 +27,7 @@ connect.post("/", async (c) => {
       );
     }
 
-    const mcpClientManager = c.get(
-      "mcpJamClientManager",
-    ) as MCPJamClientManager;
+    const mcpClientManager = c.mcpJamClientManager;
 
     try {
       await mcpClientManager.connectToServer(serverId, serverConfig);

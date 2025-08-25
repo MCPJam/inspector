@@ -1,15 +1,12 @@
 import { Hono } from "hono";
 import "../../types/hono"; // Type extensions
-import MCPJamClientManager from "../../services/mcpjam-client-manager";
 
 const servers = new Hono();
 
 // List all connected servers with their status
 servers.get("/", async (c) => {
   try {
-    const mcpJamClientManager = c.get(
-      "mcpJamClientManager",
-    ) as MCPJamClientManager;
+    const mcpJamClientManager = c.mcpJamClientManager;
 
     // Get all server configurations and statuses
     const connectedServers = mcpJamClientManager.getConnectedServers();
@@ -43,9 +40,7 @@ servers.get("/", async (c) => {
 servers.get("/status/:serverId", async (c) => {
   try {
     const serverId = c.req.param("serverId");
-    const mcpJamClientManager = c.get(
-      "mcpJamClientManager",
-    ) as MCPJamClientManager;
+    const mcpJamClientManager = c.mcpJamClientManager;
 
     const status = mcpJamClientManager.getConnectionStatus(serverId);
 
@@ -70,9 +65,7 @@ servers.get("/status/:serverId", async (c) => {
 servers.delete("/:serverId", async (c) => {
   try {
     const serverId = c.req.param("serverId");
-    const mcpJamClientManager = c.get(
-      "mcpJamClientManager",
-    ) as MCPJamClientManager;
+    const mcpJamClientManager = c.mcpJamClientManager;
 
     await mcpJamClientManager.disconnectFromServer(serverId);
 
@@ -107,9 +100,7 @@ servers.post("/reconnect", async (c) => {
       );
     }
 
-    const mcpJamClientManager = c.get(
-      "mcpJamClientManager",
-    ) as MCPJamClientManager;
+    const mcpJamClientManager = c.mcpJamClientManager;
 
     // Disconnect first, then reconnect
     await mcpJamClientManager.disconnectFromServer(serverId);

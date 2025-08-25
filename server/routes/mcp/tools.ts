@@ -3,7 +3,6 @@ import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { TextEncoder } from "util";
 import "../../types/hono"; // Type extensions
-import MCPJamClientManager from "../../services/mcpjam-client-manager";
 
 const tools = new Hono();
 
@@ -48,9 +47,7 @@ tools.post("/", async (c) => {
         );
       }
 
-      const mcpJamClientManager = c.get(
-        "mcpJamClientManager",
-      ) as MCPJamClientManager;
+      const mcpJamClientManager = c.mcpJamClientManager;
       const success = mcpJamClientManager.respondToElicitation(
         requestId,
         response,
@@ -93,9 +90,7 @@ tools.post("/", async (c) => {
             return;
           }
 
-          const mcpJamClientManager = c.get(
-            "mcpJamClientManager",
-          ) as MCPJamClientManager;
+          const mcpJamClientManager = c.mcpJamClientManager;
           // Use server name from config or default key
           const serverId =
             (serverConfig as any).name || (serverConfig as any).id || "server";
@@ -233,9 +228,7 @@ tools.post("/", async (c) => {
           controller.close();
         } finally {
           // Clear the elicitation callback
-          const mcpJamClientManager = c.get(
-            "mcpJamClientManager",
-          ) as MCPJamClientManager;
+          const mcpJamClientManager = c.mcpJamClientManager;
           if (mcpJamClientManager) {
             mcpJamClientManager.clearElicitationCallback();
           }
