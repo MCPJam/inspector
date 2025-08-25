@@ -1,5 +1,5 @@
 import { MCPClient, MastraMCPServerDefinition } from "@mastra/mcp";
-import { validateServerConfig } from "../utils/mcp-utils";
+import { validateServerConfig, normalizeServerConfigName } from "../utils/mcp-utils";
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 
@@ -41,6 +41,18 @@ export interface ToolResult {
 	result: any;
 }
 
+export interface ElicitationRequest {
+	message: string;
+	requestedSchema: any;
+}
+
+export interface ElicitationResponse {
+	[key: string]: unknown;
+	action: "accept" | "decline" | "cancel";
+	content?: any;
+	_meta?: any;
+}
+
 export interface ResourceContent {
 	contents: any[];
 }
@@ -61,6 +73,15 @@ class MCPJamAgent {
 	private toolRegistry: Map<string, DiscoveredTool> = new Map();
 	private resourceRegistry: Map<string, DiscoveredResource> = new Map();
 	private promptRegistry: Map<string, DiscoveredPrompt> = new Map();
+	
+	// Store for pending elicitation requests with Promise resolvers
+	private pendingElicitations: Map<string, {
+		resolve: (response: ElicitationResponse) => void;
+		reject: (error: any) => void;
+	}> = new Map();
+	
+	// Optional callback for handling elicitation requests
+	private elicitationCallback?: (request: { requestId: string; message: string; schema: any }) => Promise<ElicitationResponse>;
 
 	async connectToServer(serverId: string, serverConfig: any): Promise<void> {
 		const id = normalizeServerId(serverId);
@@ -88,6 +109,15 @@ class MCPJamAgent {
 			await client.getTools();
 			this.mcpClients.set(id, client);
 			this.statuses.set(id, "connected");
+			
+			// Register elicitation handler for this server
+			if (client.elicitation?.onRequest) {
+				const normalizedName = normalizeServerConfigName(serverId);
+				client.elicitation.onRequest(normalizedName, async (elicitationRequest: ElicitationRequest) => {
+					return await this.handleElicitationRequest(elicitationRequest);
+				});
+			}
+			
 			await this.discoverServerResources(id);
 		} catch (err) {
 			this.statuses.set(id, "error");
@@ -322,6 +352,71 @@ class MCPJamAgent {
 	private pickAnyClient(): MCPClient | undefined {
 		for (const c of this.mcpClients.values()) return c;
 		return undefined;
+	}
+
+	/**
+	 * Handles elicitation requests from MCP servers during direct tool execution
+	 */
+	private async handleElicitationRequest(elicitationRequest: ElicitationRequest): Promise<ElicitationResponse> {
+		const requestId = `elicit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+		// Create a promise that will be resolved when the user responds
+		return new Promise<ElicitationResponse>((resolve, reject) => {
+			this.pendingElicitations.set(requestId, { resolve, reject });
+			
+			// If there's an active elicitation callback, use it
+			if (this.elicitationCallback) {
+				this.elicitationCallback({
+					requestId,
+					message: elicitationRequest.message,
+					schema: elicitationRequest.requestedSchema,
+				}).then(resolve).catch(reject);
+			} else {
+				// If no callback is set, reject with details for the tools route to handle
+				const error = new Error('ELICITATION_REQUIRED');
+				(error as any).elicitationRequest = {
+					requestId,
+					message: elicitationRequest.message,
+					schema: elicitationRequest.requestedSchema,
+				};
+				reject(error);
+			}
+		});
+	}
+
+	/**
+	 * Responds to a pending elicitation request
+	 */
+	respondToElicitation(requestId: string, response: ElicitationResponse): boolean {
+		const pending = this.pendingElicitations.get(requestId);
+		if (!pending) {
+			return false;
+		}
+
+		pending.resolve(response);
+		this.pendingElicitations.delete(requestId);
+		return true;
+	}
+
+	/**
+	 * Gets the pending elicitations map for external access
+	 */
+	getPendingElicitations(): Map<string, { resolve: (response: ElicitationResponse) => void; reject: (error: any) => void }> {
+		return this.pendingElicitations;
+	}
+
+	/**
+	 * Sets a callback to handle elicitation requests
+	 */
+	setElicitationCallback(callback: (request: { requestId: string; message: string; schema: any }) => Promise<ElicitationResponse>): void {
+		this.elicitationCallback = callback;
+	}
+
+	/**
+	 * Clears the elicitation callback
+	 */
+	clearElicitationCallback(): void {
+		this.elicitationCallback = undefined;
 	}
 }
 
