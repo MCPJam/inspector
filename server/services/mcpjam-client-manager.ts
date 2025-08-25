@@ -134,7 +134,7 @@ class MCPJamClientManager {
           normalizedName,
           async (elicitationRequest: ElicitationRequest) => {
             return await this.handleElicitationRequest(elicitationRequest);
-          },
+          }
         );
       }
 
@@ -275,13 +275,22 @@ class MCPJamClientManager {
   getAvailableResources(): DiscoveredResource[] {
     return Array.from(this.resourceRegistry.values());
   }
+
+  getResourcesForServer(serverId: string): DiscoveredResource[] {
+    const id = normalizeServerId(serverId);
+    console.log("resources", this.getAvailableResources());
+    return Array.from(this.resourceRegistry.values()).filter(
+      (r) => r.serverId === id
+    );
+  }
+
   getAvailablePrompts(): DiscoveredPrompt[] {
     return Array.from(this.promptRegistry.values());
   }
 
   async executeToolDirect(
     toolName: string,
-    parameters: Record<string, any>,
+    parameters: Record<string, any>
   ): Promise<ToolResult> {
     // toolName may include server prefix "serverId:tool"
     let serverId = "";
@@ -347,18 +356,13 @@ class MCPJamClientManager {
     return { result };
   }
 
-  async getResource(resourceUri: string): Promise<ResourceContent> {
+  async getResource(
+    resourceUri: string,
+    serverId: string
+  ): Promise<ResourceContent> {
     // resourceUri may include server prefix
-    let serverId = "";
     let uri = resourceUri;
-    if (resourceUri.includes(":")) {
-      const [sid, rest] = resourceUri.split(":", 2);
-      serverId = normalizeServerId(sid);
-      uri = rest;
-    }
-    const client = serverId
-      ? this.mcpClients.get(serverId)
-      : this.pickAnyClient();
+    const client = this.mcpClients.get(serverId);
     if (!client) throw new Error("No MCP client available");
     const content = await client.resources.read(serverId, uri);
     return { contents: content?.contents || [] };
@@ -366,7 +370,7 @@ class MCPJamClientManager {
 
   async getPrompt(
     promptName: string,
-    args?: Record<string, any>,
+    args?: Record<string, any>
   ): Promise<PromptResult> {
     let serverId = "";
     let name = promptName;
@@ -396,7 +400,7 @@ class MCPJamClientManager {
    * Handles elicitation requests from MCP servers during direct tool execution
    */
   private async handleElicitationRequest(
-    elicitationRequest: ElicitationRequest,
+    elicitationRequest: ElicitationRequest
   ): Promise<ElicitationResponse> {
     const requestId = `elicit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
@@ -431,7 +435,7 @@ class MCPJamClientManager {
    */
   respondToElicitation(
     requestId: string,
-    response: ElicitationResponse,
+    response: ElicitationResponse
   ): boolean {
     const pending = this.pendingElicitations.get(requestId);
     if (!pending) {
@@ -464,7 +468,7 @@ class MCPJamClientManager {
       requestId: string;
       message: string;
       schema: any;
-    }) => Promise<ElicitationResponse>,
+    }) => Promise<ElicitationResponse>
   ): void {
     this.elicitationCallback = callback;
   }

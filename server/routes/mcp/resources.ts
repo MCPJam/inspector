@@ -7,29 +7,13 @@ const resources = new Hono();
 // List resources endpoint
 resources.post("/list", async (c) => {
   try {
-    const { serverConfig } = await c.req.json();
+    const { serverId } = await c.req.json();
 
-    if (!serverConfig) {
-      return c.json({ success: false, error: "serverConfig is required" }, 400);
+    if (!serverId) {
+      return c.json({ success: false, error: "serverId is required" }, 400);
     }
-
     const mcpClientManager = c.get("mcpAgent") as MCPJamClientManager;
-    const serverId =
-      (serverConfig as any).name || (serverConfig as any).id || "server";
-
-    // Connect to server via centralized agent
-    await mcpClientManager.connectToServer(serverId, serverConfig);
-
-    // Get resources from agent's registry
-    const allResources = mcpClientManager.getAvailableResources();
-    const normalizedServerId = serverId
-      .toLowerCase()
-      .replace(/[\s\-]+/g, "_")
-      .replace(/[^a-z0-9_]/g, "");
-    const serverResources = allResources.filter(
-      (r) => r.serverId === normalizedServerId,
-    );
-
+    const serverResources = mcpClientManager.getResourcesForServer(serverId);
     return c.json({ resources: { [serverId]: serverResources } });
   } catch (error) {
     console.error("Error fetching resources:", error);
@@ -38,7 +22,7 @@ resources.post("/list", async (c) => {
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
       },
-      500,
+      500
     );
   }
 });
@@ -46,10 +30,10 @@ resources.post("/list", async (c) => {
 // Read resource endpoint
 resources.post("/read", async (c) => {
   try {
-    const { serverConfig, uri } = await c.req.json();
+    const { serverId, uri } = await c.req.json();
 
-    if (!serverConfig) {
-      return c.json({ success: false, error: "serverConfig is required" }, 400);
+    if (!serverId) {
+      return c.json({ success: false, error: "serverId is required" }, 400);
     }
 
     if (!uri) {
@@ -58,19 +42,13 @@ resources.post("/read", async (c) => {
           success: false,
           error: "Resource URI is required",
         },
-        400,
+        400
       );
     }
 
     const mcpClientManager = c.get("mcpAgent") as MCPJamClientManager;
-    const serverId =
-      (serverConfig as any).name || (serverConfig as any).id || "server";
 
-    // Connect to server via centralized agent
-    await mcpClientManager.connectToServer(serverId, serverConfig);
-
-    // Use agent to get resource content
-    const content = await mcpClientManager.getResource(uri);
+    const content = await mcpClientManager.getResource(uri, serverId);
 
     return c.json({ content });
   } catch (error) {
@@ -80,7 +58,7 @@ resources.post("/read", async (c) => {
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
       },
-      500,
+      500
     );
   }
 });

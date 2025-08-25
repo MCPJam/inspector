@@ -29,7 +29,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
   const isDebugCallback = useMemo(
     () => window.location.pathname.startsWith("/oauth/callback/debug"),
-    [],
+    []
   );
 
   const {
@@ -129,15 +129,18 @@ export default function App() {
                 allServerConfigsMap={Object.fromEntries(
                   Object.entries(connectedServerConfigs)
                     .filter(
-                      ([, entry]) => entry.connectionStatus === "connected",
+                      ([, entry]) => entry.connectionStatus === "connected"
                     )
-                    .map(([name, entry]) => [name, entry.config]),
+                    .map(([name, entry]) => [name, entry.config])
                 )}
               />
             )}
 
             {activeTab === "resources" && (
-              <ResourcesTab serverConfig={selectedMCPConfig} />
+              <ResourcesTab
+                serverConfig={selectedMCPConfig}
+                serverName={appState.selectedServer}
+              />
             )}
 
             {activeTab === "prompts" && (
