@@ -1,6 +1,6 @@
 import { Hono } from "hono";
-import { ContentfulStatusCode } from "hono/utils/http-status";
 import "../../types/hono"; // Type extensions
+import MCPJamClientManager from "../../services/mcpjam-client-manager";
 
 const prompts = new Hono();
 
@@ -13,15 +13,15 @@ prompts.post("/list", async (c) => {
       return c.json({ success: false, error: "serverConfig is required" }, 400);
     }
 
-    const agent = c.get("mcpAgent");
+    const mcpClientManager = c.get("mcpAgent") as MCPJamClientManager;
     const serverId =
       (serverConfig as any).name || (serverConfig as any).id || "server";
 
     // Connect to server via centralized agent
-    await agent.connectToServer(serverId, serverConfig);
+    await mcpClientManager.connectToServer(serverId, serverConfig);
 
     // Get prompts from agent's registry
-    const allPrompts = agent.getAvailablePrompts();
+    const allPrompts = mcpClientManager.getAvailablePrompts();
     const normalizedServerId = serverId
       .toLowerCase()
       .replace(/[\s\-]+/g, "_")
@@ -62,15 +62,15 @@ prompts.post("/get", async (c) => {
       );
     }
 
-    const agent = c.get("mcpAgent");
+    const mcpClientManager = c.get("mcpAgent") as MCPJamClientManager;
     const serverId =
       (serverConfig as any).name || (serverConfig as any).id || "server";
 
     // Connect to server via centralized agent
-    await agent.connectToServer(serverId, serverConfig);
+    await mcpClientManager.connectToServer(serverId, serverConfig);
 
     // Use agent to get prompt content
-    const content = await agent.getPrompt(name, args || {});
+    const content = await mcpClientManager.getPrompt(name, args || {});
 
     return c.json({ content });
   } catch (error) {
