@@ -360,10 +360,7 @@ class MCPJamClientManager {
       ? this.mcpClients.get(serverId)
       : this.pickAnyClient();
     if (!client) throw new Error("No MCP client available");
-    const content = await client.resources.read(
-      serverId || Object.keys(client.servers)[0],
-      uri,
-    );
+    const content = await client.resources.read(serverId, uri);
     return { contents: content?.contents || [] };
   }
 
@@ -383,17 +380,11 @@ class MCPJamClientManager {
       : this.pickAnyClient();
     if (!client) throw new Error("No MCP client available");
     const content = await client.prompts.get({
-      serverName: serverId || Object.keys(client.servers)[0],
+      serverName: serverId,
       name,
       args: args || {},
     });
     return { content };
-  }
-
-  async executeConversational(messages: ChatMessage[]): Promise<ChatResponse> {
-    // Placeholder: actual conversational orchestration remains in chat route for streaming.
-    // This method is reserved for future integration where streaming is managed centrally.
-    return { text: "" };
   }
 
   private pickAnyClient(): MCPClient | undefined {
