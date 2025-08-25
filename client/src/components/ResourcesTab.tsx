@@ -232,7 +232,7 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
                         <div className="flex items-center gap-3">
                           <code className="font-mono font-semibold text-foreground bg-muted px-2 py-1 rounded-md border border-border text-xs">
                             {allResources.find(
-                              (r) => r.uri === selectedResource
+                              (r) => r.uri === selectedResource,
                             )?.name || selectedResource}
                           </code>
                         </div>
@@ -339,7 +339,7 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
                                       )}
                                     </div>
                                   </div>
-                                )
+                                ),
                               )}
                             </div>
                           )}
