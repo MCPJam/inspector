@@ -57,7 +57,11 @@ prompts.post("/get", async (c) => {
     ) as MCPJamClientManager;
 
     // Get prompt content directly - servers are already connected
-    const content = await mcpJamClientManager.getPrompt(name, args || {});
+    const content = await mcpJamClientManager.getPrompt(
+      name,
+      serverId,
+      args || {},
+    );
 
     return c.json({ content });
   } catch (error) {

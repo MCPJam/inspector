@@ -376,30 +376,17 @@ class MCPJamClientManager {
 
   async getPrompt(
     promptName: string,
+    serverId: string,
     args?: Record<string, any>,
   ): Promise<PromptResult> {
-    let serverId = "";
-    let name = promptName;
-    if (promptName.includes(":")) {
-      const [sid, rest] = promptName.split(":", 2);
-      serverId = normalizeServerId(sid);
-      name = rest;
-    }
-    const client = serverId
-      ? this.mcpClients.get(serverId)
-      : this.pickAnyClient();
+    const client = this.mcpClients.get(serverId);
     if (!client) throw new Error("No MCP client available");
     const content = await client.prompts.get({
       serverName: serverId,
-      name,
+      name: promptName,
       args: args || {},
     });
     return { content };
-  }
-
-  private pickAnyClient(): MCPClient | undefined {
-    for (const c of this.mcpClients.values()) return c;
-    return undefined;
   }
 
   /**
