@@ -18,13 +18,14 @@ connect.post("/", async (c) => {
       );
     }
 
-    const agent = c.get('mcpAgent');
-    const serverId = (serverConfig as any).name || (serverConfig as any).id || "server";
+    const agent = c.get("mcpAgent");
+    const serverId =
+      (serverConfig as any).name || (serverConfig as any).id || "server";
 
     try {
       // Test connection via centralized agent
       await agent.connectToServer(serverId, serverConfig);
-      
+
       // Check connection status
       const status = agent.getConnectionStatus(serverId);
       if (status === "connected") {

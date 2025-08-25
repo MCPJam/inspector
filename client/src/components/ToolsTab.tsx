@@ -1284,7 +1284,10 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                                       action: "execute",
                                       toolName: evt.payload.toolName,
                                       parameters: evt.payload.params || {},
-                                      serverConfig: { ...getServerConfig(), name: serverName },
+                                      serverConfig: {
+                                        ...getServerConfig(),
+                                        name: serverName,
+                                      },
                                     }),
                                   });
                                 } catch {

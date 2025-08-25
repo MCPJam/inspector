@@ -6,21 +6,23 @@ const servers = new Hono();
 // List all connected servers with their status
 servers.get("/", async (c) => {
   try {
-    const agent = c.get('mcpAgent');
-    
+    const agent = c.get("mcpAgent");
+
     // Get all server configurations and statuses
     const connectedServers = agent.getConnectedServers();
-    
-    const serverList = Object.entries(connectedServers).map(([serverId, serverInfo]) => ({
-      id: serverId,
-      name: serverId,
-      status: serverInfo.status,
-      config: serverInfo.config
-    }));
+
+    const serverList = Object.entries(connectedServers).map(
+      ([serverId, serverInfo]) => ({
+        id: serverId,
+        name: serverId,
+        status: serverInfo.status,
+        config: serverInfo.config,
+      }),
+    );
 
     return c.json({
       success: true,
-      servers: serverList
+      servers: serverList,
     });
   } catch (error) {
     console.error("Error listing servers:", error);
@@ -38,14 +40,14 @@ servers.get("/", async (c) => {
 servers.get("/status/:serverId", async (c) => {
   try {
     const serverId = c.req.param("serverId");
-    const agent = c.get('mcpAgent');
-    
+    const agent = c.get("mcpAgent");
+
     const status = agent.getConnectionStatus(serverId);
-    
+
     return c.json({
       success: true,
       serverId,
-      status
+      status,
     });
   } catch (error) {
     console.error("Error getting server status:", error);
@@ -63,13 +65,13 @@ servers.get("/status/:serverId", async (c) => {
 servers.delete("/:serverId", async (c) => {
   try {
     const serverId = c.req.param("serverId");
-    const agent = c.get('mcpAgent');
-    
+    const agent = c.get("mcpAgent");
+
     await agent.disconnectFromServer(serverId);
-    
+
     return c.json({
       success: true,
-      message: `Disconnected from server: ${serverId}`
+      message: `Disconnected from server: ${serverId}`,
     });
   } catch (error) {
     console.error("Error disconnecting server:", error);
@@ -87,7 +89,7 @@ servers.delete("/:serverId", async (c) => {
 servers.post("/reconnect", async (c) => {
   try {
     const { serverId, serverConfig } = await c.req.json();
-    
+
     if (!serverId || !serverConfig) {
       return c.json(
         {
@@ -98,19 +100,19 @@ servers.post("/reconnect", async (c) => {
       );
     }
 
-    const agent = c.get('mcpAgent');
-    
+    const agent = c.get("mcpAgent");
+
     // Disconnect first, then reconnect
     await agent.disconnectFromServer(serverId);
     await agent.connectToServer(serverId, serverConfig);
-    
+
     const status = agent.getConnectionStatus(serverId);
-    
+
     return c.json({
       success: true,
       serverId,
       status,
-      message: `Reconnected to server: ${serverId}`
+      message: `Reconnected to server: ${serverId}`,
     });
   } catch (error) {
     console.error("Error reconnecting server:", error);

@@ -612,7 +612,7 @@ export function useAppState() {
 
   const handleDisconnect = useCallback(async (serverName: string) => {
     logger.info("Disconnecting from server", { serverName });
-    
+
     // Immediately update UI to show disconnecting state
     setAppState((prev: AppState) => ({
       ...prev,
@@ -632,13 +632,16 @@ export function useAppState() {
         (name) => name !== serverName,
       ),
     }));
-    
+
     try {
       // Disconnect from centralized agent
-      const response = await fetch(`/api/mcp/servers/${encodeURIComponent(serverName)}`, {
-        method: "DELETE",
-      });
-      
+      const response = await fetch(
+        `/api/mcp/servers/${encodeURIComponent(serverName)}`,
+        {
+          method: "DELETE",
+        },
+      );
+
       const result = await response.json();
       if (result.success) {
         // Update to final disconnected state
@@ -658,7 +661,7 @@ export function useAppState() {
       } else {
         logger.warn("Failed to disconnect from centralized agent", {
           serverName,
-          error: result.error
+          error: result.error,
         });
         // Revert to previous state on failure
         setAppState((prev: AppState) => ({
@@ -679,7 +682,7 @@ export function useAppState() {
     } catch (error) {
       logger.warn("Error disconnecting from centralized agent", {
         serverName,
-        error: error instanceof Error ? error.message : "Unknown error"
+        error: error instanceof Error ? error.message : "Unknown error",
       });
       // Revert to previous state on error
       setAppState((prev: AppState) => ({
@@ -691,7 +694,8 @@ export function useAppState() {
                 ...prev.servers[serverName],
                 connectionStatus: "failed" as const,
                 enabled: false,
-                lastError: error instanceof Error ? error.message : "Unknown error",
+                lastError:
+                  error instanceof Error ? error.message : "Unknown error",
               }
             : prev.servers[serverName],
         },
@@ -894,12 +898,16 @@ export function useAppState() {
             // Update local state with centralized agent status on startup
             setAppState((prev) => {
               const updatedServers = { ...prev.servers };
-              
+
               // Update status for all servers
-              for (const [serverName, server] of Object.entries(updatedServers)) {
+              for (const [serverName, server] of Object.entries(
+                updatedServers,
+              )) {
                 // Find matching agent server
-                const agentServer = result.servers.find((s: any) => s.id === serverName);
-                
+                const agentServer = result.servers.find(
+                  (s: any) => s.id === serverName,
+                );
+
                 if (agentServer) {
                   // Server exists in agent - update with agent status
                   updatedServers[serverName] = {
@@ -916,7 +924,7 @@ export function useAppState() {
                   };
                 }
               }
-              
+
               return {
                 ...prev,
                 servers: updatedServers,
@@ -926,7 +934,7 @@ export function useAppState() {
         }
       } catch (error) {
         logger.debug("Failed to sync server status on startup", {
-          error: error instanceof Error ? error.message : "Unknown error"
+          error: error instanceof Error ? error.message : "Unknown error",
         });
       }
     };
