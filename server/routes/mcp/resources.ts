@@ -22,7 +22,7 @@ resources.post("/list", async (c) => {
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
       },
-      500
+      500,
     );
   }
 });
@@ -42,7 +42,7 @@ resources.post("/read", async (c) => {
           success: false,
           error: "Resource URI is required",
         },
-        400
+        400,
       );
     }
 
@@ -58,7 +58,7 @@ resources.post("/read", async (c) => {
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
       },
-      500
+      500,
     );
   }
 });
