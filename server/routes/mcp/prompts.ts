@@ -7,30 +7,18 @@ const prompts = new Hono();
 // List prompts endpoint
 prompts.post("/list", async (c) => {
   try {
-    const { serverConfig } = await c.req.json();
+    const { serverId } = await c.req.json();
 
-    if (!serverConfig) {
-      return c.json({ success: false, error: "serverConfig is required" }, 400);
+    if (!serverId) {
+      return c.json({ success: false, error: "serverId is required" }, 400);
     }
 
     const mcpJamClientManager = c.get(
       "mcpJamClientManager",
     ) as MCPJamClientManager;
-    const serverId =
-      (serverConfig as any).name || (serverConfig as any).id || "server";
 
-    // Connect to server via centralized client manager
-    await mcpJamClientManager.connectToServer(serverId, serverConfig);
-
-    // Get prompts from agent's registry
-    const allPrompts = mcpJamClientManager.getAvailablePrompts();
-    const normalizedServerId = serverId
-      .toLowerCase()
-      .replace(/[\s\-]+/g, "_")
-      .replace(/[^a-z0-9_]/g, "");
-    const serverPrompts = allPrompts.filter(
-      (p) => p.serverId === normalizedServerId,
-    );
+    // Get prompts for specific server
+    const serverPrompts = mcpJamClientManager.getPromptsForServer(serverId);
 
     return c.json({ prompts: { [serverId]: serverPrompts } });
   } catch (error) {
@@ -48,10 +36,10 @@ prompts.post("/list", async (c) => {
 // Get prompt endpoint
 prompts.post("/get", async (c) => {
   try {
-    const { serverConfig, name, args } = await c.req.json();
+    const { serverId, name, args } = await c.req.json();
 
-    if (!serverConfig) {
-      return c.json({ success: false, error: "serverConfig is required" }, 400);
+    if (!serverId) {
+      return c.json({ success: false, error: "serverId is required" }, 400);
     }
 
     if (!name) {
@@ -67,14 +55,13 @@ prompts.post("/get", async (c) => {
     const mcpJamClientManager = c.get(
       "mcpJamClientManager",
     ) as MCPJamClientManager;
-    const serverId =
-      (serverConfig as any).name || (serverConfig as any).id || "server";
 
-    // Connect to server via centralized client manager
-    await mcpJamClientManager.connectToServer(serverId, serverConfig);
-
-    // Use client manager to get prompt content
-    const content = await mcpJamClientManager.getPrompt(name, args || {});
+    // Get prompt content directly - servers are already connected
+    const content = await mcpJamClientManager.getPrompt(
+      name,
+      serverId,
+      args || {},
+    );
 
     return c.json({ content });
   } catch (error) {

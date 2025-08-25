@@ -137,11 +137,17 @@ export default function App() {
             )}
 
             {activeTab === "resources" && (
-              <ResourcesTab serverConfig={selectedMCPConfig} />
+              <ResourcesTab
+                serverConfig={selectedMCPConfig}
+                serverName={appState.selectedServer}
+              />
             )}
 
             {activeTab === "prompts" && (
-              <PromptsTab serverConfig={selectedMCPConfig} />
+              <PromptsTab
+                serverConfig={selectedMCPConfig}
+                serverName={appState.selectedServer}
+              />
             )}
 
             {activeTab === "auth" && (

@@ -22,9 +22,10 @@ interface Resource {
 
 interface ResourcesTabProps {
   serverConfig?: MastraMCPServerDefinition;
+  serverName?: string;
 }
 
-export function ResourcesTab({ serverConfig }: ResourcesTabProps) {
+export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
   const [resources, setResources] = useState<Record<string, Resource[]>>({});
   const [selectedResource, setSelectedResource] = useState<string>("");
   const [resourceContent, setResourceContent] = useState<any>(null);
@@ -33,10 +34,10 @@ export function ResourcesTab({ serverConfig }: ResourcesTabProps) {
   const [error, setError] = useState<string>("");
 
   useEffect(() => {
-    if (serverConfig) {
+    if (serverConfig && serverName) {
       fetchResources();
     }
-  }, [serverConfig]);
+  }, [serverConfig, serverName]);
 
   const getServerConfig = (): MastraMCPServerDefinition | null => {
     if (!serverConfig) return null;
@@ -44,8 +45,7 @@ export function ResourcesTab({ serverConfig }: ResourcesTabProps) {
   };
 
   const fetchResources = async () => {
-    const config = getServerConfig();
-    if (!config) return;
+    if (!serverName) return;
 
     setFetchingResources(true);
     setError("");
@@ -55,7 +55,7 @@ export function ResourcesTab({ serverConfig }: ResourcesTabProps) {
       const response = await fetch("/api/mcp/resources/list", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ serverConfig: config }),
+        body: JSON.stringify({ serverId: serverName }),
       });
 
       const data = await response.json();
@@ -73,9 +73,8 @@ export function ResourcesTab({ serverConfig }: ResourcesTabProps) {
   };
 
   const readResource = async (uri: string) => {
-    const config = getServerConfig();
-    if (!config) return;
-
+    if (!serverName) return;
+    console.log("uri", uri);
     setLoading(true);
     setError("");
 
@@ -84,7 +83,7 @@ export function ResourcesTab({ serverConfig }: ResourcesTabProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          serverConfig: config,
+          serverId: serverName,
           uri: uri,
         }),
       });
@@ -105,7 +104,7 @@ export function ResourcesTab({ serverConfig }: ResourcesTabProps) {
 
   const allResources = Object.values(resources).flat();
 
-  if (!serverConfig) {
+  if (!serverConfig || !serverName) {
     return (
       <Card>
         <CardContent className="pt-6">

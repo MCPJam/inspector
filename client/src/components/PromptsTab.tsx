@@ -35,6 +35,7 @@ interface Prompt {
 
 interface PromptsTabProps {
   serverConfig?: MastraMCPServerDefinition;
+  serverName?: string;
 }
 
 interface FormField {
@@ -48,7 +49,7 @@ interface FormField {
   maximum?: number;
 }
 
-export function PromptsTab({ serverConfig }: PromptsTabProps) {
+export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
   const [prompts, setPrompts] = useState<Record<string, Prompt[]>>({});
   const [selectedPrompt, setSelectedPrompt] = useState<string>("");
   const [selectedPromptData, setSelectedPromptData] = useState<Prompt | null>(
@@ -61,10 +62,10 @@ export function PromptsTab({ serverConfig }: PromptsTabProps) {
   const [error, setError] = useState<string>("");
 
   useEffect(() => {
-    if (serverConfig) {
+    if (serverConfig && serverName) {
       fetchPrompts();
     }
-  }, [serverConfig]);
+  }, [serverConfig, serverName]);
 
   useEffect(() => {
     if (selectedPromptData?.arguments) {
@@ -80,8 +81,7 @@ export function PromptsTab({ serverConfig }: PromptsTabProps) {
   };
 
   const fetchPrompts = async () => {
-    const config = getServerConfig();
-    if (!config) return;
+    if (!serverName) return;
 
     setFetchingPrompts(true);
     setError("");
@@ -90,7 +90,7 @@ export function PromptsTab({ serverConfig }: PromptsTabProps) {
       const response = await fetch("/api/mcp/prompts/list", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ serverConfig: config }),
+        body: JSON.stringify({ serverId: serverName }),
       });
 
       const data = await response.json();
@@ -161,10 +161,7 @@ export function PromptsTab({ serverConfig }: PromptsTabProps) {
   };
 
   const getPrompt = async () => {
-    if (!selectedPrompt) return;
-
-    const config = getServerConfig();
-    if (!config) return;
+    if (!selectedPrompt || !serverName) return;
 
     setLoading(true);
     setError("");
@@ -175,7 +172,7 @@ export function PromptsTab({ serverConfig }: PromptsTabProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          serverConfig: config,
+          serverId: serverName,
           name: selectedPrompt,
           args: params,
         }),
@@ -199,7 +196,7 @@ export function PromptsTab({ serverConfig }: PromptsTabProps) {
     .flat()
     .map((prompt) => prompt.name);
 
-  if (!serverConfig) {
+  if (!serverConfig || !serverName) {
     return (
       <Card>
         <CardContent className="pt-6">

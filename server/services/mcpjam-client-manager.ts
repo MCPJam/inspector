@@ -275,8 +275,23 @@ class MCPJamClientManager {
   getAvailableResources(): DiscoveredResource[] {
     return Array.from(this.resourceRegistry.values());
   }
+
+  getResourcesForServer(serverId: string): DiscoveredResource[] {
+    const id = normalizeServerId(serverId);
+    return Array.from(this.resourceRegistry.values()).filter(
+      (r) => r.serverId === id,
+    );
+  }
+
   getAvailablePrompts(): DiscoveredPrompt[] {
     return Array.from(this.promptRegistry.values());
+  }
+
+  getPromptsForServer(serverId: string): DiscoveredPrompt[] {
+    const id = normalizeServerId(serverId);
+    return Array.from(this.promptRegistry.values()).filter(
+      (p) => p.serverId === id,
+    );
   }
 
   async executeToolDirect(
@@ -347,18 +362,13 @@ class MCPJamClientManager {
     return { result };
   }
 
-  async getResource(resourceUri: string): Promise<ResourceContent> {
+  async getResource(
+    resourceUri: string,
+    serverId: string,
+  ): Promise<ResourceContent> {
     // resourceUri may include server prefix
-    let serverId = "";
     let uri = resourceUri;
-    if (resourceUri.includes(":")) {
-      const [sid, rest] = resourceUri.split(":", 2);
-      serverId = normalizeServerId(sid);
-      uri = rest;
-    }
-    const client = serverId
-      ? this.mcpClients.get(serverId)
-      : this.pickAnyClient();
+    const client = this.mcpClients.get(serverId);
     if (!client) throw new Error("No MCP client available");
     const content = await client.resources.read(serverId, uri);
     return { contents: content?.contents || [] };
@@ -366,30 +376,17 @@ class MCPJamClientManager {
 
   async getPrompt(
     promptName: string,
+    serverId: string,
     args?: Record<string, any>,
   ): Promise<PromptResult> {
-    let serverId = "";
-    let name = promptName;
-    if (promptName.includes(":")) {
-      const [sid, rest] = promptName.split(":", 2);
-      serverId = normalizeServerId(sid);
-      name = rest;
-    }
-    const client = serverId
-      ? this.mcpClients.get(serverId)
-      : this.pickAnyClient();
+    const client = this.mcpClients.get(serverId);
     if (!client) throw new Error("No MCP client available");
     const content = await client.prompts.get({
       serverName: serverId,
-      name,
+      name: promptName,
       args: args || {},
     });
     return { content };
-  }
-
-  private pickAnyClient(): MCPClient | undefined {
-    for (const c of this.mcpClients.values()) return c;
-    return undefined;
   }
 
   /**

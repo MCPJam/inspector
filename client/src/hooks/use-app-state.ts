@@ -332,6 +332,7 @@ export function useAppState() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             serverConfig: mcpConfig,
+            serverId: formData.name,
           }),
         });
 
@@ -512,6 +513,7 @@ export function useAppState() {
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 serverConfig: result.serverConfig,
+                serverId: serverName,
               }),
             });
 
@@ -841,6 +843,7 @@ export function useAppState() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             serverConfig,
+            serverId: serverName,
           }),
         });
 
@@ -1069,6 +1072,7 @@ export function useAppState() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               serverConfig: originalServer.config, // Use original config with OAuth tokens
+              serverId: originalServerName,
             }),
           });
 

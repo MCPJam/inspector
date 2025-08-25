@@ -6,7 +6,7 @@ const connect = new Hono();
 
 connect.post("/", async (c) => {
   try {
-    const { serverConfig } = await c.req.json();
+    const { serverConfig, serverId } = await c.req.json();
 
     if (!serverConfig) {
       return c.json(
@@ -18,18 +18,23 @@ connect.post("/", async (c) => {
       );
     }
 
-    const mcpJamClientManager = c.get(
+    if (!serverId) {
+      return c.json(
+        {
+          success: false,
+          error: "serverId is required",
+        },
+        400,
+      );
+    }
+
+    const mcpClientManager = c.get(
       "mcpJamClientManager",
     ) as MCPJamClientManager;
-    const serverId =
-      (serverConfig as any).name || (serverConfig as any).id || "server";
 
     try {
-      // Test connection via centralized client manager
-      await mcpJamClientManager.connectToServer(serverId, serverConfig);
-
-      // Check connection status
-      const status = mcpJamClientManager.getConnectionStatus(serverId);
+      await mcpClientManager.connectToServer(serverId, serverConfig);
+      const status = mcpClientManager.getConnectionStatus(serverId);
       if (status === "connected") {
         return c.json({
           success: true,
