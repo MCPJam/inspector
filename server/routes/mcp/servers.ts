@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import "../../types/hono"; // Type extensions
+import MCPJamClientManager from "../../services/mcpjam-client-manager";
 
 const servers = new Hono();
 

@@ -1,6 +1,6 @@
 import { Hono } from "hono";
-import { ContentfulStatusCode } from "hono/utils/http-status";
 import "../../types/hono"; // Type extensions
+import MCPJamClientManager from "../../services/mcpjam-client-manager";
 
 const prompts = new Hono();
 

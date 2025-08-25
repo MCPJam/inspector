@@ -1,10 +1,9 @@
 import { Hono } from "hono";
-import type { Tool } from "@mastra/core/tools";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { ContentfulStatusCode } from "hono/utils/http-status";
 import { TextEncoder } from "util";
 import "../../types/hono"; // Type extensions
+import MCPJamClientManager from "../../services/mcpjam-client-manager";
 
 const tools = new Hono();
 
