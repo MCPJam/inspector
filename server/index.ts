@@ -72,11 +72,11 @@ function getMCPConfigFromEnv() {
 const app = new Hono();
 
 // Initialize centralized MCPJam Client Manager
-const mcpAgent = new MCPJamClientManager();
+const mcpJamClientManager = new MCPJamClientManager();
 
 // Middleware to inject client manager into context
 app.use("*", async (c, next) => {
-  c.set("mcpAgent", mcpAgent);
+  c.set("mcpJamClientManager", mcpJamClientManager);
   await next();
 });
 
