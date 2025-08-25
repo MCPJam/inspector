@@ -752,7 +752,7 @@ export function useAppState() {
       try {
         let serverConfig = server.config;
 
-        // If server has OAuth tokens, try to refresh them
+        // If server has OAuth tokens, try to refresh them first, then fallback to fresh OAuth
         if (server.oauthTokens) {
           logger.info("Attempting to refresh OAuth tokens", { serverName });
           const refreshResult = await refreshOAuthTokens(serverName);
@@ -775,12 +775,63 @@ export function useAppState() {
             }));
           } else {
             logger.warn(
-              "OAuth token refresh failed, attempting with existing tokens",
+              "OAuth token refresh failed, attempting fresh OAuth flow",
               {
                 serverName,
                 error: refreshResult.error,
               },
             );
+
+            // If token refresh failed and server has a URL, try fresh OAuth
+            if ("url" in server.config && server.config.url) {
+              try {
+                logger.info("Initiating fresh OAuth flow", { serverName });
+
+                // Clear existing tokens first
+                clearOAuthData(serverName);
+
+                // Initiate new OAuth flow with stored client credentials
+                const oauthOptions = {
+                  serverName: serverName,
+                  serverUrl: server.config.url.toString(),
+                  clientId: server.oauthTokens?.client_id,
+                  clientSecret: server.oauthTokens?.client_secret,
+                };
+
+                const oauthResult = await initiateOAuth(oauthOptions);
+
+                if (oauthResult.success && oauthResult.serverConfig) {
+                  logger.info("Fresh OAuth flow successful", { serverName });
+                  serverConfig = oauthResult.serverConfig;
+
+                  // Update server state with new config and tokens
+                  setAppState((prev) => ({
+                    ...prev,
+                    servers: {
+                      ...prev.servers,
+                      [serverName]: {
+                        ...prev.servers[serverName],
+                        config: oauthResult.serverConfig!,
+                        oauthTokens: getStoredTokens(serverName),
+                      },
+                    },
+                  }));
+                } else {
+                  logger.warn(
+                    "Fresh OAuth flow failed, using existing config",
+                    {
+                      serverName,
+                      error: oauthResult.error,
+                    },
+                  );
+                }
+              } catch (oauthError) {
+                logger.error("Error during fresh OAuth flow", {
+                  serverName,
+                  error: oauthError,
+                });
+              }
+            }
           }
         }
 
