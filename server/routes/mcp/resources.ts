@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import "../../types/hono"; // Type extensions
-import MCPJamClientManager from "../../services/mcpjam-client-manager";
 
 const resources = new Hono();
 
@@ -12,9 +11,7 @@ resources.post("/list", async (c) => {
     if (!serverId) {
       return c.json({ success: false, error: "serverId is required" }, 400);
     }
-    const mcpClientManager = c.get(
-      "mcpJamClientManager",
-    ) as MCPJamClientManager;
+    const mcpClientManager = c.mcpJamClientManager;
     const serverResources = mcpClientManager.getResourcesForServer(serverId);
     return c.json({ resources: { [serverId]: serverResources } });
   } catch (error) {
@@ -48,9 +45,7 @@ resources.post("/read", async (c) => {
       );
     }
 
-    const mcpClientManager = c.get(
-      "mcpJamClientManager",
-    ) as MCPJamClientManager;
+    const mcpClientManager = c.mcpJamClientManager;
 
     const content = await mcpClientManager.getResource(uri, serverId);
 
