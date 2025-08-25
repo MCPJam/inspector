@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import "../../types/hono"; // Type extensions
-import MCPJamClientManager from "../../services/mcpjam-client-manager";
 
 const prompts = new Hono();
 
@@ -13,9 +12,7 @@ prompts.post("/list", async (c) => {
       return c.json({ success: false, error: "serverId is required" }, 400);
     }
 
-    const mcpJamClientManager = c.get(
-      "mcpJamClientManager",
-    ) as MCPJamClientManager;
+    const mcpJamClientManager = c.mcpJamClientManager;
 
     // Get prompts for specific server
     const serverPrompts = mcpJamClientManager.getPromptsForServer(serverId);
@@ -52,9 +49,7 @@ prompts.post("/get", async (c) => {
       );
     }
 
-    const mcpJamClientManager = c.get(
-      "mcpJamClientManager",
-    ) as MCPJamClientManager;
+    const mcpJamClientManager = c.mcpJamClientManager;
 
     // Get prompt content directly - servers are already connected
     const content = await mcpJamClientManager.getPrompt(
