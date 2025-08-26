@@ -390,7 +390,12 @@ class MCPJamClientManager {
     if (!tool)
       throw new Error(`Tool '${name}' not found in server '${serverId}'`);
 
-    const result = await tool.execute({ context: parameters || {} });
+    // Check if this is an elicitation tool (they expect parameters directly, not wrapped in context)
+    const isElicitationTool = name.includes('elicit_information') || name.includes('elicitation');
+    
+    const result = isElicitationTool 
+      ? await tool.execute(parameters || {})
+      : await tool.execute({ context: parameters || {} });
     return { result };
   }
 
