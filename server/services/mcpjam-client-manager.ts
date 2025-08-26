@@ -1,7 +1,5 @@
 import { MCPClient, MastraMCPServerDefinition } from "@mastra/mcp";
-import {
-  validateServerConfig,
-} from "../utils/mcp-utils";
+import { validateServerConfig } from "../utils/mcp-utils";
 
 export type ConnectionStatus =
   | "disconnected"
