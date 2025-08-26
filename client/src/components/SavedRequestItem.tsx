@@ -11,13 +11,13 @@ interface SavedRequestItemProps {
   onDelete: (id: string) => void;
 }
 
-export function SavedRequestItem({ 
-  request, 
-  isHighlighted, 
-  onLoad, 
-  onRename, 
-  onDuplicate, 
-  onDelete 
+export function SavedRequestItem({
+  request,
+  isHighlighted,
+  onLoad,
+  onRename,
+  onDuplicate,
+  onDelete,
 }: SavedRequestItemProps) {
   return (
     <div
@@ -36,9 +36,7 @@ export function SavedRequestItem({
             </code>
           </div>
           <div>
-            <div className="text-xs font-medium truncate">
-              {request.title}
-            </div>
+            <div className="text-xs font-medium truncate">{request.title}</div>
             {request.description && (
               <div className="text-[10px] text-muted-foreground truncate">
                 {request.description}
