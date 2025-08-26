@@ -142,8 +142,18 @@ export function createMCPClient(
 export interface MultipleValidationResult {
   success: boolean;
   validConfigs?: Record<string, MastraMCPServerDefinition>;
+  serverNameMapping?: Record<string, string>; // serverID -> originalName
   errors?: Record<string, string>;
   error?: HonoErrorResponse;
+}
+
+// Generate unique server ID that avoids collisions
+function generateUniqueServerID(serverName: string): string {
+  // Use normalized name as base + timestamp + random suffix to ensure uniqueness
+  const normalizedBase = normalizeServerConfigName(serverName);
+  const timestamp = Date.now().toString(36);
+  const random = Math.random().toString(36).substring(2, 8);
+  return `${normalizedBase}_${timestamp}_${random}`;
 }
 
 export const validateMultipleServerConfigs = (
@@ -160,6 +170,7 @@ export const validateMultipleServerConfigs = (
   }
 
   const validConfigs: Record<string, MastraMCPServerDefinition> = {};
+  const serverNameMapping: Record<string, string> = {};
   const errors: Record<string, string> = {};
   let hasErrors = false;
 
@@ -168,18 +179,18 @@ export const validateMultipleServerConfigs = (
     const validationResult = validateServerConfig(serverConfig);
 
     if (validationResult.success && validationResult.config) {
-      // Use normalized server name as the key for consistent lookup
-      const normalizedServerName = normalizeServerConfigName(serverName);
-      validConfigs[normalizedServerName] = validationResult.config;
+      // Generate unique server ID to avoid collisions from normalized names
+      const serverID = generateUniqueServerID(serverName);
+      validConfigs[serverID] = validationResult.config;
+      serverNameMapping[serverID] = serverName; // Map serverID back to original name
     } else {
       hasErrors = true;
       let errorMessage = "Configuration validation failed";
       if (validationResult.error) {
         errorMessage = validationResult.error.message;
       }
-      // Use normalized server name for error keys too for consistency
-      const normalizedServerName = normalizeServerConfigName(serverName);
-      errors[normalizedServerName] = errorMessage;
+      // Use original server name for error keys since this is for user display
+      errors[serverName] = errorMessage;
     }
   }
 
@@ -188,6 +199,7 @@ export const validateMultipleServerConfigs = (
     return {
       success: true,
       validConfigs,
+      serverNameMapping,
     };
   }
 
@@ -196,6 +208,7 @@ export const validateMultipleServerConfigs = (
     return {
       success: false,
       validConfigs,
+      serverNameMapping,
       errors,
     };
   }
