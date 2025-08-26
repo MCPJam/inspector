@@ -18,14 +18,7 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "./ui/resizable";
-import {
-  Wrench,
-  Play,
-  RefreshCw,
-  ChevronRight,
-  CheckCircle,
-  XCircle,
-} from "lucide-react";
+import { Wrench, Play, RefreshCw, CheckCircle, XCircle } from "lucide-react";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import type { MCPToolType } from "@mastra/core/mcp";
@@ -36,6 +29,8 @@ import { validateToolOutput } from "@/lib/schema-utils";
 import { SearchInput } from "@/components/ui/search-input";
 import { UIResourceRenderer } from "@mcp-ui/client";
 import SaveRequestDialog from "./SaveRequestDialog";
+import { ToolItem } from "./ToolItem";
+import { SavedRequestItem } from "./SavedRequestItem";
 import {
   listSavedRequests,
   saveRequest,
@@ -94,7 +89,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   >(undefined);
   const [unstructuredValidationResult, setUnstructuredValidationResult] =
     useState<"not_applicable" | "valid" | "invalid_json" | "schema_mismatch">(
-      "not_applicable"
+      "not_applicable",
     );
   const [loading, setLoading] = useState(false);
   const [fetchingTools, setFetchingTools] = useState(false);
@@ -104,6 +99,10 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     useState<ElicitationRequest | null>(null);
   const [elicitationLoading, setElicitationLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [activeTab, setActiveTab] = useState<"tools" | "saved">("tools");
+  const [highlightedRequestId, setHighlightedRequestId] = useState<
+    string | null
+  >(null);
   const serverKey = useMemo(() => {
     if (!serverConfig) return "none";
     try {
@@ -277,7 +276,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       logger.error(
         "Tools fetch network error",
         { error: errorMsg },
-        err instanceof Error ? err : undefined
+        err instanceof Error ? err : undefined,
       );
       setError("Network error fetching tools");
     } finally {
@@ -366,8 +365,8 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   const updateFieldValue = (fieldName: string, value: any) => {
     setFormFields((prev) =>
       prev.map((field) =>
-        field.name === fieldName ? { ...field, value } : field
-      )
+        field.name === fieldName ? { ...field, value } : field,
+      ),
     );
   };
 
@@ -382,7 +381,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
           return { ...field, value: raw };
         }
         return field;
-      })
+      }),
     );
   };
 
@@ -526,7 +525,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                 setResult(result);
                 if (result.structuredContent) {
                   setStructuredResult(
-                    result.structuredContent as Record<string, unknown>
+                    result.structuredContent as Record<string, unknown>,
                   );
                   setShowStructured(true);
                 }
@@ -537,11 +536,11 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
 
                   const validationReport = validateToolOutput(
                     result,
-                    outputSchema
+                    outputSchema,
                   );
                   setValidationErrors(validationReport.structuredErrors);
                   setUnstructuredValidationResult(
-                    validationReport.unstructuredStatus
+                    validationReport.unstructuredStatus,
                   );
 
                   if (validationReport.structuredErrors) {
@@ -549,7 +548,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                       "Schema validation failed for structuredContent",
                       {
                         errors: validationReport.structuredErrors,
-                      }
+                      },
                     );
                   }
                   if (
@@ -557,7 +556,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                     validationReport.unstructuredStatus === "schema_mismatch"
                   ) {
                     logger.warn(
-                      `Validation failed for raw content: ${validationReport.unstructuredStatus}`
+                      `Validation failed for raw content: ${validationReport.unstructuredStatus}`,
                     );
                   }
                 }
@@ -597,7 +596,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
           toolName: selectedTool,
           error: errorMsg,
         },
-        err instanceof Error ? err : undefined
+        err instanceof Error ? err : undefined,
       );
       setError("Error executing tool");
     } finally {
@@ -624,8 +623,12 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   };
 
   const handleDuplicateRequest = (req: SavedRequest) => {
-    duplicateRequest(serverKey, req.id);
+    const duplicated = duplicateRequest(serverKey, req.id);
     setSavedRequests(listSavedRequests(serverKey));
+    if (duplicated && duplicated.id) {
+      setHighlightedRequestId(duplicated.id);
+      setTimeout(() => setHighlightedRequestId(null), 2000);
+    }
   };
 
   const handleRenameRequest = (req: SavedRequest) => {
@@ -638,7 +641,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
 
   const handleElicitationResponse = async (
     action: "accept" | "decline" | "cancel",
-    parameters?: Record<string, any>
+    parameters?: Record<string, any>,
   ) => {
     if (!elicitationRequest) {
       logger.warn("Cannot handle elicitation response: no active request");
@@ -692,7 +695,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
           action,
           error: errorMsg,
         },
-        err instanceof Error ? err : undefined
+        err instanceof Error ? err : undefined,
       );
       setError("Error responding to elicitation request");
     } finally {
@@ -708,6 +711,684 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         return haystack.includes(searchQuery.trim().toLowerCase());
       })
     : toolNames;
+
+  const renderLeftPanel = () => {
+    return (
+      <ResizablePanel defaultSize={35} minSize={20} maxSize={55}>
+        <div className="h-full border-r border-border bg-background">
+          {/* Tab Navigation */}
+          <div className="border-b border-border">
+            <div className="flex">
+              <button
+                onClick={() => setActiveTab("tools")}
+                className={`px-4 py-3 text-xs font-medium border-b-2 transition-colors ${
+                  activeTab === "tools"
+                    ? "border-primary text-primary"
+                    : "border-transparent text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Tools
+              </button>
+              <button
+                onClick={() => setActiveTab("saved")}
+                className={`px-4 py-3 text-xs font-medium border-b-2 transition-colors ${
+                  activeTab === "saved"
+                    ? "border-primary text-primary"
+                    : "border-transparent text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Saved Requests
+                {savedRequests.length > 0 && (
+                  <span className="ml-2 bg-muted text-muted-foreground rounded px-1.5 py-0.5 text-xs font-mono">
+                    {savedRequests.length}
+                  </span>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Tab Content */}
+          {activeTab === "tools" ? (
+            <div className="h-[calc(100%-49px)] flex flex-col">
+              {/* Tools Header */}
+              <div className="px-4 py-4 border-b border-border bg-background space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <Wrench className="h-3 w-3 text-muted-foreground" />
+                    <h2 className="text-xs font-semibold text-foreground">
+                      Tools
+                    </h2>
+                    <Badge variant="secondary" className="text-xs font-mono">
+                      {toolNames.length}
+                    </Badge>
+                  </div>
+                  <Button
+                    onClick={fetchTools}
+                    variant="ghost"
+                    size="sm"
+                    disabled={fetchingTools}
+                  >
+                    <RefreshCw
+                      className={`h-3 w-3 ${fetchingTools ? "animate-spin" : ""} cursor-pointer`}
+                    />
+                  </Button>
+                </div>
+                <SearchInput
+                  value={searchQuery}
+                  onValueChange={setSearchQuery}
+                  placeholder="Search tools by name or description"
+                />
+              </div>
+
+              {/* Tools List */}
+              <div className="flex-1 overflow-hidden">
+                <ScrollArea className="h-full">
+                  <div className="p-2">
+                    {fetchingTools ? (
+                      <div className="flex flex-col items-center justify-center py-16 text-center">
+                        <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center mb-3">
+                          <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin cursor-pointer" />
+                        </div>
+                        <p className="text-xs text-muted-foreground font-semibold mb-1">
+                          Loading tools...
+                        </p>
+                        <p className="text-xs text-muted-foreground/70">
+                          Fetching available tools from server
+                        </p>
+                      </div>
+                    ) : filteredToolNames.length === 0 ? (
+                      <div className="text-center py-8">
+                        <p className="text-sm text-muted-foreground">
+                          {toolNames.length === 0
+                            ? "No tools available"
+                            : "No tools match your search"}
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        {filteredToolNames.map((name) => (
+                          <ToolItem
+                            key={name}
+                            tool={tools[name]}
+                            name={name}
+                            isSelected={selectedTool === name}
+                            onClick={() => setSelectedTool(name)}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </ScrollArea>
+              </div>
+            </div>
+          ) : (
+            <div className="h-[calc(100%-49px)] flex flex-col">
+              {/* Saved Requests Header */}
+              <div className="px-4 py-4 border-b border-border bg-background space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <h2 className="text-xs font-semibold text-foreground">
+                      Saved Requests
+                    </h2>
+                    <Badge variant="secondary" className="text-xs font-mono">
+                      {savedRequests.length}
+                    </Badge>
+                  </div>
+                </div>
+              </div>
+
+              {/* Saved Requests List */}
+              <div className="flex-1 overflow-hidden">
+                <ScrollArea className="h-full">
+                  <div className="p-2 space-y-1">
+                    {savedRequests.length === 0 ? (
+                      <div className="text-center py-16">
+                        <p className="text-xs text-muted-foreground">
+                          No saved requests
+                        </p>
+                      </div>
+                    ) : (
+                      savedRequests.map((request) => (
+                        <SavedRequestItem
+                          key={request.id}
+                          request={request}
+                          isHighlighted={highlightedRequestId === request.id}
+                          onLoad={handleLoadRequest}
+                          onRename={handleRenameRequest}
+                          onDuplicate={handleDuplicateRequest}
+                          onDelete={handleDeleteRequest}
+                        />
+                      ))
+                    )}
+                  </div>
+                </ScrollArea>
+              </div>
+            </div>
+          )}
+        </div>
+      </ResizablePanel>
+    );
+  };
+
+  const renderRightPanel = () => {
+    return (
+      <ResizablePanel defaultSize={70} minSize={50}>
+        <div className="h-full flex flex-col bg-background">
+          {selectedTool ? (
+            <>
+              {/* Header */}
+              <div className="flex items-center justify-between px-6 py-5 border-b border-border bg-background">
+                <div className="space-y-2">
+                  <div className="flex items-center gap-3">
+                    <code className="font-mono font-semibold text-foreground bg-muted px-2 py-1 rounded-md border border-border text-xs">
+                      {selectedTool}
+                    </code>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    onClick={executeTool}
+                    disabled={loading || !selectedTool}
+                    className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm transition-all duration-200 cursor-pointer"
+                    size="sm"
+                  >
+                    {loading ? (
+                      <>
+                        <RefreshCw className="h-3 w-3 mr-1.5 animate-spin cursor-pointer" />
+                        <span className="font-mono text-xs">
+                          {elicitationRequest ? "Waiting..." : "Running"}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <Play className="h-3 w-3 mr-1.5 cursor-pointer" />
+                        <span className="font-mono text-xs">Execute</span>
+                      </>
+                    )}
+                  </Button>
+                  <Button
+                    onClick={handleSaveCurrent}
+                    variant="outline"
+                    size="sm"
+                    disabled={!selectedTool}
+                  >
+                    <SaveIcon className="h-3 w-3 mr-1" />
+                    <span className="font-mono text-xs">Save</span>
+                  </Button>
+                </div>
+              </div>
+
+              {/* Description */}
+              {tools[selectedTool]?.description && (
+                <div className="px-6 py-4 bg-muted/50 border-b border-border">
+                  <TruncatedText
+                    text={tools[selectedTool].description}
+                    title={tools[selectedTool].name}
+                    maxLength={400}
+                  />
+                </div>
+              )}
+
+              {/* Parameters */}
+              <div className="flex-1 overflow-hidden">
+                <ScrollArea className="h-full">
+                  <div className="px-6 py-6">
+                    {formFields.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center py-16 text-center">
+                        <div className="w-10 h-10 bg-muted rounded-full flex items-center justify-center mb-3">
+                          <Play className="h-4 w-4 text-muted-foreground" />
+                        </div>
+                        <p className="text-xs text-muted-foreground font-semibold mb-1">
+                          No parameters required
+                        </p>
+                        <p className="text-xs text-muted-foreground/70">
+                          This tool can be executed directly
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-8">
+                        {formFields.map((field) => (
+                          <div key={field.name} className="group">
+                            <div className="flex items-start justify-between mb-3">
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-3">
+                                  <code className="font-mono text-xs font-semibold text-foreground bg-muted px-1.5 py-0.5 rounded border border-border">
+                                    {field.name}
+                                  </code>
+                                  {field.required && (
+                                    <div
+                                      className="w-1.5 h-1.5 bg-amber-400 dark:bg-amber-500 rounded-full"
+                                      title="Required field"
+                                    />
+                                  )}
+                                </div>
+                                {field.description && (
+                                  <p className="text-xs text-muted-foreground leading-relaxed max-w-md font-medium">
+                                    {field.description}
+                                  </p>
+                                )}
+                              </div>
+                              <Badge
+                                variant="secondary"
+                                className="text-xs font-mono font-medium"
+                              >
+                                {field.type}
+                              </Badge>
+                            </div>
+
+                            <div className="space-y-2">
+                              {field.type === "enum" ? (
+                                <Select
+                                  value={field.value}
+                                  onValueChange={(value) =>
+                                    updateFieldValue(field.name, value)
+                                  }
+                                >
+                                  <SelectTrigger className="w-full bg-background border-border hover:border-border/80 focus:border-ring focus:ring-0 font-medium text-xs">
+                                    <SelectValue
+                                      placeholder="Select an option"
+                                      className="font-mono text-xs"
+                                    />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {field.enum?.map((option) => (
+                                      <SelectItem
+                                        key={option}
+                                        value={option}
+                                        className="font-mono text-xs"
+                                      >
+                                        {option}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              ) : field.type === "boolean" ? (
+                                <div className="flex items-center space-x-3 py-2">
+                                  <input
+                                    type="checkbox"
+                                    checked={field.value}
+                                    onChange={(e) =>
+                                      updateFieldValue(
+                                        field.name,
+                                        e.target.checked,
+                                      )
+                                    }
+                                    className="w-4 h-4 text-primary bg-background border-border rounded focus:ring-ring focus:ring-2"
+                                  />
+                                  <span className="text-xs text-foreground font-medium">
+                                    {field.value ? "Enabled" : "Disabled"}
+                                  </span>
+                                </div>
+                              ) : field.type === "array" ||
+                                field.type === "object" ? (
+                                <Textarea
+                                  value={
+                                    typeof field.value === "string"
+                                      ? field.value
+                                      : JSON.stringify(field.value, null, 2)
+                                  }
+                                  onChange={(e) =>
+                                    updateFieldValue(field.name, e.target.value)
+                                  }
+                                  placeholder={`Enter ${field.type} as JSON`}
+                                  className="font-mono text-xs h-20 bg-background border-border hover:border-border/80 focus:border-ring focus:ring-0 resize-none"
+                                />
+                              ) : (
+                                <Input
+                                  type={
+                                    field.type === "number" ||
+                                    field.type === "integer"
+                                      ? "number"
+                                      : "text"
+                                  }
+                                  value={field.value}
+                                  onChange={(e) =>
+                                    updateFieldValue(field.name, e.target.value)
+                                  }
+                                  placeholder={`Enter ${field.name}`}
+                                  className="bg-background border-border hover:border-border/80 focus:border-ring focus:ring-0 font-medium text-xs"
+                                />
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </ScrollArea>
+              </div>
+            </>
+          ) : (
+            <div className="h-full flex items-center justify-center">
+              <div className="text-center">
+                <div className="w-12 h-12 bg-muted rounded-full flex items-center justify-center mx-auto mb-3">
+                  <Wrench className="h-5 w-5 text-muted-foreground" />
+                </div>
+                <p className="text-xs font-semibold text-foreground mb-1">
+                  Select a tool
+                </p>
+                <p className="text-xs text-muted-foreground font-medium">
+                  Choose a tool from the left to configure parameters
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      </ResizablePanel>
+    );
+  };
+
+  const renderResultsPanel = () => {
+    return (
+      <ResizablePanel defaultSize={40} minSize={15} maxSize={85}>
+        <div className="h-full flex flex-col border-t border-border bg-background">
+          {/* Header */}
+          <div className="flex items-center justify-between p-4 border-b border-border">
+            <div className="flex items-center gap-4">
+              <h2 className="text-xs font-semibold text-foreground">
+                Response
+              </h2>
+              {showStructured &&
+                validationErrors !== undefined &&
+                (validationErrors === null ? (
+                  <Badge
+                    variant="default"
+                    className="bg-green-600 hover:bg-green-700"
+                  >
+                    <CheckCircle className="h-3 w-3 mr-1.5" />
+                    Valid
+                  </Badge>
+                ) : (
+                  <Badge variant="destructive">
+                    <XCircle className="h-3 w-3 mr-1.5" />
+                    Invalid
+                  </Badge>
+                ))}
+            </div>
+
+            {structuredResult && (
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant={!showStructured ? "default" : "outline"}
+                  onClick={() => setShowStructured(false)}
+                >
+                  Raw Output
+                </Button>
+                <Button
+                  size="sm"
+                  variant={showStructured ? "default" : "outline"}
+                  onClick={() => setShowStructured(true)}
+                >
+                  Structured Output
+                </Button>
+              </div>
+            )}
+          </div>
+
+          {/* Content */}
+          <div className="flex-1 overflow-hidden">
+            {error ? (
+              <div className="p-4">
+                <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
+                  {error}
+                </div>
+              </div>
+            ) : showStructured && validationErrors ? (
+              <div className="p-4">
+                <h3 className="text-sm font-semibold text-destructive mb-2">
+                  Validation Errors
+                </h3>
+                <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-md">
+                  <JsonView
+                    src={validationErrors}
+                    theme="atom"
+                    dark={true}
+                    enableClipboard={true}
+                    displaySize={false}
+                    collapseStringsAfterLength={100}
+                    style={{
+                      fontSize: "12px",
+                      fontFamily:
+                        "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                      backgroundColor: "hsl(var(--background))",
+                      padding: "16px",
+                      borderRadius: "8px",
+                      border: "1px solid hsl(var(--border))",
+                    }}
+                  />
+                  <span className="text-sm font-semibold text-destructive mb-2">{`${validationErrors[0].instancePath.slice(1)} ${validationErrors[0].message}`}</span>
+                </div>
+              </div>
+            ) : showStructured &&
+              structuredResult &&
+              validationErrors === null ? (
+              <ScrollArea className="h-full">
+                <div className="p-4">
+                  <JsonView
+                    src={structuredResult}
+                    dark={true}
+                    theme="atom"
+                    enableClipboard={true}
+                    displaySize={false}
+                    collapseStringsAfterLength={100}
+                    style={{
+                      fontSize: "12px",
+                      fontFamily:
+                        "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                      backgroundColor: "hsl(var(--background))",
+                      padding: "16px",
+                      borderRadius: "8px",
+                      border: "1px solid hsl(var(--border))",
+                    }}
+                  />
+                </div>
+              </ScrollArea>
+            ) : result && !showStructured ? (
+              <div className="flex-1 overflow-auto">
+                <div className="p-4">
+                  {unstructuredValidationResult === "valid" && (
+                    <Badge
+                      variant="default"
+                      className="bg-green-600 hover:bg-green-700 mb-4"
+                    >
+                      <CheckCircle className="h-3 w-3 mr-1.5" />
+                      Success: Content matches the output schema.
+                    </Badge>
+                  )}
+                  {unstructuredValidationResult === "schema_mismatch" && (
+                    <Badge variant="destructive" className="mb-4">
+                      <XCircle className="h-3 w-3 mr-1.5" />
+                      Error: Content does not match the output schema.
+                    </Badge>
+                  )}
+                  {unstructuredValidationResult === "invalid_json" && (
+                    <Badge
+                      variant="destructive"
+                      className="bg-amber-600 hover:bg-amber-700 mb-4"
+                    >
+                      <XCircle className="h-3 w-3 mr-1.5" />
+                      Warning: Output schema provided by the tool is invalid.
+                    </Badge>
+                  )}
+                  {(() => {
+                    const uiRes = getUIResourceFromResult(result as any);
+                    if (uiRes) {
+                      return (
+                        <UIResourceRenderer
+                          resource={uiRes}
+                          htmlProps={{
+                            autoResizeIframe: true,
+                            style: {
+                              width: "100%",
+                              minHeight: "500px",
+                              height: "auto",
+                              overflow: "visible",
+                            },
+                          }}
+                          onUIAction={async (evt) => {
+                            logger.info("MCP-UI Action received", {
+                              type: evt.type,
+                              payload: evt.payload,
+                            });
+
+                            try {
+                              switch (evt.type) {
+                                case "tool":
+                                  if (evt.payload?.toolName) {
+                                    logger.info("Executing tool from MCP-UI", {
+                                      toolName: evt.payload.toolName,
+                                      params: evt.payload.params,
+                                    });
+
+                                    await fetch("/api/mcp/tools", {
+                                      method: "POST",
+                                      headers: {
+                                        "Content-Type": "application/json",
+                                      },
+                                      body: JSON.stringify({
+                                        action: "execute",
+                                        toolName: evt.payload.toolName,
+                                        parameters: evt.payload.params || {},
+                                        serverConfig: getServerConfig(),
+                                      }),
+                                    });
+                                  }
+                                  break;
+
+                                case "prompt":
+                                  if (evt.payload?.prompt) {
+                                    logger.info(
+                                      "Processing prompt from MCP-UI",
+                                      {
+                                        prompt: evt.payload.prompt,
+                                      },
+                                    );
+                                    // For now, just log the prompt
+                                    // In a full implementation, this could integrate with chat or other prompt handling
+                                    console.log(
+                                      "MCP-UI Prompt Request:",
+                                      evt.payload.prompt,
+                                    );
+                                  }
+                                  break;
+
+                                case "intent":
+                                  if (evt.payload?.intent) {
+                                    logger.info(
+                                      "Processing intent from MCP-UI",
+                                      {
+                                        intent: evt.payload.intent,
+                                        params: evt.payload.params,
+                                      },
+                                    );
+
+                                    // Try to handle intent by calling a handleIntent tool if it exists
+                                    try {
+                                      await fetch("/api/mcp/tools", {
+                                        method: "POST",
+                                        headers: {
+                                          "Content-Type": "application/json",
+                                        },
+                                        body: JSON.stringify({
+                                          action: "execute",
+                                          toolName: "handleIntent",
+                                          parameters: {
+                                            intent: evt.payload.intent,
+                                            params: evt.payload.params || {},
+                                          },
+                                          serverConfig: getServerConfig(),
+                                        }),
+                                      });
+                                    } catch (error) {
+                                      // If no handleIntent tool exists, just log the intent
+                                      logger.warn(
+                                        "No handleIntent tool available, intent logged only",
+                                        {
+                                          intent: evt.payload.intent,
+                                          error,
+                                        },
+                                      );
+                                    }
+                                  }
+                                  break;
+
+                                case "notify":
+                                  if (evt.payload?.message) {
+                                    logger.info("Notification from MCP-UI", {
+                                      message: evt.payload.message,
+                                    });
+                                    // Handle notifications - could show toast, update UI, etc.
+                                    console.log(
+                                      "MCP-UI Notification:",
+                                      evt.payload.message,
+                                    );
+                                  }
+                                  break;
+
+                                case "link":
+                                  if (evt.payload?.url) {
+                                    logger.info("Opening link from MCP-UI", {
+                                      url: evt.payload.url,
+                                    });
+                                    window.open(
+                                      evt.payload.url,
+                                      "_blank",
+                                      "noopener,noreferrer",
+                                    );
+                                  }
+                                  break;
+                                default:
+                                  logger.warn("Unknown MCP-UI action type", {});
+                              }
+                            } catch (error) {
+                              logger.error("Error handling MCP-UI action", {
+                                type: evt.type,
+                                payload: evt.payload,
+                                error:
+                                  error instanceof Error
+                                    ? error.message
+                                    : String(error),
+                              });
+                            }
+                          }}
+                        />
+                      );
+                    }
+                    return (
+                      <JsonView
+                        src={result}
+                        dark={true}
+                        theme="atom"
+                        enableClipboard={true}
+                        displaySize={false}
+                        collapseStringsAfterLength={100}
+                        style={{
+                          fontSize: "12px",
+                          fontFamily:
+                            "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                          backgroundColor: "hsl(var(--background))",
+                          padding: "16px",
+                          borderRadius: "8px",
+                          border: "1px solid hsl(var(--border))",
+                        }}
+                      />
+                    );
+                  })()}
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-full">
+                <p className="text-xs text-muted-foreground font-medium">
+                  Execute a tool to see results here
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      </ResizablePanel>
+    );
+  };
 
   if (!serverConfig) {
     return (
@@ -727,739 +1408,20 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         {/* Top Section - Tools and Parameters */}
         <ResizablePanel defaultSize={70} minSize={30}>
           <ResizablePanelGroup direction="horizontal" className="h-full">
-            {/* Left Panel - Saved Requests + Tools List */}
-            <ResizablePanel defaultSize={35} minSize={20} maxSize={55}>
-              <div className="h-full border-r border-border bg-background">
-                <ResizablePanelGroup direction="vertical" className="h-full">
-                  <ResizablePanel defaultSize={30} minSize={15} maxSize={60}>
-                    {/* Saved Requests */}
-                    <div className="px-4 py-4 border-b border-border bg-background space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <h2 className="text-xs font-semibold text-foreground">
-                            Saved Requests
-                          </h2>
-                          <Badge
-                            variant="secondary"
-                            className="text-xs font-mono"
-                          >
-                            {savedRequests.length}
-                          </Badge>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="h-[calc(100%-48px)] overflow-hidden">
-                      <ScrollArea className="h-full">
-                        <div className="p-2 space-y-1">
-                          {savedRequests.length === 0 ? (
-                            <div className="text-center py-6">
-                              <p className="text-xs text-muted-foreground">
-                                No saved requests
-                              </p>
-                            </div>
-                          ) : (
-                            savedRequests.map((request) => (
-                              <div
-                                key={request.id}
-                                className="group p-2 rounded hover:bg-muted/40 mx-2 cursor-pointer"
-                                onClick={() => handleLoadRequest(request)}
-                              >
-                                <div className="flex items-start justify-between">
-                                  <div className="min-w-0 pr-2">
-                                    <div className="flex items-center gap-2">
-                                      <code className="font-mono text-[10px] bg-muted px-1.5 py-0.5 rounded border border-border">
-                                        {request.toolName}
-                                      </code>
-                                    </div>
-                                    <div>
-                                      <div className="text-xs font-medium truncate">
-                                        {request.title}
-                                      </div>
-                                      {request.description && (
-                                        <div className="text-[10px] text-muted-foreground truncate">
-                                          {request.description}
-                                        </div>
-                                      )}
-                                    </div>
-                                  </div>
-                                  <div className="flex gap-1">
-                                    <Button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleRenameRequest(request);
-                                      }}
-                                      size="sm"
-                                      variant="ghost"
-                                      className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100"
-                                    >
-                                      <Edit2 className="w-3 h-3" />
-                                    </Button>
-                                    <Button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleDuplicateRequest(request);
-                                      }}
-                                      size="sm"
-                                      variant="ghost"
-                                      className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100"
-                                    >
-                                      <Copy className="w-3 h-3" />
-                                    </Button>
-                                    <Button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleDeleteRequest(request.id);
-                                      }}
-                                      size="sm"
-                                      variant="ghost"
-                                      className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100"
-                                    >
-                                      <Trash2 className="w-3 h-3" />
-                                    </Button>
-                                  </div>
-                                </div>
-                              </div>
-                            ))
-                          )}
-                        </div>
-                      </ScrollArea>
-                    </div>
-                  </ResizablePanel>
-                  <ResizableHandle withHandle />
-                  <ResizablePanel defaultSize={70} minSize={40}>
-                    {/* Tools Header */}
-                    <div className="px-4 py-4 border-b border-border bg-background space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <Wrench className="h-3 w-3 text-muted-foreground" />
-                          <h2 className="text-xs font-semibold text-foreground">
-                            Tools
-                          </h2>
-                          <Badge
-                            variant="secondary"
-                            className="text-xs font-mono"
-                          >
-                            {toolNames.length}
-                          </Badge>
-                        </div>
-                        <Button
-                          onClick={fetchTools}
-                          variant="ghost"
-                          size="sm"
-                          disabled={fetchingTools}
-                        >
-                          <RefreshCw
-                            className={`h-3 w-3 ${fetchingTools ? "animate-spin" : ""} cursor-pointer`}
-                          />
-                        </Button>
-                      </div>
-                      <SearchInput
-                        value={searchQuery}
-                        onValueChange={setSearchQuery}
-                        placeholder="Search tools by name or description"
-                      />
-                    </div>
-
-                    {/* Tools List */}
-                    <div className="h-[calc(100%-88px)] overflow-hidden">
-                      <ScrollArea className="h-full">
-                        <div className="p-2">
-                          {fetchingTools ? (
-                            <div className="flex flex-col items-center justify-center py-16 text-center">
-                              <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center mb-3">
-                                <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin cursor-pointer" />
-                              </div>
-                              <p className="text-xs text-muted-foreground font-semibold mb-1">
-                                Loading tools...
-                              </p>
-                              <p className="text-xs text-muted-foreground/70">
-                                Fetching available tools from server
-                              </p>
-                            </div>
-                          ) : filteredToolNames.length === 0 ? (
-                            <div className="text-center py-8">
-                              <p className="text-sm text-muted-foreground">
-                                {toolNames.length === 0
-                                  ? "No tools available"
-                                  : "No tools match your search"}
-                              </p>
-                            </div>
-                          ) : (
-                            <div className="space-y-1">
-                              {filteredToolNames.map((name) => (
-                                <div
-                                  key={name}
-                                  className={`cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${
-                                    selectedTool === name
-                                      ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
-                                      : "hover:shadow-sm"
-                                  }`}
-                                  onClick={() => {
-                                    setSelectedTool(name);
-                                  }}
-                                >
-                                  <div className="flex items-start gap-3">
-                                    <div className="flex-1 min-w-0">
-                                      <div className="flex items-center gap-2 mb-1">
-                                        <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border">
-                                          {name}
-                                        </code>
-                                      </div>
-                                      {tools[name]?.description && (
-                                        <p className="text-xs mt-2 line-clamp-2 leading-relaxed text-muted-foreground">
-                                          {tools[name].description}
-                                        </p>
-                                      )}
-                                    </div>
-                                    <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0 mt-1" />
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      </ScrollArea>
-                    </div>
-                  </ResizablePanel>
-                </ResizablePanelGroup>
-              </div>
-            </ResizablePanel>
+            {/* Left Panel - Tabbed Interface */}
+            {renderLeftPanel()}
 
             <ResizableHandle withHandle />
 
             {/* Right Panel - Parameters */}
-            <ResizablePanel defaultSize={70} minSize={50}>
-              <div className="h-full flex flex-col bg-background">
-                {selectedTool ? (
-                  <>
-                    {/* Header */}
-                    <div className="flex items-center justify-between px-6 py-5 border-b border-border bg-background">
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-3">
-                          <code className="font-mono font-semibold text-foreground bg-muted px-2 py-1 rounded-md border border-border text-xs">
-                            {selectedTool}
-                          </code>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          onClick={executeTool}
-                          disabled={loading || !selectedTool}
-                          className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm transition-all duration-200 cursor-pointer"
-                          size="sm"
-                        >
-                          {loading ? (
-                            <>
-                              <RefreshCw className="h-3 w-3 mr-1.5 animate-spin cursor-pointer" />
-                              <span className="font-mono text-xs">
-                                {elicitationRequest ? "Waiting..." : "Running"}
-                              </span>
-                            </>
-                          ) : (
-                            <>
-                              <Play className="h-3 w-3 mr-1.5 cursor-pointer" />
-                              <span className="font-mono text-xs">Execute</span>
-                            </>
-                          )}
-                        </Button>
-                        <Button
-                          onClick={handleSaveCurrent}
-                          variant="outline"
-                          size="sm"
-                          disabled={!selectedTool}
-                        >
-                          <SaveIcon className="h-3 w-3 mr-1" />
-                          <span className="font-mono text-xs">Save</span>
-                        </Button>
-                      </div>
-                    </div>
-
-                    {/* Description */}
-                    {tools[selectedTool]?.description && (
-                      <div className="px-6 py-4 bg-muted/50 border-b border-border">
-                        <TruncatedText
-                          text={tools[selectedTool].description}
-                          title={tools[selectedTool].name}
-                          maxLength={400}
-                        />
-                      </div>
-                    )}
-
-                    {/* Parameters */}
-                    <div className="flex-1 overflow-hidden">
-                      <ScrollArea className="h-full">
-                        <div className="px-6 py-6">
-                          {formFields.length === 0 ? (
-                            <div className="flex flex-col items-center justify-center py-16 text-center">
-                              <div className="w-10 h-10 bg-muted rounded-full flex items-center justify-center mb-3">
-                                <Play className="h-4 w-4 text-muted-foreground" />
-                              </div>
-                              <p className="text-xs text-muted-foreground font-semibold mb-1">
-                                No parameters required
-                              </p>
-                              <p className="text-xs text-muted-foreground/70">
-                                This tool can be executed directly
-                              </p>
-                            </div>
-                          ) : (
-                            <div className="space-y-8">
-                              {formFields.map((field) => (
-                                <div key={field.name} className="group">
-                                  <div className="flex items-start justify-between mb-3">
-                                    <div className="space-y-1">
-                                      <div className="flex items-center gap-3">
-                                        <code className="font-mono text-xs font-semibold text-foreground bg-muted px-1.5 py-0.5 rounded border border-border">
-                                          {field.name}
-                                        </code>
-                                        {field.required && (
-                                          <div
-                                            className="w-1.5 h-1.5 bg-amber-400 dark:bg-amber-500 rounded-full"
-                                            title="Required field"
-                                          />
-                                        )}
-                                      </div>
-                                      {field.description && (
-                                        <p className="text-xs text-muted-foreground leading-relaxed max-w-md font-medium">
-                                          {field.description}
-                                        </p>
-                                      )}
-                                    </div>
-                                    <Badge
-                                      variant="secondary"
-                                      className="text-xs font-mono font-medium"
-                                    >
-                                      {field.type}
-                                    </Badge>
-                                  </div>
-
-                                  <div className="space-y-2">
-                                    {field.type === "enum" ? (
-                                      <Select
-                                        value={field.value}
-                                        onValueChange={(value) =>
-                                          updateFieldValue(field.name, value)
-                                        }
-                                      >
-                                        <SelectTrigger className="w-full bg-background border-border hover:border-border/80 focus:border-ring focus:ring-0 font-medium text-xs">
-                                          <SelectValue
-                                            placeholder="Select an option"
-                                            className="font-mono text-xs"
-                                          />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                          {field.enum?.map((option) => (
-                                            <SelectItem
-                                              key={option}
-                                              value={option}
-                                              className="font-mono text-xs"
-                                            >
-                                              {option}
-                                            </SelectItem>
-                                          ))}
-                                        </SelectContent>
-                                      </Select>
-                                    ) : field.type === "boolean" ? (
-                                      <div className="flex items-center space-x-3 py-2">
-                                        <input
-                                          type="checkbox"
-                                          checked={field.value}
-                                          onChange={(e) =>
-                                            updateFieldValue(
-                                              field.name,
-                                              e.target.checked
-                                            )
-                                          }
-                                          className="w-4 h-4 text-primary bg-background border-border rounded focus:ring-ring focus:ring-2"
-                                        />
-                                        <span className="text-xs text-foreground font-medium">
-                                          {field.value ? "Enabled" : "Disabled"}
-                                        </span>
-                                      </div>
-                                    ) : field.type === "array" ||
-                                      field.type === "object" ? (
-                                      <Textarea
-                                        value={
-                                          typeof field.value === "string"
-                                            ? field.value
-                                            : JSON.stringify(
-                                                field.value,
-                                                null,
-                                                2
-                                              )
-                                        }
-                                        onChange={(e) =>
-                                          updateFieldValue(
-                                            field.name,
-                                            e.target.value
-                                          )
-                                        }
-                                        placeholder={`Enter ${field.type} as JSON`}
-                                        className="font-mono text-xs h-20 bg-background border-border hover:border-border/80 focus:border-ring focus:ring-0 resize-none"
-                                      />
-                                    ) : (
-                                      <Input
-                                        type={
-                                          field.type === "number" ||
-                                          field.type === "integer"
-                                            ? "number"
-                                            : "text"
-                                        }
-                                        value={field.value}
-                                        onChange={(e) =>
-                                          updateFieldValue(
-                                            field.name,
-                                            e.target.value
-                                          )
-                                        }
-                                        placeholder={`Enter ${field.name}`}
-                                        className="bg-background border-border hover:border-border/80 focus:border-ring focus:ring-0 font-medium text-xs"
-                                      />
-                                    )}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      </ScrollArea>
-                    </div>
-                  </>
-                ) : (
-                  <div className="h-full flex items-center justify-center">
-                    <div className="text-center">
-                      <div className="w-12 h-12 bg-muted rounded-full flex items-center justify-center mx-auto mb-3">
-                        <Wrench className="h-5 w-5 text-muted-foreground" />
-                      </div>
-                      <p className="text-xs font-semibold text-foreground mb-1">
-                        Select a tool
-                      </p>
-                      <p className="text-xs text-muted-foreground font-medium">
-                        Choose a tool from the left to configure parameters
-                      </p>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </ResizablePanel>
+            {renderRightPanel()}
           </ResizablePanelGroup>
         </ResizablePanel>
 
         <ResizableHandle withHandle />
 
         {/* Bottom Panel - Results */}
-        <ResizablePanel defaultSize={40} minSize={15} maxSize={85}>
-          <div className="h-full flex flex-col border-t border-border bg-background">
-            {/* Header */}
-            <div className="flex items-center justify-between p-4 border-b border-border">
-              <div className="flex items-center gap-4">
-                <h2 className="text-xs font-semibold text-foreground">
-                  Response
-                </h2>
-                {showStructured &&
-                  validationErrors !== undefined &&
-                  (validationErrors === null ? (
-                    <Badge
-                      variant="default"
-                      className="bg-green-600 hover:bg-green-700"
-                    >
-                      <CheckCircle className="h-3 w-3 mr-1.5" />
-                      Valid
-                    </Badge>
-                  ) : (
-                    <Badge variant="destructive">
-                      <XCircle className="h-3 w-3 mr-1.5" />
-                      Invalid
-                    </Badge>
-                  ))}
-              </div>
-
-              {structuredResult && (
-                <div className="flex gap-2">
-                  <Button
-                    size="sm"
-                    variant={!showStructured ? "default" : "outline"}
-                    onClick={() => setShowStructured(false)}
-                  >
-                    Raw Output
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant={showStructured ? "default" : "outline"}
-                    onClick={() => setShowStructured(true)}
-                  >
-                    Structured Output
-                  </Button>
-                </div>
-              )}
-            </div>
-
-            {/* Content */}
-            <div className="flex-1 overflow-hidden">
-              {error ? (
-                <div className="p-4">
-                  <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
-                    {error}
-                  </div>
-                </div>
-              ) : showStructured && validationErrors ? (
-                <div className="p-4">
-                  <h3 className="text-sm font-semibold text-destructive mb-2">
-                    Validation Errors
-                  </h3>
-                  <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-md">
-                    <JsonView
-                      src={validationErrors}
-                      theme="atom"
-                      dark={true}
-                      enableClipboard={true}
-                      displaySize={false}
-                      collapseStringsAfterLength={100}
-                      style={{
-                        fontSize: "12px",
-                        fontFamily:
-                          "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                        backgroundColor: "hsl(var(--background))",
-                        padding: "16px",
-                        borderRadius: "8px",
-                        border: "1px solid hsl(var(--border))",
-                      }}
-                    />
-                    <span className="text-sm font-semibold text-destructive mb-2">{`${validationErrors[0].instancePath.slice(1)} ${validationErrors[0].message}`}</span>
-                  </div>
-                </div>
-              ) : showStructured &&
-                structuredResult &&
-                validationErrors === null ? (
-                <ScrollArea className="h-full">
-                  <div className="p-4">
-                    <JsonView
-                      src={structuredResult}
-                      dark={true}
-                      theme="atom"
-                      enableClipboard={true}
-                      displaySize={false}
-                      collapseStringsAfterLength={100}
-                      style={{
-                        fontSize: "12px",
-                        fontFamily:
-                          "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                        backgroundColor: "hsl(var(--background))",
-                        padding: "16px",
-                        borderRadius: "8px",
-                        border: "1px solid hsl(var(--border))",
-                      }}
-                    />
-                  </div>
-                </ScrollArea>
-              ) : result && !showStructured ? (
-                <div className="flex-1 overflow-auto">
-                  <div className="p-4">
-                    {unstructuredValidationResult === "valid" && (
-                      <Badge
-                        variant="default"
-                        className="bg-green-600 hover:bg-green-700 mb-4"
-                      >
-                        <CheckCircle className="h-3 w-3 mr-1.5" />
-                        Success: Content matches the output schema.
-                      </Badge>
-                    )}
-                    {unstructuredValidationResult === "schema_mismatch" && (
-                      <Badge variant="destructive" className="mb-4">
-                        <XCircle className="h-3 w-3 mr-1.5" />
-                        Error: Content does not match the output schema.
-                      </Badge>
-                    )}
-                    {unstructuredValidationResult === "invalid_json" && (
-                      <Badge
-                        variant="destructive"
-                        className="bg-amber-600 hover:bg-amber-700 mb-4"
-                      >
-                        <XCircle className="h-3 w-3 mr-1.5" />
-                        Warning: Output schema provided by the tool is invalid.
-                      </Badge>
-                    )}
-                    {(() => {
-                      const uiRes = getUIResourceFromResult(result as any);
-                      if (uiRes) {
-                        return (
-                          <UIResourceRenderer
-                            resource={uiRes}
-                            htmlProps={{
-                              autoResizeIframe: true,
-                              style: {
-                                width: "100%",
-                                minHeight: "500px",
-                                height: "auto",
-                                overflow: "visible",
-                              },
-                            }}
-                            onUIAction={async (evt) => {
-                              logger.info("MCP-UI Action received", {
-                                type: evt.type,
-                                payload: evt.payload,
-                              });
-
-                              try {
-                                switch (evt.type) {
-                                  case "tool":
-                                    if (evt.payload?.toolName) {
-                                      logger.info(
-                                        "Executing tool from MCP-UI",
-                                        {
-                                          toolName: evt.payload.toolName,
-                                          params: evt.payload.params,
-                                        }
-                                      );
-
-                                      await fetch("/api/mcp/tools", {
-                                        method: "POST",
-                                        headers: {
-                                          "Content-Type": "application/json",
-                                        },
-                                        body: JSON.stringify({
-                                          action: "execute",
-                                          toolName: evt.payload.toolName,
-                                          parameters: evt.payload.params || {},
-                                          serverConfig: getServerConfig(),
-                                        }),
-                                      });
-                                    }
-                                    break;
-
-                                  case "prompt":
-                                    if (evt.payload?.prompt) {
-                                      logger.info(
-                                        "Processing prompt from MCP-UI",
-                                        {
-                                          prompt: evt.payload.prompt,
-                                        }
-                                      );
-                                      // For now, just log the prompt
-                                      // In a full implementation, this could integrate with chat or other prompt handling
-                                      console.log(
-                                        "MCP-UI Prompt Request:",
-                                        evt.payload.prompt
-                                      );
-                                    }
-                                    break;
-
-                                  case "intent":
-                                    if (evt.payload?.intent) {
-                                      logger.info(
-                                        "Processing intent from MCP-UI",
-                                        {
-                                          intent: evt.payload.intent,
-                                          params: evt.payload.params,
-                                        }
-                                      );
-
-                                      // Try to handle intent by calling a handleIntent tool if it exists
-                                      try {
-                                        await fetch("/api/mcp/tools", {
-                                          method: "POST",
-                                          headers: {
-                                            "Content-Type": "application/json",
-                                          },
-                                          body: JSON.stringify({
-                                            action: "execute",
-                                            toolName: "handleIntent",
-                                            parameters: {
-                                              intent: evt.payload.intent,
-                                              params: evt.payload.params || {},
-                                            },
-                                            serverConfig: getServerConfig(),
-                                          }),
-                                        });
-                                      } catch (error) {
-                                        // If no handleIntent tool exists, just log the intent
-                                        logger.warn(
-                                          "No handleIntent tool available, intent logged only",
-                                          {
-                                            intent: evt.payload.intent,
-                                            error,
-                                          }
-                                        );
-                                      }
-                                    }
-                                    break;
-
-                                  case "notify":
-                                    if (evt.payload?.message) {
-                                      logger.info("Notification from MCP-UI", {
-                                        message: evt.payload.message,
-                                      });
-                                      // Handle notifications - could show toast, update UI, etc.
-                                      console.log(
-                                        "MCP-UI Notification:",
-                                        evt.payload.message
-                                      );
-                                    }
-                                    break;
-
-                                  case "link":
-                                    if (evt.payload?.url) {
-                                      logger.info("Opening link from MCP-UI", {
-                                        url: evt.payload.url,
-                                      });
-                                      window.open(
-                                        evt.payload.url,
-                                        "_blank",
-                                        "noopener,noreferrer"
-                                      );
-                                    }
-                                    break;
-                                  default:
-                                    logger.warn(
-                                      "Unknown MCP-UI action type",
-                                      {}
-                                    );
-                                }
-                              } catch (error) {
-                                logger.error("Error handling MCP-UI action", {
-                                  type: evt.type,
-                                  payload: evt.payload,
-                                  error:
-                                    error instanceof Error
-                                      ? error.message
-                                      : String(error),
-                                });
-                              }
-                            }}
-                          />
-                        );
-                      }
-                      return (
-                        <JsonView
-                          src={result}
-                          dark={true}
-                          theme="atom"
-                          enableClipboard={true}
-                          displaySize={false}
-                          collapseStringsAfterLength={100}
-                          style={{
-                            fontSize: "12px",
-                            fontFamily:
-                              "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                            backgroundColor: "hsl(var(--background))",
-                            padding: "16px",
-                            borderRadius: "8px",
-                            border: "1px solid hsl(var(--border))",
-                          }}
-                        />
-                      );
-                    })()}
-                  </div>
-                </div>
-              ) : (
-                <div className="flex items-center justify-center h-full">
-                  <p className="text-xs text-muted-foreground font-medium">
-                    Execute a tool to see results here
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
-        </ResizablePanel>
+        {renderResultsPanel()}
       </ResizablePanelGroup>
 
       <ElicitationDialog
@@ -1482,10 +1444,14 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
             setSavedRequests(listSavedRequests(serverKey));
             setEditingRequestId(null);
             setIsSaveDialogOpen(false);
+            // Switch to saved tab and highlight the edited request
+            setActiveTab("saved");
+            setHighlightedRequestId(editingRequestId);
+            setTimeout(() => setHighlightedRequestId(null), 2000);
             return;
           }
           const params = buildParameters();
-          saveRequest(serverKey, {
+          const newRequest = saveRequest(serverKey, {
             title,
             description,
             toolName: selectedTool,
@@ -1493,6 +1459,12 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
           });
           setSavedRequests(listSavedRequests(serverKey));
           setIsSaveDialogOpen(false);
+          // Switch to saved tab and highlight the new request
+          setActiveTab("saved");
+          if (newRequest && newRequest.id) {
+            setHighlightedRequestId(newRequest.id);
+            setTimeout(() => setHighlightedRequestId(null), 2000);
+          }
         }}
       />
     </div>
