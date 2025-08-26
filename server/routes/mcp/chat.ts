@@ -1,8 +1,5 @@
 import { Hono } from "hono";
-import {
-  validateMultipleServerConfigs,
-  createMCPClientWithMultipleConnections,
-} from "../../utils/mcp-utils";
+import { MCPJamClientManager } from "../../services/mcpjam-client-manager";
 import { Agent } from "@mastra/core/agent";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
@@ -12,7 +9,6 @@ import {
   ModelDefinition,
   ModelProvider,
 } from "../../../shared/types";
-import { MCPClient } from "@mastra/mcp";
 import { ContentfulStatusCode } from "hono/utils/http-status";
 import { TextEncoder } from "util";
 import { getDefaultTemperatureByProvider } from "../../../client/src/lib/chat-utils";
@@ -73,6 +69,9 @@ try {
 
 // Store for pending elicitation requests
 const pendingElicitations = new Map<string, PendingElicitation>();
+
+// Shared MCPJamClientManager instance for chat
+const mcpClientManager = new MCPJamClientManager();
 
 const chat = new Hono();
 
@@ -458,8 +457,6 @@ const createStreamingResponse = async (
 
 // Main chat endpoint
 chat.post("/", async (c) => {
-  let client: MCPClient | null = null;
-
   try {
     const requestData: ChatRequest = await c.req.json();
     const {
@@ -514,7 +511,7 @@ chat.post("/", async (c) => {
       );
     }
 
-    // Validate and create MCP client
+    // Connect to servers through MCPJamClientManager
     if (!serverConfigs || Object.keys(serverConfigs).length === 0) {
       return c.json(
         {
@@ -525,23 +522,42 @@ chat.post("/", async (c) => {
       );
     }
 
-    const validation = validateMultipleServerConfigs(serverConfigs);
-    if (!validation.success) {
-      dbg(
-        "Server config validation failed",
-        validation.errors || validation.error,
-      );
+    // Connect to each server using MCPJamClientManager
+    const serverErrors: Record<string, string> = {};
+    const connectedServers: string[] = [];
+    
+    for (const [serverName, serverConfig] of Object.entries(serverConfigs)) {
+      try {
+        await mcpClientManager.connectToServer(serverName, serverConfig);
+        connectedServers.push(serverName);
+        dbg("Connected to server", { serverName });
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        serverErrors[serverName] = errorMessage;
+        dbg("Failed to connect to server", { serverName, error: errorMessage });
+      }
+    }
+
+    // Check if any servers connected successfully
+    if (connectedServers.length === 0) {
       return c.json(
         {
           success: false,
-          error: validation.error!.message,
-          details: validation.errors,
+          error: "Failed to connect to any servers",
+          details: serverErrors,
         },
-        validation.error!.status as ContentfulStatusCode,
+        400,
       );
     }
 
-    client = createMCPClientWithMultipleConnections(validation.validConfigs!);
+    // Log warnings for failed connections but continue with successful ones
+    if (Object.keys(serverErrors).length > 0) {
+      dbg("Some servers failed to connect", { 
+        connectedServers, 
+        failedServers: Object.keys(serverErrors),
+        errors: serverErrors 
+      });
+    }
 
     // Create LLM model
     const llmModel = createLlmModel(model, apiKey, ollamaBaseUrl);
@@ -560,10 +576,27 @@ chat.post("/", async (c) => {
       content: msg.content,
     }));
 
-    // Get toolsets for dynamic tool resolution
-    const toolsets = await client.getToolsets();
+    // Get available tools from all connected servers
+    const allTools = mcpClientManager.getAvailableTools();
+    const toolsByServer: Record<string, any> = {};
+    
+    // Group tools by server for the agent
+    for (const tool of allTools) {
+      if (!toolsByServer[tool.serverId]) {
+        toolsByServer[tool.serverId] = {};
+      }
+      toolsByServer[tool.serverId][tool.name] = {
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+        execute: async (params: any) => {
+          return await mcpClientManager.executeToolDirect(`${tool.serverId}:${tool.name}`, params);
+        }
+      };
+    }
+    
     dbg("Streaming start", {
-      toolsetServers: Object.keys(toolsets),
+      connectedServers,
+      toolCount: allTools.length,
       messageCount: formattedMessages.length,
     });
 
@@ -602,28 +635,19 @@ chat.post("/", async (c) => {
               : undefined,
         });
 
-        // Register elicitation handler
-        if (client?.elicitation?.onRequest) {
-          for (const serverName of Object.keys(validation.validConfigs!)) {
-            // serverName is already normalized by validateMultipleServerConfigs
-            const elicitationHandler =
-              createElicitationHandler(streamingContext);
-            client.elicitation.onRequest(serverName, elicitationHandler);
-          }
-        }
+        // Register elicitation handler with MCPJamClientManager
+        mcpClientManager.setElicitationCallback(async (request) => {
+          return await createElicitationHandler(streamingContext)(request);
+        });
 
         try {
-          if (client) {
-            await createStreamingResponse(
-              streamingAgent,
-              formattedMessages,
-              toolsets,
-              streamingContext,
-              provider,
-            );
-          } else {
-            throw new Error("MCP client is null");
-          }
+          await createStreamingResponse(
+            streamingAgent,
+            formattedMessages,
+            toolsByServer,
+            streamingContext,
+            provider,
+          );
         } catch (error) {
           controller.enqueue(
             encoder.encode(
@@ -649,7 +673,9 @@ chat.post("/", async (c) => {
     });
   } catch (error) {
     console.error("[mcp/chat] Error in chat API:", error);
-    await safeDisconnect(client);
+    
+    // Clear elicitation callback on error
+    mcpClientManager.clearElicitationCallback();
 
     return c.json(
       {

@@ -65,17 +65,24 @@ export interface PromptResult {
   content: any;
 }
 
-function normalizeServerId(serverId: string) {
-  return serverId
+function generateUniqueServerId(serverId: string) {
+  // Generate unique server ID that avoids collisions
+  const normalizedBase = serverId
     .toLowerCase()
     .replace(/[\s\-]+/g, "_")
     .replace(/[^a-z0-9_]/g, "");
+  const timestamp = Date.now().toString(36);
+  const random = Math.random().toString(36).substring(2, 8);
+  return `${normalizedBase}_${timestamp}_${random}`;
 }
 
 class MCPJamClientManager {
   private mcpClients: Map<string, MCPClient> = new Map();
   private statuses: Map<string, ConnectionStatus> = new Map();
   private configs: Map<string, MastraMCPServerDefinition> = new Map();
+  
+  // Map original server names to unique IDs
+  private serverIdMapping: Map<string, string> = new Map();
 
   private toolRegistry: Map<string, DiscoveredTool> = new Map();
   private resourceRegistry: Map<string, DiscoveredResource> = new Map();
@@ -97,10 +104,24 @@ class MCPJamClientManager {
     schema: any;
   }) => Promise<ElicitationResponse>;
 
-  async connectToServer(serverId: string, serverConfig: any): Promise<void> {
-    const id = normalizeServerId(serverId);
+  // Helper method to get unique ID for a server name
+  private getServerUniqueId(serverName: string): string | undefined {
+    return this.serverIdMapping.get(serverName);
+  }
 
-    // Check if already connected
+  // Public method to get server ID for external use (like frontend)
+  getServerIdForName(serverName: string): string | undefined {
+    return this.serverIdMapping.get(serverName);
+  }
+
+  async connectToServer(serverId: string, serverConfig: any): Promise<void> {
+    // Generate unique ID for this server to avoid collisions
+    const id = generateUniqueServerId(serverId);
+    
+    // Store the mapping
+    this.serverIdMapping.set(serverId, id);
+
+    // Check if already connected (shouldn't happen with unique IDs, but keep for safety)
     if (this.mcpClients.has(id)) return;
 
     // Validate server configuration
@@ -147,7 +168,9 @@ class MCPJamClientManager {
   }
 
   async disconnectFromServer(serverId: string): Promise<void> {
-    const id = normalizeServerId(serverId);
+    const id = this.getServerUniqueId(serverId);
+    if (!id) return; // Server not found
+    
     const client = this.mcpClients.get(id);
     if (client) {
       try {
@@ -156,6 +179,8 @@ class MCPJamClientManager {
     }
     this.mcpClients.delete(id);
     this.statuses.set(id, "disconnected");
+    this.serverIdMapping.delete(serverId); // Clean up the mapping
+    
     // purge registries for this server
     for (const key of Array.from(this.toolRegistry.keys())) {
       const item = this.toolRegistry.get(key)!;
@@ -172,8 +197,8 @@ class MCPJamClientManager {
   }
 
   getConnectionStatus(serverId: string): ConnectionStatus {
-    const id = normalizeServerId(serverId);
-    return this.statuses.get(id) || "disconnected";
+    const id = this.getServerUniqueId(serverId);
+    return id ? this.statuses.get(id) || "disconnected" : "disconnected";
   }
 
   getConnectedServers(): Record<
@@ -199,7 +224,8 @@ class MCPJamClientManager {
   }
 
   private async discoverServerResources(serverId: string): Promise<void> {
-    const id = normalizeServerId(serverId);
+    const id = this.getServerUniqueId(serverId);
+    if (!id) return;
     const client = this.mcpClients.get(id);
     if (!client) return;
 
@@ -252,7 +278,10 @@ class MCPJamClientManager {
   }
 
   async getToolsetsForServer(serverId: string): Promise<Record<string, any>> {
-    const id = normalizeServerId(serverId);
+    const id = this.getServerUniqueId(serverId);
+    if (!id) {
+      throw new Error(`No MCP client available for server: ${serverId}`);
+    }
     const client = this.mcpClients.get(id);
     if (!client) {
       throw new Error(`No MCP client available for server: ${serverId}`);
@@ -274,7 +303,8 @@ class MCPJamClientManager {
   }
 
   getResourcesForServer(serverId: string): DiscoveredResource[] {
-    const id = normalizeServerId(serverId);
+    const id = this.getServerUniqueId(serverId);
+    if (!id) return [];
     return Array.from(this.resourceRegistry.values()).filter(
       (r) => r.serverId === id,
     );
@@ -285,7 +315,8 @@ class MCPJamClientManager {
   }
 
   getPromptsForServer(serverId: string): DiscoveredPrompt[] {
-    const id = normalizeServerId(serverId);
+    const id = this.getServerUniqueId(serverId);
+    if (!id) return [];
     return Array.from(this.promptRegistry.values()).filter(
       (p) => p.serverId === id,
     );
@@ -301,7 +332,7 @@ class MCPJamClientManager {
 
     if (toolName.includes(":")) {
       const [sid, n] = toolName.split(":", 2);
-      serverId = normalizeServerId(sid);
+      serverId = this.getServerUniqueId(sid) || "";
       name = n;
     } else {
       // Find which server has this tool by checking un-prefixed name
