@@ -205,13 +205,13 @@ class MCPJamClientManager {
     string,
     { status: ConnectionStatus; config?: any }
   > {
-    const servers: Record<string, { status: ConnectionStatus; config?: any }> =
-      {};
+    const servers: Record<string, { status: ConnectionStatus; config?: any }> = {};
 
-    for (const [serverId, status] of this.statuses.entries()) {
-      servers[serverId] = {
-        status,
-        config: this.configs.get(serverId),
+    // Return data keyed by the original server names provided by callers
+    for (const [originalName, uniqueId] of this.serverIdMapping.entries()) {
+      servers[originalName] = {
+        status: this.statuses.get(uniqueId) || "disconnected",
+        config: this.configs.get(uniqueId),
       };
     }
 
@@ -248,7 +248,7 @@ class MCPJamClientManager {
     // Resources
     try {
       const res = await client.resources.list();
-      for (const [group, list] of Object.entries<any>(res)) {
+      for (const [, list] of Object.entries<any>(res)) {
         for (const r of list as any[]) {
           this.resourceRegistry.set(`${serverId}:${r.uri}`, {
             uri: r.uri,
@@ -264,7 +264,7 @@ class MCPJamClientManager {
     // Prompts
     try {
       const prompts = await client.prompts.list();
-      for (const [group, list] of Object.entries<any>(prompts)) {
+      for (const [, list] of Object.entries<any>(prompts)) {
         for (const p of list as any[]) {
           this.promptRegistry.set(`${serverId}:${p.name}`, {
             name: p.name,
@@ -340,7 +340,7 @@ class MCPJamClientManager {
       name = n;
     } else {
       // Find which server has this tool by checking un-prefixed name
-      for (const [key, tool] of this.toolRegistry.entries()) {
+      for (const tool of this.toolRegistry.values()) {
         if (tool.name === toolName) {
           serverId = tool.serverId;
           name = toolName;
