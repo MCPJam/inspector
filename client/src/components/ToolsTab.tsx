@@ -94,7 +94,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   >(undefined);
   const [unstructuredValidationResult, setUnstructuredValidationResult] =
     useState<"not_applicable" | "valid" | "invalid_json" | "schema_mismatch">(
-      "not_applicable",
+      "not_applicable"
     );
   const [loading, setLoading] = useState(false);
   const [fetchingTools, setFetchingTools] = useState(false);
@@ -104,6 +104,10 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     useState<ElicitationRequest | null>(null);
   const [elicitationLoading, setElicitationLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [activeTab, setActiveTab] = useState<"tools" | "saved">("tools");
+  const [highlightedRequestId, setHighlightedRequestId] = useState<
+    string | null
+  >(null);
   const serverKey = useMemo(() => {
     if (!serverConfig) return "none";
     try {
@@ -277,7 +281,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       logger.error(
         "Tools fetch network error",
         { error: errorMsg },
-        err instanceof Error ? err : undefined,
+        err instanceof Error ? err : undefined
       );
       setError("Network error fetching tools");
     } finally {
@@ -366,8 +370,8 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   const updateFieldValue = (fieldName: string, value: any) => {
     setFormFields((prev) =>
       prev.map((field) =>
-        field.name === fieldName ? { ...field, value } : field,
-      ),
+        field.name === fieldName ? { ...field, value } : field
+      )
     );
   };
 
@@ -382,7 +386,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
           return { ...field, value: raw };
         }
         return field;
-      }),
+      })
     );
   };
 
@@ -526,7 +530,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                 setResult(result);
                 if (result.structuredContent) {
                   setStructuredResult(
-                    result.structuredContent as Record<string, unknown>,
+                    result.structuredContent as Record<string, unknown>
                   );
                   setShowStructured(true);
                 }
@@ -537,11 +541,11 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
 
                   const validationReport = validateToolOutput(
                     result,
-                    outputSchema,
+                    outputSchema
                   );
                   setValidationErrors(validationReport.structuredErrors);
                   setUnstructuredValidationResult(
-                    validationReport.unstructuredStatus,
+                    validationReport.unstructuredStatus
                   );
 
                   if (validationReport.structuredErrors) {
@@ -549,7 +553,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                       "Schema validation failed for structuredContent",
                       {
                         errors: validationReport.structuredErrors,
-                      },
+                      }
                     );
                   }
                   if (
@@ -557,7 +561,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                     validationReport.unstructuredStatus === "schema_mismatch"
                   ) {
                     logger.warn(
-                      `Validation failed for raw content: ${validationReport.unstructuredStatus}`,
+                      `Validation failed for raw content: ${validationReport.unstructuredStatus}`
                     );
                   }
                 }
@@ -597,7 +601,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
           toolName: selectedTool,
           error: errorMsg,
         },
-        err instanceof Error ? err : undefined,
+        err instanceof Error ? err : undefined
       );
       setError("Error executing tool");
     } finally {
@@ -624,8 +628,12 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   };
 
   const handleDuplicateRequest = (req: SavedRequest) => {
-    duplicateRequest(serverKey, req.id);
+    const duplicated = duplicateRequest(serverKey, req.id);
     setSavedRequests(listSavedRequests(serverKey));
+    if (duplicated && duplicated.id) {
+      setHighlightedRequestId(duplicated.id);
+      setTimeout(() => setHighlightedRequestId(null), 2000);
+    }
   };
 
   const handleRenameRequest = (req: SavedRequest) => {
@@ -638,7 +646,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
 
   const handleElicitationResponse = async (
     action: "accept" | "decline" | "cancel",
-    parameters?: Record<string, any>,
+    parameters?: Record<string, any>
   ) => {
     if (!elicitationRequest) {
       logger.warn("Cannot handle elicitation response: no active request");
@@ -692,7 +700,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
           action,
           error: errorMsg,
         },
-        err instanceof Error ? err : undefined,
+        err instanceof Error ? err : undefined
       );
       setError("Error responding to elicitation request");
     } finally {
@@ -727,12 +735,140 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         {/* Top Section - Tools and Parameters */}
         <ResizablePanel defaultSize={70} minSize={30}>
           <ResizablePanelGroup direction="horizontal" className="h-full">
-            {/* Left Panel - Saved Requests + Tools List */}
+            {/* Left Panel - Tabbed Interface */}
             <ResizablePanel defaultSize={35} minSize={20} maxSize={55}>
               <div className="h-full border-r border-border bg-background">
-                <ResizablePanelGroup direction="vertical" className="h-full">
-                  <ResizablePanel defaultSize={30} minSize={15} maxSize={60}>
-                    {/* Saved Requests */}
+                {/* Tab Navigation */}
+                <div className="border-b border-border">
+                  <div className="flex">
+                    <button
+                      onClick={() => setActiveTab("tools")}
+                      className={`px-4 py-3 text-xs font-medium border-b-2 transition-colors ${
+                        activeTab === "tools"
+                          ? "border-primary text-primary"
+                          : "border-transparent text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      Tools
+                    </button>
+                    <button
+                      onClick={() => setActiveTab("saved")}
+                      className={`px-4 py-3 text-xs font-medium border-b-2 transition-colors ${
+                        activeTab === "saved"
+                          ? "border-primary text-primary"
+                          : "border-transparent text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      Saved Requests
+                      {savedRequests.length > 0 && (
+                        <span className="ml-2 bg-muted text-muted-foreground rounded px-1.5 py-0.5 text-xs font-mono">
+                          {savedRequests.length}
+                        </span>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Tab Content */}
+                {activeTab === "tools" ? (
+                  <div className="h-[calc(100%-49px)] flex flex-col">
+                    {/* Tools Header */}
+                    <div className="px-4 py-4 border-b border-border bg-background space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <Wrench className="h-3 w-3 text-muted-foreground" />
+                          <h2 className="text-xs font-semibold text-foreground">
+                            Tools
+                          </h2>
+                          <Badge
+                            variant="secondary"
+                            className="text-xs font-mono"
+                          >
+                            {toolNames.length}
+                          </Badge>
+                        </div>
+                        <Button
+                          onClick={fetchTools}
+                          variant="ghost"
+                          size="sm"
+                          disabled={fetchingTools}
+                        >
+                          <RefreshCw
+                            className={`h-3 w-3 ${fetchingTools ? "animate-spin" : ""} cursor-pointer`}
+                          />
+                        </Button>
+                      </div>
+                      <SearchInput
+                        value={searchQuery}
+                        onValueChange={setSearchQuery}
+                        placeholder="Search tools by name or description"
+                      />
+                    </div>
+
+                    {/* Tools List */}
+                    <div className="flex-1 overflow-hidden">
+                      <ScrollArea className="h-full">
+                        <div className="p-2">
+                          {fetchingTools ? (
+                            <div className="flex flex-col items-center justify-center py-16 text-center">
+                              <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center mb-3">
+                                <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin cursor-pointer" />
+                              </div>
+                              <p className="text-xs text-muted-foreground font-semibold mb-1">
+                                Loading tools...
+                              </p>
+                              <p className="text-xs text-muted-foreground/70">
+                                Fetching available tools from server
+                              </p>
+                            </div>
+                          ) : filteredToolNames.length === 0 ? (
+                            <div className="text-center py-8">
+                              <p className="text-sm text-muted-foreground">
+                                {toolNames.length === 0
+                                  ? "No tools available"
+                                  : "No tools match your search"}
+                              </p>
+                            </div>
+                          ) : (
+                            <div className="space-y-1">
+                              {filteredToolNames.map((name) => (
+                                <div
+                                  key={name}
+                                  className={`cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${
+                                    selectedTool === name
+                                      ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
+                                      : "hover:shadow-sm"
+                                  }`}
+                                  onClick={() => {
+                                    setSelectedTool(name);
+                                  }}
+                                >
+                                  <div className="flex items-start gap-3">
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-2 mb-1">
+                                        <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border">
+                                          {name}
+                                        </code>
+                                      </div>
+                                      {tools[name]?.description && (
+                                        <p className="text-xs mt-2 line-clamp-2 leading-relaxed text-muted-foreground">
+                                          {tools[name].description}
+                                        </p>
+                                      )}
+                                    </div>
+                                    <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0 mt-1" />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </ScrollArea>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="h-[calc(100%-49px)] flex flex-col">
+                    {/* Saved Requests Header */}
                     <div className="px-4 py-4 border-b border-border bg-background space-y-3">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
@@ -748,11 +884,13 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                         </div>
                       </div>
                     </div>
-                    <div className="h-[calc(100%-48px)] overflow-hidden">
+
+                    {/* Saved Requests List */}
+                    <div className="flex-1 overflow-hidden">
                       <ScrollArea className="h-full">
                         <div className="p-2 space-y-1">
                           {savedRequests.length === 0 ? (
-                            <div className="text-center py-6">
+                            <div className="text-center py-16">
                               <p className="text-xs text-muted-foreground">
                                 No saved requests
                               </p>
@@ -761,8 +899,14 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                             savedRequests.map((request) => (
                               <div
                                 key={request.id}
-                                className="group p-2 rounded hover:bg-muted/40 mx-2 cursor-pointer"
-                                onClick={() => handleLoadRequest(request)}
+                                className={`group p-2 rounded mx-2 cursor-pointer transition-all duration-200 ${
+                                  highlightedRequestId === request.id
+                                    ? "bg-primary/20 border border-primary/30 shadow-sm"
+                                    : "hover:bg-muted/40"
+                                }`}
+                                onClick={() => {
+                                  handleLoadRequest(request);
+                                }}
                               >
                                 <div className="flex items-start justify-between">
                                   <div className="min-w-0 pr-2">
@@ -824,104 +968,8 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                         </div>
                       </ScrollArea>
                     </div>
-                  </ResizablePanel>
-                  <ResizableHandle withHandle />
-                  <ResizablePanel defaultSize={70} minSize={40}>
-                    {/* Tools Header */}
-                    <div className="px-4 py-4 border-b border-border bg-background space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <Wrench className="h-3 w-3 text-muted-foreground" />
-                          <h2 className="text-xs font-semibold text-foreground">
-                            Tools
-                          </h2>
-                          <Badge
-                            variant="secondary"
-                            className="text-xs font-mono"
-                          >
-                            {toolNames.length}
-                          </Badge>
-                        </div>
-                        <Button
-                          onClick={fetchTools}
-                          variant="ghost"
-                          size="sm"
-                          disabled={fetchingTools}
-                        >
-                          <RefreshCw
-                            className={`h-3 w-3 ${fetchingTools ? "animate-spin" : ""} cursor-pointer`}
-                          />
-                        </Button>
-                      </div>
-                      <SearchInput
-                        value={searchQuery}
-                        onValueChange={setSearchQuery}
-                        placeholder="Search tools by name or description"
-                      />
-                    </div>
-
-                    {/* Tools List */}
-                    <div className="h-[calc(100%-88px)] overflow-hidden">
-                      <ScrollArea className="h-full">
-                        <div className="p-2">
-                          {fetchingTools ? (
-                            <div className="flex flex-col items-center justify-center py-16 text-center">
-                              <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center mb-3">
-                                <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin cursor-pointer" />
-                              </div>
-                              <p className="text-xs text-muted-foreground font-semibold mb-1">
-                                Loading tools...
-                              </p>
-                              <p className="text-xs text-muted-foreground/70">
-                                Fetching available tools from server
-                              </p>
-                            </div>
-                          ) : filteredToolNames.length === 0 ? (
-                            <div className="text-center py-8">
-                              <p className="text-sm text-muted-foreground">
-                                {toolNames.length === 0
-                                  ? "No tools available"
-                                  : "No tools match your search"}
-                              </p>
-                            </div>
-                          ) : (
-                            <div className="space-y-1">
-                              {filteredToolNames.map((name) => (
-                                <div
-                                  key={name}
-                                  className={`cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${
-                                    selectedTool === name
-                                      ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
-                                      : "hover:shadow-sm"
-                                  }`}
-                                  onClick={() => {
-                                    setSelectedTool(name);
-                                  }}
-                                >
-                                  <div className="flex items-start gap-3">
-                                    <div className="flex-1 min-w-0">
-                                      <div className="flex items-center gap-2 mb-1">
-                                        <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border">
-                                          {name}
-                                        </code>
-                                      </div>
-                                      {tools[name]?.description && (
-                                        <p className="text-xs mt-2 line-clamp-2 leading-relaxed text-muted-foreground">
-                                          {tools[name].description}
-                                        </p>
-                                      )}
-                                    </div>
-                                    <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0 mt-1" />
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      </ScrollArea>
-                    </div>
-                  </ResizablePanel>
-                </ResizablePanelGroup>
+                  </div>
+                )}
               </div>
             </ResizablePanel>
 
@@ -1066,7 +1114,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                                           onChange={(e) =>
                                             updateFieldValue(
                                               field.name,
-                                              e.target.checked,
+                                              e.target.checked
                                             )
                                           }
                                           className="w-4 h-4 text-primary bg-background border-border rounded focus:ring-ring focus:ring-2"
@@ -1084,13 +1132,13 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                                             : JSON.stringify(
                                                 field.value,
                                                 null,
-                                                2,
+                                                2
                                               )
                                         }
                                         onChange={(e) =>
                                           updateFieldValue(
                                             field.name,
-                                            e.target.value,
+                                            e.target.value
                                           )
                                         }
                                         placeholder={`Enter ${field.type} as JSON`}
@@ -1108,7 +1156,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                                         onChange={(e) =>
                                           updateFieldValue(
                                             field.name,
-                                            e.target.value,
+                                            e.target.value
                                           )
                                         }
                                         placeholder={`Enter ${field.name}`}
@@ -1319,7 +1367,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                                 window.open(
                                   evt.payload.url,
                                   "_blank",
-                                  "noopener,noreferrer",
+                                  "noopener,noreferrer"
                                 );
                               }
                             }}
@@ -1380,10 +1428,14 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
             setSavedRequests(listSavedRequests(serverKey));
             setEditingRequestId(null);
             setIsSaveDialogOpen(false);
+            // Switch to saved tab and highlight the edited request
+            setActiveTab("saved");
+            setHighlightedRequestId(editingRequestId);
+            setTimeout(() => setHighlightedRequestId(null), 2000);
             return;
           }
           const params = buildParameters();
-          saveRequest(serverKey, {
+          const newRequest = saveRequest(serverKey, {
             title,
             description,
             toolName: selectedTool,
@@ -1391,6 +1443,12 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
           });
           setSavedRequests(listSavedRequests(serverKey));
           setIsSaveDialogOpen(false);
+          // Switch to saved tab and highlight the new request
+          setActiveTab("saved");
+          if (newRequest && newRequest.id) {
+            setHighlightedRequestId(newRequest.id);
+            setTimeout(() => setHighlightedRequestId(null), 2000);
+          }
         }}
       />
     </div>
