@@ -168,14 +168,18 @@ export const validateMultipleServerConfigs = (
     const validationResult = validateServerConfig(serverConfig);
 
     if (validationResult.success && validationResult.config) {
-      validConfigs[serverName] = validationResult.config;
+      // Use normalized server name as the key for consistent lookup
+      const normalizedServerName = normalizeServerConfigName(serverName);
+      validConfigs[normalizedServerName] = validationResult.config;
     } else {
       hasErrors = true;
       let errorMessage = "Configuration validation failed";
       if (validationResult.error) {
         errorMessage = validationResult.error.message;
       }
-      errors[serverName] = errorMessage;
+      // Use normalized server name for error keys too for consistency
+      const normalizedServerName = normalizeServerConfigName(serverName);
+      errors[normalizedServerName] = errorMessage;
     }
   }
 
