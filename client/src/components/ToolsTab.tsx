@@ -1195,7 +1195,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         <ResizableHandle withHandle />
 
         {/* Bottom Panel - Results */}
-        <ResizablePanel defaultSize={30} minSize={15} maxSize={70}>
+        <ResizablePanel defaultSize={40} minSize={15} maxSize={85}>
           <div className="h-full flex flex-col border-t border-border bg-background">
             {/* Header */}
             <div className="flex items-center justify-between p-4 border-b border-border">
@@ -1300,7 +1300,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                   </div>
                 </ScrollArea>
               ) : result && !showStructured ? (
-                <ScrollArea className="h-full">
+                <div className="flex-1 overflow-auto">
                   <div className="p-4">
                     {unstructuredValidationResult === "valid" && (
                       <Badge
@@ -1334,41 +1334,143 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                             resource={uiRes}
                             htmlProps={{
                               autoResizeIframe: true,
-                              style: { width: "100%", overflow: "visible" },
+                              style: {
+                                width: "100%",
+                                minHeight: "500px",
+                                height: "auto",
+                                overflow: "visible",
+                              },
                             }}
                             onUIAction={async (evt) => {
-                              if (
-                                evt.type === "tool" &&
-                                evt.payload?.toolName
-                              ) {
-                                try {
-                                  await fetch("/api/mcp/tools", {
-                                    method: "POST",
-                                    headers: {
-                                      "Content-Type": "application/json",
-                                    },
-                                    body: JSON.stringify({
-                                      action: "execute",
-                                      toolName: evt.payload.toolName,
-                                      parameters: evt.payload.params || {},
-                                      serverConfig: {
-                                        ...getServerConfig(),
-                                        name: serverName,
-                                      },
-                                    }),
-                                  });
-                                } catch {
-                                  // ignore
+                              logger.info("MCP-UI Action received", {
+                                type: evt.type,
+                                payload: evt.payload,
+                              });
+
+                              try {
+                                switch (evt.type) {
+                                  case "tool":
+                                    if (evt.payload?.toolName) {
+                                      logger.info(
+                                        "Executing tool from MCP-UI",
+                                        {
+                                          toolName: evt.payload.toolName,
+                                          params: evt.payload.params,
+                                        }
+                                      );
+
+                                      await fetch("/api/mcp/tools", {
+                                        method: "POST",
+                                        headers: {
+                                          "Content-Type": "application/json",
+                                        },
+                                        body: JSON.stringify({
+                                          action: "execute",
+                                          toolName: evt.payload.toolName,
+                                          parameters: evt.payload.params || {},
+                                          serverConfig: getServerConfig(),
+                                        }),
+                                      });
+                                    }
+                                    break;
+
+                                  case "prompt":
+                                    if (evt.payload?.prompt) {
+                                      logger.info(
+                                        "Processing prompt from MCP-UI",
+                                        {
+                                          prompt: evt.payload.prompt,
+                                        }
+                                      );
+                                      // For now, just log the prompt
+                                      // In a full implementation, this could integrate with chat or other prompt handling
+                                      console.log(
+                                        "MCP-UI Prompt Request:",
+                                        evt.payload.prompt
+                                      );
+                                    }
+                                    break;
+
+                                  case "intent":
+                                    if (evt.payload?.intent) {
+                                      logger.info(
+                                        "Processing intent from MCP-UI",
+                                        {
+                                          intent: evt.payload.intent,
+                                          params: evt.payload.params,
+                                        }
+                                      );
+
+                                      // Try to handle intent by calling a handleIntent tool if it exists
+                                      try {
+                                        await fetch("/api/mcp/tools", {
+                                          method: "POST",
+                                          headers: {
+                                            "Content-Type": "application/json",
+                                          },
+                                          body: JSON.stringify({
+                                            action: "execute",
+                                            toolName: "handleIntent",
+                                            parameters: {
+                                              intent: evt.payload.intent,
+                                              params: evt.payload.params || {},
+                                            },
+                                            serverConfig: getServerConfig(),
+                                          }),
+                                        });
+                                      } catch (error) {
+                                        // If no handleIntent tool exists, just log the intent
+                                        logger.warn(
+                                          "No handleIntent tool available, intent logged only",
+                                          {
+                                            intent: evt.payload.intent,
+                                            error,
+                                          }
+                                        );
+                                      }
+                                    }
+                                    break;
+
+                                  case "notify":
+                                    if (evt.payload?.message) {
+                                      logger.info("Notification from MCP-UI", {
+                                        message: evt.payload.message,
+                                      });
+                                      // Handle notifications - could show toast, update UI, etc.
+                                      console.log(
+                                        "MCP-UI Notification:",
+                                        evt.payload.message
+                                      );
+                                    }
+                                    break;
+
+                                  case "link":
+                                    if (evt.payload?.url) {
+                                      logger.info("Opening link from MCP-UI", {
+                                        url: evt.payload.url,
+                                      });
+                                      window.open(
+                                        evt.payload.url,
+                                        "_blank",
+                                        "noopener,noreferrer"
+                                      );
+                                    }
+                                    break;
+                                  default:
+                                    logger.warn(
+                                      "Unknown MCP-UI action type",
+                                      {}
+                                    );
                                 }
-                              } else if (
-                                evt.type === "link" &&
-                                evt.payload?.url
-                              ) {
-                                window.open(
-                                  evt.payload.url,
-                                  "_blank",
-                                  "noopener,noreferrer"
-                                );
+                              } catch (error) {
+                                logger.error("Error handling MCP-UI action", {
+                                  type: evt.type,
+                                  payload: evt.payload,
+                                  error:
+                                    error instanceof Error
+                                      ? error.message
+                                      : String(error),
+                                });
                               }
                             }}
                           />
@@ -1395,7 +1497,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                       );
                     })()}
                   </div>
-                </ScrollArea>
+                </div>
               ) : (
                 <div className="flex items-center justify-center h-full">
                   <p className="text-xs text-muted-foreground font-medium">
