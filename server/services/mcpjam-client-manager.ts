@@ -84,6 +84,9 @@ class MCPJamClientManager {
   // Map original server names to unique IDs
   private serverIdMapping: Map<string, string> = new Map();
 
+  // Track in-flight connections to avoid duplicate concurrent connects
+  private pendingConnections: Map<string, Promise<void>> = new Map();
+
   private toolRegistry: Map<string, DiscoveredTool> = new Map();
   private resourceRegistry: Map<string, DiscoveredResource> = new Map();
   private promptRegistry: Map<string, DiscoveredPrompt> = new Map();
@@ -115,56 +118,71 @@ class MCPJamClientManager {
   }
 
   async connectToServer(serverId: string, serverConfig: any): Promise<void> {
-    // Generate unique ID for this server to avoid collisions
-    const id = generateUniqueServerId(serverId);
-
-    // Store the mapping
-    this.serverIdMapping.set(serverId, id);
-
-    // Check if already connected (shouldn't happen with unique IDs, but keep for safety)
-    if (this.mcpClients.has(id)) return;
-
-    // Validate server configuration
-    const validation = validateServerConfig(serverConfig);
-    if (!validation.success) {
-      this.statuses.set(id, "error");
-      throw new Error(validation.error!.message);
+    // If a connection is already in-flight for this server name, wait for it
+    const pending = this.pendingConnections.get(serverId);
+    if (pending) {
+      await pending;
+      return;
     }
 
-    this.configs.set(id, validation.config!);
-    this.statuses.set(id, "connecting");
-
-    const client = new MCPClient({
-      id: `mcpjam-${id}`,
-      servers: { [id]: validation.config! },
-    });
-
-    try {
-      // touch the server to verify connection
-      await client.getTools();
-      this.mcpClients.set(id, client);
-      this.statuses.set(id, "connected");
-
-      // Register elicitation handler for this server
-      if (client.elicitation?.onRequest) {
-        // Use the already-normalized id instead of re-normalizing the original serverId
-        client.elicitation.onRequest(
-          id,
-          async (elicitationRequest: ElicitationRequest) => {
-            return await this.handleElicitationRequest(elicitationRequest);
-          },
-        );
+    const connectPromise = (async () => {
+      // Reuse existing unique ID for this server name if present; otherwise generate and map one
+      let id = this.serverIdMapping.get(serverId);
+      if (!id) {
+        id = generateUniqueServerId(serverId);
+        this.serverIdMapping.set(serverId, id);
       }
 
-      await this.discoverServerResources(id);
-    } catch (err) {
-      this.statuses.set(id, "error");
+      // If already connected, no-op
+      if (this.mcpClients.has(id)) return;
+
+      // Validate server configuration
+      const validation = validateServerConfig(serverConfig);
+      if (!validation.success) {
+        this.statuses.set(id, "error");
+        throw new Error(validation.error!.message);
+      }
+
+      this.configs.set(id, validation.config!);
+      this.statuses.set(id, "connecting");
+
+      const client = new MCPClient({
+        id: `mcpjam-${id}`,
+        servers: { [id]: validation.config! },
+      });
+
       try {
-        await client.disconnect();
-      } catch {}
-      this.mcpClients.delete(id);
-      throw err;
-    }
+        // touch the server to verify connection
+        await client.getTools();
+        this.mcpClients.set(id, client);
+        this.statuses.set(id, "connected");
+
+        // Register elicitation handler for this server
+        if (client.elicitation?.onRequest) {
+          client.elicitation.onRequest(
+            id,
+            async (elicitationRequest: ElicitationRequest) => {
+              return await this.handleElicitationRequest(elicitationRequest);
+            },
+          );
+        }
+
+        await this.discoverServerResources(id);
+      } catch (err) {
+        this.statuses.set(id, "error");
+        try {
+          await client.disconnect();
+        } catch {}
+        this.mcpClients.delete(id);
+        throw err;
+      }
+    })()
+      .finally(() => {
+        this.pendingConnections.delete(serverId);
+      });
+
+    this.pendingConnections.set(serverId, connectPromise);
+    await connectPromise;
   }
 
   async disconnectFromServer(serverId: string): Promise<void> {
