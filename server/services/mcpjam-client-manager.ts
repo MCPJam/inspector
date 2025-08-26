@@ -224,20 +224,19 @@ class MCPJamClientManager {
   }
 
   private async discoverServerResources(serverId: string): Promise<void> {
-    const id = this.getServerUniqueId(serverId);
-    if (!id) return;
-    const client = this.mcpClients.get(id);
+    // serverId is already the unique ID when called from connectToServer
+    const client = this.mcpClients.get(serverId);
     if (!client) return;
 
     // Tools
     const tools = await client.getTools();
     for (const [name, tool] of Object.entries<any>(tools)) {
-      this.toolRegistry.set(`${id}:${name}`, {
+      this.toolRegistry.set(`${serverId}:${name}`, {
         name,
         description: tool.description,
         inputSchema: tool.inputSchema,
         outputSchema: (tool as any).outputSchema,
-        serverId: id,
+        serverId: serverId,
       });
     }
 
@@ -246,12 +245,12 @@ class MCPJamClientManager {
       const res = await client.resources.list();
       for (const [group, list] of Object.entries<any>(res)) {
         for (const r of list as any[]) {
-          this.resourceRegistry.set(`${id}:${r.uri}`, {
+          this.resourceRegistry.set(`${serverId}:${r.uri}`, {
             uri: r.uri,
             name: r.name,
             description: r.description,
             mimeType: r.mimeType,
-            serverId: id,
+            serverId: serverId,
           });
         }
       }
@@ -262,11 +261,11 @@ class MCPJamClientManager {
       const prompts = await client.prompts.list();
       for (const [group, list] of Object.entries<any>(prompts)) {
         for (const p of list as any[]) {
-          this.promptRegistry.set(`${id}:${p.name}`, {
+          this.promptRegistry.set(`${serverId}:${p.name}`, {
             name: p.name,
             description: p.description,
             arguments: p.arguments,
-            serverId: id,
+            serverId: serverId,
           });
         }
       }
