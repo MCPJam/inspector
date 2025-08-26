@@ -625,7 +625,39 @@ chat.post("/", async (c) => {
 
         // Register elicitation handler with MCPJamClientManager
         mcpClientManager.setElicitationCallback(async (request) => {
-          return await createElicitationHandler(streamingContext)(request);
+          // Convert MCPJamClientManager format to createElicitationHandler format
+          const elicitationRequest = {
+            message: request.message,
+            requestedSchema: request.schema
+          };
+          
+          // Stream elicitation request to client using the provided requestId
+          if (streamingContext.controller && streamingContext.encoder) {
+            streamingContext.controller.enqueue(
+              streamingContext.encoder.encode(
+                `data: ${JSON.stringify({
+                  type: "elicitation_request",
+                  requestId: request.requestId,
+                  message: elicitationRequest.message,
+                  schema: elicitationRequest.requestedSchema,
+                  timestamp: new Date(),
+                })}\n\n`,
+              ),
+            );
+          }
+
+          // Return a promise that will be resolved when user responds
+          return new Promise<ElicitationResponse>((resolve, reject) => {
+            pendingElicitations.set(request.requestId, { resolve, reject });
+
+            // Set timeout to clean up if no response
+            setTimeout(() => {
+              if (pendingElicitations.has(request.requestId)) {
+                pendingElicitations.delete(request.requestId);
+                reject(new Error("Elicitation timeout"));
+              }
+            }, ELICITATION_TIMEOUT);
+          });
         });
 
         try {
@@ -646,6 +678,8 @@ chat.post("/", async (c) => {
             ),
           );
         } finally {
+          // Clear elicitation callback to prevent memory leaks
+          mcpClientManager.clearElicitationCallback();
           controller.close();
         }
       },
