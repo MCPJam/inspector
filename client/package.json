@@ -16,7 +16,7 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@hookform/resolvers": "^3.10.0",
-    "@mcp-ui/client": "^5.6.2",
+    "@mcp-ui/client": "^5.9.0",
     "@modelcontextprotocol/sdk": "^1.17.3",
     "@tanstack/react-query": "^5.83.0",
     "@tanstack/react-table": "^8.21.3",
