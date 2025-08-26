@@ -1,7 +1,6 @@
 import { MCPClient, MastraMCPServerDefinition } from "@mastra/mcp";
 import {
   validateServerConfig,
-  normalizeServerConfigName,
 } from "../utils/mcp-utils";
 
 export type ConnectionStatus =
@@ -129,9 +128,9 @@ class MCPJamClientManager {
 
       // Register elicitation handler for this server
       if (client.elicitation?.onRequest) {
-        const normalizedName = normalizeServerConfigName(serverId);
+        // Use the already-normalized id instead of re-normalizing the original serverId
         client.elicitation.onRequest(
-          normalizedName,
+          id,
           async (elicitationRequest: ElicitationRequest) => {
             return await this.handleElicitationRequest(elicitationRequest);
           },

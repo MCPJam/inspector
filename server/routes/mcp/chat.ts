@@ -2,7 +2,6 @@ import { Hono } from "hono";
 import {
   validateMultipleServerConfigs,
   createMCPClientWithMultipleConnections,
-  normalizeServerConfigName,
 } from "../../utils/mcp-utils";
 import { Agent } from "@mastra/core/agent";
 import { createAnthropic } from "@ai-sdk/anthropic";
@@ -605,11 +604,11 @@ chat.post("/", async (c) => {
 
         // Register elicitation handler
         if (client?.elicitation?.onRequest) {
-          for (const serverName of Object.keys(serverConfigs)) {
-            const normalizedName = normalizeServerConfigName(serverName);
+          for (const serverName of Object.keys(validation.validConfigs!)) {
+            // serverName is already normalized by validateMultipleServerConfigs
             const elicitationHandler =
               createElicitationHandler(streamingContext);
-            client.elicitation.onRequest(normalizedName, elicitationHandler);
+            client.elicitation.onRequest(serverName, elicitationHandler);
           }
         }
 
