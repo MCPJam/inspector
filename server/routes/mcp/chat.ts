@@ -400,7 +400,6 @@ const fallbackToCompletion = async (
   }
 };
 
-
 /**
  * Creates the streaming response for the chat
  */
@@ -513,14 +512,15 @@ chat.post("/", async (c) => {
     // Connect to each server using MCPJamClientManager
     const serverErrors: Record<string, string> = {};
     const connectedServers: string[] = [];
-    
+
     for (const [serverName, serverConfig] of Object.entries(serverConfigs)) {
       try {
         await mcpClientManager.connectToServer(serverName, serverConfig);
         connectedServers.push(serverName);
         dbg("Connected to server", { serverName });
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        const errorMessage =
+          error instanceof Error ? error.message : "Unknown error";
         serverErrors[serverName] = errorMessage;
         dbg("Failed to connect to server", { serverName, error: errorMessage });
       }
@@ -540,10 +540,10 @@ chat.post("/", async (c) => {
 
     // Log warnings for failed connections but continue with successful ones
     if (Object.keys(serverErrors).length > 0) {
-      dbg("Some servers failed to connect", { 
-        connectedServers, 
+      dbg("Some servers failed to connect", {
+        connectedServers,
         failedServers: Object.keys(serverErrors),
-        errors: serverErrors 
+        errors: serverErrors,
       });
     }
 
@@ -567,7 +567,7 @@ chat.post("/", async (c) => {
     // Get available tools from all connected servers
     const allTools = mcpClientManager.getAvailableTools();
     const toolsByServer: Record<string, any> = {};
-    
+
     // Group tools by server for the agent
     for (const tool of allTools) {
       if (!toolsByServer[tool.serverId]) {
@@ -577,11 +577,14 @@ chat.post("/", async (c) => {
         description: tool.description,
         inputSchema: tool.inputSchema,
         execute: async (params: any) => {
-          return await mcpClientManager.executeToolDirect(`${tool.serverId}:${tool.name}`, params);
-        }
+          return await mcpClientManager.executeToolDirect(
+            `${tool.serverId}:${tool.name}`,
+            params,
+          );
+        },
       };
     }
-    
+
     dbg("Streaming start", {
       connectedServers,
       toolCount: allTools.length,
@@ -628,9 +631,9 @@ chat.post("/", async (c) => {
           // Convert MCPJamClientManager format to createElicitationHandler format
           const elicitationRequest = {
             message: request.message,
-            requestedSchema: request.schema
+            requestedSchema: request.schema,
           };
-          
+
           // Stream elicitation request to client using the provided requestId
           if (streamingContext.controller && streamingContext.encoder) {
             streamingContext.controller.enqueue(
@@ -694,7 +697,7 @@ chat.post("/", async (c) => {
     });
   } catch (error) {
     console.error("[mcp/chat] Error in chat API:", error);
-    
+
     // Clear elicitation callback on error
     mcpClientManager.clearElicitationCallback();
 
