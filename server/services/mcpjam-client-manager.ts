@@ -176,10 +176,9 @@ class MCPJamClientManager {
         this.mcpClients.delete(id);
         throw err;
       }
-    })()
-      .finally(() => {
-        this.pendingConnections.delete(serverId);
-      });
+    })().finally(() => {
+      this.pendingConnections.delete(serverId);
+    });
 
     this.pendingConnections.set(serverId, connectPromise);
     await connectPromise;
@@ -223,7 +222,8 @@ class MCPJamClientManager {
     string,
     { status: ConnectionStatus; config?: any }
   > {
-    const servers: Record<string, { status: ConnectionStatus; config?: any }> = {};
+    const servers: Record<string, { status: ConnectionStatus; config?: any }> =
+      {};
 
     // Return data keyed by the original server names provided by callers
     for (const [originalName, uniqueId] of this.serverIdMapping.entries()) {
@@ -417,14 +417,21 @@ class MCPJamClientManager {
       schema &&
       typeof schema === "object" &&
       (schema as any).properties &&
-      Object.prototype.hasOwnProperty.call((schema as any).properties, "context");
+      Object.prototype.hasOwnProperty.call(
+        (schema as any).properties,
+        "context",
+      );
     const requiresContext =
       hasContextProperty ||
-      (schema && Array.isArray((schema as any).required) && (schema as any).required.includes("context"));
+      (schema &&
+        Array.isArray((schema as any).required) &&
+        (schema as any).required.includes("context"));
 
     const contextWrapped = { context: parameters || {} };
     const direct = parameters || {};
-    const attempts = requiresContext ? [contextWrapped, direct] : [direct, contextWrapped];
+    const attempts = requiresContext
+      ? [contextWrapped, direct]
+      : [direct, contextWrapped];
 
     let lastError: any = undefined;
     for (const args of attempts) {
