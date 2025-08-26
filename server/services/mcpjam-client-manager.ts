@@ -228,9 +228,14 @@ class MCPJamClientManager {
     const client = this.mcpClients.get(serverId);
     if (!client) return;
 
-    // Tools
-    const tools = await client.getTools();
-    for (const [name, tool] of Object.entries<any>(tools)) {
+    // Tools - use toolsets instead of getTools for consistency
+    const toolsets = await client.getToolsets();
+    const flattenedTools: Record<string, any> = {};
+    Object.values(toolsets).forEach((serverTools: any) => {
+      Object.assign(flattenedTools, serverTools);
+    });
+    
+    for (const [name, tool] of Object.entries<any>(flattenedTools)) {
       this.toolRegistry.set(`${serverId}:${name}`, {
         name,
         description: tool.description,
@@ -331,7 +336,7 @@ class MCPJamClientManager {
 
     if (toolName.includes(":")) {
       const [sid, n] = toolName.split(":", 2);
-      serverId = this.getServerUniqueId(sid) || "";
+      serverId = sid; // sid is already the unique server ID
       name = n;
     } else {
       // Find which server has this tool by checking un-prefixed name
