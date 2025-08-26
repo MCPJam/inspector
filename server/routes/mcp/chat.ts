@@ -400,18 +400,6 @@ const fallbackToCompletion = async (
   }
 };
 
-/**
- * Safely disconnects an MCP client
- */
-const safeDisconnect = async (client: MCPClient | null) => {
-  if (client) {
-    try {
-      await client.disconnect();
-    } catch (cleanupError) {
-      console.warn("[mcp/chat] Error cleaning up MCP client:", cleanupError);
-    }
-  }
-};
 
 /**
  * Creates the streaming response for the chat
@@ -614,7 +602,7 @@ chat.post("/", async (c) => {
 
         // Flatten toolsets into a single tools object for streaming wrapper
         const flattenedTools: Record<string, any> = {};
-        Object.values(toolsets).forEach((serverTools: any) => {
+        Object.values(toolsByServer).forEach((serverTools: any) => {
           Object.assign(flattenedTools, serverTools);
         });
 
@@ -658,7 +646,6 @@ chat.post("/", async (c) => {
             ),
           );
         } finally {
-          await safeDisconnect(client);
           controller.close();
         }
       },
