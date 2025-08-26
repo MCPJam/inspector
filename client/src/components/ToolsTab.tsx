@@ -94,7 +94,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   >(undefined);
   const [unstructuredValidationResult, setUnstructuredValidationResult] =
     useState<"not_applicable" | "valid" | "invalid_json" | "schema_mismatch">(
-      "not_applicable",
+      "not_applicable"
     );
   const [loading, setLoading] = useState(false);
   const [fetchingTools, setFetchingTools] = useState(false);
@@ -277,7 +277,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       logger.error(
         "Tools fetch network error",
         { error: errorMsg },
-        err instanceof Error ? err : undefined,
+        err instanceof Error ? err : undefined
       );
       setError("Network error fetching tools");
     } finally {
@@ -366,8 +366,8 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   const updateFieldValue = (fieldName: string, value: any) => {
     setFormFields((prev) =>
       prev.map((field) =>
-        field.name === fieldName ? { ...field, value } : field,
-      ),
+        field.name === fieldName ? { ...field, value } : field
+      )
     );
   };
 
@@ -382,7 +382,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
           return { ...field, value: raw };
         }
         return field;
-      }),
+      })
     );
   };
 
@@ -526,7 +526,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                 setResult(result);
                 if (result.structuredContent) {
                   setStructuredResult(
-                    result.structuredContent as Record<string, unknown>,
+                    result.structuredContent as Record<string, unknown>
                   );
                   setShowStructured(true);
                 }
@@ -537,11 +537,11 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
 
                   const validationReport = validateToolOutput(
                     result,
-                    outputSchema,
+                    outputSchema
                   );
                   setValidationErrors(validationReport.structuredErrors);
                   setUnstructuredValidationResult(
-                    validationReport.unstructuredStatus,
+                    validationReport.unstructuredStatus
                   );
 
                   if (validationReport.structuredErrors) {
@@ -549,7 +549,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                       "Schema validation failed for structuredContent",
                       {
                         errors: validationReport.structuredErrors,
-                      },
+                      }
                     );
                   }
                   if (
@@ -557,7 +557,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                     validationReport.unstructuredStatus === "schema_mismatch"
                   ) {
                     logger.warn(
-                      `Validation failed for raw content: ${validationReport.unstructuredStatus}`,
+                      `Validation failed for raw content: ${validationReport.unstructuredStatus}`
                     );
                   }
                 }
@@ -597,7 +597,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
           toolName: selectedTool,
           error: errorMsg,
         },
-        err instanceof Error ? err : undefined,
+        err instanceof Error ? err : undefined
       );
       setError("Error executing tool");
     } finally {
@@ -638,7 +638,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
 
   const handleElicitationResponse = async (
     action: "accept" | "decline" | "cancel",
-    parameters?: Record<string, any>,
+    parameters?: Record<string, any>
   ) => {
     if (!elicitationRequest) {
       logger.warn("Cannot handle elicitation response: no active request");
@@ -692,7 +692,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
           action,
           error: errorMsg,
         },
-        err instanceof Error ? err : undefined,
+        err instanceof Error ? err : undefined
       );
       setError("Error responding to elicitation request");
     } finally {
@@ -1066,7 +1066,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                                           onChange={(e) =>
                                             updateFieldValue(
                                               field.name,
-                                              e.target.checked,
+                                              e.target.checked
                                             )
                                           }
                                           className="w-4 h-4 text-primary bg-background border-border rounded focus:ring-ring focus:ring-2"
@@ -1084,13 +1084,13 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                                             : JSON.stringify(
                                                 field.value,
                                                 null,
-                                                2,
+                                                2
                                               )
                                         }
                                         onChange={(e) =>
                                           updateFieldValue(
                                             field.name,
-                                            e.target.value,
+                                            e.target.value
                                           )
                                         }
                                         placeholder={`Enter ${field.type} as JSON`}
@@ -1108,7 +1108,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                                         onChange={(e) =>
                                           updateFieldValue(
                                             field.name,
-                                            e.target.value,
+                                            e.target.value
                                           )
                                         }
                                         placeholder={`Enter ${field.name}`}
@@ -1286,28 +1286,31 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                             resource={uiRes}
                             htmlProps={{
                               autoResizeIframe: true,
-                              style: { 
-                                width: "100%", 
+                              style: {
+                                width: "100%",
                                 minHeight: "500px",
                                 height: "auto",
-                                overflow: "visible" 
+                                overflow: "visible",
                               },
                             }}
                             onUIAction={async (evt) => {
-                              logger.info("MCP-UI Action received", { 
-                                type: evt.type, 
-                                payload: evt.payload 
+                              logger.info("MCP-UI Action received", {
+                                type: evt.type,
+                                payload: evt.payload,
                               });
-                              
+
                               try {
                                 switch (evt.type) {
                                   case "tool":
                                     if (evt.payload?.toolName) {
-                                      logger.info("Executing tool from MCP-UI", {
-                                        toolName: evt.payload.toolName,
-                                        params: evt.payload.params
-                                      });
-                                      
+                                      logger.info(
+                                        "Executing tool from MCP-UI",
+                                        {
+                                          toolName: evt.payload.toolName,
+                                          params: evt.payload.params,
+                                        }
+                                      );
+
                                       await fetch("/api/mcp/tools", {
                                         method: "POST",
                                         headers: {
@@ -1322,25 +1325,34 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                                       });
                                     }
                                     break;
-                                    
+
                                   case "prompt":
                                     if (evt.payload?.prompt) {
-                                      logger.info("Processing prompt from MCP-UI", {
-                                        prompt: evt.payload.prompt
-                                      });
+                                      logger.info(
+                                        "Processing prompt from MCP-UI",
+                                        {
+                                          prompt: evt.payload.prompt,
+                                        }
+                                      );
                                       // For now, just log the prompt
                                       // In a full implementation, this could integrate with chat or other prompt handling
-                                      console.log("MCP-UI Prompt Request:", evt.payload.prompt);
+                                      console.log(
+                                        "MCP-UI Prompt Request:",
+                                        evt.payload.prompt
+                                      );
                                     }
                                     break;
-                                    
+
                                   case "intent":
                                     if (evt.payload?.intent) {
-                                      logger.info("Processing intent from MCP-UI", {
-                                        intent: evt.payload.intent,
-                                        params: evt.payload.params
-                                      });
-                                      
+                                      logger.info(
+                                        "Processing intent from MCP-UI",
+                                        {
+                                          intent: evt.payload.intent,
+                                          params: evt.payload.params,
+                                        }
+                                      );
+
                                       // Try to handle intent by calling a handleIntent tool if it exists
                                       try {
                                         await fetch("/api/mcp/tools", {
@@ -1353,104 +1365,63 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                                             toolName: "handleIntent",
                                             parameters: {
                                               intent: evt.payload.intent,
-                                              params: evt.payload.params || {}
+                                              params: evt.payload.params || {},
                                             },
                                             serverConfig: getServerConfig(),
                                           }),
                                         });
                                       } catch (error) {
                                         // If no handleIntent tool exists, just log the intent
-                                        logger.warn("No handleIntent tool available, intent logged only", {
-                                          intent: evt.payload.intent,
-                                          error
-                                        });
+                                        logger.warn(
+                                          "No handleIntent tool available, intent logged only",
+                                          {
+                                            intent: evt.payload.intent,
+                                            error,
+                                          }
+                                        );
                                       }
                                     }
                                     break;
-                                    
+
                                   case "notify":
                                     if (evt.payload?.message) {
                                       logger.info("Notification from MCP-UI", {
-                                        message: evt.payload.message
+                                        message: evt.payload.message,
                                       });
                                       // Handle notifications - could show toast, update UI, etc.
-                                      console.log("MCP-UI Notification:", evt.payload.message);
+                                      console.log(
+                                        "MCP-UI Notification:",
+                                        evt.payload.message
+                                      );
                                     }
                                     break;
-                                    
+
                                   case "link":
                                     if (evt.payload?.url) {
                                       logger.info("Opening link from MCP-UI", {
-                                        url: evt.payload.url
+                                        url: evt.payload.url,
                                       });
                                       window.open(
                                         evt.payload.url,
                                         "_blank",
-                                        "noopener,noreferrer",
+                                        "noopener,noreferrer"
                                       );
                                     }
                                     break;
-                                    
-                                  case "ui-request-data":
-                                    if (evt.payload?.requestType) {
-                                      logger.info("Data request from MCP-UI", {
-                                        requestType: evt.payload.requestType,
-                                        params: evt.payload.params,
-                                        messageId: evt.messageId
-                                      });
-                                      
-                                      // Try to handle data request by calling a handleDataRequest tool if it exists
-                                      try {
-                                        await fetch("/api/mcp/tools", {
-                                          method: "POST",
-                                          headers: {
-                                            "Content-Type": "application/json",
-                                          },
-                                          body: JSON.stringify({
-                                            action: "execute",
-                                            toolName: "handleDataRequest",
-                                            parameters: {
-                                              requestType: evt.payload.requestType,
-                                              params: evt.payload.params || {}
-                                            },
-                                            serverConfig: getServerConfig(),
-                                          }),
-                                        });
-                                      } catch (error) {
-                                        logger.warn("No handleDataRequest tool available", {
-                                          requestType: evt.payload.requestType,
-                                          error
-                                        });
-                                      }
-                                    }
-                                    break;
-                                    
-                                  case "ui-lifecycle-iframe-ready":
-                                    logger.info("MCP-UI iframe ready");
-                                    // Handle iframe ready - could send render data if needed
-                                    break;
-                                    
-                                  case "ui-size-change":
-                                    if (evt.payload?.width && evt.payload?.height) {
-                                      logger.info("MCP-UI size change", {
-                                        width: evt.payload.width,
-                                        height: evt.payload.height
-                                      });
-                                      // Handle size changes - could adjust container if needed
-                                    }
-                                    break;
-                                    
                                   default:
-                                    logger.warn("Unknown MCP-UI action type", {
-                                      type: evt.type,
-                                      payload: evt.payload
-                                    });
+                                    logger.warn(
+                                      "Unknown MCP-UI action type",
+                                      {}
+                                    );
                                 }
                               } catch (error) {
                                 logger.error("Error handling MCP-UI action", {
                                   type: evt.type,
                                   payload: evt.payload,
-                                  error: error instanceof Error ? error.message : String(error)
+                                  error:
+                                    error instanceof Error
+                                      ? error.message
+                                      : String(error),
                                 });
                               }
                             }}
