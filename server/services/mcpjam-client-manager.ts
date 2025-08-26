@@ -328,7 +328,7 @@ class MCPJamClientManager {
 
   async executeToolDirect(
     toolName: string,
-    parameters: Record<string, any>,
+    parameters: Record<string, any> = {},
   ): Promise<ToolResult> {
     // toolName may include server prefix "serverId:tool"
     let serverId = "";
@@ -336,7 +336,9 @@ class MCPJamClientManager {
 
     if (toolName.includes(":")) {
       const [sid, n] = toolName.split(":", 2);
-      serverId = sid; // sid is already the unique server ID
+      // Resolve provided server identifier (original name or unique ID) to the unique ID
+      const mappedId = this.getServerUniqueId(sid);
+      serverId = mappedId || (this.mcpClients.has(sid) ? sid : "");
       name = n;
     } else {
       // Find which server has this tool by checking un-prefixed name
@@ -390,14 +392,32 @@ class MCPJamClientManager {
     if (!tool)
       throw new Error(`Tool '${name}' not found in server '${serverId}'`);
 
-    // Check if this is an elicitation tool (they expect parameters directly, not wrapped in context)
-    const isElicitationTool =
-      name.includes("elicit_information") || name.includes("elicitation");
+    // Inspect input schema to choose the most likely argument shape, but be robust and
+    // fall back to the alternate shape on invalid-arguments errors.
+    const schema: any = (tool as any).inputSchema;
+    const hasContextProperty =
+      schema &&
+      typeof schema === "object" &&
+      (schema as any).properties &&
+      Object.prototype.hasOwnProperty.call((schema as any).properties, "context");
+    const requiresContext =
+      hasContextProperty ||
+      (schema && Array.isArray((schema as any).required) && (schema as any).required.includes("context"));
 
-    const result = isElicitationTool
-      ? await tool.execute(parameters || {})
-      : await tool.execute({ context: parameters || {} });
-    return { result };
+    const contextWrapped = { context: parameters || {} };
+    const direct = parameters || {};
+    const attempts = requiresContext ? [contextWrapped, direct] : [direct, contextWrapped];
+
+    let lastError: any = undefined;
+    for (const args of attempts) {
+      try {
+        const result = await tool.execute(args);
+        return { result };
+      } catch (err: any) {
+        lastError = err;
+      }
+    }
+    throw lastError;
   }
 
   async getResource(
@@ -406,9 +426,18 @@ class MCPJamClientManager {
   ): Promise<ResourceContent> {
     // resourceUri may include server prefix
     let uri = resourceUri;
-    const client = this.mcpClients.get(serverId);
+    // Resolve provided server identifier (original name or unique ID) to the unique ID
+    const mappedId = this.getServerUniqueId(serverId);
+    const resolvedServerId =
+      mappedId || (this.mcpClients.has(serverId) ? serverId : undefined);
+
+    if (!resolvedServerId) {
+      throw new Error(`No MCP client available for server: ${serverId}`);
+    }
+
+    const client = this.mcpClients.get(resolvedServerId);
     if (!client) throw new Error("No MCP client available");
-    const content = await client.resources.read(serverId, uri);
+    const content = await client.resources.read(resolvedServerId, uri);
     return { contents: content?.contents || [] };
   }
 
@@ -417,10 +446,19 @@ class MCPJamClientManager {
     serverId: string,
     args?: Record<string, any>,
   ): Promise<PromptResult> {
-    const client = this.mcpClients.get(serverId);
+    // Resolve provided server identifier (original name or unique ID) to the unique ID
+    const mappedId = this.getServerUniqueId(serverId);
+    const resolvedServerId =
+      mappedId || (this.mcpClients.has(serverId) ? serverId : undefined);
+
+    if (!resolvedServerId) {
+      throw new Error(`No MCP client available for server: ${serverId}`);
+    }
+
+    const client = this.mcpClients.get(resolvedServerId);
     if (!client) throw new Error("No MCP client available");
     const content = await client.prompts.get({
-      serverName: serverId,
+      serverName: resolvedServerId,
       name: promptName,
       args: args || {},
     });
