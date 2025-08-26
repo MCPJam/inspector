@@ -80,7 +80,7 @@ class MCPJamClientManager {
   private mcpClients: Map<string, MCPClient> = new Map();
   private statuses: Map<string, ConnectionStatus> = new Map();
   private configs: Map<string, MastraMCPServerDefinition> = new Map();
-  
+
   // Map original server names to unique IDs
   private serverIdMapping: Map<string, string> = new Map();
 
@@ -117,7 +117,7 @@ class MCPJamClientManager {
   async connectToServer(serverId: string, serverConfig: any): Promise<void> {
     // Generate unique ID for this server to avoid collisions
     const id = generateUniqueServerId(serverId);
-    
+
     // Store the mapping
     this.serverIdMapping.set(serverId, id);
 
@@ -170,7 +170,7 @@ class MCPJamClientManager {
   async disconnectFromServer(serverId: string): Promise<void> {
     const id = this.getServerUniqueId(serverId);
     if (!id) return; // Server not found
-    
+
     const client = this.mcpClients.get(id);
     if (client) {
       try {
@@ -180,7 +180,7 @@ class MCPJamClientManager {
     this.mcpClients.delete(id);
     this.statuses.set(id, "disconnected");
     this.serverIdMapping.delete(serverId); // Clean up the mapping
-    
+
     // purge registries for this server
     for (const key of Array.from(this.toolRegistry.keys())) {
       const item = this.toolRegistry.get(key)!;
@@ -234,7 +234,7 @@ class MCPJamClientManager {
     Object.values(toolsets).forEach((serverTools: any) => {
       Object.assign(flattenedTools, serverTools);
     });
-    
+
     for (const [name, tool] of Object.entries<any>(flattenedTools)) {
       this.toolRegistry.set(`${serverId}:${name}`, {
         name,
@@ -391,9 +391,10 @@ class MCPJamClientManager {
       throw new Error(`Tool '${name}' not found in server '${serverId}'`);
 
     // Check if this is an elicitation tool (they expect parameters directly, not wrapped in context)
-    const isElicitationTool = name.includes('elicit_information') || name.includes('elicitation');
-    
-    const result = isElicitationTool 
+    const isElicitationTool =
+      name.includes("elicit_information") || name.includes("elicitation");
+
+    const result = isElicitationTool
       ? await tool.execute(parameters || {})
       : await tool.execute({ context: parameters || {} });
     return { result };
