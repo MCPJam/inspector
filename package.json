@@ -19,6 +19,9 @@
     "bin",
     "dist/client",
     "dist/server",
+    "dist/shared",
+    "action.yml",
+    "index.js",
     "package.json",
     "README.md",
     "LICENSE"
@@ -27,9 +30,11 @@
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:server": "cd server && npm run dev",
     "dev:client": "cd client && npm run dev",
-    "build": "npm run build:client && npm run build:server",
+    "build": "npm run build:client && npm run build:server && npm run build:action",
     "build:client": "cd client && npm run build",
     "build:server": "cd server && npm run build",
+    
+    "build:action": "esbuild index.ts --bundle --platform=node --target=node20 --outfile=index.js",
     "start": "NODE_ENV=production node bin/start.js",
     "publish": "node -e \"console.error('Use npm publish directly.'); process.exit(1)\"",
     "prettier-fix": "prettier --write .",
@@ -133,6 +138,9 @@
     "tw-animate-css": "^1.3.5",
     "typescript": "^5",
     "vite": "^6.0.7",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "esbuild": "^0.23.0",
+    "fast-xml-parser": "^4.5.0",
+    "which": "^4.0.0"
   }
 }

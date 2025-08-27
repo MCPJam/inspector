@@ -1,0 +1,16 @@
+name: 'MCPJAM Inspector'
+description: 'Run MCP evaluations in CI/CD'
+inputs:
+  tests:
+    description: 'Path to test definitions file'
+    required: true
+  environment:
+    description: 'Path to environment configuration file'
+    required: true
+  output-format:
+    description: 'Output format (junit-xml, json)'
+    required: false
+    default: 'junit-xml'
+runs:
+  using: 'node20'
+  main: 'index.js'
