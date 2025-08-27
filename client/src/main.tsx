@@ -16,7 +16,7 @@ if (isPostHogDisabled) {
   root.render(
     <StrictMode>
       <App />
-    </StrictMode>
+    </StrictMode>,
   );
 } else {
   // Render with PostHog
@@ -25,6 +25,6 @@ if (isPostHogDisabled) {
       <PostHogProvider apiKey={getPostHogKey()} options={getPostHogOptions()}>
         <App />
       </PostHogProvider>
-    </StrictMode>
+    </StrictMode>,
   );
 }
