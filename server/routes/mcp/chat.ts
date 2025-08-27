@@ -38,6 +38,7 @@ interface ChatRequest {
   provider: ModelProvider;
   apiKey?: string;
   systemPrompt?: string;
+  temperature?: number;
   messages?: ChatMessage[];
   ollamaBaseUrl?: string;
   action?: string;
@@ -326,10 +327,11 @@ const fallbackToCompletion = async (
   messages: any[],
   streamingContext: StreamingContext,
   provider: ModelProvider,
+  temperature?: number,
 ) => {
   try {
     const result = await agent.generate(messages, {
-      temperature: getDefaultTemperatureByProvider(provider),
+      temperature: temperature == null || undefined ? getDefaultTemperatureByProvider(provider) : temperature,
     });
     if (result.text && result.text.trim()) {
       streamingContext.controller.enqueue(
@@ -366,10 +368,11 @@ const createStreamingResponse = async (
   toolsets: any,
   streamingContext: StreamingContext,
   provider: ModelProvider,
+  temperature?: number,
 ) => {
   const stream = await agent.stream(messages, {
     maxSteps: MAX_AGENT_STEPS,
-    temperature: getDefaultTemperatureByProvider(provider),
+    temperature: temperature == null || undefined ? getDefaultTemperatureByProvider(provider) : temperature,
     toolsets,
     onStepFinish: ({ text, toolCalls, toolResults }) => {
       handleAgentStepFinish(streamingContext, text, toolCalls, toolResults);
@@ -381,7 +384,7 @@ const createStreamingResponse = async (
   // Fall back to completion if no content was streamed
   if (!hasContent) {
     dbg("No content from textStream; falling back to completion");
-    await fallbackToCompletion(agent, messages, streamingContext, provider);
+    await fallbackToCompletion(agent, messages, streamingContext, provider, temperature);
   }
 
   // Stream elicitation completion
@@ -410,6 +413,7 @@ chat.post("/", async (c) => {
       provider,
       apiKey,
       systemPrompt,
+      temperature,
       messages,
       ollamaBaseUrl,
       action,
@@ -628,6 +632,7 @@ chat.post("/", async (c) => {
             toolsByServer,
             streamingContext,
             provider,
+            temperature,
           );
         } catch (error) {
           controller.enqueue(

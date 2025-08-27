@@ -32,6 +32,9 @@ interface ChatInputProps {
   // System prompt props
   systemPrompt?: string;
   onSystemPromptChange?: (prompt: string) => void;
+  // Temperature props
+  temperature?: number;
+  onTemperatureChange?: (temperature: number) => void;
 }
 
 export function ChatInput({
@@ -50,6 +53,8 @@ export function ChatInput({
   onModelChange,
   systemPrompt,
   onSystemPromptChange,
+  temperature,
+  onTemperatureChange,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -304,13 +309,15 @@ export function ChatInput({
           />
         )}
         {/* System Prompt Selector */}
-        {onSystemPromptChange && (
+        {onSystemPromptChange && onTemperatureChange && (
           <SystemPromptSelector
             systemPrompt={
               systemPrompt ||
               "You are a helpful assistant with access to MCP tools."
             }
             onSystemPromptChange={onSystemPromptChange}
+            temperature={temperature || 0}
+            onTemperatureChange={onTemperatureChange}
             disabled={disabled}
             isLoading={isLoading}
           />

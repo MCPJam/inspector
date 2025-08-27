@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState } from "react";
 import { MessageCircle } from "lucide-react";
-import { MastraMCPServerDefinition } from "@/shared/types.js";
+import { MastraMCPServerDefinition, ModelDefinition } from "@/shared/types.js";
 import { useChat } from "@/hooks/use-chat";
 import { Message } from "./chat/message";
 import { ChatInput } from "./chat/chat-input";
@@ -8,6 +8,7 @@ import { ElicitationDialog } from "./ElicitationDialog";
 import { TooltipProvider } from "./ui/tooltip";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
+import { getDefaultTemperatureForModel } from "@/lib/chat-utils";
 
 interface ChatTabProps {
   serverConfigs?: Record<string, MastraMCPServerDefinition>;
@@ -21,6 +22,8 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
   const [systemPromptState, setSystemPromptState] = useState(
     systemPrompt || "You are a helpful assistant with access to MCP tools.",
   );
+
+  const [temperatureState, setTemperatureState] = useState(1.0);
 
   const {
     messages,
@@ -41,10 +44,18 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
   } = useChat({
     serverConfigs: serverConfigs,
     systemPrompt: systemPromptState,
+    temperature: temperatureState,
     onError: (error) => {
       toast.error(error);
     },
   });
+
+  // Update temperature when model changes
+  useEffect(() => {
+    if (model) {
+      setTemperatureState(getDefaultTemperatureForModel(model));
+    }
+  }, [model]);
 
   const hasMessages = messages.length > 0;
   // Auto-scroll to bottom when new messages arrive
@@ -120,6 +131,8 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
               hasMessages={false}
               systemPrompt={systemPromptState}
               onSystemPromptChange={setSystemPromptState}
+              temperature={temperatureState}
+              onTemperatureChange={setTemperatureState}
             />
             {/* System prompt editor shown inline above input */}
             {availableModels.length === 0 && (
@@ -242,6 +255,8 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
               hasMessages={hasMessages}
               systemPrompt={systemPromptState}
               onSystemPromptChange={setSystemPromptState}
+              temperature={temperatureState}
+              onTemperatureChange={setTemperatureState}
             />
           </div>
         </div>
