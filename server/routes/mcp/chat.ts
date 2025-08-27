@@ -1,9 +1,4 @@
 import { Hono } from "hono";
-import {
-  validateMultipleServerConfigs,
-  createMCPClientWithMultipleConnections,
-  normalizeServerConfigName,
-} from "../../utils/mcp-utils";
 import { Agent } from "@mastra/core/agent";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
@@ -13,17 +8,10 @@ import {
   ModelDefinition,
   ModelProvider,
 } from "../../../shared/types";
-import { MCPClient } from "@mastra/mcp";
-import { ContentfulStatusCode } from "hono/utils/http-status";
 import { TextEncoder } from "util";
 import { getDefaultTemperatureByProvider } from "../../../client/src/lib/chat-utils";
 
 // Types
-interface ElicitationRequest {
-  message: string;
-  requestedSchema: any;
-}
-
 interface ElicitationResponse {
   [key: string]: unknown;
   action: "accept" | "decline" | "cancel";
@@ -75,6 +63,8 @@ try {
 // Store for pending elicitation requests
 const pendingElicitations = new Map<string, PendingElicitation>();
 
+// Use the context-injected MCPJamClientManager (see server/index.ts middleware)
+
 const chat = new Hono();
 
 // Helper Functions
@@ -116,42 +106,7 @@ const createLlmModel = (
   }
 };
 
-/**
- * Handles elicitation requests by streaming them to the client and waiting for response
- */
-const createElicitationHandler = (streamingContext: StreamingContext) => {
-  return async (elicitationRequest: ElicitationRequest) => {
-    const requestId = `elicit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-
-    // Stream elicitation request to client
-    if (streamingContext.controller && streamingContext.encoder) {
-      streamingContext.controller.enqueue(
-        streamingContext.encoder.encode(
-          `data: ${JSON.stringify({
-            type: "elicitation_request",
-            requestId,
-            message: elicitationRequest.message,
-            schema: elicitationRequest.requestedSchema,
-            timestamp: new Date(),
-          })}\n\n`,
-        ),
-      );
-    }
-
-    // Return a promise that will be resolved when user responds
-    return new Promise<ElicitationResponse>((resolve, reject) => {
-      pendingElicitations.set(requestId, { resolve, reject });
-
-      // Set timeout to clean up if no response
-      setTimeout(() => {
-        if (pendingElicitations.has(requestId)) {
-          pendingElicitations.delete(requestId);
-          reject(new Error("Elicitation timeout"));
-        }
-      }, ELICITATION_TIMEOUT);
-    });
-  };
-};
+// Removed unused createElicitationHandler
 
 /**
  * Wraps MCP tools to capture execution events and stream them to the client
@@ -403,19 +358,6 @@ const fallbackToCompletion = async (
 };
 
 /**
- * Safely disconnects an MCP client
- */
-const safeDisconnect = async (client: MCPClient | null) => {
-  if (client) {
-    try {
-      await client.disconnect();
-    } catch (cleanupError) {
-      console.warn("[mcp/chat] Error cleaning up MCP client:", cleanupError);
-    }
-  }
-};
-
-/**
  * Creates the streaming response for the chat
  */
 const createStreamingResponse = async (
@@ -459,8 +401,7 @@ const createStreamingResponse = async (
 
 // Main chat endpoint
 chat.post("/", async (c) => {
-  let client: MCPClient | null = null;
-
+  const mcpClientManager = c.mcpJamClientManager;
   try {
     const requestData: ChatRequest = await c.req.json();
     const {
@@ -515,7 +456,7 @@ chat.post("/", async (c) => {
       );
     }
 
-    // Validate and create MCP client
+    // Connect to servers through MCPJamClientManager
     if (!serverConfigs || Object.keys(serverConfigs).length === 0) {
       return c.json(
         {
@@ -526,23 +467,43 @@ chat.post("/", async (c) => {
       );
     }
 
-    const validation = validateMultipleServerConfigs(serverConfigs);
-    if (!validation.success) {
-      dbg(
-        "Server config validation failed",
-        validation.errors || validation.error,
-      );
+    // Connect to each server using MCPJamClientManager
+    const serverErrors: Record<string, string> = {};
+    const connectedServers: string[] = [];
+
+    for (const [serverName, serverConfig] of Object.entries(serverConfigs)) {
+      try {
+        await mcpClientManager.connectToServer(serverName, serverConfig);
+        connectedServers.push(serverName);
+        dbg("Connected to server", { serverName });
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : "Unknown error";
+        serverErrors[serverName] = errorMessage;
+        dbg("Failed to connect to server", { serverName, error: errorMessage });
+      }
+    }
+
+    // Check if any servers connected successfully
+    if (connectedServers.length === 0) {
       return c.json(
         {
           success: false,
-          error: validation.error!.message,
-          details: validation.errors,
+          error: "Failed to connect to any servers",
+          details: serverErrors,
         },
-        validation.error!.status as ContentfulStatusCode,
+        400,
       );
     }
 
-    client = createMCPClientWithMultipleConnections(validation.validConfigs!);
+    // Log warnings for failed connections but continue with successful ones
+    if (Object.keys(serverErrors).length > 0) {
+      dbg("Some servers failed to connect", {
+        connectedServers,
+        failedServers: Object.keys(serverErrors),
+        errors: serverErrors,
+      });
+    }
 
     // Create LLM model
     const llmModel = createLlmModel(model, apiKey, ollamaBaseUrl);
@@ -561,10 +522,30 @@ chat.post("/", async (c) => {
       content: msg.content,
     }));
 
-    // Get toolsets for dynamic tool resolution
-    const toolsets = await client.getToolsets();
+    // Get available tools from all connected servers
+    const allTools = mcpClientManager.getAvailableTools();
+    const toolsByServer: Record<string, any> = {};
+
+    // Group tools by server for the agent
+    for (const tool of allTools) {
+      if (!toolsByServer[tool.serverId]) {
+        toolsByServer[tool.serverId] = {};
+      }
+      toolsByServer[tool.serverId][tool.name] = {
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+        execute: async (params: any) => {
+          return await mcpClientManager.executeToolDirect(
+            `${tool.serverId}:${tool.name}`,
+            params,
+          );
+        },
+      };
+    }
+
     dbg("Streaming start", {
-      toolsetServers: Object.keys(toolsets),
+      connectedServers,
+      toolCount: allTools.length,
       messageCount: formattedMessages.length,
     });
 
@@ -582,7 +563,7 @@ chat.post("/", async (c) => {
 
         // Flatten toolsets into a single tools object for streaming wrapper
         const flattenedTools: Record<string, any> = {};
-        Object.values(toolsets).forEach((serverTools: any) => {
+        Object.values(toolsByServer).forEach((serverTools: any) => {
           Object.assign(flattenedTools, serverTools);
         });
 
@@ -603,28 +584,51 @@ chat.post("/", async (c) => {
               : undefined,
         });
 
-        // Register elicitation handler
-        if (client?.elicitation?.onRequest) {
-          for (const serverName of Object.keys(serverConfigs)) {
-            const normalizedName = normalizeServerConfigName(serverName);
-            const elicitationHandler =
-              createElicitationHandler(streamingContext);
-            client.elicitation.onRequest(normalizedName, elicitationHandler);
+        // Register elicitation handler with MCPJamClientManager
+        mcpClientManager.setElicitationCallback(async (request) => {
+          // Convert MCPJamClientManager format to createElicitationHandler format
+          const elicitationRequest = {
+            message: request.message,
+            requestedSchema: request.schema,
+          };
+
+          // Stream elicitation request to client using the provided requestId
+          if (streamingContext.controller && streamingContext.encoder) {
+            streamingContext.controller.enqueue(
+              streamingContext.encoder.encode(
+                `data: ${JSON.stringify({
+                  type: "elicitation_request",
+                  requestId: request.requestId,
+                  message: elicitationRequest.message,
+                  schema: elicitationRequest.requestedSchema,
+                  timestamp: new Date(),
+                })}\n\n`,
+              ),
+            );
           }
-        }
+
+          // Return a promise that will be resolved when user responds
+          return new Promise<ElicitationResponse>((resolve, reject) => {
+            pendingElicitations.set(request.requestId, { resolve, reject });
+
+            // Set timeout to clean up if no response
+            setTimeout(() => {
+              if (pendingElicitations.has(request.requestId)) {
+                pendingElicitations.delete(request.requestId);
+                reject(new Error("Elicitation timeout"));
+              }
+            }, ELICITATION_TIMEOUT);
+          });
+        });
 
         try {
-          if (client) {
-            await createStreamingResponse(
-              streamingAgent,
-              formattedMessages,
-              toolsets,
-              streamingContext,
-              provider,
-            );
-          } else {
-            throw new Error("MCP client is null");
-          }
+          await createStreamingResponse(
+            streamingAgent,
+            formattedMessages,
+            toolsByServer,
+            streamingContext,
+            provider,
+          );
         } catch (error) {
           controller.enqueue(
             encoder.encode(
@@ -635,7 +639,8 @@ chat.post("/", async (c) => {
             ),
           );
         } finally {
-          await safeDisconnect(client);
+          // Clear elicitation callback to prevent memory leaks
+          mcpClientManager.clearElicitationCallback();
           controller.close();
         }
       },
@@ -650,7 +655,9 @@ chat.post("/", async (c) => {
     });
   } catch (error) {
     console.error("[mcp/chat] Error in chat API:", error);
-    await safeDisconnect(client);
+
+    // Clear elicitation callback on error
+    mcpClientManager.clearElicitationCallback();
 
     return c.json(
       {
