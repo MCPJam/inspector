@@ -21,6 +21,7 @@ interface UseChatOptions {
   initialMessages?: ChatMessage[];
   serverConfigs?: Record<string, MastraMCPServerDefinition>;
   systemPrompt?: string;
+  temperature?: number;
   onMessageSent?: (message: ChatMessage) => void;
   onMessageReceived?: (message: ChatMessage) => void;
   onError?: (error: string) => void;
@@ -34,6 +35,7 @@ export function useChat(options: UseChatOptions = {}) {
     initialMessages = [],
     serverConfigs,
     systemPrompt,
+    temperature,
     onMessageSent,
     onMessageReceived,
     onError,
@@ -292,6 +294,7 @@ export function useChat(options: UseChatOptions = {}) {
             provider: model.provider,
             apiKey: currentApiKey,
             systemPrompt,
+            temperature,
             messages: messagesRef.current.concat(userMessage),
             ollamaBaseUrl: getOllamaBaseUrl(),
           }),
