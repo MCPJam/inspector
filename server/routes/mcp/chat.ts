@@ -331,7 +331,10 @@ const fallbackToCompletion = async (
 ) => {
   try {
     const result = await agent.generate(messages, {
-      temperature: temperature == null || undefined ? getDefaultTemperatureByProvider(provider) : temperature,
+      temperature:
+        temperature == null || undefined
+          ? getDefaultTemperatureByProvider(provider)
+          : temperature,
     });
     if (result.text && result.text.trim()) {
       streamingContext.controller.enqueue(
@@ -372,7 +375,10 @@ const createStreamingResponse = async (
 ) => {
   const stream = await agent.stream(messages, {
     maxSteps: MAX_AGENT_STEPS,
-    temperature: temperature == null || undefined ? getDefaultTemperatureByProvider(provider) : temperature,
+    temperature:
+      temperature == null || undefined
+        ? getDefaultTemperatureByProvider(provider)
+        : temperature,
     toolsets,
     onStepFinish: ({ text, toolCalls, toolResults }) => {
       handleAgentStepFinish(streamingContext, text, toolCalls, toolResults);
@@ -384,7 +390,13 @@ const createStreamingResponse = async (
   // Fall back to completion if no content was streamed
   if (!hasContent) {
     dbg("No content from textStream; falling back to completion");
-    await fallbackToCompletion(agent, messages, streamingContext, provider, temperature);
+    await fallbackToCompletion(
+      agent,
+      messages,
+      streamingContext,
+      provider,
+      temperature,
+    );
   }
 
   // Stream elicitation completion
