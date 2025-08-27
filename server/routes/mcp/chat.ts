@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { MCPJamClientManager } from "../../services/mcpjam-client-manager";
 import { Agent } from "@mastra/core/agent";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
@@ -9,16 +8,10 @@ import {
   ModelDefinition,
   ModelProvider,
 } from "../../../shared/types";
-import { ContentfulStatusCode } from "hono/utils/http-status";
 import { TextEncoder } from "util";
 import { getDefaultTemperatureByProvider } from "../../../client/src/lib/chat-utils";
 
 // Types
-interface ElicitationRequest {
-  message: string;
-  requestedSchema: any;
-}
-
 interface ElicitationResponse {
   [key: string]: unknown;
   action: "accept" | "decline" | "cancel";
@@ -70,8 +63,7 @@ try {
 // Store for pending elicitation requests
 const pendingElicitations = new Map<string, PendingElicitation>();
 
-// Shared MCPJamClientManager instance for chat
-const mcpClientManager = new MCPJamClientManager();
+// Use the context-injected MCPJamClientManager (see server/index.ts middleware)
 
 const chat = new Hono();
 
@@ -114,42 +106,7 @@ const createLlmModel = (
   }
 };
 
-/**
- * Handles elicitation requests by streaming them to the client and waiting for response
- */
-const createElicitationHandler = (streamingContext: StreamingContext) => {
-  return async (elicitationRequest: ElicitationRequest) => {
-    const requestId = `elicit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-
-    // Stream elicitation request to client
-    if (streamingContext.controller && streamingContext.encoder) {
-      streamingContext.controller.enqueue(
-        streamingContext.encoder.encode(
-          `data: ${JSON.stringify({
-            type: "elicitation_request",
-            requestId,
-            message: elicitationRequest.message,
-            schema: elicitationRequest.requestedSchema,
-            timestamp: new Date(),
-          })}\n\n`,
-        ),
-      );
-    }
-
-    // Return a promise that will be resolved when user responds
-    return new Promise<ElicitationResponse>((resolve, reject) => {
-      pendingElicitations.set(requestId, { resolve, reject });
-
-      // Set timeout to clean up if no response
-      setTimeout(() => {
-        if (pendingElicitations.has(requestId)) {
-          pendingElicitations.delete(requestId);
-          reject(new Error("Elicitation timeout"));
-        }
-      }, ELICITATION_TIMEOUT);
-    });
-  };
-};
+// Removed unused createElicitationHandler
 
 /**
  * Wraps MCP tools to capture execution events and stream them to the client
@@ -444,6 +401,7 @@ const createStreamingResponse = async (
 
 // Main chat endpoint
 chat.post("/", async (c) => {
+  const mcpClientManager = c.mcpJamClientManager;
   try {
     const requestData: ChatRequest = await c.req.json();
     const {
