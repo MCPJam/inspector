@@ -64,7 +64,9 @@ export function SystemPromptSelector({
           className="h-8 px-2 rounded-full hover:bg-muted/80 transition-colors text-xs cursor-pointer"
         >
           <Settings2 className="h-2 w-2 mr-1" />
-          <span className="text-[10px] font-medium">System Prompt & Temperature</span>
+          <span className="text-[10px] font-medium">
+            System Prompt & Temperature
+          </span>
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-md">
@@ -98,8 +100,8 @@ export function SystemPromptSelector({
               className="w-full"
             />
             <p className="text-xs text-muted-foreground">
-              Lower values (0-0.3) for focused tasks, higher values (0.7-2.0) for
-              creative tasks
+              Lower values (0-0.3) for focused tasks, higher values (0.7-2.0)
+              for creative tasks
             </p>
           </div>
 
