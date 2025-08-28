@@ -21,6 +21,22 @@ Short flags:
 mcpjam evals run -t weather-tests.json -e local-dev.json
 ```
 
+### CLI Options
+
+- `--tests, -t <file>`: Path to the tests configuration file (required)
+- `--environment, -e <file>`: Path to the environment configuration file (required)
+- `--help, -h`: Show help information
+- `--version, -V`: Display version number
+
+### Example Files
+
+The CLI includes example configuration files in the `examples/` directory:
+
+- `test-servers.json`: Sample tests configuration
+- `mcp-environment.json`: Sample environment configuration
+- `weather-tests.json`: Weather service testing example
+- `local-dev.json`: Local development environment setup
+
 ## File Formats
 
 ### Tests File (mcp-tests.json)
