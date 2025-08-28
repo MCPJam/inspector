@@ -16,11 +16,13 @@ export const MCPServerConfigSchema = z.union([
 
 export const EnvironmentFileSchema = z.object({
   mcpServers: z.record(MCPServerConfigSchema),
-  providerApiKeys: z.object({
-    anthropic: z.string().optional(),
-    openai: z.string().optional(),
-    deepseek: z.string().optional(),
-  }).optional(),
+  providerApiKeys: z
+    .object({
+      anthropic: z.string().optional(),
+      openai: z.string().optional(),
+      deepseek: z.string().optional(),
+    })
+    .optional(),
 });
 
 export type MCPServerConfig = z.infer<typeof MCPServerConfigSchema>;
