@@ -5,6 +5,21 @@ import type { Test } from '../../schemas/test-schema.js';
 import type { EnvironmentFile } from '../../schemas/environment-schema.js';
 import { createTestsRouter } from '../server/tests-router.js';
 
+async function findAvailablePort(startPort = 3500): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.listen(0, () => {
+      const port = (server.address() as any)?.port;
+      server.close(() => {
+        resolve(port || startPort);
+      });
+    });
+    server.on('error', () => {
+      resolve(startPort);
+    });
+  });
+}
+
 export interface TestResult {
   testId: string;
   title: string;
@@ -30,12 +45,15 @@ export async function runTests(tests: Test[], environment: EnvironmentFile): Pro
   const app = new Hono();
   app.route('/mcp/tests', createTestsRouter());
   
+  // Find an available port
+  const port = await findAvailablePort();
   const server = serve({
     fetch: app.fetch,
-    port: 0, // Use random available port
+    port,
   });
 
-  const port = (server as any).port || 3000;
+  // Wait a moment for server to start
+  await new Promise(resolve => setTimeout(resolve, 100));
   
   try {
     // Convert tests to backend format
@@ -86,7 +104,9 @@ export async function runTests(tests: Test[], environment: EnvironmentFile): Pro
     };
     
   } finally {
-    server.close();
+    if (server && typeof server.close === 'function') {
+      server.close();
+    }
   }
 }
 
@@ -99,10 +119,16 @@ function convertServerConfig(config: any): any {
       env: config.env || {},
     };
   } else {
-    // HTTP server  
+    // HTTP server - convert to the format that matches the UI logic
+    const url = typeof config.url === 'string' ? new URL(config.url) : config.url;
     return {
-      url: config.url,
-      headers: config.headers || {},
+      url,
+      requestInit: {
+        headers: config.headers || {},
+      },
+      eventSourceInit: {
+        headers: config.headers || {},
+      },
     };
   }
 }

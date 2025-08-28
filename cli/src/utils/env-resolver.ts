@@ -30,7 +30,7 @@ function resolveServerConfig(config: any): any {
       ) : undefined,
     };
   } else {
-    // HTTP server
+    // HTTP server - handle simple headers format like the UI
     return {
       ...config,
       headers: config.headers ? Object.fromEntries(
@@ -45,9 +45,12 @@ function resolveServerConfig(config: any): any {
 
 function resolveTemplate(value: string | undefined): string | undefined {
   if (!value) return value;
-  
+  // Collapse whitespace in env var values to avoid broken multi-line exports
+  const collapseWhitespace = (s: string) => s.replace(/[\r\n]+/g, "").replace(/\s{2,}/g, "");
+
   return value.replace(/\$\{([^}]+)\}/g, (match, envVar) => {
-    const resolved = process.env[envVar];
+    const raw = process.env[envVar];
+    const resolved = raw ? collapseWhitespace(raw) : raw;
     if (resolved === undefined) {
       console.warn(`⚠️  Warning: Environment variable ${envVar} is not set`);
       return match;
