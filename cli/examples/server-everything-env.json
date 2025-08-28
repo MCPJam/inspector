@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "server-everything": {
+      "command": "npx",
+      "args": ["@modelcontextprotocol/server-everything"]
+    }
+  },
+  "providerApiKeys": {
+    "openai": "${OPENAI_API_KEY}"
+  }
+}

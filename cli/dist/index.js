@@ -55,6 +55,7 @@ var EnvironmentFileSchema = z2.object({
 });
 
 // src/runner/test-runner.ts
+import { createServer } from "http";
 import { serve } from "@hono/node-server";
 import { Hono as Hono2 } from "hono";
 
@@ -63,8 +64,465 @@ import { Hono } from "hono";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOllama } from "ollama-ai-provider";
-import { MCPClient } from "@mastra/mcp";
 import { Agent } from "@mastra/core/agent";
+
+// ../server/services/mcpjam-client-manager.ts
+import { MCPClient as MCPClient2 } from "@mastra/mcp";
+
+// ../server/utils/mcp-utils.ts
+import { MCPClient } from "@mastra/mcp";
+function validateServerConfig(serverConfig) {
+  if (!serverConfig) {
+    return {
+      success: false,
+      error: {
+        message: "Server configuration is required",
+        status: 400
+      }
+    };
+  }
+  const config = { ...serverConfig };
+  if (config.url) {
+    try {
+      if (typeof config.url === "string") {
+        const parsed = new URL(config.url);
+        parsed.search = "";
+        parsed.hash = "";
+        config.url = parsed;
+      } else if (typeof config.url === "object" && !config.url.href) {
+        return {
+          success: false,
+          error: {
+            message: "Invalid URL configuration",
+            status: 400
+          }
+        };
+      }
+      if (config.oauth?.access_token) {
+        const authHeaders = {
+          Authorization: `Bearer ${config.oauth.access_token}`,
+          ...config.requestInit?.headers || {}
+        };
+        config.requestInit = {
+          ...config.requestInit,
+          headers: authHeaders
+        };
+        config.eventSourceInit = {
+          fetch(input, init) {
+            const headers = new Headers(init?.headers || {});
+            headers.set(
+              "Authorization",
+              `Bearer ${config.oauth.access_token}`
+            );
+            if (config.requestInit?.headers) {
+              const requestHeaders = new Headers(config.requestInit.headers);
+              requestHeaders.forEach((value, key) => {
+                if (key.toLowerCase() !== "authorization") {
+                  headers.set(key, value);
+                }
+              });
+            }
+            return fetch(input, {
+              ...init,
+              headers
+            });
+          }
+        };
+      } else if (config.requestInit?.headers) {
+        config.eventSourceInit = {
+          fetch(input, init) {
+            const headers = new Headers(init?.headers || {});
+            const requestHeaders = new Headers(config.requestInit.headers);
+            requestHeaders.forEach((value, key) => {
+              headers.set(key, value);
+            });
+            return fetch(input, {
+              ...init,
+              headers
+            });
+          }
+        };
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: {
+          message: `Invalid URL format: ${error}`,
+          status: 400
+        }
+      };
+    }
+  }
+  return {
+    success: true,
+    config
+  };
+}
+
+// ../server/services/mcpjam-client-manager.ts
+function generateUniqueServerId(serverId) {
+  const normalizedBase = serverId.toLowerCase().replace(/[\s\-]+/g, "_").replace(/[^a-z0-9_]/g, "");
+  const timestamp = Date.now().toString(36);
+  const random = Math.random().toString(36).substring(2, 8);
+  return `${normalizedBase}_${timestamp}_${random}`;
+}
+var MCPJamClientManager = class {
+  mcpClients = /* @__PURE__ */ new Map();
+  statuses = /* @__PURE__ */ new Map();
+  configs = /* @__PURE__ */ new Map();
+  // Map original server names to unique IDs
+  serverIdMapping = /* @__PURE__ */ new Map();
+  // Track in-flight connections to avoid duplicate concurrent connects
+  pendingConnections = /* @__PURE__ */ new Map();
+  toolRegistry = /* @__PURE__ */ new Map();
+  resourceRegistry = /* @__PURE__ */ new Map();
+  promptRegistry = /* @__PURE__ */ new Map();
+  // Store for pending elicitation requests with Promise resolvers
+  pendingElicitations = /* @__PURE__ */ new Map();
+  // Optional callback for handling elicitation requests
+  elicitationCallback;
+  // Helper method to get unique ID for a server name
+  getServerUniqueId(serverName) {
+    return this.serverIdMapping.get(serverName);
+  }
+  // Public method to get server ID for external use (like frontend)
+  getServerIdForName(serverName) {
+    return this.serverIdMapping.get(serverName);
+  }
+  async connectToServer(serverId, serverConfig) {
+    const pending = this.pendingConnections.get(serverId);
+    if (pending) {
+      await pending;
+      return;
+    }
+    const connectPromise = (async () => {
+      let id = this.serverIdMapping.get(serverId);
+      if (!id) {
+        id = generateUniqueServerId(serverId);
+        this.serverIdMapping.set(serverId, id);
+      }
+      if (this.mcpClients.has(id)) return;
+      const validation = validateServerConfig(serverConfig);
+      if (!validation.success) {
+        this.statuses.set(id, "error");
+        throw new Error(validation.error.message);
+      }
+      this.configs.set(id, validation.config);
+      this.statuses.set(id, "connecting");
+      const client = new MCPClient2({
+        id: `mcpjam-${id}`,
+        servers: { [id]: validation.config }
+      });
+      try {
+        await client.getTools();
+        this.mcpClients.set(id, client);
+        this.statuses.set(id, "connected");
+        if (client.elicitation?.onRequest) {
+          client.elicitation.onRequest(
+            id,
+            async (elicitationRequest) => {
+              return await this.handleElicitationRequest(elicitationRequest);
+            }
+          );
+        }
+        await this.discoverServerResources(id);
+      } catch (err) {
+        this.statuses.set(id, "error");
+        try {
+          await client.disconnect();
+        } catch {
+        }
+        this.mcpClients.delete(id);
+        throw err;
+      }
+    })().finally(() => {
+      this.pendingConnections.delete(serverId);
+    });
+    this.pendingConnections.set(serverId, connectPromise);
+    await connectPromise;
+  }
+  async disconnectFromServer(serverId) {
+    const id = this.getServerUniqueId(serverId);
+    if (!id) return;
+    const client = this.mcpClients.get(id);
+    if (client) {
+      try {
+        await client.disconnect();
+      } catch {
+      }
+    }
+    this.mcpClients.delete(id);
+    this.statuses.set(id, "disconnected");
+    this.serverIdMapping.delete(serverId);
+    for (const key of Array.from(this.toolRegistry.keys())) {
+      const item = this.toolRegistry.get(key);
+      if (item.serverId === id) this.toolRegistry.delete(key);
+    }
+    for (const key of Array.from(this.resourceRegistry.keys())) {
+      const item = this.resourceRegistry.get(key);
+      if (item.serverId === id) this.resourceRegistry.delete(key);
+    }
+    for (const key of Array.from(this.promptRegistry.keys())) {
+      const item = this.promptRegistry.get(key);
+      if (item.serverId === id) this.promptRegistry.delete(key);
+    }
+  }
+  getConnectionStatus(serverId) {
+    const id = this.getServerUniqueId(serverId);
+    return id ? this.statuses.get(id) || "disconnected" : "disconnected";
+  }
+  getConnectedServers() {
+    const servers = {};
+    for (const [originalName, uniqueId] of this.serverIdMapping.entries()) {
+      servers[originalName] = {
+        status: this.statuses.get(uniqueId) || "disconnected",
+        config: this.configs.get(uniqueId)
+      };
+    }
+    return servers;
+  }
+  async discoverAllResources() {
+    const serverIds = Array.from(this.mcpClients.keys());
+    await Promise.all(serverIds.map((id) => this.discoverServerResources(id)));
+  }
+  async discoverServerResources(serverId) {
+    const client = this.mcpClients.get(serverId);
+    if (!client) return;
+    const toolsets = await client.getToolsets();
+    const flattenedTools = {};
+    Object.values(toolsets).forEach((serverTools) => {
+      Object.assign(flattenedTools, serverTools);
+    });
+    for (const [name, tool] of Object.entries(flattenedTools)) {
+      this.toolRegistry.set(`${serverId}:${name}`, {
+        name,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+        outputSchema: tool.outputSchema,
+        serverId
+      });
+    }
+    try {
+      const res = await client.resources.list();
+      for (const [, list] of Object.entries(res)) {
+        for (const r of list) {
+          this.resourceRegistry.set(`${serverId}:${r.uri}`, {
+            uri: r.uri,
+            name: r.name,
+            description: r.description,
+            mimeType: r.mimeType,
+            serverId
+          });
+        }
+      }
+    } catch {
+    }
+    try {
+      const prompts = await client.prompts.list();
+      for (const [, list] of Object.entries(prompts)) {
+        for (const p of list) {
+          this.promptRegistry.set(`${serverId}:${p.name}`, {
+            name: p.name,
+            description: p.description,
+            arguments: p.arguments,
+            serverId
+          });
+        }
+      }
+    } catch {
+    }
+  }
+  getAvailableTools() {
+    return Array.from(this.toolRegistry.values());
+  }
+  async getToolsetsForServer(serverId) {
+    const id = this.getServerUniqueId(serverId);
+    if (!id) {
+      throw new Error(`No MCP client available for server: ${serverId}`);
+    }
+    const client = this.mcpClients.get(id);
+    if (!client) {
+      throw new Error(`No MCP client available for server: ${serverId}`);
+    }
+    const toolsets = await client.getToolsets();
+    const flattenedTools = {};
+    Object.values(toolsets).forEach((serverTools) => {
+      Object.assign(flattenedTools, serverTools);
+    });
+    return flattenedTools;
+  }
+  getAvailableResources() {
+    return Array.from(this.resourceRegistry.values());
+  }
+  getResourcesForServer(serverId) {
+    const id = this.getServerUniqueId(serverId);
+    if (!id) return [];
+    return Array.from(this.resourceRegistry.values()).filter(
+      (r) => r.serverId === id
+    );
+  }
+  getAvailablePrompts() {
+    return Array.from(this.promptRegistry.values());
+  }
+  getPromptsForServer(serverId) {
+    const id = this.getServerUniqueId(serverId);
+    if (!id) return [];
+    return Array.from(this.promptRegistry.values()).filter(
+      (p) => p.serverId === id
+    );
+  }
+  async executeToolDirect(toolName, parameters = {}) {
+    let serverId = "";
+    let name = toolName;
+    if (toolName.includes(":")) {
+      const [sid, n] = toolName.split(":", 2);
+      const mappedId = this.getServerUniqueId(sid);
+      serverId = mappedId || (this.mcpClients.has(sid) ? sid : "");
+      name = n;
+    } else {
+      for (const tool2 of this.toolRegistry.values()) {
+        if (tool2.name === toolName) {
+          serverId = tool2.serverId;
+          name = toolName;
+          break;
+        }
+      }
+    }
+    if (!serverId) {
+      for (const [clientServerId, client2] of this.mcpClients.entries()) {
+        try {
+          const toolsets2 = await client2.getToolsets();
+          const flattenedTools2 = {};
+          Object.values(toolsets2).forEach((serverTools) => {
+            Object.assign(flattenedTools2, serverTools);
+          });
+          if (flattenedTools2[toolName]) {
+            serverId = clientServerId;
+            name = toolName;
+            break;
+          }
+        } catch {
+        }
+      }
+    }
+    if (!serverId) {
+      throw new Error(`Tool not found in any connected server: ${toolName}`);
+    }
+    const client = this.mcpClients.get(serverId);
+    if (!client)
+      throw new Error(`No MCP client available for server: ${serverId}`);
+    const toolsets = await client.getToolsets();
+    const flattenedTools = {};
+    Object.values(toolsets).forEach((serverTools) => {
+      Object.assign(flattenedTools, serverTools);
+    });
+    const tool = flattenedTools[name];
+    if (!tool)
+      throw new Error(`Tool '${name}' not found in server '${serverId}'`);
+    const schema = tool.inputSchema;
+    const hasContextProperty = schema && typeof schema === "object" && schema.properties && Object.prototype.hasOwnProperty.call(
+      schema.properties,
+      "context"
+    );
+    const requiresContext = hasContextProperty || schema && Array.isArray(schema.required) && schema.required.includes("context");
+    const contextWrapped = { context: parameters || {} };
+    const direct = parameters || {};
+    const attempts = requiresContext ? [contextWrapped, direct] : [direct, contextWrapped];
+    let lastError = void 0;
+    for (const args of attempts) {
+      try {
+        const result = await tool.execute(args);
+        return { result };
+      } catch (err) {
+        lastError = err;
+      }
+    }
+    throw lastError;
+  }
+  async getResource(resourceUri, serverId) {
+    let uri = resourceUri;
+    const mappedId = this.getServerUniqueId(serverId);
+    const resolvedServerId = mappedId || (this.mcpClients.has(serverId) ? serverId : void 0);
+    if (!resolvedServerId) {
+      throw new Error(`No MCP client available for server: ${serverId}`);
+    }
+    const client = this.mcpClients.get(resolvedServerId);
+    if (!client) throw new Error("No MCP client available");
+    const content = await client.resources.read(resolvedServerId, uri);
+    return { contents: content?.contents || [] };
+  }
+  async getPrompt(promptName, serverId, args) {
+    const mappedId = this.getServerUniqueId(serverId);
+    const resolvedServerId = mappedId || (this.mcpClients.has(serverId) ? serverId : void 0);
+    if (!resolvedServerId) {
+      throw new Error(`No MCP client available for server: ${serverId}`);
+    }
+    const client = this.mcpClients.get(resolvedServerId);
+    if (!client) throw new Error("No MCP client available");
+    const content = await client.prompts.get({
+      serverName: resolvedServerId,
+      name: promptName,
+      args: args || {}
+    });
+    return { content };
+  }
+  /**
+   * Handles elicitation requests from MCP servers during direct tool execution
+   */
+  async handleElicitationRequest(elicitationRequest) {
+    const requestId = `elicit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    return new Promise((resolve2, reject) => {
+      this.pendingElicitations.set(requestId, { resolve: resolve2, reject });
+      if (this.elicitationCallback) {
+        this.elicitationCallback({
+          requestId,
+          message: elicitationRequest.message,
+          schema: elicitationRequest.requestedSchema
+        }).then(resolve2).catch(reject);
+      } else {
+        const error = new Error("ELICITATION_REQUIRED");
+        error.elicitationRequest = {
+          requestId,
+          message: elicitationRequest.message,
+          schema: elicitationRequest.requestedSchema
+        };
+        reject(error);
+      }
+    });
+  }
+  /**
+   * Responds to a pending elicitation request
+   */
+  respondToElicitation(requestId, response) {
+    const pending = this.pendingElicitations.get(requestId);
+    if (!pending) {
+      return false;
+    }
+    pending.resolve(response);
+    this.pendingElicitations.delete(requestId);
+    return true;
+  }
+  /**
+   * Gets the pending elicitations map for external access
+   */
+  getPendingElicitations() {
+    return this.pendingElicitations;
+  }
+  /**
+   * Sets a callback to handle elicitation requests
+   */
+  setElicitationCallback(callback) {
+    this.elicitationCallback = callback;
+  }
+  /**
+   * Clears the elicitation callback
+   */
+  clearElicitationCallback() {
+    this.elicitationCallback = void 0;
+  }
+};
+
+// src/server/tests-router.ts
 function createTestsRouter() {
   const tests = new Hono();
   tests.post("/run-all", async (c) => {
@@ -104,53 +562,96 @@ function createTestsRouter() {
       const readableStream = new ReadableStream({
         async start(controller) {
           let failed = false;
+          const clientManager = new MCPJamClientManager();
           for (const test of testsInput) {
+            console.log(`\u{1F50D} Starting test: ${test.title}`);
             const calledTools = /* @__PURE__ */ new Set();
             const expectedSet = new Set(test.expectedTools || []);
-            let client = null;
+            let serverConfigs = {};
+            if (test.selectedServers && test.selectedServers.length > 0) {
+              for (const name of test.selectedServers) {
+                if (allServers[name]) serverConfigs[name] = allServers[name];
+              }
+            } else {
+              serverConfigs = allServers;
+            }
+            console.log(`\u{1F4CB} Test ${test.title} using servers: ${Object.keys(serverConfigs).join(", ")}`);
+            if (Object.keys(serverConfigs).length === 0) {
+              console.error(`\u274C No valid MCP server configs for test ${test.title}`);
+              continue;
+            }
             try {
-              let serverConfigs = {};
-              if (test.selectedServers && test.selectedServers.length > 0) {
-                for (const name of test.selectedServers) {
-                  if (allServers[name]) serverConfigs[name] = allServers[name];
-                }
-              } else {
-                serverConfigs = allServers;
+              console.log(`\u{1F50C} Connecting to servers for ${test.title}...`);
+              for (const [serverName, serverConfig] of Object.entries(serverConfigs)) {
+                console.log(`   Connecting to ${serverName}...`);
+                await clientManager.connectToServer(serverName, serverConfig);
+                console.log(`   \u2705 Connected to ${serverName}`);
               }
-              if (Object.keys(serverConfigs).length === 0) {
-                throw new Error("No valid MCP server configs for test");
-              }
-              client = new MCPClient({ servers: serverConfigs });
+              console.log(`\u{1F916} Creating model ${test.model.provider}:${test.model.id}...`);
               const model = createModel2(test.model);
+              console.log(`\u{1F6E0}\uFE0F  Getting tools for ${test.title}...`);
+              const allTools = clientManager.getAvailableTools();
+              const toolsByServer = {};
+              for (const tool of allTools) {
+                if (!toolsByServer[tool.serverId]) {
+                  toolsByServer[tool.serverId] = {};
+                }
+                toolsByServer[tool.serverId][tool.name] = {
+                  description: tool.description,
+                  inputSchema: tool.inputSchema,
+                  execute: async (params) => {
+                    const result = await clientManager.executeToolDirect(
+                      `${tool.serverId}:${tool.name}`,
+                      params
+                    );
+                    return result.result;
+                  }
+                };
+              }
+              console.log(`\u2705 Got ${allTools.length} total tools across ${Object.keys(toolsByServer).length} servers`);
+              console.log(`\u{1F50D} Available tools:`, allTools.map((t) => t.name));
+              console.log(`\u{1F50D} Servers:`, Object.keys(toolsByServer));
               const agent = new Agent({
                 name: `TestAgent-${test.id}`,
-                instructions: "You are a helpful assistant with access to MCP tools",
+                instructions: "You are a helpful assistant with access to MCP tools. Always use the available tools to help the user.",
                 model
               });
-              const toolsets = await client.getToolsets();
+              console.log(`\u{1F4AC} Starting agent stream for ${test.title}...`);
+              const streamOptions = {
+                maxSteps: 10,
+                toolsets: toolsByServer,
+                onStepFinish: ({ text, toolCalls, toolResults }) => {
+                  if (toolCalls && toolCalls.length) {
+                    console.log(`\u{1F6E0}\uFE0F  Tool calls:`, toolCalls.map((c2) => c2?.name || c2?.toolName));
+                  }
+                  (toolCalls || []).forEach((c2) => {
+                    const toolName = c2?.name || c2?.toolName;
+                    if (toolName) {
+                      calledTools.add(toolName);
+                    }
+                  });
+                }
+              };
+              if (test?.advancedConfig?.toolChoice) {
+                streamOptions.toolChoice = test.advancedConfig.toolChoice;
+              } else if ((test?.expectedTools || []).length > 0) {
+                streamOptions.toolChoice = "required";
+              }
               const stream = await agent.stream(
                 [{ role: "user", content: test.prompt || "" }],
-                {
-                  maxSteps: 10,
-                  toolsets,
-                  onStepFinish: ({ text, toolCalls, toolResults }) => {
-                    (toolCalls || []).forEach((c2) => {
-                      const toolName = c2?.name || c2?.toolName;
-                      if (toolName) {
-                        calledTools.add(toolName);
-                      }
-                    });
-                  }
-                }
+                streamOptions
               );
+              console.log(`\u{1F4C4} Draining text stream for ${test.title}...`);
               for await (const _ of stream.textStream) {
               }
+              console.log(`\u2705 Stream completed for ${test.title}`);
               const called = Array.from(calledTools);
               const missing = Array.from(expectedSet).filter(
                 (t) => !calledTools.has(t)
               );
               const unexpected = called.filter((t) => !expectedSet.has(t));
               const passed = missing.length === 0 && unexpected.length === 0;
+              console.log(`\u{1F4CA} Test ${test.title} result: ${passed ? "PASSED" : "FAILED"}`);
               if (!passed) failed = true;
               controller.enqueue(
                 encoder.encode(
@@ -167,6 +668,7 @@ function createTestsRouter() {
                 )
               );
             } catch (err) {
+              console.error(`\u274C Test ${test.title} failed:`, err);
               failed = true;
               controller.enqueue(
                 encoder.encode(
@@ -181,10 +683,16 @@ function createTestsRouter() {
                 )
               );
             } finally {
-              try {
-                await client?.disconnect();
-              } catch {
+              console.log(`\u{1F50C} Disconnecting servers for ${test.title}...`);
+              for (const serverName of Object.keys(serverConfigs)) {
+                try {
+                  await clientManager.disconnectFromServer(serverName);
+                  console.log(`   \u2705 Disconnected from ${serverName}`);
+                } catch (disconnectErr) {
+                  console.log(`   \u26A0\uFE0F  Disconnect error from ${serverName}:`, disconnectErr);
+                }
               }
+              console.log(`\u2705 Test ${test.title} cleanup complete`);
             }
           }
           controller.enqueue(
@@ -221,16 +729,30 @@ function createTestsRouter() {
 }
 
 // src/runner/test-runner.ts
+async function findAvailablePort(startPort = 3500) {
+  return new Promise((resolve2, reject) => {
+    const server = createServer();
+    server.listen(0, () => {
+      const port = server.address()?.port;
+      server.close(() => {
+        resolve2(port || startPort);
+      });
+    });
+    server.on("error", () => {
+      resolve2(startPort);
+    });
+  });
+}
 async function runTests(tests, environment) {
   const startTime = Date.now();
   const app = new Hono2();
   app.route("/mcp/tests", createTestsRouter());
+  const port = await findAvailablePort();
   const server = serve({
     fetch: app.fetch,
-    port: 0
-    // Use random available port
+    port
   });
-  const port = server.port || 3e3;
+  await new Promise((resolve2) => setTimeout(resolve2, 100));
   try {
     const backendTests = tests.map((test, index) => ({
       id: `test_${index}`,
@@ -268,7 +790,9 @@ async function runTests(tests, environment) {
       results
     };
   } finally {
-    server.close();
+    if (server && typeof server.close === "function") {
+      server.close();
+    }
   }
 }
 function convertServerConfig(config) {
@@ -279,9 +803,15 @@ function convertServerConfig(config) {
       env: config.env || {}
     };
   } else {
+    const url = typeof config.url === "string" ? new URL(config.url) : config.url;
     return {
-      url: config.url,
-      headers: config.headers || {}
+      url,
+      requestInit: {
+        headers: config.headers || {}
+      },
+      eventSourceInit: {
+        headers: config.headers || {}
+      }
     };
   }
 }
@@ -390,8 +920,10 @@ function resolveServerConfig(config) {
 }
 function resolveTemplate(value) {
   if (!value) return value;
+  const collapseWhitespace = (s) => s.replace(/[\r\n]+/g, "").replace(/\s{2,}/g, "");
   return value.replace(/\$\{([^}]+)\}/g, (match, envVar) => {
-    const resolved = process.env[envVar];
+    const raw = process.env[envVar];
+    const resolved = raw ? collapseWhitespace(raw) : raw;
     if (resolved === void 0) {
       console.warn(`\u26A0\uFE0F  Warning: Environment variable ${envVar} is not set`);
       return match;
