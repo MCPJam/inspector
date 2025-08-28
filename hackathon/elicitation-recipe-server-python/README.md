@@ -4,6 +4,8 @@ In this hackathon project, we will build an MCP server that helps users find rec
 
 Elicitation is a powerful part of the MCP spec, enabling servers to implement powerful workflows and requesting for user input before fulfilling a request. This creates a richer MCP experience as it allows the server to obtain additional info mid-request.
 
+![Demo](img/demo.png)
+
 ## Prerequisites
 
 - Python
@@ -159,15 +161,27 @@ if __name__ == "__main__":
 
 ## Step 4: Test the Recipe Finder MCP Server
 
+### 1. **Start your MCP server**
+
+Make sure your in your venv. If not, run `.source .venv/bin/activate`. Then run the python script with `python3 recipe.py`. You should see your server spin up with SSE transport.
+
+```
+git:(main) python3 recipe.py
+INFO:     Started server process [64839]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+```
+
 ### 1. **Start the MCPJam inspector:**
 
 This command will open up the MCPJam inspector with the server configured:
 
 ```bash
-npx @mcpjam/inspector@latest uv run fastmcp run <FILE_PATH>
+npx @mcpjam/inspector@latest
 ```
 
-Replace `<FILE_PATH>` with the path to your `recipe_finder.py` file. For example, `/Users/matt8p/Desktop/recipe-finder/recipe_finder.py`. Once you run the command, you should see that the inspector connected to your Recipe Finder MCP server.
+Connect to a server and paste in the URL of the server. `http://127.0.0.1:8000/sse`
 
 ### 2. Set up your OpenAI API token
 
