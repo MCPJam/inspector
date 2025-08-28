@@ -609,11 +609,10 @@ function createTestsRouter() {
                 };
               }
               console.log(`\u2705 Got ${allTools.length} total tools across ${Object.keys(toolsByServer).length} servers`);
-              console.log(`\u{1F50D} Available tools:`, allTools.map((t) => t.name));
               console.log(`\u{1F50D} Servers:`, Object.keys(toolsByServer));
               const agent = new Agent({
                 name: `TestAgent-${test.id}`,
-                instructions: "You are a helpful assistant with access to MCP tools. Always use the available tools to help the user.",
+                instructions: "You are a helpful assistant with access to MCP tools",
                 model
               });
               console.log(`\u{1F4AC} Starting agent stream for ${test.title}...`);
@@ -634,8 +633,6 @@ function createTestsRouter() {
               };
               if (test?.advancedConfig?.toolChoice) {
                 streamOptions.toolChoice = test.advancedConfig.toolChoice;
-              } else if ((test?.expectedTools || []).length > 0) {
-                streamOptions.toolChoice = "required";
               }
               const stream = await agent.stream(
                 [{ role: "user", content: test.prompt || "" }],
