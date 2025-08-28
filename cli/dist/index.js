@@ -189,6 +189,17 @@ var MCPJamClientManager = class {
   getServerIdForName(serverName) {
     return this.serverIdMapping.get(serverName);
   }
+  // Public method to get original server name from a unique server ID
+  getOriginalNameForId(uniqueServerId) {
+    for (const [originalName, uid] of this.serverIdMapping.entries()) {
+      if (uid === uniqueServerId) return originalName;
+    }
+    return void 0;
+  }
+  // Convenience: map an array of unique IDs to their original names (fallback to ID if not found)
+  mapIdsToOriginalNames(uniqueIds) {
+    return uniqueIds.map((id) => this.getOriginalNameForId(id) || id);
+  }
   async connectToServer(serverId, serverConfig) {
     const pending = this.pendingConnections.get(serverId);
     if (pending) {
@@ -609,14 +620,9 @@ function createTestsRouter() {
                 };
               }
               console.log(`\u2705 Got ${allTools.length} total tools across ${Object.keys(toolsByServer).length} servers`);
-              const uniqueToOriginalName = {};
-              for (const originalName of Object.keys(serverConfigs)) {
-                const uid = clientManager.getServerIdForName(originalName);
-                if (uid) uniqueToOriginalName[uid] = originalName;
-              }
               console.log(
                 `\u{1F50D} Servers:`,
-                Object.keys(toolsByServer).map((id) => uniqueToOriginalName[id] || id)
+                clientManager.mapIdsToOriginalNames(Object.keys(toolsByServer))
               );
               const agent = new Agent({
                 name: `TestAgent-${test.id}`,
