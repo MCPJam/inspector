@@ -118,15 +118,10 @@ export function createTestsRouter() {
               }
               
               console.log(`✅ Got ${allTools.length} total tools across ${Object.keys(toolsByServer).length} servers`);
-              // Map unique server IDs back to original names for readability
-              const uniqueToOriginalName: Record<string, string> = {};
-              for (const originalName of Object.keys(serverConfigs)) {
-                const uid = clientManager.getServerIdForName(originalName);
-                if (uid) uniqueToOriginalName[uid] = originalName;
-              }
+              // Map unique server IDs back to original names for readability using client manager helper
               console.log(
                 `🔍 Servers:`,
-                Object.keys(toolsByServer).map((id) => uniqueToOriginalName[id] || id),
+                clientManager.mapIdsToOriginalNames(Object.keys(toolsByServer)),
               );
               
               const agent = new Agent({
