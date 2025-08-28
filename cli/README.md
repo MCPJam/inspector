@@ -34,8 +34,6 @@ The CLI includes example configuration files in the `examples/` directory:
 
 - `test-servers.json`: Sample tests configuration
 - `mcp-environment.json`: Sample environment configuration
-- `weather-tests.json`: Weather service testing example
-- `local-dev.json`: Local development environment setup
 
 ## File Formats
 
