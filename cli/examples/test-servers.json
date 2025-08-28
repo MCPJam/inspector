@@ -15,7 +15,7 @@
       "selectedServers": ["github-mcp"]
     },
     {
-      "title": "Add 20 and 30 and create a new repository with the result",
+      "title": "Add 20 and 30 via tool call and create a new repository with the result",
       "prompt": "Add 20 and 30 via tool call and create a new repository with the result",
       "expectedTools": ["add", "create_repository"],
       "model": { "id": "claude-3-5-sonnet-20241022", "provider": "anthropic" },

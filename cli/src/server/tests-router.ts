@@ -118,8 +118,17 @@ export function createTestsRouter() {
               }
               
               console.log(`✅ Got ${allTools.length} total tools across ${Object.keys(toolsByServer).length} servers`);
-              console.log(`🔍 Servers:`, Object.keys(toolsByServer));
-
+              // Map unique server IDs back to original names for readability
+              const uniqueToOriginalName: Record<string, string> = {};
+              for (const originalName of Object.keys(serverConfigs)) {
+                const uid = clientManager.getServerIdForName(originalName);
+                if (uid) uniqueToOriginalName[uid] = originalName;
+              }
+              console.log(
+                `🔍 Servers:`,
+                Object.keys(toolsByServer).map((id) => uniqueToOriginalName[id] || id),
+              );
+              
               const agent = new Agent({
                 name: `TestAgent-${test.id}`,
                 instructions: "You are a helpful assistant with access to MCP tools",
@@ -130,7 +139,7 @@ export function createTestsRouter() {
               const streamOptions: any = {
                 maxSteps: 10,
                 toolsets: toolsByServer,
-                onStepFinish: ({ text, toolCalls, toolResults }) => {
+                onStepFinish: ({ text, toolCalls, toolResults }: { text: string; toolCalls?: any[]; toolResults?: any[] }) => {
                   if (toolCalls && toolCalls.length) {
                     console.log(`🛠️  Tool calls:`, toolCalls.map((c: any) => c?.name || c?.toolName));
                   }
@@ -144,8 +153,9 @@ export function createTestsRouter() {
                 },
               };
               // Only set toolChoice if explicitly configured, don't force "required"
-              if (test?.advancedConfig?.toolChoice) {
-                streamOptions.toolChoice = test.advancedConfig.toolChoice;
+              const tAny = test as any;
+              if (tAny?.advancedConfig?.toolChoice) {
+                streamOptions.toolChoice = tAny.advancedConfig.toolChoice;
               }
               const stream = await agent.stream(
                 [{ role: "user", content: test.prompt || "" }] as any,
