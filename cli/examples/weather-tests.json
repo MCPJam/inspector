@@ -1,0 +1,24 @@
+{
+  "tests": [
+    {
+      "title": "Test weather tool",
+      "prompt": "What's the weather in San Francisco?",
+      "expectedTools": ["get_weather"],
+      "model": { "id": "claude-3-5-sonnet-20241022", "provider": "anthropic" },
+      "selectedServers": ["weather-server"],
+      "advancedConfig": {
+        "instructions": "You are a helpful weather assistant",
+        "temperature": 0.1,
+        "maxSteps": 5,
+        "toolChoice": "auto"
+      }
+    },
+    {
+      "title": "Test location validation", 
+      "prompt": "What's the weather in an invalid location like XYZ123?",
+      "expectedTools": ["get_weather", "validate_location"],
+      "model": { "id": "gpt-4o", "provider": "openai" },
+      "selectedServers": ["weather-server"]
+    }
+  ]
+}
