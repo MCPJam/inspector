@@ -32,15 +32,20 @@ export function createTestsRouter() {
         switch (model.provider) {
           case "anthropic":
             return createAnthropic({
-              apiKey: providerApiKeys?.anthropic || process.env.ANTHROPIC_API_KEY || "",
+              apiKey:
+                providerApiKeys?.anthropic ||
+                process.env.ANTHROPIC_API_KEY ||
+                "",
             })(model.id);
           case "openai":
             return createOpenAI({
-              apiKey: providerApiKeys?.openai || process.env.OPENAI_API_KEY || "",
+              apiKey:
+                providerApiKeys?.openai || process.env.OPENAI_API_KEY || "",
             })(model.id);
           case "deepseek":
             return createOpenAI({
-              apiKey: providerApiKeys?.deepseek || process.env.DEEPSEEK_API_KEY || "",
+              apiKey:
+                providerApiKeys?.deepseek || process.env.DEEPSEEK_API_KEY || "",
               baseURL: "https://api.deepseek.com/v1",
             })(model.id);
           case "ollama":
@@ -57,12 +62,12 @@ export function createTestsRouter() {
           let failed = false;
 
           const clientManager = new MCPJamClientManager();
-          
+
           for (const test of testsInput) {
             console.log(`🔍 Starting test: ${test.title}`);
             const calledTools = new Set<string>();
             const expectedSet = new Set<string>(test.expectedTools || []);
-            
+
             // Build servers for this test - keep in outer scope for cleanup
             let serverConfigs: Record<string, any> = {};
             if (test.selectedServers && test.selectedServers.length > 0) {
@@ -73,32 +78,39 @@ export function createTestsRouter() {
               serverConfigs = allServers;
             }
 
-            console.log(`📋 Test ${test.title} using servers: ${Object.keys(serverConfigs).join(', ')}`);
+            console.log(
+              `📋 Test ${test.title} using servers: ${Object.keys(serverConfigs).join(", ")}`,
+            );
 
             if (Object.keys(serverConfigs).length === 0) {
-              console.error(`❌ No valid MCP server configs for test ${test.title}`);
+              console.error(
+                `❌ No valid MCP server configs for test ${test.title}`,
+              );
               continue;
             }
 
             try {
-
               // Connect to all servers for this test using the client manager (like chat route)
               console.log(`🔌 Connecting to servers for ${test.title}...`);
-              for (const [serverName, serverConfig] of Object.entries(serverConfigs)) {
+              for (const [serverName, serverConfig] of Object.entries(
+                serverConfigs,
+              )) {
                 console.log(`   Connecting to ${serverName}...`);
                 await clientManager.connectToServer(serverName, serverConfig);
                 console.log(`   ✅ Connected to ${serverName}`);
               }
-              
-              console.log(`🤖 Creating model ${test.model.provider}:${test.model.id}...`);
+
+              console.log(
+                `🤖 Creating model ${test.model.provider}:${test.model.id}...`,
+              );
               const model = createModel(test.model);
 
               console.log(`🛠️  Getting tools for ${test.title}...`);
-              
+
               // Get available tools and create the tool structure like chat.ts
               const allTools = clientManager.getAvailableTools();
               const toolsByServer: Record<string, any> = {};
-              
+
               // Group tools by server for the agent (like chat route)
               for (const tool of allTools) {
                 if (!toolsByServer[tool.serverId]) {
@@ -116,17 +128,20 @@ export function createTestsRouter() {
                   },
                 };
               }
-              
-              console.log(`✅ Got ${allTools.length} total tools across ${Object.keys(toolsByServer).length} servers`);
+
+              console.log(
+                `✅ Got ${allTools.length} total tools across ${Object.keys(toolsByServer).length} servers`,
+              );
               // Map unique server IDs back to original names for readability using client manager helper
               console.log(
                 `🔍 Servers:`,
                 clientManager.mapIdsToOriginalNames(Object.keys(toolsByServer)),
               );
-              
+
               const agent = new Agent({
                 name: `TestAgent-${test.id}`,
-                instructions: "You are a helpful assistant with access to MCP tools",
+                instructions:
+                  "You are a helpful assistant with access to MCP tools",
                 model,
               });
 
@@ -134,9 +149,20 @@ export function createTestsRouter() {
               const streamOptions: any = {
                 maxSteps: 10,
                 toolsets: toolsByServer,
-                onStepFinish: ({ text, toolCalls, toolResults }: { text: string; toolCalls?: any[]; toolResults?: any[] }) => {
+                onStepFinish: ({
+                  text,
+                  toolCalls,
+                  toolResults,
+                }: {
+                  text: string;
+                  toolCalls?: any[];
+                  toolResults?: any[];
+                }) => {
                   if (toolCalls && toolCalls.length) {
-                    console.log(`🛠️  Tool calls:`, toolCalls.map((c: any) => c?.name || c?.toolName));
+                    console.log(
+                      `🛠️  Tool calls:`,
+                      toolCalls.map((c: any) => c?.name || c?.toolName),
+                    );
                   }
                   // Accumulate tool names
                   (toolCalls || []).forEach((c: any) => {
@@ -166,12 +192,14 @@ export function createTestsRouter() {
 
               const called = Array.from(calledTools);
               const missing = Array.from(expectedSet).filter(
-                (t) => !calledTools.has(t)
+                (t) => !calledTools.has(t),
               );
               const unexpected = called.filter((t) => !expectedSet.has(t));
               const passed = missing.length === 0 && unexpected.length === 0;
 
-              console.log(`📊 Test ${test.title} result: ${passed ? 'PASSED' : 'FAILED'}`);
+              console.log(
+                `📊 Test ${test.title} result: ${passed ? "PASSED" : "FAILED"}`,
+              );
               if (!passed) failed = true;
 
               controller.enqueue(
@@ -183,8 +211,8 @@ export function createTestsRouter() {
                     calledTools: called,
                     missingTools: missing,
                     unexpectedTools: unexpected,
-                  })}\n\n`
-                )
+                  })}\n\n`,
+                ),
               );
             } catch (err) {
               console.error(`❌ Test ${test.title} failed:`, err);
@@ -196,8 +224,8 @@ export function createTestsRouter() {
                     testId: test.id,
                     passed: false,
                     error: (err as Error)?.message,
-                  })}\n\n`
-                )
+                  })}\n\n`,
+                ),
               );
             } finally {
               console.log(`🔌 Disconnecting servers for ${test.title}...`);
@@ -206,7 +234,10 @@ export function createTestsRouter() {
                   await clientManager.disconnectFromServer(serverName);
                   console.log(`   ✅ Disconnected from ${serverName}`);
                 } catch (disconnectErr) {
-                  console.log(`   ⚠️  Disconnect error from ${serverName}:`, disconnectErr);
+                  console.log(
+                    `   ⚠️  Disconnect error from ${serverName}:`,
+                    disconnectErr,
+                  );
                 }
               }
               console.log(`✅ Test ${test.title} cleanup complete`);
@@ -218,8 +249,8 @@ export function createTestsRouter() {
               `data: ${JSON.stringify({
                 type: "run_complete",
                 passed: !failed,
-              })}\n\n`
-            )
+              })}\n\n`,
+            ),
           );
           controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
           controller.close();
@@ -236,7 +267,7 @@ export function createTestsRouter() {
     } catch (err) {
       return c.json(
         { success: false, error: (err as Error)?.message || "Unknown error" },
-        500
+        500,
       );
     }
   });

@@ -17,6 +17,7 @@ mcpjam evals run --tests weather-tests.json --environment local-dev.json
 ```
 
 Short flags:
+
 ```bash
 mcpjam evals run -t weather-tests.json -e local-dev.json
 ```
@@ -91,8 +92,9 @@ The CLI includes example configuration files in the `examples/` directory:
 The CLI resolves template variables like `${ANTHROPIC_API_KEY}` from your environment at runtime.
 
 Required environment variables depend on your test configuration:
+
 - `ANTHROPIC_API_KEY` - For Claude models
-- `OPENAI_API_KEY` - For OpenAI models  
+- `OPENAI_API_KEY` - For OpenAI models
 - `DEEPSEEK_API_KEY` - For DeepSeek models
 - Custom variables for your MCP servers (e.g., `WEATHER_API_KEY`)
 
