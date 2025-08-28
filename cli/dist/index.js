@@ -609,7 +609,15 @@ function createTestsRouter() {
                 };
               }
               console.log(`\u2705 Got ${allTools.length} total tools across ${Object.keys(toolsByServer).length} servers`);
-              console.log(`\u{1F50D} Servers:`, Object.keys(toolsByServer));
+              const uniqueToOriginalName = {};
+              for (const originalName of Object.keys(serverConfigs)) {
+                const uid = clientManager.getServerIdForName(originalName);
+                if (uid) uniqueToOriginalName[uid] = originalName;
+              }
+              console.log(
+                `\u{1F50D} Servers:`,
+                Object.keys(toolsByServer).map((id) => uniqueToOriginalName[id] || id)
+              );
               const agent = new Agent({
                 name: `TestAgent-${test.id}`,
                 instructions: "You are a helpful assistant with access to MCP tools",
@@ -631,8 +639,9 @@ function createTestsRouter() {
                   });
                 }
               };
-              if (test?.advancedConfig?.toolChoice) {
-                streamOptions.toolChoice = test.advancedConfig.toolChoice;
+              const tAny = test;
+              if (tAny?.advancedConfig?.toolChoice) {
+                streamOptions.toolChoice = tAny.advancedConfig.toolChoice;
               }
               const stream = await agent.stream(
                 [{ role: "user", content: test.prompt || "" }],
