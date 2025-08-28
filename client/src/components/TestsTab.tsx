@@ -252,6 +252,8 @@ export function TestsTab({
         models.push(model);
       else if (model.provider === "deepseek" && hasToken("deepseek"))
         models.push(model);
+      else if (model.provider === "google" && hasToken("google"))
+        models.push(model);
     }
     if (isOllamaRunning && ollamaModels.length > 0)
       models.push(...ollamaModels);
@@ -274,6 +276,10 @@ export function TestsTab({
       else if (hasToken("deepseek"))
         setCurrentModel(
           SUPPORTED_MODELS.find((m) => m.id === Model.DEEPSEEK_CHAT) || null,
+        );
+      else if (hasToken("google"))
+        setCurrentModel(
+          SUPPORTED_MODELS.find((m) => m.id === Model.GEMINI_2_5_FLASH) || null,
         );
       else setCurrentModel(null);
     }
@@ -655,6 +661,7 @@ export function TestsTab({
       anthropic: getToken("anthropic"),
       openai: getToken("openai"),
       deepseek: getToken("deepseek"),
+      google: getToken("google"),
     } as any;
 
     // Consolidate all servers map from props

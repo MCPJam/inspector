@@ -7,6 +7,7 @@ import {
 import { Agent } from "@mastra/core/agent";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOllama } from "ollama-ai-provider";
 import {
   ChatMessage,
@@ -102,6 +103,8 @@ const createLlmModel = (
       return createOpenAI({ apiKey, baseURL: "https://api.deepseek.com/v1" })(
         modelDefinition.id,
       );
+    case "google":
+      return createGoogleGenerativeAI({ apiKey })(modelDefinition.id);
     case "ollama":
       const baseUrl = ollamaBaseUrl || "http://localhost:11434";
       return createOllama({
