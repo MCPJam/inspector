@@ -1,14 +1,10 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { ChatMessage, ChatState, Attachment } from "@/lib/chat-types";
 import { createMessage } from "@/lib/chat-utils";
-import {
-  MastraMCPServerDefinition,
-  Model,
-  ModelDefinition,
-  SUPPORTED_MODELS,
-} from "@/shared/types.js";
+import { Model, ModelDefinition, SUPPORTED_MODELS } from "@/shared/types.js";
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
 import { detectOllamaModels } from "@/lib/ollama-utils";
+import { MastraMCPServerDefinition } from "@mastra/mcp";
 
 interface ElicitationRequest {
   requestId: string;

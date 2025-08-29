@@ -1,6 +1,5 @@
 import { useRef, useEffect, useState } from "react";
 import { MessageCircle } from "lucide-react";
-import { MastraMCPServerDefinition } from "@/shared/types.js";
 import { useChat } from "@/hooks/use-chat";
 import { Message } from "./chat/message";
 import { ChatInput } from "./chat/chat-input";
@@ -8,6 +7,7 @@ import { ElicitationDialog } from "./ElicitationDialog";
 import { TooltipProvider } from "./ui/tooltip";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
+import { MastraMCPServerDefinition } from "@mastra/mcp";
 
 interface ChatTabProps {
   serverConfigs?: Record<string, MastraMCPServerDefinition>;
