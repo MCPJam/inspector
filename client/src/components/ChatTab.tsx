@@ -22,6 +22,9 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
     systemPrompt || "You are a helpful assistant with access to MCP tools.",
   );
 
+  const noServersConnected =
+    Object.keys(serverConfigs || {}).length === 0 || !serverConfigs;
+
   const {
     messages,
     isLoading,
@@ -85,12 +88,20 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
           >
             <div className="space-y-3">
               <h1 className="text-4xl font-semibold bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
-                Let&apos;s test out your MCP servers!
+                Test your servers in chat
               </h1>
-              {serverConfigs && (
+              {noServersConnected ? (
+                <div className="text-sm text-muted-foreground mt-4">
+                  <p className="text-xs">
+                    You must be connected to at least 1 MCP server to get
+                    started.
+                  </p>
+                </div>
+              ) : (
                 <div className="text-sm text-muted-foreground mt-4">
                   <p>
-                    Connected servers: {Object.keys(serverConfigs).join(", ")}
+                    Connected servers:{" "}
+                    {Object.keys(serverConfigs || {}).join(", ")}
                   </p>
                 </div>
               )}
@@ -109,7 +120,7 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
               onChange={setInput}
               onSubmit={sendMessage}
               onStop={stopGeneration}
-              disabled={availableModels.length === 0}
+              disabled={availableModels.length === 0 || noServersConnected}
               isLoading={isLoading}
               placeholder="Send a message..."
               className="border-2 shadow-lg bg-background/80 backdrop-blur-sm"
@@ -231,7 +242,7 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
               onChange={setInput}
               onSubmit={sendMessage}
               onStop={stopGeneration}
-              disabled={availableModels.length === 0}
+              disabled={availableModels.length === 0 || noServersConnected}
               isLoading={isLoading}
               placeholder="Send a message..."
               className="border-2 shadow-sm"
