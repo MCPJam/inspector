@@ -14,12 +14,7 @@ import { Save as SaveIcon, Play, Trash2, Copy, Plus, X } from "lucide-react";
 import { ModelSelector } from "./chat/model-selector";
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
 import { detectOllamaModels } from "@/lib/ollama-utils";
-import {
-  MastraMCPServerDefinition,
-  ModelDefinition,
-  SUPPORTED_MODELS,
-  Model,
-} from "@/shared/types.js";
+import { ModelDefinition, SUPPORTED_MODELS, Model } from "@/shared/types.js";
 import {
   listSavedTests,
   saveTest,
@@ -27,6 +22,7 @@ import {
   duplicateTest,
   type SavedTest,
 } from "@/lib/test-storage";
+import { MastraMCPServerDefinition } from "@mastra/mcp";
 
 interface TestsTabProps {
   serverConfig?: MastraMCPServerDefinition;
@@ -252,6 +248,8 @@ export function TestsTab({
         models.push(model);
       else if (model.provider === "deepseek" && hasToken("deepseek"))
         models.push(model);
+      else if (model.provider === "google" && hasToken("google"))
+        models.push(model);
     }
     if (isOllamaRunning && ollamaModels.length > 0)
       models.push(...ollamaModels);
@@ -274,6 +272,10 @@ export function TestsTab({
       else if (hasToken("deepseek"))
         setCurrentModel(
           SUPPORTED_MODELS.find((m) => m.id === Model.DEEPSEEK_CHAT) || null,
+        );
+      else if (hasToken("google"))
+        setCurrentModel(
+          SUPPORTED_MODELS.find((m) => m.id === Model.GEMINI_2_5_FLASH) || null,
         );
       else setCurrentModel(null);
     }
@@ -655,6 +657,7 @@ export function TestsTab({
       anthropic: getToken("anthropic"),
       openai: getToken("openai"),
       deepseek: getToken("deepseek"),
+      google: getToken("google"),
     } as any;
 
     // Consolidate all servers map from props

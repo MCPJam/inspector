@@ -9,12 +9,12 @@ import {
   MCPOAuthOptions,
 } from "@/lib/mcp-oauth";
 import {
-  MastraMCPServerDefinition,
   StdioServerDefinition,
   HttpServerDefinition,
   OauthTokens,
 } from "@/shared/types.js";
 import { useLogger } from "./use-logger";
+import { MastraMCPServerDefinition } from "@mastra/mcp";
 
 export interface ServerWithName {
   name: string;

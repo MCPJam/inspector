@@ -1,3 +1,4 @@
+/// <reference types="@electron-forge/plugin-vite/forge-vite-env" />
 import { app, BrowserWindow, shell, Menu } from "electron";
 import { serve } from "@hono/node-server";
 import path from "path";
@@ -51,6 +52,8 @@ async function startHonoServer(): Promise<number> {
 
     // Set environment variable to tell the server it's running in Electron
     process.env.ELECTRON_APP = "true";
+    process.env.IS_PACKAGED = app.isPackaged ? "true" : "false";
+    process.env.ELECTRON_RESOURCES_PATH = process.resourcesPath;
 
     const honoApp = createHonoApp();
 
@@ -78,18 +81,15 @@ function createMainWindow(serverUrl: string): BrowserWindow {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      enableRemoteModule: false,
-      preload: path.join(__dirname, "../preload/index.js"),
+      // Vite plugin outputs main.js and preload.js into the same directory (.vite/build)
+      preload: path.join(__dirname, "preload.js"),
     },
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     show: false, // Don't show until ready
   });
 
-  // Register IPC listeners
-  registerListeners(window);
-
   // Load the app
-  window.loadURL(serverUrl);
+  window.loadURL(isDev ? MAIN_WINDOW_VITE_DEV_SERVER_URL : serverUrl);
 
   if (isDev) {
     window.webContents.openDevTools();
@@ -102,12 +102,6 @@ function createMainWindow(serverUrl: string): BrowserWindow {
     if (isDev) {
       window.webContents.openDevTools();
     }
-  });
-
-  // Handle external links
-  window.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
-    return { action: "deny" };
   });
 
   // Handle window closed
@@ -213,6 +207,9 @@ app.whenReady().then(async () => {
     createAppMenu();
     mainWindow = createMainWindow(serverUrl);
 
+    // Register IPC listeners
+    registerListeners(mainWindow);
+
     log.info("MCPJam Electron app ready");
   } catch (error) {
     log.error("Failed to initialize app:", error);
@@ -224,6 +221,7 @@ app.on("window-all-closed", () => {
   // Close the server when all windows are closed
   if (server) {
     server.close?.();
+    serverPort = 0;
   }
 
   // On macOS, keep the app running even when all windows are closed
@@ -253,9 +251,9 @@ app.on("activate", async () => {
 
 // Security: Prevent new window creation
 app.on("web-contents-created", (_, contents) => {
-  contents.on("new-window", (navigationEvent, navigationUrl) => {
-    navigationEvent.preventDefault();
-    shell.openExternal(navigationUrl);
+  contents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url);
+    return { action: "deny" };
   });
 });
 

@@ -1,14 +1,10 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { ChatMessage, ChatState, Attachment } from "@/lib/chat-types";
 import { createMessage } from "@/lib/chat-utils";
-import {
-  MastraMCPServerDefinition,
-  Model,
-  ModelDefinition,
-  SUPPORTED_MODELS,
-} from "@/shared/types.js";
+import { Model, ModelDefinition, SUPPORTED_MODELS } from "@/shared/types.js";
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
 import { detectOllamaModels } from "@/lib/ollama-utils";
+import { MastraMCPServerDefinition } from "@mastra/mcp";
 
 interface ElicitationRequest {
   requestId: string;
@@ -106,6 +102,11 @@ export function useChat(options: UseChatOptions = {}) {
           (m) => m.id === Model.DEEPSEEK_CHAT,
         );
         if (deepseekModel) setModel(deepseekModel);
+      } else if (hasToken("google")) {
+        const googleModel = SUPPORTED_MODELS.find(
+          (m) => m.id === Model.GEMINI_2_5_FLASH,
+        );
+        if (googleModel) setModel(googleModel);
       } else {
         setModel(null);
       }
@@ -149,6 +150,8 @@ export function useChat(options: UseChatOptions = {}) {
       } else if (model.provider === "openai" && hasToken("openai")) {
         availableModelsList.push(model);
       } else if (model.provider === "deepseek" && hasToken("deepseek")) {
+        availableModelsList.push(model);
+      } else if (model.provider === "google" && hasToken("google")) {
         availableModelsList.push(model);
       }
     }

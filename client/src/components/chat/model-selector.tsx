@@ -43,6 +43,8 @@ const getProviderDisplayName = (provider: ModelProvider): string => {
       return "OpenAI";
     case "deepseek":
       return "DeepSeek";
+    case "google":
+      return "Google AI";
     case "ollama":
       return "Ollama";
     default:
