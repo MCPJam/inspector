@@ -145,6 +145,8 @@ export function getDefaultTemperatureByProvider(provider: string): number {
       return 1.0;
     case "anthropic":
       return 0;
+    case "google":
+      return 0.9; // Google's recommended default
     default:
       return 0;
   }

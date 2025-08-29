@@ -104,6 +104,11 @@ export function useChat(options: UseChatOptions = {}) {
           (m) => m.id === Model.DEEPSEEK_CHAT,
         );
         if (deepseekModel) setModel(deepseekModel);
+      } else if (hasToken("google")) {
+        const googleModel = SUPPORTED_MODELS.find(
+          (m) => m.id === Model.GEMINI_2_5_FLASH,
+        );
+        if (googleModel) setModel(googleModel);
       } else {
         setModel(null);
       }
@@ -147,6 +152,8 @@ export function useChat(options: UseChatOptions = {}) {
       } else if (model.provider === "openai" && hasToken("openai")) {
         availableModelsList.push(model);
       } else if (model.provider === "deepseek" && hasToken("deepseek")) {
+        availableModelsList.push(model);
+      } else if (model.provider === "google" && hasToken("google")) {
         availableModelsList.push(model);
       }
     }

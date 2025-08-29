@@ -6,12 +6,9 @@ import { resolve } from "path";
 export default defineConfig({
   plugins: [react()],
   root: "./client",
-  build: {
-    outDir: "../dist/renderer",
-    emptyOutDir: true,
-  },
   resolve: {
     alias: {
+      "@/shared": resolve(__dirname, "./shared"),
       "@": resolve(__dirname, "./client/src"),
     },
   },
