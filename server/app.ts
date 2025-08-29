@@ -5,6 +5,7 @@ import { serveStatic } from "@hono/node-server/serve-static";
 
 // Import routes
 import mcpRoutes from "./routes/mcp/index.js";
+import path from "path";
 
 export function createHonoApp() {
   const app = new Hono();
@@ -35,20 +36,21 @@ export function createHonoApp() {
 
   // Static file serving (for production OR when running in Electron)
   const isElectron = process.env.ELECTRON_APP === "true";
-  if (process.env.NODE_ENV === "production" || isElectron) {
+  const isProduction = process.env.NODE_ENV === "production";
+  const isPackaged = process.env.IS_PACKAGED === "true";
+
+  if (isProduction || isElectron) {
+    let root = "./dist/client";
+    if (isElectron && isPackaged) {
+      // Electron packaged app
+      root = path.resolve(process.env.ELECTRON_RESOURCES_PATH!, "client");
+    }
+
     // Serve static assets (JS, CSS, images, etc.)
-    app.use("/*", serveStatic({ root: "./dist/client" }));
+    app.use("/*", serveStatic({ root }));
 
     // SPA fallback - serve index.html for all non-API routes
-    app.get("*", (c) => {
-      const path = c.req.path;
-      // Don't intercept API routes
-      if (path.startsWith("/api/")) {
-        return c.notFound();
-      }
-      // Return index.html for SPA routes
-      return serveStatic({ path: "./dist/client/index.html" })(c);
-    });
+    app.get("/*", serveStatic({ path: `${root}/index.html` }));
   } else {
     // Development mode - just API
     app.get("/", (c) => {

@@ -35,15 +35,15 @@ A Python-based MCP server that connects to NASA's API to fetch the Astronomy Pic
 
 [View Project →](nasa-mcp-python/README.md)
 
-### 🎵 (Week 2) Spotify MCP Server [TBD]
+### 🍳 (Week 2) Recipe Elicitation MCP server
 
-**Location:** `spotify-mcp-python/`
+**Location:** `elicitation-recipe-server-python/`
 
-A Python MCP server for integrating with Spotify's API, allowing AI assistants to search for music, get track information, and manage playlists.
+A Python MCP server for fetching cooking recipes using elicitation. Learn how to build an MCP server with support for elicitation.
 
-TBD
+**Estimated Time:** 15 minutes
 
-[View Project →](spotify-mcp-python/README.md)
+[View Project →](elicitation-recipe-server-python/README.md)
 
 ## 🔗 Resources
 

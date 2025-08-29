@@ -6,7 +6,6 @@ import {
   DEFAULT_AUTH_SETTINGS,
   StatusMessage,
 } from "@/shared/types.js";
-import { MastraMCPServerDefinition } from "@/shared/types.js";
 import { Card, CardContent } from "./ui/card";
 import {
   initiateOAuth,
@@ -23,6 +22,7 @@ import {
 } from "../lib/oauth-flow-types";
 import { OAuthFlowProgress } from "./OAuthFlowProgress";
 import { OAuthStateMachine } from "../lib/oauth-state-machine";
+import { MastraMCPServerDefinition } from "@mastra/mcp";
 
 interface StatusMessageProps {
   message: StatusMessage;

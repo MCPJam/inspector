@@ -25,7 +25,6 @@ import {
   Edit,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
-import { formatTimeRemaining } from "@/lib/utils";
 
 interface ServerConnectionCardProps {
   server: ServerWithName;
@@ -47,31 +46,7 @@ export function ServerConnectionCard({
   const [isErrorExpanded, setIsErrorExpanded] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const isHttpServer = server.config.url !== undefined;
-  const hasOAuth = server.oauthTokens;
-  const headers = server.config.requestInit?.headers as Record<string, string>;
-  const manualBearerToken =
-    headers?.Authorization?.startsWith("Bearer ") &&
-    headers.Authorization.slice(7); // Remove 'Bearer ' prefix
-
-  // Show expandable section if there's OAuth data, manual Bearer token, or STDIO server
-  const hasExpandableContent = hasOAuth || manualBearerToken || !isHttpServer;
-
-  // Calculate OAuth token expiration
-  const getTokenStatus = () => {
-    if (!server.oauthTokens?.expires_in) return null;
-    // For simplicity, we'll just show that token is active
-    return {
-      percentage: 100,
-      timeLeft: 3600000, // 1 hour default
-      hours: 1,
-      minutes: 0,
-      seconds: 0,
-      isExpired: false,
-      isExpiringSoon: false,
-    };
-  };
-
-  const tokenStatus = getTokenStatus();
+  const serverConfig = server.config;
 
   const copyToClipboard = async (text: string, fieldName: string) => {
     try {
@@ -281,212 +256,53 @@ export function ServerConnectionCard({
               )}
             </div>
           )}
-          {hasExpandableContent && (
-            <div className="flex justify-end">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground cursor-pointer"
-                onClick={() => setIsExpanded(!isExpanded)}
-              >
-                {isExpanded ? (
-                  <ChevronUp className="h-3 w-3" />
-                ) : (
-                  <ChevronDown className="h-3 w-3" />
-                )}
-              </Button>
-            </div>
-          )}
+          <div className="flex justify-end">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground cursor-pointer"
+              onClick={() => setIsExpanded(!isExpanded)}
+            >
+              {isExpanded ? (
+                <ChevronUp className="h-3 w-3" />
+              ) : (
+                <ChevronDown className="h-3 w-3" />
+              )}
+            </Button>
+          </div>
           {/* Expandable Details */}
-          {isExpanded && hasExpandableContent && (
+          {isExpanded && (
             <div className="space-y-3 pt-2">
-              {/* Manual Bearer Token Information - only show if no OAuth */}
-              {manualBearerToken && !server.oauthTokens && (
-                <div className="space-y-2">
-                  <div className="space-y-3 text-xs">
-                    <div>
-                      <span className="text-muted-foreground font-medium">
-                        Bearer Access Token (Manual):
-                      </span>
-                      <div className="font-mono text-foreground break-all bg-muted/30 p-2 rounded mt-1 relative group">
-                        <div className="pr-8">{manualBearerToken}</div>
-                        <button
-                          onClick={() =>
-                            copyToClipboard(
-                              manualBearerToken,
-                              "manualBearerToken",
-                            )
-                          }
-                          className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
-                        >
-                          {copiedField === "manualBearerToken" ? (
-                            <Check className="h-3 w-3 text-green-500" />
-                          ) : (
-                            <Copy className="h-3 w-3" />
-                          )}
-                        </button>
+              {/* Server Configuration */}
+              <div className="space-y-2">
+                <div className="space-y-3 text-xs">
+                  <div>
+                    <span className="text-muted-foreground font-medium">
+                      Server Configuration:
+                    </span>
+                    <div className="font-mono text-foreground break-all bg-muted/30 p-2 rounded mt-1 relative group">
+                      <div className="pr-8 whitespace-pre-wrap">
+                        {JSON.stringify(serverConfig, null, 2)}
                       </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* OAuth Information */}
-              {server.oauthTokens && (
-                <div className="space-y-2">
-                  <div className="space-y-3 text-xs">
-                    <div>
-                      <span className="text-muted-foreground font-medium">
-                        Client ID:
-                      </span>
-                      <div className="font-mono text-foreground break-all bg-muted/30 p-2 rounded mt-1 relative group">
-                        <div className="pr-8">
-                          {server.oauthTokens.client_id}
-                        </div>
-                        <button
-                          onClick={() =>
-                            copyToClipboard(
-                              server.oauthTokens?.client_id || "",
-                              "clientId",
-                            )
-                          }
-                          className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
-                        >
-                          {copiedField === "clientId" ? (
-                            <Check className="h-3 w-3 text-green-500" />
-                          ) : (
-                            <Copy className="h-3 w-3" />
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground font-medium">
-                        Bearer Access Token:
-                      </span>
-                      <div className="font-mono text-foreground break-all bg-muted/30 p-2 rounded mt-1 relative group">
-                        <div className="pr-8">
-                          {server.oauthTokens.access_token}
-                        </div>
-                        <button
-                          onClick={() =>
-                            copyToClipboard(
-                              server.oauthTokens?.access_token || "",
-                              "accessToken",
-                            )
-                          }
-                          className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
-                        >
-                          {copiedField === "accessToken" ? (
-                            <Check className="h-3 w-3 text-green-500" />
-                          ) : (
-                            <Copy className="h-3 w-3" />
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground font-medium">
-                        Refresh Token:
-                      </span>
-                      <div className="font-mono text-foreground break-all bg-muted/30 p-2 rounded mt-1 relative group">
-                        <div className="pr-8">
-                          {server.oauthTokens.refresh_token || "N/A"}
-                        </div>
-                        <button
-                          onClick={() =>
-                            copyToClipboard(
-                              server.oauthTokens?.refresh_token || "N/A",
-                              "refreshToken",
-                            )
-                          }
-                          className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
-                        >
-                          {copiedField === "refreshToken" ? (
-                            <Check className="h-3 w-3 text-green-500" />
-                          ) : (
-                            <Copy className="h-3 w-3" />
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                    {server.oauthTokens.scope && (
-                      <div>
-                        <span className="text-muted-foreground font-medium">
-                          Scopes:
-                        </span>
-                        <div className="font-mono text-foreground break-all bg-muted/30 p-2 rounded mt-1">
-                          {server.oauthTokens.scope}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {tokenStatus && (
-                    <div>
-                      <span className="text-xs text-muted-foreground font-medium">
-                        Token Expiry:
-                      </span>
-                      <div
-                        className={`text-xs font-mono mt-1 bg-muted/30 p-2 rounded ${
-                          tokenStatus.isExpired
-                            ? "text-red-500"
-                            : tokenStatus.isExpiringSoon
-                              ? "text-yellow-500"
-                              : "text-green-500"
-                        }`}
+                      <button
+                        onClick={() =>
+                          copyToClipboard(
+                            JSON.stringify(serverConfig, null, 2),
+                            "serverConfig",
+                          )
+                        }
+                        className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
                       >
-                        {formatTimeRemaining(tokenStatus.timeLeft)}
-                      </div>
+                        {copiedField === "serverConfig" ? (
+                          <Check className="h-3 w-3 text-green-500" />
+                        ) : (
+                          <Copy className="h-3 w-3" />
+                        )}
+                      </button>
                     </div>
-                  )}
+                  </div>
                 </div>
-              )}
-
-              {/* Command Arguments and Environment */}
-              {!isHttpServer && (
-                <div className="space-y-3">
-                  {server.config.args && server.config.args.length > 0 && (
-                    <div>
-                      <span className="text-xs text-muted-foreground font-medium">
-                        Arguments:
-                      </span>
-                      <div className="space-y-1 mt-1">
-                        {server.config.args.map((arg, index) => (
-                          <div
-                            key={index}
-                            className="text-xs font-mono text-foreground bg-muted/30 p-2 rounded break-all"
-                          >
-                            {arg}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {server.config.env &&
-                    Object.keys(server.config.env).length > 0 && (
-                      <div>
-                        <span className="text-xs text-muted-foreground font-medium">
-                          Environment:
-                        </span>
-                        <div className="space-y-1 mt-1">
-                          {Object.entries(server.config.env).map(
-                            ([key, value]) => (
-                              <div
-                                key={key}
-                                className="text-xs font-mono bg-muted/30 p-2 rounded break-all"
-                              >
-                                <span className="text-blue-600">{key}</span>=
-                                <span className="text-green-600">{value}</span>
-                              </div>
-                            ),
-                          )}
-                        </div>
-                      </div>
-                    )}
-                </div>
-              )}
+              </div>
             </div>
           )}
         </div>

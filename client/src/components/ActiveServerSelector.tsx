@@ -59,11 +59,7 @@ export function ActiveServerSelector({
     ([, server]) => server.enabled !== false,
   );
   if (servers.length === 0) {
-    return (
-      <div className="mb-6 p-4 border rounded-lg bg-muted/30 text-center text-sm text-muted-foreground">
-        No servers connected. Add a server to get started.
-      </div>
-    );
+    return null;
   }
 
   return (

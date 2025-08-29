@@ -48,3 +48,6 @@ next-env.d.ts
 
 # typescript
 *.tsbuildinfo
+
+# vite
+.vite/

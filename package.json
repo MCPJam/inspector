@@ -11,7 +11,7 @@
     "type": "git",
     "url": "https://github.com/MCPJam/inspector.git"
   },
-  "main": "bin/start.js",
+  "main": ".vite/build/main.cjs",
   "bin": {
     "inspector-vite": "bin/start.js"
   },

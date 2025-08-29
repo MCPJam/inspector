@@ -12,6 +12,7 @@ export default defineConfig({
       // Force React resolution to prevent conflicts with @mcp-ui/client
       react: path.resolve(__dirname, "node_modules/react"),
       "react-dom": path.resolve(__dirname, "node_modules/react-dom"),
+      "@mcp-ui/client": path.resolve(__dirname, "node_modules/@mcp-ui/client"),
     },
     dedupe: ["react", "react-dom"],
   },
