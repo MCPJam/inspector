@@ -292,10 +292,6 @@ export interface ServerFormData {
   clientSecret?: string;
 }
 
-export type MastraMCPServerDefinition =
-  | StdioServerDefinition
-  | HttpServerDefinition;
-
 export interface OauthTokens {
   client_id: string;
   client_secret: string;
