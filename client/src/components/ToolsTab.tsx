@@ -22,7 +22,6 @@ import { Wrench, Play, RefreshCw, CheckCircle, XCircle } from "lucide-react";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import type { MCPToolType } from "@mastra/core/mcp";
-import { MastraMCPServerDefinition } from "@/shared/types.js";
 import { ElicitationDialog } from "./ElicitationDialog";
 import { TruncatedText } from "@/components/ui/truncated-text";
 import { validateToolOutput } from "@/lib/schema-utils";
@@ -40,6 +39,7 @@ import {
 } from "@/lib/request-storage";
 import type { SavedRequest } from "@/lib/request-types";
 import { Save as SaveIcon, Trash2, Copy, Edit2 } from "lucide-react";
+import { MastraMCPServerDefinition } from "@mastra/mcp";
 
 interface Tool {
   name: string;

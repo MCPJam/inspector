@@ -135,13 +135,13 @@ These serve as the fallback; there is no separate default.css file. */
     -webkit-user-select: none;
     user-select: none;
   }
-  
+
   .drag button {
     -webkit-app-region: no-drag;
     -webkit-user-select: auto;
     user-select: auto;
   }
-  
+
   .no-drag {
     -webkit-app-region: no-drag;
     -webkit-user-select: auto;

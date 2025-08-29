@@ -14,12 +14,7 @@ import { Save as SaveIcon, Play, Trash2, Copy, Plus, X } from "lucide-react";
 import { ModelSelector } from "./chat/model-selector";
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
 import { detectOllamaModels } from "@/lib/ollama-utils";
-import {
-  MastraMCPServerDefinition,
-  ModelDefinition,
-  SUPPORTED_MODELS,
-  Model,
-} from "@/shared/types.js";
+import { ModelDefinition, SUPPORTED_MODELS, Model } from "@/shared/types.js";
 import {
   listSavedTests,
   saveTest,
@@ -27,6 +22,7 @@ import {
   duplicateTest,
   type SavedTest,
 } from "@/lib/test-storage";
+import { MastraMCPServerDefinition } from "@mastra/mcp";
 
 interface TestsTabProps {
   serverConfig?: MastraMCPServerDefinition;
