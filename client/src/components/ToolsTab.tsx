@@ -38,7 +38,7 @@ import {
   updateRequestMeta,
 } from "@/lib/request-storage";
 import type { SavedRequest } from "@/lib/request-types";
-import { Save as SaveIcon, Trash2, Copy, Edit2 } from "lucide-react";
+import { Save as SaveIcon } from "lucide-react";
 import { MastraMCPServerDefinition } from "@mastra/mcp";
 
 interface Tool {
