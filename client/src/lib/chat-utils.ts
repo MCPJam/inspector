@@ -1,6 +1,7 @@
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { ChatMessage } from "./chat-types";
+import { ModelDefinition } from "@/shared/types.js";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -150,4 +151,8 @@ export function getDefaultTemperatureByProvider(provider: string): number {
     default:
       return 0;
   }
+}
+
+export function getDefaultTemperatureForModel(model: ModelDefinition): number {
+  return getDefaultTemperatureByProvider(model.provider);
 }

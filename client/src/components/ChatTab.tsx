@@ -7,6 +7,7 @@ import { ElicitationDialog } from "./ElicitationDialog";
 import { TooltipProvider } from "./ui/tooltip";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
+import { getDefaultTemperatureForModel } from "@/lib/chat-utils";
 import { MastraMCPServerDefinition } from "@mastra/mcp";
 
 interface ChatTabProps {
@@ -22,6 +23,7 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
     systemPrompt || "You are a helpful assistant with access to MCP tools.",
   );
 
+  const [temperatureState, setTemperatureState] = useState(1.0);
   const noServersConnected =
     Object.keys(serverConfigs || {}).length === 0 || !serverConfigs;
 
@@ -44,10 +46,18 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
   } = useChat({
     serverConfigs: serverConfigs,
     systemPrompt: systemPromptState,
+    temperature: temperatureState,
     onError: (error) => {
       toast.error(error);
     },
   });
+
+  // Update temperature when model changes
+  useEffect(() => {
+    if (model) {
+      setTemperatureState(getDefaultTemperatureForModel(model));
+    }
+  }, [model]);
 
   const hasMessages = messages.length > 0;
   // Auto-scroll to bottom when new messages arrive
@@ -131,6 +141,8 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
               hasMessages={false}
               systemPrompt={systemPromptState}
               onSystemPromptChange={setSystemPromptState}
+              temperature={temperatureState}
+              onTemperatureChange={setTemperatureState}
             />
             {/* System prompt editor shown inline above input */}
             {availableModels.length === 0 && (
@@ -253,6 +265,8 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
               hasMessages={hasMessages}
               systemPrompt={systemPromptState}
               onSystemPromptChange={setSystemPromptState}
+              temperature={temperatureState}
+              onTemperatureChange={setTemperatureState}
             />
           </div>
         </div>
