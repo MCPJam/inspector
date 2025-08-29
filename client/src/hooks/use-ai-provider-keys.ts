@@ -4,6 +4,7 @@ export interface ProviderTokens {
   anthropic: string;
   openai: string;
   deepseek: string;
+  google: string;
   ollama: string;
   ollamaBaseUrl: string;
 }
@@ -25,6 +26,7 @@ const defaultTokens: ProviderTokens = {
   anthropic: "",
   openai: "",
   deepseek: "",
+  google: "",
   ollama: "local", // Ollama runs locally, no API key needed
   ollamaBaseUrl: "http://localhost:11434",
 };

@@ -97,7 +97,12 @@ export interface StreamingMessage {
 }
 
 // Model definitions
-export type ModelProvider = "anthropic" | "openai" | "ollama" | "deepseek";
+export type ModelProvider =
+  | "anthropic"
+  | "openai"
+  | "ollama"
+  | "deepseek"
+  | "google";
 
 export interface ModelDefinition {
   id: Model | string;
@@ -126,6 +131,26 @@ export enum Model {
   O1 = "o1",
   DEEPSEEK_CHAT = "deepseek-chat",
   DEEPSEEK_REASONER = "deepseek-reasoner",
+  // Google Gemini models
+  GEMINI_2_5_PRO = "gemini-2.5-pro",
+  GEMINI_2_5_FLASH = "gemini-2.5-flash",
+  GEMINI_2_5_FLASH_LITE = "gemini-2.5-flash-lite",
+  GEMINI_2_0_FLASH_EXP = "gemini-2.0-flash-exp",
+  GEMINI_1_5_PRO = "gemini-1.5-pro",
+  GEMINI_1_5_PRO_002 = "gemini-1.5-pro-002",
+  GEMINI_1_5_FLASH = "gemini-1.5-flash",
+  GEMINI_1_5_FLASH_002 = "gemini-1.5-flash-002",
+  GEMINI_1_5_FLASH_8B = "gemini-1.5-flash-8b",
+  GEMINI_1_5_FLASH_8B_001 = "gemini-1.5-flash-8b-001",
+  // Google Gemma models
+  GEMMA_3_2B = "gemma-3-2b",
+  GEMMA_3_9B = "gemma-3-9b",
+  GEMMA_3_27B = "gemma-3-27b",
+  GEMMA_2_2B = "gemma-2-2b",
+  GEMMA_2_9B = "gemma-2-9b",
+  GEMMA_2_27B = "gemma-2-27b",
+  CODE_GEMMA_2B = "codegemma-2b",
+  CODE_GEMMA_7B = "codegemma-7b",
 }
 
 export const SUPPORTED_MODELS: ModelDefinition[] = [
@@ -172,6 +197,42 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     id: Model.DEEPSEEK_REASONER,
     name: "DeepSeek Reasoner",
     provider: "deepseek",
+  },
+  // Google Gemini models (latest first)
+  {
+    id: Model.GEMINI_2_5_PRO,
+    name: "Gemini 2.5 Pro",
+    provider: "google",
+  },
+  {
+    id: Model.GEMINI_2_5_FLASH,
+    name: "Gemini 2.5 Flash",
+    provider: "google",
+  },
+  {
+    id: Model.GEMINI_2_0_FLASH_EXP,
+    name: "Gemini 2.0 Flash Experimental",
+    provider: "google",
+  },
+  {
+    id: Model.GEMINI_1_5_PRO_002,
+    name: "Gemini 1.5 Pro 002",
+    provider: "google",
+  },
+  {
+    id: Model.GEMINI_1_5_PRO,
+    name: "Gemini 1.5 Pro",
+    provider: "google",
+  },
+  {
+    id: Model.GEMINI_1_5_FLASH_002,
+    name: "Gemini 1.5 Flash 002",
+    provider: "google",
+  },
+  {
+    id: Model.GEMINI_1_5_FLASH,
+    name: "Gemini 1.5 Flash",
+    provider: "google",
   },
 ];
 

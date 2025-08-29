@@ -60,6 +60,15 @@ export function SettingsTab() {
       placeholder: "sk-...",
       getApiKeyUrl: "https://platform.deepseek.com/api_keys",
     },
+    {
+      id: "google",
+      name: "Google AI",
+      logo: "/google_logo.png",
+      logoAlt: "Google AI",
+      description: "Gemini & Gemma models for multimodal AI and coding tasks",
+      placeholder: "AI...",
+      getApiKeyUrl: "https://aistudio.google.com/app/apikey",
+    },
   ];
 
   const handleEdit = (providerId: string) => {
