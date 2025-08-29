@@ -7,6 +7,7 @@ import { MakerDMG } from "@electron-forge/maker-dmg";
 import { VitePlugin } from "@electron-forge/plugin-vite";
 import { FusesPlugin } from "@electron-forge/plugin-fuses";
 import { FuseV1Options, FuseVersion } from "@electron/fuses";
+import { resolve } from "path";
 
 const config: ForgeConfig = {
   packagerConfig: {
@@ -15,18 +16,7 @@ const config: ForgeConfig = {
     appCategoryType: "public.app-category.developer-tools",
     executableName: "mcpjam-inspector",
     // icon: 'assets/icon', // Add icon files later
-    ignore: [
-      /^\/src\//,
-      /^\/client\//,
-      /^\/server\//,
-      /\.ts$/,
-      /\.tsx$/,
-      /\.map$/,
-      /tsconfig\.json$/,
-      /vite\.config\.ts$/,
-      /\.git/,
-      /node_modules\/\.cache/,
-    ],
+    extraResource: [resolve(__dirname, "dist", "client")],
   },
   rebuildConfig: {},
   makers: [
