@@ -117,6 +117,19 @@ class MCPJamClientManager {
     return this.serverIdMapping.get(serverName);
   }
 
+  // Public method to get original server name from a unique server ID
+  getOriginalNameForId(uniqueServerId: string): string | undefined {
+    for (const [originalName, uid] of this.serverIdMapping.entries()) {
+      if (uid === uniqueServerId) return originalName;
+    }
+    return undefined;
+  }
+
+  // Convenience: map an array of unique IDs to their original names (fallback to ID if not found)
+  mapIdsToOriginalNames(uniqueIds: string[]): string[] {
+    return uniqueIds.map((id) => this.getOriginalNameForId(id) || id);
+  }
+
   async connectToServer(serverId: string, serverConfig: any): Promise<void> {
     // If a connection is already in-flight for this server name, wait for it
     const pending = this.pendingConnections.get(serverId);
