@@ -51,6 +51,8 @@ async function startHonoServer(): Promise<number> {
 
     // Set environment variable to tell the server it's running in Electron
     process.env.ELECTRON_APP = "true";
+    process.env.IS_PACKAGED = app.isPackaged ? "true" : "false";
+    process.env.ELECTRON_RESOURCES_PATH = process.resourcesPath;
 
     const honoApp = createHonoApp();
 
@@ -79,7 +81,8 @@ function createMainWindow(serverUrl: string): BrowserWindow {
       nodeIntegration: false,
       contextIsolation: true,
       enableRemoteModule: false,
-      preload: path.join(__dirname, "../preload/index.js"),
+      // Vite plugin outputs main.js and preload.js into the same directory (.vite/build)
+      preload: path.join(__dirname, "preload.js"),
     },
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     show: false, // Don't show until ready
