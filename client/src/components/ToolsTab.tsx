@@ -391,11 +391,15 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     let validationErrors = 0;
 
     formFields.forEach((field) => {
-      if (
+      // Include required fields even if they have empty values
+      // Include non-required fields only if they have non-empty values
+      const shouldInclude = field.required || (
         field.value !== "" &&
         field.value !== null &&
         field.value !== undefined
-      ) {
+      );
+
+      if (shouldInclude) {
         let processedValue = field.value;
         processedFields++;
 
@@ -460,6 +464,8 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       logger.info("Starting tool execution", {
         toolName: selectedTool,
         parameters: params,
+        parameterKeys: Object.keys(params),
+        formFields: formFields.map(f => ({ name: f.name, value: f.value, required: f.required })),
       });
       const response = await fetch("/api/mcp/tools", {
         method: "POST",
