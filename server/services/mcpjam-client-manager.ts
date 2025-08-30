@@ -450,6 +450,16 @@ class MCPJamClientManager {
     for (const args of attempts) {
       try {
         const result = await tool.execute(args);
+
+        // Check if the result indicates an error
+        if (result && result.isError) {
+          const errorText =
+            result.content && result.content[0] && result.content[0].text
+              ? result.content[0].text
+              : "Unknown error";
+          throw new Error(errorText);
+        }
+
         return { result };
       } catch (err: any) {
         lastError = err;
