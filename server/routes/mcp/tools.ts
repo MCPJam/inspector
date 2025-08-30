@@ -24,15 +24,6 @@ tools.post("/", async (c) => {
     action = requestData.action;
     toolName = requestData.toolName;
     const { serverConfig, parameters, requestId, response } = requestData;
-    
-    console.log('Request data debug:', {
-      action,
-      toolName,
-      hasParameters: 'parameters' in requestData,
-      parameters,
-      parametersType: typeof parameters,
-      requestDataKeys: Object.keys(requestData)
-    });
 
     if (!action || !["list", "execute", "respond"].includes(action)) {
       return c.json(
@@ -201,16 +192,6 @@ tools.post("/", async (c) => {
               controller.close();
               return;
             }
-
-            console.log('Tool execution debug:', {
-              toolName,
-              parameters,
-              parametersType: typeof parameters,
-              parametersIsNull: parameters === null,
-              parametersIsUndefined: parameters === undefined,
-              parametersKeys: parameters ? Object.keys(parameters) : 'no keys',
-              fallbackParams: parameters || {}
-            });
 
             controller.enqueue(
               encoder.encode(

@@ -449,19 +449,10 @@ class MCPJamClientManager {
     let lastError: any = undefined;
     for (const args of attempts) {
       try {
-        console.log('Attempting tool execution:', {
-          toolName: name,
-          args,
-          argsType: typeof args,
-          argsKeys: args ? Object.keys(args) : 'no keys'
-        });
         const result = await tool.execute(args);
-        console.log('Tool execution succeeded with args:', args);
-        console.log('Tool execution result:', JSON.stringify(result, null, 2));
         
         // Check if the result indicates an error
         if (result && result.isError) {
-          console.log('Result indicates error, throwing exception');
           const errorText = result.content && result.content[0] && result.content[0].text 
             ? result.content[0].text 
             : 'Unknown error';
@@ -470,7 +461,6 @@ class MCPJamClientManager {
         
         return { result };
       } catch (err: any) {
-        console.log('Tool execution failed with args:', args, 'error:', err);
         lastError = err;
       }
     }
