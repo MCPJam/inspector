@@ -464,8 +464,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       logger.info("Starting tool execution", {
         toolName: selectedTool,
         parameters: params,
-        parameterKeys: Object.keys(params),
-        formFields: formFields.map(f => ({ name: f.name, value: f.value, required: f.required })),
       });
       const response = await fetch("/api/mcp/tools", {
         method: "POST",
