@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/inspector",
-  "version": "0.9.6",
+  "version": "0.9.9",
   "type": "module",
   "description": "MCPJam Inspector",
   "license": "Apache-2.0",
@@ -9,7 +9,7 @@
   "bugs": "https://github.com/mcpjam/inspector/issues",
   "repository": {
     "type": "git",
-    "url": "https://github.com/MCPJam/inspector.git"
+    "url": "git+https://github.com/MCPJam/inspector.git"
   },
   "main": ".vite/build/main.cjs",
   "bin": {
@@ -31,7 +31,6 @@
     "build:client": "cd client && npm run build",
     "build:server": "cd server && npm run build",
     "start": "NODE_ENV=production node bin/start.js",
-    "publish": "node -e \"console.error('Use npm publish directly.'); process.exit(1)\"",
     "prettier-fix": "prettier --write .",
     "install:deps": "cd server && npm install && cd ../client && npm install",
     "docker:build": "docker build -t mcpjam/mcp-inspector:latest .",
