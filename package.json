@@ -17,8 +17,7 @@
   },
   "files": [
     "bin",
-    "dist/client",
-    "dist/server",
+    "dist",
     "package.json",
     "README.md",
     "LICENSE"
