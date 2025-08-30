@@ -1,5 +1,7 @@
 .next/
 node_modules/
+client/node_modules/
+server/node_modules/
 .git/
 .gitignore
 README.md
@@ -14,3 +16,15 @@ coverage/
 *.swp
 *.swo
 *~ 
+src/
+.claude/
+hackathon/
+claude-code-prompts/
+cli/
+forge.config.ts
+vite.*.config.*
+tsconfig.json
+Dockerfile*
+docker-compose*
+CONTRIBUTING.md
+SECURITY.md
