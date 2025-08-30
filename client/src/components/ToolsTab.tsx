@@ -393,11 +393,11 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     formFields.forEach((field) => {
       // Include required fields even if they have empty values
       // Include non-required fields only if they have non-empty values
-      const shouldInclude = field.required || (
-        field.value !== "" &&
-        field.value !== null &&
-        field.value !== undefined
-      );
+      const shouldInclude =
+        field.required ||
+        (field.value !== "" &&
+          field.value !== null &&
+          field.value !== undefined);
 
       if (shouldInclude) {
         let processedValue = field.value;
