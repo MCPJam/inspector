@@ -64,7 +64,7 @@ tests.post("/run-all", async (c) => {
             baseURL:
               ollamaBaseUrl ||
               process.env.OLLAMA_BASE_URL ||
-              "http://localhost:11434",
+              "http://localhost:11434/api",
           })(model.id, { simulateStreaming: true });
         default:
           throw new Error(`Unsupported provider: ${model.provider}`);

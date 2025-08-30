@@ -97,7 +97,7 @@ const createLlmModel = (
     case "google":
       return createGoogleGenerativeAI({ apiKey })(modelDefinition.id);
     case "ollama":
-      const baseUrl = ollamaBaseUrl || "http://localhost:11434";
+      const baseUrl = ollamaBaseUrl || "http://localhost:11434/api";
       return createOllama({
         baseURL: `${baseUrl}`,
       })(modelDefinition.id, {

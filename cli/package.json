@@ -37,7 +37,7 @@
     "ai": "^5.0.11",
     "commander": "^12.0.0",
     "hono": "^4.6.11",
-    "ollama-ai-provider": "^1.2.0",
+    "ollama-ai-provider-v2": "^1.2.1",
     "zod": "^3.25.76"
   },
   "devDependencies": {

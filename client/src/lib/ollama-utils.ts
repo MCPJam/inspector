@@ -19,7 +19,7 @@ interface OllamaModelsResponse {
 export class OllamaClient {
   private baseUrl: string;
 
-  constructor(baseUrl: string = "http://localhost:11434") {
+  constructor(baseUrl: string = "http://localhost:11434/api") {
     this.baseUrl = baseUrl;
   }
 
@@ -29,7 +29,7 @@ export class OllamaClient {
 
   async isOllamaRunning(): Promise<boolean> {
     try {
-      const response = await fetch(`${this.baseUrl}/api/version`, {
+      const response = await fetch(`${this.baseUrl}/version`, {
         method: "GET",
         signal: AbortSignal.timeout(3000), // 3 second timeout
       });
@@ -41,7 +41,7 @@ export class OllamaClient {
 
   async getAvailableModels(): Promise<string[]> {
     try {
-      const response = await fetch(`${this.baseUrl}/api/tags`, {
+      const response = await fetch(`${this.baseUrl}/tags`, {
         method: "GET",
         signal: AbortSignal.timeout(5000), // 5 second timeout
       });
