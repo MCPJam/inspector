@@ -297,7 +297,7 @@ const handleAgentStepFinish = (
 };
 
 /**
- * Streams text content from the agent's response
+ * Streams content from the agent's streamVNext response
  */
 const streamAgentResponse = async (
   streamingContext: StreamingContext,
@@ -306,15 +306,75 @@ const streamAgentResponse = async (
   let hasContent = false;
   let chunkCount = 0;
 
-  for await (const chunk of stream.textStream) {
-    if (chunk && chunk.trim()) {
+  for await (const chunk of stream.fullStream) {
+    chunkCount++;
+
+    // Handle text content
+    if (chunk.type === "text-delta" && chunk.textDelta) {
       hasContent = true;
-      chunkCount++;
       streamingContext.controller.enqueue(
         streamingContext.encoder!.encode(
-          `data: ${JSON.stringify({ type: "text", content: chunk })}\n\n`,
+          `data: ${JSON.stringify({ type: "text", content: chunk.textDelta })}\n\n`,
         ),
       );
+    }
+
+    // Handle tool calls from streamVNext
+    if (chunk.type === "tool-call" && chunk.toolName) {
+      const currentToolCallId = ++streamingContext.toolCallId;
+      streamingContext.controller.enqueue(
+        streamingContext.encoder!.encode(
+          `data: ${JSON.stringify({
+            type: "tool_call",
+            toolCall: {
+              id: currentToolCallId,
+              name: chunk.toolName,
+              parameters: chunk.args || {},
+              timestamp: new Date(),
+              status: "executing",
+            },
+          })}\n\n`,
+        ),
+      );
+    }
+
+    // Handle tool results from streamVNext
+    if (chunk.type === "tool-result" && chunk.result !== undefined) {
+      const currentToolCallId = streamingContext.toolCallId;
+      streamingContext.controller.enqueue(
+        streamingContext.encoder!.encode(
+          `data: ${JSON.stringify({
+            type: "tool_result",
+            toolResult: {
+              id: currentToolCallId,
+              toolCallId: currentToolCallId,
+              result: chunk.result,
+              timestamp: new Date(),
+            },
+          })}\n\n`,
+        ),
+      );
+    }
+
+    // Handle errors from streamVNext
+    if (chunk.type === "error" && chunk.error) {
+      streamingContext.controller.enqueue(
+        streamingContext.encoder!.encode(
+          `data: ${JSON.stringify({
+            type: "error",
+            error:
+              chunk.error instanceof Error
+                ? chunk.error.message
+                : String(chunk.error),
+          })}\n\n`,
+        ),
+      );
+    }
+
+    // Handle finish event
+    if (chunk.type === "finish") {
+      // Stream completion will be handled by the main function
+      break;
     }
   }
 
@@ -353,8 +413,7 @@ const fallbackToCompletion = async (
     streamingContext.controller.enqueue(
       streamingContext.encoder!.encode(
         `data: ${JSON.stringify({
-          type: "text",
-          content: "Failed to generate response. Please try again. ",
+          type: "error",
           error:
             fallbackErr instanceof Error
               ? fallbackErr.message
@@ -366,7 +425,71 @@ const fallbackToCompletion = async (
 };
 
 /**
- * Creates the streaming response for the chat
+ * Falls back to the regular stream method for V1 models
+ */
+const fallbackToStreamMethod = async (
+  agent: Agent,
+  messages: any[],
+  toolsets: any,
+  streamingContext: StreamingContext,
+  provider: ModelProvider,
+  temperature?: number,
+) => {
+  try {
+    const stream = await agent.stream(messages, {
+      maxSteps: MAX_AGENT_STEPS,
+      temperature:
+        temperature == null || undefined
+          ? getDefaultTemperatureByProvider(provider)
+          : temperature,
+      toolsets,
+      onStepFinish: ({ text, toolCalls, toolResults }) => {
+        handleAgentStepFinish(streamingContext, text, toolCalls, toolResults);
+      },
+    });
+
+    let hasContent = false;
+    let chunkCount = 0;
+
+    for await (const chunk of stream.textStream) {
+      if (chunk && chunk.trim()) {
+        hasContent = true;
+        chunkCount++;
+        streamingContext.controller.enqueue(
+          streamingContext.encoder!.encode(
+            `data: ${JSON.stringify({ type: "text", content: chunk })}\n\n`,
+          ),
+        );
+      }
+    }
+
+    dbg("Stream method finished", { hasContent, chunkCount });
+
+    // Fall back to completion if no content was streamed
+    if (!hasContent) {
+      dbg("No content from textStream; falling back to completion");
+      await fallbackToCompletion(
+        agent,
+        messages,
+        streamingContext,
+        provider,
+        temperature,
+      );
+    }
+  } catch (streamErr) {
+    dbg("Stream method failed", streamErr);
+    await fallbackToCompletion(
+      agent,
+      messages,
+      streamingContext,
+      provider,
+      temperature,
+    );
+  }
+};
+
+/**
+ * Creates the streaming response for the chat using streamVNext or fallback to stream
  */
 const createStreamingResponse = async (
   agent: Agent,
@@ -376,30 +499,50 @@ const createStreamingResponse = async (
   provider: ModelProvider,
   temperature?: number,
 ) => {
-  const stream = await agent.stream(messages, {
-    maxSteps: MAX_AGENT_STEPS,
-    temperature:
-      temperature == null || undefined
-        ? getDefaultTemperatureByProvider(provider)
-        : temperature,
-    toolsets,
-    onStepFinish: ({ text, toolCalls, toolResults }) => {
-      handleAgentStepFinish(streamingContext, text, toolCalls, toolResults);
-    },
-  });
+  try {
+    // Try streamVNext first (works with AI SDK v2 models)
+    const stream = await agent.streamVNext(messages, {
+      maxSteps: MAX_AGENT_STEPS,
+      temperature:
+        temperature == null || undefined
+          ? getDefaultTemperatureByProvider(provider)
+          : temperature,
+      toolsets,
+    });
 
-  const { hasContent } = await streamAgentResponse(streamingContext, stream);
+    const { hasContent } = await streamAgentResponse(streamingContext, stream);
 
-  // Fall back to completion if no content was streamed
-  if (!hasContent) {
-    dbg("No content from textStream; falling back to completion");
-    await fallbackToCompletion(
-      agent,
-      messages,
-      streamingContext,
-      provider,
-      temperature,
-    );
+    // Fall back to completion if no content was streamed
+    if (!hasContent) {
+      dbg("No content from fullStream; falling back to completion");
+      await fallbackToCompletion(
+        agent,
+        messages,
+        streamingContext,
+        provider,
+        temperature,
+      );
+    }
+  } catch (error) {
+    // If streamVNext fails (e.g., V1 models), fall back to the regular stream method
+    if (
+      error instanceof Error &&
+      error.message.includes("V1 models are not supported for streamVNext")
+    ) {
+      dbg(
+        "streamVNext not supported for this model, falling back to stream method",
+      );
+      await fallbackToStreamMethod(
+        agent,
+        messages,
+        toolsets,
+        streamingContext,
+        provider,
+        temperature,
+      );
+    } else {
+      throw error;
+    }
   }
 
   // Stream elicitation completion
@@ -527,15 +670,6 @@ chat.post("/", async (c) => {
     // Create LLM model
     const llmModel = createLlmModel(model, apiKey, ollamaBaseUrl);
 
-    // Create agent without tools initially - we'll add them in the streaming context
-    const agent = new Agent({
-      name: "MCP Chat Agent",
-      instructions:
-        systemPrompt || "You are a helpful assistant with access to MCP tools.",
-      model: llmModel,
-      tools: undefined, // Start without tools, add them in streaming context
-    });
-
     const formattedMessages = messages.map((msg: ChatMessage) => ({
       role: msg.role,
       content: msg.content,
@@ -562,6 +696,22 @@ chat.post("/", async (c) => {
       };
     }
 
+    // Flatten toolsets into a single tools object
+    const flattenedTools: Record<string, any> = {};
+    Object.values(toolsByServer).forEach((serverTools: any) => {
+      Object.assign(flattenedTools, serverTools);
+    });
+
+    // Create agent with tools for streamVNext
+    const agent = new Agent({
+      name: "MCP Chat Agent",
+      instructions:
+        systemPrompt || "You are a helpful assistant with access to MCP tools.",
+      model: llmModel,
+      tools:
+        Object.keys(flattenedTools).length > 0 ? flattenedTools : undefined,
+    });
+
     dbg("Streaming start", {
       connectedServers,
       toolCount: allTools.length,
@@ -579,29 +729,6 @@ chat.post("/", async (c) => {
           lastEmittedToolCallId: null,
           stepIndex: 0,
         };
-
-        // Flatten toolsets into a single tools object for streaming wrapper
-        const flattenedTools: Record<string, any> = {};
-        Object.values(toolsByServer).forEach((serverTools: any) => {
-          Object.assign(flattenedTools, serverTools);
-        });
-
-        // Create streaming-wrapped tools
-        const streamingWrappedTools = wrapToolsWithStreaming(
-          flattenedTools,
-          streamingContext,
-        );
-
-        // Create a new agent instance with streaming tools since tools property is read-only
-        const streamingAgent = new Agent({
-          name: agent.name,
-          instructions: agent.instructions,
-          model: agent.model!,
-          tools:
-            Object.keys(streamingWrappedTools).length > 0
-              ? streamingWrappedTools
-              : undefined,
-        });
 
         // Register elicitation handler with MCPJamClientManager
         mcpClientManager.setElicitationCallback(async (request) => {
@@ -642,7 +769,7 @@ chat.post("/", async (c) => {
 
         try {
           await createStreamingResponse(
-            streamingAgent,
+            agent,
             formattedMessages,
             toolsByServer,
             streamingContext,
