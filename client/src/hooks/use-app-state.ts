@@ -426,32 +426,6 @@ export function useAppState() {
         handleConnect(formData);
         return;
       }
-
-      // If no window config, try API config (development mode)
-      fetch("/api/mcp-cli-config")
-        .then((response) => response.json())
-        .then((data) => {
-          const cliConfig = data.config;
-          if (cliConfig && cliConfig.command) {
-            logger.info(
-              "Auto-connecting to CLI-provided MCP server (from API)",
-              { cliConfig },
-            );
-
-            const formData: ServerFormData = {
-              name: cliConfig.name || "CLI Server",
-              type: "stdio" as const,
-              command: cliConfig.command,
-              args: cliConfig.args || [],
-            };
-
-            handleConnect(formData);
-          }
-        })
-        .catch((error) => {
-          // Ignore errors - just means no CLI config available
-          logger.debug("No CLI config available", { error });
-        });
     }
   }, [isLoading, handleConnect, logger]);
 
