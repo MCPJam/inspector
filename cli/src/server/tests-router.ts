@@ -50,7 +50,8 @@ export function createTestsRouter() {
             })(model.id);
           case "ollama":
             return createOllama({
-              baseURL: process.env.OLLAMA_BASE_URL || "http://localhost:11434",
+              baseURL:
+                process.env.OLLAMA_BASE_URL || "http://localhost:11434/api",
             })(model.id, { simulateStreaming: true });
           default:
             throw new Error(`Unsupported provider: ${model.provider}`);
