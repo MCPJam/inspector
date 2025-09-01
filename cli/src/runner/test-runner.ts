@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import type { Test } from "../../schemas/test-schema.js";
 import type { EnvironmentFile } from "../../schemas/environment-schema.js";
 import { createTestsRouter } from "../server/tests-router.js";
+import { Logger } from "../utils/logger.js";
 
 async function findAvailablePort(startPort = 3500): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -186,30 +187,8 @@ async function processStreamingResults(
 
             results.push(result);
 
-            // Print result immediately
-            if (result.passed) {
-              console.log(`✅ ${result.title}`);
-              console.log(
-                `   Called tools: ${result.calledTools.join(", ") || "none"}`,
-              );
-            } else {
-              console.log(`❌ ${result.title}`);
-              if (result.error) {
-                console.log(`   Error: ${result.error}`);
-              } else {
-                console.log(
-                  `   Called tools: ${result.calledTools.join(", ") || "none"}`,
-                );
-                if (result.missingTools.length > 0) {
-                  console.log(`   Missing: ${result.missingTools.join(", ")}`);
-                }
-                if (result.unexpectedTools.length > 0) {
-                  console.log(
-                    `   Unexpected: ${result.unexpectedTools.join(", ")}`,
-                  );
-                }
-              }
-            }
+            // Print result immediately with clean formatting
+            Logger.testResult(result);
           } else if (event.type === "trace_step") {
             // Optional: could show progress steps
           }
