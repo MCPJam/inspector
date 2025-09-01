@@ -82,17 +82,20 @@ export function useAppState() {
             ([name, server]: [string, any]) => {
               // Fix URL serialization issue: convert string URLs back to URL objects
               let config = server.config;
-              if (config && typeof config.url === 'string') {
+              if (config && typeof config.url === "string") {
                 try {
                   config = {
                     ...config,
                     url: new URL(config.url),
                   };
                 } catch (error) {
-                  logger.error(`Failed to parse URL for server ${name}:`, error);
+                  logger.error(
+                    `Failed to parse URL for server ${name}:`,
+                    error,
+                  );
                 }
               }
-              
+
               return [
                 name,
                 {
