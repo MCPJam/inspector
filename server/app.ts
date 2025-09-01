@@ -5,10 +5,20 @@ import { serveStatic } from "@hono/node-server/serve-static";
 
 // Import routes
 import mcpRoutes from "./routes/mcp/index.js";
+import { MCPJamClientManager } from "./services/mcpjam-client-manager.js";
 import path from "path";
 
 export function createHonoApp() {
   const app = new Hono();
+
+  // Create the MCPJam client manager instance
+  const mcpJamClientManager = new MCPJamClientManager();
+
+  // Middleware to inject the client manager into context
+  app.use("*", async (c, next) => {
+    c.mcpJamClientManager = mcpJamClientManager;
+    await next();
+  });
 
   // Middleware
   app.use("*", logger());
@@ -19,6 +29,7 @@ export function createHonoApp() {
         "http://localhost:8080",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "http://localhost:5173",
       ],
       credentials: true,
     }),
