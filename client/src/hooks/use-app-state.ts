@@ -79,18 +79,37 @@ export function useAppState() {
         // Ensure all loaded servers have the new fields with defaults
         const updatedServers = Object.fromEntries(
           Object.entries(parsed.servers || {}).map(
-            ([name, server]: [string, any]) => [
-              name,
-              {
-                ...server,
-                connectionStatus: server.connectionStatus || "disconnected",
-                retryCount: server.retryCount || 0,
-                lastConnectionTime: server.lastConnectionTime
-                  ? new Date(server.lastConnectionTime)
-                  : new Date(),
-                enabled: server.enabled !== false,
-              },
-            ],
+            ([name, server]: [string, any]) => {
+              // Fix URL serialization issue: convert string URLs back to URL objects
+              let config = server.config;
+              if (config && typeof config.url === "string") {
+                try {
+                  config = {
+                    ...config,
+                    url: new URL(config.url),
+                  };
+                } catch (error) {
+                  logger.error(
+                    `Failed to parse URL for server ${name}:`,
+                    error,
+                  );
+                }
+              }
+
+              return [
+                name,
+                {
+                  ...server,
+                  config,
+                  connectionStatus: server.connectionStatus || "disconnected",
+                  retryCount: server.retryCount || 0,
+                  lastConnectionTime: server.lastConnectionTime
+                    ? new Date(server.lastConnectionTime)
+                    : new Date(),
+                  enabled: server.enabled !== false,
+                },
+              ];
+            },
           ),
         );
         setAppState({
