@@ -28,7 +28,7 @@ const defaultTokens: ProviderTokens = {
   deepseek: "",
   google: "",
   ollama: "local", // Ollama runs locally, no API key needed
-  ollamaBaseUrl: "http://localhost:11434",
+  ollamaBaseUrl: "http://localhost:11434/api",
 };
 
 export function useAiProviderKeys(): useAiProviderKeysReturn {
