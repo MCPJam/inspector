@@ -14,5 +14,14 @@ export default defineConfig({
   },
   server: {
     port: 8080,
+    hmr: {
+      port: 8081,
+    },
+    proxy: {
+      "/api": {
+        target: "http://localhost:3001", // the port need to be the same as the server port
+        changeOrigin: true,
+      },
+    },
   },
 });
