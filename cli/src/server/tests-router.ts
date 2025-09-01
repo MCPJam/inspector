@@ -4,6 +4,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createOllama } from "ollama-ai-provider";
 import { Agent } from "@mastra/core/agent";
 import { MCPJamClientManager } from "../../../server/services/mcpjam-client-manager.js";
+import { Logger } from "../utils/logger.js";
 
 // Simplified version of the server's tests router for CLI use
 export function createTestsRouter() {
@@ -29,26 +30,39 @@ export function createTestsRouter() {
       }
 
       function createModel(model: { id: string; provider: string }) {
+        let apiKey: string | undefined;
+
         switch (model.provider) {
           case "anthropic":
-            return createAnthropic({
-              apiKey:
-                providerApiKeys?.anthropic ||
-                process.env.ANTHROPIC_API_KEY ||
-                "",
-            })(model.id);
+            apiKey =
+              providerApiKeys?.anthropic || process.env.ANTHROPIC_API_KEY;
+            if (!apiKey) {
+              throw new Error(
+                "Missing Anthropic API key. Set ANTHROPIC_API_KEY environment variable or provide in environment file.",
+              );
+            }
+            return createAnthropic({ apiKey })(model.id);
           case "openai":
-            return createOpenAI({
-              apiKey:
-                providerApiKeys?.openai || process.env.OPENAI_API_KEY || "",
-            })(model.id);
+            apiKey = providerApiKeys?.openai || process.env.OPENAI_API_KEY;
+            if (!apiKey) {
+              throw new Error(
+                "Missing OpenAI API key. Set OPENAI_API_KEY environment variable or provide in environment file.",
+              );
+            }
+            return createOpenAI({ apiKey })(model.id);
           case "deepseek":
+            apiKey = providerApiKeys?.deepseek || process.env.DEEPSEEK_API_KEY;
+            if (!apiKey) {
+              throw new Error(
+                "Missing DeepSeek API key. Set DEEPSEEK_API_KEY environment variable or provide in environment file.",
+              );
+            }
             return createOpenAI({
-              apiKey:
-                providerApiKeys?.deepseek || process.env.DEEPSEEK_API_KEY || "",
+              apiKey,
               baseURL: "https://api.deepseek.com/v1",
             })(model.id);
           case "ollama":
+            // Ollama doesn't require API key, but check if server is accessible
             return createOllama({
               baseURL:
                 process.env.OLLAMA_BASE_URL || "http://localhost:11434/api",
@@ -65,7 +79,7 @@ export function createTestsRouter() {
           const clientManager = new MCPJamClientManager();
 
           for (const test of testsInput) {
-            console.log(`🔍 Starting test: ${test.title}`);
+            Logger.testStarting(test.title);
             const calledTools = new Set<string>();
             const expectedSet = new Set<string>(test.expectedTools || []);
 
@@ -79,34 +93,58 @@ export function createTestsRouter() {
               serverConfigs = allServers;
             }
 
-            console.log(
-              `📋 Test ${test.title} using servers: ${Object.keys(serverConfigs).join(", ")}`,
-            );
-
             if (Object.keys(serverConfigs).length === 0) {
-              console.error(
-                `❌ No valid MCP server configs for test ${test.title}`,
-              );
+              Logger.testError(test.title, "No valid MCP server configs");
               continue;
             }
 
             try {
               // Connect to all servers for this test using the client manager (like chat route)
-              console.log(`🔌 Connecting to servers for ${test.title}...`);
               for (const [serverName, serverConfig] of Object.entries(
                 serverConfigs,
               )) {
-                console.log(`   Connecting to ${serverName}...`);
                 await clientManager.connectToServer(serverName, serverConfig);
-                console.log(`   ✅ Connected to ${serverName}`);
               }
 
-              console.log(
-                `🤖 Creating model ${test.model.provider}:${test.model.id}...`,
-              );
-              const model = createModel(test.model);
+              // Create model with better error handling
+              let model;
+              try {
+                model = createModel(test.model);
+              } catch (modelErr) {
+                const errorMessage =
+                  (modelErr as Error)?.message ||
+                  "Unknown model creation error";
 
-              console.log(`🛠️  Getting tools for ${test.title}...`);
+                // Check if it's an API key error
+                if (errorMessage.includes("API key")) {
+                  throw new Error(
+                    `Invalid or missing API key for ${test.model.provider}`,
+                  );
+                }
+                // Check for authentication errors from the providers
+                else if (
+                  errorMessage.includes("401") ||
+                  errorMessage.includes("unauthorized") ||
+                  errorMessage.includes("authentication")
+                ) {
+                  throw new Error(
+                    `Authentication failed for ${test.model.provider}. Check your API key.`,
+                  );
+                }
+                // Check for invalid model errors
+                else if (
+                  errorMessage.includes("model") &&
+                  errorMessage.includes("not found")
+                ) {
+                  throw new Error(
+                    `Model "${test.model.id}" not found for ${test.model.provider}`,
+                  );
+                } else {
+                  throw new Error(
+                    `Failed to create ${test.model.provider} model: ${errorMessage}`,
+                  );
+                }
+              }
 
               // Get available tools and create the tool structure like chat.ts
               const allTools = clientManager.getAvailableTools();
@@ -130,13 +168,9 @@ export function createTestsRouter() {
                 };
               }
 
-              console.log(
-                `✅ Got ${allTools.length} total tools across ${Object.keys(toolsByServer).length} servers`,
-              );
-              // Map unique server IDs back to original names for readability using client manager helper
-              console.log(
-                `🔍 Servers:`,
-                clientManager.mapIdsToOriginalNames(Object.keys(toolsByServer)),
+              Logger.serverConnection(
+                Object.keys(toolsByServer).length,
+                allTools.length,
               );
 
               const agent = new Agent({
@@ -146,7 +180,6 @@ export function createTestsRouter() {
                 model,
               });
 
-              console.log(`💬 Starting agent stream for ${test.title}...`);
               const streamOptions: any = {
                 maxSteps: 10,
                 toolsets: toolsByServer,
@@ -159,12 +192,6 @@ export function createTestsRouter() {
                   toolCalls?: any[];
                   toolResults?: any[];
                 }) => {
-                  if (toolCalls && toolCalls.length) {
-                    console.log(
-                      `🛠️  Tool calls:`,
-                      toolCalls.map((c: any) => c?.name || c?.toolName),
-                    );
-                  }
                   // Accumulate tool names
                   (toolCalls || []).forEach((c: any) => {
                     const toolName = c?.name || c?.toolName;
@@ -185,11 +212,9 @@ export function createTestsRouter() {
               );
 
               // Drain the stream
-              console.log(`📄 Draining text stream for ${test.title}...`);
               for await (const _ of stream.textStream) {
                 // no-op
               }
-              console.log(`✅ Stream completed for ${test.title}`);
 
               const called = Array.from(calledTools);
               const missing = Array.from(expectedSet).filter(
@@ -198,9 +223,6 @@ export function createTestsRouter() {
               const unexpected = called.filter((t) => !expectedSet.has(t));
               const passed = missing.length === 0 && unexpected.length === 0;
 
-              console.log(
-                `📊 Test ${test.title} result: ${passed ? "PASSED" : "FAILED"}`,
-              );
               if (!passed) failed = true;
 
               controller.enqueue(
@@ -216,7 +238,8 @@ export function createTestsRouter() {
                 ),
               );
             } catch (err) {
-              console.error(`❌ Test ${test.title} failed:`, err);
+              const errorMessage = (err as Error)?.message || "Unknown error";
+              Logger.testError(test.title, errorMessage);
               failed = true;
               controller.enqueue(
                 encoder.encode(
@@ -224,24 +247,23 @@ export function createTestsRouter() {
                     type: "result",
                     testId: test.id,
                     passed: false,
-                    error: (err as Error)?.message,
+                    error: errorMessage,
                   })}\n\n`,
                 ),
               );
             } finally {
-              console.log(`🔌 Disconnecting servers for ${test.title}...`);
+              // Clean disconnect without verbose logging
               for (const serverName of Object.keys(serverConfigs)) {
                 try {
                   await clientManager.disconnectFromServer(serverName);
-                  console.log(`   ✅ Disconnected from ${serverName}`);
                 } catch (disconnectErr) {
-                  console.log(
-                    `   ⚠️  Disconnect error from ${serverName}:`,
-                    disconnectErr,
-                  );
+                  // Only log connection errors if they're critical
+                  const errorMessage =
+                    (disconnectErr as Error)?.message ||
+                    "Unknown disconnect error";
+                  Logger.connectionError(serverName, errorMessage);
                 }
               }
-              console.log(`✅ Test ${test.title} cleanup complete`);
             }
           }
 
