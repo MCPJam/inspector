@@ -1,25 +1,11 @@
-import { createServer } from "http";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import type { Test } from "../../schemas/test-schema.js";
 import type { EnvironmentFile } from "../../schemas/environment-schema.js";
 import { createTestsRouter } from "../server/tests-router.js";
 import { Logger } from "../utils/logger.js";
-
-async function findAvailablePort(startPort = 3500): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = createServer();
-    server.listen(0, () => {
-      const port = (server.address() as any)?.port;
-      server.close(() => {
-        resolve(port || startPort);
-      });
-    });
-    server.on("error", () => {
-      resolve(startPort);
-    });
-  });
-}
+import { createTestResult } from "../utils/test-errors.js";
+import { findAvailablePort } from "../utils/utils.js";
 
 export interface TestResult {
   testId: string;
@@ -49,56 +35,67 @@ export async function runTests(
   const app = new Hono();
   app.route("/mcp/tests", createTestsRouter());
 
-  // Find an available port
   const port = await findAvailablePort();
   const server = serve({
     fetch: app.fetch,
     port,
   });
 
-  // Wait a moment for server to start
   await new Promise((resolve) => setTimeout(resolve, 100));
 
   try {
-    // Convert tests to backend format
-    const backendTests = tests.map((test, index) => ({
-      id: `test_${index}`,
-      title: test.title,
-      prompt: test.prompt,
-      expectedTools: test.expectedTools,
-      model: test.model,
-      selectedServers: test.selectedServers,
-    }));
+    const backendServers = convertServersConfig(environment.mcpServers);
 
-    // Convert environment to backend format
-    const backendServers = Object.fromEntries(
-      Object.entries(environment.mcpServers).map(([name, config]) => [
-        name,
-        convertServerConfig(config),
-      ]),
-    );
+    const results: TestResult[] = [];
 
-    const payload = {
-      tests: backendTests,
-      allServers: backendServers,
-      providerApiKeys: environment.providerApiKeys || {},
-    };
+    for (let i = 0; i < tests.length; i++) {
+      const test = tests[i];
+      if (!test) {
+        throw new Error(`Test ${i} is undefined`);
+      }
 
-    // Make request to backend
-    const response = await fetch(`http://localhost:${port}/mcp/tests/run-all`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+      const payload = {
+        test: { ...test, id: `test_${i}` },
+        allServers: backendServers,
+        providerApiKeys: environment.providerApiKeys || {},
+      };
 
-    if (!response.ok) {
-      throw new Error(
-        `Server error: ${response.status} ${response.statusText}`,
-      );
+      try {
+        const response = await fetch(`http://localhost:${port}/mcp/tests/run`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) {
+          throw new Error(
+            `Server error: ${response.status} ${response.statusText}`,
+          );
+        }
+
+        const result = (await response.json()) as TestResult;
+        const testResult = { ...result, title: test.title, duration: 0 };
+
+        results.push(testResult);
+        Logger.testResult(testResult);
+      } catch (testError) {
+        const errorMessage = (testError as Error)?.message || "Unknown error";
+        const testResult = createTestResult(
+          `test_${i}`,
+          test.title,
+          false,
+          errorMessage,
+          [],
+          test.expectedTools || [],
+          [],
+        );
+
+        results.push(testResult);
+        Logger.testResult(testResult);
+      }
     }
 
-    // Process streaming response
-    const results = await processStreamingResults(response, tests);
+    await cleanupServerConnections(port);
 
     const duration = ((Date.now() - startTime) / 1000).toFixed(1);
 
@@ -117,87 +114,38 @@ export async function runTests(
 
 function convertServerConfig(config: any): any {
   if ("command" in config) {
-    // STDIO server
     return {
       command: config.command,
       args: config.args || [],
       env: config.env || {},
     };
-  } else {
-    // HTTP server - keep URL as string per schema
-    return {
-      url: config.url,
-      requestInit: {
-        headers: config.headers || {},
-      },
-      eventSourceInit: {
-        headers: config.headers || {},
-      },
-    };
   }
+
+  return {
+    url: config.url,
+    requestInit: { headers: config.headers || {} },
+    eventSourceInit: { headers: config.headers || {} },
+  };
 }
 
-async function processStreamingResults(
-  response: Response,
-  tests: Test[],
-): Promise<TestResult[]> {
-  const results: TestResult[] = [];
-  const reader = response.body?.getReader();
-  const decoder = new TextDecoder();
+function convertServersConfig(
+  mcpServers: Record<string, any>,
+): Record<string, any> {
+  return Object.fromEntries(
+    Object.entries(mcpServers).map(([name, config]) => [
+      name,
+      convertServerConfig(config),
+    ]),
+  );
+}
 
-  if (!reader) {
-    throw new Error("No response body");
+async function cleanupServerConnections(port: number): Promise<void> {
+  try {
+    await fetch(`http://localhost:${port}/mcp/tests/cleanup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (cleanupError) {
+    console.warn("Warning: Failed to cleanup server connections");
   }
-
-  let buffer = "";
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-
-    // Process complete lines
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
-
-    for (const line of lines) {
-      if (line.startsWith("data: ")) {
-        const data = line.slice(6);
-        if (data === "[DONE]") break;
-
-        try {
-          const event = JSON.parse(data);
-
-          if (event.type === "result") {
-            const testIndex = parseInt(event.testId.split("_")[1]);
-            const test = tests[testIndex];
-            const testStart = Date.now();
-
-            const result: TestResult = {
-              testId: event.testId,
-              title: test?.title || "Unknown Test",
-              passed: event.passed,
-              calledTools: event.calledTools || [],
-              missingTools: event.missingTools || [],
-              unexpectedTools: event.unexpectedTools || [],
-              error: event.error,
-              duration: 0, // We don't have individual timing from the stream
-            };
-
-            results.push(result);
-
-            // Print result immediately with clean formatting
-            Logger.testResult(result);
-          } else if (event.type === "trace_step") {
-            // Optional: could show progress steps
-          }
-        } catch (e) {
-          // Ignore malformed JSON
-        }
-      }
-    }
-  }
-
-  return results;
 }

@@ -18,6 +18,10 @@ export class Logger {
     console.log();
   }
 
+  static toolCall(toolName: string): void {
+    console.log(chalk.gray(`Tool called: ${toolName}`));
+  }
+
   static testResult(result: TestResult): void {
     this.progressCounter++;
     const status = result.passed ? chalk.green("PASS") : chalk.red("FAIL");
