@@ -1,5 +1,6 @@
 {
   "name": "@mcpjam/inspector",
+  "productName": "MCPJam Inspector",
   "version": "0.9.6",
   "type": "module",
   "description": "MCPJam Inspector",
@@ -18,6 +19,8 @@
   "files": [
     "bin",
     "dist",
+    "assets/icon.ico",
+    "assets/icon.icns",
     "package.json",
     "README.md",
     "LICENSE"
@@ -44,7 +47,9 @@
     "docker:clean": "docker-compose down -v --rmi all",
     "electron:start": "electron-forge start",
     "electron:package": "electron-forge package",
-    "electron:make": "electron-forge make",
+    "icons:win": "node scripts/generate-windows-icon.mjs",
+    "icons:mac": "node scripts/generate-mac-icon.mjs",
+    "electron:make": "npm run icons:win && npm run icons:mac && electron-forge make",
     "electron:publish": "electron-forge publish",
     "electron:dev": "electron-forge start",
     "test": "vitest run",
@@ -128,6 +133,8 @@
     "electron": "^37.2.5",
     "eslint": "^9",
     "tailwindcss": "^4.1.11",
+    "png-to-ico": "^2.1.8",
+    "sharp": "^0.33.4",
     "tsup": "^8.3.5",
     "tsx": "^4.19.2",
     "tw-animate-css": "^1.3.5",
