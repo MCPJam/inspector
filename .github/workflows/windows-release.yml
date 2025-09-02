@@ -3,7 +3,7 @@ name: Windows Release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
 
 jobs:
   make-windows:
@@ -49,5 +49,3 @@ jobs:
             out\make\**\*.nupkg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-

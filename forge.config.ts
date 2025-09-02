@@ -19,7 +19,7 @@ const osxSignOptions = enableMacSigning
       "entitlements-inherit": resolve(
         __dirname,
         "assets",
-        "entitlements.mac.plist"
+        "entitlements.mac.plist",
       ),
       "gatekeeper-assess": false,
     }
@@ -39,14 +39,14 @@ const osxNotarizeOptions = enableMacSigning
         appleApiIssuer: process.env.APPLE_API_ISSUER_ID,
       }
     : process.env.APPLE_ID &&
-      process.env.APPLE_APP_SPECIFIC_PASSWORD &&
-      process.env.APPLE_TEAM_ID
-    ? {
-        appleId: process.env.APPLE_ID,
-        appleIdPassword: process.env.APPLE_APP_SPECIFIC_PASSWORD,
-        teamId: process.env.APPLE_TEAM_ID,
-      }
-    : undefined
+        process.env.APPLE_APP_SPECIFIC_PASSWORD &&
+        process.env.APPLE_TEAM_ID
+      ? {
+          appleId: process.env.APPLE_ID,
+          appleIdPassword: process.env.APPLE_APP_SPECIFIC_PASSWORD,
+          teamId: process.env.APPLE_TEAM_ID,
+        }
+      : undefined
   : undefined;
 
 const config: ForgeConfig = {
@@ -55,7 +55,7 @@ const config: ForgeConfig = {
     appBundleId: "com.mcpjam.inspector",
     appCategoryType: "public.app-category.developer-tools",
     executableName: "mcpjam-inspector",
-    icon: 'assets/icon',
+    icon: "assets/icon",
     extraResource: [resolve(__dirname, "dist", "client")],
     osxSign: osxSignOptions,
     osxNotarize: osxNotarizeOptions,
@@ -64,12 +64,12 @@ const config: ForgeConfig = {
   makers: [
     new MakerSquirrel({
       // Use generated Windows icon if present
-      setupIcon: resolve(__dirname, 'assets', 'icon.ico'),
+      setupIcon: resolve(__dirname, "assets", "icon.ico"),
       // Signing params read from env on Windows CI
       // Example (set in CI):
       // WINDOWS_PFX_FILE, WINDOWS_PFX_PASSWORD
       signWithParams: (() => {
-        const onWindows = process.platform === 'win32';
+        const onWindows = process.platform === "win32";
         const pfx = process.env.WINDOWS_PFX_FILE;
         const pwd = process.env.WINDOWS_PFX_PASSWORD;
         if (!onWindows || !pfx || !pwd) return undefined; // build unsigned when secrets are absent

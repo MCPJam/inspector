@@ -1,8 +1,8 @@
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
-import fs from 'fs/promises';
-import sharp from 'sharp';
-import pngToIco from 'png-to-ico';
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
+import fs from "fs/promises";
+import sharp from "sharp";
+import pngToIco from "png-to-ico";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -12,11 +12,11 @@ async function ensureDir(dir) {
 }
 
 async function generateWindowsIcon() {
-  const projectRoot = join(__dirname, '..');
-  const svgPath = join(projectRoot, 'client', 'public', 'mcp_jam.svg');
-  const tmpDir = join(projectRoot, '.icon-tmp');
-  const outDir = join(projectRoot, 'assets');
-  const outIco = join(outDir, 'icon.ico');
+  const projectRoot = join(__dirname, "..");
+  const svgPath = join(projectRoot, "client", "public", "mcp_jam.svg");
+  const tmpDir = join(projectRoot, ".icon-tmp");
+  const outDir = join(projectRoot, "assets");
+  const outIco = join(outDir, "icon.ico");
 
   await ensureDir(tmpDir);
   await ensureDir(outDir);
@@ -27,7 +27,10 @@ async function generateWindowsIcon() {
   for (const size of sizes) {
     const outPng = join(tmpDir, `icon-${size}.png`);
     await sharp(svgPath)
-      .resize(size, size, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+      .resize(size, size, {
+        fit: "contain",
+        background: { r: 0, g: 0, b: 0, alpha: 0 },
+      })
       .png()
       .toFile(outPng);
     pngPaths.push(outPng);
@@ -45,8 +48,6 @@ async function generateWindowsIcon() {
 }
 
 generateWindowsIcon().catch((err) => {
-  console.error('Failed to generate Windows icon:', err);
+  console.error("Failed to generate Windows icon:", err);
   process.exit(1);
 });
-
-
