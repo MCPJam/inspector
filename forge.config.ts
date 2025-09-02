@@ -55,14 +55,27 @@ const config: ForgeConfig = {
     appBundleId: "com.mcpjam.inspector",
     appCategoryType: "public.app-category.developer-tools",
     executableName: "mcpjam-inspector",
-    // icon: 'assets/icon', // Add icon files later
+    icon: 'assets/icon',
     extraResource: [resolve(__dirname, "dist", "client")],
     osxSign: osxSignOptions,
     osxNotarize: osxNotarizeOptions,
   },
   rebuildConfig: {},
   makers: [
-    new MakerSquirrel({}),
+    new MakerSquirrel({
+      // Use generated Windows icon if present
+      setupIcon: resolve(__dirname, 'assets', 'icon.ico'),
+      // Signing params read from env on Windows CI
+      // Example (set in CI):
+      // WINDOWS_PFX_FILE, WINDOWS_PFX_PASSWORD
+      signWithParams: (() => {
+        const onWindows = process.platform === 'win32';
+        const pfx = process.env.WINDOWS_PFX_FILE;
+        const pwd = process.env.WINDOWS_PFX_PASSWORD;
+        if (!onWindows || !pfx || !pwd) return undefined; // build unsigned when secrets are absent
+        return `/f \"${pfx}\" /p \"${pwd}\" /tr http://timestamp.digicert.com /td sha256 /fd sha256`;
+      })(),
+    }),
     new MakerZIP({}, ["darwin", "linux"]),
     new MakerDMG({
       format: "ULFO",
