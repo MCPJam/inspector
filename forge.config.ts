@@ -63,6 +63,8 @@ const config: ForgeConfig = {
   rebuildConfig: {},
   makers: [
     new MakerSquirrel({
+      name: "mcpjam-inspector",
+      setupExe: "MCPJam-Inspector-Setup.exe",
       // Use generated Windows icon if present
       setupIcon: resolve(__dirname, "assets", "icon.ico"),
       // Signing params read from env on Windows CI
