@@ -27,6 +27,7 @@
     "@types/node": "^20",
     "tsup": "^8.3.5",
     "tsx": "^4.19.2",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vite": "^5.4.10"
   }
 }
