@@ -9,6 +9,46 @@ import { FusesPlugin } from "@electron-forge/plugin-fuses";
 import { FuseV1Options, FuseVersion } from "@electron/fuses";
 import { resolve } from "path";
 
+const enableMacSigning = process.platform === "darwin";
+
+const osxSignOptions = enableMacSigning
+  ? {
+      identity: process.env.MAC_CODESIGN_IDENTITY || "Developer ID Application",
+      "hardened-runtime": true,
+      entitlements: resolve(__dirname, "assets", "entitlements.mac.plist"),
+      "entitlements-inherit": resolve(
+        __dirname,
+        "assets",
+        "entitlements.mac.plist"
+      ),
+      "gatekeeper-assess": false,
+    }
+  : undefined;
+
+const osxNotarizeOptions = enableMacSigning
+  ? process.env.APPLE_API_KEY_ID &&
+    process.env.APPLE_API_ISSUER_ID &&
+    process.env.APPLE_API_KEY_FILE
+    ? {
+        // For notarytool auth with ASC API key
+        // appleApiKey: path to the .p8 file
+        // appleApiKeyId: the key ID (e.g., QN5YX8VT8S)
+        // appleApiIssuer: the issuer ID (GUID)
+        appleApiKey: process.env.APPLE_API_KEY_FILE,
+        appleApiKeyId: process.env.APPLE_API_KEY_ID,
+        appleApiIssuer: process.env.APPLE_API_ISSUER_ID,
+      }
+    : process.env.APPLE_ID &&
+      process.env.APPLE_APP_SPECIFIC_PASSWORD &&
+      process.env.APPLE_TEAM_ID
+    ? {
+        appleId: process.env.APPLE_ID,
+        appleIdPassword: process.env.APPLE_APP_SPECIFIC_PASSWORD,
+        teamId: process.env.APPLE_TEAM_ID,
+      }
+    : undefined
+  : undefined;
+
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
@@ -17,6 +57,8 @@ const config: ForgeConfig = {
     executableName: "mcpjam-inspector",
     // icon: 'assets/icon', // Add icon files later
     extraResource: [resolve(__dirname, "dist", "client")],
+    osxSign: osxSignOptions,
+    osxNotarize: osxNotarizeOptions,
   },
   rebuildConfig: {},
   makers: [
