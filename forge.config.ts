@@ -9,18 +9,73 @@ import { FusesPlugin } from "@electron-forge/plugin-fuses";
 import { FuseV1Options, FuseVersion } from "@electron/fuses";
 import { resolve } from "path";
 
+const enableMacSigning = process.platform === "darwin";
+
+const osxSignOptions = enableMacSigning
+  ? {
+      identity: process.env.MAC_CODESIGN_IDENTITY || "Developer ID Application",
+      "hardened-runtime": true,
+      entitlements: resolve(__dirname, "assets", "entitlements.mac.plist"),
+      "entitlements-inherit": resolve(
+        __dirname,
+        "assets",
+        "entitlements.mac.plist",
+      ),
+      "gatekeeper-assess": false,
+    }
+  : undefined;
+
+const osxNotarizeOptions = enableMacSigning
+  ? process.env.APPLE_API_KEY_ID &&
+    process.env.APPLE_API_ISSUER_ID &&
+    process.env.APPLE_API_KEY_FILE
+    ? {
+        // For notarytool auth with ASC API key
+        // appleApiKey: path to the .p8 file
+        // appleApiKeyId: the key ID (e.g., QN5YX8VT8S)
+        // appleApiIssuer: the issuer ID (GUID)
+        appleApiKey: process.env.APPLE_API_KEY_FILE,
+        appleApiKeyId: process.env.APPLE_API_KEY_ID,
+        appleApiIssuer: process.env.APPLE_API_ISSUER_ID,
+      }
+    : process.env.APPLE_ID &&
+        process.env.APPLE_APP_SPECIFIC_PASSWORD &&
+        process.env.APPLE_TEAM_ID
+      ? {
+          appleId: process.env.APPLE_ID,
+          appleIdPassword: process.env.APPLE_APP_SPECIFIC_PASSWORD,
+          teamId: process.env.APPLE_TEAM_ID,
+        }
+      : undefined
+  : undefined;
+
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
     appBundleId: "com.mcpjam.inspector",
     appCategoryType: "public.app-category.developer-tools",
     executableName: "mcpjam-inspector",
-    // icon: 'assets/icon', // Add icon files later
+    icon: "assets/icon",
     extraResource: [resolve(__dirname, "dist", "client")],
+    osxSign: osxSignOptions,
+    osxNotarize: osxNotarizeOptions,
   },
   rebuildConfig: {},
   makers: [
-    new MakerSquirrel({}),
+    new MakerSquirrel({
+      // Use generated Windows icon if present
+      setupIcon: resolve(__dirname, "assets", "icon.ico"),
+      // Signing params read from env on Windows CI
+      // Example (set in CI):
+      // WINDOWS_PFX_FILE, WINDOWS_PFX_PASSWORD
+      signWithParams: (() => {
+        const onWindows = process.platform === "win32";
+        const pfx = process.env.WINDOWS_PFX_FILE;
+        const pwd = process.env.WINDOWS_PFX_PASSWORD;
+        if (!onWindows || !pfx || !pwd) return undefined; // build unsigned when secrets are absent
+        return `/f \"${pfx}\" /p \"${pwd}\" /tr http://timestamp.digicert.com /td sha256 /fd sha256`;
+      })(),
+    }),
     new MakerZIP({}, ["darwin", "linux"]),
     new MakerDMG({
       format: "ULFO",
