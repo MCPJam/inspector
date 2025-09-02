@@ -24,6 +24,8 @@ on:
 jobs:
   make-windows:
     runs-on: windows-latest
+    env:
+      WINDOWS_PFX_BASE64: ${{ secrets.WINDOWS_PFX_BASE64 }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -39,13 +41,11 @@ jobs:
           npm run install:deps
 
       - name: Restore code signing cert
-        if: ${{ secrets.WINDOWS_PFX_BASE64 != '' }}
+        if: env.WINDOWS_PFX_BASE64 != ''
         shell: pwsh
         run: |
           $bytes = [System.Convert]::FromBase64String($env:WINDOWS_PFX_BASE64)
           [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\\codesign.pfx", $bytes)
-        env:
-          WINDOWS_PFX_BASE64: ${{ secrets.WINDOWS_PFX_BASE64 }}
 
       - name: Build
         run: npm run build
