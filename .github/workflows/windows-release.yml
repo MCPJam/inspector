@@ -40,6 +40,11 @@ jobs:
           npm install
           npm run install:deps
 
+      - name: Workaround npm optional deps bug (rollup prebuilt)
+        if: runner.os == 'Windows'
+        run: |
+          npm i -D @rollup/rollup-win32-x64-msvc@^4
+
       - name: Restore code signing cert
         if: env.WINDOWS_PFX_BASE64 != ''
         shell: pwsh
