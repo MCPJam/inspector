@@ -1,4 +1,4 @@
-name: Build and Push to Docker Hub
+name: Docker Release
 
 on:
   workflow_dispatch:
@@ -33,7 +33,7 @@ jobs:
           images: ${{ env.DOCKER_REPOSITORY }}
           tags: |
             type=ref,event=branch
-            type=sha,prefix={{branch}}-
+            type=sha,prefix={{branch}}-,enable={{is_branch}}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable={{is_default_branch}}
