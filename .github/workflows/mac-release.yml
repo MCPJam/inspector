@@ -99,8 +99,8 @@ jobs:
           xcrun stapler staple "$DMG_PATH"
           xcrun stapler validate "$DMG_PATH"
 
-          # Verify with Gatekeeper
-          spctl -a -t open --context context:primary-signature "$DMG_PATH"
+          # Verify DMG is properly signed and notarized
+          codesign --verify --deep --strict --verbose=2 "$DMG_PATH"
 
           echo "DMG_PATH=$DMG_PATH" >> $GITHUB_ENV
         env:
