@@ -4,19 +4,29 @@
 # Stage 1: Build client
 FROM node:20-alpine AS client-builder
 WORKDIR /app
+COPY package.json package-lock.json ./
 COPY client/package*.json ./client/
-RUN cd client && npm install --include=dev
-COPY client/ ./client/
+COPY server/package*.json ./server/
 COPY shared/ ./shared/
+# Install all dependencies including root ones
+RUN npm install --include=dev
+RUN cd client && npm install --include=dev
+RUN cd server && npm install --include=dev
+COPY client/ ./client/
 RUN cd client && npm run build
 
 # Stage 2: Build server
 FROM node:20-alpine AS server-builder
 WORKDIR /app
+COPY package.json package-lock.json ./
+COPY client/package*.json ./client/
 COPY server/package*.json ./server/
+COPY shared/ ./shared/
+# Install all dependencies including root ones
+RUN npm install --include=dev
+RUN cd client && npm install --include=dev
 RUN cd server && npm install --include=dev
 COPY server/ ./server/
-COPY shared/ ./shared/
 # Copy client files needed by server build
 COPY client/ ./client/
 RUN cd server && npm run build
