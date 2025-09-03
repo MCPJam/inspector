@@ -1,0 +1,190 @@
+name: Mac Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g., v1.0.0)"
+        required: false
+        type: string
+      create_release:
+        description: "Create GitHub release?"
+        required: false
+        default: true
+        type: boolean
+
+env:
+  NODE_VERSION: "18"
+
+jobs:
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        run: |
+          npm install
+          npm run install:deps
+
+      - name: Build application
+        run: |
+          npm run build
+          npm run electron:make
+
+      - name: Setup Apple API Key
+        run: |
+          echo "${{ secrets.APPLE_API_KEY_CONTENT }}" | base64 -d > /tmp/AuthKey.p8
+        env:
+          APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
+
+      - name: Notarize and staple DMG
+        run: |
+          # Find the DMG file
+          DMG_PATH=$(find out/make -name "*.dmg" | head -n1)
+
+          if [ ! -f "$DMG_PATH" ]; then
+            echo "DMG file not found!"
+            exit 1
+          fi
+
+          echo "Found DMG: $DMG_PATH"
+
+          # Notarize the DMG
+          xcrun notarytool submit "$DMG_PATH" \
+            --key /tmp/AuthKey.p8 \
+            --key-id "${{ secrets.APPLE_API_KEY_ID }}" \
+            --issuer "${{ secrets.APPLE_API_ISSUER_ID }}" \
+            --wait
+
+          # Staple the DMG
+          xcrun stapler staple "$DMG_PATH"
+          xcrun stapler validate "$DMG_PATH"
+
+          # Verify with Gatekeeper
+          spctl -a -t open --context context:primary-signature "$DMG_PATH"
+
+          echo "DMG_PATH=$DMG_PATH" >> $GITHUB_ENV
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+
+      - name: Notarize and staple ZIP
+        run: |
+          # Find the ZIP file
+          ZIP_PATH=$(find out/make -name "*.zip" | head -n1)
+
+          if [ ! -f "$ZIP_PATH" ]; then
+            echo "ZIP file not found!"
+            exit 1
+          fi
+
+          echo "Found ZIP: $ZIP_PATH"
+
+          # Notarize the ZIP
+          xcrun notarytool submit "$ZIP_PATH" \
+            --key /tmp/AuthKey.p8 \
+            --key-id "${{ secrets.APPLE_API_KEY_ID }}" \
+            --issuer "${{ secrets.APPLE_API_ISSUER_ID }}" \
+            --wait
+
+          echo "ZIP_PATH=$ZIP_PATH" >> $GITHUB_ENV
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+
+      - name: Create stapled app ZIP for auto-updates
+        run: |
+          # Extract the notarized ZIP to get the app
+          cd "$(dirname "$ZIP_PATH")"
+          unzip -q "$(basename "$ZIP_PATH")" -d notarized
+
+          # Find and staple the app
+          APP_PATH=$(find notarized -name "*.app" | head -n1)
+          if [ ! -d "$APP_PATH" ]; then
+            echo "App not found in ZIP!"
+            exit 1
+          fi
+
+          xcrun stapler staple "$APP_PATH"
+          xcrun stapler validate "$APP_PATH"
+
+          # Create new ZIP with stapled app
+          STAPLED_ZIP="${ZIP_PATH%.zip}-stapled.zip"
+          ditto -c -k --keepParent "$APP_PATH" "$STAPLED_ZIP"
+
+          echo "STAPLED_ZIP=$STAPLED_ZIP" >> $GITHUB_ENV
+
+      - name: Clean up sensitive files
+        if: always()
+        run: rm -f /tmp/AuthKey.p8
+
+      - name: Upload build artifacts (if not creating release)
+        if: github.event_name == 'workflow_dispatch' && !inputs.create_release
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcpjam-inspector-macos
+          path: |
+            ${{ env.DMG_PATH }}
+            ${{ env.ZIP_PATH }}
+            ${{ env.STAPLED_ZIP }}
+          retention-days: 30
+
+      - name: Create GitHub Release
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.create_release)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && (inputs.version || github.sha) || github.ref_name }}
+          name: Release ${{ github.event_name == 'workflow_dispatch' && (inputs.version || github.sha) || github.ref_name }}
+          draft: false
+          prerelease: ${{ contains(github.event_name == 'workflow_dispatch' && (inputs.version || github.sha) || github.ref_name, 'beta') || contains(github.event_name == 'workflow_dispatch' && (inputs.version || github.sha) || github.ref_name, 'alpha') }}
+          files: |
+            ${{ env.DMG_PATH }}
+            ${{ env.ZIP_PATH }}
+            ${{ env.STAPLED_ZIP }}
+          body: |
+            ## Download
+            - **macOS DMG**: [MCPJam Inspector.dmg](${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event_name == 'workflow_dispatch' && (inputs.version || github.sha) || github.ref_name }}/MCPJam%20Inspector.dmg)
+            - **macOS ZIP**: [MCPJam Inspector ZIP](${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event_name == 'workflow_dispatch' && (inputs.version || github.sha) || github.ref_name }}/MCPJam%20Inspector-darwin-arm64-${{ github.event_name == 'workflow_dispatch' && (inputs.version || github.sha) || github.ref_name }}.zip)
+
+            Both files are notarized and stapled for seamless installation on macOS.
+
+            ## Auto-generated release
+            This release was automatically built and notarized by GitHub Actions.
+
+  publish-npm:
+    runs-on: ubuntu-latest
+    needs: build-mac
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        run: |
+          npm install
+          npm run install:deps
+
+      - name: Build for npm
+        run: npm run build
+
+      - name: Publish to npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
