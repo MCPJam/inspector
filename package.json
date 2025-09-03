@@ -33,7 +33,6 @@
     "build:client": "cd client && npm run build",
     "build:server": "cd server && npm run build",
     "start": "NODE_ENV=production node bin/start.js",
-    "publish": "node -e \"console.error('Use npm publish directly.'); process.exit(1)\"",
     "prettier-fix": "prettier --write .",
     "install:deps": "cd server && npm install && cd ../client && npm install",
     "docker:build": "docker build -t mcpjam/mcp-inspector:latest .",
