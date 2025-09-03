@@ -1,0 +1,65 @@
+name: NPM Publish
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (e.g., v1.0.0)"
+        required: false
+        type: string
+
+env:
+  NODE_VERSION: "18"
+
+jobs:
+  publish-npm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        run: |
+          npm install
+          npm run install:deps
+
+      - name: Update package version (if tag provided)
+        if: github.event_name == 'push' || inputs.version
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # Extract version from git tag (remove 'v' prefix)
+            VERSION="${{ github.ref_name }}"
+            VERSION="${VERSION#v}"
+          else
+            # Use provided version (remove 'v' prefix if present)
+            VERSION="${{ inputs.version }}"
+            VERSION="${VERSION#v}"
+          fi
+          echo "Updating package.json to version: $VERSION"
+          npm version "$VERSION" --no-git-tag-version
+          
+      - name: Build for npm
+        run: npm run build
+
+      - name: Publish to npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create success summary
+        run: |
+          echo "## ✅ NPM Package Published Successfully!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Package:** [@mcpjam/inspector](https://www.npmjs.com/package/@mcpjam/inspector)" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ github.ref_name || inputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Install with: \`npm install @mcpjam/inspector\`" >> $GITHUB_STEP_SUMMARY
