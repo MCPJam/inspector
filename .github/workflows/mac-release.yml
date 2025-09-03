@@ -177,18 +177,18 @@ jobs:
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.create_release)
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event_name == 'workflow_dispatch' && (inputs.version || github.sha) || github.ref_name }}
-          name: Release ${{ github.event_name == 'workflow_dispatch' && (inputs.version || github.sha) || github.ref_name }}
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && (inputs.version || 'v0.9.14-manual') || github.ref_name }}
+          name: Release ${{ github.event_name == 'workflow_dispatch' && (inputs.version || 'v0.9.14-manual') || github.ref_name }}
           draft: false
-          prerelease: ${{ contains(github.event_name == 'workflow_dispatch' && (inputs.version || github.sha) || github.ref_name, 'beta') || contains(github.event_name == 'workflow_dispatch' && (inputs.version || github.sha) || github.ref_name, 'alpha') }}
+          prerelease: false
           files: |
             ${{ env.DMG_PATH }}
             ${{ env.ZIP_PATH }}
             ${{ env.STAPLED_ZIP }}
           body: |
             ## Download
-            - **macOS DMG**: [MCPJam Inspector.dmg](${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event_name == 'workflow_dispatch' && (inputs.version || github.sha) || github.ref_name }}/MCPJam%20Inspector.dmg)
-            - **macOS ZIP**: [MCPJam Inspector ZIP](${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event_name == 'workflow_dispatch' && (inputs.version || github.sha) || github.ref_name }}/MCPJam%20Inspector-darwin-arm64-${{ github.event_name == 'workflow_dispatch' && (inputs.version || github.sha) || github.ref_name }}.zip)
+            - **macOS DMG**: [MCPJam Inspector.dmg](${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event_name == 'workflow_dispatch' && (inputs.version || 'v0.9.14-manual') || github.ref_name }}/MCPJam%20Inspector.dmg)
+            - **macOS ZIP**: [MCPJam Inspector ZIP](${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.event_name == 'workflow_dispatch' && (inputs.version || 'v0.9.14-manual') || github.ref_name }}/MCPJam%20Inspector-darwin-arm64-0.9.14.zip)
 
             Both files are notarized and stapled for seamless installation on macOS.
 
