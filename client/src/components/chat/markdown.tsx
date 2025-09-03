@@ -1,13 +1,25 @@
 // Note: Next.js Link replaced with standard anchor tag for now
-import React, { memo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { CodeBlock } from "./code-block";
 import { useState } from "react";
 
 const components: Partial<Components> = {
-  // @ts-expect-error - CodeBlock component doesn't match exact interface
-  code: CodeBlock,
+  code: ({ node, className, children, ...props }: any) => {
+    // Determine if this should be inline based on context
+    // ReactMarkdown sets inline=true for single backticks, false for triple backticks
+    const isReallyInline = !className?.includes('language-') && typeof children === 'string' && !children.includes('\n');
+    
+    return (
+      <CodeBlock 
+        node={node}
+        inline={isReallyInline}
+        className={className || ''}
+        children={children}
+        {...props}
+      />
+    );
+  },
   pre: ({ children }) => <>{children}</>,
   img: ({ src, alt, ...props }) => {
     if (!src) return null;
