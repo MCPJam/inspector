@@ -1,23 +1,23 @@
-name: Build and Release
+name: Mac Release
 
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (e.g., v1.0.0)'
+        description: "Version to release (e.g., v1.0.0)"
         required: false
         type: string
       create_release:
-        description: 'Create GitHub release?'
+        description: "Create GitHub release?"
         required: false
         default: true
         type: boolean
 
 env:
-  NODE_VERSION: '18'
+  NODE_VERSION: "18"
 
 jobs:
   build-mac:
@@ -30,7 +30,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          registry-url: 'https://registry.npmjs.org'
+          registry-url: "https://registry.npmjs.org"
 
       - name: Install dependencies
         run: |
@@ -52,28 +52,28 @@ jobs:
         run: |
           # Find the DMG file
           DMG_PATH=$(find out/make -name "*.dmg" | head -n1)
-          
+
           if [ ! -f "$DMG_PATH" ]; then
             echo "DMG file not found!"
             exit 1
           fi
-          
+
           echo "Found DMG: $DMG_PATH"
-          
+
           # Notarize the DMG
           xcrun notarytool submit "$DMG_PATH" \
             --key /tmp/AuthKey.p8 \
             --key-id "${{ secrets.APPLE_API_KEY_ID }}" \
             --issuer "${{ secrets.APPLE_API_ISSUER_ID }}" \
             --wait
-          
+
           # Staple the DMG
           xcrun stapler staple "$DMG_PATH"
           xcrun stapler validate "$DMG_PATH"
-          
+
           # Verify with Gatekeeper
           spctl -a -t open --context context:primary-signature "$DMG_PATH"
-          
+
           echo "DMG_PATH=$DMG_PATH" >> $GITHUB_ENV
         env:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
@@ -83,21 +83,21 @@ jobs:
         run: |
           # Find the ZIP file
           ZIP_PATH=$(find out/make -name "*.zip" | head -n1)
-          
+
           if [ ! -f "$ZIP_PATH" ]; then
             echo "ZIP file not found!"
             exit 1
           fi
-          
+
           echo "Found ZIP: $ZIP_PATH"
-          
+
           # Notarize the ZIP
           xcrun notarytool submit "$ZIP_PATH" \
             --key /tmp/AuthKey.p8 \
             --key-id "${{ secrets.APPLE_API_KEY_ID }}" \
             --issuer "${{ secrets.APPLE_API_ISSUER_ID }}" \
             --wait
-          
+
           echo "ZIP_PATH=$ZIP_PATH" >> $GITHUB_ENV
         env:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
@@ -108,21 +108,21 @@ jobs:
           # Extract the notarized ZIP to get the app
           cd "$(dirname "$ZIP_PATH")"
           unzip -q "$(basename "$ZIP_PATH")" -d notarized
-          
+
           # Find and staple the app
           APP_PATH=$(find notarized -name "*.app" | head -n1)
           if [ ! -d "$APP_PATH" ]; then
             echo "App not found in ZIP!"
             exit 1
           fi
-          
+
           xcrun stapler staple "$APP_PATH"
           xcrun stapler validate "$APP_PATH"
-          
+
           # Create new ZIP with stapled app
           STAPLED_ZIP="${ZIP_PATH%.zip}-stapled.zip"
           ditto -c -k --keepParent "$APP_PATH" "$STAPLED_ZIP"
-          
+
           echo "STAPLED_ZIP=$STAPLED_ZIP" >> $GITHUB_ENV
 
       - name: Clean up sensitive files
@@ -156,9 +156,9 @@ jobs:
             ## Download
             - **macOS DMG**: [MCPJam Inspector.dmg](${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.ref_name || inputs.version || github.sha }}/MCPJam%20Inspector.dmg)
             - **macOS ZIP**: [MCPJam Inspector ZIP](${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.ref_name || inputs.version || github.sha }}/MCPJam%20Inspector-darwin-arm64-${{ github.ref_name || inputs.version || github.sha }}.zip)
-            
+
             Both files are notarized and stapled for seamless installation on macOS.
-            
+
             ## Auto-generated release
             This release was automatically built and notarized by GitHub Actions.
 
@@ -174,7 +174,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          registry-url: 'https://registry.npmjs.org'
+          registry-url: "https://registry.npmjs.org"
 
       - name: Install dependencies
         run: |
