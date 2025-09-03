@@ -19,6 +19,9 @@ on:
 env:
   NODE_VERSION: "18"
 
+permissions:
+  contents: write
+  
 jobs:
   build-mac:
     runs-on: macos-latest
@@ -147,7 +150,7 @@ jobs:
           xcrun stapler validate "$APP_PATH"
 
           # Create new ZIP with stapled app
-          STAPLED_ZIP="${ZIP_PATH%.zip}-stapled.zip"
+          STAPLED_ZIP="$GITHUB_WORKSPACE/MCPJam Inspector-stapled.zip"
           ditto -c -k --keepParent "$APP_PATH" "$STAPLED_ZIP"
 
           echo "STAPLED_ZIP=$STAPLED_ZIP" >> $GITHUB_ENV
