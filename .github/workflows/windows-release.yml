@@ -85,8 +85,8 @@ jobs:
           body: |
             ## Download for Windows
             - **Windows Installer**: [MCPJam Inspector Setup.exe](https://github.com/MCPJam/inspector/releases/download/${{ github.event_name == 'workflow_dispatch' && (inputs.version || 'v0.9.14-manual') || github.ref_name }}/MCPJam-Inspector-Setup.exe)
-            
+
             The installer is code-signed and ready for installation on Windows.
-            
+
             ## Auto-generated release
             This release was automatically built and signed by GitHub Actions.

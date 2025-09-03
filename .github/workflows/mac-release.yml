@@ -21,7 +21,7 @@ env:
 
 permissions:
   contents: write
-  
+
 jobs:
   build-mac:
     runs-on: macos-latest
@@ -44,25 +44,25 @@ jobs:
         run: |
           # Create API key file
           echo "${{ secrets.APPLE_API_KEY_CONTENT }}" | base64 -d > /tmp/AuthKey.p8
-          
+
           # Create certificates directory
           mkdir -p ~/certificates
-          
+
           # Decode and install Developer ID Application certificate
           echo "${{ secrets.DEVELOPER_ID_APPLICATION_CERT }}" | base64 -d > ~/certificates/developer_id_application.p12
-          
+
           # Create temporary keychain
           security create-keychain -p "temp_keychain_password" build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p "temp_keychain_password" build.keychain
           security set-keychain-settings -t 3600 -u build.keychain
-          
+
           # Import certificate
           security import ~/certificates/developer_id_application.p12 -k build.keychain -P "${{ secrets.DEVELOPER_ID_APPLICATION_PASSWORD }}" -T /usr/bin/codesign
-          
+
           # Enable codesign to access keychain
           security set-key-partition-list -S apple-tool:,apple: -s -k "temp_keychain_password" build.keychain
-          
+
           # Set identity for Electron Forge
           echo "MAC_CODESIGN_IDENTITY=Developer ID Application: Marcelo Jimenez (TLBS4N7QZ3)" >> $GITHUB_ENV
           echo "APPLE_API_KEY_FILE=/tmp/AuthKey.p8" >> $GITHUB_ENV
@@ -101,7 +101,7 @@ jobs:
           # Staple the DMG
           xcrun stapler staple "$DMG_PATH"
           xcrun stapler validate "$DMG_PATH"
-          
+
           echo "✅ DMG successfully notarized and stapled"
 
           echo "DMG_PATH=$DMG_PATH" >> $GITHUB_ENV
@@ -194,4 +194,3 @@ jobs:
 
             ## Auto-generated release
             This release was automatically built and notarized by GitHub Actions.
-
