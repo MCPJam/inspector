@@ -59,6 +59,15 @@ jobs:
           WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
         run: npm run electron:make
 
+      - name: Rename installer to consistent name
+        run: |
+          $setupFile = Get-ChildItem -Path "out\make" -Recurse -Name "*Setup.exe" | Select-Object -First 1
+          if ($setupFile) {
+            Copy-Item "out\make\$setupFile" "MCPJam-Inspector-Setup.exe"
+            echo "SETUP_PATH=MCPJam-Inspector-Setup.exe" >> $env:GITHUB_ENV
+          }
+        shell: powershell
+
       - name: Upload build artifacts (if not creating release)
         if: github.event_name == 'workflow_dispatch' && !inputs.create_release
         uses: actions/upload-artifact@v4
@@ -79,7 +88,7 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            out\make\**\*Setup.exe
+            ${{ env.SETUP_PATH }}
             out\make\**\RELEASES
             out\make\**\*.nupkg
           body: |

@@ -104,7 +104,9 @@ jobs:
 
           echo "✅ DMG successfully notarized and stapled"
 
-          echo "DMG_PATH=$DMG_PATH" >> $GITHUB_ENV
+          # Rename DMG to consistent name
+          cp "$DMG_PATH" "MCPJam Inspector.dmg"
+          echo "DMG_PATH=MCPJam Inspector.dmg" >> $GITHUB_ENV
         env:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
