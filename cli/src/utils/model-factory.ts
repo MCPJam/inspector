@@ -27,7 +27,7 @@ const MODEL_CREATORS = {
   ollama: (_: string, modelId: string) =>
     createOllama({
       baseURL: process.env.OLLAMA_BASE_URL || "http://localhost:11434/api",
-    })(modelId, { simulateStreaming: true }),
+    })(modelId),
 };
 
 const ENV_KEYS = {
