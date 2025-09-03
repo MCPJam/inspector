@@ -46,7 +46,7 @@ jobs:
           fi
           echo "Updating package.json to version: $VERSION"
           npm version "$VERSION" --no-git-tag-version
-          
+
       - name: Build for npm
         run: npm run build
 
