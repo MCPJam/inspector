@@ -1,25 +1,23 @@
 name: Windows Release
 
 on:
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: "Release tag to upload assets to (e.g., v0.9.7). Leave empty to skip Release upload."
-        required: false
-        default: ""
-      draft:
-        description: "Create draft release (manual runs)"
-        type: boolean
-        required: false
-        default: true
-      prerelease:
-        description: "Mark as prerelease (manual runs)"
-        type: boolean
-        required: false
-        default: false
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g., v1.0.0)"
+        required: false
+        type: string
+      create_release:
+        description: "Create GitHub release?"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
 
 jobs:
   make-windows:
@@ -61,36 +59,34 @@ jobs:
           WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
         run: npm run electron:make
 
-      - name: Upload to GitHub Release (on tag push)
-        if: github.event_name == 'push'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            out\make\**\*Setup.exe
-            out\make\**\RELEASES
-            out\make\**\*.nupkg
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload to GitHub Release (manual run)
-        if: github.event_name == 'workflow_dispatch' && inputs.tag != ''
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ inputs.tag }}
-          draft: ${{ inputs.draft }}
-          prerelease: ${{ inputs.prerelease }}
-          files: |
-            out\make\**\*Setup.exe
-            out\make\**\RELEASES
-            out\make\**\*.nupkg
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload CI artifacts (always)
+      - name: Upload build artifacts (if not creating release)
+        if: github.event_name == 'workflow_dispatch' && !inputs.create_release
         uses: actions/upload-artifact@v4
         with:
-          name: windows-dist
+          name: mcpjam-inspector-windows
           path: |
             out\make\**\*Setup.exe
             out\make\**\RELEASES
             out\make\**\*.nupkg
+          retention-days: 30
+
+      - name: Create GitHub Release
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.create_release)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && (inputs.version || 'v0.9.14-manual') || github.ref_name }}
+          name: Release ${{ github.event_name == 'workflow_dispatch' && (inputs.version || 'v0.9.14-manual') || github.ref_name }}
+          draft: false
+          prerelease: false
+          files: |
+            out\make\**\*Setup.exe
+            out\make\**\RELEASES
+            out\make\**\*.nupkg
+          body: |
+            ## Download for Windows
+            - **Windows Installer**: [MCPJam Inspector Setup.exe](https://github.com/MCPJam/inspector/releases/download/${{ github.event_name == 'workflow_dispatch' && (inputs.version || 'v0.9.14-manual') || github.ref_name }}/MCPJam-Inspector-Setup.exe)
+            
+            The installer is code-signed and ready for installation on Windows.
+            
+            ## Auto-generated release
+            This release was automatically built and signed by GitHub Actions.
