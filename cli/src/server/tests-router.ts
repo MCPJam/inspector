@@ -1,7 +1,12 @@
 import { Hono } from "hono";
 import { Agent } from "@mastra/core/agent";
 import { Logger } from "../utils/logger.js";
-import { TestConnectionManager } from "../utils/connection-manager.js";
+import { MCPJamClientManager } from "../../../server/services/mcpjam-client-manager.js";
+import {
+  createFlattenedTools,
+  connectToServersWithLogging,
+  cleanupConnections,
+} from "../utils/utils.js";
 import { createModel } from "../utils/model-factory.js";
 import {
   validateTest,
@@ -12,7 +17,8 @@ import { createTestResult } from "../utils/test-errors.js";
 
 export function createTestsRouter() {
   const tests = new Hono();
-  let connectionManager: TestConnectionManager | null = null;
+  let connectionManager: MCPJamClientManager | null = null;
+  let connectedServers = new Set<string>();
 
   tests.post("/run", async (c) => {
     try {
@@ -22,7 +28,7 @@ export function createTestsRouter() {
       validateTest(test);
 
       if (!connectionManager) {
-        connectionManager = new TestConnectionManager();
+        connectionManager = new MCPJamClientManager();
       }
 
       Logger.testStarting(test.title);
@@ -34,9 +40,15 @@ export function createTestsRouter() {
       );
 
       try {
-        await connectionManager.connectToServers(serverConfigs);
+        await connectToServersWithLogging(connectionManager, serverConfigs);
+        Object.keys(serverConfigs).forEach((name) =>
+          connectedServers.add(name),
+        );
+
         const model = createModel(test.model, providerApiKeys);
-        const flattenedTools = connectionManager.getFlattenedTools();
+        const flattenedTools = createFlattenedTools(
+          connectionManager.getAvailableTools(),
+        );
 
         const agent = new Agent({
           name: `TestAgent-${test.id}`,
@@ -111,7 +123,7 @@ export function createTestsRouter() {
   tests.post("/cleanup", async (c) => {
     if (connectionManager) {
       try {
-        await connectionManager.cleanup();
+        await cleanupConnections(connectionManager, connectedServers);
         connectionManager = null;
         return c.json({ success: true });
       } catch (err) {
