@@ -17,6 +17,8 @@ COPY server/package*.json ./server/
 RUN cd server && npm install --include=dev
 COPY server/ ./server/
 COPY shared/ ./shared/
+# Copy client files needed by server build
+COPY client/ ./client/
 RUN cd server && npm run build
 
 # Stage 3: Production image - extend existing or create new
