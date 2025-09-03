@@ -1,37 +1,30 @@
 # Use the existing mcpjam/mcp-inspector as base or build from scratch
 # Multi-stage build for client and server
 
-# Stage 1: Build client
-FROM node:20-alpine AS client-builder
+# Stage 1: Dependencies base (shared)
+FROM node:20-alpine AS deps-base
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY client/package*.json ./client/
 COPY server/package*.json ./server/
-COPY shared/ ./shared/
-# Install all dependencies including root ones
 RUN npm install --include=dev
-RUN cd client && npm install --include=dev
+RUN cd client && npm install --include=dev  
 RUN cd server && npm install --include=dev
+
+# Stage 2: Build client
+FROM deps-base AS client-builder
+COPY shared/ ./shared/
 COPY client/ ./client/
 RUN cd client && npm run build
 
-# Stage 2: Build server
-FROM node:20-alpine AS server-builder
-WORKDIR /app
-COPY package.json package-lock.json ./
-COPY client/package*.json ./client/
-COPY server/package*.json ./server/
+# Stage 3: Build server  
+FROM deps-base AS server-builder
 COPY shared/ ./shared/
-# Install all dependencies including root ones
-RUN npm install --include=dev
-RUN cd client && npm install --include=dev
-RUN cd server && npm install --include=dev
 COPY server/ ./server/
-# Copy client files needed by server build
 COPY client/ ./client/
 RUN cd server && npm run build
 
-# Stage 3: Production image - extend existing or create new
+# Stage 4: Production image - extend existing or create new
 FROM node:20-alpine AS production
 
 # Install dumb-init for proper signal handling
