@@ -129,6 +129,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.21",
     "concurrently": "^9.1.0",
+    "convex": "^1.26.2",
     "electron": "^37.2.5",
     "eslint": "^9",
     "png-to-ico": "^2.1.8",
