@@ -1,4 +1,5 @@
 import { serve } from "@hono/node-server";
+import fixPath from "fix-path";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
@@ -68,6 +69,11 @@ function getMCPConfigFromEnv() {
     name: "CLI Server", // Default name for CLI-provided servers
   };
 }
+
+// Ensure PATH is initialized from the user's shell so spawned processes can find binaries (e.g., npx)
+try {
+  fixPath();
+} catch {}
 
 const app = new Hono();
 
