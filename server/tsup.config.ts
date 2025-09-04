@@ -25,6 +25,10 @@ export default defineConfig({
     "zod-to-json-schema",
     "clsx",
     "tailwind-merge",
+    // Keep environment PATH fixers external (these may use CJS internals and dynamic requires)
+    "fix-path",
+    "shell-path",
+    "execa",
   ],
   noExternal: [
     // Force bundling of problematic packages
