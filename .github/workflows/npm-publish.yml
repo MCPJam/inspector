@@ -32,21 +32,6 @@ jobs:
           npm install
           npm run install:deps
 
-      - name: Update package version (if tag provided)
-        if: github.event_name == 'push' || inputs.version
-        run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            # Extract version from git tag (remove 'v' prefix)
-            VERSION="${{ github.ref_name }}"
-            VERSION="${VERSION#v}"
-          else
-            # Use provided version (remove 'v' prefix if present)
-            VERSION="${{ inputs.version }}"
-            VERSION="${VERSION#v}"
-          fi
-          echo "Updating package.json to version: $VERSION"
-          npm version "$VERSION" --no-git-tag-version
-
       - name: Build for npm
         run: npm run build
 
