@@ -48,7 +48,7 @@ async function findAvailablePort(startPort = 3000): Promise<number> {
 
 async function startHonoServer(): Promise<number> {
   try {
-    const port = await findAvailablePort(3000);
+    const port = app.isPackaged ? 17692 : await findAvailablePort(3000);
 
     // Set environment variable to tell the server it's running in Electron
     process.env.ELECTRON_APP = "true";
@@ -60,7 +60,7 @@ async function startHonoServer(): Promise<number> {
     server = serve({
       fetch: honoApp.fetch,
       port,
-      hostname: "127.0.0.1",
+      hostname: "localhost",
     });
 
     log.info(`🚀 MCPJam Server started on port ${port}`);
