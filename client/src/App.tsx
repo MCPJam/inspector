@@ -21,6 +21,7 @@ import { ThemeSwitcher } from "./components/sidebar/theme-switcher";
 import { useAppState } from "./hooks/use-app-state";
 import { PreferencesStoreProvider } from "./stores/preferences/preferences-provider";
 import { Toaster } from "./components/ui/sonner";
+import { AuthButton } from "./components/AuthButton";
 
 // Import global styles
 import "./index.css";
@@ -82,6 +83,7 @@ export default function App() {
               </div>
               <div className="flex items-center gap-2">
                 <ThemeSwitcher />
+                <AuthButton />
               </div>
             </div>
           </header>
@@ -128,9 +130,7 @@ export default function App() {
                 serverConfigsMap={selectedMCPConfigsMap}
                 allServerConfigsMap={Object.fromEntries(
                   Object.entries(connectedServerConfigs)
-                    .filter(
-                      ([, entry]) => entry.connectionStatus === "connected",
-                    )
+                    .filter(([, entry]) => entry.connectionStatus === "connected")
                     .map(([name, entry]) => [name, entry.config]),
                 )}
               />
