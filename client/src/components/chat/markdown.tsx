@@ -1,14 +1,41 @@
 // Note: Next.js Link replaced with standard anchor tag for now
-import React, { memo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { CodeBlock } from "./code-block";
 import { useState } from "react";
 
 const components: Partial<Components> = {
-  // @ts-expect-error - CodeBlock component doesn't match exact interface
-  code: CodeBlock,
-  pre: ({ children }) => <>{children}</>,
+  code: ({ node, className, children, ...props }: any) => {
+    // Check if we're inside a pre tag (this indicates a code block)
+    const isInPre = node?.parent?.tagName === 'pre';
+    
+    // Check for language class - be more specific about valid language classes
+    const hasLanguageClass = className && 
+      className.startsWith('language-') && 
+      className !== 'language-' &&
+      !className.includes('def') && // Filter out malformed language classes
+      className.length > 9; // "language-" is 9 chars, so valid languages should be longer
+    
+    // Check for multiline content
+    const isMultiLine = typeof children === 'string' && children.includes('\n');
+    
+    // Code block detection: must be in pre tag OR have valid language class OR be multiline
+    const isCodeBlock = isInPre || hasLanguageClass || isMultiLine;
+    
+    return (
+      <CodeBlock 
+        node={node}
+        inline={!isCodeBlock}
+        className={className || ''}
+        children={children}
+        {...props}
+      />
+    );
+  },
+  // Simplified pre handling - just pass through to children
+  pre: ({ children }) => {
+    return <>{children}</>;
+  },
   img: ({ src, alt, ...props }) => {
     if (!src) return null;
 

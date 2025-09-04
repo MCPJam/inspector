@@ -305,11 +305,23 @@ const streamAgentResponse = async (
 ) => {
   let hasContent = false;
   let chunkCount = 0;
+  let totalContentLength = 0;
+
+  dbg("Starting to stream response...");
 
   for await (const chunk of stream.textStream) {
     if (chunk && chunk.trim()) {
       hasContent = true;
       chunkCount++;
+      totalContentLength += chunk.length;
+      
+      dbg("Streaming chunk", { 
+        chunkNumber: chunkCount, 
+        chunkLength: chunk.length, 
+        totalLength: totalContentLength,
+        chunkPreview: chunk.substring(0, 50) + (chunk.length > 50 ? "..." : "")
+      });
+      
       streamingContext.controller.enqueue(
         streamingContext.encoder!.encode(
           `data: ${JSON.stringify({ type: "text", content: chunk })}\n\n`,
@@ -318,7 +330,7 @@ const streamAgentResponse = async (
     }
   }
 
-  dbg("Streaming finished", { hasContent, chunkCount });
+  dbg("Streaming finished", { hasContent, chunkCount, totalContentLength });
   return { hasContent, chunkCount };
 };
 
@@ -525,6 +537,13 @@ chat.post("/", async (c) => {
     }
 
     // Create LLM model
+    dbg("Creating LLM model", { 
+      modelId: model.id, 
+      provider: model.provider,
+      hasApiKey: !!apiKey,
+      ollamaBaseUrl 
+    });
+    
     const llmModel = createLlmModel(model, apiKey, ollamaBaseUrl);
 
     // Create agent without tools initially - we'll add them in the streaming context
@@ -535,6 +554,8 @@ chat.post("/", async (c) => {
       model: llmModel,
       tools: undefined, // Start without tools, add them in streaming context
     });
+
+    dbg("Agent created successfully");
 
     const formattedMessages = messages.map((msg: ChatMessage) => ({
       role: msg.role,
@@ -649,7 +670,12 @@ chat.post("/", async (c) => {
             provider,
             temperature,
           );
+          dbg("Streaming completed successfully");
         } catch (error) {
+          dbg("Streaming error", { 
+            error: error instanceof Error ? error.message : "Unknown error",
+            stack: error instanceof Error ? error.stack : undefined
+          });
           controller.enqueue(
             encoder.encode(
               `data: ${JSON.stringify({
