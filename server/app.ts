@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import fixPath from "fix-path";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { serveStatic } from "@hono/node-server/serve-static";
@@ -9,6 +10,11 @@ import { MCPJamClientManager } from "./services/mcpjam-client-manager.js";
 import path from "path";
 
 export function createHonoApp() {
+  // Ensure PATH includes user shell paths so child processes (e.g., npx) can be found
+  // This is crucial when launched from GUI apps (Electron) where PATH is minimal
+  try {
+    fixPath();
+  } catch {}
   const app = new Hono();
 
   // Create the MCPJam client manager instance
