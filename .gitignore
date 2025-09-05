@@ -33,6 +33,9 @@ internals/
 .DS_Store
 *.pem
 
+# pnpm
+pnpm-lock.yaml
+
 # debug
 npm-debug.log*
 yarn-debug.log*

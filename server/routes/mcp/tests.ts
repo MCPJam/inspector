@@ -134,38 +134,37 @@ tests.post("/run-all", async (c) => {
                 model,
               });
               const toolsets = await client.getToolsets();
-              const stream = await agent.stream(
+              const stream = await agent.streamVNext(
                 [{ role: "user", content: test.prompt || "" }] as any,
                 {
                   maxSteps: 10,
                   toolsets,
-                  onStepFinish: ({ text, toolCalls, toolResults }) => {
-                    step += 1;
-                    // Accumulate tool names
-                    (toolCalls || []).forEach((c: any) => {
-                      const toolName = c?.name || c?.toolName;
-                      if (toolName) {
-                        calledTools.add(toolName);
-                      }
-                    });
-                    controller.enqueue(
-                      encoder.encode(
-                        `data: ${JSON.stringify({
-                          type: "trace_step",
-                          testId: test.id,
-                          step,
-                          text,
-                          toolCalls,
-                          toolResults,
-                        })}\n\n`,
-                      ),
-                    );
-                  },
                 },
               );
-              // Drain text (no need to forward text here)
-              for await (const _ of stream.textStream) {
-                // no-op
+
+              // Process the streamVNext output
+              for await (const chunk of stream.fullStream) {
+                if (chunk.type === "tool-call" && chunk.payload) {
+                  const toolName = chunk.payload.toolName;
+                  if (toolName) {
+                    calledTools.add(toolName);
+                  }
+                }
+                if (chunk.type === "finish") {
+                  step += 1;
+                  controller.enqueue(
+                    encoder.encode(
+                      `data: ${JSON.stringify({
+                        type: "trace_step",
+                        testId: test.id,
+                        step,
+                        text: "Test completed",
+                        toolCalls: Array.from(calledTools),
+                        toolResults: [],
+                      })}\n\n`,
+                    ),
+                  );
+                }
               }
               const called = Array.from(calledTools);
               const missing = Array.from(expectedSet).filter(
