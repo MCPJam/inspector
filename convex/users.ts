@@ -1,5 +1,4 @@
-import { mutation } from "convex/server";
-import { internalMutation } from "convex/server";
+import { mutation, internalMutation } from "./_generated/server";
 
 // Upsert a user record on first login. Stores basic profile and plan defaults.
 export const ensureUser = mutation(async (ctx) => {
