@@ -1,6 +1,7 @@
 /// <reference types="@electron-forge/plugin-vite/forge-vite-env" />
 import { app, BrowserWindow, shell, Menu } from "electron";
 import { serve } from "@hono/node-server";
+import { spawn, ChildProcess } from "child_process";
 import path from "path";
 import { createHonoApp } from "../server/app.js";
 import log from "electron-log";
@@ -22,6 +23,7 @@ if (process.platform === "win32") {
 let mainWindow: BrowserWindow | null = null;
 let server: any = null;
 let serverPort: number = 0;
+let convexProcess: ChildProcess | null = null;
 
 const isDev = process.env.NODE_ENV === "development";
 
@@ -43,6 +45,59 @@ async function findAvailablePort(startPort = 3000): Promise<number> {
         .then(resolve)
         .catch(reject);
     });
+  });
+}
+
+async function startConvexDev(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    log.info("🔄 Starting Convex dev server for authentication...");
+    
+    convexProcess = spawn("npx", ["convex", "dev"], {
+      stdio: ["ignore", "pipe", "pipe"],
+      cwd: process.cwd(),
+    });
+
+    let convexReady = false;
+    const startupTimeout = setTimeout(() => {
+      if (!convexReady) {
+        log.warn("Convex startup taking longer than expected");
+        resolve(); // Continue even if Convex is slow to start
+      }
+    }, 15000);
+
+    convexProcess.stdout?.on('data', (data) => {
+      const output = data.toString();
+      log.info(`Convex: ${output.trim()}`);
+      
+      if ((output.includes('Convex functions ready') || output.includes('Push complete')) && !convexReady) {
+        convexReady = true;
+        clearTimeout(startupTimeout);
+        log.info("✅ Convex authentication backend ready");
+        resolve();
+      }
+    });
+
+    convexProcess.stderr?.on('data', (data) => {
+      const error = data.toString();
+      log.warn(`Convex error: ${error.trim()}`);
+    });
+
+    convexProcess.on('close', (code) => {
+      log.info(`Convex process closed with code ${code}`);
+      convexProcess = null;
+    });
+
+    convexProcess.on('error', (error) => {
+      log.error('Failed to start Convex:', error);
+      reject(error);
+    });
+
+    // Give Convex a moment to start up
+    setTimeout(() => {
+      if (!convexReady) {
+        log.info("Convex is starting up...");
+      }
+    }, 3000);
   });
 }
 
@@ -199,6 +254,11 @@ function createAppMenu(): void {
 // App event handlers
 app.whenReady().then(async () => {
   try {
+    // Start Convex dev server for authentication
+    await startConvexDev().catch(error => {
+      log.warn("Convex failed to start, authentication features may not work:", error.message);
+    });
+
     // Start the embedded Hono server
     serverPort = await startHonoServer();
     const serverUrl = `http://127.0.0.1:${serverPort}`;
@@ -218,10 +278,15 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
-  // Close the server when all windows are closed
+  // Close the server and Convex when all windows are closed
   if (server) {
     server.close?.();
     serverPort = 0;
+  }
+  
+  if (convexProcess) {
+    convexProcess.kill('SIGTERM');
+    convexProcess = null;
   }
 
   // On macOS, keep the app running even when all windows are closed
@@ -261,6 +326,11 @@ app.on("web-contents-created", (_, contents) => {
 app.on("before-quit", () => {
   if (server) {
     server.close?.();
+  }
+  
+  if (convexProcess) {
+    convexProcess.kill('SIGTERM');
+    convexProcess = null;
   }
 });
 

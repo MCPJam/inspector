@@ -27,7 +27,13 @@ export function AuthButton() {
       <span className="text-sm text-muted-foreground max-w-[160px] truncate">
         {user?.email || user?.id}
       </span>
-      <Button variant="outline" size="sm" onClick={() => signOut()}>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() =>
+          signOut({ returnTo: window.location.origin })
+        }
+      >
         Sign out
       </Button>
     </div>
