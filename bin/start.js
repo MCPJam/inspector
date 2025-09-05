@@ -552,49 +552,6 @@ async function main() {
   });
 
   try {
-    // Start Convex dev server for auth/signup functionality
-    logStep("Convex", "Starting backend services for authentication...");
-    const convexProcess = spawn("npx", ["convex", "dev"], {
-      cwd: projectRoot,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: process.env,
-    });
-
-    // Handle Convex startup
-    let convexReady = false;
-    const convexStartupTimeout = setTimeout(() => {
-      if (!convexReady) {
-        logWarning("Convex startup is taking longer than expected...");
-        logInfo("Authentication features may not be immediately available");
-      }
-    }, 15000);
-
-    convexProcess.stdout?.on('data', (data) => {
-      const output = data.toString();
-      if (output.includes('Convex functions ready') || output.includes('Push complete')) {
-        if (!convexReady) {
-          convexReady = true;
-          clearTimeout(convexStartupTimeout);
-          logSuccess("Authentication backend ready");
-        }
-      }
-    });
-
-    convexProcess.stderr?.on('data', (data) => {
-      const error = data.toString();
-      if (error.includes('ERROR')) {
-        logWarning(`Convex: ${error.trim()}`);
-      }
-    });
-
-    // Cleanup Convex process on exit
-    abort.signal.addEventListener('abort', () => {
-      convexProcess.kill('SIGTERM');
-    });
-
-    // Wait a moment for Convex to start
-    await delay(2000);
-
     const distServerPath = resolve(projectRoot, "dist", "server", "index.js");
 
     // Check if production build exists
