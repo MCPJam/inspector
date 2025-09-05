@@ -22,12 +22,16 @@ import { useAppState } from "./hooks/use-app-state";
 import { PreferencesStoreProvider } from "./stores/preferences/preferences-provider";
 import { Toaster } from "./components/ui/sonner";
 import { AuthButton } from "./components/AuthButton";
+import { useElectronOAuth } from "./hooks/useElectronOAuth";
 
 // Import global styles
 import "./index.css";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
+  
+  // Set up Electron OAuth callback handling
+  useElectronOAuth();
   const isDebugCallback = useMemo(
     () => window.location.pathname.startsWith("/oauth/callback/debug"),
     [],
