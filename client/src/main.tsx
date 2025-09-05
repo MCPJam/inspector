@@ -1,4 +1,4 @@
-import { StrictMode, useEffect } from "react";
+import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import "./index.css";
@@ -14,9 +14,10 @@ import { ConvexProviderWithAuthKit } from "@convex-dev/workos";
 
 const convexUrl = import.meta.env.VITE_CONVEX_URL as string;
 const workosClientId = import.meta.env.VITE_WORKOS_CLIENT_ID as string;
-const workosRedirectUri =
-  (import.meta.env.VITE_WORKOS_REDIRECT_URI as string) ||
-  `${window.location.origin}/callback`;
+// Determine redirect URI dynamically to support both web and Electron
+const workosRedirectUri = (window as any).isElectron
+  ? "mcpjam://callback"
+  : `${window.location.origin}/callback`;
 
 const convex = new ConvexReactClient(convexUrl);
 
