@@ -3,7 +3,8 @@ import { useConvexAuth } from "convex/react";
 import { Button } from "@/components/ui/button";
 
 export function AuthButton() {
-  const { isAuthenticated, isLoading } = useConvexAuth();
+  // Use Convex only for loading signal; rely on WorkOS user presence for UI state
+  const { isLoading } = useConvexAuth();
   const { user, signIn, signOut } = useAuth();
 
   if (isLoading) {
@@ -14,7 +15,7 @@ export function AuthButton() {
     );
   }
 
-  if (!isAuthenticated) {
+  if (!user) {
     return (
       <Button variant="outline" size="sm" onClick={() => signIn()}>
         Sign in
@@ -30,9 +31,13 @@ export function AuthButton() {
       <Button
         variant="outline"
         size="sm"
-        onClick={() =>
-          signOut({ returnTo: window.location.origin })
-        }
+        onClick={() => {
+          const isElectron = (window as any).isElectron;
+          const returnTo = isElectron && import.meta.env.DEV
+            ? "http://localhost:8080/callback"
+            : window.location.origin;
+          signOut({ returnTo });
+        }}
       >
         Sign out
       </Button>
