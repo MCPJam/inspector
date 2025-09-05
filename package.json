@@ -26,7 +26,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "dev": "concurrently \"npm run dev:convex\" \"npm run dev:server\" \"npm run dev:client\"",
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:convex": "convex dev",
     "dev:server": "cd server && npm run dev",
     "dev:client": "cd client && npm run dev",
