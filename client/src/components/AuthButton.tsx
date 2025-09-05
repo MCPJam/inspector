@@ -1,8 +1,10 @@
 import { useAuth } from "@workos-inc/authkit-react";
+import { useConvexAuth } from "convex/react";
 import { Button } from "@/components/ui/button";
 
 export function AuthButton() {
-  const { user, isAuthenticated, signIn, signOut, isLoading } = useAuth();
+  const { isAuthenticated, isLoading } = useConvexAuth();
+  const { user, signIn, signOut } = useAuth();
 
   if (isLoading) {
     return (
