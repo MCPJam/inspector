@@ -277,6 +277,7 @@ export function useAppState() {
                         ...prev.servers[formData.name],
                         config: oauthResult.serverConfig!,
                         connectionStatus: "connected" as const,
+                        enabled: true,
                         oauthTokens: getStoredTokens(formData.name),
                         lastError: undefined,
                       },
@@ -366,6 +367,7 @@ export function useAppState() {
               [formData.name]: {
                 ...prev.servers[formData.name],
                 connectionStatus: "connected" as const,
+                enabled: true,
                 lastConnectionTime: new Date(),
                 retryCount: 0,
                 lastError: undefined,
@@ -424,27 +426,95 @@ export function useAppState() {
     [convertFormToMCPConfig],
   );
 
-  // Auto-connect to CLI-provided MCP server on mount
+  // Auto-connect to CLI-provided MCP server(s) on mount
   useEffect(() => {
     if (!isLoading) {
-      // First try window config (production mode)
-      const windowCliConfig = (window as any).MCP_CLI_CONFIG;
-      if (windowCliConfig && windowCliConfig.command) {
-        logger.info(
-          "Auto-connecting to CLI-provided MCP server (from window)",
-          { cliConfig: windowCliConfig },
-        );
+      // Fetch CLI config from API (both dev and production)
+      fetch("/api/mcp-cli-config")
+        .then((response) => response.json())
+        .then((data) => {
+          const windowCliConfig = data.config;
+          if (windowCliConfig) {
+            // Handle multiple servers from config file
+            if (
+              windowCliConfig.servers &&
+              Array.isArray(windowCliConfig.servers)
+            ) {
+              const autoConnectServer = windowCliConfig.autoConnectServer;
 
-        const formData: ServerFormData = {
-          name: windowCliConfig.name || "CLI Server",
-          type: "stdio" as const,
-          command: windowCliConfig.command,
-          args: windowCliConfig.args || [],
-        };
+              logger.info(
+                "Processing CLI-provided MCP servers (from config file)",
+                {
+                  serverCount: windowCliConfig.servers.length,
+                  autoConnectServer: autoConnectServer || "all",
+                  cliConfig: windowCliConfig,
+                },
+              );
 
-        handleConnect(formData);
-        return;
-      }
+              // Add all servers to the UI, but only auto-connect to filtered ones
+              windowCliConfig.servers.forEach((server: any) => {
+                const formData: ServerFormData = {
+                  name: server.name || "CLI Server",
+                  type: "stdio" as const,
+                  command: server.command,
+                  args: server.args || [],
+                  env: server.env || {},
+                };
+
+                // Always add server to UI state first (without connecting)
+                setAppState((prev) => ({
+                  ...prev,
+                  servers: {
+                    ...prev.servers,
+                    [formData.name]: {
+                      name: formData.name,
+                      config: convertFormToMCPConfig(formData),
+                      lastConnectionTime: new Date(),
+                      connectionStatus: "disconnected" as const,
+                      retryCount: 0,
+                      enabled: false, // Start disabled, will enable on successful connection
+                    },
+                  },
+                }));
+
+                // Only auto-connect if no filter or server matches filter
+                if (!autoConnectServer || server.name === autoConnectServer) {
+                  logger.info("Auto-connecting to server", {
+                    serverName: server.name,
+                  });
+                  handleConnect(formData);
+                } else {
+                  logger.info("Skipping auto-connect for server", {
+                    serverName: server.name,
+                    reason: "filtered out",
+                  });
+                }
+              });
+              return;
+            }
+            // Handle legacy single server mode
+            else if (windowCliConfig.command) {
+              logger.info(
+                "Auto-connecting to CLI-provided MCP server (legacy mode)",
+                { cliConfig: windowCliConfig },
+              );
+
+              const formData: ServerFormData = {
+                name: windowCliConfig.name || "CLI Server",
+                type: "stdio" as const,
+                command: windowCliConfig.command,
+                args: windowCliConfig.args || [],
+              };
+
+              handleConnect(formData);
+              return;
+            }
+          }
+        })
+        .catch((error) => {
+          // Ignore API errors in development mode when config endpoint might not be available
+          logger.debug("Could not fetch CLI config from API", { error });
+        });
     }
   }, [isLoading, handleConnect, logger]);
 
@@ -520,6 +590,7 @@ export function useAppState() {
                   [serverName]: {
                     ...prev.servers[serverName],
                     connectionStatus: "connected" as const,
+                    enabled: true,
                     lastConnectionTime: new Date(),
                     lastError: undefined,
                   },
@@ -851,6 +922,7 @@ export function useAppState() {
               [serverName]: {
                 ...prev.servers[serverName],
                 connectionStatus: "connected" as const,
+                enabled: true,
                 lastConnectionTime: new Date(),
                 retryCount: 0,
                 lastError: undefined,
@@ -1080,6 +1152,7 @@ export function useAppState() {
                   ...prev.servers[originalServerName],
                   config: mcpConfig, // Now update to new config
                   connectionStatus: "connected" as const,
+                  enabled: true,
                   lastConnectionTime: new Date(),
                   retryCount: 0,
                   lastError: undefined,
