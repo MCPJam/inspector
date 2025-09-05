@@ -4,11 +4,10 @@ const authConfig = {
   providers: [
     {
       type: 'customJwt',
-      issuer: 'https://api.workos.com/',
+      issuer: `https://api.workos.com/`,
       algorithm: 'RS256',
-      jwks: 'https://api.workos.com/user_management/jwks',
+      jwks: `https://api.workos.com/sso/jwks/${clientId}`,
       applicationID: clientId,
-      audience: clientId,
     },
     {
       type: 'customJwt',
@@ -16,7 +15,6 @@ const authConfig = {
       algorithm: 'RS256',
       jwks: `https://api.workos.com/sso/jwks/${clientId}`,
       applicationID: clientId,
-      audience: clientId,
     },
   ],
 };

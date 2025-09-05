@@ -32,6 +32,10 @@ export default function App() {
     () => window.location.pathname.startsWith("/oauth/callback/debug"),
     [],
   );
+  const isOAuthCallback = useMemo(
+    () => window.location.pathname === "/callback",
+    [],
+  );
 
   const {
     appState,
@@ -58,6 +62,31 @@ export default function App() {
 
   if (isDebugCallback) {
     return <OAuthDebugCallback />;
+  }
+
+  if (isOAuthCallback) {
+    // Handle the actual OAuth callback - AuthKit will process this automatically
+    // Show a loading screen while the OAuth flow completes
+    useEffect(() => {
+      // Fallback: redirect to home after 5 seconds if still stuck
+      const timeout = setTimeout(() => {
+        window.location.href = '/';
+      }, 5000);
+
+      return () => clearTimeout(timeout);
+    }, []);
+
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+          <p className="mt-4 text-muted-foreground">Completing sign in...</p>
+          <p className="mt-2 text-xs text-muted-foreground">
+            If this takes too long, you'll be redirected automatically
+          </p>
+        </div>
+      </div>
+    );
   }
 
   if (isLoading) {
