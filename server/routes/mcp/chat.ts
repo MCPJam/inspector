@@ -18,11 +18,6 @@ interface ElicitationResponse {
   _meta?: any;
 }
 
-interface PendingElicitation {
-  resolve: (response: ElicitationResponse) => void;
-  reject: (error: any) => void;
-}
-
 interface StreamingContext {
   controller: ReadableStreamDefaultController;
   encoder: TextEncoder;
@@ -32,7 +27,6 @@ interface StreamingContext {
 }
 
 interface ChatRequest {
-  serverConfigs?: Record<string, any>;
   model: ModelDefinition;
   provider: ModelProvider;
   apiKey?: string;
@@ -59,12 +53,8 @@ try {
   (process as any).setMaxListeners?.(50);
 } catch {}
 
-const pendingElicitations = new Map<string, PendingElicitation>();
 const chat = new Hono();
 
-/**
- * Handles tool call and result events from the agent's onStepFinish callback
- */
 const handleAgentStepFinish = (
   streamingContext: StreamingContext,
   text: string,
@@ -242,7 +232,7 @@ const streamAgentResponse = async (
  */
 const fallbackToCompletion = async (
   agent: Agent,
-  messages: any[],
+  messages: ChatMessage[],
   streamingContext: StreamingContext,
   provider: ModelProvider,
   temperature?: number,
@@ -285,8 +275,7 @@ const fallbackToCompletion = async (
  */
 const fallbackToStreamV1Method = async (
   agent: Agent,
-  messages: any[],
-  toolsets: any,
+  messages: ChatMessage[],
   streamingContext: StreamingContext,
   provider: ModelProvider,
   temperature?: number,
@@ -298,7 +287,6 @@ const fallbackToStreamV1Method = async (
         temperature == null || undefined
           ? getDefaultTemperatureByProvider(provider)
           : temperature,
-      toolsets,
       onStepFinish: ({ text, toolCalls, toolResults }) => {
         handleAgentStepFinish(streamingContext, text, toolCalls, toolResults);
       },
@@ -344,13 +332,9 @@ const fallbackToStreamV1Method = async (
   }
 };
 
-/**
- * Creates the streaming response for the chat using streamVNext or fallback to stream
- */
 const createStreamingResponse = async (
   agent: Agent,
-  messages: any[],
-  toolsets: any,
+  messages: ChatMessage[],
   streamingContext: StreamingContext,
   provider: ModelProvider,
   temperature?: number,
@@ -365,7 +349,6 @@ const createStreamingResponse = async (
             ? getDefaultTemperatureByProvider(provider)
             : temperature,
       },
-      toolsets,
       onStepFinish: ({ text, toolCalls, toolResults }) => {
         handleAgentStepFinish(streamingContext, text, toolCalls, toolResults);
       },
@@ -373,7 +356,6 @@ const createStreamingResponse = async (
 
     const { hasContent } = await streamAgentResponse(streamingContext, stream);
 
-    // Fall back to completion if no content was streamed
     if (!hasContent) {
       dbg("No content from fullStream; falling back to completion");
       await fallbackToCompletion(
@@ -396,7 +378,6 @@ const createStreamingResponse = async (
       await fallbackToStreamV1Method(
         agent,
         messages,
-        toolsets,
         streamingContext,
         provider,
         temperature,
@@ -427,7 +408,6 @@ chat.post("/", async (c) => {
   try {
     const requestData: ChatRequest = await c.req.json();
     const {
-      serverConfigs,
       model,
       provider,
       apiKey,
@@ -452,8 +432,11 @@ chat.post("/", async (c) => {
         );
       }
 
-      const pending = pendingElicitations.get(requestId);
-      if (!pending) {
+      const success = mcpClientManager.respondToElicitation(
+        requestId,
+        response,
+      );
+      if (!success) {
         return c.json(
           {
             success: false,
@@ -463,8 +446,6 @@ chat.post("/", async (c) => {
         );
       }
 
-      pending.resolve(response);
-      pendingElicitations.delete(requestId);
       return c.json({ success: true });
     }
 
@@ -479,104 +460,18 @@ chat.post("/", async (c) => {
       );
     }
 
-    // Connect to servers through MCPJamClientManager
-    if (!serverConfigs || Object.keys(serverConfigs).length === 0) {
-      return c.json(
-        {
-          success: false,
-          error: "No server configs provided",
-        },
-        400,
-      );
-    }
-
-    // Connect to each server using MCPJamClientManager
-    const serverErrors: Record<string, string> = {};
-    const connectedServers: string[] = [];
-
-    for (const [serverName, serverConfig] of Object.entries(serverConfigs)) {
-      try {
-        await mcpClientManager.connectToServer(serverName, serverConfig);
-        connectedServers.push(serverName);
-        dbg("Connected to server", { serverName });
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : "Unknown error";
-        serverErrors[serverName] = errorMessage;
-        dbg("Failed to connect to server", { serverName, error: errorMessage });
-      }
-    }
-
-    // Check if any servers connected successfully
-    if (connectedServers.length === 0) {
-      return c.json(
-        {
-          success: false,
-          error: "Failed to connect to any servers",
-          details: serverErrors,
-        },
-        400,
-      );
-    }
-
-    // Log warnings for failed connections but continue with successful ones
-    if (Object.keys(serverErrors).length > 0) {
-      dbg("Some servers failed to connect", {
-        connectedServers,
-        failedServers: Object.keys(serverErrors),
-        errors: serverErrors,
-      });
-    }
-
     // Create LLM model
     const llmModel = createLlmModel(model, apiKey, ollamaBaseUrl);
 
-    const formattedMessages = messages.map((msg: ChatMessage) => ({
-      role: msg.role,
-      content: msg.content,
-    }));
+    const toolsets =
+      await mcpClientManager.getFlattenedToolsetsForEnabledServers();
 
-    // Get available tools from all connected servers
-    const allTools = mcpClientManager.getAvailableTools();
-    const toolsByServer: Record<string, any> = {};
-
-    // Group tools by server for the agent
-    for (const tool of allTools) {
-      if (!toolsByServer[tool.serverId]) {
-        toolsByServer[tool.serverId] = {};
-      }
-      toolsByServer[tool.serverId][tool.name] = {
-        description: tool.description,
-        inputSchema: tool.inputSchema,
-        execute: async (params: any) => {
-          return await mcpClientManager.executeToolDirect(
-            `${tool.serverId}:${tool.name}`,
-            params,
-          );
-        },
-      };
-    }
-
-    // Flatten toolsets into a single tools object
-    const flattenedTools: Record<string, any> = {};
-    Object.values(toolsByServer).forEach((serverTools: any) => {
-      Object.assign(flattenedTools, serverTools);
-    });
-
-    // Create agent with tools for streamVNext
     const agent = new Agent({
       name: "MCP Chat Agent",
       instructions:
         systemPrompt || "You are a helpful assistant with access to MCP tools.",
       model: llmModel,
-      tools:
-        Object.keys(flattenedTools).length > 0 ? flattenedTools : undefined,
-    });
-
-    dbg("Streaming start", {
-      connectedServers,
-      toolCount: allTools.length,
-      messageCount: formattedMessages.length,
+      tools: toolsets,
     });
 
     // Create streaming response
@@ -616,23 +511,29 @@ chat.post("/", async (c) => {
 
           // Return a promise that will be resolved when user responds
           return new Promise<ElicitationResponse>((resolve, reject) => {
-            pendingElicitations.set(request.requestId, { resolve, reject });
-
             // Set timeout to clean up if no response
-            setTimeout(() => {
-              if (pendingElicitations.has(request.requestId)) {
-                pendingElicitations.delete(request.requestId);
-                reject(new Error("Elicitation timeout"));
-              }
+            const timeout = setTimeout(() => {
+              reject(new Error("Elicitation timeout"));
             }, ELICITATION_TIMEOUT);
+
+            // Store the resolver in the manager's pending elicitations
+            mcpClientManager.getPendingElicitations().set(request.requestId, {
+              resolve: (response: ElicitationResponse) => {
+                clearTimeout(timeout);
+                resolve(response);
+              },
+              reject: (error: any) => {
+                clearTimeout(timeout);
+                reject(error);
+              },
+            });
           });
         });
 
         try {
           await createStreamingResponse(
             agent,
-            formattedMessages,
-            toolsByServer,
+            messages,
             streamingContext,
             provider,
             temperature,
