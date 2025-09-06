@@ -11,7 +11,8 @@ import {
 } from "../../../shared/types";
 import { TextEncoder } from "util";
 import { getDefaultTemperatureByProvider } from "../../../client/src/lib/chat-utils";
-import { stepCountIs } from "ai-v5";
+import { stepCountIs, StreamTextResult } from "ai-v5";
+import { AISDKV5OutputStream } from "node_modules/@mastra/core/dist/stream/aisdk/v5/output";
 
 // Types
 interface ElicitationResponse {
@@ -120,6 +121,7 @@ const handleAgentStepFinish = (
   toolCalls: any[] | undefined,
   toolResults: any[] | undefined,
 ) => {
+  console.log("handleAgentStepFinish", text, toolCalls, toolResults);
   try {
     // Handle tool calls
     if (toolCalls && Array.isArray(toolCalls)) {
@@ -210,75 +212,15 @@ const streamAgentResponse = async (
   let hasContent = false;
   let chunkCount = 0;
 
-  for await (const chunk of stream.fullStream) {
-    chunkCount++;
-
-    // Handle text content
-    if (chunk.type === "text-delta" && chunk.textDelta) {
+  for await (const chunk of stream.textStream) {
+    if (chunk && chunk.trim()) {
       hasContent = true;
+      chunkCount++;
       streamingContext.controller.enqueue(
         streamingContext.encoder!.encode(
-          `data: ${JSON.stringify({ type: "text", content: chunk.textDelta })}\n\n`,
+          `data: ${JSON.stringify({ type: "text", content: chunk })}\n\n`,
         ),
       );
-    }
-
-    // Handle tool calls from streamVNext
-    if (chunk.type === "tool-call" && chunk.toolName) {
-      const currentToolCallId = ++streamingContext.toolCallId;
-      streamingContext.controller.enqueue(
-        streamingContext.encoder!.encode(
-          `data: ${JSON.stringify({
-            type: "tool_call",
-            toolCall: {
-              id: currentToolCallId,
-              name: chunk.toolName,
-              parameters: chunk.args || {},
-              timestamp: new Date(),
-              status: "executing",
-            },
-          })}\n\n`,
-        ),
-      );
-    }
-
-    // Handle tool results from streamVNext
-    if (chunk.type === "tool-result" && chunk.result !== undefined) {
-      const currentToolCallId = streamingContext.toolCallId;
-      streamingContext.controller.enqueue(
-        streamingContext.encoder!.encode(
-          `data: ${JSON.stringify({
-            type: "tool_result",
-            toolResult: {
-              id: currentToolCallId,
-              toolCallId: currentToolCallId,
-              result: chunk.result,
-              timestamp: new Date(),
-            },
-          })}\n\n`,
-        ),
-      );
-    }
-
-    // Handle errors from streamVNext
-    if (chunk.type === "error" && chunk.error) {
-      streamingContext.controller.enqueue(
-        streamingContext.encoder!.encode(
-          `data: ${JSON.stringify({
-            type: "error",
-            error:
-              chunk.error instanceof Error
-                ? chunk.error.message
-                : String(chunk.error),
-          })}\n\n`,
-        ),
-      );
-    }
-
-    // Handle finish event
-    if (chunk.type === "finish") {
-      // Stream completion will be handled by the main function
-      break;
     }
   }
 
@@ -352,22 +294,7 @@ const fallbackToStreamV1Method = async (
       },
     });
 
-    let hasContent = false;
-    let chunkCount = 0;
-
-    for await (const chunk of stream.textStream) {
-      if (chunk && chunk.trim()) {
-        hasContent = true;
-        chunkCount++;
-        streamingContext.controller.enqueue(
-          streamingContext.encoder!.encode(
-            `data: ${JSON.stringify({ type: "text", content: chunk })}\n\n`,
-          ),
-        );
-      }
-    }
-
-    dbg("Stream method finished", { hasContent, chunkCount });
+    const { hasContent } = await streamAgentResponse(streamingContext, stream);
 
     // Fall back to completion if no content was streamed
     if (!hasContent) {
@@ -404,8 +331,8 @@ const createStreamingResponse = async (
   temperature?: number,
 ) => {
   try {
-    // Try streamVNext first (works with AI SDK v2 models)
     const stream = await agent.streamVNext(messages, {
+      format: "aisdk",
       stopWhen: stepCountIs(MAX_AGENT_STEPS),
       modelSettings: {
         temperature:
@@ -418,7 +345,7 @@ const createStreamingResponse = async (
         handleAgentStepFinish(streamingContext, text, toolCalls, toolResults);
       },
     });
-
+    
     const { hasContent } = await streamAgentResponse(streamingContext, stream);
 
     // Fall back to completion if no content was streamed
