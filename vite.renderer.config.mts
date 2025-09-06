@@ -4,6 +4,7 @@ import { resolve } from "path";
 
 // https://vitejs.dev/config
 export default defineConfig({
+  envDir: ".", // Load env files from project root
   plugins: [react()],
   root: "./client",
   resolve: {

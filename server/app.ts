@@ -36,6 +36,7 @@ export function createHonoApp() {
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://localhost:5173",
+        "http://localhost:3000",
       ],
       credentials: true,
     }),
@@ -49,23 +50,26 @@ export function createHonoApp() {
     return c.json({ status: "ok", timestamp: new Date().toISOString() });
   });
 
-  // Static file serving (for production OR when running in Electron)
+  // Static hosting / dev redirect behavior
   const isElectron = process.env.ELECTRON_APP === "true";
   const isProduction = process.env.NODE_ENV === "production";
   const isPackaged = process.env.IS_PACKAGED === "true";
 
-  if (isProduction || isElectron) {
+  if (isProduction || (isElectron && isPackaged)) {
+    // Production (web) or Electron packaged build: serve files from bundled client
     let root = "./dist/client";
     if (isElectron && isPackaged) {
-      // Electron packaged app
       root = path.resolve(process.env.ELECTRON_RESOURCES_PATH!, "client");
     }
-
-    // Serve static assets (JS, CSS, images, etc.)
     app.use("/*", serveStatic({ root }));
-
-    // SPA fallback - serve index.html for all non-API routes
     app.get("/*", serveStatic({ path: `${root}/index.html` }));
+  } else if (isElectron && !isPackaged) {
+    // Electron development: redirect any front-end route to the renderer dev server
+    const rendererDevUrl = "http://localhost:8080";
+    app.get("/*", (c) => {
+      const target = new URL(c.req.path, rendererDevUrl).toString();
+      return c.redirect(target, 307);
+    });
   } else {
     // Development mode - just API
     app.get("/", (c) => {

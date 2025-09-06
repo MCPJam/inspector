@@ -4,6 +4,7 @@ import path from "path";
 
 // https://vitejs.dev/config/
 export default defineConfig({
+  envDir: "..",
   plugins: [react()],
   resolve: {
     alias: {
@@ -46,6 +47,9 @@ export default defineConfig({
           });
         },
       },
+    },
+    fs: {
+      allow: [".."],
     },
   },
   build: {
