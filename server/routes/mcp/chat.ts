@@ -11,6 +11,7 @@ import {
 } from "../../../shared/types";
 import { TextEncoder } from "util";
 import { getDefaultTemperatureByProvider } from "../../../client/src/lib/chat-utils";
+import { stepCountIs } from "ai-v5";
 
 // Types
 interface ElicitationResponse {
@@ -108,103 +109,6 @@ const createLlmModel = (
         `Unsupported provider: ${modelDefinition.provider} for model: ${modelDefinition.id}`,
       );
   }
-};
-
-// Removed unused createElicitationHandler
-
-/**
- * Wraps MCP tools to capture execution events and stream them to the client
- */
-const wrapToolsWithStreaming = (
-  tools: Record<string, any>,
-  streamingContext: StreamingContext,
-) => {
-  const wrappedTools: Record<string, any> = {};
-
-  for (const [name, tool] of Object.entries(tools)) {
-    wrappedTools[name] = {
-      ...(tool as any),
-      execute: async (params: any) => {
-        const currentToolCallId = ++streamingContext.toolCallId;
-        const startedAt = Date.now();
-
-        // Stream tool call event immediately
-        if (streamingContext.controller && streamingContext.encoder) {
-          streamingContext.controller.enqueue(
-            streamingContext.encoder.encode(
-              `data: ${JSON.stringify({
-                type: "tool_call",
-                toolCall: {
-                  id: currentToolCallId,
-                  name,
-                  parameters: params,
-                  timestamp: new Date(),
-                  status: "executing",
-                },
-              })}\n\n`,
-            ),
-          );
-        }
-
-        dbg("Tool executing", { name, currentToolCallId, params });
-
-        try {
-          const result = await (tool as any).execute(params);
-          dbg("Tool result", {
-            name,
-            currentToolCallId,
-            ms: Date.now() - startedAt,
-          });
-
-          // Stream tool result event
-          if (streamingContext.controller && streamingContext.encoder) {
-            streamingContext.controller.enqueue(
-              streamingContext.encoder.encode(
-                `data: ${JSON.stringify({
-                  type: "tool_result",
-                  toolResult: {
-                    id: currentToolCallId,
-                    toolCallId: currentToolCallId,
-                    result,
-                    timestamp: new Date(),
-                  },
-                })}\n\n`,
-              ),
-            );
-          }
-
-          return result;
-        } catch (error) {
-          dbg("Tool error", {
-            name,
-            currentToolCallId,
-            error: error instanceof Error ? error.message : String(error),
-          });
-
-          // Stream tool error event
-          if (streamingContext.controller && streamingContext.encoder) {
-            streamingContext.controller.enqueue(
-              streamingContext.encoder.encode(
-                `data: ${JSON.stringify({
-                  type: "tool_result",
-                  toolResult: {
-                    id: currentToolCallId,
-                    toolCallId: currentToolCallId,
-                    error:
-                      error instanceof Error ? error.message : String(error),
-                    timestamp: new Date(),
-                  },
-                })}\n\n`,
-              ),
-            );
-          }
-          throw error;
-        }
-      },
-    };
-  }
-
-  return wrappedTools;
 };
 
 /**
@@ -427,7 +331,7 @@ const fallbackToCompletion = async (
 /**
  * Falls back to the regular stream method for V1 models
  */
-const fallbackToStreamMethod = async (
+const fallbackToStreamV1Method = async (
   agent: Agent,
   messages: any[],
   toolsets: any,
@@ -502,12 +406,17 @@ const createStreamingResponse = async (
   try {
     // Try streamVNext first (works with AI SDK v2 models)
     const stream = await agent.streamVNext(messages, {
-      maxSteps: MAX_AGENT_STEPS,
-      temperature:
-        temperature == null || undefined
-          ? getDefaultTemperatureByProvider(provider)
-          : temperature,
+      stopWhen: stepCountIs(MAX_AGENT_STEPS),
+      modelSettings: {
+        temperature:
+          temperature == null || undefined
+            ? getDefaultTemperatureByProvider(provider)
+            : temperature,
+      },
       toolsets,
+      onStepFinish: ({ text, toolCalls, toolResults }) => {
+        handleAgentStepFinish(streamingContext, text, toolCalls, toolResults);
+      },
     });
 
     const { hasContent } = await streamAgentResponse(streamingContext, stream);
@@ -532,7 +441,7 @@ const createStreamingResponse = async (
       dbg(
         "streamVNext not supported for this model, falling back to stream method",
       );
-      await fallbackToStreamMethod(
+      await fallbackToStreamV1Method(
         agent,
         messages,
         toolsets,
