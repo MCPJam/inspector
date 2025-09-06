@@ -15,13 +15,18 @@ import { ConvexProviderWithAuthKit } from "@convex-dev/workos";
 const convexUrl = import.meta.env.VITE_CONVEX_URL as string;
 const workosClientId = import.meta.env.VITE_WORKOS_CLIENT_ID as string;
 // Determine redirect URI with an env override for special cases
-// Priority: explicit env → Electron deep link → current origin
+// In a browser (http/https), ALWAYS use the web callback to avoid deep-link prompts
 const envRedirect = (import.meta.env.VITE_WORKOS_REDIRECT_URI as string) || "";
-const workosRedirectUri = envRedirect
-  ? envRedirect
-  : (window as any).isElectron
-    ? "mcpjam://oauth/callback"
-    : `${window.location.origin}/callback`;
+const isBrowserHttp =
+  typeof window !== "undefined" &&
+  (window.location.protocol === "http:" || window.location.protocol === "https:");
+const workosRedirectUri = isBrowserHttp
+  ? `${window.location.origin}/callback`
+  : envRedirect
+    ? envRedirect
+    : (window as any).isElectron
+      ? "mcpjam://oauth/callback"
+      : `${window.location.origin}/callback`;
 
 const convex = new ConvexReactClient(convexUrl);
 
