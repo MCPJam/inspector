@@ -196,8 +196,8 @@ if (process.env.NODE_ENV === "production") {
 
 const port = parseInt(process.env.PORT || "3000");
 
-// Display the localhost URL in a box
-logBox(`http://localhost:${port}`, "🚀 Inspector Launched");
+// Display the 127.0.0.1 URL in a box
+logBox(`http://127.0.0.1:${port}`, "🚀 Inspector Launched");
 
 // Graceful shutdown handling
 const server = serve({
