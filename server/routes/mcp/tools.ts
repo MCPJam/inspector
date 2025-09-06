@@ -6,14 +6,7 @@ import "../../types/hono"; // Type extensions
 
 const tools = new Hono();
 
-// Store for pending elicitation requests
-const pendingElicitations = new Map<
-  string,
-  {
-    resolve: (response: any) => void;
-    reject: (error: any) => void;
-  }
->();
+// Note: Elicitation handling is now centralized in MCPJamClientManager
 
 tools.post("/", async (c) => {
   let action: string | undefined;
@@ -54,14 +47,6 @@ tools.post("/", async (c) => {
       );
 
       if (!success) {
-        // Also check local pendingElicitations for backward compatibility
-        const pending = pendingElicitations.get(requestId);
-        if (pending) {
-          pending.resolve(response);
-          pendingElicitations.delete(requestId);
-          return c.json({ success: true });
-        }
-
         return c.json(
           {
             success: false,
@@ -114,26 +99,21 @@ tools.post("/", async (c) => {
               ),
             );
 
-            // Return a promise that will be resolved by the respond endpoint
             return new Promise((resolve, reject) => {
-              pendingElicitations.set(requestId, {
+              const timeout = setTimeout(() => {
+                reject(new Error("Elicitation timeout"));
+              }, 300000); // 5 minutes
+
+              mcpJamClientManager.getPendingElicitations().set(requestId, {
                 resolve: (response: any) => {
+                  clearTimeout(timeout);
                   resolve(response);
-                  pendingElicitations.delete(requestId);
                 },
                 reject: (error: any) => {
+                  clearTimeout(timeout);
                   reject(error);
-                  pendingElicitations.delete(requestId);
                 },
               });
-
-              // Set timeout
-              setTimeout(() => {
-                if (pendingElicitations.has(requestId)) {
-                  pendingElicitations.delete(requestId);
-                  reject(new Error("Elicitation timeout"));
-                }
-              }, 300000); // 5 minutes
             });
           });
 
