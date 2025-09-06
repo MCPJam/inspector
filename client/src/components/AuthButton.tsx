@@ -33,9 +33,15 @@ export function AuthButton() {
         size="sm"
         onClick={() => {
           const isElectron = (window as any).isElectron;
+          // Normalize returnTo for WorkOS: prefer 127.0.0.1 when running on localhost
+          const origin = window.location.origin;
+          const normalizedOrigin = origin.includes('://localhost')
+            ? origin.replace('://localhost', '://127.0.0.1')
+            : origin;
+          const devElectronReturn = "http://localhost:8080/callback";
           const returnTo = isElectron && import.meta.env.DEV
-            ? "http://localhost:8080/callback"
-            : window.location.origin;
+            ? devElectronReturn
+            : normalizedOrigin;
           signOut({ returnTo });
         }}
       >
