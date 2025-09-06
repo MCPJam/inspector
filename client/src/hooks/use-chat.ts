@@ -292,7 +292,6 @@ export function useChat(options: UseChatOptions = {}) {
             Accept: "text/event-stream",
           },
           body: JSON.stringify({
-            serverConfigs,
             model,
             provider: model.provider,
             apiKey: currentApiKey,
