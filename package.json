@@ -55,7 +55,7 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^1.2.12",
+    "@ai-sdk/anthropic": "^2.0.12",
     "@ai-sdk/deepseek": "^1.0.5",
     "@ai-sdk/google": "^2.0.11",
     "@ai-sdk/openai": "^1.3.23",
@@ -72,7 +72,7 @@
     "@tanstack/react-query": "^5.83.0",
     "@tanstack/react-table": "^8.21.3",
     "@uiw/react-json-view": "^2.0.0-alpha.33",
-    "ai": "^5.0.11",
+    "ai": "^5.0.33",
     "ajv": "^8.17.1",
     "class-variance-authority": "^0.7.1",
     "classnames": "^2.5.1",
@@ -131,14 +131,14 @@
     "concurrently": "^9.1.0",
     "electron": "^37.2.5",
     "eslint": "^9",
-    "tailwindcss": "^4.1.11",
     "png-to-ico": "^2.1.8",
     "sharp": "^0.33.4",
+    "tailwindcss": "^4.1.11",
     "tsup": "^8.3.5",
     "tsx": "^4.19.2",
     "tw-animate-css": "^1.3.5",
     "typescript": "^5",
-    "vite": "^5.4.10",
+    "vite": "^7.1.4",
     "vitest": "^3.2.4"
   }
 }
