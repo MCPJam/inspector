@@ -1,9 +1,5 @@
 import { Hono } from "hono";
 import { Agent } from "@mastra/core/agent";
-import { createAnthropic } from "@ai-sdk/anthropic";
-import { createOpenAI } from "@ai-sdk/openai";
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
-import { createOllama } from "ollama-ai-provider";
 import {
   ChatMessage,
   ModelDefinition,
@@ -12,6 +8,7 @@ import {
 import { TextEncoder } from "util";
 import { getDefaultTemperatureByProvider } from "../../../client/src/lib/chat-utils";
 import { stepCountIs } from "ai-v5";
+import { createLlmModel } from "utils/chat-helpers";
 
 // Types
 interface ElicitationResponse {
@@ -58,58 +55,12 @@ const dbg = (...args: any[]) => {
   if (DEBUG_ENABLED) console.log("[mcp/chat]", ...args);
 };
 
-// Avoid MaxListeners warnings when repeatedly creating MCP clients in dev
 try {
   (process as any).setMaxListeners?.(50);
 } catch {}
 
-// Store for pending elicitation requests
 const pendingElicitations = new Map<string, PendingElicitation>();
-
-// Use the context-injected MCPJamClientManager (see server/index.ts middleware)
-
 const chat = new Hono();
-
-// Helper Functions
-
-/**
- * Creates an LLM model based on the provider and configuration
- */
-const createLlmModel = (
-  modelDefinition: ModelDefinition,
-  apiKey: string,
-  ollamaBaseUrl?: string,
-) => {
-  if (!modelDefinition?.id || !modelDefinition?.provider) {
-    throw new Error(
-      `Invalid model definition: ${JSON.stringify(modelDefinition)}`,
-    );
-  }
-
-  switch (modelDefinition.provider) {
-    case "anthropic":
-      return createAnthropic({ apiKey })(modelDefinition.id);
-    case "openai":
-      return createOpenAI({ apiKey })(modelDefinition.id);
-    case "deepseek":
-      return createOpenAI({ apiKey, baseURL: "https://api.deepseek.com/v1" })(
-        modelDefinition.id,
-      );
-    case "google":
-      return createGoogleGenerativeAI({ apiKey })(modelDefinition.id);
-    case "ollama":
-      const baseUrl = ollamaBaseUrl || "http://localhost:11434/api";
-      return createOllama({
-        baseURL: `${baseUrl}`,
-      })(modelDefinition.id, {
-        simulateStreaming: true,
-      });
-    default:
-      throw new Error(
-        `Unsupported provider: ${modelDefinition.provider} for model: ${modelDefinition.id}`,
-      );
-  }
-};
 
 /**
  * Handles tool call and result events from the agent's onStepFinish callback
@@ -303,6 +254,7 @@ const fallbackToCompletion = async (
           ? getDefaultTemperatureByProvider(provider)
           : temperature,
     });
+    console.log("result", result);
     if (result.text && result.text.trim()) {
       streamingContext.controller.enqueue(
         streamingContext.encoder!.encode(
@@ -711,8 +663,6 @@ chat.post("/", async (c) => {
     });
   } catch (error) {
     console.error("[mcp/chat] Error in chat API:", error);
-
-    // Clear elicitation callback on error
     mcpClientManager.clearElicitationCallback();
 
     return c.json(

@@ -14,8 +14,8 @@
     "@ai-sdk/google": "^1.2.22",
     "@ai-sdk/openai": "^1.3.23",
     "@hono/node-server": "^1.13.7",
-    "@mastra/core": "0.15.2",
-    "@mastra/mcp": "0.11.2",
+    "@mastra/core": "0.16.0",
+    "@mastra/mcp": "0.11.4",
     "@modelcontextprotocol/sdk": "^1.17.3",
     "ai": "^5.0.11",
     "hono": "^4.6.11",
@@ -28,6 +28,6 @@
     "tsup": "^8.3.5",
     "tsx": "^4.19.2",
     "typescript": "^5",
-    "vite": "^5.4.10"
+    "vite": "^7.1.4"
   }
 }

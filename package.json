@@ -66,8 +66,8 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@hono/node-server": "^1.13.7",
     "@hookform/resolvers": "^3.10.0",
-    "@mastra/core": "0.15.2",
-    "@mastra/mcp": "0.11.2",
+    "@mastra/core": "0.16.0",
+    "@mastra/mcp": "0.11.4",
     "@modelcontextprotocol/sdk": "^1.17.3",
     "@tanstack/react-query": "^5.83.0",
     "@tanstack/react-table": "^8.21.3",
@@ -131,14 +131,14 @@
     "concurrently": "^9.1.0",
     "electron": "^37.2.5",
     "eslint": "^9",
-    "tailwindcss": "^4.1.11",
     "png-to-ico": "^2.1.8",
     "sharp": "^0.33.4",
+    "tailwindcss": "^4.1.11",
     "tsup": "^8.3.5",
     "tsx": "^4.19.2",
     "tw-animate-css": "^1.3.5",
     "typescript": "^5",
-    "vite": "^5.4.10",
+    "vite": "^7.1.4",
     "vitest": "^3.2.4"
   }
 }
