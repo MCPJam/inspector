@@ -8,7 +8,7 @@ import {
 import { TextEncoder } from "util";
 import { getDefaultTemperatureByProvider } from "../../../client/src/lib/chat-utils";
 import { stepCountIs } from "ai-v5";
-import { createLlmModel } from "utils/chat-helpers";
+import { createLlmModel } from "../../utils/chat-helpers";
 import { SSEvent } from "../../../shared/sse";
 
 // Types

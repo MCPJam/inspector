@@ -1,7 +1,6 @@
 /// <reference types="@electron-forge/plugin-vite/forge-vite-env" />
 import { app, BrowserWindow, shell, Menu } from "electron";
 import { serve } from "@hono/node-server";
-import { spawn, ChildProcess } from "child_process";
 import path from "path";
 import { createHonoApp } from "../server/app.js";
 import log from "electron-log";
