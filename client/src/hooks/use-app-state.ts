@@ -1,621 +1,130 @@
-import { useState, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { toast } from "sonner";
+import { MastraMCPServerDefinition } from "@mastra/mcp";
+
+import { useLogger } from "./use-logger";
+
+import { initialAppState, type ServerWithName } from "@/state/app-types";
+import { appReducer } from "@/state/app-reducer";
+import { loadAppState, saveAppState } from "@/state/storage";
+import { testConnection, deleteServer, listServers } from "@/state/mcp-api";
 import {
-  initiateOAuth,
+  ensureAuthorizedForReconnect,
+  type OAuthResult,
+} from "@/state/oauth-orchestrator";
+import type { ServerFormData } from "@/shared/types.js";
+import { toMCPConfig } from "@/state/server-helpers";
+import {
   handleOAuthCallback,
   getStoredTokens,
   clearOAuthData,
-  refreshOAuthTokens,
-  MCPOAuthOptions,
 } from "@/lib/mcp-oauth";
-import {
-  StdioServerDefinition,
-  HttpServerDefinition,
-  OauthTokens,
-} from "@/shared/types.js";
-import { useLogger } from "./use-logger";
-import { MastraMCPServerDefinition } from "@mastra/mcp";
 
-export interface ServerWithName {
-  name: string;
-  config: MastraMCPServerDefinition;
-  oauthTokens?: OauthTokens;
-  lastConnectionTime: Date;
-  connectionStatus:
-    | "connected"
-    | "connecting"
-    | "failed"
-    | "disconnected"
-    | "oauth-flow";
-  retryCount: number;
-  lastError?: string;
-  enabled?: boolean;
-}
-
-export interface AppState {
-  servers: Record<string, ServerWithName>;
-  selectedServer: string;
-  selectedMultipleServers: string[]; // Array of selected server names for multi-select mode
-  isMultiSelectMode: boolean; // Flag to enable/disable multi-select mode
-}
-
-export interface ServerFormData {
-  name: string;
-  type: "stdio" | "http";
-  command?: string;
-  args?: string[];
-  url?: string;
-  headers?: Record<string, string>;
-  env?: Record<string, string>;
-  useOAuth?: boolean;
-  oauthScopes?: string[];
-  clientId?: string;
-  clientSecret?: string;
-}
-
-const STORAGE_KEY = "mcp-inspector-state";
+export type { ServerWithName } from "@/state/app-types";
 
 export function useAppState() {
   const logger = useLogger("Connections");
 
-  const [appState, setAppState] = useState<AppState>({
-    servers: {},
-    selectedServer: "none",
-    selectedMultipleServers: [],
-    isMultiSelectMode: false,
-  });
-
+  const [appState, dispatch] = useReducer(appReducer, initialAppState);
   const [isLoading, setIsLoading] = useState(true);
-  const [reconnectionTimeouts, setReconnectionTimeouts] = useState<
-    Record<string, NodeJS.Timeout>
-  >({});
 
-  // Load state from localStorage on mount
+  // Operation guard to avoid races
+  const opTokenRef = useRef<Map<string, number>>(new Map());
+  const nextOpToken = (name: string) => {
+    const current = opTokenRef.current.get(name) ?? 0;
+    const next = current + 1;
+    opTokenRef.current.set(name, next);
+    return next;
+  };
+  const isStaleOp = (name: string, token: number) =>
+    (opTokenRef.current.get(name) ?? 0) !== token;
+
+  // Load from storage once
   useEffect(() => {
-    const savedState = localStorage.getItem(STORAGE_KEY);
-    if (savedState) {
-      try {
-        const parsed = JSON.parse(savedState);
-        // Ensure all loaded servers have the new fields with defaults
-        const updatedServers = Object.fromEntries(
-          Object.entries(parsed.servers || {}).map(
-            ([name, server]: [string, any]) => {
-              // Fix URL serialization issue: convert string URLs back to URL objects
-              let config = server.config;
-              if (config && typeof config.url === "string") {
-                try {
-                  config = {
-                    ...config,
-                    url: new URL(config.url),
-                  };
-                } catch (error) {
-                  logger.error(
-                    `Failed to parse URL for server ${name}:`,
-                    error,
-                  );
-                }
-              }
-
-              return [
-                name,
-                {
-                  ...server,
-                  config,
-                  connectionStatus: server.connectionStatus || "disconnected",
-                  retryCount: server.retryCount || 0,
-                  lastConnectionTime: server.lastConnectionTime
-                    ? new Date(server.lastConnectionTime)
-                    : new Date(),
-                  enabled: server.enabled !== false,
-                },
-              ];
-            },
-          ),
-        );
-        setAppState({
-          servers: updatedServers,
-          selectedServer: parsed.selectedServer || "none",
-          selectedMultipleServers: parsed.selectedMultipleServers || [],
-          isMultiSelectMode: parsed.isMultiSelectMode || false,
-        });
-      } catch (error) {
-        logger.error("Failed to parse saved state", {
-          error: error instanceof Error ? error.message : "Unknown error",
-        });
-      }
+    try {
+      const loaded = loadAppState();
+      dispatch({ type: "HYDRATE_STATE", payload: loaded });
+    } catch (error) {
+      logger.error("Failed to load saved state", {
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    } finally {
+      setIsLoading(false);
     }
-    setIsLoading(false);
-  }, []);
+  }, [logger]);
 
-  // Save state to localStorage whenever it changes
+  // Persist on change
   useEffect(() => {
-    if (!isLoading) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
-    }
+    if (!isLoading) saveAppState(appState);
   }, [appState, isLoading]);
 
+  const validateForm = (formData: ServerFormData): string | null => {
+    if (formData.type === "stdio") {
+      if (!formData.command || formData.command.trim() === "") {
+        return "Command is required for STDIO connections";
+      }
+      return null;
+    }
+    if (!formData.url || formData.url.trim() === "") {
+      return "URL is required for HTTP connections";
+    }
+    try {
+      new URL(formData.url);
+    } catch (err) {
+      return `Invalid URL format: ${formData.url} ${err}`;
+    }
+    return null;
+  };
+
   const setSelectedMultipleServersToAllServers = useCallback(() => {
-    setAppState((prev) => ({
-      ...prev,
-      selectedMultipleServers: Object.entries(appState.servers)
-        .filter(([, s]) => s.enabled !== false)
-        .map(([name]) => name),
-    }));
+    const enabledNames = Object.entries(appState.servers)
+      .filter(([, s]) => s.enabled !== false)
+      .map(([name]) => name);
+    dispatch({ type: "SET_MULTI_SELECTED", names: enabledNames });
   }, [appState.servers]);
 
-  // Check for OAuth callback completion on mount
-  useEffect(() => {
-    if (!isLoading) {
-      const urlParams = new URLSearchParams(window.location.search);
-      const code = urlParams.get("code");
-      const error = urlParams.get("error");
-
-      if (code) {
-        handleOAuthCallbackComplete(code);
-      } else if (error) {
-        // Show the error toast (do not suppress), then clean up the URL
-        toast.error(`OAuth authorization failed: ${error}`);
-        localStorage.removeItem("mcp-oauth-pending");
-        window.history.replaceState(
-          {},
-          document.title,
-          window.location.pathname,
-        );
-      }
-    }
-  }, [isLoading]);
-
-  const convertFormToMCPConfig = useCallback(
-    (formData: ServerFormData): MastraMCPServerDefinition => {
-      if (formData.type === "stdio") {
-        return {
-          command: formData.command!,
-          args: formData.args,
-          env: formData.env,
-        } as StdioServerDefinition;
-      } else {
-        return {
-          url: new URL(formData.url!),
-          requestInit: { headers: formData.headers || {} },
-        } as HttpServerDefinition;
-      }
-    },
-    [],
-  );
-
-  const handleConnect = useCallback(
-    async (formData: ServerFormData) => {
-      // Validate form data first
-
-      if (formData.type === "stdio") {
-        if (!formData.command || formData.command.trim() === "") {
-          toast.error("Command is required for STDIO connections");
-          return;
-        }
-      } else {
-        if (!formData.url || formData.url.trim() === "") {
-          toast.error("URL is required for HTTP connections");
-          return;
-        }
-
-        try {
-          new URL(formData.url);
-        } catch (urlError) {
-          toast.error(`Invalid URL format: ${formData.url} ${urlError}`);
-          return;
-        }
-      }
-
-      // Convert form data to MCP config
-      const mcpConfig = convertFormToMCPConfig(formData);
-
-      // Immediately create server with 'connecting' state for responsive UI
-      setAppState((prev) => ({
-        ...prev,
-        servers: {
-          ...prev.servers,
-          [formData.name]: {
-            name: formData.name,
-            config: mcpConfig,
-            lastConnectionTime: new Date(),
-            connectionStatus: "connecting" as const,
-            retryCount: 0,
-            enabled: true,
-          },
-        },
-        selectedServer: formData.name,
-      }));
-
-      try {
-        // Handle OAuth flow for HTTP servers
-        if (formData.type === "http" && formData.useOAuth && formData.url) {
-          // Mark as OAuth flow in progress
-          setAppState((prev) => ({
-            ...prev,
-            servers: {
-              ...prev.servers,
-              [formData.name]: {
-                ...prev.servers[formData.name],
-                connectionStatus: "oauth-flow" as const,
-              },
-            },
-          }));
-
-          const oauthOptions: MCPOAuthOptions = {
-            serverName: formData.name,
-            serverUrl: formData.url,
-            clientId: formData.clientId,
-            clientSecret: formData.clientSecret,
-          } as MCPOAuthOptions;
-          // Only pass scopes if the user explicitly provided them
-          if (formData.oauthScopes && formData.oauthScopes.length > 0) {
-            oauthOptions.scopes = formData.oauthScopes;
-          }
-
-          const oauthResult = await initiateOAuth(oauthOptions);
-
-          if (oauthResult.success) {
-            if (oauthResult.serverConfig) {
-              // Already authorized, test connection immediately
-              try {
-                const response = await fetch("/api/mcp/connect", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    serverConfig: oauthResult.serverConfig,
-                  }),
-                });
-
-                const connectionResult = await response.json();
-
-                if (connectionResult.success) {
-                  setAppState((prev) => ({
-                    ...prev,
-                    servers: {
-                      ...prev.servers,
-                      [formData.name]: {
-                        ...prev.servers[formData.name],
-                        config: oauthResult.serverConfig!,
-                        connectionStatus: "connected" as const,
-                        enabled: true,
-                        oauthTokens: getStoredTokens(formData.name),
-                        lastError: undefined,
-                      },
-                    },
-                  }));
-                  toast.success(`Connected successfully with OAuth!`);
-                } else {
-                  setAppState((prev) => ({
-                    ...prev,
-                    servers: {
-                      ...prev.servers,
-                      [formData.name]: {
-                        ...prev.servers[formData.name],
-                        connectionStatus: "failed" as const,
-                        lastError:
-                          connectionResult.error ||
-                          "OAuth connection test failed",
-                      },
-                    },
-                  }));
-                  toast.error(
-                    `OAuth succeeded but connection failed: ${connectionResult.error}`,
-                  );
-                }
-              } catch (error) {
-                const errorMessage =
-                  error instanceof Error ? error.message : "Unknown error";
-                setAppState((prev) => ({
-                  ...prev,
-                  servers: {
-                    ...prev.servers,
-                    [formData.name]: {
-                      ...prev.servers[formData.name],
-                      connectionStatus: "failed" as const,
-                      lastError: errorMessage,
-                    },
-                  },
-                }));
-                toast.error(
-                  `OAuth succeeded but connection test threw error: ${errorMessage}`,
-                );
-              }
-              return;
-            } else {
-              // Redirect needed - keep oauth-flow status
-              toast.success(
-                "OAuth flow initiated. You will be redirected to authorize access.",
-              );
-              return;
-            }
-          } else {
-            setAppState((prev) => ({
-              ...prev,
-              servers: {
-                ...prev.servers,
-                [formData.name]: {
-                  ...prev.servers[formData.name],
-                  connectionStatus: "failed" as const,
-                  retryCount: 0,
-                  lastError: oauthResult.error || "OAuth initialization failed",
-                },
-              },
-            }));
-            toast.error(`OAuth initialization failed: ${oauthResult.error}`);
-            return;
-          }
-        }
-
-        // For non-OAuth connections, test connection using the stateless endpoint
-        const response = await fetch("/api/mcp/connect", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            serverConfig: mcpConfig,
-            serverId: formData.name,
-          }),
-        });
-
-        const result = await response.json();
-
-        if (result.success) {
-          // Update existing server to connected state
-          setAppState((prev) => ({
-            ...prev,
-            servers: {
-              ...prev.servers,
-              [formData.name]: {
-                ...prev.servers[formData.name],
-                connectionStatus: "connected" as const,
-                enabled: true,
-                lastConnectionTime: new Date(),
-                retryCount: 0,
-                lastError: undefined,
-              },
-            },
-          }));
-          logger.info("Connection successful", {
-            serverName: formData.name,
-          });
-          toast.success(`Connected successfully!`);
-        } else {
-          // Update existing server to failed state
-          setAppState((prev) => ({
-            ...prev,
-            servers: {
-              ...prev.servers,
-              [formData.name]: {
-                ...prev.servers[formData.name],
-                connectionStatus: "failed" as const,
-                retryCount: 0,
-                lastError: result.error,
-              },
-            },
-          }));
-          logger.error("Connection failed", {
-            serverName: formData.name,
-            error: result.error,
-          });
-          toast.error(`Failed to connect to ${formData.name}`);
-        }
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : "Unknown error";
-
-        // Update existing server to failed state
-        setAppState((prev) => ({
-          ...prev,
-          servers: {
-            ...prev.servers,
-            [formData.name]: {
-              ...prev.servers[formData.name],
-              connectionStatus: "failed" as const,
-              retryCount: 0,
-              lastError: errorMessage,
-            },
-          },
-        }));
-        logger.error("Connection failed", {
-          serverName: formData.name,
-          error: errorMessage,
-        });
-
-        toast.error(`Network error: ${errorMessage}`);
-      }
-    },
-    [convertFormToMCPConfig],
-  );
-
-  // Auto-connect to CLI-provided MCP server(s) on mount
-  useEffect(() => {
-    if (!isLoading) {
-      // Fetch CLI config from API (both dev and production)
-      fetch("/api/mcp-cli-config")
-        .then((response) => response.json())
-        .then((data) => {
-          const windowCliConfig = data.config;
-          if (windowCliConfig) {
-            // Handle multiple servers from config file
-            if (
-              windowCliConfig.servers &&
-              Array.isArray(windowCliConfig.servers)
-            ) {
-              const autoConnectServer = windowCliConfig.autoConnectServer;
-
-              logger.info(
-                "Processing CLI-provided MCP servers (from config file)",
-                {
-                  serverCount: windowCliConfig.servers.length,
-                  autoConnectServer: autoConnectServer || "all",
-                  cliConfig: windowCliConfig,
-                },
-              );
-
-              // Add all servers to the UI, but only auto-connect to filtered ones
-              windowCliConfig.servers.forEach((server: any) => {
-                const formData: ServerFormData = {
-                  name: server.name || "CLI Server",
-                  type: "stdio" as const,
-                  command: server.command,
-                  args: server.args || [],
-                  env: server.env || {},
-                };
-
-                // Always add server to UI state first (without connecting)
-                setAppState((prev) => ({
-                  ...prev,
-                  servers: {
-                    ...prev.servers,
-                    [formData.name]: {
-                      name: formData.name,
-                      config: convertFormToMCPConfig(formData),
-                      lastConnectionTime: new Date(),
-                      connectionStatus: "disconnected" as const,
-                      retryCount: 0,
-                      enabled: false, // Start disabled, will enable on successful connection
-                    },
-                  },
-                }));
-
-                // Only auto-connect if no filter or server matches filter
-                if (!autoConnectServer || server.name === autoConnectServer) {
-                  logger.info("Auto-connecting to server", {
-                    serverName: server.name,
-                  });
-                  handleConnect(formData);
-                } else {
-                  logger.info("Skipping auto-connect for server", {
-                    serverName: server.name,
-                    reason: "filtered out",
-                  });
-                }
-              });
-              return;
-            }
-            // Handle legacy single server mode
-            else if (windowCliConfig.command) {
-              logger.info(
-                "Auto-connecting to CLI-provided MCP server (legacy mode)",
-                { cliConfig: windowCliConfig },
-              );
-
-              const formData: ServerFormData = {
-                name: windowCliConfig.name || "CLI Server",
-                type: "stdio" as const,
-                command: windowCliConfig.command,
-                args: windowCliConfig.args || [],
-              };
-
-              handleConnect(formData);
-              return;
-            }
-          }
-        })
-        .catch((error) => {
-          // Ignore API errors in development mode when config endpoint might not be available
-          logger.debug("Could not fetch CLI config from API", { error });
-        });
-    }
-  }, [isLoading, handleConnect, logger]);
-
+  // OAuth callback finish handler
   const handleOAuthCallbackComplete = useCallback(
     async (code: string) => {
-      // Clean up URL parameters immediately
       window.history.replaceState({}, document.title, window.location.pathname);
-
       try {
         const result = await handleOAuthCallback(code);
-
         if (result.success && result.serverConfig && result.serverName) {
           const serverName = result.serverName;
 
-          // Check if server exists and is in oauth-flow state
-          const existingServer = appState.servers[serverName];
-          if (
-            !existingServer ||
-            existingServer.connectionStatus !== "oauth-flow"
-          ) {
-            // Create new server entry if it doesn't exist or wasn't in oauth flow
-            setAppState((prev) => ({
-              ...prev,
-              servers: {
-                ...prev.servers,
-                [serverName]: {
-                  name: serverName,
-                  config: result.serverConfig!,
-                  oauthTokens: getStoredTokens(serverName),
-                  lastConnectionTime: new Date(),
-                  connectionStatus: "connecting" as const,
-                  retryCount: 0,
-                },
-              },
-              selectedServer: serverName,
-            }));
-          } else {
-            // Update existing server to connecting with OAuth config
-            setAppState((prev) => ({
-              ...prev,
-              servers: {
-                ...prev.servers,
-                [serverName]: {
-                  ...prev.servers[serverName],
-                  config: result.serverConfig!,
-                  oauthTokens: getStoredTokens(serverName),
-                  connectionStatus: "connecting" as const,
-                  lastError: undefined,
-                },
-              },
-              selectedServer: serverName,
-            }));
-          }
+          // Move to connecting with fresh OAuth config
+          dispatch({
+            type: "CONNECT_REQUEST",
+            name: serverName,
+            config: result.serverConfig,
+            select: true,
+          });
 
           // Test the connection
           try {
-            const response = await fetch("/api/mcp/connect", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                serverConfig: result.serverConfig,
-                serverId: serverName,
-              }),
-            });
-
-            const connectionResult = await response.json();
-
+            const connectionResult = await testConnection(
+              result.serverConfig,
+              serverName,
+            );
             if (connectionResult.success) {
-              setAppState((prev) => ({
-                ...prev,
-                servers: {
-                  ...prev.servers,
-                  [serverName]: {
-                    ...prev.servers[serverName],
-                    connectionStatus: "connected" as const,
-                    enabled: true,
-                    lastConnectionTime: new Date(),
-                    lastError: undefined,
-                  },
-                },
-              }));
-
+              dispatch({
+                type: "CONNECT_SUCCESS",
+                name: serverName,
+                config: result.serverConfig,
+                tokens: getStoredTokens(serverName),
+              });
               logger.info("OAuth connection successful", { serverName });
               toast.success(
                 `OAuth connection successful! Connected to ${serverName}.`,
               );
             } else {
-              setAppState((prev) => ({
-                ...prev,
-                servers: {
-                  ...prev.servers,
-                  [serverName]: {
-                    ...prev.servers[serverName],
-                    connectionStatus: "failed" as const,
-                    lastError:
-                      connectionResult.error ||
-                      "Connection test failed after OAuth",
-                  },
-                },
-              }));
-
+              dispatch({
+                type: "CONNECT_FAILURE",
+                name: serverName,
+                error:
+                  connectionResult.error ||
+                  "Connection test failed after OAuth",
+              });
               logger.error("OAuth connection test failed", {
                 serverName,
                 error: connectionResult.error,
@@ -629,19 +138,11 @@ export function useAppState() {
               connectionError instanceof Error
                 ? connectionError.message
                 : "Unknown connection error";
-
-            setAppState((prev) => ({
-              ...prev,
-              servers: {
-                ...prev.servers,
-                [serverName]: {
-                  ...prev.servers[serverName],
-                  connectionStatus: "failed" as const,
-                  lastError: errorMessage,
-                },
-              },
-            }));
-
+            dispatch({
+              type: "CONNECT_FAILURE",
+              name: serverName,
+              error: errorMessage,
+            });
             logger.error("OAuth connection test error", {
               serverName,
               error: errorMessage,
@@ -660,17 +161,184 @@ export function useAppState() {
         logger.error("OAuth callback failed", { error: errorMessage });
       }
     },
+    [logger],
+  );
+
+  // Check for OAuth callback completion on mount
+  useEffect(() => {
+    if (!isLoading) {
+      const urlParams = new URLSearchParams(window.location.search);
+      const code = urlParams.get("code");
+      const error = urlParams.get("error");
+      if (code) {
+        handleOAuthCallbackComplete(code);
+      } else if (error) {
+        toast.error(`OAuth authorization failed: ${error}`);
+        localStorage.removeItem("mcp-oauth-pending");
+        window.history.replaceState(
+          {},
+          document.title,
+          window.location.pathname,
+        );
+      }
+    }
+  }, [isLoading, handleOAuthCallbackComplete]);
+
+  const handleConnect = useCallback(
+    async (formData: ServerFormData) => {
+      const validationError = validateForm(formData);
+      if (validationError) {
+        toast.error(validationError);
+        return;
+      }
+
+      const mcpConfig = toMCPConfig(formData);
+      dispatch({
+        type: "CONNECT_REQUEST",
+        name: formData.name,
+        config: mcpConfig,
+        select: true,
+      });
+      const token = nextOpToken(formData.name);
+
+      try {
+        if (formData.type === "http" && formData.useOAuth && formData.url) {
+          // Mark oauth-flow status for UI while initiating
+          dispatch({
+            type: "UPSERT_SERVER",
+            name: formData.name,
+            server: {
+              name: formData.name,
+              config: mcpConfig,
+              lastConnectionTime: new Date(),
+              connectionStatus: "oauth-flow",
+              retryCount: 0,
+              enabled: true,
+            } as ServerWithName,
+          });
+
+          const { initiateOAuth } = await import("@/lib/mcp-oauth");
+          const oauthOptions: any = {
+            serverName: formData.name,
+            serverUrl: formData.url,
+            clientId: formData.clientId,
+            clientSecret: formData.clientSecret,
+          };
+          if (formData.oauthScopes && formData.oauthScopes.length > 0) {
+            oauthOptions.scopes = formData.oauthScopes;
+          }
+          const oauthResult = await initiateOAuth(oauthOptions);
+          if (oauthResult.success) {
+            if (oauthResult.serverConfig) {
+              const connectionResult = await testConnection(
+                oauthResult.serverConfig,
+                formData.name,
+              );
+              if (isStaleOp(formData.name, token)) return;
+              if (connectionResult.success) {
+                dispatch({
+                  type: "CONNECT_SUCCESS",
+                  name: formData.name,
+                  config: oauthResult.serverConfig,
+                  tokens: getStoredTokens(formData.name),
+                });
+                toast.success(`Connected successfully with OAuth!`);
+              } else {
+                dispatch({
+                  type: "CONNECT_FAILURE",
+                  name: formData.name,
+                  error:
+                    connectionResult.error || "OAuth connection test failed",
+                });
+                toast.error(
+                  `OAuth succeeded but connection failed: ${connectionResult.error}`,
+                );
+              }
+            } else {
+              toast.success(
+                "OAuth flow initiated. You will be redirected to authorize access.",
+              );
+            }
+            return;
+          } else {
+            if (isStaleOp(formData.name, token)) return;
+            dispatch({
+              type: "CONNECT_FAILURE",
+              name: formData.name,
+              error: oauthResult.error || "OAuth initialization failed",
+            });
+            toast.error(`OAuth initialization failed: ${oauthResult.error}`);
+            return;
+          }
+        }
+
+        // Non-OAuth connect
+        const result = await testConnection(mcpConfig, formData.name);
+        if (isStaleOp(formData.name, token)) return;
+        if (result.success) {
+          dispatch({
+            type: "CONNECT_SUCCESS",
+            name: formData.name,
+            config: mcpConfig,
+          });
+          logger.info("Connection successful", { serverName: formData.name });
+          toast.success(`Connected successfully!`);
+        } else {
+          dispatch({
+            type: "CONNECT_FAILURE",
+            name: formData.name,
+            error: result.error || "Connection test failed",
+          });
+          logger.error("Connection failed", {
+            serverName: formData.name,
+            error: result.error,
+          });
+          toast.error(`Failed to connect to ${formData.name}`);
+        }
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : "Unknown error";
+        if (isStaleOp(formData.name, token)) return;
+        dispatch({
+          type: "CONNECT_FAILURE",
+          name: formData.name,
+          error: errorMessage,
+        });
+        logger.error("Connection failed", {
+          serverName: formData.name,
+          error: errorMessage,
+        });
+        toast.error(`Network error: ${errorMessage}`);
+      }
+    },
     [appState.servers, logger],
   );
+
+  // Auto-connect to CLI-provided MCP server on mount
+  useEffect(() => {
+    if (!isLoading) {
+      const windowCliConfig = (window as any).MCP_CLI_CONFIG;
+      if (windowCliConfig && windowCliConfig.command) {
+        logger.info(
+          "Auto-connecting to CLI-provided MCP server (from window)",
+          { cliConfig: windowCliConfig },
+        );
+        const formData: ServerFormData = {
+          name: windowCliConfig.name || "CLI Server",
+          type: "stdio" as const,
+          command: windowCliConfig.command,
+          args: windowCliConfig.args || [],
+        };
+        handleConnect(formData);
+        return;
+      }
+    }
+  }, [isLoading, handleConnect, logger]);
 
   const getValidAccessToken = useCallback(
     async (serverName: string): Promise<string | null> => {
       const server = appState.servers[serverName];
-      if (!server?.oauthTokens) {
-        return null;
-      }
-
-      // The SDK handles token refresh automatically
+      if (!server?.oauthTokens) return null;
       return server.oauthTokens.access_token || null;
     },
     [appState.servers],
@@ -678,299 +346,81 @@ export function useAppState() {
 
   const handleDisconnect = useCallback(async (serverName: string) => {
     logger.info("Disconnecting from server", { serverName });
-
-    // Immediately update UI to show disconnecting state
-    setAppState((prev: AppState) => ({
-      ...prev,
-      servers: {
-        ...prev.servers,
-        [serverName]: prev.servers[serverName]
-          ? {
-              ...prev.servers[serverName],
-              connectionStatus: "connecting" as const, // Show connecting state while processing
-              enabled: false,
-            }
-          : prev.servers[serverName],
-      },
-      selectedServer:
-        prev.selectedServer === serverName ? "none" : prev.selectedServer,
-      selectedMultipleServers: prev.selectedMultipleServers.filter(
-        (name) => name !== serverName,
-      ),
-    }));
-
+    dispatch({ type: "DISCONNECT", name: serverName });
     try {
-      // Disconnect from centralized agent
-      const response = await fetch(
-        `/api/mcp/servers/${encodeURIComponent(serverName)}`,
-        {
-          method: "DELETE",
-        },
-      );
-
-      const result = await response.json();
-      if (result.success) {
-        // Update to final disconnected state
-        setAppState((prev: AppState) => ({
-          ...prev,
-          servers: {
-            ...prev.servers,
-            [serverName]: prev.servers[serverName]
-              ? {
-                  ...prev.servers[serverName],
-                  connectionStatus: "disconnected" as const,
-                  enabled: false,
-                }
-              : prev.servers[serverName],
-          },
-        }));
-      } else {
-        logger.warn("Failed to disconnect from centralized agent", {
-          serverName,
-          error: result.error,
-        });
-        // Revert to previous state on failure
-        setAppState((prev: AppState) => ({
-          ...prev,
-          servers: {
-            ...prev.servers,
-            [serverName]: prev.servers[serverName]
-              ? {
-                  ...prev.servers[serverName],
-                  connectionStatus: "connected" as const,
-                  enabled: true,
-                  lastError: result.error,
-                }
-              : prev.servers[serverName],
-          },
-        }));
+      const result = await deleteServer(serverName);
+      if (!result.success) {
+        dispatch({ type: "DISCONNECT", name: serverName, error: result.error });
       }
     } catch (error) {
-      logger.warn("Error disconnecting from centralized agent", {
-        serverName,
+      dispatch({
+        type: "DISCONNECT",
+        name: serverName,
         error: error instanceof Error ? error.message : "Unknown error",
       });
-      // Revert to previous state on error
-      setAppState((prev: AppState) => ({
-        ...prev,
-        servers: {
-          ...prev.servers,
-          [serverName]: prev.servers[serverName]
-            ? {
-                ...prev.servers[serverName],
-                connectionStatus: "failed" as const,
-                enabled: false,
-                lastError:
-                  error instanceof Error ? error.message : "Unknown error",
-              }
-            : prev.servers[serverName],
-        },
-      }));
     }
   }, []);
 
-  // Permanently remove a server: clear OAuth data and delete from state
   const handleRemoveServer = useCallback(async (serverName: string) => {
     logger.info("Removing server", { serverName });
-
-    // Clear OAuth data
     clearOAuthData(serverName);
-
-    // Remove server from state (no API call needed for stateless architecture)
-    setAppState((prev: AppState) => {
-      const newServers = { ...prev.servers };
-      delete newServers[serverName];
-
-      return {
-        ...prev,
-        servers: newServers,
-        selectedServer:
-          prev.selectedServer === serverName ? "none" : prev.selectedServer,
-        selectedMultipleServers: prev.selectedMultipleServers.filter(
-          (name) => name !== serverName,
-        ),
-      };
-    });
+    dispatch({ type: "REMOVE_SERVER", name: serverName });
   }, []);
 
   const handleReconnect = useCallback(
     async (serverName: string) => {
       logger.info("Reconnecting to server", { serverName });
-
       const server = appState.servers[serverName];
-      if (!server) {
-        throw new Error(`Server ${serverName} not found`);
-      }
+      if (!server) throw new Error(`Server ${serverName} not found`);
 
-      // Update status to connecting
-      setAppState((prev) => ({
-        ...prev,
-        servers: {
-          ...prev.servers,
-          [serverName]: {
-            ...server,
-            connectionStatus: "connecting" as const,
-            enabled: true,
-          },
-        },
-      }));
-
+      dispatch({ type: "RECONNECT_REQUEST", name: serverName });
+      const token = nextOpToken(serverName);
       try {
-        let serverConfig = server.config;
-
-        // If server has OAuth tokens, try to refresh them first, then fallback to fresh OAuth
-        if (server.oauthTokens) {
-          logger.info("Attempting to refresh OAuth tokens", { serverName });
-          const refreshResult = await refreshOAuthTokens(serverName);
-
-          if (refreshResult.success && refreshResult.serverConfig) {
-            logger.info("OAuth tokens refreshed successfully", { serverName });
-            serverConfig = refreshResult.serverConfig;
-
-            // Update server state with refreshed config and tokens
-            setAppState((prev) => ({
-              ...prev,
-              servers: {
-                ...prev.servers,
-                [serverName]: {
-                  ...prev.servers[serverName],
-                  config: refreshResult.serverConfig!,
-                  oauthTokens: getStoredTokens(serverName),
-                },
-              },
-            }));
-          } else {
-            logger.warn(
-              "OAuth token refresh failed, attempting fresh OAuth flow",
-              {
-                serverName,
-                error: refreshResult.error,
-              },
-            );
-
-            // If token refresh failed and server has a URL, try fresh OAuth
-            if ("url" in server.config && server.config.url) {
-              try {
-                logger.info("Initiating fresh OAuth flow", { serverName });
-
-                // Clear existing tokens first
-                clearOAuthData(serverName);
-
-                // Initiate new OAuth flow with stored client credentials
-                const oauthOptions = {
-                  serverName: serverName,
-                  serverUrl: server.config.url.toString(),
-                  clientId: server.oauthTokens?.client_id,
-                  clientSecret: server.oauthTokens?.client_secret,
-                };
-
-                const oauthResult = await initiateOAuth(oauthOptions);
-
-                if (oauthResult.success && oauthResult.serverConfig) {
-                  logger.info("Fresh OAuth flow successful", { serverName });
-                  serverConfig = oauthResult.serverConfig;
-
-                  // Update server state with new config and tokens
-                  setAppState((prev) => ({
-                    ...prev,
-                    servers: {
-                      ...prev.servers,
-                      [serverName]: {
-                        ...prev.servers[serverName],
-                        config: oauthResult.serverConfig!,
-                        oauthTokens: getStoredTokens(serverName),
-                      },
-                    },
-                  }));
-                } else {
-                  logger.warn(
-                    "Fresh OAuth flow failed, using existing config",
-                    {
-                      serverName,
-                      error: oauthResult.error,
-                    },
-                  );
-                }
-              } catch (oauthError) {
-                logger.error("Error during fresh OAuth flow", {
-                  serverName,
-                  error: oauthError,
-                });
-              }
-            }
-          }
+        const authResult: OAuthResult =
+          await ensureAuthorizedForReconnect(server);
+        if (authResult.kind === "redirect") return; // UI shows oauth-flow during redirect
+        if (authResult.kind === "error") {
+          if (isStaleOp(serverName, token)) return;
+          dispatch({
+            type: "CONNECT_FAILURE",
+            name: serverName,
+            error: authResult.error,
+          });
+          toast.error(`Failed to connect: ${serverName}`);
+          return;
         }
-
-        // Test connection using the stateless endpoint
-        const response = await fetch("/api/mcp/connect", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            serverConfig,
-            serverId: serverName,
-          }),
-        });
-
-        const result = await response.json();
-
+        const result = await testConnection(
+          authResult.serverConfig,
+          serverName,
+        );
+        if (isStaleOp(serverName, token)) return;
         if (result.success) {
-          // Update status to connected and reset retry count
-          setAppState((prev) => ({
-            ...prev,
-            servers: {
-              ...prev.servers,
-              [serverName]: {
-                ...prev.servers[serverName],
-                connectionStatus: "connected" as const,
-                enabled: true,
-                lastConnectionTime: new Date(),
-                retryCount: 0,
-                lastError: undefined,
-              },
-            },
-          }));
-          logger.info("Reconnection successful", {
-            serverName,
-            result,
+          dispatch({
+            type: "CONNECT_SUCCESS",
+            name: serverName,
+            config: authResult.serverConfig,
+            tokens: authResult.tokens,
           });
-          return { success: true };
+          logger.info("Reconnection successful", { serverName, result });
+          return { success: true } as const;
         } else {
-          // Update status to failed and increment retry count
-          setAppState((prev) => ({
-            ...prev,
-            servers: {
-              ...prev.servers,
-              [serverName]: {
-                ...prev.servers[serverName],
-                connectionStatus: "failed" as const,
-                retryCount: prev.servers[serverName].retryCount + 1,
-                lastError: result.error || "Connection test failed",
-              },
-            },
-          }));
-          logger.error("Reconnection failed", {
-            serverName,
-            result,
+          dispatch({
+            type: "CONNECT_FAILURE",
+            name: serverName,
+            error: result.error || "Connection test failed",
           });
+          logger.error("Reconnection failed", { serverName, result });
           toast.error(`Failed to connect: ${serverName}`);
         }
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : "Unknown error";
-
-        // Update status to failed and increment retry count
-        setAppState((prev) => ({
-          ...prev,
-          servers: {
-            ...prev.servers,
-            [serverName]: {
-              ...prev.servers[serverName],
-              connectionStatus: "failed" as const,
-              retryCount: prev.servers[serverName].retryCount + 1,
-              lastError: errorMessage,
-            },
-          },
-        }));
+        if (isStaleOp(serverName, token)) return;
+        dispatch({
+          type: "CONNECT_FAILURE",
+          name: serverName,
+          error: errorMessage,
+        });
         logger.error("Reconnection failed", {
           serverName,
           error: errorMessage,
@@ -981,75 +431,14 @@ export function useAppState() {
     [appState.servers],
   );
 
-  // Effect to handle cleanup of reconnection timeouts (automatic retries disabled)
-  useEffect(() => {
-    // Cleanup timeouts for servers that are no longer failed or have been removed
-    Object.keys(reconnectionTimeouts).forEach((serverName) => {
-      const server = appState.servers[serverName];
-      if (!server || server.connectionStatus !== "failed") {
-        clearTimeout(reconnectionTimeouts[serverName]);
-        setReconnectionTimeouts((prev) => {
-          const newTimeouts = { ...prev };
-          delete newTimeouts[serverName];
-          return newTimeouts;
-        });
-      }
-    });
-  }, [appState.servers, reconnectionTimeouts]);
-
-  // Cleanup timeouts on unmount
-  useEffect(() => {
-    return () => {
-      Object.values(reconnectionTimeouts).forEach(clearTimeout);
-    };
-  }, [reconnectionTimeouts]);
-
   // Sync with centralized agent status on app startup only
   useEffect(() => {
     if (isLoading) return;
-
     const syncServerStatus = async () => {
       try {
-        const response = await fetch("/api/mcp/servers");
-        if (response.ok) {
-          const result = await response.json();
-          if (result.success && result.servers) {
-            // Update local state with centralized agent status on startup
-            setAppState((prev) => {
-              const updatedServers = { ...prev.servers };
-
-              // Update status for all servers
-              for (const [serverName, server] of Object.entries(
-                updatedServers,
-              )) {
-                // Find matching agent server
-                const agentServer = result.servers.find(
-                  (s: any) => s.id === serverName,
-                );
-
-                if (agentServer) {
-                  // Server exists in agent - update with agent status
-                  updatedServers[serverName] = {
-                    ...server,
-                    connectionStatus: agentServer.status,
-                    enabled: agentServer.status === "connected",
-                  };
-                } else {
-                  // Server doesn't exist in agent - mark as disconnected and disabled
-                  updatedServers[serverName] = {
-                    ...server,
-                    connectionStatus: "disconnected",
-                    enabled: false,
-                  };
-                }
-              }
-
-              return {
-                ...prev,
-                servers: updatedServers,
-              };
-            });
-          }
+        const result = await listServers();
+        if (result?.success && result.servers) {
+          dispatch({ type: "SYNC_AGENT_STATUS", servers: result.servers });
         }
       } catch (error) {
         logger.debug("Failed to sync server status on startup", {
@@ -1057,112 +446,64 @@ export function useAppState() {
         });
       }
     };
-
-    // Sync only once on startup
     syncServerStatus();
   }, [isLoading, logger]);
 
   const setSelectedServer = useCallback((serverName: string) => {
-    setAppState((prev) => ({
-      ...prev,
-      selectedServer: serverName,
-    }));
+    dispatch({ type: "SELECT_SERVER", name: serverName });
   }, []);
 
   const setSelectedMCPConfigs = useCallback((serverNames: string[]) => {
-    setAppState((prev) => ({
-      ...prev,
-      selectedMCPConfigs: serverNames,
-    }));
+    dispatch({ type: "SET_MULTI_SELECTED", names: serverNames });
   }, []);
 
   const toggleMultiSelectMode = useCallback((enabled: boolean) => {
-    setAppState((prev) => ({
-      ...prev,
-      isMultiSelectMode: enabled,
-      // Reset selections when switching modes
-      selectedMultipleServers: enabled ? [] : prev.selectedMultipleServers,
-    }));
+    dispatch({ type: "SET_MULTI_MODE", enabled });
   }, []);
 
-  const toggleServerSelection = useCallback((serverName: string) => {
-    setAppState((prev) => {
-      const currentSelected = prev.selectedMultipleServers;
-      const isSelected = currentSelected.includes(serverName);
-
-      return {
-        ...prev,
-        selectedMultipleServers: isSelected
-          ? currentSelected.filter((name) => name !== serverName)
-          : [...currentSelected, serverName],
-      };
-    });
-  }, []);
+  const toggleServerSelection = useCallback(
+    (serverName: string) => {
+      const current = appState.selectedMultipleServers;
+      const next = current.includes(serverName)
+        ? current.filter((n) => n !== serverName)
+        : [...current, serverName];
+      dispatch({ type: "SET_MULTI_SELECTED", names: next });
+    },
+    [appState.selectedMultipleServers],
+  );
 
   const handleUpdate = useCallback(
     async (originalServerName: string, formData: ServerFormData) => {
       const originalServer = appState.servers[originalServerName];
       const hadOAuthTokens = originalServer?.oauthTokens != null;
-
-      // For OAuth servers, preserve the tokens if the server name and URL haven't changed
-      // and the user is still using OAuth authentication
       const shouldPreserveOAuth =
         hadOAuthTokens &&
         formData.useOAuth &&
         formData.name === originalServerName &&
         formData.type === "http" &&
-        formData.url === originalServer.config.url?.toString();
+        formData.url === (originalServer?.config as any).url?.toString();
 
-      if (shouldPreserveOAuth) {
-        // Update server config without disconnecting to preserve OAuth tokens
-        const mcpConfig = convertFormToMCPConfig(formData);
-
-        // Update the server configuration in place
-        setAppState((prev) => ({
-          ...prev,
-          servers: {
-            ...prev.servers,
-            [originalServerName]: {
-              ...prev.servers[originalServerName],
-              config: mcpConfig,
-              connectionStatus: "connecting" as const,
-            },
-          },
-        }));
-
-        // Test connection with existing OAuth tokens
+      if (shouldPreserveOAuth && originalServer) {
+        const mcpConfig = toMCPConfig(formData);
+        dispatch({
+          type: "CONNECT_REQUEST",
+          name: originalServerName,
+          config: mcpConfig,
+        });
         try {
-          const response = await fetch("/api/mcp/connect", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              serverConfig: originalServer.config, // Use original config with OAuth tokens
-              serverId: originalServerName,
-            }),
-          });
-
-          const result = await response.json();
-
+          const result = await testConnection(
+            originalServer.config,
+            originalServerName,
+          );
           if (result.success) {
-            setAppState((prev) => ({
-              ...prev,
-              servers: {
-                ...prev.servers,
-                [originalServerName]: {
-                  ...prev.servers[originalServerName],
-                  config: mcpConfig, // Now update to new config
-                  connectionStatus: "connected" as const,
-                  enabled: true,
-                  lastConnectionTime: new Date(),
-                  retryCount: 0,
-                  lastError: undefined,
-                },
-              },
-            }));
+            dispatch({
+              type: "CONNECT_SUCCESS",
+              name: originalServerName,
+              config: mcpConfig,
+            });
             toast.success("Server configuration updated successfully!");
             return;
           } else {
-            // Connection failed, fall back to full reconnect
             console.warn(
               "OAuth connection test failed, falling back to full reconnect",
             );
@@ -1175,14 +516,8 @@ export function useAppState() {
         }
       }
 
-      // Full disconnect and reconnect for non-OAuth or when preservation fails
-      // First, disconnect the original server
       await handleDisconnect(originalServerName);
-
-      // Then connect with the new configuration
       await handleConnect(formData);
-
-      // If the server name changed, update selected server
       if (
         appState.selectedServer === originalServerName &&
         formData.name !== originalServerName
@@ -1193,10 +528,8 @@ export function useAppState() {
     [
       appState.servers,
       appState.selectedServer,
-      convertFormToMCPConfig,
       handleDisconnect,
       handleConnect,
-      setSelectedServer,
     ],
   );
 
