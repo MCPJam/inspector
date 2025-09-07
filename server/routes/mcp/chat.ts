@@ -1,6 +1,10 @@
 import { Hono } from "hono";
 import { Agent } from "@mastra/core/agent";
-import { ChatMessage, ModelDefinition, ModelProvider } from "../../../shared/types";
+import {
+  ChatMessage,
+  ModelDefinition,
+  ModelProvider,
+} from "../../../shared/types";
 import { TextEncoder } from "util";
 import { getDefaultTemperatureByProvider } from "../../../client/src/lib/chat-utils";
 import { stepCountIs } from "ai-v5";
@@ -364,7 +368,11 @@ const createStreamingResponse = async (
   });
 
   // End stream
-  sendSseEvent(streamingContext.controller, streamingContext.encoder!, "[DONE]");
+  sendSseEvent(
+    streamingContext.controller,
+    streamingContext.encoder!,
+    "[DONE]",
+  );
 };
 
 // Main chat endpoint
@@ -461,13 +469,17 @@ chat.post("/", async (c) => {
 
           // Stream elicitation request to client using the provided requestId
           if (streamingContext.controller && streamingContext.encoder) {
-            sendSseEvent(streamingContext.controller, streamingContext.encoder, {
-              type: "elicitation_request",
-              requestId: request.requestId,
-              message: elicitationRequest.message,
-              schema: elicitationRequest.requestedSchema,
-              timestamp: new Date().toISOString(),
-            });
+            sendSseEvent(
+              streamingContext.controller,
+              streamingContext.encoder,
+              {
+                type: "elicitation_request",
+                requestId: request.requestId,
+                message: elicitationRequest.message,
+                schema: elicitationRequest.requestedSchema,
+                timestamp: new Date().toISOString(),
+              },
+            );
           }
 
           // Return a promise that will be resolved when user responds
@@ -492,7 +504,13 @@ chat.post("/", async (c) => {
         });
 
         try {
-          await createStreamingResponse(agent, messages, streamingContext, provider, temperature);
+          await createStreamingResponse(
+            agent,
+            messages,
+            streamingContext,
+            provider,
+            temperature,
+          );
         } catch (error) {
           sendSseEvent(controller, encoder, {
             type: "error",

@@ -61,4 +61,3 @@ export type SSEvent =
   | SSEElicitationCompleteEvent
   | SSETraceStepEvent
   | SSEErrorEvent;
-
