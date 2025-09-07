@@ -94,7 +94,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   const [loading, setLoading] = useState(false);
   const [fetchingTools, setFetchingTools] = useState(false);
   const [error, setError] = useState<string>("");
-  const [eventSource, setEventSource] = useState<EventSource | null>(null);
   const [elicitationRequest, setElicitationRequest] =
     useState<ElicitationRequest | null>(null);
   const [elicitationLoading, setElicitationLoading] = useState(false);
@@ -141,13 +140,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       setUnstructuredValidationResult("not_applicable");
       setError("");
     }
-
-    // Cleanup EventSource on unmount
-    return () => {
-      if (eventSource) {
-        eventSource.close();
-      }
-    };
   }, [serverConfig, logger]);
 
   useEffect(() => {
@@ -168,20 +160,14 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
 
   const fetchTools = async () => {
     const config = getServerConfig();
-    if (!config) {
-      logger.warn("Cannot fetch tools: no server config available");
+    if (!serverName) {
+      logger.warn("Cannot fetch tools: no serverId available");
       return;
     }
 
     logger.info("Starting tool fetch", {
       serverConfig: config,
     });
-
-    // Close existing EventSource if any
-    if (eventSource) {
-      eventSource.close();
-      setEventSource(null);
-    }
 
     // Clear all tools-related state when switching servers
     setFetchingTools(true);
@@ -198,13 +184,10 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     const fetchStartTime = Date.now();
 
     try {
-      const response = await fetch("/api/mcp/tools", {
+      const response = await fetch("/api/mcp/tools/list", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "list",
-          serverConfig: { ...config, name: serverName },
-        }),
+        body: JSON.stringify({ serverId: serverName }),
       });
 
       if (!response.ok) {
@@ -213,64 +196,17 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         throw new Error(errorMsg);
       }
 
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-
-      if (!reader) {
-        const errorMsg = "No response body";
-        logger.error("Tools fetch error: no response body");
-        throw new Error(errorMsg);
-      }
-
-      let toolCount = 0;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          break;
-        }
-
-        const chunk = decoder.decode(value);
-        const lines = chunk.split("\n");
-
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            const data = line.slice(6);
-            if (data === "[DONE]") {
-              setFetchingTools(false);
-              return;
-            }
-
-            try {
-              const parsed = JSON.parse(data);
-              if (parsed.type === "tools_list") {
-                toolCount = Object.keys(parsed.tools || {}).length;
-                setTools(parsed.tools || {});
-                // console.log(parsed.tools, "parsed tools")
-                const fetchDuration = Date.now() - fetchStartTime;
-                logger.info("Tools fetch completed successfully", {
-                  serverConfig: config,
-                  toolCount,
-                  duration: fetchDuration,
-                  tools: parsed.tools,
-                });
-              } else if (parsed.type === "tool_error") {
-                logger.error("Tools fetch error from server", {
-                  error: parsed.error,
-                });
-                setError(parsed.error);
-                setFetchingTools(false);
-                return;
-              }
-            } catch (parseError) {
-              logger.warn("Failed to parse SSE data", {
-                data,
-                error: parseError,
-              });
-            }
-          }
-        }
-      }
+      const data = await response.json();
+      const toolMap = data.tools || {};
+      const toolCount = Object.keys(toolMap).length;
+      setTools(toolMap);
+      const fetchDuration = Date.now() - fetchStartTime;
+      logger.info("Tools fetch completed successfully", {
+        serverConfig: config,
+        toolCount,
+        duration: fetchDuration,
+        tools: toolMap,
+      });
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : "Unknown error";
       logger.error(
@@ -443,9 +379,8 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       return;
     }
 
-    const config = getServerConfig();
-    if (!config) {
-      logger.warn("Cannot execute tool: no server config available");
+    if (!serverName) {
+      logger.warn("Cannot execute tool: no serverId available");
       return;
     }
 
@@ -465,14 +400,13 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         toolName: selectedTool,
         parameters: params,
       });
-      const response = await fetch("/api/mcp/tools", {
+      const response = await fetch("/api/mcp/tools/execute", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          action: "execute",
-          serverConfig: { ...config, name: serverName },
+          serverId: serverName,
           toolName: selectedTool,
           parameters: params,
         }),
@@ -486,111 +420,52 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         });
         throw new Error(errorMsg);
       }
-
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-
-      if (!reader) {
-        const errorMsg = "No response body";
-        logger.error("Tool execution error: no response body", {
+      const data = await response.json();
+      if (data.status === "completed") {
+        const result = data.result;
+        const executionDuration = Date.now() - executionStartTime;
+        logger.info("Tool execution completed successfully", {
           toolName: selectedTool,
+          duration: executionDuration,
+          result,
         });
-        throw new Error(errorMsg);
-      }
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          break;
+        setResult(result);
+        if (result?.structuredContent) {
+          setStructuredResult(
+            result.structuredContent as Record<string, unknown>,
+          );
+          setShowStructured(true);
         }
 
-        const chunk = decoder.decode(value);
-        const lines = chunk.split("\n");
-
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            const data = line.slice(6);
-            if (data === "[DONE]") {
-              setLoading(false);
-              return;
-            }
-
-            try {
-              const parsed = JSON.parse(data);
-
-              if (parsed.type === "tool_result") {
-                const result = parsed.result;
-                const executionDuration = Date.now() - executionStartTime;
-                logger.info("Tool execution completed successfully", {
-                  toolName: selectedTool,
-                  duration: executionDuration,
-                  result: result,
-                });
-                setResult(result);
-                if (result.structuredContent) {
-                  setStructuredResult(
-                    result.structuredContent as Record<string, unknown>,
-                  );
-                  setShowStructured(true);
-                }
-
-                const currentTool = tools[selectedTool];
-                if (currentTool && currentTool.outputSchema) {
-                  const outputSchema = currentTool.outputSchema;
-
-                  const validationReport = validateToolOutput(
-                    result,
-                    outputSchema,
-                  );
-                  setValidationErrors(validationReport.structuredErrors);
-                  setUnstructuredValidationResult(
-                    validationReport.unstructuredStatus,
-                  );
-
-                  if (validationReport.structuredErrors) {
-                    logger.warn(
-                      "Schema validation failed for structuredContent",
-                      {
-                        errors: validationReport.structuredErrors,
-                      },
-                    );
-                  }
-                  if (
-                    validationReport.unstructuredStatus === "invalid_json" ||
-                    validationReport.unstructuredStatus === "schema_mismatch"
-                  ) {
-                    logger.warn(
-                      `Validation failed for raw content: ${validationReport.unstructuredStatus}`,
-                    );
-                  }
-                }
-              } else if (parsed.type === "tool_error") {
-                logger.error("Tool execution error from server", {
-                  toolName: selectedTool,
-                  error: parsed.error,
-                });
-                setError(parsed.error);
-                setLoading(false);
-                return;
-              } else if (parsed.type === "elicitation_request") {
-                setElicitationRequest({
-                  requestId: parsed.requestId,
-                  message: parsed.message,
-                  schema: parsed.schema,
-                  timestamp: parsed.timestamp,
-                });
-              } else if (parsed.type === "elicitation_complete") {
-                setElicitationRequest(null);
-              }
-            } catch (parseError) {
-              logger.warn("Failed to parse tool execution SSE data", {
-                toolName: selectedTool,
-                data,
-                error: parseError,
-              });
-            }
+        const currentTool = tools[selectedTool];
+        if (currentTool && currentTool.outputSchema) {
+          const outputSchema = currentTool.outputSchema;
+          const validationReport = validateToolOutput(result, outputSchema);
+          setValidationErrors(validationReport.structuredErrors);
+          setUnstructuredValidationResult(validationReport.unstructuredStatus);
+          if (validationReport.structuredErrors) {
+            logger.warn("Schema validation failed for structuredContent", {
+              errors: validationReport.structuredErrors,
+            });
+          }
+          if (
+            validationReport.unstructuredStatus === "invalid_json" ||
+            validationReport.unstructuredStatus === "schema_mismatch"
+          ) {
+            logger.warn(
+              `Validation failed for raw content: ${validationReport.unstructuredStatus}`,
+            );
           }
         }
+      } else if (data.status === "elicitation_required") {
+        setElicitationRequest({
+          requestId: data.requestId,
+          message: data.message,
+          schema: data.schema,
+          timestamp: data.timestamp,
+        });
+      } else if (data.error) {
+        setError(data.error);
       }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : "Unknown error";
@@ -667,13 +542,12 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         };
       }
 
-      const response = await fetch("/api/mcp/tools", {
+      const response = await fetch("/api/mcp/tools/respond", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          action: "respond",
           requestId: elicitationRequest.requestId,
           response: responseData,
         }),
@@ -689,7 +563,37 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         throw new Error(errorMsg);
       }
 
-      setElicitationRequest(null);
+      const data = await response.json();
+      if (data.status === "completed") {
+        // Show final result
+        setElicitationRequest(null);
+        const result = data.result;
+        setResult(result);
+        if (result?.structuredContent) {
+          setStructuredResult(
+            result.structuredContent as Record<string, unknown>,
+          );
+          setShowStructured(true);
+        }
+
+        const currentTool = tools[selectedTool];
+        if (currentTool && currentTool.outputSchema) {
+          const outputSchema = currentTool.outputSchema;
+          const validationReport = validateToolOutput(result, outputSchema);
+          setValidationErrors(validationReport.structuredErrors);
+          setUnstructuredValidationResult(validationReport.unstructuredStatus);
+        }
+      } else if (data.status === "elicitation_required") {
+        // Next elicitation round
+        setElicitationRequest({
+          requestId: data.requestId,
+          message: data.message,
+          schema: data.schema,
+          timestamp: data.timestamp,
+        });
+      } else if (data.error) {
+        setError(data.error);
+      }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : "Unknown error";
       logger.error(
@@ -1245,16 +1149,17 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                                       params: evt.payload.params,
                                     });
 
-                                    await fetch("/api/mcp/tools", {
+                                    await fetch("/api/mcp/tools/execute", {
                                       method: "POST",
                                       headers: {
                                         "Content-Type": "application/json",
                                       },
                                       body: JSON.stringify({
-                                        action: "execute",
                                         toolName: evt.payload.toolName,
                                         parameters: evt.payload.params || {},
-                                        serverConfig: getServerConfig(),
+                                        ...(serverName
+                                          ? { serverId: serverName }
+                                          : {}),
                                       }),
                                     });
                                   }
@@ -1289,19 +1194,20 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
 
                                     // Try to handle intent by calling a handleIntent tool if it exists
                                     try {
-                                      await fetch("/api/mcp/tools", {
+                                      await fetch("/api/mcp/tools/execute", {
                                         method: "POST",
                                         headers: {
                                           "Content-Type": "application/json",
                                         },
                                         body: JSON.stringify({
-                                          action: "execute",
                                           toolName: "handleIntent",
                                           parameters: {
                                             intent: evt.payload.intent,
                                             params: evt.payload.params || {},
                                           },
-                                          serverConfig: getServerConfig(),
+                                          ...(serverName
+                                            ? { serverId: serverName }
+                                            : {}),
                                         }),
                                       });
                                     } catch (error) {
