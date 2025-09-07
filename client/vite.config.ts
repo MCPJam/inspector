@@ -56,11 +56,11 @@ export default defineConfig({
         const target = siteUrlFromEnv || derivedSiteUrl;
         if (!target) return {} as Record<string, any>;
         return {
-          "/convex": {
+          "/backend": {
             target,
             changeOrigin: true,
             secure: true,
-            rewrite: (path: string) => path.replace(/^\/convex/, ""),
+            rewrite: (path: string) => path.replace(/^\/backend/, ""),
           },
         } as Record<string, any>;
       })(),

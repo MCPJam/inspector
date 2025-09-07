@@ -63,7 +63,7 @@ export default function App() {
   useEffect(() => {
     if (!isAuthenticated) return;
     const abort = new AbortController();
-    fetch(`/convex/ensureUser`, {
+    fetch(`/backend/ensureUser`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal: abort.signal,
