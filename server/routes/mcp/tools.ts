@@ -1,239 +1,257 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { TextEncoder } from "util";
 import "../../types/hono"; // Type extensions
 
 const tools = new Hono();
 
-// Note: Elicitation handling is now centralized in MCPJamClientManager
+type ElicitationEvent = {
+  requestId: string;
+  message: string;
+  schema: any;
+  toolName: string;
+  timestamp: string;
+};
 
-tools.post("/", async (c) => {
-  let action: string | undefined;
-  let toolName: string | undefined;
+type ExecutionState = {
+  id: string;
+  serverId: string;
+  toolName: string;
+  execPromise: Promise<{ result: any }>;
+  completed: boolean;
+  result?: { result: any };
+  error?: any;
+  queue: ElicitationEvent[];
+  waiters: Array<(ev: ElicitationEvent) => void>;
+};
 
+let activeExecution: ExecutionState | null = null;
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function takeNextElicitation(state: ExecutionState): Promise<ElicitationEvent> {
+  if (state.queue.length > 0) {
+    return Promise.resolve(state.queue.shift()!);
+  }
+  return new Promise((resolve) => {
+    state.waiters.push(resolve);
+  });
+}
+
+// POST /list — return tools as JSON (no SSE)
+tools.post("/list", async (c) => {
   try {
-    const requestData = await c.req.json();
-    action = requestData.action;
-    toolName = requestData.toolName;
-    const { serverConfig, parameters, requestId, response } = requestData;
+    const { serverId } = await c.req.json();
+    if (!serverId) {
+      return c.json({ error: "serverId is required" }, 400);
+    }
+    const mcp = c.mcpJamClientManager;
+    const status = mcp.getConnectionStatus(serverId);
+    if (status !== "connected") {
+      return c.json({ error: `Server '${serverId}' is not connected` }, 400);
+    }
+    const flattenedTools = await mcp.getToolsetsForServer(serverId);
 
-    if (!action || !["list", "execute", "respond"].includes(action)) {
-      return c.json(
-        {
-          success: false,
-          error: "Action must be 'list', 'execute', or 'respond'",
-        },
-        400,
-      );
+    const toolsWithJsonSchema: Record<string, any> = {};
+    for (const [name, tool] of Object.entries(flattenedTools)) {
+      let inputSchema = (tool as any).inputSchema;
+      try {
+        inputSchema = zodToJsonSchema(inputSchema as z.ZodType<any>);
+      } catch {}
+      toolsWithJsonSchema[name] = {
+        name,
+        description: (tool as any).description,
+        inputSchema,
+        outputSchema: (tool as any).outputSchema,
+      };
+    }
+    return c.json({ tools: toolsWithJsonSchema });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return c.json({ error: msg }, 500);
+  }
+});
+
+// POST /execute — execute a tool; may return completed or an elicitation requirement
+tools.post("/execute", async (c) => {
+  try {
+    const { serverId, toolName, parameters } = await c.req.json();
+    if (!serverId) return c.json({ error: "serverId is required" }, 400);
+    if (!toolName) return c.json({ error: "toolName is required" }, 400);
+
+    if (activeExecution) {
+      return c.json({ error: "Another execution is already in progress" }, 409);
     }
 
-    // Handle elicitation response
-    if (action === "respond") {
-      if (!requestId) {
-        return c.json(
-          {
-            success: false,
-            error: "requestId is required for respond action",
-          },
-          400,
-        );
-      }
+    const mcp = c.mcpJamClientManager;
+    const status = mcp.getConnectionStatus(serverId);
+    if (status !== "connected") {
+      return c.json({ error: `Server '${serverId}' is not connected` }, 400);
+    }
 
-      const mcpJamClientManager = c.mcpJamClientManager;
-      const success = mcpJamClientManager.respondToElicitation(
+    const executionId = `exec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+    const state: ExecutionState = {
+      id: executionId,
+      serverId,
+      toolName,
+      execPromise: Promise.resolve().then(() =>
+        mcp.executeToolDirect(toolName, parameters || {}),
+      ),
+      completed: false,
+      queue: [],
+      waiters: [],
+    };
+
+    activeExecution = state;
+
+    mcp.setElicitationCallback(async ({ requestId, message, schema }) => {
+      if (!activeExecution) {
+        // No active execution; reject so upstream can handle
+        throw new Error("No active execution");
+      }
+      const event: ElicitationEvent = {
         requestId,
-        response,
-      );
-
-      if (!success) {
-        return c.json(
-          {
-            success: false,
-            error: "No pending elicitation found for this requestId",
-          },
-          404,
-        );
+        message,
+        schema,
+        toolName,
+        timestamp: nowIso(),
+      };
+      // push to queue and notify waiter if present
+      if (activeExecution.waiters.length > 0) {
+        const waiter = activeExecution.waiters.shift()!;
+        waiter(event);
+      } else {
+        activeExecution.queue.push(event);
       }
 
-      return c.json({ success: true });
+      // Return a promise that resolves when respond endpoint supplies an answer
+      return new Promise((resolve, reject) => {
+        const timeout = setTimeout(
+          () => reject(new Error("Elicitation timeout")),
+          300000,
+        );
+        mcp.getPendingElicitations().set(requestId, {
+          resolve: (response: any) => {
+            clearTimeout(timeout);
+            resolve(response);
+          },
+          reject: (error: any) => {
+            clearTimeout(timeout);
+            reject(error);
+          },
+        });
+      });
+    });
+
+    // Race: next elicitation vs completion
+    const race = await Promise.race([
+      state.execPromise.then((res) => ({ kind: "done", res }) as const),
+      takeNextElicitation(state).then(
+        (ev) => ({ kind: "elicit", ev }) as const,
+      ),
+    ]);
+
+    if (race.kind === "done") {
+      state.completed = true;
+      state.result = race.res;
+      // clear global state
+      activeExecution = null;
+      mcp.clearElicitationCallback();
+      return c.json(
+        { status: "completed", toolName, result: race.res.result },
+        200,
+      );
     }
 
-    // Use centralized MCPJam Agent
-    const encoder = new TextEncoder();
-    const readableStream = new ReadableStream({
-      async start(controller) {
-        try {
-          if (!serverConfig) {
-            controller.enqueue(
-              encoder.encode(
-                `data: ${JSON.stringify({ type: "tool_error", error: "serverConfig is required" })}\n\n`,
-              ),
-            );
-            controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
-            controller.close();
-            return;
-          }
-
-          const mcpJamClientManager = c.mcpJamClientManager;
-          // Use server name from config or default key
-          const serverId =
-            (serverConfig as any).name || (serverConfig as any).id || "server";
-          await mcpJamClientManager.connectToServer(serverId, serverConfig);
-
-          // Set up elicitation callback for streaming context
-          mcpJamClientManager.setElicitationCallback(async (request) => {
-            const { requestId, message, schema } = request;
-
-            // Stream elicitation request to client
-            controller.enqueue(
-              encoder.encode(
-                `data: ${JSON.stringify({
-                  type: "elicitation_request",
-                  requestId,
-                  message,
-                  schema,
-                  toolName: toolName || "unknown",
-                  timestamp: new Date(),
-                })}\n\n`,
-              ),
-            );
-
-            return new Promise((resolve, reject) => {
-              const timeout = setTimeout(() => {
-                reject(new Error("Elicitation timeout"));
-              }, 300000); // 5 minutes
-
-              mcpJamClientManager.getPendingElicitations().set(requestId, {
-                resolve: (response: any) => {
-                  clearTimeout(timeout);
-                  resolve(response);
-                },
-                reject: (error: any) => {
-                  clearTimeout(timeout);
-                  reject(error);
-                },
-              });
-            });
-          });
-
-          if (action === "list") {
-            // Use existing connection through MCPJam Agent to get un-prefixed tools
-            try {
-              const flattenedTools =
-                await mcpJamClientManager.getToolsetsForServer(serverId);
-
-              // Convert to the expected format with JSON schema conversion
-              const toolsWithJsonSchema: Record<string, any> = {};
-              for (const [name, tool] of Object.entries(flattenedTools)) {
-                let inputSchema = (tool as any).inputSchema;
-                try {
-                  // If original schemas are Zod, convert to JSON Schema. Otherwise pass through.
-                  inputSchema = zodToJsonSchema(inputSchema as z.ZodType<any>);
-                } catch {
-                  // ignore conversion errors and use existing schema shape
-                }
-                toolsWithJsonSchema[name] = {
-                  name,
-                  description: (tool as any).description,
-                  inputSchema,
-                  outputSchema: (tool as any).outputSchema,
-                };
-              }
-
-              controller.enqueue(
-                encoder.encode(
-                  `data: ${JSON.stringify({ type: "tools_list", tools: toolsWithJsonSchema })}\n\n`,
-                ),
-              );
-              controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
-              controller.close();
-              return;
-            } catch (err) {
-              controller.enqueue(
-                encoder.encode(
-                  `data: ${JSON.stringify({ type: "tool_error", error: err instanceof Error ? err.message : String(err) })}\n\n`,
-                ),
-              );
-              controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
-              controller.close();
-              return;
-            }
-          }
-
-          if (action === "execute") {
-            if (!toolName) {
-              controller.enqueue(
-                encoder.encode(
-                  `data: ${JSON.stringify({ type: "tool_error", error: "Tool name is required for execution" })}\n\n`,
-                ),
-              );
-              controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
-              controller.close();
-              return;
-            }
-
-            controller.enqueue(
-              encoder.encode(
-                `data: ${JSON.stringify({ type: "tool_executing", toolName, parameters: parameters || {}, message: "Executing tool..." })}\n\n`,
-              ),
-            );
-
-            // Execute tool using centralized client manager
-            const exec = await mcpJamClientManager.executeToolDirect(
-              toolName,
-              parameters || {},
-            );
-            controller.enqueue(
-              encoder.encode(
-                `data: ${JSON.stringify({ type: "tool_result", toolName, result: exec.result })}\n\n`,
-              ),
-            );
-            controller.enqueue(
-              encoder.encode(
-                `data: ${JSON.stringify({ type: "elicitation_complete", toolName })}\n\n`,
-              ),
-            );
-            controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
-            controller.close();
-            return;
-          }
-        } catch (err) {
-          controller.enqueue(
-            encoder.encode(
-              `data: ${JSON.stringify({ type: "tool_error", error: err instanceof Error ? err.message : String(err) })}\n\n`,
-            ),
-          );
-          controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
-          controller.close();
-        } finally {
-          // Clear the elicitation callback
-          const mcpJamClientManager = c.mcpJamClientManager;
-          if (mcpJamClientManager) {
-            mcpJamClientManager.clearElicitationCallback();
-          }
-        }
-      },
-    });
-
-    return new Response(readableStream, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      },
-    });
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : "Unknown error";
-
+    // Elicitation required
     return c.json(
       {
-        success: false,
-        error: errorMsg,
+        status: "elicitation_required",
+        executionId,
+        requestId: race.ev.requestId,
+        toolName,
+        message: race.ev.message,
+        schema: race.ev.schema,
+        timestamp: race.ev.timestamp,
       },
-      500,
+      202,
     );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return c.json({ error: msg }, 500);
   }
+});
+
+// POST /respond — respond to the current elicitation; may return next elicitation or completion
+tools.post("/respond", async (c) => {
+  try {
+    const { requestId, response } = await c.req.json();
+    if (!requestId) return c.json({ error: "requestId is required" }, 400);
+    if (!activeExecution) return c.json({ error: "No active execution" }, 404);
+
+    const mcp = c.mcpJamClientManager;
+    const ok = mcp.respondToElicitation(requestId, response);
+    if (!ok)
+      return c.json({ error: "No pending elicitation for requestId" }, 404);
+
+    // After responding, wait for either next elicitation or completion
+    const state = activeExecution;
+    try {
+      const race = await Promise.race([
+        state.execPromise.then((res) => ({ kind: "done", res }) as const),
+        takeNextElicitation(state).then(
+          (ev) => ({ kind: "elicit", ev }) as const,
+        ),
+      ]);
+
+      if (race.kind === "done") {
+        state.completed = true;
+        state.result = race.res;
+        activeExecution = null;
+        mcp.clearElicitationCallback();
+        return c.json(
+          {
+            status: "completed",
+            toolName: state.toolName,
+            result: race.res.result,
+          },
+          200,
+        );
+      }
+
+      return c.json(
+        {
+          status: "elicitation_required",
+          executionId: state.id,
+          requestId: race.ev.requestId,
+          toolName: state.toolName,
+          message: race.ev.message,
+          schema: race.ev.schema,
+          timestamp: race.ev.timestamp,
+        },
+        202,
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return c.json({ error: msg }, 500);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return c.json({ error: msg }, 500);
+  }
+});
+
+// Optional: legacy root route returns 410 Gone to indicate migration
+tools.post("/", async () => {
+  return new Response(
+    JSON.stringify({
+      error: "Endpoint migrated. Use /list, /execute, or /respond.",
+    }),
+    { status: 410, headers: { "Content-Type": "application/json" } },
+  );
 });
 
 export default tools;
