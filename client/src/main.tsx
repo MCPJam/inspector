@@ -13,44 +13,50 @@ import { ConvexReactClient } from "convex/react";
 import { ConvexProviderWithAuthKit } from "@convex-dev/workos";
 
 const convexUrl = import.meta.env.VITE_CONVEX_URL as string;
-// Optional: if removing Convex client entirely later, guard on presence
 const workosClientId = import.meta.env.VITE_WORKOS_CLIENT_ID as string;
-// Determine redirect URI with an env override for special cases
-// In a browser (http/https), ALWAYS use the web callback to avoid deep-link prompts
-const envRedirect = (import.meta.env.VITE_WORKOS_REDIRECT_URI as string) || "";
-const isBrowserHttp =
-  typeof window !== "undefined" &&
-  (window.location.protocol === "http:" || window.location.protocol === "https:");
-const workosRedirectUri = isBrowserHttp
-  ? `${window.location.origin}/callback`
-  : envRedirect
-    ? envRedirect
-    : (window as any).isElectron
-      ? "mcpjam://oauth/callback"
-      : `${window.location.origin}/callback`;
+
+// Compute redirect URI safely across environments
+const workosRedirectUri = (() => {
+  const envRedirect = (import.meta.env.VITE_WORKOS_REDIRECT_URI as string) || undefined;
+  if (typeof window === "undefined") return envRedirect ?? "/callback";
+  const isBrowserHttp =
+    window.location.protocol === "http:" || window.location.protocol === "https:";
+  if (isBrowserHttp) return `${window.location.origin}/callback`;
+  if (envRedirect) return envRedirect;
+  if ((window as any)?.isElectron) return "mcpjam://oauth/callback";
+  return `${window.location.origin}/callback`;
+})();
+
+// Warn if critical env vars are missing
+if (!convexUrl) {
+  console.warn("[main] VITE_CONVEX_URL is not set; Convex features may not work.");
+}
+if (!workosClientId) {
+  console.warn(
+    "[main] VITE_WORKOS_CLIENT_ID is not set; authentication will not work.",
+  );
+}
 
 const convex = new ConvexReactClient(convexUrl);
 
 const root = createRoot(document.getElementById("root")!);
 
-const AppTree = (
-  <StrictMode>
-    <AuthKitProvider clientId={workosClientId} redirectUri={workosRedirectUri}>
-      <ConvexProviderWithAuthKit client={convex} useAuth={useAuth}>
-        <App />
-      </ConvexProviderWithAuthKit>
-    </AuthKitProvider>
-  </StrictMode>
+const Providers = (
+  <AuthKitProvider clientId={workosClientId} redirectUri={workosRedirectUri}>
+    <ConvexProviderWithAuthKit client={convex} useAuth={useAuth}>
+      <App />
+    </ConvexProviderWithAuthKit>
+  </AuthKitProvider>
 );
 
-if (isPostHogDisabled) {
-  root.render(AppTree);
-} else {
-  root.render(
-    <StrictMode>
+root.render(
+  <StrictMode>
+    {isPostHogDisabled ? (
+      Providers
+    ) : (
       <PostHogProvider apiKey={getPostHogKey()} options={getPostHogOptions()}>
-        {AppTree}
+        {Providers}
       </PostHogProvider>
-    </StrictMode>,
-  );
-}
+    )}
+  </StrictMode>,
+);
