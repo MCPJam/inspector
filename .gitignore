@@ -44,7 +44,10 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
-
+.env
+.env.*
+client/.env
+client/.env.*
 
 # next.js
 /.next/
@@ -56,3 +59,6 @@ next-env.d.ts
 
 # vite
 .vite/
+
+# convex (generated client code)
+convex/

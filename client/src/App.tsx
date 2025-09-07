@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useConvexAuth } from "convex/react";
 
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
@@ -21,14 +22,24 @@ import { ThemeSwitcher } from "./components/sidebar/theme-switcher";
 import { useAppState } from "./hooks/use-app-state";
 import { PreferencesStoreProvider } from "./stores/preferences/preferences-provider";
 import { Toaster } from "./components/ui/sonner";
+import { AuthButton } from "./components/AuthButton";
+import { useElectronOAuth } from "./hooks/useElectronOAuth";
 
 // Import global styles
 import "./index.css";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
+  const { isAuthenticated } = useConvexAuth();
+
+  // Set up Electron OAuth callback handling
+  useElectronOAuth();
   const isDebugCallback = useMemo(
     () => window.location.pathname.startsWith("/oauth/callback/debug"),
+    [],
+  );
+  const isOAuthCallback = useMemo(
+    () => window.location.pathname === "/callback",
     [],
   );
 
@@ -48,6 +59,19 @@ export default function App() {
     setSelectedMultipleServersToAllServers,
   } = useAppState();
 
+  // Ensure a user record exists in Convex when authenticated
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const abort = new AbortController();
+    fetch(`/backend/ensureUser`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: abort.signal,
+      credentials: "include",
+    }).catch(() => {});
+    return () => abort.abort();
+  }, [isAuthenticated]);
+
   const handleNavigate = (section: string) => {
     setActiveTab(section);
     if (section === "chat") {
@@ -57,6 +81,31 @@ export default function App() {
 
   if (isDebugCallback) {
     return <OAuthDebugCallback />;
+  }
+
+  if (isOAuthCallback) {
+    // Handle the actual OAuth callback - AuthKit will process this automatically
+    // Show a loading screen while the OAuth flow completes
+    useEffect(() => {
+      // Fallback: redirect to home after 5 seconds if still stuck
+      const timeout = setTimeout(() => {
+        window.location.href = "/";
+      }, 5000);
+
+      return () => clearTimeout(timeout);
+    }, []);
+
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+          <p className="mt-4 text-muted-foreground">Completing sign in...</p>
+          <p className="mt-2 text-xs text-muted-foreground">
+            If this takes too long, you'll be redirected automatically
+          </p>
+        </div>
+      </div>
+    );
   }
 
   if (isLoading) {
@@ -82,6 +131,7 @@ export default function App() {
               </div>
               <div className="flex items-center gap-2">
                 <ThemeSwitcher />
+                <AuthButton />
               </div>
             </div>
           </header>
