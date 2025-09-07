@@ -44,7 +44,6 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
     elicitationLoading,
     handleElicitationResponse,
   } = useChat({
-    serverConfigs: serverConfigs,
     systemPrompt: systemPromptState,
     temperature: temperatureState,
     onError: (error) => {
