@@ -82,7 +82,7 @@ The application will be available at `http://localhost:3001`.
 
 ### mcp.json
 
-You can import your `mcp.json` MCP server configs from Claude Desktop and Cursor with the command: 
+You can import your `mcp.json` MCP server configs from Claude Desktop and Cursor with the command:
 
 ```
 npx @mcpjam/inspector@latest --config mcp.json

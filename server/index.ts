@@ -197,7 +197,8 @@ if (process.env.NODE_ENV === "production") {
 const port = parseInt(process.env.PORT || "3000");
 
 // Default to localhost unless explicitly running in production
-const hostname = process.env.NODE_ENV === "production" ? "127.0.0.1" : "localhost";
+const hostname =
+  process.env.NODE_ENV === "production" ? "127.0.0.1" : "localhost";
 logBox(`http://${hostname}:${port}`, "🚀 Inspector Launched");
 
 // Graceful shutdown handling

@@ -65,10 +65,10 @@ const electronAPI: ElectronAPI = {
 
   oauth: {
     onCallback: (callback: (url: string) => void) => {
-      ipcRenderer.on('oauth-callback', (_, url: string) => callback(url));
+      ipcRenderer.on("oauth-callback", (_, url: string) => callback(url));
     },
     removeCallback: () => {
-      ipcRenderer.removeAllListeners('oauth-callback');
+      ipcRenderer.removeAllListeners("oauth-callback");
     },
   },
 };
