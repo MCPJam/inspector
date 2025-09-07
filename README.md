@@ -80,6 +80,14 @@ The application will be available at `http://localhost:3001`.
 
 ## Connecting to MCP servers
 
+### mcp.json
+
+You can import your `mcp.json` MCP server configs from Claude Desktop and Cursor with the command: 
+
+```
+ npm run start -- --config mcp.json
+```
+
 ### STDIO
 
 Note: Always use global file paths
