@@ -55,6 +55,42 @@ import "./types/hono"; // Type extensions
 
 // Utility function to extract MCP server config from environment variables
 function getMCPConfigFromEnv() {
+  // First check if we have a full config file
+  const configData = process.env.MCP_CONFIG_DATA;
+  if (configData) {
+    try {
+      const config = JSON.parse(configData);
+      console.log("Parsed config data:", config);
+      if (config.mcpServers && Object.keys(config.mcpServers).length > 0) {
+        // Transform the config to match client expectations
+        const servers = Object.entries(config.mcpServers).map(
+          ([name, serverConfig]: [string, any]) => ({
+            name,
+            command: serverConfig.command,
+            args: serverConfig.args || [],
+            env: serverConfig.env || {},
+          }),
+        );
+        console.log("Transformed servers:", servers);
+
+        // Check for auto-connect server filter
+        const autoConnectServer = process.env.MCP_AUTO_CONNECT_SERVER;
+        console.log(
+          "Auto-connect server filter:",
+          autoConnectServer || "none (connect to all)",
+        );
+
+        return {
+          servers,
+          autoConnectServer: autoConnectServer || null,
+        };
+      }
+    } catch (error) {
+      console.error("Failed to parse MCP_CONFIG_DATA:", error);
+    }
+  }
+
+  // Fall back to legacy single server mode
   const command = process.env.MCP_SERVER_COMMAND;
   if (!command) {
     return null;
@@ -64,9 +100,14 @@ function getMCPConfigFromEnv() {
   const args = argsString ? JSON.parse(argsString) : [];
 
   return {
-    command,
-    args,
-    name: "CLI Server", // Default name for CLI-provided servers
+    servers: [
+      {
+        command,
+        args,
+        name: "CLI Server", // Default name for CLI-provided servers
+        env: {},
+      },
+    ],
   };
 }
 
