@@ -22,7 +22,7 @@ tools.post("/", async (c) => {
       return c.json(
         {
           success: false,
-          error: "Action must be 'list', 'execute', or 'respond'",
+          error: "Action must be 'list', 'execute', or 'respond'",s
         },
         400,
       );
