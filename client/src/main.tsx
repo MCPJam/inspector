@@ -13,6 +13,7 @@ import { ConvexReactClient } from "convex/react";
 import { ConvexProviderWithAuthKit } from "@convex-dev/workos";
 
 const convexUrl = import.meta.env.VITE_CONVEX_URL as string;
+// Optional: if removing Convex client entirely later, guard on presence
 const workosClientId = import.meta.env.VITE_WORKOS_CLIENT_ID as string;
 // Determine redirect URI with an env override for special cases
 // In a browser (http/https), ALWAYS use the web callback to avoid deep-link prompts

@@ -47,6 +47,23 @@ export default defineConfig({
           });
         },
       },
+      ...(() => {
+        const siteUrlFromEnv = process.env.VITE_CONVEX_SITE_URL;
+        const cloudUrl = process.env.VITE_CONVEX_URL || "";
+        const derivedSiteUrl = cloudUrl
+          ? cloudUrl.replace(".convex.cloud", ".convex.site")
+          : "";
+        const target = siteUrlFromEnv || derivedSiteUrl;
+        if (!target) return {} as Record<string, any>;
+        return {
+          "/convex": {
+            target,
+            changeOrigin: true,
+            secure: true,
+            rewrite: (path: string) => path.replace(/^\/convex/, ""),
+          },
+        } as Record<string, any>;
+      })(),
     },
     fs: {
       allow: [".."],
