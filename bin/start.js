@@ -520,7 +520,7 @@ async function main() {
         logSuccess(`Default port ${requestedPort} is available`);
       } else {
         logError(
-          `Default port ${requestedPort} is already in use. Please free the port or specify a different one with --port <number>`,
+          `Default port ${requestedPort} is already in use. Please free the port`,
         );
         throw new Error(`Port ${requestedPort} is already in use`);
       }
