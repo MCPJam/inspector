@@ -1,0 +1,21 @@
+{
+    "mcpServers": {
+      "everything": {
+        "command": "npx",
+        "args": ["@modelcontextprotocol/server-everything"],
+        "env": {
+          "hello": "Hello MCP!"
+        }
+      },
+      "currency": {
+        "type": "sse",
+        "url": "https://currency-mcp.wesbos.com/sse",
+        "note": "For SSE connections, add this URL directly in Client"
+      },
+      "Sentry": {
+        "command": "npx",
+        "args": ["mcp-remote@latest", "https://mcp.sentry.dev/sse"]
+      }
+    }
+  }
+  
