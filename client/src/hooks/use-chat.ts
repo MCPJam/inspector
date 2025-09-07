@@ -323,7 +323,14 @@ export function useChat(options: UseChatOptions = {}) {
         abortControllerRef.current = null;
       }
     },
-    [model, currentApiKey, systemPrompt, onMessageReceived, applySseEvent, getOllamaBaseUrl],
+    [
+      model,
+      currentApiKey,
+      systemPrompt,
+      onMessageReceived,
+      applySseEvent,
+      getOllamaBaseUrl,
+    ],
   );
 
   const sendMessage = useCallback(
@@ -350,8 +357,13 @@ export function useChat(options: UseChatOptions = {}) {
         await sendChatRequest(userMessage);
         setStatus("idle");
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : "An error occurred";
-        setState((prev) => ({ ...prev, isLoading: false, error: errorMessage }));
+        const errorMessage =
+          error instanceof Error ? error.message : "An error occurred";
+        setState((prev) => ({
+          ...prev,
+          isLoading: false,
+          error: errorMessage,
+        }));
         setStatus("error");
         onError?.(errorMessage);
       }
@@ -394,8 +406,13 @@ export function useChat(options: UseChatOptions = {}) {
         await sendChatRequest(userMessage);
         setStatus("idle");
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : "An error occurred";
-        setState((prev) => ({ ...prev, isLoading: false, error: errorMessage }));
+        const errorMessage =
+          error instanceof Error ? error.message : "An error occurred";
+        setState((prev) => ({
+          ...prev,
+          isLoading: false,
+          error: errorMessage,
+        }));
         setStatus("error");
         onError?.(errorMessage);
       }
