@@ -149,6 +149,23 @@ class MCPJamClientManager {
     return allFlattenedTools as DynamicArgument<ToolsInput>;
   }
 
+  async getToolsetsForServer(
+    serverId: string,
+  ): Promise<DynamicArgument<ToolsInput>> {
+    const id = this.resolveServerId(serverId);
+    if (!id) {
+      throw new Error(`No MCP client available for server: ${serverId}`);
+    }
+    const client = this.mcpClients.get(id);
+    if (!client) {
+      throw new Error(`No MCP client available for server: ${serverId}`);
+    }
+
+    // Get toolsets and flatten them
+    const toolsets = await client.getToolsets();
+    return this.flattenToolsets(toolsets) as DynamicArgument<ToolsInput>;
+  }
+
   async connectToServer(serverId: string, serverConfig: any): Promise<void> {
     // If a connection is already in-flight for this server name, wait for it
     const pending = this.pendingConnections.get(serverId);
@@ -329,20 +346,6 @@ class MCPJamClientManager {
     return Array.from(this.toolRegistry.values());
   }
 
-  async getToolsetsForServer(serverId: string): Promise<Record<string, any>> {
-    const id = this.resolveServerId(serverId);
-    if (!id) {
-      throw new Error(`No MCP client available for server: ${serverId}`);
-    }
-    const client = this.mcpClients.get(id);
-    if (!client) {
-      throw new Error(`No MCP client available for server: ${serverId}`);
-    }
-
-    // Get toolsets and flatten them
-    const toolsets = await client.getToolsets();
-    return this.flattenToolsets(toolsets);
-  }
   getAvailableResources(): DiscoveredResource[] {
     return Array.from(this.resourceRegistry.values());
   }
