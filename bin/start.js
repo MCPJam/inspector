@@ -492,8 +492,8 @@ async function main() {
   // Apply parsed environment variables to process.env first
   Object.assign(process.env, envVars);
 
-  // Port discovery and configuration
-  const requestedPort = parseInt(process.env.PORT ?? "6274", 10);
+  // Port configuration (fixed default to 3000)
+  const requestedPort = parseInt(process.env.PORT ?? "3000", 10);
   let PORT;
 
   try {
@@ -513,18 +513,16 @@ async function main() {
         throw new Error(`Port ${requestedPort} is already in use`);
       }
     } else {
-      // Dynamic port discovery
-      logInfo("No specific port requested, using dynamic port discovery");
+      // Fixed port policy: use default port 3000 and fail fast if unavailable
+      logInfo("No specific port requested, using fixed default port 3000");
       if (await isPortAvailable(requestedPort)) {
         PORT = requestedPort.toString();
         logSuccess(`Default port ${requestedPort} is available`);
       } else {
-        logWarning(
-          `Default port ${requestedPort} is in use, searching for next available port...`,
+        logError(
+          `Default port ${requestedPort} is already in use. Please free the port`,
         );
-        const availablePort = await findAvailablePort(requestedPort + 1);
-        PORT = availablePort.toString();
-        logSuccess(`Found available port: ${availablePort}`);
+        throw new Error(`Port ${requestedPort} is already in use`);
       }
     }
 

@@ -29,6 +29,12 @@ interface ElectronAPI {
     disconnect: (id: string) => Promise<void>;
     listServers: () => Promise<any[]>;
   };
+
+  // OAuth operations
+  oauth: {
+    onCallback: (callback: (url: string) => void) => void;
+    removeCallback: () => void;
+  };
 }
 
 // Expose protected methods that allow the renderer process to use
@@ -55,6 +61,15 @@ const electronAPI: ElectronAPI = {
     connect: (config) => ipcRenderer.invoke("mcp:connect", config),
     disconnect: (id) => ipcRenderer.invoke("mcp:disconnect", id),
     listServers: () => ipcRenderer.invoke("mcp:list-servers"),
+  },
+
+  oauth: {
+    onCallback: (callback: (url: string) => void) => {
+      ipcRenderer.on("oauth-callback", (_, url: string) => callback(url));
+    },
+    removeCallback: () => {
+      ipcRenderer.removeAllListeners("oauth-callback");
+    },
   },
 };
 
