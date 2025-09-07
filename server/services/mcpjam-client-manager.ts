@@ -1,5 +1,7 @@
 import { MCPClient, MastraMCPServerDefinition } from "@mastra/mcp";
 import { validateServerConfig } from "../utils/mcp-utils";
+import { DynamicArgument } from "@mastra/core/base";
+import { ToolsInput } from "@mastra/core/agent";
 
 export type ConnectionStatus =
   | "disconnected"
@@ -107,9 +109,12 @@ class MCPJamClientManager {
     schema: any;
   }) => Promise<ElicitationResponse>;
 
-  // Helper method to get unique ID for a server name
-  private getServerUniqueId(serverName: string): string | undefined {
-    return this.serverIdMapping.get(serverName);
+  // Centralized server ID resolution - handles both original names and unique IDs
+  private resolveServerId(serverIdentifier: string): string | undefined {
+    if (this.mcpClients.has(serverIdentifier)) {
+      return serverIdentifier;
+    }
+    return this.serverIdMapping.get(serverIdentifier);
   }
 
   // Public method to get server ID for external use (like frontend)
@@ -117,17 +122,31 @@ class MCPJamClientManager {
     return this.serverIdMapping.get(serverName);
   }
 
-  // Public method to get original server name from a unique server ID
-  getOriginalNameForId(uniqueServerId: string): string | undefined {
-    for (const [originalName, uid] of this.serverIdMapping.entries()) {
-      if (uid === uniqueServerId) return originalName;
-    }
-    return undefined;
+  private flattenToolsets(toolsets: Record<string, any>): Record<string, any> {
+    const flattenedTools: Record<string, any> = {};
+    Object.values(toolsets).forEach((serverTools: any) => {
+      Object.assign(flattenedTools, serverTools);
+    });
+    return flattenedTools;
   }
 
-  // Convenience: map an array of unique IDs to their original names (fallback to ID if not found)
-  mapIdsToOriginalNames(uniqueIds: string[]): string[] {
-    return uniqueIds.map((id) => this.getOriginalNameForId(id) || id);
+  async getFlattenedToolsetsForEnabledServers(): Promise<
+    DynamicArgument<ToolsInput>
+  > {
+    const allFlattenedTools: Record<string, any> = {};
+
+    for (const [serverId, client] of this.mcpClients.entries()) {
+      if (this.getConnectionStatus(serverId) !== "connected") continue;
+      try {
+        const toolsets = await client.getToolsets();
+        const flattenedTools = this.flattenToolsets(toolsets);
+        Object.assign(allFlattenedTools, flattenedTools);
+      } catch (error) {
+        console.warn(`Failed to get tools from server ${serverId}:`, error);
+      }
+    }
+
+    return allFlattenedTools as DynamicArgument<ToolsInput>;
   }
 
   async connectToServer(serverId: string, serverConfig: any): Promise<void> {
@@ -198,7 +217,7 @@ class MCPJamClientManager {
   }
 
   async disconnectFromServer(serverId: string): Promise<void> {
-    const id = this.getServerUniqueId(serverId);
+    const id = this.resolveServerId(serverId);
     if (!id) return; // Server not found
 
     const client = this.mcpClients.get(id);
@@ -227,16 +246,18 @@ class MCPJamClientManager {
   }
 
   getConnectionStatus(serverId: string): ConnectionStatus {
-    const id = this.getServerUniqueId(serverId);
+    const id = this.resolveServerId(serverId);
     return id ? this.statuses.get(id) || "disconnected" : "disconnected";
   }
 
   getConnectedServers(): Record<
     string,
-    { status: ConnectionStatus; config?: any }
+    { status: ConnectionStatus; config?: MastraMCPServerDefinition }
   > {
-    const servers: Record<string, { status: ConnectionStatus; config?: any }> =
-      {};
+    const servers: Record<
+      string,
+      { status: ConnectionStatus; config?: MastraMCPServerDefinition }
+    > = {};
 
     // Return data keyed by the original server names provided by callers
     for (const [originalName, uniqueId] of this.serverIdMapping.entries()) {
@@ -245,7 +266,6 @@ class MCPJamClientManager {
         config: this.configs.get(uniqueId),
       };
     }
-
     return servers;
   }
 
@@ -261,10 +281,7 @@ class MCPJamClientManager {
 
     // Tools - use toolsets instead of getTools for consistency
     const toolsets = await client.getToolsets();
-    const flattenedTools: Record<string, any> = {};
-    Object.values(toolsets).forEach((serverTools: any) => {
-      Object.assign(flattenedTools, serverTools);
-    });
+    const flattenedTools = this.flattenToolsets(toolsets);
 
     for (const [name, tool] of Object.entries<any>(flattenedTools)) {
       this.toolRegistry.set(`${serverId}:${name}`, {
@@ -313,7 +330,7 @@ class MCPJamClientManager {
   }
 
   async getToolsetsForServer(serverId: string): Promise<Record<string, any>> {
-    const id = this.getServerUniqueId(serverId);
+    const id = this.resolveServerId(serverId);
     if (!id) {
       throw new Error(`No MCP client available for server: ${serverId}`);
     }
@@ -322,23 +339,16 @@ class MCPJamClientManager {
       throw new Error(`No MCP client available for server: ${serverId}`);
     }
 
-    // Get toolsets like in the chat route - this gives us server-prefixed tools
+    // Get toolsets and flatten them
     const toolsets = await client.getToolsets();
-
-    // Flatten toolsets to get un-prefixed tool names like in chat route
-    const flattenedTools: Record<string, any> = {};
-    Object.values(toolsets).forEach((serverTools: any) => {
-      Object.assign(flattenedTools, serverTools);
-    });
-
-    return flattenedTools;
+    return this.flattenToolsets(toolsets);
   }
   getAvailableResources(): DiscoveredResource[] {
     return Array.from(this.resourceRegistry.values());
   }
 
   getResourcesForServer(serverId: string): DiscoveredResource[] {
-    const id = this.getServerUniqueId(serverId);
+    const id = this.resolveServerId(serverId);
     if (!id) return [];
     return Array.from(this.resourceRegistry.values()).filter(
       (r) => r.serverId === id,
@@ -350,7 +360,7 @@ class MCPJamClientManager {
   }
 
   getPromptsForServer(serverId: string): DiscoveredPrompt[] {
-    const id = this.getServerUniqueId(serverId);
+    const id = this.resolveServerId(serverId);
     if (!id) return [];
     return Array.from(this.promptRegistry.values()).filter(
       (p) => p.serverId === id,
@@ -367,9 +377,7 @@ class MCPJamClientManager {
 
     if (toolName.includes(":")) {
       const [sid, n] = toolName.split(":", 2);
-      // Resolve provided server identifier (original name or unique ID) to the unique ID
-      const mappedId = this.getServerUniqueId(sid);
-      serverId = mappedId || (this.mcpClients.has(sid) ? sid : "");
+      serverId = this.resolveServerId(sid) || "";
       name = n;
     } else {
       // Find which server has this tool by checking un-prefixed name
@@ -387,11 +395,7 @@ class MCPJamClientManager {
       for (const [clientServerId, client] of this.mcpClients.entries()) {
         try {
           const toolsets = await client.getToolsets();
-          // Flatten toolsets to check for the tool
-          const flattenedTools: Record<string, any> = {};
-          Object.values(toolsets).forEach((serverTools: any) => {
-            Object.assign(flattenedTools, serverTools);
-          });
+          const flattenedTools = this.flattenToolsets(toolsets);
 
           if (flattenedTools[toolName]) {
             serverId = clientServerId;
@@ -412,12 +416,9 @@ class MCPJamClientManager {
     if (!client)
       throw new Error(`No MCP client available for server: ${serverId}`);
 
-    // Use toolsets to get the actual tool (since tools might be prefixed in getTools())
+    // Use toolsets to get the actual tool
     const toolsets = await client.getToolsets();
-    const flattenedTools: Record<string, any> = {};
-    Object.values(toolsets).forEach((serverTools: any) => {
-      Object.assign(flattenedTools, serverTools);
-    });
+    const flattenedTools = this.flattenToolsets(toolsets);
 
     const tool = flattenedTools[name];
     if (!tool)
@@ -474,10 +475,7 @@ class MCPJamClientManager {
   ): Promise<ResourceContent> {
     // resourceUri may include server prefix
     let uri = resourceUri;
-    // Resolve provided server identifier (original name or unique ID) to the unique ID
-    const mappedId = this.getServerUniqueId(serverId);
-    const resolvedServerId =
-      mappedId || (this.mcpClients.has(serverId) ? serverId : undefined);
+    const resolvedServerId = this.resolveServerId(serverId);
 
     if (!resolvedServerId) {
       throw new Error(`No MCP client available for server: ${serverId}`);
@@ -494,10 +492,7 @@ class MCPJamClientManager {
     serverId: string,
     args?: Record<string, any>,
   ): Promise<PromptResult> {
-    // Resolve provided server identifier (original name or unique ID) to the unique ID
-    const mappedId = this.getServerUniqueId(serverId);
-    const resolvedServerId =
-      mappedId || (this.mcpClients.has(serverId) ? serverId : undefined);
+    const resolvedServerId = this.resolveServerId(serverId);
 
     if (!resolvedServerId) {
       throw new Error(`No MCP client available for server: ${serverId}`);

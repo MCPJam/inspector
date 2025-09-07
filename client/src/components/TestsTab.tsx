@@ -443,10 +443,6 @@ export function TestsTab({
         },
         signal: abortController.signal,
         body: JSON.stringify({
-          serverConfigs:
-            selectionMap && Object.keys(selectionMap).length > 0
-              ? selectionMap
-              : { test: serverConfig },
           model: currentModel,
           provider: currentModel?.provider,
           apiKey: currentApiKey,
