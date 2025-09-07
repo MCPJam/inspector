@@ -108,6 +108,8 @@ export interface ModelDefinition {
   id: Model | string;
   name: string;
   provider: ModelProvider;
+  disabled?: boolean;
+  disabledReason?: string;
 }
 
 export enum Model {

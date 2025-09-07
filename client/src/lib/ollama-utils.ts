@@ -130,7 +130,7 @@ export const detectOllamaModels = async (
     return { isRunning: false, availableModels: [] };
   }
 
-  const availableModels = await client.getToolCapableModels();
+  const availableModels = await client.getAvailableModels();
 
   return {
     isRunning: true,
@@ -139,7 +139,7 @@ export const detectOllamaModels = async (
 };
 
 // Utility to fetch only tool-capable models using a provided base URL (if any)
-export const getOllamaToolCapableModels = async (
+export const detectOllamaToolCapableModels = async (
   baseUrl?: string,
 ): Promise<string[]> => {
   const client = baseUrl ? new OllamaClient(baseUrl) : ollamaClient;
