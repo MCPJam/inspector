@@ -17,10 +17,12 @@ const workosClientId = import.meta.env.VITE_WORKOS_CLIENT_ID as string;
 
 // Compute redirect URI safely across environments
 const workosRedirectUri = (() => {
-  const envRedirect = (import.meta.env.VITE_WORKOS_REDIRECT_URI as string) || undefined;
+  const envRedirect =
+    (import.meta.env.VITE_WORKOS_REDIRECT_URI as string) || undefined;
   if (typeof window === "undefined") return envRedirect ?? "/callback";
   const isBrowserHttp =
-    window.location.protocol === "http:" || window.location.protocol === "https:";
+    window.location.protocol === "http:" ||
+    window.location.protocol === "https:";
   if (isBrowserHttp) return `${window.location.origin}/callback`;
   if (envRedirect) return envRedirect;
   if ((window as any)?.isElectron) return "mcpjam://oauth/callback";
@@ -29,7 +31,9 @@ const workosRedirectUri = (() => {
 
 // Warn if critical env vars are missing
 if (!convexUrl) {
-  console.warn("[main] VITE_CONVEX_URL is not set; Convex features may not work.");
+  console.warn(
+    "[main] VITE_CONVEX_URL is not set; Convex features may not work.",
+  );
 }
 if (!workosClientId) {
   console.warn(

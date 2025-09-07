@@ -20,8 +20,8 @@ if (process.platform === "win32") {
 }
 
 // Register custom protocol for OAuth callbacks
-if (!app.isDefaultProtocolClient('mcpjam')) {
-  app.setAsDefaultProtocolClient('mcpjam');
+if (!app.isDefaultProtocolClient("mcpjam")) {
+  app.setAsDefaultProtocolClient("mcpjam");
 }
 
 let mainWindow: BrowserWindow | null = null;
@@ -50,7 +50,6 @@ async function findAvailablePort(startPort = 3000): Promise<number> {
     });
   });
 }
-
 
 async function startHonoServer(): Promise<number> {
   try {
@@ -259,27 +258,27 @@ app.on("activate", async () => {
 });
 
 // Handle OAuth callback URLs
-app.on('open-url', (event, url) => {
+app.on("open-url", (event, url) => {
   event.preventDefault();
-  log.info('OAuth callback received:', url);
+  log.info("OAuth callback received:", url);
 
-  if (!url.startsWith('mcpjam://oauth/callback')) {
+  if (!url.startsWith("mcpjam://oauth/callback")) {
     return;
   }
 
   try {
     const parsed = new URL(url);
-    const code = parsed.searchParams.get('code') ?? '';
-    const state = parsed.searchParams.get('state') ?? '';
+    const code = parsed.searchParams.get("code") ?? "";
+    const state = parsed.searchParams.get("state") ?? "";
 
     // Compute the base URL the renderer should load
     const baseUrl = isDev
       ? MAIN_WINDOW_VITE_DEV_SERVER_URL
       : `http://127.0.0.1:${serverPort}`;
 
-    const callbackUrl = new URL('/callback', baseUrl);
-    if (code) callbackUrl.searchParams.set('code', code);
-    if (state) callbackUrl.searchParams.set('state', state);
+    const callbackUrl = new URL("/callback", baseUrl);
+    if (code) callbackUrl.searchParams.set("code", code);
+    if (state) callbackUrl.searchParams.set("state", state);
 
     // Ensure a window exists, then load the callback route directly
     if (!mainWindow) {
@@ -289,7 +288,7 @@ app.on('open-url', (event, url) => {
 
     // Still emit the event for any listeners
     if (mainWindow && mainWindow.webContents) {
-      mainWindow.webContents.send('oauth-callback', url);
+      mainWindow.webContents.send("oauth-callback", url);
     }
 
     if (mainWindow) {
@@ -297,7 +296,7 @@ app.on('open-url', (event, url) => {
       mainWindow.focus();
     }
   } catch (e) {
-    log.error('Failed processing OAuth callback URL:', e);
+    log.error("Failed processing OAuth callback URL:", e);
   }
 });
 

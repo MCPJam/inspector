@@ -31,7 +31,7 @@ import "./index.css";
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
   const { isAuthenticated } = useConvexAuth();
-  
+
   // Set up Electron OAuth callback handling
   useElectronOAuth();
   const isDebugCallback = useMemo(
@@ -89,7 +89,7 @@ export default function App() {
     useEffect(() => {
       // Fallback: redirect to home after 5 seconds if still stuck
       const timeout = setTimeout(() => {
-        window.location.href = '/';
+        window.location.href = "/";
       }, 5000);
 
       return () => clearTimeout(timeout);
@@ -178,7 +178,9 @@ export default function App() {
                 serverConfigsMap={selectedMCPConfigsMap}
                 allServerConfigsMap={Object.fromEntries(
                   Object.entries(connectedServerConfigs)
-                    .filter(([, entry]) => entry.connectionStatus === "connected")
+                    .filter(
+                      ([, entry]) => entry.connectionStatus === "connected",
+                    )
                     .map(([name, entry]) => [name, entry.config]),
                 )}
               />
