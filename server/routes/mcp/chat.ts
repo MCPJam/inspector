@@ -9,6 +9,7 @@ import { TextEncoder } from "util";
 import { getDefaultTemperatureByProvider } from "../../../client/src/lib/chat-utils";
 import { stepCountIs } from "ai-v5";
 import { createLlmModel } from "utils/chat-helpers";
+import { SSEvent } from "../../../shared/sse";
 
 // Types
 interface ElicitationResponse {
@@ -55,6 +56,16 @@ try {
 
 const chat = new Hono();
 
+// Small helper to send one SSE event consistently
+const sendSseEvent = (
+  controller: ReadableStreamDefaultController,
+  encoder: TextEncoder,
+  event: SSEvent | "[DONE]",
+) => {
+  const payload = event === "[DONE]" ? "[DONE]" : JSON.stringify(event);
+  controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
+};
+
 const handleAgentStepFinish = (
   streamingContext: StreamingContext,
   text: string,
@@ -69,20 +80,16 @@ const handleAgentStepFinish = (
         streamingContext.lastEmittedToolCallId = currentToolCallId;
 
         if (streamingContext.controller && streamingContext.encoder) {
-          streamingContext.controller.enqueue(
-            streamingContext.encoder.encode(
-              `data: ${JSON.stringify({
-                type: "tool_call",
-                toolCall: {
-                  id: currentToolCallId,
-                  name: call.name || call.toolName,
-                  parameters: call.params || call.args || {},
-                  timestamp: new Date(),
-                  status: "executing",
-                },
-              })}\n\n`,
-            ),
-          );
+          sendSseEvent(streamingContext.controller, streamingContext.encoder, {
+            type: "tool_call",
+            toolCall: {
+              id: currentToolCallId,
+              name: call.name || call.toolName,
+              parameters: call.params || call.args || {},
+              timestamp: new Date().toISOString(),
+              status: "executing",
+            },
+          });
         }
       }
     }
@@ -96,20 +103,16 @@ const handleAgentStepFinish = (
             : ++streamingContext.toolCallId;
 
         if (streamingContext.controller && streamingContext.encoder) {
-          streamingContext.controller.enqueue(
-            streamingContext.encoder.encode(
-              `data: ${JSON.stringify({
-                type: "tool_result",
-                toolResult: {
-                  id: currentToolCallId,
-                  toolCallId: currentToolCallId,
-                  result: result.result,
-                  error: (result as any).error,
-                  timestamp: new Date(),
-                },
-              })}\n\n`,
-            ),
-          );
+          sendSseEvent(streamingContext.controller, streamingContext.encoder, {
+            type: "tool_result",
+            toolResult: {
+              id: currentToolCallId,
+              toolCallId: currentToolCallId,
+              result: result.result,
+              error: (result as any).error,
+              timestamp: new Date().toISOString(),
+            },
+          });
         }
       }
     }
@@ -117,24 +120,20 @@ const handleAgentStepFinish = (
     // Emit a consolidated trace step event for UI tracing panels
     streamingContext.stepIndex = (streamingContext.stepIndex || 0) + 1;
     if (streamingContext.controller && streamingContext.encoder) {
-      streamingContext.controller.enqueue(
-        streamingContext.encoder.encode(
-          `data: ${JSON.stringify({
-            type: "trace_step",
-            step: streamingContext.stepIndex,
-            text,
-            toolCalls: (toolCalls || []).map((c: any) => ({
-              name: c.name || c.toolName,
-              params: c.params || c.args || {},
-            })),
-            toolResults: (toolResults || []).map((r: any) => ({
-              result: r.result,
-              error: (r as any).error,
-            })),
-            timestamp: new Date(),
-          })}\n\n`,
-        ),
-      );
+      sendSseEvent(streamingContext.controller, streamingContext.encoder, {
+        type: "trace_step",
+        step: streamingContext.stepIndex,
+        text,
+        toolCalls: (toolCalls || []).map((c: any) => ({
+          name: c.name || c.toolName,
+          params: c.params || c.args || {},
+        })),
+        toolResults: (toolResults || []).map((r: any) => ({
+          result: r.result,
+          error: (r as any).error,
+        })),
+        timestamp: new Date().toISOString(),
+      });
     }
   } catch (err) {
     dbg("onStepFinish error", err);
@@ -157,63 +156,50 @@ const streamAgentResponse = async (
     // Handle text content
     if (chunk.type === "text-delta" && chunk.textDelta) {
       hasContent = true;
-      streamingContext.controller.enqueue(
-        streamingContext.encoder!.encode(
-          `data: ${JSON.stringify({ type: "text", content: chunk.textDelta })}\n\n`,
-        ),
-      );
+      sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
+        type: "text",
+        content: chunk.textDelta,
+      });
     }
 
     // Handle tool calls from streamVNext
     if (chunk.type === "tool-call" && chunk.toolName) {
       const currentToolCallId = ++streamingContext.toolCallId;
-      streamingContext.controller.enqueue(
-        streamingContext.encoder!.encode(
-          `data: ${JSON.stringify({
-            type: "tool_call",
-            toolCall: {
-              id: currentToolCallId,
-              name: chunk.toolName,
-              parameters: chunk.args || {},
-              timestamp: new Date(),
-              status: "executing",
-            },
-          })}\n\n`,
-        ),
-      );
+      sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
+        type: "tool_call",
+        toolCall: {
+          id: currentToolCallId,
+          name: chunk.toolName,
+          parameters: chunk.args || {},
+          timestamp: new Date().toISOString(),
+          status: "executing",
+        },
+      });
     }
 
     // Handle tool results from streamVNext
     if (chunk.type === "tool-result" && chunk.result !== undefined) {
       const currentToolCallId = streamingContext.toolCallId;
-      streamingContext.controller.enqueue(
-        streamingContext.encoder!.encode(
-          `data: ${JSON.stringify({
-            type: "tool_result",
-            toolResult: {
-              id: currentToolCallId,
-              toolCallId: currentToolCallId,
-              result: chunk.result,
-              timestamp: new Date(),
-            },
-          })}\n\n`,
-        ),
-      );
+      sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
+        type: "tool_result",
+        toolResult: {
+          id: currentToolCallId,
+          toolCallId: currentToolCallId,
+          result: chunk.result,
+          timestamp: new Date().toISOString(),
+        },
+      });
     }
 
     // Handle errors from streamVNext
     if (chunk.type === "error" && chunk.error) {
-      streamingContext.controller.enqueue(
-        streamingContext.encoder!.encode(
-          `data: ${JSON.stringify({
-            type: "error",
-            error:
-              chunk.error instanceof Error
-                ? chunk.error.message
-                : String(chunk.error),
-          })}\n\n`,
-        ),
-      );
+      sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
+        type: "error",
+        error:
+          chunk.error instanceof Error
+            ? chunk.error.message
+            : String(chunk.error),
+      });
     }
 
     // Handle finish event
@@ -246,27 +232,17 @@ const fallbackToCompletion = async (
     });
     console.log("result", result);
     if (result.text && result.text.trim()) {
-      streamingContext.controller.enqueue(
-        streamingContext.encoder!.encode(
-          `data: ${JSON.stringify({
-            type: "text",
-            content: result.text,
-          })}\n\n`,
-        ),
-      );
+      sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
+        type: "text",
+        content: result.text,
+      });
     }
   } catch (fallbackErr) {
-    streamingContext.controller.enqueue(
-      streamingContext.encoder!.encode(
-        `data: ${JSON.stringify({
-          type: "error",
-          error:
-            fallbackErr instanceof Error
-              ? fallbackErr.message
-              : "Unknown error",
-        })}\n\n`,
-      ),
-    );
+    sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
+      type: "error",
+      error:
+        fallbackErr instanceof Error ? fallbackErr.message : "Unknown error",
+    });
   }
 };
 
@@ -299,11 +275,10 @@ const fallbackToStreamV1Method = async (
       if (chunk && chunk.trim()) {
         hasContent = true;
         chunkCount++;
-        streamingContext.controller.enqueue(
-          streamingContext.encoder!.encode(
-            `data: ${JSON.stringify({ type: "text", content: chunk })}\n\n`,
-          ),
-        );
+        sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
+          type: "text",
+          content: chunk,
+        });
       }
     }
 
@@ -388,17 +363,15 @@ const createStreamingResponse = async (
   }
 
   // Stream elicitation completion
-  streamingContext.controller.enqueue(
-    streamingContext.encoder!.encode(
-      `data: ${JSON.stringify({
-        type: "elicitation_complete",
-      })}\n\n`,
-    ),
-  );
+  sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
+    type: "elicitation_complete",
+  });
 
   // End stream
-  streamingContext.controller.enqueue(
-    streamingContext.encoder!.encode(`data: [DONE]\n\n`),
+  sendSseEvent(
+    streamingContext.controller,
+    streamingContext.encoder!,
+    "[DONE]",
   );
 };
 
@@ -496,16 +469,16 @@ chat.post("/", async (c) => {
 
           // Stream elicitation request to client using the provided requestId
           if (streamingContext.controller && streamingContext.encoder) {
-            streamingContext.controller.enqueue(
-              streamingContext.encoder.encode(
-                `data: ${JSON.stringify({
-                  type: "elicitation_request",
-                  requestId: request.requestId,
-                  message: elicitationRequest.message,
-                  schema: elicitationRequest.requestedSchema,
-                  timestamp: new Date(),
-                })}\n\n`,
-              ),
+            sendSseEvent(
+              streamingContext.controller,
+              streamingContext.encoder,
+              {
+                type: "elicitation_request",
+                requestId: request.requestId,
+                message: elicitationRequest.message,
+                schema: elicitationRequest.requestedSchema,
+                timestamp: new Date().toISOString(),
+              },
             );
           }
 
@@ -539,14 +512,10 @@ chat.post("/", async (c) => {
             temperature,
           );
         } catch (error) {
-          controller.enqueue(
-            encoder.encode(
-              `data: ${JSON.stringify({
-                type: "error",
-                error: error instanceof Error ? error.message : "Unknown error",
-              })}\n\n`,
-            ),
-          );
+          sendSseEvent(controller, encoder, {
+            type: "error",
+            error: error instanceof Error ? error.message : "Unknown error",
+          });
         } finally {
           // Clear elicitation callback to prevent memory leaks
           mcpClientManager.clearElicitationCallback();
