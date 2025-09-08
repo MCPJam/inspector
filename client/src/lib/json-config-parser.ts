@@ -4,6 +4,8 @@ export interface JsonServerConfig {
   command?: string;
   args?: string[];
   env?: Record<string, string>;
+  type?: "sse";
+  url?: string;
 }
 
 export interface JsonConfig {
@@ -31,8 +33,19 @@ export function parseJsonConfig(jsonContent: string): ServerFormData[] {
         continue;
       }
 
-      // Only support STDIO servers (MCP default format)
-      if (serverConfig.command) {
+      // Determine server type based on config
+      if (serverConfig.type === 'sse' || serverConfig.url) {
+        // HTTP/SSE server
+        servers.push({
+          name: serverName,
+          type: "http",
+          url: serverConfig.url || "",
+          headers: {},
+          env: {},
+          useOAuth: false,
+        });
+      } else if (serverConfig.command) {
+        // STDIO server (MCP default format)
         servers.push({
           name: serverName,
           type: "stdio",
@@ -81,11 +94,20 @@ export function validateJsonConfig(jsonContent: string): { success: boolean; err
 
       const configObj = serverConfig as JsonServerConfig;
       const hasCommand = configObj.command && typeof configObj.command === 'string';
+      const hasUrl = configObj.url && typeof configObj.url === 'string';
+      const isSse = configObj.type === 'sse';
 
-      if (!hasCommand) {
+      if (!hasCommand && !hasUrl && !isSse) {
         return { 
           success: false, 
-          error: `Server "${serverName}" must have a "command" property` 
+          error: `Server "${serverName}" must have either "command" or "url" property` 
+        };
+      }
+
+      if (hasCommand && hasUrl) {
+        return { 
+          success: false, 
+          error: `Server "${serverName}" cannot have both "command" and "url" properties` 
         };
       }
     }

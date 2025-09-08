@@ -165,13 +165,17 @@ export function JsonImportModal({
           {/* Example Config */}
           <Card className="p-4 bg-muted/30">
             <div className="space-y-2">
-              <h4 className="text-sm font-medium">Example JSON Format (MCP Default):</h4>
+              <h4 className="text-sm font-medium">Example JSON Format:</h4>
               <pre className="text-xs text-muted-foreground overflow-x-auto">
 {`{
   "mcpServers": {
     "weather": {
       "command": "/path/to/node",
       "args": ["/path/to/weather-server.js"]
+    },
+    "asana": {
+      "type": "sse",
+      "url": "https://mcp.asana.com/sse"
     }
   }
 }`}
