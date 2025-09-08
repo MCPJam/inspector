@@ -4,6 +4,7 @@ import path from "path";
 
 // https://vitejs.dev/config/
 export default defineConfig({
+  envDir: "..",
   plugins: [react()],
   resolve: {
     alias: {
@@ -46,6 +47,26 @@ export default defineConfig({
           });
         },
       },
+      ...(() => {
+        const siteUrlFromEnv = process.env.VITE_CONVEX_SITE_URL;
+        const cloudUrl = process.env.VITE_CONVEX_URL || "";
+        const derivedSiteUrl = cloudUrl
+          ? cloudUrl.replace(".convex.cloud", ".convex.site")
+          : "";
+        const target = siteUrlFromEnv || derivedSiteUrl;
+        if (!target) return {} as Record<string, any>;
+        return {
+          "/backend": {
+            target,
+            changeOrigin: true,
+            secure: true,
+            rewrite: (path: string) => path.replace(/^\/backend/, ""),
+          },
+        } as Record<string, any>;
+      })(),
+    },
+    fs: {
+      allow: [".."],
     },
   },
   build: {

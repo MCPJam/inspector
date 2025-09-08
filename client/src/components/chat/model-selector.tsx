@@ -140,7 +140,9 @@ export function ModelSelector({
                       <TooltipTrigger asChild>
                         <div className="pointer-events-auto">{item}</div>
                       </TooltipTrigger>
-                      <TooltipContent side="right">{model.disabledReason}</TooltipContent>
+                      <TooltipContent side="right">
+                        {model.disabledReason}
+                      </TooltipContent>
                     </Tooltip>
                   ) : (
                     item

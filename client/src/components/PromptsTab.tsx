@@ -75,11 +75,6 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
     }
   }, [selectedPromptData]);
 
-  const getServerConfig = (): MastraMCPServerDefinition | null => {
-    if (!serverConfig) return null;
-    return serverConfig;
-  };
-
   const fetchPrompts = async () => {
     if (!serverName) return;
 
