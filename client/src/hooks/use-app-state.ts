@@ -350,7 +350,7 @@ export function useAppState() {
                   env: server.env || {},
                 };
 
-                // Only add server if it doesn't already exist (CLI config as convenience pre-loader)
+                // Always add/update server from CLI config
                 const mcpConfig = toMCPConfig(formData);
                 dispatch({
                   type: "UPSERT_SERVER",
@@ -365,17 +365,12 @@ export function useAppState() {
                   },
                 });
 
-                // Only auto-connect if server was newly added and matches filter
+                // Only auto-connect if matches filter (or no filter)
                 if (!autoConnectServer || server.name === autoConnectServer) {
                   logger.info("Auto-connecting to server", {
                     serverName: server.name,
                   });
                   handleConnect(formData);
-                } else if (appState.servers[formData.name]) {
-                  logger.info("Skipping auto-connect for server", {
-                    serverName: server.name,
-                    reason: "server already exists",
-                  });
                 } else {
                   logger.info("Skipping auto-connect for server", {
                     serverName: server.name,
