@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { ModelDefinition, ModelProvider } from "@/shared/types.js";
 import { ProviderLogo } from "./provider-logo";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 
 interface ModelSelectorProps {
   currentModel: ModelDefinition;
@@ -112,23 +113,41 @@ export function ModelSelector({
                 avoidCollisions={true}
                 collisionPadding={8}
               >
-                {models.map((model) => (
-                  <DropdownMenuItem
-                    key={model.id}
-                    onClick={() => {
-                      onModelChange(model);
-                      setIsModelSelectorOpen(false);
-                    }}
-                    className="flex items-center gap-3 text-sm cursor-pointer"
-                  >
-                    <div className="flex flex-col flex-1">
-                      <span className="font-medium">{model.name}</span>
-                    </div>
-                    {model.id === currentModel.id && (
-                      <div className="ml-auto w-2 h-2 bg-primary rounded-full" />
-                    )}
-                  </DropdownMenuItem>
-                ))}
+                {models.map((model) => {
+                  const isDisabled = !!model.disabled;
+
+                  const item = (
+                    <DropdownMenuItem
+                      key={model.id}
+                      onSelect={() => {
+                        onModelChange(model);
+                        setIsModelSelectorOpen(false);
+                      }}
+                      className="flex items-center gap-3 text-sm cursor-pointer"
+                      disabled={isDisabled}
+                    >
+                      <div className="flex flex-col flex-1">
+                        <span className="font-medium">{model.name}</span>
+                      </div>
+                      {model.id === currentModel.id && (
+                        <div className="ml-auto w-2 h-2 bg-primary rounded-full" />
+                      )}
+                    </DropdownMenuItem>
+                  );
+
+                  return isDisabled ? (
+                    <Tooltip key={model.id}>
+                      <TooltipTrigger asChild>
+                        <div className="pointer-events-auto">{item}</div>
+                      </TooltipTrigger>
+                      <TooltipContent side="right">
+                        {model.disabledReason}
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    item
+                  );
+                })}
               </DropdownMenuSubContent>
             </DropdownMenuSub>
           );
