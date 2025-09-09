@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import connect from "./connect";
 import servers from "./servers";
 import tools from "./tools";
+import dynamicTools from "./dynamic-tools";
 import resources from "./resources";
 import prompts from "./prompts";
 import chat from "./chat";
@@ -30,6 +31,9 @@ mcp.route("/servers", servers);
 
 // Tools endpoint - REAL IMPLEMENTATION
 mcp.route("/tools", tools);
+
+// Dynamic tools endpoint - NEW
+mcp.route("/dynamic-tools", dynamicTools);
 
 // Tests endpoint - generate per-test agents
 mcp.route("/tests", tests);

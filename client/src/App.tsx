@@ -3,6 +3,7 @@ import { useConvexAuth } from "convex/react";
 
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
+import { DynamicToolsManager } from "./components/DynamicToolsManager";
 import { ResourcesTab } from "./components/ResourcesTab";
 import { PromptsTab } from "./components/PromptsTab";
 import { ChatTab } from "./components/ChatTab";
@@ -172,6 +173,11 @@ export default function App() {
                 serverName={appState.selectedServer}
               />
             )}
+
+            {activeTab === "dynamic-tools" && (
+              <DynamicToolsManager />
+            )}
+
             {activeTab === "tests" && (
               <TestsTab
                 serverConfig={selectedMCPConfig}

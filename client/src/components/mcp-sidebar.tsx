@@ -8,6 +8,7 @@ import {
   MessageSquareCode,
   BookOpen,
   FlaskConical,
+  Zap,
 } from "lucide-react";
 
 import { NavMain } from "@/components/sidebar/nav-main";
@@ -49,6 +50,11 @@ const navigationSections = [
         title: "Tools",
         url: "#tools",
         icon: Hammer,
+      },
+      {
+        title: "Dynamic Tools",
+        url: "#dynamic-tools",
+        icon: Zap,
       },
       // moved Evals to bottom; placeholder here removed
       {
