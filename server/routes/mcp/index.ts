@@ -7,6 +7,7 @@ import prompts from "./prompts";
 import chat from "./chat";
 import tests from "./tests.ts";
 import oauth from "./oauth";
+import exporter from "./export";
 
 const mcp = new Hono();
 
@@ -42,5 +43,8 @@ mcp.route("/prompts", prompts);
 
 // OAuth proxy endpoints
 mcp.route("/oauth", oauth);
+
+// Export endpoints - REAL IMPLEMENTATION
+mcp.route("/export", exporter);
 
 export default mcp;
