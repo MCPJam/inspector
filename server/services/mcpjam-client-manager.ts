@@ -2,6 +2,7 @@ import { MCPClient, MastraMCPServerDefinition } from "@mastra/mcp";
 import { validateServerConfig } from "../utils/mcp-utils";
 import { DynamicArgument } from "@mastra/core/base";
 import { ToolsInput } from "@mastra/core/agent";
+import { DynamicToolManager, DynamicToolDefinition } from "./dynamic-tool-manager.js";
 
 export type ConnectionStatus =
   | "disconnected"
@@ -93,6 +94,9 @@ class MCPJamClientManager {
   private resourceRegistry: Map<string, DiscoveredResource> = new Map();
   private promptRegistry: Map<string, DiscoveredPrompt> = new Map();
 
+  // Dynamic tool manager
+  private dynamicToolManager: DynamicToolManager = new DynamicToolManager();
+
   // Store for pending elicitation requests with Promise resolvers
   private pendingElicitations: Map<
     string,
@@ -135,6 +139,7 @@ class MCPJamClientManager {
   > {
     const allFlattenedTools: Record<string, any> = {};
 
+    // Get MCP tools from connected servers
     for (const [serverId, client] of this.mcpClients.entries()) {
       if (this.getConnectionStatus(serverId) !== "connected") continue;
       try {
@@ -144,6 +149,13 @@ class MCPJamClientManager {
       } catch (error) {
         console.warn(`Failed to get tools from server ${serverId}:`, error);
       }
+    }
+
+    // Add dynamic tools
+    const dynamicTools = this.dynamicToolManager.getAllTools();
+    for (const toolDef of dynamicTools) {
+      const dynamicTool = this.dynamicToolManager.createDynamicTool(toolDef);
+      allFlattenedTools[`dynamic_${toolDef.id}`] = dynamicTool;
     }
 
     return allFlattenedTools as DynamicArgument<ToolsInput>;
@@ -593,6 +605,23 @@ class MCPJamClientManager {
    */
   clearElicitationCallback(): void {
     this.elicitationCallback = undefined;
+  }
+
+  // Dynamic tool management methods
+  createDynamicTool(definition: DynamicToolDefinition): void {
+    this.dynamicToolManager.registerTool(definition);
+  }
+
+  getDynamicTool(id: string): DynamicToolDefinition | undefined {
+    return this.dynamicToolManager.getTool(id);
+  }
+
+  getAllDynamicTools(): DynamicToolDefinition[] {
+    return this.dynamicToolManager.getAllTools();
+  }
+
+  deleteDynamicTool(id: string): boolean {
+    return this.dynamicToolManager.deleteTool(id);
   }
 }
 
