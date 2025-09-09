@@ -1,10 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
-import { Plus, Database } from "lucide-react";
+import { Plus, Database,FileText } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { ServerConnectionCard } from "./connection/ServerConnectionCard";
 import { ServerModal } from "./connection/ServerModal";
+import { JsonImportModal } from "./connection/JsonImportModal";
 import { ServerFormData } from "@/shared/types.js";
 import { MCPIcon } from "./ui/mcp-icon";
 
@@ -26,6 +27,7 @@ export function ServersTab({
   onRemove,
 }: ServersTabProps) {
   const [isAddingServer, setIsAddingServer] = useState(false);
+  const [isImportingJson, setIsImportingJson] = useState(false);
   const [isEditingServer, setIsEditingServer] = useState(false);
   const [serverToEdit, setServerToEdit] = useState<ServerWithName | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
@@ -68,6 +70,13 @@ export function ServersTab({
     setServerToEdit(null);
   };
 
+  const handleJsonImport = (servers: ServerFormData[]) => {
+    // Import each server by calling onConnect for each one
+    servers.forEach((server) => {
+      onConnect(server);
+    });
+  };
+
   return (
     <div className="space-y-6 p-8">
       {/* Header Section */}
@@ -75,13 +84,23 @@ export function ServersTab({
         <div>
           <h2 className="text-2xl font-bold tracking-tight">MCP Servers</h2>
         </div>
-        <Button
-          onClick={() => setIsAddingServer(true)}
-          className="cursor-pointer"
-        >
-          <Plus className="h-4 w-4 mr-2" />
-          Add Server
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            onClick={() => setIsImportingJson(true)}
+            variant="outline"
+            className="cursor-pointer"
+          >
+            <FileText className="h-4 w-4 mr-2" />
+            Import JSON
+          </Button>
+          <Button
+            onClick={() => setIsAddingServer(true)}
+            className="cursor-pointer"
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Add Server
+          </Button>
+        </div>
       </div>
       {/* Server Cards Grid */}
       {connectedCount > 0 ? (
@@ -148,6 +167,13 @@ export function ServersTab({
           server={serverToEdit}
         />
       )}
+
+      {/* JSON Import Modal */}
+      <JsonImportModal
+        isOpen={isImportingJson}
+        onClose={() => setIsImportingJson(false)}
+        onImport={handleJsonImport}
+      />
     </div>
   );
 }
