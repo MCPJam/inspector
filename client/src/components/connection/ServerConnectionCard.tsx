@@ -19,12 +19,14 @@ import {
   RefreshCw,
   Loader2,
   Copy,
+  Download,
   Check,
   X,
   Wifi,
   Edit,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
+import { exportServerApi } from "@/lib/mcp-export-api";
 
 interface ServerConnectionCardProps {
   server: ServerWithName;
@@ -43,6 +45,7 @@ export function ServerConnectionCard({
 }: ServerConnectionCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isReconnecting, setIsReconnecting] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const [isErrorExpanded, setIsErrorExpanded] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const isHttpServer = server.config.url !== undefined;
@@ -68,6 +71,40 @@ export function ServerConnectionCard({
       toast.error(`Failed to reconnect to ${server.name}: ${errorMessage}`);
     } finally {
       setIsReconnecting(false);
+    }
+  };
+
+  const downloadJson = (filename: string, data: any) => {
+    const blob = new Blob([JSON.stringify(data, null, 2)], {
+      type: "application/json;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExport = async () => {
+    setIsExporting(true);
+    try {
+      const toastId = toast.loading(`Exporting ${server.name}…`);
+      const data = await exportServerApi(server.name);
+      const ts = new Date().toISOString().replace(/[:.]/g, "-");
+      const filename = `mcp-server-export_${server.name}_${ts}.json`;
+      downloadJson(filename, data);
+      toast.success(`Exported ${server.name} info to ${filename}`, {
+        id: toastId,
+      });
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+      toast.error(`Failed to export ${server.name}: ${errorMessage}`);
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -197,6 +234,20 @@ export function ServerConnectionCard({
                   >
                     <Edit className="h-3 w-3 mr-2" />
                     Edit
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={handleExport}
+                    disabled={
+                      isExporting || server.connectionStatus !== "connected"
+                    }
+                    className="text-xs cursor-pointer"
+                  >
+                    {isExporting ? (
+                      <Loader2 className="h-3 w-3 mr-2 animate-spin" />
+                    ) : (
+                      <Download className="h-3 w-3 mr-2" />
+                    )}
+                    {isExporting ? "Exporting..." : "Export server info"}
                   </DropdownMenuItem>
                   <Separator />
                   <DropdownMenuItem
