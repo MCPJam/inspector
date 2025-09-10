@@ -66,9 +66,11 @@ function getMCPConfigFromEnv() {
         const servers = Object.entries(config.mcpServers).map(
           ([name, serverConfig]: [string, any]) => ({
             name,
+            type: serverConfig.type || "stdio", // Default to stdio if not specified
             command: serverConfig.command,
             args: serverConfig.args || [],
             env: serverConfig.env || {},
+            url: serverConfig.url, // For SSE/HTTP connections
           }),
         );
         console.log("Transformed servers:", servers);

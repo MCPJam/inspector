@@ -344,9 +344,12 @@ export function useAppState() {
               cliConfig.servers.forEach((server: any) => {
                 const formData: ServerFormData = {
                   name: server.name || "CLI Server",
-                  type: "stdio" as const,
+                  type: (server.type === "sse"
+                    ? "http"
+                    : server.type || "stdio") as "stdio" | "http",
                   command: server.command,
                   args: server.args || [],
+                  url: server.url,
                   env: server.env || {},
                 };
 
@@ -382,10 +385,9 @@ export function useAppState() {
             }
             // Handle legacy single server mode
             if (cliConfig.command) {
-              logger.info(
-                "Auto-connecting to CLI-provided MCP server (from config file)",
-                { cliConfig },
-              );
+              logger.info("Auto-connecting to CLI-provided MCP server", {
+                cliConfig,
+              });
               const formData: ServerFormData = {
                 name: cliConfig.name || "CLI Server",
                 type: "stdio" as const,
