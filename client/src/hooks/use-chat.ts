@@ -9,6 +9,7 @@ import {
 } from "@/lib/ollama-utils";
 import { SSEvent } from "@/shared/sse";
 import { parseSSEStream } from "@/lib/sse";
+import { getConversationTokens } from "@/lib/token-counter";
 
 interface ElicitationRequest {
   requestId: string;
@@ -58,6 +59,27 @@ export function useChat(options: UseChatOptions = {}) {
   useEffect(() => {
     messagesRef.current = state.messages;
   }, [state.messages]);
+
+  // Token tracking (async)
+  const [tokenCount, setTokenCount] = useState(0);
+
+  useEffect(() => {
+    const updateTokenCount = async () => {
+      try {
+        const count = await getConversationTokens(
+          state.messages,
+          systemPrompt,
+          model || undefined,
+        );
+        setTokenCount(count);
+      } catch (error) {
+        console.warn("Failed to count tokens:", error);
+        setTokenCount(0);
+      }
+    };
+
+    updateTokenCount();
+  }, [state.messages, systemPrompt, model]);
 
   // Check for Ollama models on mount and periodically
   useEffect(() => {
@@ -531,6 +553,7 @@ export function useChat(options: UseChatOptions = {}) {
     hasValidApiKey: Boolean(currentApiKey),
     elicitationRequest,
     elicitationLoading,
+    tokenCount,
 
     // Actions
     sendMessage,

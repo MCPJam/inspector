@@ -110,6 +110,8 @@ export interface ModelDefinition {
   provider: ModelProvider;
   disabled?: boolean;
   disabledReason?: string;
+  contextWindow?: number; // Maximum context window in tokens
+  inputTokenLimit?: number; // Maximum input tokens
 }
 
 export enum Model {
@@ -156,77 +158,207 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     id: Model.CLAUDE_OPUS_4_0,
     name: "Claude Opus 4",
     provider: "anthropic",
+    contextWindow: 200000,
   },
   {
     id: Model.CLAUDE_SONNET_4_0,
     name: "Claude Sonnet 4",
     provider: "anthropic",
+    contextWindow: 200000,
   },
   {
     id: Model.CLAUDE_3_7_SONNET_LATEST,
     name: "Claude Sonnet 3.7",
     provider: "anthropic",
+    contextWindow: 200000,
   },
   {
     id: Model.CLAUDE_3_5_SONNET_LATEST,
     name: "Claude Sonnet 3.5",
     provider: "anthropic",
+    contextWindow: 200000,
   },
   {
     id: Model.CLAUDE_3_5_HAIKU_LATEST,
     name: "Claude Haiku 3.5",
     provider: "anthropic",
+    contextWindow: 200000,
   },
-  { id: Model.GPT_4_1, name: "GPT-4.1", provider: "openai" },
-  { id: Model.GPT_4_1_MINI, name: "GPT-4.1 Mini", provider: "openai" },
-  { id: Model.GPT_4_1_NANO, name: "GPT-4.1 Nano", provider: "openai" },
-  { id: Model.GPT_4O, name: "GPT-4o", provider: "openai" },
-  { id: Model.GPT_4O_MINI, name: "GPT-4o Mini", provider: "openai" },
-  { id: Model.GPT_4_TURBO, name: "GPT-4 Turbo", provider: "openai" },
-  { id: Model.GPT_4, name: "GPT-4", provider: "openai" },
-  { id: Model.GPT_5, name: "GPT-5", provider: "openai" },
-  { id: Model.GPT_3_5_TURBO, name: "GPT-3.5 Turbo", provider: "openai" },
-  { id: Model.DEEPSEEK_CHAT, name: "DeepSeek Chat", provider: "deepseek" },
+  {
+    id: Model.GPT_4_1,
+    name: "GPT-4.1",
+    provider: "openai",
+    contextWindow: 128000,
+  },
+  {
+    id: Model.GPT_4_1_MINI,
+    name: "GPT-4.1 Mini",
+    provider: "openai",
+    contextWindow: 128000,
+  },
+  {
+    id: Model.GPT_4_1_NANO,
+    name: "GPT-4.1 Nano",
+    provider: "openai",
+    contextWindow: 128000,
+  },
+  {
+    id: Model.GPT_4O,
+    name: "GPT-4o",
+    provider: "openai",
+    contextWindow: 128000,
+  },
+  {
+    id: Model.GPT_4O_MINI,
+    name: "GPT-4o Mini",
+    provider: "openai",
+    contextWindow: 128000,
+  },
+  {
+    id: Model.GPT_4_TURBO,
+    name: "GPT-4 Turbo",
+    provider: "openai",
+    contextWindow: 128000,
+  },
+  {
+    id: Model.GPT_4,
+    name: "GPT-4",
+    provider: "openai",
+    contextWindow: 8192,
+  },
+  {
+    id: Model.GPT_5,
+    name: "GPT-5",
+    provider: "openai",
+    contextWindow: 200000,
+  },
+  {
+    id: Model.GPT_3_5_TURBO,
+    name: "GPT-3.5 Turbo",
+    provider: "openai",
+    contextWindow: 16384,
+  },
+  {
+    id: Model.DEEPSEEK_CHAT,
+    name: "DeepSeek Chat",
+    provider: "deepseek",
+    contextWindow: 64000,
+  },
   {
     id: Model.DEEPSEEK_REASONER,
     name: "DeepSeek Reasoner",
     provider: "deepseek",
+    contextWindow: 64000,
   },
   // Google Gemini models (latest first)
   {
     id: Model.GEMINI_2_5_PRO,
     name: "Gemini 2.5 Pro",
     provider: "google",
+    contextWindow: 2000000,
   },
   {
     id: Model.GEMINI_2_5_FLASH,
     name: "Gemini 2.5 Flash",
     provider: "google",
+    contextWindow: 2000000,
   },
   {
     id: Model.GEMINI_2_0_FLASH_EXP,
     name: "Gemini 2.0 Flash Experimental",
     provider: "google",
+    contextWindow: 1000000,
   },
   {
     id: Model.GEMINI_1_5_PRO_002,
     name: "Gemini 1.5 Pro 002",
     provider: "google",
+    contextWindow: 2000000,
   },
   {
     id: Model.GEMINI_1_5_PRO,
     name: "Gemini 1.5 Pro",
     provider: "google",
+    contextWindow: 2000000,
   },
   {
     id: Model.GEMINI_1_5_FLASH_002,
     name: "Gemini 1.5 Flash 002",
     provider: "google",
+    contextWindow: 1000000,
   },
   {
     id: Model.GEMINI_1_5_FLASH,
     name: "Gemini 1.5 Flash",
     provider: "google",
+    contextWindow: 1000000,
+  },
+  {
+    id: Model.GEMINI_2_5_FLASH_LITE,
+    name: "Gemini 2.5 Flash Lite",
+    provider: "google",
+    contextWindow: 1000000,
+  },
+  {
+    id: Model.GEMINI_1_5_FLASH_8B,
+    name: "Gemini 1.5 Flash 8B",
+    provider: "google",
+    contextWindow: 1000000,
+  },
+  {
+    id: Model.GEMINI_1_5_FLASH_8B_001,
+    name: "Gemini 1.5 Flash 8B 001",
+    provider: "google",
+    contextWindow: 1000000,
+  },
+  // Google Gemma models
+  {
+    id: Model.GEMMA_3_2B,
+    name: "Gemma 3 2B",
+    provider: "google",
+    contextWindow: 8192,
+  },
+  {
+    id: Model.GEMMA_3_9B,
+    name: "Gemma 3 9B",
+    provider: "google",
+    contextWindow: 8192,
+  },
+  {
+    id: Model.GEMMA_3_27B,
+    name: "Gemma 3 27B",
+    provider: "google",
+    contextWindow: 8192,
+  },
+  {
+    id: Model.GEMMA_2_2B,
+    name: "Gemma 2 2B",
+    provider: "google",
+    contextWindow: 8192,
+  },
+  {
+    id: Model.GEMMA_2_9B,
+    name: "Gemma 2 9B",
+    provider: "google",
+    contextWindow: 8192,
+  },
+  {
+    id: Model.GEMMA_2_27B,
+    name: "Gemma 2 27B",
+    provider: "google",
+    contextWindow: 8192,
+  },
+  {
+    id: Model.CODE_GEMMA_2B,
+    name: "CodeGemma 2B",
+    provider: "google",
+    contextWindow: 8192,
+  },
+  {
+    id: Model.CODE_GEMMA_7B,
+    name: "CodeGemma 7B",
+    provider: "google",
+    contextWindow: 8192,
   },
 ];
 
