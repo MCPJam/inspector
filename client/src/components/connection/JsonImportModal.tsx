@@ -22,7 +22,10 @@ export function JsonImportModal({
   onImport,
 }: JsonImportModalProps) {
   const [jsonContent, setJsonContent] = useState("");
-  const [validationResult, setValidationResult] = useState<{ success: boolean; error?: string } | null>(null);
+  const [validationResult, setValidationResult] = useState<{
+    success: boolean;
+    error?: string;
+  } | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -74,10 +77,13 @@ export function JsonImportModal({
       }
 
       onImport(servers);
-      toast.success(`Successfully imported ${servers.length} server${servers.length === 1 ? '' : 's'}`);
+      toast.success(
+        `Successfully imported ${servers.length} server${servers.length === 1 ? "" : "s"}`,
+      );
       handleClose();
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
       toast.error(`Failed to import servers: ${errorMessage}`);
     } finally {
       setIsImporting(false);
@@ -91,7 +97,6 @@ export function JsonImportModal({
     onClose();
   };
 
-
   const getValidationIcon = () => {
     if (!validationResult) return null;
     return validationResult.success ? (
@@ -104,9 +109,13 @@ export function JsonImportModal({
   const getValidationMessage = () => {
     if (!validationResult) return null;
     return validationResult.success ? (
-      <span className="text-green-600 dark:text-green-400">Valid JSON config</span>
+      <span className="text-green-600 dark:text-green-400">
+        Valid JSON config
+      </span>
     ) : (
-      <span className="text-red-600 dark:text-red-400">{validationResult.error}</span>
+      <span className="text-red-600 dark:text-red-400">
+        {validationResult.error}
+      </span>
     );
   };
 
@@ -115,7 +124,8 @@ export function JsonImportModal({
       <DialogContent className="max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
         <DialogHeader className="space-y-2">
           <DialogTitle className="flex text-xl font-semibold">
-            <img src="/mcp.svg" alt="MCP" className="mr-2" /> Import Servers from JSON
+            <img src="/mcp.svg" alt="MCP" className="mr-2" /> Import Servers
+            from JSON
           </DialogTitle>
         </DialogHeader>
 
@@ -167,7 +177,7 @@ export function JsonImportModal({
             <div className="space-y-2">
               <h4 className="text-sm font-medium">Example JSON Format:</h4>
               <pre className="text-xs text-muted-foreground overflow-x-auto">
-{`{
+                {`{
   "mcpServers": {
     "weather": {
       "command": "/path/to/node",
@@ -187,9 +197,7 @@ export function JsonImportModal({
           {validationResult && !validationResult.success && (
             <Alert variant="destructive">
               <AlertCircle className="h-4 w-4" />
-              <AlertDescription>
-                {validationResult.error}
-              </AlertDescription>
+              <AlertDescription>{validationResult.error}</AlertDescription>
             </Alert>
           )}
         </div>

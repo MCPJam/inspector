@@ -20,21 +20,25 @@ export interface JsonConfig {
 export function parseJsonConfig(jsonContent: string): ServerFormData[] {
   try {
     const config: JsonConfig = JSON.parse(jsonContent);
-    
-    if (!config.mcpServers || typeof config.mcpServers !== 'object') {
-      throw new Error('Invalid JSON config: missing or invalid "mcpServers" property');
+
+    if (!config.mcpServers || typeof config.mcpServers !== "object") {
+      throw new Error(
+        'Invalid JSON config: missing or invalid "mcpServers" property',
+      );
     }
 
     const servers: ServerFormData[] = [];
 
-    for (const [serverName, serverConfig] of Object.entries(config.mcpServers)) {
-      if (!serverConfig || typeof serverConfig !== 'object') {
+    for (const [serverName, serverConfig] of Object.entries(
+      config.mcpServers,
+    )) {
+      if (!serverConfig || typeof serverConfig !== "object") {
         console.warn(`Skipping invalid server config for "${serverName}"`);
         continue;
       }
 
       // Determine server type based on config
-      if (serverConfig.type === 'sse' || serverConfig.url) {
+      if (serverConfig.type === "sse" || serverConfig.url) {
         // HTTP/SSE server
         servers.push({
           name: serverName,
@@ -54,7 +58,9 @@ export function parseJsonConfig(jsonContent: string): ServerFormData[] {
           env: serverConfig.env || {},
         });
       } else {
-        console.warn(`Skipping server "${serverName}": missing required command`);
+        console.warn(
+          `Skipping server "${serverName}": missing required command`,
+        );
         continue;
       }
     }
@@ -62,7 +68,7 @@ export function parseJsonConfig(jsonContent: string): ServerFormData[] {
     return servers;
   } catch (error) {
     if (error instanceof SyntaxError) {
-      throw new Error('Invalid JSON format: ' + error.message);
+      throw new Error("Invalid JSON format: " + error.message);
     }
     throw error;
   }
@@ -73,41 +79,56 @@ export function parseJsonConfig(jsonContent: string): ServerFormData[] {
  * @param jsonContent - The JSON string content
  * @returns Validation result with success status and error message
  */
-export function validateJsonConfig(jsonContent: string): { success: boolean; error?: string } {
+export function validateJsonConfig(jsonContent: string): {
+  success: boolean;
+  error?: string;
+} {
   try {
     const config = JSON.parse(jsonContent);
-    
-    if (!config.mcpServers || typeof config.mcpServers !== 'object') {
-      return { success: false, error: 'Missing or invalid "mcpServers" property' };
+
+    if (!config.mcpServers || typeof config.mcpServers !== "object") {
+      return {
+        success: false,
+        error: 'Missing or invalid "mcpServers" property',
+      };
     }
 
     const serverNames = Object.keys(config.mcpServers);
     if (serverNames.length === 0) {
-      return { success: false, error: 'No servers found in "mcpServers" object' };
+      return {
+        success: false,
+        error: 'No servers found in "mcpServers" object',
+      };
     }
 
     // Validate each server config
-    for (const [serverName, serverConfig] of Object.entries(config.mcpServers)) {
-      if (!serverConfig || typeof serverConfig !== 'object') {
-        return { success: false, error: `Invalid server config for "${serverName}"` };
+    for (const [serverName, serverConfig] of Object.entries(
+      config.mcpServers,
+    )) {
+      if (!serverConfig || typeof serverConfig !== "object") {
+        return {
+          success: false,
+          error: `Invalid server config for "${serverName}"`,
+        };
       }
 
       const configObj = serverConfig as JsonServerConfig;
-      const hasCommand = configObj.command && typeof configObj.command === 'string';
-      const hasUrl = configObj.url && typeof configObj.url === 'string';
-      const isSse = configObj.type === 'sse';
+      const hasCommand =
+        configObj.command && typeof configObj.command === "string";
+      const hasUrl = configObj.url && typeof configObj.url === "string";
+      const isSse = configObj.type === "sse";
 
       if (!hasCommand && !hasUrl && !isSse) {
-        return { 
-          success: false, 
-          error: `Server "${serverName}" must have either "command" or "url" property` 
+        return {
+          success: false,
+          error: `Server "${serverName}" must have either "command" or "url" property`,
         };
       }
 
       if (hasCommand && hasUrl) {
-        return { 
-          success: false, 
-          error: `Server "${serverName}" cannot have both "command" and "url" properties` 
+        return {
+          success: false,
+          error: `Server "${serverName}" cannot have both "command" and "url" properties`,
         };
       }
     }
@@ -115,9 +136,11 @@ export function validateJsonConfig(jsonContent: string): { success: boolean; err
     return { success: true };
   } catch (error) {
     if (error instanceof SyntaxError) {
-      return { success: false, error: 'Invalid JSON format: ' + error.message };
+      return { success: false, error: "Invalid JSON format: " + error.message };
     }
-    return { success: false, error: 'Unknown error: ' + (error as Error).message };
+    return {
+      success: false,
+      error: "Unknown error: " + (error as Error).message,
+    };
   }
 }
-
