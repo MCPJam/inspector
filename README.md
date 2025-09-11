@@ -15,7 +15,7 @@
 [![Discord](https://img.shields.io/badge/Discord-Join%20Server-5865F2.svg?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/JEnDtz8X6z)
 
 
-<table align="center">
+<table align="center" border="0" cellpadding="0" cellspacing="0">
   <tr>
     <td align="center">
       <a href="https://handbook.opencoreventures.com/catalyst-sponsorship-program/" target="_blank" rel="noopener noreferrer">
