@@ -20,7 +20,7 @@
     <img src="./client/public/catalyst.png" alt="Catalyst Project" width="150">
   </a>
   <a href="https://resources.github.com/github-secure-open-source-fund/" target="_blank" rel="noopener noreferrer">
-    <img src="./client/public/microsoft_sponsor.png" alt="Microsoft" width="120">
+    <img src="./client/public/microsoft_sponsor.png" alt="Microsoft" width="150">
   </a>
 </div>
 
