@@ -314,26 +314,96 @@ export function useAppState() {
     [appState.servers, logger],
   );
 
-  // Auto-connect to CLI-provided MCP server on mount
+  // CLI config processing guard
+  const cliConfigProcessedRef = useRef<boolean>(false);
+
+  // Auto-connect to CLI-provided MCP server(s) on mount
   useEffect(() => {
-    if (!isLoading) {
-      const windowCliConfig = (window as any).MCP_CLI_CONFIG;
-      if (windowCliConfig && windowCliConfig.command) {
-        logger.info(
-          "Auto-connecting to CLI-provided MCP server (from window)",
-          { cliConfig: windowCliConfig },
-        );
-        const formData: ServerFormData = {
-          name: windowCliConfig.name || "CLI Server",
-          type: "stdio" as const,
-          command: windowCliConfig.command,
-          args: windowCliConfig.args || [],
-        };
-        handleConnect(formData);
-        return;
-      }
+    if (!isLoading && !cliConfigProcessedRef.current) {
+      cliConfigProcessedRef.current = true;
+      // Fetch CLI config from API (both dev and production)
+      fetch("/api/mcp-cli-config")
+        .then((response) => response.json())
+        .then((data) => {
+          const cliConfig = data.config;
+          if (cliConfig) {
+            // Handle multiple servers from config file
+            if (cliConfig.servers && Array.isArray(cliConfig.servers)) {
+              const autoConnectServer = cliConfig.autoConnectServer;
+
+              logger.info(
+                "Processing CLI-provided MCP servers (from config file)",
+                {
+                  serverCount: cliConfig.servers.length,
+                  autoConnectServer: autoConnectServer || "all",
+                  cliConfig: cliConfig,
+                },
+              );
+
+              // Add all servers to the UI, but only auto-connect to filtered ones
+              cliConfig.servers.forEach((server: any) => {
+                const formData: ServerFormData = {
+                  name: server.name || "CLI Server",
+                  type: (server.type === "sse"
+                    ? "http"
+                    : server.type || "stdio") as "stdio" | "http",
+                  command: server.command,
+                  args: server.args || [],
+                  url: server.url,
+                  env: server.env || {},
+                };
+
+                // Always add/update server from CLI config
+                const mcpConfig = toMCPConfig(formData);
+                dispatch({
+                  type: "UPSERT_SERVER",
+                  name: formData.name,
+                  server: {
+                    name: formData.name,
+                    config: mcpConfig,
+                    lastConnectionTime: new Date(),
+                    connectionStatus: "disconnected" as const,
+                    retryCount: 0,
+                    enabled: false, // Start disabled, will enable on successful connection
+                  },
+                });
+
+                // Only auto-connect if matches filter (or no filter)
+                if (!autoConnectServer || server.name === autoConnectServer) {
+                  logger.info("Auto-connecting to server", {
+                    serverName: server.name,
+                  });
+                  handleConnect(formData);
+                } else {
+                  logger.info("Skipping auto-connect for server", {
+                    serverName: server.name,
+                    reason: "filtered out",
+                  });
+                }
+              });
+              return;
+            }
+            // Handle legacy single server mode
+            if (cliConfig.command) {
+              logger.info("Auto-connecting to CLI-provided MCP server", {
+                cliConfig,
+              });
+              const formData: ServerFormData = {
+                name: cliConfig.name || "CLI Server",
+                type: "stdio" as const,
+                command: cliConfig.command,
+                args: cliConfig.args || [],
+                env: cliConfig.env || {},
+              };
+              handleConnect(formData);
+            }
+          }
+        })
+        .catch((error) => {
+          logger.debug("Could not fetch CLI config from API", { error });
+        });
     }
-  }, [isLoading, handleConnect, logger]);
+  }, [isLoading, handleConnect, logger, appState.servers]);
 
   const getValidAccessToken = useCallback(
     async (serverName: string): Promise<string | null> => {
