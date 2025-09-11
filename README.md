@@ -14,6 +14,15 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=for-the-badge)](https://opensource.org/licenses/Apache-2.0)
 [![Discord](https://img.shields.io/badge/Discord-Join%20Server-5865F2.svg?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/JEnDtz8X6z)
 
+
+<a href="https://handbook.opencoreventures.com/catalyst-sponsorship-program/" target="_blank" rel="noopener noreferrer">
+  <img src="./client/public/catalyst.png" alt="Catalyst Project" width="100" style="margin-right: 20px;">
+</a>
+<a href="https://resources.github.com/github-secure-open-source-fund/" target="_blank" rel="noopener noreferrer">
+  <img src="./client/public/microsoft_sponsor.png" alt="Microsoft" width="100">
+</a>
+<br/>
+<br/>
 </div>
 
 A developer tool for testing, debugging Model Context Protocol (MCP) servers. Test whether or not you built your MCP server correctly. The project is open source and fully compliant to the MCP spec.
