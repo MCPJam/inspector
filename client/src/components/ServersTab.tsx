@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
-import { Plus, Database,FileText } from "lucide-react";
+import { Plus, Database, FileText } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { ServerConnectionCard } from "./connection/ServerConnectionCard";
 import { ServerModal } from "./connection/ServerModal";
