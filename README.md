@@ -16,10 +16,10 @@
 
 
 <a href="https://handbook.opencoreventures.com/catalyst-sponsorship-program/" target="_blank" rel="noopener noreferrer">
-  <img src="./client/public/catalyst.png" alt="Catalyst Project" width="150" style="margin-right: 40px;">
+  <img src="./client/public/catalyst.png" alt="Catalyst Project" width="150" style="vertical-align: middle; margin-right: 40px;">
 </a>
 <a href="https://resources.github.com/github-secure-open-source-fund/" target="_blank" rel="noopener noreferrer">
-  <img src="./client/public/microsoft_sponsor.png" alt="Microsoft" width="150">
+  <img src="./client/public/microsoft_sponsor.png" alt="Microsoft" width="120" style="vertical-align: middle;">
 </a>
 <br/>
 <br/>
