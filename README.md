@@ -15,15 +15,16 @@
 [![Discord](https://img.shields.io/badge/Discord-Join%20Server-5865F2.svg?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/JEnDtz8X6z)
 
 
-<p align="center">
-  <a href="https://handbook.opencoreventures.com/catalyst-sponsorship-program/" target="_blank" rel="noopener noreferrer">
-    <img src="./client/public/catalyst.png" alt="Catalyst Project" width="150">
-  </a>
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <a href="https://resources.github.com/github-secure-open-source-fund/" target="_blank" rel="noopener noreferrer">
-    <img src="./client/public/microsoft_sponsor.jpeg" alt="Microsoft" width="150">
-  </a>
-</p>
+<div align="center" style="display: flex; align-items: center; justify-content: center; gap: 40px;">
+
+<a href="https://handbook.opencoreventures.com/catalyst-sponsorship-program/" target="_blank" rel="noopener noreferrer">
+  <img src="./client/public/catalyst.png" alt="Catalyst Project" width="150"">
+</a>
+<a href="https://resources.github.com/github-secure-open-source-fund/" target="_blank" rel="noopener noreferrer">
+  <img src="./client/public/microsoft_sponsor.jpeg" alt="Microsoft" width="150">
+</a>
+
+</div>
 
 <br/>
 <br/>
