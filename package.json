@@ -1,7 +1,7 @@
 {
   "name": "@mcpjam/inspector",
   "productName": "MCPJam Inspector",
-  "version": "0.9.25",
+  "version": "0.9.26",
   "type": "module",
   "description": "MCPJam Inspector",
   "license": "Apache-2.0",
@@ -21,6 +21,7 @@
     "dist",
     "assets/icon.ico",
     "assets/icon.icns",
+    ".env.production",
     "package.json",
     "README.md",
     "LICENSE"
