@@ -56,7 +56,10 @@ const config: ForgeConfig = {
     appCategoryType: "public.app-category.developer-tools",
     executableName: "mcpjam-inspector",
     icon: "assets/icon",
-    extraResource: [resolve(__dirname, "dist", "client")],
+    extraResource: [
+      resolve(__dirname, "dist", "client"),
+      resolve(__dirname, ".env.production")
+    ],
     osxSign: osxSignOptions,
     osxNotarize: osxNotarizeOptions,
   },
