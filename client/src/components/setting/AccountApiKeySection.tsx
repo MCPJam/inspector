@@ -61,6 +61,20 @@ export function AccountApiKeySection() {
       }
   >;
 
+  const regenerateAndGet = useMutation(
+    anyApi.apiKeys.regenerateAndGet,
+  ) as unknown as () => Promise<{
+    apiKey: string;
+    key: {
+      _id: string;
+      prefix: string;
+      name: string;
+      createdAt: number;
+      lastUsedAt: number | null;
+      revokedAt: number | null;
+    };
+  }>;
+
   // We no longer need the primary key details for this simplified UI
 
   const handleGenerateKey = async (forceNew: boolean) => {
@@ -134,8 +148,25 @@ export function AccountApiKeySection() {
             type="button"
             variant={isVisible ? "default" : "default"}
             size="sm"
-            onClick={() => setIsVisible((v) => !v)}
-            disabled={!apiKeyPlaintext}
+            onClick={async () => {
+              if (isVisible) {
+                setIsVisible(false);
+              } else {
+                if (!apiKeyPlaintext && keys && keys.length > 0) {
+                  try {
+                    setIsGenerating(true);
+                    const result = await regenerateAndGet();
+                    setApiKeyPlaintext(result.apiKey);
+                  } catch (err) {
+                    console.error("Failed to get key", err);
+                  } finally {
+                    setIsGenerating(false);
+                  }
+                }
+                setIsVisible(true);
+              }
+            }}
+            disabled={isGenerating || (!apiKeyPlaintext && (!keys || keys.length === 0))}
             title={isVisible ? "Hide key" : "Show key"}
           >
             <Eye className="h-4 w-4" />
@@ -163,7 +194,19 @@ export function AccountApiKeySection() {
             type="button"
             variant="outline"
             size="sm"
-            onClick={() => handleGenerateKey(true)}
+            onClick={async () => {
+              if (!isAuthenticated) return;
+              try {
+                setIsGenerating(true);
+                const result = await regenerateAndGet();
+                setApiKeyPlaintext(result.apiKey);
+                setIsVisible(true);
+              } catch (err) {
+                console.error("Failed to regenerate key", err);
+              } finally {
+                setIsGenerating(false);
+              }
+            }}
             disabled={isGenerating || !isAuthenticated}
             title="Regenerate key"
           >
