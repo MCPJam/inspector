@@ -46,7 +46,6 @@ yarn-error.log*
 .env
 client/.env
 client/.env.*
-.env.production
 
 # next.js
 /.next/
