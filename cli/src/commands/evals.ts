@@ -13,10 +13,12 @@ evalsCommand
   .description("Run tests against MCP servers")
   .requiredOption("-t, --tests <file>", "Path to tests JSON file")
   .requiredOption("-e, --environment <file>", "Path to environment JSON file")
+  .requiredOption("-a, --api-key <key>", "Personal access key")
   .action(async (options) => {
     try {
       Logger.header("v1.0.0");
       console.log(`Running tests from ${options.tests}`);
+
       // Read and parse test file
       const testsContent = await readFile(resolve(options.tests), "utf8");
       const testsData = JSON.parse(testsContent);
@@ -24,6 +26,10 @@ evalsCommand
       // Read and parse environment file
       const envContent = await readFile(resolve(options.environment), "utf8");
       const envData = JSON.parse(envContent);
+
+      // Read API token
+      console.log(`API key: ${options.apiKey}`);
+      const apiKey = options.apiKey;
 
       // Determine Convex base URL
       const url: string =
@@ -40,6 +46,7 @@ evalsCommand
         body: JSON.stringify({
           tests: testsData.tests,
           environment: envData,
+          apiKey: apiKey,
         }),
       });
 
