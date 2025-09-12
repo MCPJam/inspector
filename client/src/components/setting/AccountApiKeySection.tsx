@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
-import { api } from "../../../../convex/_generated/api";
 
 export function AccountApiKeySection() {
   const [apiKeyPlaintext, setApiKeyPlaintext] = useState<string | null>(null);
@@ -15,10 +14,9 @@ export function AccountApiKeySection() {
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const { signIn } = useAuth();
 
-  const anyApi = api as any;
   const keys = useQuery(
-    anyApi.apiKeys.list,
-    isAuthenticated ? {} : undefined,
+    "apiKeys:list" as any,
+    isAuthenticated ? ({} as any) : undefined,
   ) as
     | {
         _id: string;
@@ -29,39 +27,10 @@ export function AccountApiKeySection() {
         revokedAt: number | null;
       }[]
     | undefined;
-  const createOrUpdate = useMutation(
-    anyApi.apiKeys.createOrUpdate,
-  ) as unknown as (args: { name?: string; forceNew?: boolean }) => Promise<
-    | {
-        created: true;
-        updated: false;
-        apiKey: string;
-        key: {
-          _id: string;
-          prefix: string;
-          name: string;
-          createdAt: number;
-          lastUsedAt: number | null;
-          revokedAt: number | null;
-        };
-      }
-    | {
-        created: false;
-        updated: boolean;
-        apiKey: null;
-        key: {
-          _id: string;
-          prefix: string;
-          name: string;
-          createdAt: number;
-          lastUsedAt: number | null;
-          revokedAt: number | null;
-        };
-      }
-  >;
+  
 
   const regenerateAndGet = useMutation(
-    anyApi.apiKeys.regenerateAndGet,
+    "apiKeys:regenerateAndGet" as any,
   ) as unknown as () => Promise<{
     apiKey: string;
     key: {
@@ -76,19 +45,7 @@ export function AccountApiKeySection() {
 
   // We no longer need the primary key details for this simplified UI
 
-  const handleGenerateKey = async (forceNew: boolean) => {
-    if (!isAuthenticated) return;
-    try {
-      setIsGenerating(true);
-      const result = await createOrUpdate({ forceNew });
-      setApiKeyPlaintext(result.apiKey);
-      setIsVisible(true);
-    } catch (err) {
-      console.error("Failed to generate key", err);
-    } finally {
-      setIsGenerating(false);
-    }
-  };
+  
 
   const handleCopyPlaintext = async () => {
     if (!apiKeyPlaintext) return;
