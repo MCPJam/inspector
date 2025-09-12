@@ -179,7 +179,6 @@ export function AccountApiKeySection() {
             variant="outline"
             size="sm"
             onClick={handleCopyPlaintext}
-            disabled={!apiKeyPlaintext || !isVisible}
           >
             {isCopied ? (
               <>
