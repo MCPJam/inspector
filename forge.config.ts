@@ -58,7 +58,7 @@ const config: ForgeConfig = {
     icon: "assets/icon",
     extraResource: [
       resolve(__dirname, "dist", "client"),
-      resolve(__dirname, ".env.production")
+      resolve(__dirname, ".env.production"),
     ],
     osxSign: osxSignOptions,
     osxNotarize: osxNotarizeOptions,

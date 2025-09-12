@@ -31,9 +31,7 @@ export function AccountApiKeySection() {
     | undefined;
   const createOrUpdate = useMutation(
     anyApi.apiKeys.createOrUpdate,
-  ) as unknown as (
-    args: { name?: string; forceNew?: boolean },
-  ) => Promise<
+  ) as unknown as (args: { name?: string; forceNew?: boolean }) => Promise<
     | {
         created: true;
         updated: false;
@@ -169,7 +167,9 @@ export function AccountApiKeySection() {
                 setIsVisible(true);
               }
             }}
-            disabled={isGenerating || (!apiKeyPlaintext && (!keys || keys.length === 0))}
+            disabled={
+              isGenerating || (!apiKeyPlaintext && (!keys || keys.length === 0))
+            }
             title={isVisible ? "Hide key" : "Show key"}
           >
             <Eye className="h-4 w-4" />
@@ -219,5 +219,3 @@ export function AccountApiKeySection() {
     </div>
   );
 }
-
-
