@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useConvexAuth } from "convex/react";
-
+import { useConvexAuth, useMutation } from "convex/react";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
@@ -31,6 +30,7 @@ import "./index.css";
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
   const { isAuthenticated } = useConvexAuth();
+  const ensureUser = useMutation("users:ensureUser" as any);
 
   // Set up Electron OAuth callback handling
   useElectronOAuth();
@@ -62,15 +62,10 @@ export default function App() {
   // Ensure a user record exists in Convex when authenticated
   useEffect(() => {
     if (!isAuthenticated) return;
-    const abort = new AbortController();
-    fetch(`/backend/ensureUser`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: abort.signal,
-      credentials: "include",
-    }).catch(() => {});
-    return () => abort.abort();
-  }, [isAuthenticated]);
+    ensureUser().catch((error) => {
+      console.error("Failed to ensure user:", error);
+    });
+  }, [isAuthenticated, ensureUser]);
 
   const handleNavigate = (section: string) => {
     setActiveTab(section);
