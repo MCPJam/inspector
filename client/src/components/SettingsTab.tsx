@@ -4,6 +4,8 @@ import { useState } from "react";
 import { ProvidersTable } from "./setting/ProvidersTable";
 import { ProviderConfigDialog } from "./setting/ProviderConfigDialog";
 import { OllamaConfigDialog } from "./setting/OllamaConfigDialog";
+import { Button } from "@/components/ui/button";
+import { AccountApiKeySection } from "./setting/AccountApiKeySection";
 
 interface ProviderConfig {
   id: string;
@@ -139,6 +141,8 @@ export function SettingsTab() {
         <Settings className="h-6 w-6" />
         <h1 className="text-2xl font-bold">Settings</h1>
       </div>
+
+      <AccountApiKeySection />
 
       <div className="space-y-4">
         <div>
