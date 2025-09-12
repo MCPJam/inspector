@@ -55,6 +55,9 @@ export function ServerModal({
   const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>(
     [],
   );
+  const [customHeaders, setCustomHeaders] = useState<
+    Array<{ key: string; value: string }>
+  >([]);
 
   // Convert ServerWithName to ServerFormData format
   const convertServerConfig = (server: ServerWithName): ServerFormData => {
@@ -143,6 +146,15 @@ export function ServerModal({
       } else {
         // HTTP server
         const headers = formData.headers || {};
+        
+        // Convert headers object to key-value pairs (excluding Authorization header)
+        const headerEntries = Object.entries(headers)
+          .filter(([key]) => key.toLowerCase() !== "authorization")
+          .map(([key, value]) => ({
+            key,
+            value: String(value),
+          }));
+        setCustomHeaders(headerEntries);
         const authHeader = headers.Authorization;
         const hasBearerToken = authHeader?.startsWith("Bearer ");
         const hasOAuth = formData.useOAuth;
@@ -255,18 +267,26 @@ export function ServerModal({
       }
 
       if (serverFormData.type === "http") {
+        // Add custom headers for HTTP
+        const customHeadersObj = customHeaders.reduce(
+          (acc, { key, value }) => {
+            if (key && value) acc[key] = value;
+            return acc;
+          },
+          {} as Record<string, string>,
+        );
         if (authType === "none") {
           finalFormData = {
             ...finalFormData,
             useOAuth: false,
-            headers: mode === "edit" ? {} : finalFormData.headers, // Clear headers for edit, preserve for add
+            headers: customHeadersObj, // Use custom headers only
           };
           delete (finalFormData as any).oauthScopes;
         } else if (authType === "bearer" && bearerToken) {
           finalFormData = {
             ...finalFormData,
             headers: {
-              ...finalFormData.headers,
+              ...customHeadersObj,
               Authorization: `Bearer ${bearerToken}`,
             },
             useOAuth: false,
@@ -286,7 +306,7 @@ export function ServerModal({
             clientSecret: useCustomClientId
               ? clientSecret.trim() || undefined
               : undefined,
-            headers: mode === "edit" ? {} : finalFormData.headers, // Clear headers for edit, preserve for add
+            headers: customHeadersObj, // Use custom headers for OAuth too
           };
           if (scopes.length > 0) {
             (finalFormData as any).oauthScopes = scopes;
@@ -335,6 +355,7 @@ export function ServerModal({
     setClientIdError(null);
     setClientSecretError(null);
     setEnvVars([]);
+    setCustomHeaders([]);
   };
 
   const addEnvVar = () => {
@@ -353,6 +374,24 @@ export function ServerModal({
 
   const removeEnvVar = (index: number) => {
     setEnvVars(envVars.filter((_, i) => i !== index));
+  };
+
+  const addCustomHeader = () => {
+    setCustomHeaders([...customHeaders, { key: "", value: "" }]);
+  };
+
+  const updateCustomHeader = (
+    index: number,
+    field: "key" | "value",
+    value: string,
+  ) => {
+    const updated = [...customHeaders];
+    updated[index][field] = value;
+    setCustomHeaders(updated);
+  };
+
+  const removeCustomHeader = (index: number) => {
+    setCustomHeaders(customHeaders.filter((_, i) => i !== index));
   };
 
   const dialogTitle = mode === "add" ? "Add MCP Server" : "Edit MCP Server";
@@ -657,6 +696,60 @@ export function ServerModal({
                   )}
                 </div>
               )}
+
+              {/* Custom Headers for HTTP */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-sm font-medium text-foreground">
+                    Custom Headers
+                  </label>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={addCustomHeader}
+                    className="text-xs"
+                  >
+                    Add Header
+                  </Button>
+                </div>
+                {customHeaders.length > 0 && (
+                  <div className="space-y-2 max-h-32 overflow-y-auto">
+                    {customHeaders.map((header, index) => (
+                      <div key={index} className="flex gap-2 items-center">
+                        <Input
+                          value={header.key}
+                          onChange={(e) =>
+                            updateCustomHeader(index, "key", e.target.value)
+                          }
+                          placeholder="Header-Name"
+                          className="flex-1 text-xs"
+                        />
+                        <Input
+                          value={header.value}
+                          onChange={(e) =>
+                            updateCustomHeader(index, "value", e.target.value)
+                          }
+                          placeholder="header-value"
+                          className="flex-1 text-xs"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => removeCustomHeader(index)}
+                          className="px-2 text-xs"
+                        >
+                          ×
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  Add custom HTTP headers for your MCP server connection (e.g. API-Key, X-Custom-Header)
+                </p>
+              </div>
             </div>
           )}
 
