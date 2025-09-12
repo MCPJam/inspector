@@ -1,5 +1,9 @@
+import { config } from "dotenv";
 import { Command } from "commander";
 import { evalsCommand } from "./commands/evals.js";
+
+// Load environment variables from .env file
+config();
 
 const program = new Command();
 
