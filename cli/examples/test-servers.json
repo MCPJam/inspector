@@ -1,25 +1,18 @@
 {
   "tests": [
     {
-      "title": "Add 1 plus 2 equals 3",
-      "prompt": "Add 1 plus 2",
-      "expectedTools": ["add"],
-      "model": { "id": "claude-3-5-sonnet-20241022", "provider": "anthropic" },
-      "selectedServers": ["server-everything"]
-    },
-    {
-      "title": "Create a new repository",
-      "prompt": "Create a new repository called 'test-repo'",
-      "expectedTools": ["create_repository"],
-      "model": { "id": "claude-3-5-sonnet-20241022", "provider": "anthropic" },
-      "selectedServers": ["github-mcp"]
-    },
-    {
-      "title": "Add 20 and 30 via tool call and create a new repository with the result",
-      "prompt": "Add 20 and 30 via tool call and create a new repository with the result",
-      "expectedTools": ["add", "create_repository"],
-      "model": { "id": "claude-3-5-sonnet-20241022", "provider": "anthropic" },
-      "selectedServers": ["github-mcp"]
+      "title": "Test workspaces",
+      "query": "What Asana workspace am I in?",
+      "runs": 30,
+      "model": "claude-sonnet-3.5",
+      "expectedToolCalls": ["asana_list_workspaces"],
+      "judgeRequirement": "The workspace was successfully returned",
+      "advancedConfig": {
+        "instructions": "You are a helpful weather assistant",
+        "temperature": 0.1,
+        "maxSteps": 5,
+        "toolChoice": "auto"
+      }
     }
   ]
 }

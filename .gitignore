@@ -19,6 +19,7 @@
 /dist
 cli/build/
 cli/dist/
+cli-reference/
 client/dist/
 server/build/
 client/node_modules/
@@ -44,6 +45,7 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env
+.env.development
 client/.env
 client/.env.*
 
