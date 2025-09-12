@@ -3,6 +3,7 @@ import { MessageCircle } from "lucide-react";
 import { useChat } from "@/hooks/use-chat";
 import { Message } from "./chat/message";
 import { ChatInput } from "./chat/chat-input";
+import { ContextWindowProgress } from "./chat/context-window-progress";
 import { ElicitationDialog } from "./ElicitationDialog";
 import { TooltipProvider } from "./ui/tooltip";
 import { motion, AnimatePresence } from "framer-motion";
@@ -43,6 +44,7 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
     elicitationRequest,
     elicitationLoading,
     handleElicitationResponse,
+    tokenCount,
   } = useChat({
     systemPrompt: systemPromptState,
     temperature: temperatureState,
@@ -143,6 +145,21 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
               temperature={temperatureState}
               onTemperatureChange={setTemperatureState}
             />
+            {/* Context Window Progress */}
+            {model && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.4 }}
+                className="mt-3"
+              >
+                <ContextWindowProgress
+                  tokenCount={tokenCount}
+                  model={model}
+                  showDetails={true}
+                />
+              </motion.div>
+            )}
             {/* System prompt editor shown inline above input */}
             {availableModels.length === 0 && (
               <motion.p
@@ -248,6 +265,16 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
         {/* Fixed Bottom Input - Absolute positioned */}
         <div className="absolute bottom-0 left-0 right-0 border-t border-border/50 bg-background/80 backdrop-blur-sm">
           <div className="max-w-4xl mx-auto p-4">
+            {/* Context Window Progress */}
+            {model && (
+              <div className="mb-3">
+                <ContextWindowProgress
+                  tokenCount={tokenCount}
+                  model={model}
+                  showDetails={true}
+                />
+              </div>
+            )}
             <ChatInput
               value={input}
               onChange={setInput}
