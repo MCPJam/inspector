@@ -1,7 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { useConvexAuth, useMutation } from "convex/react";
-import { api } from "../../convex/_generated/api";
-
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
@@ -32,7 +30,7 @@ import "./index.css";
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
   const { isAuthenticated } = useConvexAuth();
-  const ensureUser = useMutation(api.users.ensureUser);
+  const ensureUser = useMutation("users:ensureUser" as any);
 
   // Set up Electron OAuth callback handling
   useElectronOAuth();
