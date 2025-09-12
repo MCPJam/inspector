@@ -27,7 +27,6 @@ export function AccountApiKeySection() {
         revokedAt: number | null;
       }[]
     | undefined;
-  
 
   const regenerateAndGet = useMutation(
     "apiKeys:regenerateAndGet" as any,
@@ -44,8 +43,6 @@ export function AccountApiKeySection() {
   }>;
 
   // We no longer need the primary key details for this simplified UI
-
-  
 
   const handleCopyPlaintext = async () => {
     if (!apiKeyPlaintext) return;
