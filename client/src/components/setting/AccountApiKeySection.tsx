@@ -141,7 +141,7 @@ export function AccountApiKeySection() {
           <Input
             readOnly
             value={isVisible && apiKeyPlaintext ? apiKeyPlaintext : ""}
-            placeholder="Hidden — click the eye to display"
+            placeholder="************************"
             className="font-mono"
           />
           <Button
@@ -176,19 +176,9 @@ export function AccountApiKeySection() {
             variant="outline"
             size="sm"
             onClick={handleCopyPlaintext}
-            disabled={!apiKeyPlaintext || !isVisible}
           >
             <Copy className="h-4 w-4" />
             <span>Copy</span>
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => setIsVisible(false)}
-            disabled={!apiKeyPlaintext || !isVisible}
-          >
-            Hide
           </Button>
           <Button
             type="button"
