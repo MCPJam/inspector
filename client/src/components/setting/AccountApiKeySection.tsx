@@ -1,4 +1,4 @@
-import { KeyRound, Copy, RefreshCw, Eye } from "lucide-react";
+import { KeyRound, Copy, RefreshCw, Eye, Check } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,6 +10,7 @@ export function AccountApiKeySection() {
   const [apiKeyPlaintext, setApiKeyPlaintext] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
+  const [isCopied, setIsCopied] = useState(false);
 
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const { signIn } = useAuth();
@@ -95,6 +96,8 @@ export function AccountApiKeySection() {
     if (!apiKeyPlaintext) return;
     try {
       await navigator.clipboard.writeText(apiKeyPlaintext);
+      setIsCopied(true);
+      setTimeout(() => setIsCopied(false), 2000);
     } catch (err) {
       console.error("Clipboard error", err);
     }
@@ -176,9 +179,19 @@ export function AccountApiKeySection() {
             variant="outline"
             size="sm"
             onClick={handleCopyPlaintext}
+            disabled={!apiKeyPlaintext || !isVisible}
           >
-            <Copy className="h-4 w-4" />
-            <span>Copy</span>
+            {isCopied ? (
+              <>
+                <Check className="h-4 w-4" />
+                <span>Copied!</span>
+              </>
+            ) : (
+              <>
+                <Copy className="h-4 w-4" />
+                <span>Copy</span>
+              </>
+            )}
           </Button>
           <Button
             type="button"
