@@ -1,4 +1,4 @@
-import { KeyRound, Copy, RefreshCw } from "lucide-react";
+import { KeyRound, Copy, RefreshCw, Eye } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,6 +9,7 @@ import { api } from "../../../../convex/_generated/api";
 export function AccountApiKeySection() {
   const [apiKeyPlaintext, setApiKeyPlaintext] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isVisible, setIsVisible] = useState(false);
 
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const { signIn } = useAuth();
@@ -60,7 +61,7 @@ export function AccountApiKeySection() {
       }
   >;
 
-  const primaryKey = (keys ?? []).find((k) => !k.revokedAt) ?? null;
+  // We no longer need the primary key details for this simplified UI
 
   const handleGenerateKey = async (forceNew: boolean) => {
     if (!isAuthenticated) return;
@@ -68,6 +69,7 @@ export function AccountApiKeySection() {
       setIsGenerating(true);
       const result = await createOrUpdate({ forceNew });
       setApiKeyPlaintext(result.apiKey);
+      setIsVisible(true);
     } catch (err) {
       console.error("Failed to generate key", err);
     } finally {
@@ -97,7 +99,7 @@ export function AccountApiKeySection() {
       <div className="space-y-3 rounded-md border p-4">
         <div className="flex items-center gap-2">
           <KeyRound className="h-5 w-5" />
-          <h3 className="text-lg font-semibold">Account API Key</h3>
+          <h3 className="text-lg font-semibold">MCPJam API Key</h3>
         </div>
         <p className="text-sm text-muted-foreground">
           Sign in to view and manage your API key.
@@ -113,82 +115,62 @@ export function AccountApiKeySection() {
     <div className="space-y-4">
       <div className="flex items-center gap-2">
         <KeyRound className="h-5 w-5" />
-        <h3 className="text-lg font-semibold">Account API Key</h3>
+        <h3 className="text-lg font-semibold">MCPJam API Key</h3>
       </div>
       <p className="text-muted-foreground text-sm">
-        Generate and manage your personal API key for authenticated requests.
-        The full key is shown only once when created.
+        Manage your personal API key. You can show or regenerate it anytime.
       </p>
 
-      {primaryKey ? (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div className="space-y-1">
-            <div className="text-sm text-muted-foreground">Key prefix</div>
-            <div className="font-mono text-sm">{primaryKey.prefix}</div>
-          </div>
-          <div className="space-y-1">
-            <div className="text-sm text-muted-foreground">Created</div>
-            <div className="text-sm">
-              {new Date(primaryKey.createdAt).toLocaleString()}
-            </div>
-          </div>
-          <div className="space-y-1">
-            <div className="text-sm text-muted-foreground">Last used</div>
-            <div className="text-sm">
-              {primaryKey.lastUsedAt
-                ? new Date(primaryKey.lastUsedAt).toLocaleString()
-                : "Never"}
-            </div>
-          </div>
-          <div className="flex items-end justify-start">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => handleGenerateKey(true)}
-              disabled={isGenerating || !isAuthenticated}
-            >
-              <RefreshCw className="h-4 w-4" />
-              <span>Regenerate key</span>
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <div className="flex items-center gap-3">
+      <div className="space-y-2 rounded-md border p-3">
+        <div className="text-sm font-medium">Your API key</div>
+        <div className="flex items-center gap-2">
+          <Input
+            readOnly
+            value={isVisible && apiKeyPlaintext ? apiKeyPlaintext : ""}
+            placeholder="Hidden — click the eye to display"
+            className="font-mono"
+          />
           <Button
             type="button"
+            variant={isVisible ? "default" : "default"}
+            size="sm"
+            onClick={() => setIsVisible((v) => !v)}
+            disabled={!apiKeyPlaintext}
+            title={isVisible ? "Hide key" : "Show key"}
+          >
+            <Eye className="h-4 w-4" />
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleCopyPlaintext}
+            disabled={!apiKeyPlaintext || !isVisible}
+          >
+            <Copy className="h-4 w-4" />
+            <span>Copy</span>
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setIsVisible(false)}
+            disabled={!apiKeyPlaintext || !isVisible}
+          >
+            Hide
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
             onClick={() => handleGenerateKey(true)}
             disabled={isGenerating || !isAuthenticated}
+            title="Regenerate key"
           >
-            <KeyRound className="h-4 w-4" />
-            <span>Create API Key</span>
+            <RefreshCw className="h-4 w-4" />
           </Button>
-          <span className="text-sm text-muted-foreground">
-            You don't have an active key yet.
-          </span>
         </div>
-      )}
-
-      {apiKeyPlaintext ? (
-        <div className="space-y-2 rounded-md border p-3">
-          <div className="text-sm font-medium">Your new API key (shown once)</div>
-          <div className="flex items-center gap-2">
-            <Input readOnly value={apiKeyPlaintext} className="font-mono" />
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={handleCopyPlaintext}
-            >
-              <Copy className="h-4 w-4" />
-              <span>Copy</span>
-            </Button>
-          </div>
-          <div className="text-xs text-muted-foreground">
-            Store this key securely. You won't be able to see it again.
-          </div>
-        </div>
-      ) : null}
+      </div>
     </div>
   );
 }
