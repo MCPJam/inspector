@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { cn } from "@/lib/chat-utils";
 import { Attachment } from "@/lib/chat-types";
 import { Button } from "../ui/button";
@@ -7,9 +7,11 @@ import { ArrowUp, Paperclip, Square } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowDown } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
-import { Model, ModelDefinition } from "@/shared/types.js";
+import { ModelDefinition } from "@/shared/types.js";
 import { ModelSelector } from "./model-selector";
 import { SystemPromptSelector } from "./system-prompt-selector";
+import { TokenCount } from "@/hooks/use-chat";
+import { ContextWindowProgressCompact } from "../ui/context-window-progress";
 
 interface ChatInputProps {
   value: string;
@@ -35,6 +37,9 @@ interface ChatInputProps {
   // Temperature props
   temperature?: number;
   onTemperatureChange?: (temperature: number) => void;
+  // Token counting props
+  tokenCount?: TokenCount | null;
+  getInputTokenCount?: (inputText: string) => TokenCount | null;
 }
 
 export function ChatInput({
@@ -55,11 +60,30 @@ export function ChatInput({
   onSystemPromptChange,
   temperature,
   onTemperatureChange,
+  tokenCount,
+  getInputTokenCount,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [uploadQueue, setUploadQueue] = useState<string[]>([]);
+  const [debouncedValue, setDebouncedValue] = useState(value);
+
+  // Debounce input for token counting (500ms delay for better performance)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedValue(value);
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [value]);
+
+  // Real-time token counting for current input (debounced and optimized)
+  const currentInputTokenCount = useMemo(() => {
+    // Only calculate for meaningful input lengths (> 10 characters) to avoid unnecessary calculations
+    if (!getInputTokenCount || !debouncedValue || debouncedValue.length < 10) return tokenCount;
+    return getInputTokenCount(debouncedValue);
+  }, [getInputTokenCount, debouncedValue, tokenCount]);
 
   // Get current model data
   const currentModelData = currentModel;
@@ -321,6 +345,15 @@ export function ChatInput({
             disabled={disabled}
             isLoading={isLoading}
           />
+        )}
+        {/* Context Window Progress */}
+        {currentInputTokenCount && currentModelData && (
+          <div className="flex-1 flex justify-end">
+            <ContextWindowProgressCompact 
+              tokenCount={currentInputTokenCount}
+              className="min-w-0"
+            />
+          </div>
         )}
       </div>
     </div>

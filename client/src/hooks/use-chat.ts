@@ -9,6 +9,13 @@ import {
 } from "@/lib/ollama-utils";
 import { SSEvent } from "@/shared/sse";
 import { parseSSEStream } from "@/lib/sse";
+import { 
+  calculateTokenUsage, 
+  countTokensInInput,
+  type TokenCount
+} from "@/lib/token-counter";
+
+export type { TokenCount };
 
 interface ElicitationRequest {
   requestId: string;
@@ -25,6 +32,7 @@ interface UseChatOptions {
   onMessageReceived?: (message: ChatMessage) => void;
   onError?: (error: string) => void;
   onModelChange?: (model: ModelDefinition) => void;
+  enableTokenCounting?: boolean; // New option to disable token counting for performance
 }
 
 export function useChat(options: UseChatOptions = {}) {
@@ -38,6 +46,7 @@ export function useChat(options: UseChatOptions = {}) {
     onMessageReceived,
     onError,
     onModelChange,
+    enableTokenCounting = true, // Default to enabled
   } = options;
 
   const [state, setState] = useState<ChatState>({
@@ -577,6 +586,19 @@ export function useChat(options: UseChatOptions = {}) {
     };
   }, []);
 
+  // Token counting - memoized with proper dependencies and conditional calculation
+  const tokenCount = useMemo(() => {
+    // Only calculate if we have a model and token counting is enabled
+    if (!model || !enableTokenCounting) return null;
+    return calculateTokenUsage(state.messages, systemPrompt || "", model);
+  }, [state.messages, systemPrompt, model?.id, enableTokenCounting]);
+
+  const getInputTokenCount = useCallback((inputText: string) => {
+    // Only calculate if we have a model, token counting is enabled, and non-empty input
+    if (!model || !enableTokenCounting || !inputText.trim()) return tokenCount;
+    return countTokensInInput(inputText, state.messages, systemPrompt || "", model);
+  }, [state.messages, systemPrompt, model?.id, tokenCount, enableTokenCounting]);
+
   return {
     // State
     messages: state.messages,
@@ -591,6 +613,10 @@ export function useChat(options: UseChatOptions = {}) {
     hasValidApiKey: Boolean(currentApiKey),
     elicitationRequest,
     elicitationLoading,
+    
+    // Token counting
+    tokenCount,
+    getInputTokenCount,
 
     // Actions
     sendMessage,

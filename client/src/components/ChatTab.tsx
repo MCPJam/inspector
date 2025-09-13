@@ -43,6 +43,8 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
     elicitationRequest,
     elicitationLoading,
     handleElicitationResponse,
+    tokenCount,
+    getInputTokenCount,
   } = useChat({
     systemPrompt: systemPromptState,
     temperature: temperatureState,
@@ -142,6 +144,8 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
               onSystemPromptChange={setSystemPromptState}
               temperature={temperatureState}
               onTemperatureChange={setTemperatureState}
+              tokenCount={tokenCount}
+              getInputTokenCount={getInputTokenCount}
             />
             {/* System prompt editor shown inline above input */}
             {availableModels.length === 0 && (
@@ -266,6 +270,8 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
               onSystemPromptChange={setSystemPromptState}
               temperature={temperatureState}
               onTemperatureChange={setTemperatureState}
+              tokenCount={tokenCount}
+              getInputTokenCount={getInputTokenCount}
             />
           </div>
         </div>
