@@ -147,6 +147,7 @@ async def find_recipe(ctx: Context) -> str:
 
         # Step 3: Find and return matching recipe
         # ... recipe matching and formatting logic
+        # (you can find this code in recipe_finder.py in this directory)
 
     except Exception as e:
         return f"Oops! Something went wrong: {str(e)}"
@@ -166,7 +167,7 @@ if __name__ == "__main__":
 Make sure your in your venv. If not, run `.source .venv/bin/activate`. Then run the python script with `python3 recipe.py`. You should see your server spin up with SSE transport.
 
 ```
-git:(main) python3 recipe.py
+git:(main) python3 recipe_finder.py
 INFO:     Started server process [64839]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
