@@ -14,6 +14,17 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=for-the-badge)](https://opensource.org/licenses/Apache-2.0)
 [![Discord](https://img.shields.io/badge/Discord-Join%20Server-5865F2.svg?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/JEnDtz8X6z)
 
+<p align="center"> 
+  <a href="https://handbook.opencoreventures.com/catalyst-sponsorship-program/" target="_blank" rel="noopener noreferrer">
+    <img src="./client/public/catalyst.png" alt="Catalyst Project" width="150" hspace="20">
+  </a>
+  <a href="https://resources.github.com/github-secure-open-source-fund/" target="_blank" rel="noopener noreferrer">
+    <img src="./client/public/microsoft_sponsor.jpeg" alt="Microsoft" width="190" height=70 hspace="20">
+  </a>
+</p>
+
+<br/>
+<br/>
 </div>
 
 A developer tool for testing, debugging Model Context Protocol (MCP) servers. Test whether or not you built your MCP server correctly. The project is open source and fully compliant to the MCP spec.
@@ -79,6 +90,14 @@ docker run -d -p 3001:3001 --name mcp-inspector mcpjam/mcp-inspector:latest
 The application will be available at `http://localhost:3001`.
 
 ## Connecting to MCP servers
+
+### mcp.json
+
+You can import your `mcp.json` MCP server configs from Claude Desktop and Cursor with the command:
+
+```
+npx @mcpjam/inspector@latest --config mcp.json
+```
 
 ### STDIO
 

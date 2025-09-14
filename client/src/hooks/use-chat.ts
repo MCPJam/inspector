@@ -3,7 +3,10 @@ import { ChatMessage, ChatState, Attachment } from "@/lib/chat-types";
 import { createMessage } from "@/lib/chat-utils";
 import { Model, ModelDefinition, SUPPORTED_MODELS } from "@/shared/types.js";
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
-import { detectOllamaModels } from "@/lib/ollama-utils";
+import {
+  detectOllamaModels,
+  detectOllamaToolCapableModels,
+} from "@/lib/ollama-utils";
 import { SSEvent } from "@/shared/sse";
 import { parseSSEStream } from "@/lib/sse";
 
@@ -63,13 +66,24 @@ export function useChat(options: UseChatOptions = {}) {
         await detectOllamaModels(getOllamaBaseUrl());
       setIsOllamaRunning(isRunning);
 
-      // Convert string model names to ModelDefinition objects
+      const toolCapableModels = isRunning
+        ? await detectOllamaToolCapableModels(getOllamaBaseUrl())
+        : [];
+      const toolCapableSet = new Set(toolCapableModels);
+
       const ollamaModelDefinitions: ModelDefinition[] = availableModels.map(
-        (modelName) => ({
-          id: modelName,
-          name: modelName,
-          provider: "ollama" as const,
-        }),
+        (modelName) => {
+          const supportsTools = toolCapableSet.has(modelName);
+          return {
+            id: modelName,
+            name: modelName,
+            provider: "ollama" as const,
+            disabled: !supportsTools,
+            disabledReason: supportsTools
+              ? undefined
+              : "Model does not support tool calling",
+          };
+        },
       );
 
       setOllamaModels(ollamaModelDefinitions);

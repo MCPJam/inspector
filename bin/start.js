@@ -5,7 +5,7 @@ import { spawn } from "child_process";
 import { fileURLToPath } from "url";
 import { createServer } from "net";
 import { execSync } from "child_process";
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -336,6 +336,8 @@ async function main() {
   let ollamaModel = null;
   let mcpServerCommand = null;
   let mcpServerArgs = [];
+  let mcpConfigFile = null;
+  let mcpServerName = null;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -354,6 +356,16 @@ async function main() {
       const port = args[++i];
       envVars.PORT = port;
       envVars.BASE_URL = `http://localhost:${port}`;
+      continue;
+    }
+
+    if (parsingFlags && arg === "--config" && i + 1 < args.length) {
+      mcpConfigFile = args[++i];
+      continue;
+    }
+
+    if (parsingFlags && arg === "--server" && i + 1 < args.length) {
+      mcpServerName = args[++i];
       continue;
     }
 
@@ -380,8 +392,59 @@ async function main() {
     }
   }
 
-  // Handle MCP server configuration if provided
-  if (mcpServerCommand) {
+  // Handle MCP config file if provided
+  if (mcpConfigFile) {
+    logStep("MCP Server", `Configuring auto-connection to: ${mcpConfigFile}`);
+
+    try {
+      const configPath = resolve(mcpConfigFile);
+      if (!existsSync(configPath)) {
+        logError(`MCP config file not found: ${configPath}`);
+        process.exit(1);
+      }
+
+      const configContent = readFileSync(configPath, "utf-8");
+      const configData = JSON.parse(configContent);
+
+      if (
+        !configData.mcpServers ||
+        Object.keys(configData.mcpServers).length === 0
+      ) {
+        logWarning("No MCP servers found in config file");
+      } else {
+        // If --server flag is provided, validate it exists but don't filter config
+        if (mcpServerName) {
+          if (!configData.mcpServers[mcpServerName]) {
+            logError(
+              `Server '${mcpServerName}' not found in config file. Available servers: ${Object.keys(configData.mcpServers).join(", ")}`,
+            );
+            process.exit(1);
+          }
+          logInfo(`Auto-connecting only to server: ${mcpServerName}`);
+          // Pass the server filter separately
+          envVars.MCP_AUTO_CONNECT_SERVER = mcpServerName;
+        }
+
+        // Pass the full config (all servers will show in UI)
+        envVars.MCP_CONFIG_DATA = JSON.stringify(configData);
+        const serverCount = Object.keys(configData.mcpServers).length;
+        const serverNames = Object.keys(configData.mcpServers).join(", ");
+        logSuccess(
+          `MCP config loaded with ${serverCount} server(s) - showing all in UI`,
+        );
+        logInfo(`Servers: ${serverNames}`);
+        if (mcpServerName) {
+          logInfo(`Will auto-connect only to: ${mcpServerName}`);
+        } else {
+          logInfo(`Will auto-connect to all servers`);
+        }
+      }
+    } catch (error) {
+      logError(`Failed to read MCP config file: ${error.message}`);
+      process.exit(1);
+    }
+  } else if (mcpServerCommand) {
+    // Handle single MCP server command if provided (legacy mode)
     logStep(
       "MCP Server",
       `Configuring auto-connection to: ${mcpServerCommand} ${mcpServerArgs.join(" ")}`,
@@ -429,8 +492,8 @@ async function main() {
   // Apply parsed environment variables to process.env first
   Object.assign(process.env, envVars);
 
-  // Port discovery and configuration
-  const requestedPort = parseInt(process.env.PORT ?? "6274", 10);
+  // Port configuration (fixed default to 3000)
+  const requestedPort = parseInt(process.env.PORT ?? "3000", 10);
   let PORT;
 
   try {
@@ -450,18 +513,16 @@ async function main() {
         throw new Error(`Port ${requestedPort} is already in use`);
       }
     } else {
-      // Dynamic port discovery
-      logInfo("No specific port requested, using dynamic port discovery");
+      // Fixed port policy: use default port 3000 and fail fast if unavailable
+      logInfo("No specific port requested, using fixed default port 3000");
       if (await isPortAvailable(requestedPort)) {
         PORT = requestedPort.toString();
         logSuccess(`Default port ${requestedPort} is available`);
       } else {
-        logWarning(
-          `Default port ${requestedPort} is in use, searching for next available port...`,
+        logError(
+          `Default port ${requestedPort} is already in use. Please free the port`,
         );
-        const availablePort = await findAvailablePort(requestedPort + 1);
-        PORT = availablePort.toString();
-        logSuccess(`Found available port: ${availablePort}`);
+        throw new Error(`Port ${requestedPort} is already in use`);
       }
     }
 

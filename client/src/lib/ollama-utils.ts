@@ -16,6 +16,10 @@ interface OllamaModelsResponse {
   models: OllamaModel[];
 }
 
+interface OllamaShowResponse {
+  capabilities: string[];
+}
+
 export class OllamaClient {
   private baseUrl: string;
 
@@ -78,6 +82,33 @@ export class OllamaClient {
       ),
     );
   }
+
+  async getToolCapableModels(): Promise<string[]> {
+    const models = await this.getAvailableModels();
+    if (models.length === 0) return [];
+
+    const checked = await Promise.all(
+      models.map(async (modelName): Promise<string | null> => {
+        try {
+          const response = await fetch(`${this.baseUrl}/show`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model: modelName }),
+            signal: AbortSignal.timeout(5000),
+          });
+
+          if (!response.ok) return null;
+
+          const data: OllamaShowResponse = await response.json();
+          return data.capabilities.includes("tools") ? modelName : null;
+        } catch {
+          return null;
+        }
+      }),
+    );
+
+    return checked.flatMap((name) => (name ? [name] : []));
+  }
 }
 
 // Create a singleton instance
@@ -105,4 +136,12 @@ export const detectOllamaModels = async (
     isRunning: true,
     availableModels,
   };
+};
+
+// Utility to fetch only tool-capable models using a provided base URL (if any)
+export const detectOllamaToolCapableModels = async (
+  baseUrl?: string,
+): Promise<string[]> => {
+  const client = baseUrl ? new OllamaClient(baseUrl) : ollamaClient;
+  return client.getToolCapableModels();
 };

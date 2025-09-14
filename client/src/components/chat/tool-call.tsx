@@ -10,10 +10,9 @@ import {
 } from "lucide-react";
 import { ToolCall, ToolResult } from "@/lib/chat-types";
 import { cn } from "@/lib/utils";
-// React import is not required due to automatic JSX runtime
 import { MCPIcon } from "../ui/mcp-icon";
 import { UIResourceRenderer } from "@mcp-ui/client";
-import type { MastraMCPServerDefinition } from "@/shared/types.js";
+import { MastraMCPServerDefinition } from "@mastra/mcp";
 
 interface ToolCallDisplayProps {
   toolCall: ToolCall;
@@ -355,8 +354,8 @@ export function ToolCallDisplay({
                                   evt.type === "tool" &&
                                   evt.payload?.toolName
                                 ) {
-                                  const serverConfigToUse = (():
-                                    | MastraMCPServerDefinition
+                                  const serverIdToUse = (():
+                                    | string
                                     | undefined => {
                                     if (
                                       serverConfigs &&
@@ -365,22 +364,21 @@ export function ToolCallDisplay({
                                     ) {
                                       const onlyKey =
                                         Object.keys(serverConfigs)[0];
-                                      return serverConfigs[onlyKey];
+                                      return onlyKey;
                                     }
                                     return undefined;
                                   })();
 
-                                  fetch("/api/mcp/tools", {
+                                  fetch("/api/mcp/tools/execute", {
                                     method: "POST",
                                     headers: {
                                       "Content-Type": "application/json",
                                     },
                                     body: JSON.stringify({
-                                      action: "execute",
                                       toolName: evt.payload.toolName,
                                       parameters: evt.payload.params || {},
-                                      ...(serverConfigToUse
-                                        ? { serverConfig: serverConfigToUse }
+                                      ...(serverIdToUse
+                                        ? { serverId: serverIdToUse }
                                         : {}),
                                     }),
                                   }).catch(() => {});

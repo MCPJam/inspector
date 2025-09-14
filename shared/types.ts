@@ -108,6 +108,8 @@ export interface ModelDefinition {
   id: Model | string;
   name: string;
   provider: ModelProvider;
+  disabled?: boolean;
+  disabledReason?: string;
 }
 
 export enum Model {
@@ -116,9 +118,6 @@ export enum Model {
   CLAUDE_3_7_SONNET_LATEST = "claude-3-7-sonnet-latest",
   CLAUDE_3_5_SONNET_LATEST = "claude-3-5-sonnet-latest",
   CLAUDE_3_5_HAIKU_LATEST = "claude-3-5-haiku-latest",
-  O3_MINI = "o3-mini",
-  O3 = "o3",
-  O4_MINI = "o4-mini",
   GPT_4_1 = "gpt-4.1",
   GPT_4_1_MINI = "gpt-4.1-mini",
   GPT_4_1_NANO = "gpt-4.1-nano",
@@ -128,7 +127,6 @@ export enum Model {
   GPT_4 = "gpt-4",
   GPT_5 = "gpt-5",
   GPT_3_5_TURBO = "gpt-3.5-turbo",
-  O1 = "o1",
   DEEPSEEK_CHAT = "deepseek-chat",
   DEEPSEEK_REASONER = "deepseek-reasoner",
   // Google Gemini models
@@ -179,9 +177,6 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     name: "Claude Haiku 3.5",
     provider: "anthropic",
   },
-  { id: Model.O3_MINI, name: "O3 Mini", provider: "openai" },
-  { id: Model.O3, name: "O3", provider: "openai" },
-  { id: Model.O4_MINI, name: "O4 Mini", provider: "openai" },
   { id: Model.GPT_4_1, name: "GPT-4.1", provider: "openai" },
   { id: Model.GPT_4_1_MINI, name: "GPT-4.1 Mini", provider: "openai" },
   { id: Model.GPT_4_1_NANO, name: "GPT-4.1 Nano", provider: "openai" },
@@ -191,7 +186,6 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
   { id: Model.GPT_4, name: "GPT-4", provider: "openai" },
   { id: Model.GPT_5, name: "GPT-5", provider: "openai" },
   { id: Model.GPT_3_5_TURBO, name: "GPT-3.5 Turbo", provider: "openai" },
-  { id: Model.O1, name: "O1", provider: "openai" },
   { id: Model.DEEPSEEK_CHAT, name: "DeepSeek Chat", provider: "deepseek" },
   {
     id: Model.DEEPSEEK_REASONER,
