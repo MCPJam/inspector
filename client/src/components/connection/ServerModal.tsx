@@ -146,7 +146,7 @@ export function ServerModal({
       } else {
         // HTTP server
         const headers = formData.headers || {};
-        
+
         // Convert headers object to key-value pairs (excluding Authorization header)
         const headerEntries = Object.entries(headers)
           .filter(([key]) => key.toLowerCase() !== "authorization")
@@ -747,7 +747,8 @@ export function ServerModal({
                   </div>
                 )}
                 <p className="text-xs text-muted-foreground">
-                  Add custom HTTP headers for your MCP server connection (e.g. API-Key, X-Custom-Header)
+                  Add custom HTTP headers for your MCP server connection (e.g.
+                  API-Key, X-Custom-Header)
                 </p>
               </div>
             </div>
