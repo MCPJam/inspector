@@ -48,11 +48,11 @@ interface ResultsPanelProps {
     | "schema_mismatch";
   onExecuteFromUI: (
     toolName: string,
-    params?: Record<string, any>
+    params?: Record<string, any>,
   ) => Promise<void>;
   onHandleIntent: (
     intent: string,
-    params?: Record<string, any>
+    params?: Record<string, any>,
   ) => Promise<void>;
 }
 
@@ -213,7 +213,7 @@ export function ResultsPanel({
                         if (evt.type === "tool" && evt.payload?.toolName) {
                           await onExecuteFromUI(
                             evt.payload.toolName,
-                            evt.payload.params || {}
+                            evt.payload.params || {},
                           );
                         } else if (
                           evt.type === "intent" &&
@@ -221,13 +221,13 @@ export function ResultsPanel({
                         ) {
                           await onHandleIntent(
                             evt.payload.intent,
-                            evt.payload.params || {}
+                            evt.payload.params || {},
                           );
                         } else if (evt.type === "link" && evt.payload?.url) {
                           window.open(
                             evt.payload.url,
                             "_blank",
-                            "noopener,noreferrer"
+                            "noopener,noreferrer",
                           );
                         }
                         return { status: "handled" } as any;
