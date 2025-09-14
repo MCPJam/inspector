@@ -24,6 +24,8 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
+    "build-and-test": "npm run build && npm run test",
+    "test": "node bin/mcpjam.js evals run -t examples/test-servers.json -e examples/mcp-environment.json -a mcpjam_E689FE_7e962e84e7afa73a1b5343adbce84a11c88c0421e39ef117",
     "start": "node bin/mcpjam.js"
   },
   "dependencies": {
