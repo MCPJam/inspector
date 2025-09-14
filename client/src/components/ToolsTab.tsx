@@ -1159,6 +1159,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                       padding: "16px",
                       borderRadius: "8px",
                       border: "1px solid hsl(var(--border))",
+                      width: "calc(100vw - var(--sidebar-width) - 44px)",
                     }}
                   />
                   <span className="text-sm font-semibold text-destructive mb-2">{`${validationErrors[0].instancePath.slice(1)} ${validationErrors[0].message}`}</span>
@@ -1184,6 +1185,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                       padding: "16px",
                       borderRadius: "8px",
                       border: "1px solid hsl(var(--border))",
+                      width: "calc(100vw - var(--sidebar-width) - 32px)",
                     }}
                   />
                 </div>
