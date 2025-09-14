@@ -74,7 +74,7 @@ const navigationSections = [
     items: [
       {
         title: "Evals (beta)",
-        url: "#tests",
+        url: "#evals",
         icon: FlaskConical,
       },
     ],
