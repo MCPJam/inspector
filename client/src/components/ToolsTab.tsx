@@ -1189,7 +1189,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                 </div>
               </ScrollArea>
             ) : result && !showStructured ? (
-              <div className="flex-1 overflow-auto">
+              <div className="flex-1 overflow-scroll h-full">
                 <div className="p-4">
                   {unstructuredValidationResult === "valid" && (
                     <Badge
@@ -1362,10 +1362,9 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                     return (
                       <JsonView
                         src={result}
-                        dark={true}
+                        dark
                         theme="atom"
-                        enableClipboard={true}
-                        displaySize={false}
+                        enableClipboard
                         collapseStringsAfterLength={100}
                         style={{
                           fontSize: "12px",
@@ -1375,6 +1374,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                           padding: "16px",
                           borderRadius: "8px",
                           border: "1px solid hsl(var(--border))",
+                          width: "calc(100vw - var(--sidebar-width) - 32px)",
                         }}
                       />
                     );
