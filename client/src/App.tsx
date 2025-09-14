@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { useConvexAuth, useMutation } from "convex/react";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
 import { PromptsTab } from "./components/PromptsTab";
 import { ChatTab } from "./components/ChatTab";
 import { TestsTab } from "./components/TestsTab";
+import { EvalsTab } from "./components/EvalsTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
@@ -29,9 +29,6 @@ import "./index.css";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
-  const { isAuthenticated } = useConvexAuth();
-  const ensureUser = useMutation("users:ensureUser" as any);
-
   // Set up Electron OAuth callback handling
   useElectronOAuth();
   const isDebugCallback = useMemo(
@@ -58,14 +55,6 @@ export default function App() {
     selectedMCPConfigsMap,
     setSelectedMultipleServersToAllServers,
   } = useAppState();
-
-  // Ensure a user record exists in Convex when authenticated
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    ensureUser().catch((error) => {
-      console.error("Failed to ensure user:", error);
-    });
-  }, [isAuthenticated, ensureUser]);
 
   const handleNavigate = (section: string) => {
     setActiveTab(section);
@@ -180,7 +169,9 @@ export default function App() {
                 )}
               />
             )}
-
+            {activeTab === "evals" && (
+              <EvalsTab />
+            )}
             {activeTab === "resources" && (
               <ResourcesTab
                 serverConfig={selectedMCPConfig}
