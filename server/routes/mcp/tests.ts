@@ -27,6 +27,7 @@ tests.post("/run-all", async (c) => {
       model: ModelDefinition;
       selectedServers?: string[];
     }>;
+    const overrideBackendHttpUrl = body?.backendHttpUrl as string | undefined;
     const allServers = (body?.allServers || {}) as Record<
       string,
       MastraMCPServerDefinition
@@ -126,44 +127,107 @@ tests.post("/run-all", async (c) => {
               }
 
               client = createMCPClientWithMultipleConnections(finalServers);
-              const model = createModel(test.model);
-              const agent = new Agent({
-                name: `TestAgent-${test.id}`,
-                instructions:
-                  "You are a helpful assistant with access to MCP tools",
-                model,
-              });
-              const toolsets = await client.getToolsets();
-              const stream = await agent.streamVNext(
-                [{ role: "user", content: test.prompt || "" }] as any,
-                {
-                  maxSteps: 10,
-                  toolsets,
-                },
-              );
+              const tools = await client.getTools();
+              // Build tool schemas for backend agent
+              const toolsSchemas = Object.entries(tools).map(([name, t]) => ({
+                toolName: name,
+                inputSchema: (t as any)?.inputSchema?.toJSON?.() || {},
+              }));
 
-              // Process the streamVNext output
-              for await (const chunk of stream.fullStream) {
-                if (chunk.type === "tool-call" && chunk.payload) {
-                  const toolName = chunk.payload.toolName;
-                  if (toolName) {
-                    calledTools.add(toolName);
-                  }
+              const runId = `${Date.now()}-${test.id}`;
+              const backendUrl = (() => {
+                if (overrideBackendHttpUrl) return overrideBackendHttpUrl.replace(/\/$/, "");
+                const explicit = process.env.CONVEX_HTTP_URL;
+                if (explicit) return explicit.replace(/\/$/, "");
+                const convexUrl = process.env.VITE_CONVEX_URL || process.env.CONVEX_URL;
+                if (convexUrl) {
+                  try {
+                    const u = new URL(convexUrl);
+                    const host = u.host.replace('.convex.cloud', '.convex.site');
+                    return `${u.protocol}//${host}`;
+                  } catch {}
                 }
-                if (chunk.type === "finish") {
-                  step += 1;
+                return "http://localhost:3210";
+              })();
+
+              // Emit debug info
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({ type: "debug", testId: test.id, backendUrl })}\n\n`,
+                ),
+              );
+              console.log("[tests] Using backend URL:", backendUrl);
+
+              // Start one-step on backend
+              const startRes = await fetch(`${backendUrl}/evals/agent/start`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                  runId,
+                  model: test.model,
+                  toolsSchemas,
+                  messages: [
+                    { role: "system", content: "You are a helpful assistant with access to MCP tools." },
+                    { role: "user", content: test.prompt || "" },
+                  ],
+                }),
+              });
+              if (!startRes.ok) {
+                const errText = await startRes.text().catch(() => "");
+                controller.enqueue(
+                  encoder.encode(
+                    `data: ${JSON.stringify({ type: "result", testId: test.id, passed: false, error: `Backend start failed: ${startRes.status} ${errText}` })}\n\n`,
+                  ),
+                );
+                throw new Error(`Backend start failed: ${startRes.status} ${errText}`);
+              }
+              const startJson: any = await startRes.json();
+              if (!startJson.ok) throw new Error((startJson as any).error || "start failed");
+
+              let state: any = startJson;
+              // Loop until assistant_text
+              while (state.kind === "tool_call") {
+                const name = state.toolName as string;
+                const args = state.args || {};
+                try {
+                  const result = await (tools as any)[name]?.execute(args);
+                  calledTools.add(name);
                   controller.enqueue(
                     encoder.encode(
-                      `data: ${JSON.stringify({
-                        type: "trace_step",
-                        testId: test.id,
-                        step,
-                        text: "Test completed",
-                        toolCalls: Array.from(calledTools),
-                        toolResults: [],
-                      })}\n\n`,
+                      `data: ${JSON.stringify({ type: "trace_step", testId: test.id, step: ++step, text: "Executed tool", toolCalls: [name], toolResults: [result] })}\n\n`,
                     ),
                   );
+                  const stepRes = await fetch(`${backendUrl}/evals/agent/step`, {
+                    method: "POST",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({
+                      runId,
+                      model: test.model,
+                      toolsSchemas,
+                      messages: state.steps?.[state.steps.length - 1]?.messages || [
+                        { role: "system", content: "You are a helpful assistant with access to MCP tools." },
+                        { role: "user", content: test.prompt || "" },
+                      ],
+                      toolResultMessage: {
+                        role: "tool",
+                        toolName: name,
+                        toolCallId: state.toolCallId,
+                        content: [{ type: "text", text: typeof result === "string" ? result : JSON.stringify(result) }],
+                      },
+                    }),
+                  });
+                  const stepJson: any = await stepRes.json();
+                  if (!stepJson.ok) {
+                    controller.enqueue(
+                      encoder.encode(
+                        `data: ${JSON.stringify({ type: "result", testId: test.id, passed: false, error: (stepJson as any).error || "step failed" })}\n\n`,
+                      ),
+                    );
+                    throw new Error((stepJson as any).error || "step failed");
+                  }
+                  state = stepJson as any;
+                } catch (err) {
+                  throw new Error(`Tool '${name}' failed: ${err instanceof Error ? err.message : String(err)}`);
                 }
               }
               const called = Array.from(calledTools);
