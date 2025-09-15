@@ -168,7 +168,7 @@ export function ResultsPanel({
             </div>
           </ScrollArea>
         ) : result && !showStructured ? (
-          <div className="flex-1 overflow-auto">
+          <div className="flex-1 overflow-scroll h-full">
             <div className="p-4">
               {unstructuredValidationResult === "valid" && (
                 <Badge
@@ -251,6 +251,7 @@ export function ResultsPanel({
                       padding: "16px",
                       borderRadius: "8px",
                       border: "1px solid hsl(var(--border))",
+                      width: "calc(100vw - var(--sidebar-width) - 16px - 16px)",
                     }}
                   />
                 );
