@@ -260,11 +260,18 @@ tests.post("/run-all", async (c) => {
                 console.log(`[${name}] Tool info:`, { exists: !!tool, hasExecute: !!tool?.execute, toolKeys: tool ? Object.keys(tool) : [] });
 
                 try {
+                  const normalizeToolName = (toolName: string) => {
+                    for (const id of Object.keys(finalServers)) {
+                      const prefix = `${id}_`;
+                      if (toolName.startsWith(prefix)) return toolName.slice(prefix.length);
+                    }
+                    return toolName;
+                  };
                   const result = await tool?.execute({ context: args });
                   calledTools.add(name);
                   controller.enqueue(
                     encoder.encode(
-                      `data: ${JSON.stringify({ type: "trace_step", testId: test.id, step: ++step, text: "Executed tool", toolCalls: [name], toolResults: [result] })}\n\n`,
+                      `data: ${JSON.stringify({ type: "trace_step", testId: test.id, step: ++step, text: "Executed tool", toolCalls: [normalizeToolName(name)], toolResults: [result] })}\n\n`,
                     ),
                   );
                   const stepRes = await fetch(`${backendUrl}/evals/agent/step`, {
@@ -304,9 +311,17 @@ tests.post("/run-all", async (c) => {
                   throw new Error(`Tool '${name}' failed: ${err instanceof Error ? err.message : String(err)}`);
                 }
               }
-              const called = Array.from(calledTools);
+              const normalizeToolName = (toolName: string) => {
+                for (const id of Object.keys(finalServers)) {
+                  const prefix = `${id}_`;
+                  if (toolName.startsWith(prefix)) return toolName.slice(prefix.length);
+                }
+                return toolName;
+              };
+
+              const called = Array.from(calledTools).map((t) => normalizeToolName(t));
               const missing = Array.from(expectedSet).filter(
-                (t) => !calledTools.has(t),
+                (t) => !called.includes(t),
               );
               const unexpected = called.filter((t) => !expectedSet.has(t));
               const passed = missing.length === 0 && unexpected.length === 0;
