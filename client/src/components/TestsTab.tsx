@@ -211,11 +211,6 @@ export function TestsTab({
       missingServers,
     };
   };
-
-  // (Ollama support removed)
-
-  // Model discovery handled by MCPJamModelSelector
-
   // Load saved tests when server changes
   useEffect(() => {
     setSavedTests(listSavedTests(serverKey));
