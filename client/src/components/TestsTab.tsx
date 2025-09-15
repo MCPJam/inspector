@@ -12,8 +12,6 @@ import {
 } from "./ui/resizable";
 import { Save as SaveIcon, Play, Trash2, Copy, Plus, X } from "lucide-react";
 import MCPJamModelSelector from "./chat/mcpjam-model-selector";
-import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
-import { detectOllamaModels } from "@/lib/ollama-utils";
 import { ModelDefinition } from "@/shared/types.js";
 import {
   listSavedTests,
@@ -37,16 +35,11 @@ export function TestsTab({
   serverConfigsMap,
   allServerConfigsMap,
 }: TestsTabProps) {
-  const { getOllamaBaseUrl } = useAiProviderKeys();
-
-  const [isOllamaRunning, setIsOllamaRunning] = useState(false);
-  const [ollamaModels, setOllamaModels] = useState<ModelDefinition[]>([]);
+  
   const [availableModels, setAvailableModels] = useState<ModelDefinition[]>([]);
   const [currentModel, setCurrentModel] = useState<ModelDefinition | null>(
     null,
   );
-  // OpenRouter data is fetched and mapped directly into availableModels
-
   const [title, setTitle] = useState<string>("");
   const [prompt, setPrompt] = useState<string>("");
   const [expectedToolsInput, setExpectedToolsInput] = useState<string>("");
@@ -220,37 +213,7 @@ export function TestsTab({
     };
   };
 
-  // Discover local Ollama models (optional)
-  useEffect(() => {
-    // Only poll Ollama when explicitly enabled to avoid noisy connection-refused logs
-    const baseUrl = getOllamaBaseUrl();
-    const pollingEnabled =
-      (typeof window !== "undefined" &&
-        localStorage.getItem("MCPJAM_ENABLE_OLLAMA_POLL") === "1") ||
-      false;
-    if (!pollingEnabled || !baseUrl || !/^https?:\/\//.test(baseUrl)) {
-      setIsOllamaRunning(false);
-      setOllamaModels([]);
-      return;
-    }
-
-    const checkOllama = async () => {
-      try {
-        const { isRunning, availableModels: models } =
-          await detectOllamaModels(baseUrl);
-        setIsOllamaRunning(isRunning);
-        const modelDefs: ModelDefinition[] = models.map((modelName) => ({
-          id: modelName,
-          name: modelName,
-          provider: "ollama" as const,
-        }));
-        setOllamaModels(modelDefs);
-      } catch {}
-    };
-    checkOllama();
-    const interval = setInterval(checkOllama, 30000);
-    return () => clearInterval(interval);
-  }, [getOllamaBaseUrl]);
+  // (Ollama support removed)
 
   // Fetch providers and models from OpenRouter
   useEffect(() => {
@@ -284,8 +247,7 @@ export function TestsTab({
           })
           .filter((m: ModelDefinition) => !!m.id && !!m.name);
 
-        // Include local Ollama models if available
-        const models = [...mapped, ...(isOllamaRunning ? ollamaModels : [])];
+        const models = [...mapped];
         setAvailableModels(models);
 
         if (!currentModel && models.length > 0) {
@@ -300,7 +262,7 @@ export function TestsTab({
       cancelled = true;
       clearInterval(interval);
     };
-  }, [isOllamaRunning, ollamaModels]);
+  }, []);
 
   // Load saved tests when server changes
   useEffect(() => {
@@ -460,7 +422,6 @@ export function TestsTab({
           tests: testsPayload,
           allServers,
           providerApiKeys,
-          ollamaBaseUrl: getOllamaBaseUrl(),
           concurrency: 1,
           // Allow user to override backend URL via local storage for debugging
           backendHttpUrl:
@@ -538,7 +499,7 @@ export function TestsTab({
     currentModel,
     prompt,
     expectedToolsInput,
-    getOllamaBaseUrl,
+    
     advInstructions,
     advTemperature,
     advMaxSteps,
@@ -636,7 +597,6 @@ export function TestsTab({
           tests: testsPayload,
           allServers,
           providerApiKeys,
-          ollamaBaseUrl: getOllamaBaseUrl(),
           concurrency: 6,
         }),
       });
@@ -763,7 +723,7 @@ export function TestsTab({
     allServerConfigsMap,
     serverConfigsMap,
     serverConfig,
-    getOllamaBaseUrl,
+    
     editingTestId,
     handleLoad,
   ]);
