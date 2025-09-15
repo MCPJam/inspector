@@ -222,16 +222,30 @@ export function TestsTab({
 
   // Discover models (mirrors logic from useChat)
   useEffect(() => {
+    // Only poll Ollama when explicitly enabled to avoid noisy connection-refused logs
+    const baseUrl = getOllamaBaseUrl();
+    const pollingEnabled =
+      (typeof window !== "undefined" &&
+        localStorage.getItem("MCPJAM_ENABLE_OLLAMA_POLL") === "1") ||
+      false;
+    if (!pollingEnabled || !baseUrl || !/^https?:\/\//.test(baseUrl)) {
+      setIsOllamaRunning(false);
+      setOllamaModels([]);
+      return;
+    }
+
     const checkOllama = async () => {
-      const { isRunning, availableModels: models } =
-        await detectOllamaModels(getOllamaBaseUrl());
-      setIsOllamaRunning(isRunning);
-      const modelDefs: ModelDefinition[] = models.map((modelName) => ({
-        id: modelName,
-        name: modelName,
-        provider: "ollama" as const,
-      }));
-      setOllamaModels(modelDefs);
+      try {
+        const { isRunning, availableModels: models } =
+          await detectOllamaModels(baseUrl);
+        setIsOllamaRunning(isRunning);
+        const modelDefs: ModelDefinition[] = models.map((modelName) => ({
+          id: modelName,
+          name: modelName,
+          provider: "ollama" as const,
+        }));
+        setOllamaModels(modelDefs);
+      } catch {}
     };
     checkOllama();
     const interval = setInterval(checkOllama, 30000);
@@ -431,11 +445,29 @@ export function TestsTab({
     setLastRunInfo(null);
     setTraceEvents([]);
 
-    const expectedSet = new Set(parseExpectedTools(expectedToolsInput));
-    const calledToolsSet = new Set<string>();
+    // Build single-test payload (reuse run-all pipeline)
+    const testId = editingTestId || crypto.randomUUID();
+    const testsPayload = [
+      {
+        id: testId,
+        title: title || testId,
+        prompt: prompt.trim(),
+        expectedTools: parseExpectedTools(expectedToolsInput),
+        model: currentModel,
+        selectedServers: selectedServersForTest || [],
+      },
+    ];
+    const providerApiKeys = {
+      anthropic: getToken("anthropic"),
+      openai: getToken("openai"),
+      deepseek: getToken("deepseek"),
+      google: getToken("google"),
+    } as any;
+    const allServers =
+      allServerConfigsMap || serverConfigsMap || (serverConfig ? { test: serverConfig } : {});
 
     try {
-      const response = await fetch("/api/mcp/chat", {
+      const response = await fetch("/api/mcp/tests/run-all", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -443,25 +475,15 @@ export function TestsTab({
         },
         signal: abortController.signal,
         body: JSON.stringify({
-          model: currentModel,
-          provider: currentModel?.provider,
-          apiKey: currentApiKey,
-          systemPrompt:
-            advInstructions.trim() ||
-            "You are a helpful assistant with access to MCP tools.",
-          messages: [
-            {
-              id: crypto.randomUUID(),
-              role: "user",
-              content: prompt.trim(),
-              timestamp: Date.now(),
-            },
-          ],
+          tests: testsPayload,
+          allServers,
+          providerApiKeys,
           ollamaBaseUrl: getOllamaBaseUrl(),
-          temperature:
-            advTemperature.trim() === "" ? undefined : Number(advTemperature),
-          maxSteps: advMaxSteps.trim() === "" ? undefined : Number(advMaxSteps),
-          toolChoice: advToolChoice,
+          concurrency: 1,
+          // Allow user to override backend URL via local storage for debugging
+          backendHttpUrl:
+            (typeof window !== "undefined" &&
+              localStorage.getItem("MCPJAM_BACKEND_HTTP")) || undefined,
         }),
       });
 
@@ -484,99 +506,37 @@ export function TestsTab({
           buffer = lines.pop() || "";
 
           for (const line of lines) {
-            if (line.startsWith("data: ")) {
-              const data = line.slice(6).trim();
-              if (data === "[DONE]") {
-                doneStreaming = true;
-                break;
-              }
-              if (!data) continue;
-
-              try {
-                const parsed = JSON.parse(data);
-
-                // Capture tool calls
-                if (
-                  (parsed.type === "tool_call" ||
-                    (!parsed.type && parsed.toolCall)) &&
-                  parsed.toolCall
-                ) {
-                  const toolCall = parsed.toolCall;
-                  const toolName = toolCall?.name || toolCall?.toolName;
-                  if (toolName) {
-                    console.log(
-                      `[Individual Test Debug] Raw tool call: "${toolName}"`,
-                    );
-                    calledToolsSet.add(toolName);
-                  }
-                }
-
-                // Capture trace events - handle multiple formats
-                if (
-                  parsed.type === "trace_step" &&
-                  typeof parsed.step === "number"
-                ) {
-                  setTraceEvents((prev) => [
-                    ...prev,
-                    {
-                      step: parsed.step,
-                      text: parsed.text,
-                      toolCalls: parsed.toolCalls,
-                      toolResults: parsed.toolResults,
-                    },
-                  ]);
-                } else if (
-                  parsed.type === "text" ||
-                  parsed.type === "content"
-                ) {
-                  // Capture text responses as trace events
-                  setTraceEvents((prev) => [
-                    ...prev,
-                    {
-                      step: prev.length + 1,
-                      text:
-                        parsed.text || parsed.content || JSON.stringify(parsed),
-                      toolCalls: [],
-                      toolResults: [],
-                    },
-                  ]);
-                } else if (!parsed.type && (parsed.text || parsed.content)) {
-                  // Capture any text content without explicit type
-                  setTraceEvents((prev) => [
-                    ...prev,
-                    {
-                      step: prev.length + 1,
-                      text: parsed.text || parsed.content,
-                      toolCalls: [],
-                      toolResults: [],
-                    },
-                  ]);
-                }
-
-                // Debug: log all parsed events to console
-                if (parsed.type) {
-                  console.log("[Test Trace]", parsed.type, parsed);
-                }
-              } catch {
-                // ignore malformed line
-              }
+            if (!line.startsWith("data: ")) continue;
+            const data = line.slice(6).trim();
+            if (!data) continue;
+            if (data === "[DONE]") {
+              doneStreaming = true;
+              break;
             }
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.type === "trace_step" && parsed.testId === testId) {
+                setTraceEvents((prev) => [
+                  ...prev,
+                  {
+                    step: parsed.step,
+                    text: parsed.text,
+                    toolCalls: parsed.toolCalls,
+                    toolResults: parsed.toolResults,
+                  },
+                ]);
+              } else if (parsed.type === "result" && parsed.testId === testId) {
+                setLastRunInfo({
+                  calledTools: parsed.calledTools || [],
+                  missingTools: parsed.missingTools || [],
+                  unexpectedTools: parsed.unexpectedTools || [],
+                });
+                setRunStatus(parsed.passed ? "success" : "failed");
+              }
+            } catch {}
           }
         }
       }
-
-      const calledTools = Array.from(calledToolsSet);
-      const missingTools = Array.from(expectedSet).filter(
-        (t) => !calledToolsSet.has(t),
-      );
-      const unexpectedTools = calledTools.filter((t) => !expectedSet.has(t));
-
-      setLastRunInfo({ calledTools, missingTools, unexpectedTools });
-      setRunStatus(
-        missingTools.length === 0 && unexpectedTools.length === 0
-          ? "success"
-          : "failed",
-      );
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
         console.log("Test run was cancelled");
@@ -602,6 +562,9 @@ export function TestsTab({
     advTemperature,
     advMaxSteps,
     advToolChoice,
+    editingTestId,
+    title,
+    getToken,
   ]);
 
   // Helper to resolve model+apiKey for a given modelId or fallback to current
