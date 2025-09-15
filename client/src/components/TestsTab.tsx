@@ -11,10 +11,10 @@ import {
   ResizableHandle,
 } from "./ui/resizable";
 import { Save as SaveIcon, Play, Trash2, Copy, Plus, X } from "lucide-react";
-import { ModelSelector } from "./chat/model-selector";
+import MCPJamModelSelector from "./chat/mcpjam-model-selector";
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
 import { detectOllamaModels } from "@/lib/ollama-utils";
-import { ModelDefinition, SUPPORTED_MODELS, Model } from "@/shared/types.js";
+import { ModelDefinition } from "@/shared/types.js";
 import {
   listSavedTests,
   saveTest,
@@ -37,7 +37,7 @@ export function TestsTab({
   serverConfigsMap,
   allServerConfigsMap,
 }: TestsTabProps) {
-  const { hasToken, getToken, getOllamaBaseUrl } = useAiProviderKeys();
+  const { getOllamaBaseUrl } = useAiProviderKeys();
 
   const [isOllamaRunning, setIsOllamaRunning] = useState(false);
   const [ollamaModels, setOllamaModels] = useState<ModelDefinition[]>([]);
@@ -45,7 +45,7 @@ export function TestsTab({
   const [currentModel, setCurrentModel] = useState<ModelDefinition | null>(
     null,
   );
-  const [currentApiKey, setCurrentApiKey] = useState<string>("");
+  // OpenRouter data is fetched and mapped directly into availableModels
 
   const [title, setTitle] = useState<string>("");
   const [prompt, setPrompt] = useState<string>("");
@@ -220,7 +220,7 @@ export function TestsTab({
     };
   };
 
-  // Discover models (mirrors logic from useChat)
+  // Discover local Ollama models (optional)
   useEffect(() => {
     // Only poll Ollama when explicitly enabled to avoid noisy connection-refused logs
     const baseUrl = getOllamaBaseUrl();
@@ -252,68 +252,55 @@ export function TestsTab({
     return () => clearInterval(interval);
   }, [getOllamaBaseUrl]);
 
-  // Compute available models when tokens/ollama change
+  // Fetch providers and models from OpenRouter
   useEffect(() => {
-    const models: ModelDefinition[] = [];
-    for (const model of SUPPORTED_MODELS) {
-      if (model.provider === "anthropic" && hasToken("anthropic"))
-        models.push(model);
-      else if (model.provider === "openai" && hasToken("openai"))
-        models.push(model);
-      else if (model.provider === "deepseek" && hasToken("deepseek"))
-        models.push(model);
-      else if (model.provider === "google" && hasToken("google"))
-        models.push(model);
-    }
-    if (isOllamaRunning && ollamaModels.length > 0)
-      models.push(...ollamaModels);
-    setAvailableModels(models);
+    let cancelled = false;
+    const fetchData = async () => {
+      try {
+        const [provRes, modRes] = await Promise.all([
+          fetch("https://openrouter.ai/api/v1/providers"),
+          fetch("https://openrouter.ai/api/v1/models"),
+        ]);
+        await provRes.json().catch(() => ({ data: [] }));
+        const modJson = await modRes.json().catch(() => ({ data: [] }));
+        if (cancelled) return;
+        // We don't store providers/models raw state for now; we only map models
 
-    // Ensure a valid default selection
-    if (!currentModel || !models.find((m) => m.id === currentModel.id)) {
-      if (isOllamaRunning && ollamaModels.length > 0)
-        setCurrentModel(ollamaModels[0]);
-      else if (hasToken("anthropic"))
-        setCurrentModel(
-          SUPPORTED_MODELS.find(
-            (m) => m.id === Model.CLAUDE_3_5_SONNET_LATEST,
-          ) || null,
-        );
-      else if (hasToken("openai"))
-        setCurrentModel(
-          SUPPORTED_MODELS.find((m) => m.id === Model.GPT_4O) || null,
-        );
-      else if (hasToken("deepseek"))
-        setCurrentModel(
-          SUPPORTED_MODELS.find((m) => m.id === Model.DEEPSEEK_CHAT) || null,
-        );
-      else if (hasToken("google"))
-        setCurrentModel(
-          SUPPORTED_MODELS.find((m) => m.id === Model.GEMINI_2_5_FLASH) || null,
-        );
-      else setCurrentModel(null);
-    }
-  }, [hasToken, isOllamaRunning, ollamaModels]);
+        // Map to ModelDefinition
+        const mapped: ModelDefinition[] = (Array.isArray(modJson?.data)
+          ? modJson.data
+          : [])
+          .map((m: any) => {
+            const id = m?.id || m?.canonical_slug || m?.name;
+            const name = m?.name || String(id);
+            const provider = String(id || "").includes("/")
+              ? String(id).split("/")[0]
+              : (m?.canonical_slug?.split("/")?.[0] || "openrouter");
+            return {
+              id,
+              name,
+              provider: provider as any,
+            } as ModelDefinition;
+          })
+          .filter((m: ModelDefinition) => !!m.id && !!m.name);
 
-  // Compute API key for current model
-  useEffect(() => {
-    if (!currentModel) {
-      setCurrentApiKey("");
-      return;
-    }
-    if (currentModel.provider === "ollama") {
-      const isAvailable =
-        isOllamaRunning &&
-        ollamaModels.some(
-          (om) =>
-            om.id === currentModel.id ||
-            om.id.startsWith(`${currentModel.id}:`),
-        );
-      setCurrentApiKey(isAvailable ? "local" : "");
-      return;
-    }
-    setCurrentApiKey(getToken(currentModel.provider));
-  }, [currentModel, getToken, isOllamaRunning, ollamaModels]);
+        // Include local Ollama models if available
+        const models = [...mapped, ...(isOllamaRunning ? ollamaModels : [])];
+        setAvailableModels(models);
+
+        if (!currentModel && models.length > 0) {
+          setCurrentModel(models[0]);
+        }
+      } catch {}
+    };
+    fetchData();
+    // Refresh periodically (optional)
+    const interval = setInterval(fetchData, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [isOllamaRunning, ollamaModels]);
 
   // Load saved tests when server changes
   useEffect(() => {
@@ -435,7 +422,7 @@ export function TestsTab({
     const selectionMap = getServerSelectionMap();
     const hasServers =
       (selectionMap && Object.keys(selectionMap).length > 0) || serverConfig;
-    if (!hasServers || !currentModel || !currentApiKey || !prompt.trim())
+    if (!hasServers || !currentModel || !prompt.trim())
       return;
 
     // Create abort controller for this run
@@ -457,12 +444,7 @@ export function TestsTab({
         selectedServers: selectedServersForTest || [],
       },
     ];
-    const providerApiKeys = {
-      anthropic: getToken("anthropic"),
-      openai: getToken("openai"),
-      deepseek: getToken("deepseek"),
-      google: getToken("google"),
-    } as any;
+    const providerApiKeys = {} as any;
     const allServers =
       allServerConfigsMap || serverConfigsMap || (serverConfig ? { test: serverConfig } : {});
 
@@ -554,7 +536,6 @@ export function TestsTab({
     allServerConfigsMap,
     selectedServersForTest,
     currentModel,
-    currentApiKey,
     prompt,
     expectedToolsInput,
     getOllamaBaseUrl,
@@ -564,31 +545,22 @@ export function TestsTab({
     advToolChoice,
     editingTestId,
     title,
-    getToken,
   ]);
 
   // Helper to resolve model+apiKey for a given modelId or fallback to current
   const resolveModelAndApiKey = useCallback(
     (
       modelId?: string | null,
-    ): { model: ModelDefinition | null; apiKey: string } => {
+    ): { model: ModelDefinition | null } => {
       let model: ModelDefinition | null = null;
       if (modelId) {
         model = availableModels.find((m) => m.id === modelId) || null;
       }
       if (!model) model = currentModel;
-      if (!model) return { model: null, apiKey: "" };
-      if (model.provider === "ollama") {
-        const isAvailable =
-          isOllamaRunning &&
-          ollamaModels.some(
-            (om) => om.id === model!.id || om.id.startsWith(`${model!.id}:`),
-          );
-        return { model, apiKey: isAvailable ? "local" : "" };
-      }
-      return { model, apiKey: getToken(model.provider) };
+      if (!model) return { model: null };
+      return { model };
     },
-    [availableModels, currentModel, getToken, isOllamaRunning, ollamaModels],
+    [availableModels, currentModel],
   );
 
   // Run all saved tests in the current list; if any test fails, mark run failed and load first failing test details
@@ -612,12 +584,7 @@ export function TestsTab({
         selectedServers: t.selectedServers || [],
       };
     });
-    const providerApiKeys = {
-      anthropic: getToken("anthropic"),
-      openai: getToken("openai"),
-      deepseek: getToken("deepseek"),
-      google: getToken("google"),
-    } as any;
+    const providerApiKeys = {} as any;
 
     // Consolidate all servers map from props
     const allServers =
@@ -797,7 +764,6 @@ export function TestsTab({
     serverConfigsMap,
     serverConfig,
     getOllamaBaseUrl,
-    getToken,
     editingTestId,
     handleLoad,
   ]);
@@ -876,7 +842,6 @@ export function TestsTab({
             onClick={runStatus === "running" ? handleCancelRun : runTest}
             disabled={
               !currentModel ||
-              !currentApiKey ||
               !prompt.trim() ||
               !validateServerAvailability().isValid
             }
@@ -1106,8 +1071,8 @@ export function TestsTab({
                       Model<span className="text-destructive ml-0.5">*</span>
                     </label>
                     <div className="mt-1">
-                      {availableModels.length > 0 && currentModel ? (
-                        <ModelSelector
+                      {availableModels.length > 0 ? (
+                        <MCPJamModelSelector
                           currentModel={currentModel}
                           availableModels={availableModels}
                           onModelChange={(m) => setCurrentModel(m)}
