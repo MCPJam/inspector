@@ -7,7 +7,7 @@ import {
 } from "../../../shared/types";
 import { TextEncoder } from "util";
 import { getDefaultTemperatureByProvider } from "../../../client/src/lib/chat-utils";
-// removed stepCountIs; streamVNext uses maxSteps in this codepath
+import { stepCountIs } from "ai-v5";
 import { createLlmModel } from "../../utils/chat-helpers";
 import { SSEvent } from "../../../shared/sse";
 
@@ -62,17 +62,8 @@ const sendSseEvent = (
   encoder: TextEncoder,
   event: SSEvent | "[DONE]",
 ) => {
-  try {
-    const payload = event === "[DONE]" ? "[DONE]" : JSON.stringify(event);
-    controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
-  } catch (err) {
-    // Swallow errors if controller is already closed (race with onStepFinish)
-    const code = (err as any)?.code;
-    const msg = (err as any)?.message || "";
-    if (code !== "ERR_INVALID_STATE" && !/Invalid state: Controller is already closed/.test(msg)) {
-      throw err;
-    }
-  }
+  const payload = event === "[DONE]" ? "[DONE]" : JSON.stringify(event);
+  controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
 };
 
 const handleAgentStepFinish = (
@@ -145,11 +136,7 @@ const handleAgentStepFinish = (
       });
     }
   } catch (err) {
-    const code = (err as any)?.code;
-    const msg = (err as any)?.message || "";
-    if (code !== "ERR_INVALID_STATE" && !/Invalid state: Controller is already closed/.test(msg)) {
-      dbg("onStepFinish error", err);
-    }
+    dbg("onStepFinish error", err);
   }
 };
 
@@ -330,7 +317,13 @@ const createStreamingResponse = async (
   try {
     // Try streamVNext first (works with AI SDK v2 models)
     const stream = await agent.streamVNext(messages, {
-      maxSteps: MAX_AGENT_STEPS,
+      stopWhen: stepCountIs(MAX_AGENT_STEPS),
+      modelSettings: {
+        temperature:
+          temperature == null || undefined
+            ? getDefaultTemperatureByProvider(provider)
+            : temperature,
+      },
       onStepFinish: ({ text, toolCalls, toolResults }) => {
         handleAgentStepFinish(streamingContext, text, toolCalls, toolResults);
       },
