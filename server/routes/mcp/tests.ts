@@ -1,10 +1,6 @@
 import { Hono } from "hono";
-import { createAnthropic } from "@ai-sdk/anthropic";
-import { createOpenAI } from "@ai-sdk/openai";
-import { createOllama } from "ollama-ai-provider";
 import { MastraMCPServerDefinition, MCPClient } from "@mastra/mcp";
 import type { ModelDefinition } from "../../../shared/types";
-import { Agent } from "@mastra/core/agent";
 import {
   validateMultipleServerConfigs,
   createMCPClientWithMultipleConnections,
@@ -32,8 +28,6 @@ tests.post("/run-all", async (c) => {
       string,
       MastraMCPServerDefinition
     >;
-    const providerApiKeys = body?.providerApiKeys || {};
-    const ollamaBaseUrl: string | undefined = body?.ollamaBaseUrl;
     const maxConcurrency: number = Math.max(
       1,
       Math.min(8, body?.concurrency ?? 5),
@@ -42,36 +36,6 @@ tests.post("/run-all", async (c) => {
     if (!Array.isArray(testsInput) || testsInput.length === 0) {
       return c.json({ success: false, error: "No tests provided" }, 400);
     }
-
-    function createModel(model: ModelDefinition) {
-      switch (model.provider) {
-        case "anthropic":
-          return createAnthropic({
-            apiKey:
-              providerApiKeys?.anthropic || process.env.ANTHROPIC_API_KEY || "",
-          })(model.id);
-        case "openai":
-          return createOpenAI({
-            apiKey: providerApiKeys?.openai || process.env.OPENAI_API_KEY || "",
-          })(model.id);
-        case "deepseek":
-          return createOpenAI({
-            apiKey:
-              providerApiKeys?.deepseek || process.env.DEEPSEEK_API_KEY || "",
-            baseURL: "https://api.deepseek.com/v1",
-          })(model.id);
-        case "ollama":
-          return createOllama({
-            baseURL:
-              ollamaBaseUrl ||
-              process.env.OLLAMA_BASE_URL ||
-              "http://localhost:11434/api",
-          })(model.id, { simulateStreaming: true });
-        default:
-          throw new Error(`Unsupported provider: ${model.provider}`);
-      }
-    }
-
     const readableStream = new ReadableStream({
       async start(controller) {
         let active = 0;
