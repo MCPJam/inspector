@@ -128,11 +128,75 @@ tests.post("/run-all", async (c) => {
 
               client = createMCPClientWithMultipleConnections(finalServers);
               const tools = await client.getTools();
+
+              // Debug: log a sample tool to understand its structure
+              const sampleToolName = Object.keys(tools)[0];
+              if (sampleToolName) {
+                console.log(`[${sampleToolName}] Tool structure:`, {
+                  tool: tools[sampleToolName],
+                  inputSchema: (tools[sampleToolName] as any)?.inputSchema,
+                  inputSchemaJSON: (tools[sampleToolName] as any)?.inputSchema?.toJSON?.()
+                });
+              }
+
               // Build tool schemas for backend agent
-              const toolsSchemas = Object.entries(tools).map(([name, t]) => ({
-                toolName: name,
-                inputSchema: (t as any)?.inputSchema?.toJSON?.() || {},
-              }));
+              const toolsSchemas = Object.entries(tools).map(([name, t]) => {
+                const tool = t as any;
+                let inputSchema = {};
+
+                // Try to extract schema from Zod object
+                if (tool?.inputSchema) {
+                  // First try toJSON()
+                  const jsonSchema = tool.inputSchema.toJSON?.();
+                  if (jsonSchema && typeof jsonSchema === 'object') {
+                    inputSchema = jsonSchema;
+                  } else {
+                    // Fallback: try to extract from Zod _def
+                    const zodDef = tool.inputSchema._def;
+                    if (zodDef?.typeName === 'ZodObject') {
+                      // For ZodObject, create a simple object schema
+                      inputSchema = {
+                        type: 'object',
+                        additionalProperties: false,
+                        properties: {},
+                        required: []
+                      };
+
+                      // Try to extract properties if available
+                      if (zodDef.shape && typeof zodDef.shape === 'function') {
+                        try {
+                          const shape = zodDef.shape();
+                          const properties: any = {};
+                          const required: string[] = [];
+
+                          for (const [key, value] of Object.entries(shape)) {
+                            properties[key] = { type: 'string' }; // Simple fallback
+                            if ((value as any)?._def?.typeName !== 'ZodOptional') {
+                              required.push(key);
+                            }
+                          }
+
+                          inputSchema = {
+                            type: 'object',
+                            additionalProperties: false,
+                            properties,
+                            required
+                          };
+                        } catch (e) {
+                          // Keep default empty object schema
+                        }
+                      }
+                    }
+                  }
+                }
+
+                console.log(`[${name}] Extracted schema:`, { inputSchema });
+
+                return {
+                  toolName: name,
+                  inputSchema,
+                };
+              });
 
               const runId = `${Date.now()}-${test.id}`;
               const backendUrl = (() => {
@@ -189,8 +253,14 @@ tests.post("/run-all", async (c) => {
               while (state.kind === "tool_call") {
                 const name = state.toolName as string;
                 const args = state.args || {};
+                console.log(`[${name}] Calling tool with args:`, { rawArgs: state.args, finalArgs: args });
+
+                // Debug: check if the tool exists and its execute function
+                const tool = (tools as any)[name];
+                console.log(`[${name}] Tool info:`, { exists: !!tool, hasExecute: !!tool?.execute, toolKeys: tool ? Object.keys(tool) : [] });
+
                 try {
-                  const result = await (tools as any)[name]?.execute(args);
+                  const result = await tool?.execute({ context: args });
                   calledTools.add(name);
                   controller.enqueue(
                     encoder.encode(
@@ -210,9 +280,12 @@ tests.post("/run-all", async (c) => {
                       ],
                       toolResultMessage: {
                         role: "tool",
-                        toolName: name,
-                        toolCallId: state.toolCallId,
-                        content: [{ type: "text", text: typeof result === "string" ? result : JSON.stringify(result) }],
+                        content: [{
+                          type: "tool-result",
+                          toolCallId: state.toolCallId,
+                          toolName: name,
+                          output: result
+                        }],
                       },
                     }),
                   });
@@ -227,6 +300,7 @@ tests.post("/run-all", async (c) => {
                   }
                   state = stepJson as any;
                 } catch (err) {
+                  console.log(`[${name}] Error calling tool:`, { error: err instanceof Error ? err.message : String(err), toolArgs: args });
                   throw new Error(`Tool '${name}' failed: ${err instanceof Error ? err.message : String(err)}`);
                 }
               }
