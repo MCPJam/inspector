@@ -8,6 +8,79 @@ import {
 
 const tests = new Hono();
 
+// Helper functions
+function normalizeToolName(toolName: string, serverIds: string[]): string {
+  for (const id of serverIds) {
+    const prefix = `${id}_`;
+    if (toolName.startsWith(prefix)) {
+      return toolName.slice(prefix.length);
+    }
+  }
+  return toolName;
+}
+
+function extractToolSchema(tool: any): any {
+  if (!tool?.inputSchema) return {};
+
+  // Try toJSON() first
+  const jsonSchema = tool.inputSchema.toJSON?.();
+  if (jsonSchema && typeof jsonSchema === 'object') {
+    return jsonSchema;
+  }
+
+  // Fallback for ZodObject
+  const zodDef = tool.inputSchema._def;
+  if (zodDef?.typeName === 'ZodObject') {
+    const baseSchema = {
+      type: 'object',
+      additionalProperties: false,
+      properties: {},
+      required: []
+    };
+
+    try {
+      if (zodDef.shape && typeof zodDef.shape === 'function') {
+        const shape = zodDef.shape();
+        const properties: any = {};
+        const required: string[] = [];
+
+        for (const [key, value] of Object.entries(shape)) {
+          properties[key] = { type: 'string' };
+          if ((value as any)?._def?.typeName !== 'ZodOptional') {
+            required.push(key);
+          }
+        }
+
+        return { ...baseSchema, properties, required };
+      }
+    } catch {
+      // Keep base schema
+    }
+
+    return baseSchema;
+  }
+
+  return {};
+}
+
+function resolveBackendUrl(overrideUrl?: string): string {
+  if (overrideUrl) return overrideUrl.replace(/\/$/, "");
+
+  const explicit = process.env.CONVEX_HTTP_URL;
+  if (explicit) return explicit.replace(/\/$/, "");
+
+  const convexUrl = process.env.VITE_CONVEX_URL || process.env.CONVEX_URL;
+  if (convexUrl) {
+    try {
+      const u = new URL(convexUrl);
+      const host = u.host.replace('.convex.cloud', '.convex.site');
+      return `${u.protocol}//${host}`;
+    } catch {}
+  }
+
+  return "http://localhost:3210";
+}
+
 export default tests;
 
 // Run-all (parallel orchestrated) endpoint
@@ -92,91 +165,13 @@ tests.post("/run-all", async (c) => {
 
               client = createMCPClientWithMultipleConnections(finalServers);
               const tools = await client.getTools();
-
-              // Debug: log a sample tool to understand its structure
-              const sampleToolName = Object.keys(tools)[0];
-              if (sampleToolName) {
-                console.log(`[${sampleToolName}] Tool structure:`, {
-                  tool: tools[sampleToolName],
-                  inputSchema: (tools[sampleToolName] as any)?.inputSchema,
-                  inputSchemaJSON: (tools[sampleToolName] as any)?.inputSchema?.toJSON?.()
-                });
-              }
-
-              // Build tool schemas for backend agent
-              const toolsSchemas = Object.entries(tools).map(([name, t]) => {
-                const tool = t as any;
-                let inputSchema = {};
-
-                // Try to extract schema from Zod object
-                if (tool?.inputSchema) {
-                  // First try toJSON()
-                  const jsonSchema = tool.inputSchema.toJSON?.();
-                  if (jsonSchema && typeof jsonSchema === 'object') {
-                    inputSchema = jsonSchema;
-                  } else {
-                    // Fallback: try to extract from Zod _def
-                    const zodDef = tool.inputSchema._def;
-                    if (zodDef?.typeName === 'ZodObject') {
-                      // For ZodObject, create a simple object schema
-                      inputSchema = {
-                        type: 'object',
-                        additionalProperties: false,
-                        properties: {},
-                        required: []
-                      };
-
-                      // Try to extract properties if available
-                      if (zodDef.shape && typeof zodDef.shape === 'function') {
-                        try {
-                          const shape = zodDef.shape();
-                          const properties: any = {};
-                          const required: string[] = [];
-
-                          for (const [key, value] of Object.entries(shape)) {
-                            properties[key] = { type: 'string' }; // Simple fallback
-                            if ((value as any)?._def?.typeName !== 'ZodOptional') {
-                              required.push(key);
-                            }
-                          }
-
-                          inputSchema = {
-                            type: 'object',
-                            additionalProperties: false,
-                            properties,
-                            required
-                          };
-                        } catch (e) {
-                          // Keep default empty object schema
-                        }
-                      }
-                    }
-                  }
-                }
-
-                console.log(`[${name}] Extracted schema:`, { inputSchema });
-
-                return {
-                  toolName: name,
-                  inputSchema,
-                };
-              });
+              const toolsSchemas = Object.entries(tools).map(([name, tool]) => ({
+                toolName: name,
+                inputSchema: extractToolSchema(tool),
+              }));
 
               const runId = `${Date.now()}-${test.id}`;
-              const backendUrl = (() => {
-                if (overrideBackendHttpUrl) return overrideBackendHttpUrl.replace(/\/$/, "");
-                const explicit = process.env.CONVEX_HTTP_URL;
-                if (explicit) return explicit.replace(/\/$/, "");
-                const convexUrl = process.env.VITE_CONVEX_URL || process.env.CONVEX_URL;
-                if (convexUrl) {
-                  try {
-                    const u = new URL(convexUrl);
-                    const host = u.host.replace('.convex.cloud', '.convex.site');
-                    return `${u.protocol}//${host}`;
-                  } catch {}
-                }
-                return "http://localhost:3210";
-              })();
+              const backendUrl = resolveBackendUrl(overrideBackendHttpUrl);
 
               // Emit debug info
               controller.enqueue(
@@ -184,7 +179,6 @@ tests.post("/run-all", async (c) => {
                   `data: ${JSON.stringify({ type: "debug", testId: test.id, backendUrl })}\n\n`,
                 ),
               );
-              console.log("[tests] Using backend URL:", backendUrl);
 
               // Start one-step on backend
               const startRes = await fetch(`${backendUrl}/evals/agent/start`, {
@@ -213,31 +207,31 @@ tests.post("/run-all", async (c) => {
               if (!startJson.ok) throw new Error((startJson as any).error || "start failed");
 
               let state: any = startJson;
+              const serverIds = Object.keys(finalServers);
+
               // Loop until assistant_text
               while (state.kind === "tool_call") {
                 const name = state.toolName as string;
                 const args = state.args || {};
-                console.log(`[${name}] Calling tool with args:`, { rawArgs: state.args, finalArgs: args });
-
-                // Debug: check if the tool exists and its execute function
                 const tool = (tools as any)[name];
-                console.log(`[${name}] Tool info:`, { exists: !!tool, hasExecute: !!tool?.execute, toolKeys: tool ? Object.keys(tool) : [] });
 
                 try {
-                  const normalizeToolName = (toolName: string) => {
-                    for (const id of Object.keys(finalServers)) {
-                      const prefix = `${id}_`;
-                      if (toolName.startsWith(prefix)) return toolName.slice(prefix.length);
-                    }
-                    return toolName;
-                  };
                   const result = await tool?.execute({ context: args });
                   calledTools.add(name);
+
                   controller.enqueue(
                     encoder.encode(
-                      `data: ${JSON.stringify({ type: "trace_step", testId: test.id, step: ++step, text: "Executed tool", toolCalls: [normalizeToolName(name)], toolResults: [result] })}\n\n`,
+                      `data: ${JSON.stringify({
+                        type: "trace_step",
+                        testId: test.id,
+                        step: ++step,
+                        text: "Executed tool",
+                        toolCalls: [normalizeToolName(name, serverIds)],
+                        toolResults: [result]
+                      })}\n\n`,
                     ),
                   );
+
                   const stepRes = await fetch(`${backendUrl}/evals/agent/step`, {
                     method: "POST",
                     headers: { "content-type": "application/json" },
@@ -260,39 +254,45 @@ tests.post("/run-all", async (c) => {
                       },
                     }),
                   });
+
                   const stepJson: any = await stepRes.json();
                   if (!stepJson.ok) {
                     controller.enqueue(
                       encoder.encode(
-                        `data: ${JSON.stringify({ type: "result", testId: test.id, passed: false, error: (stepJson as any).error || "step failed" })}\n\n`,
+                        `data: ${JSON.stringify({
+                          type: "result",
+                          testId: test.id,
+                          passed: false,
+                          error: (stepJson as any).error || "step failed"
+                        })}\n\n`,
                       ),
                     );
                     throw new Error((stepJson as any).error || "step failed");
                   }
                   state = stepJson as any;
                 } catch (err) {
-                  console.log(`[${name}] Error calling tool:`, { error: err instanceof Error ? err.message : String(err), toolArgs: args });
                   throw new Error(`Tool '${name}' failed: ${err instanceof Error ? err.message : String(err)}`);
                 }
               }
-              const normalizeToolName = (toolName: string) => {
-                for (const id of Object.keys(finalServers)) {
-                  const prefix = `${id}_`;
-                  if (toolName.startsWith(prefix)) return toolName.slice(prefix.length);
-                }
-                return toolName;
-              };
 
-              const called = Array.from(calledTools).map((t) => normalizeToolName(t));
+              const called = Array.from(calledTools).map((t) => normalizeToolName(t, serverIds));
               const missing = Array.from(expectedSet).filter(
                 (t) => !called.includes(t),
               );
               const unexpected = called.filter((t) => !expectedSet.has(t));
               const passed = missing.length === 0 && unexpected.length === 0;
               if (!passed) failed = true;
+
               controller.enqueue(
                 encoder.encode(
-                  `data: ${JSON.stringify({ type: "result", testId: test.id, passed, calledTools: called, missingTools: missing, unexpectedTools: unexpected })}\n\n`,
+                  `data: ${JSON.stringify({
+                    type: "result",
+                    testId: test.id,
+                    passed,
+                    calledTools: called,
+                    missingTools: missing,
+                    unexpectedTools: unexpected
+                  })}\n\n`,
                 ),
               );
             } catch (err) {
