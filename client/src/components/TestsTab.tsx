@@ -36,7 +36,6 @@ export function TestsTab({
   allServerConfigsMap,
 }: TestsTabProps) {
   
-  const [availableModels, setAvailableModels] = useState<ModelDefinition[]>([]);
   const [currentModel, setCurrentModel] = useState<ModelDefinition | null>(
     null,
   );
@@ -215,59 +214,19 @@ export function TestsTab({
 
   // (Ollama support removed)
 
-  // Fetch providers and models from OpenRouter
-  useEffect(() => {
-    let cancelled = false;
-    const fetchData = async () => {
-      try {
-        const [provRes, modRes] = await Promise.all([
-          fetch("https://openrouter.ai/api/v1/providers"),
-          fetch("https://openrouter.ai/api/v1/models"),
-        ]);
-        await provRes.json().catch(() => ({ data: [] }));
-        const modJson = await modRes.json().catch(() => ({ data: [] }));
-        if (cancelled) return;
-        // We don't store providers/models raw state for now; we only map models
-
-        // Map to ModelDefinition
-        const mapped: ModelDefinition[] = (Array.isArray(modJson?.data)
-          ? modJson.data
-          : [])
-          .map((m: any) => {
-            const id = m?.id || m?.canonical_slug || m?.name;
-            const name = m?.name || String(id);
-            const provider = String(id || "").includes("/")
-              ? String(id).split("/")[0]
-              : (m?.canonical_slug?.split("/")?.[0] || "openrouter");
-            return {
-              id,
-              name,
-              provider: provider as any,
-            } as ModelDefinition;
-          })
-          .filter((m: ModelDefinition) => !!m.id && !!m.name);
-
-        const models = [...mapped];
-        setAvailableModels(models);
-
-        if (!currentModel && models.length > 0) {
-          setCurrentModel(models[0]);
-        }
-      } catch {}
-    };
-    fetchData();
-    // Refresh periodically (optional)
-    const interval = setInterval(fetchData, 60_000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, []);
+  // Model discovery handled by MCPJamModelSelector
 
   // Load saved tests when server changes
   useEffect(() => {
     setSavedTests(listSavedTests(serverKey));
   }, [serverKey]);
+
+  // Preferred model for the editor (persisted per test)
+  const desiredModelId = useMemo(() => {
+    if (!editingTestId) return null;
+    const t = savedTests.find((s) => s.id === editingTestId);
+    return (t?.modelId as any) || null;
+  }, [editingTestId, savedTests]);
 
   function parseExpectedTools(input: string): string[] {
     return input
@@ -335,10 +294,7 @@ export function TestsTab({
     setRunStatus("idle");
     setLastRunInfo(null);
     setTraceEvents([]);
-    if (test.modelId) {
-      const target = availableModels.find((m) => m.id === test.modelId);
-      if (target) setCurrentModel(target);
-    }
+    // If there is a desired model stored, MCPJamModelSelector will set it when available
   };
 
   const handleDelete = (id: string) => {
@@ -514,14 +470,13 @@ export function TestsTab({
       modelId?: string | null,
     ): { model: ModelDefinition | null } => {
       let model: ModelDefinition | null = null;
-      if (modelId) {
-        model = availableModels.find((m) => m.id === modelId) || null;
-      }
+      // Selector manages available models; rely on current selection
+      if (modelId && currentModel?.id === modelId) model = currentModel;
       if (!model) model = currentModel;
       if (!model) return { model: null };
       return { model };
     },
-    [availableModels, currentModel],
+    [currentModel],
   );
 
   // Run all saved tests in the current list; if any test fails, mark run failed and load first failing test details
@@ -1031,17 +986,11 @@ export function TestsTab({
                       Model<span className="text-destructive ml-0.5">*</span>
                     </label>
                     <div className="mt-1">
-                      {availableModels.length > 0 ? (
-                        <MCPJamModelSelector
-                          currentModel={currentModel}
-                          availableModels={availableModels}
-                          onModelChange={(m) => setCurrentModel(m)}
-                        />
-                      ) : (
-                        <Badge variant="secondary" className="text-xs">
-                          No model available
-                        </Badge>
-                      )}
+                      <MCPJamModelSelector
+                        currentModel={currentModel}
+                        onModelChange={(m) => setCurrentModel(m)}
+                        desiredModelId={desiredModelId}
+                      />
                     </div>
                   </div>
                   <div className="col-span-6">
