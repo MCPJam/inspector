@@ -202,7 +202,16 @@ export default function App() {
               <ChatTab serverConfigs={selectedMCPConfigsMap} />
             )}
 
-            {activeTab === "interceptor" && <InterceptorTab />}
+            {activeTab === "interceptor" && (
+              <InterceptorTab
+                connectedServerConfigs={connectedServerConfigs}
+                selectedServer={appState.selectedServer}
+                selectedMultipleServers={appState.selectedMultipleServers}
+                onServerChange={setSelectedServer}
+                onMultiServerToggle={toggleServerSelection}
+                onConnect={handleConnect}
+              />
+            )}
 
             {activeTab === "tracing" && <TracingTab />}
 

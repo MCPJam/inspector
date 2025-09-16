@@ -2,6 +2,9 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Card } from "./ui/card";
+import { ActiveServerSelector } from "./ActiveServerSelector";
+import { ServerWithName } from "@/hooks/use-app-state";
+import { ServerFormData } from "@/shared/types.js";
 
 type InterceptorLog =
   | {
@@ -23,13 +26,28 @@ type InterceptorLog =
       body?: string;
     };
 
-export function InterceptorTab() {
+type InterceptorTabProps = {
+  connectedServerConfigs: Record<string, ServerWithName>;
+  selectedServer: string;
+  selectedMultipleServers: string[];
+  onServerChange: (server: string) => void;
+  onMultiServerToggle: (server: string) => void;
+  onConnect: (formData: ServerFormData) => void;
+};
+
+export function InterceptorTab({
+  connectedServerConfigs,
+  selectedServer,
+  selectedMultipleServers,
+  onServerChange,
+  onMultiServerToggle,
+  onConnect,
+}: InterceptorTabProps) {
   const [targetUrl, setTargetUrl] = useState<string>("");
   const [interceptorId, setInterceptorId] = useState<string>("");
   const [proxyUrl, setProxyUrl] = useState<string>("");
   const [logs, setLogs] = useState<InterceptorLog[]>([]);
   const eventSourceRef = useRef<EventSource | null>(null);
-  
 
   const baseUrl = useMemo(() => {
     const u = new URL(window.location.href);
@@ -69,7 +87,7 @@ export function InterceptorTab() {
     const res = await fetch(`${baseUrl}/create`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ targetUrl }),
+      body: JSON.stringify({ targetUrl, managerServerId: selectedServer || undefined }),
     });
     const json = await res.json();
     if (!json.success) {
@@ -95,20 +113,25 @@ export function InterceptorTab() {
         <div className="text-sm text-muted-foreground">
           Create an interceptor that proxies MCP HTTP JSON-RPC and streams logs.
         </div>
+        <ActiveServerSelector
+          connectedServerConfigs={connectedServerConfigs}
+          selectedServer={selectedServer}
+          selectedMultipleServers={selectedMultipleServers}
+          isMultiSelectEnabled={false}
+          onServerChange={onServerChange}
+          onMultiServerToggle={onMultiServerToggle}
+          onConnect={onConnect}
+        />
         <div className="flex gap-2">
-          <Input
-            placeholder="Target MCP HTTP URL (e.g. http://localhost:3001)"
-            value={targetUrl}
-            onChange={(e) => setTargetUrl(e.target.value)}
-          />
-          <Button onClick={handleCreate} disabled={!targetUrl}>
+          {/* In manager-backed mode, target URL is not required; keeping the field for raw HTTP targets */}
+          <Input placeholder="Target MCP HTTP URL (optional when tunneling an active server)" value={targetUrl} onChange={(e) => setTargetUrl(e.target.value)} />
+          <Button onClick={handleCreate} disabled={!targetUrl && !selectedServer}>
             Create Interceptor
           </Button>
           <Button variant="secondary" onClick={handleClear} disabled={!interceptorId}>
             Clear Logs
           </Button>
         </div>
-        
         {proxyUrl && (
           <div className="text-xs">
             Add this as the MCP server URL in your client to route via proxy: <span className="font-mono break-all">{proxyUrl}</span>
