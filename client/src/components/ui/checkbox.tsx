@@ -1,4 +1,24 @@
 import * as React from "react";
+import { cn } from "@/lib/utils";
+
+type CheckboxProps = {
+  checked?: boolean;
+  onCheckedChange?: (checked: boolean) => void;
+  className?: string;
+};
+
+export function Checkbox({ checked, onCheckedChange, className }: CheckboxProps) {
+  return (
+    <input
+      type="checkbox"
+      className={cn("h-4 w-4", className)}
+      checked={!!checked}
+      onChange={(e) => onCheckedChange?.(e.target.checked)}
+    />
+  );
+}
+
+import * as React from "react";
 import { Checkbox as CheckboxPrimitive } from "radix-ui";
 import { CheckIcon } from "lucide-react";
 
