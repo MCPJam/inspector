@@ -11,10 +11,8 @@ import {
   ResizableHandle,
 } from "./ui/resizable";
 import { Save as SaveIcon, Play, Trash2, Copy, Plus, X } from "lucide-react";
-import { ModelSelector } from "./chat/model-selector";
-import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
-import { detectOllamaModels } from "@/lib/ollama-utils";
-import { ModelDefinition, SUPPORTED_MODELS, Model } from "@/shared/types.js";
+import MCPJamModelSelector from "./chat/mcpjam-model-selector";
+import { ModelDefinition } from "@/shared/types.js";
 import {
   listSavedTests,
   saveTest,
@@ -37,16 +35,10 @@ export function TestsTab({
   serverConfigsMap,
   allServerConfigsMap,
 }: TestsTabProps) {
-  const { hasToken, getToken, getOllamaBaseUrl } = useAiProviderKeys();
-
-  const [isOllamaRunning, setIsOllamaRunning] = useState(false);
-  const [ollamaModels, setOllamaModels] = useState<ModelDefinition[]>([]);
-  const [availableModels, setAvailableModels] = useState<ModelDefinition[]>([]);
+  
   const [currentModel, setCurrentModel] = useState<ModelDefinition | null>(
     null,
   );
-  const [currentApiKey, setCurrentApiKey] = useState<string>("");
-
   const [title, setTitle] = useState<string>("");
   const [prompt, setPrompt] = useState<string>("");
   const [expectedToolsInput, setExpectedToolsInput] = useState<string>("");
@@ -219,92 +211,17 @@ export function TestsTab({
       missingServers,
     };
   };
-
-  // Discover models (mirrors logic from useChat)
-  useEffect(() => {
-    const checkOllama = async () => {
-      const { isRunning, availableModels: models } =
-        await detectOllamaModels(getOllamaBaseUrl());
-      setIsOllamaRunning(isRunning);
-      const modelDefs: ModelDefinition[] = models.map((modelName) => ({
-        id: modelName,
-        name: modelName,
-        provider: "ollama" as const,
-      }));
-      setOllamaModels(modelDefs);
-    };
-    checkOllama();
-    const interval = setInterval(checkOllama, 30000);
-    return () => clearInterval(interval);
-  }, [getOllamaBaseUrl]);
-
-  // Compute available models when tokens/ollama change
-  useEffect(() => {
-    const models: ModelDefinition[] = [];
-    for (const model of SUPPORTED_MODELS) {
-      if (model.provider === "anthropic" && hasToken("anthropic"))
-        models.push(model);
-      else if (model.provider === "openai" && hasToken("openai"))
-        models.push(model);
-      else if (model.provider === "deepseek" && hasToken("deepseek"))
-        models.push(model);
-      else if (model.provider === "google" && hasToken("google"))
-        models.push(model);
-    }
-    if (isOllamaRunning && ollamaModels.length > 0)
-      models.push(...ollamaModels);
-    setAvailableModels(models);
-
-    // Ensure a valid default selection
-    if (!currentModel || !models.find((m) => m.id === currentModel.id)) {
-      if (isOllamaRunning && ollamaModels.length > 0)
-        setCurrentModel(ollamaModels[0]);
-      else if (hasToken("anthropic"))
-        setCurrentModel(
-          SUPPORTED_MODELS.find(
-            (m) => m.id === Model.CLAUDE_3_5_SONNET_LATEST,
-          ) || null,
-        );
-      else if (hasToken("openai"))
-        setCurrentModel(
-          SUPPORTED_MODELS.find((m) => m.id === Model.GPT_4O) || null,
-        );
-      else if (hasToken("deepseek"))
-        setCurrentModel(
-          SUPPORTED_MODELS.find((m) => m.id === Model.DEEPSEEK_CHAT) || null,
-        );
-      else if (hasToken("google"))
-        setCurrentModel(
-          SUPPORTED_MODELS.find((m) => m.id === Model.GEMINI_2_5_FLASH) || null,
-        );
-      else setCurrentModel(null);
-    }
-  }, [hasToken, isOllamaRunning, ollamaModels]);
-
-  // Compute API key for current model
-  useEffect(() => {
-    if (!currentModel) {
-      setCurrentApiKey("");
-      return;
-    }
-    if (currentModel.provider === "ollama") {
-      const isAvailable =
-        isOllamaRunning &&
-        ollamaModels.some(
-          (om) =>
-            om.id === currentModel.id ||
-            om.id.startsWith(`${currentModel.id}:`),
-        );
-      setCurrentApiKey(isAvailable ? "local" : "");
-      return;
-    }
-    setCurrentApiKey(getToken(currentModel.provider));
-  }, [currentModel, getToken, isOllamaRunning, ollamaModels]);
-
   // Load saved tests when server changes
   useEffect(() => {
     setSavedTests(listSavedTests(serverKey));
   }, [serverKey]);
+
+  // Preferred model for the editor (persisted per test)
+  const desiredModelId = useMemo(() => {
+    if (!editingTestId) return null;
+    const t = savedTests.find((s) => s.id === editingTestId);
+    return (t?.modelId as any) || null;
+  }, [editingTestId, savedTests]);
 
   function parseExpectedTools(input: string): string[] {
     return input
@@ -372,10 +289,7 @@ export function TestsTab({
     setRunStatus("idle");
     setLastRunInfo(null);
     setTraceEvents([]);
-    if (test.modelId) {
-      const target = availableModels.find((m) => m.id === test.modelId);
-      if (target) setCurrentModel(target);
-    }
+    // If there is a desired model stored, MCPJamModelSelector will set it when available
   };
 
   const handleDelete = (id: string) => {
@@ -421,7 +335,7 @@ export function TestsTab({
     const selectionMap = getServerSelectionMap();
     const hasServers =
       (selectionMap && Object.keys(selectionMap).length > 0) || serverConfig;
-    if (!hasServers || !currentModel || !currentApiKey || !prompt.trim())
+    if (!hasServers || !currentModel || !prompt.trim())
       return;
 
     // Create abort controller for this run
@@ -431,11 +345,24 @@ export function TestsTab({
     setLastRunInfo(null);
     setTraceEvents([]);
 
-    const expectedSet = new Set(parseExpectedTools(expectedToolsInput));
-    const calledToolsSet = new Set<string>();
+    // Build single-test payload (reuse run-all pipeline)
+    const testId = editingTestId || crypto.randomUUID();
+    const testsPayload = [
+      {
+        id: testId,
+        title: title || testId,
+        prompt: prompt.trim(),
+        expectedTools: parseExpectedTools(expectedToolsInput),
+        model: currentModel,
+        selectedServers: selectedServersForTest || [],
+      },
+    ];
+    const providerApiKeys = {} as any;
+    const allServers =
+      allServerConfigsMap || serverConfigsMap || (serverConfig ? { test: serverConfig } : {});
 
     try {
-      const response = await fetch("/api/mcp/chat", {
+      const response = await fetch("/api/mcp/tests/run-all", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -443,25 +370,14 @@ export function TestsTab({
         },
         signal: abortController.signal,
         body: JSON.stringify({
-          model: currentModel,
-          provider: currentModel?.provider,
-          apiKey: currentApiKey,
-          systemPrompt:
-            advInstructions.trim() ||
-            "You are a helpful assistant with access to MCP tools.",
-          messages: [
-            {
-              id: crypto.randomUUID(),
-              role: "user",
-              content: prompt.trim(),
-              timestamp: Date.now(),
-            },
-          ],
-          ollamaBaseUrl: getOllamaBaseUrl(),
-          temperature:
-            advTemperature.trim() === "" ? undefined : Number(advTemperature),
-          maxSteps: advMaxSteps.trim() === "" ? undefined : Number(advMaxSteps),
-          toolChoice: advToolChoice,
+          tests: testsPayload,
+          allServers,
+          providerApiKeys,
+          concurrency: 1,
+          // Allow user to override backend URL via local storage for debugging
+          backendHttpUrl:
+            (typeof window !== "undefined" &&
+              localStorage.getItem("MCPJAM_BACKEND_HTTP")) || undefined,
         }),
       });
 
@@ -484,99 +400,37 @@ export function TestsTab({
           buffer = lines.pop() || "";
 
           for (const line of lines) {
-            if (line.startsWith("data: ")) {
-              const data = line.slice(6).trim();
-              if (data === "[DONE]") {
-                doneStreaming = true;
-                break;
-              }
-              if (!data) continue;
-
-              try {
-                const parsed = JSON.parse(data);
-
-                // Capture tool calls
-                if (
-                  (parsed.type === "tool_call" ||
-                    (!parsed.type && parsed.toolCall)) &&
-                  parsed.toolCall
-                ) {
-                  const toolCall = parsed.toolCall;
-                  const toolName = toolCall?.name || toolCall?.toolName;
-                  if (toolName) {
-                    console.log(
-                      `[Individual Test Debug] Raw tool call: "${toolName}"`,
-                    );
-                    calledToolsSet.add(toolName);
-                  }
-                }
-
-                // Capture trace events - handle multiple formats
-                if (
-                  parsed.type === "trace_step" &&
-                  typeof parsed.step === "number"
-                ) {
-                  setTraceEvents((prev) => [
-                    ...prev,
-                    {
-                      step: parsed.step,
-                      text: parsed.text,
-                      toolCalls: parsed.toolCalls,
-                      toolResults: parsed.toolResults,
-                    },
-                  ]);
-                } else if (
-                  parsed.type === "text" ||
-                  parsed.type === "content"
-                ) {
-                  // Capture text responses as trace events
-                  setTraceEvents((prev) => [
-                    ...prev,
-                    {
-                      step: prev.length + 1,
-                      text:
-                        parsed.text || parsed.content || JSON.stringify(parsed),
-                      toolCalls: [],
-                      toolResults: [],
-                    },
-                  ]);
-                } else if (!parsed.type && (parsed.text || parsed.content)) {
-                  // Capture any text content without explicit type
-                  setTraceEvents((prev) => [
-                    ...prev,
-                    {
-                      step: prev.length + 1,
-                      text: parsed.text || parsed.content,
-                      toolCalls: [],
-                      toolResults: [],
-                    },
-                  ]);
-                }
-
-                // Debug: log all parsed events to console
-                if (parsed.type) {
-                  console.log("[Test Trace]", parsed.type, parsed);
-                }
-              } catch {
-                // ignore malformed line
-              }
+            if (!line.startsWith("data: ")) continue;
+            const data = line.slice(6).trim();
+            if (!data) continue;
+            if (data === "[DONE]") {
+              doneStreaming = true;
+              break;
             }
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.type === "trace_step" && parsed.testId === testId) {
+                setTraceEvents((prev) => [
+                  ...prev,
+                  {
+                    step: parsed.step,
+                    text: parsed.text,
+                    toolCalls: parsed.toolCalls,
+                    toolResults: parsed.toolResults,
+                  },
+                ]);
+              } else if (parsed.type === "result" && parsed.testId === testId) {
+                setLastRunInfo({
+                  calledTools: parsed.calledTools || [],
+                  missingTools: parsed.missingTools || [],
+                  unexpectedTools: parsed.unexpectedTools || [],
+                });
+                setRunStatus(parsed.passed ? "success" : "failed");
+              }
+            } catch {}
           }
         }
       }
-
-      const calledTools = Array.from(calledToolsSet);
-      const missingTools = Array.from(expectedSet).filter(
-        (t) => !calledToolsSet.has(t),
-      );
-      const unexpectedTools = calledTools.filter((t) => !expectedSet.has(t));
-
-      setLastRunInfo({ calledTools, missingTools, unexpectedTools });
-      setRunStatus(
-        missingTools.length === 0 && unexpectedTools.length === 0
-          ? "success"
-          : "failed",
-      );
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
         console.log("Test run was cancelled");
@@ -594,38 +448,30 @@ export function TestsTab({
     allServerConfigsMap,
     selectedServersForTest,
     currentModel,
-    currentApiKey,
     prompt,
     expectedToolsInput,
-    getOllamaBaseUrl,
+    
     advInstructions,
     advTemperature,
     advMaxSteps,
     advToolChoice,
+    editingTestId,
+    title,
   ]);
 
   // Helper to resolve model+apiKey for a given modelId or fallback to current
   const resolveModelAndApiKey = useCallback(
     (
       modelId?: string | null,
-    ): { model: ModelDefinition | null; apiKey: string } => {
+    ): { model: ModelDefinition | null } => {
       let model: ModelDefinition | null = null;
-      if (modelId) {
-        model = availableModels.find((m) => m.id === modelId) || null;
-      }
+      // Selector manages available models; rely on current selection
+      if (modelId && currentModel?.id === modelId) model = currentModel;
       if (!model) model = currentModel;
-      if (!model) return { model: null, apiKey: "" };
-      if (model.provider === "ollama") {
-        const isAvailable =
-          isOllamaRunning &&
-          ollamaModels.some(
-            (om) => om.id === model!.id || om.id.startsWith(`${model!.id}:`),
-          );
-        return { model, apiKey: isAvailable ? "local" : "" };
-      }
-      return { model, apiKey: getToken(model.provider) };
+      if (!model) return { model: null };
+      return { model };
     },
-    [availableModels, currentModel, getToken, isOllamaRunning, ollamaModels],
+    [currentModel],
   );
 
   // Run all saved tests in the current list; if any test fails, mark run failed and load first failing test details
@@ -649,12 +495,7 @@ export function TestsTab({
         selectedServers: t.selectedServers || [],
       };
     });
-    const providerApiKeys = {
-      anthropic: getToken("anthropic"),
-      openai: getToken("openai"),
-      deepseek: getToken("deepseek"),
-      google: getToken("google"),
-    } as any;
+    const providerApiKeys = {} as any;
 
     // Consolidate all servers map from props
     const allServers =
@@ -706,7 +547,6 @@ export function TestsTab({
           tests: testsPayload,
           allServers,
           providerApiKeys,
-          ollamaBaseUrl: getOllamaBaseUrl(),
           concurrency: 6,
         }),
       });
@@ -833,8 +673,7 @@ export function TestsTab({
     allServerConfigsMap,
     serverConfigsMap,
     serverConfig,
-    getOllamaBaseUrl,
-    getToken,
+    
     editingTestId,
     handleLoad,
   ]);
@@ -913,7 +752,6 @@ export function TestsTab({
             onClick={runStatus === "running" ? handleCancelRun : runTest}
             disabled={
               !currentModel ||
-              !currentApiKey ||
               !prompt.trim() ||
               !validateServerAvailability().isValid
             }
@@ -1143,17 +981,11 @@ export function TestsTab({
                       Model<span className="text-destructive ml-0.5">*</span>
                     </label>
                     <div className="mt-1">
-                      {availableModels.length > 0 && currentModel ? (
-                        <ModelSelector
-                          currentModel={currentModel}
-                          availableModels={availableModels}
-                          onModelChange={(m) => setCurrentModel(m)}
-                        />
-                      ) : (
-                        <Badge variant="secondary" className="text-xs">
-                          No model available
-                        </Badge>
-                      )}
+                      <MCPJamModelSelector
+                        currentModel={currentModel}
+                        onModelChange={(m) => setCurrentModel(m)}
+                        desiredModelId={desiredModelId}
+                      />
                     </div>
                   </div>
                   <div className="col-span-6">
