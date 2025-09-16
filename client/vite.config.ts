@@ -29,6 +29,10 @@ export default defineConfig({
     force: process.env.FORCE_OPTIMIZE === "true",
   },
   server: {
+    allowedHosts: [
+      // Allow localtunnel HTTPS hostnames, e.g., *.loca.lt
+      ".loca.lt",
+    ],
     proxy: {
       "/api": {
         target: "http://localhost:3000",

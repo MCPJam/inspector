@@ -84,7 +84,7 @@ export function InterceptorTab({
   }, []);
 
   const handleCreate = async () => {
-    const res = await fetch(`${baseUrl}/create`, {
+    const res = await fetch(`${baseUrl}/create?tunnel=true`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ targetUrl, managerServerId: selectedServer || undefined }),
@@ -96,7 +96,7 @@ export function InterceptorTab({
     }
     const id = json.id as string;
     setInterceptorId(id);
-    const proxy = json.proxyUrl as string | undefined;
+    const proxy = (json.publicProxyUrl as string | undefined) || (json.proxyUrl as string | undefined);
     setProxyUrl(proxy || `${baseUrl}/${id}/proxy`);
     connectStream(id);
   };

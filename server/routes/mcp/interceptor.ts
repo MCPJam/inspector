@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { interceptorStore } from "../../services/interceptor-store";
+import { ensureNgrokTunnel, getNgrokUrl } from "../../services/ngrok";
 
 const interceptor = new Hono();
 
@@ -7,6 +8,8 @@ const interceptor = new Hono();
 interceptor.post("/create", async (c) => {
   try {
     const { targetUrl, managerServerId } = await c.req.json();
+    const urlObj = new URL(c.req.url);
+    const useTunnel = urlObj.searchParams.get("tunnel") === "true";
     let finalTarget = targetUrl as string | undefined;
 
     // If a manager-backed server is provided, we don't need an external URL at all.
@@ -35,11 +38,33 @@ interceptor.post("/create", async (c) => {
 
     const entry = interceptorStore.create(finalTarget, managerServerId);
 
+    // Compute local origin and optional public HTTPS origin via tunnel
+    const localOrigin = urlObj.origin;
+    let publicOrigin: string | null = null;
+    if (useTunnel) {
+      // derive port from local origin; default to 3000
+      const portStr = urlObj.port || "3000";
+      const port = parseInt(portStr || "3000", 10) || 3000;
+      try {
+        publicOrigin = await ensureNgrokTunnel(port);
+      } catch {}
+    } else {
+      publicOrigin = getNgrokUrl();
+    }
+
+    const proxyPath = `/api/mcp/interceptor/${entry.id}/proxy`;
+    const localProxyUrl = `${localOrigin}${proxyPath}`;
+    const publicProxyUrl = publicOrigin ? `${publicOrigin}${proxyPath}` : null;
+    // Prefer HTTPS tunnel when available for backward-compatible proxyUrl consumers
+    const proxyUrl = publicProxyUrl || localProxyUrl;
+
     return c.json({
       success: true,
       id: entry.id,
       targetUrl: entry.targetUrl,
-      proxyUrl: `${new URL(c.req.url).origin}/api/mcp/interceptor/${entry.id}/proxy`,
+      proxyUrl,
+      localProxyUrl,
+      publicProxyUrl,
     });
   } catch (err) {
     return c.json(
@@ -54,7 +79,13 @@ interceptor.get("/:id", (c) => {
   const id = c.req.param("id");
   const info = interceptorStore.info(id);
   if (!info) return c.json({ success: false, error: "not found" }, 404);
-  return c.json({ success: true, ...info });
+  const urlObj = new URL(c.req.url);
+  const publicOrigin = getNgrokUrl();
+  const proxyPath = `/api/mcp/interceptor/${id}/proxy`;
+  const localProxyUrl = `${urlObj.origin}${proxyPath}`;
+  const publicProxyUrl = publicOrigin ? `${publicOrigin}${proxyPath}` : null;
+  const proxyUrl = publicProxyUrl || localProxyUrl;
+  return c.json({ success: true, ...info, proxyUrl, localProxyUrl, publicProxyUrl });
 });
 
 // Clear logs
