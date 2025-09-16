@@ -1,16 +1,85 @@
 import { Hono } from "hono";
-import { createAnthropic } from "@ai-sdk/anthropic";
-import { createOpenAI } from "@ai-sdk/openai";
-import { createOllama } from "ollama-ai-provider";
 import { MastraMCPServerDefinition, MCPClient } from "@mastra/mcp";
 import type { ModelDefinition } from "../../../shared/types";
-import { Agent } from "@mastra/core/agent";
 import {
   validateMultipleServerConfigs,
   createMCPClientWithMultipleConnections,
 } from "../../utils/mcp-utils";
 
 const tests = new Hono();
+
+// Helper functions
+function normalizeToolName(toolName: string, serverIds: string[]): string {
+  for (const id of serverIds) {
+    const prefix = `${id}_`;
+    if (toolName.startsWith(prefix)) {
+      return toolName.slice(prefix.length);
+    }
+  }
+  return toolName;
+}
+
+function extractToolSchema(tool: any): any {
+  if (!tool?.inputSchema) return {};
+
+  // Try toJSON() first
+  const jsonSchema = tool.inputSchema.toJSON?.();
+  if (jsonSchema && typeof jsonSchema === 'object') {
+    return jsonSchema;
+  }
+
+  // Fallback for ZodObject
+  const zodDef = tool.inputSchema._def;
+  if (zodDef?.typeName === 'ZodObject') {
+    const baseSchema = {
+      type: 'object',
+      additionalProperties: false,
+      properties: {},
+      required: []
+    };
+
+    try {
+      if (zodDef.shape && typeof zodDef.shape === 'function') {
+        const shape = zodDef.shape();
+        const properties: any = {};
+        const required: string[] = [];
+
+        for (const [key, value] of Object.entries(shape)) {
+          properties[key] = { type: 'string' };
+          if ((value as any)?._def?.typeName !== 'ZodOptional') {
+            required.push(key);
+          }
+        }
+
+        return { ...baseSchema, properties, required };
+      }
+    } catch {
+      // Keep base schema
+    }
+
+    return baseSchema;
+  }
+
+  return {};
+}
+
+function resolveBackendUrl(overrideUrl?: string): string {
+  if (overrideUrl) return overrideUrl.replace(/\/$/, "");
+
+  const explicit = process.env.CONVEX_HTTP_URL;
+  if (explicit) return explicit.replace(/\/$/, "");
+
+  const convexUrl = process.env.VITE_CONVEX_URL || process.env.CONVEX_URL;
+  if (convexUrl) {
+    try {
+      const u = new URL(convexUrl);
+      const host = u.host.replace('.convex.cloud', '.convex.site');
+      return `${u.protocol}//${host}`;
+    } catch {}
+  }
+
+  return "http://localhost:3210";
+}
 
 export default tests;
 
@@ -27,12 +96,11 @@ tests.post("/run-all", async (c) => {
       model: ModelDefinition;
       selectedServers?: string[];
     }>;
+    const overrideBackendHttpUrl = body?.backendHttpUrl as string | undefined;
     const allServers = (body?.allServers || {}) as Record<
       string,
       MastraMCPServerDefinition
     >;
-    const providerApiKeys = body?.providerApiKeys || {};
-    const ollamaBaseUrl: string | undefined = body?.ollamaBaseUrl;
     const maxConcurrency: number = Math.max(
       1,
       Math.min(8, body?.concurrency ?? 5),
@@ -41,36 +109,6 @@ tests.post("/run-all", async (c) => {
     if (!Array.isArray(testsInput) || testsInput.length === 0) {
       return c.json({ success: false, error: "No tests provided" }, 400);
     }
-
-    function createModel(model: ModelDefinition) {
-      switch (model.provider) {
-        case "anthropic":
-          return createAnthropic({
-            apiKey:
-              providerApiKeys?.anthropic || process.env.ANTHROPIC_API_KEY || "",
-          })(model.id);
-        case "openai":
-          return createOpenAI({
-            apiKey: providerApiKeys?.openai || process.env.OPENAI_API_KEY || "",
-          })(model.id);
-        case "deepseek":
-          return createOpenAI({
-            apiKey:
-              providerApiKeys?.deepseek || process.env.DEEPSEEK_API_KEY || "",
-            baseURL: "https://api.deepseek.com/v1",
-          })(model.id);
-        case "ollama":
-          return createOllama({
-            baseURL:
-              ollamaBaseUrl ||
-              process.env.OLLAMA_BASE_URL ||
-              "http://localhost:11434/api",
-          })(model.id, { simulateStreaming: true });
-        default:
-          throw new Error(`Unsupported provider: ${model.provider}`);
-      }
-    }
-
     const readableStream = new ReadableStream({
       async start(controller) {
         let active = 0;
@@ -126,56 +164,135 @@ tests.post("/run-all", async (c) => {
               }
 
               client = createMCPClientWithMultipleConnections(finalServers);
-              const model = createModel(test.model);
-              const agent = new Agent({
-                name: `TestAgent-${test.id}`,
-                instructions:
-                  "You are a helpful assistant with access to MCP tools",
-                model,
-              });
-              const toolsets = await client.getToolsets();
-              const stream = await agent.streamVNext(
-                [{ role: "user", content: test.prompt || "" }] as any,
-                {
-                  maxSteps: 10,
-                  toolsets,
-                },
+              const tools = await client.getTools();
+              const toolsSchemas = Object.entries(tools).map(([name, tool]) => ({
+                toolName: name,
+                inputSchema: extractToolSchema(tool),
+              }));
+
+              const runId = `${Date.now()}-${test.id}`;
+              const backendUrl = resolveBackendUrl(overrideBackendHttpUrl);
+
+              // Emit debug info
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({ type: "debug", testId: test.id, backendUrl })}\n\n`,
+                ),
               );
 
-              // Process the streamVNext output
-              for await (const chunk of stream.fullStream) {
-                if (chunk.type === "tool-call" && chunk.payload) {
-                  const toolName = chunk.payload.toolName;
-                  if (toolName) {
-                    calledTools.add(toolName);
-                  }
-                }
-                if (chunk.type === "finish") {
-                  step += 1;
+              // Start one-step on backend
+              const startRes = await fetch(`${backendUrl}/evals/agent/start`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                  runId,
+                  model: test.model,
+                  toolsSchemas,
+                  messages: [
+                    { role: "system", content: "You are a helpful assistant with access to MCP tools." },
+                    { role: "user", content: test.prompt || "" },
+                  ],
+                }),
+              });
+              if (!startRes.ok) {
+                const errText = await startRes.text().catch(() => "");
+                controller.enqueue(
+                  encoder.encode(
+                    `data: ${JSON.stringify({ type: "result", testId: test.id, passed: false, error: `Backend start failed: ${startRes.status} ${errText}` })}\n\n`,
+                  ),
+                );
+                throw new Error(`Backend start failed: ${startRes.status} ${errText}`);
+              }
+              const startJson: any = await startRes.json();
+              if (!startJson.ok) throw new Error((startJson as any).error || "start failed");
+
+              let state: any = startJson;
+              const serverIds = Object.keys(finalServers);
+
+              // Loop until assistant_text
+              while (state.kind === "tool_call") {
+                const name = state.toolName as string;
+                const args = state.args || {};
+                const tool = (tools as any)[name];
+
+                try {
+                  const result = await tool?.execute({ context: args });
+                  calledTools.add(name);
+
                   controller.enqueue(
                     encoder.encode(
                       `data: ${JSON.stringify({
                         type: "trace_step",
                         testId: test.id,
-                        step,
-                        text: "Test completed",
-                        toolCalls: Array.from(calledTools),
-                        toolResults: [],
+                        step: ++step,
+                        text: "Executed tool",
+                        toolCalls: [normalizeToolName(name, serverIds)],
+                        toolResults: [result]
                       })}\n\n`,
                     ),
                   );
+
+                  const stepRes = await fetch(`${backendUrl}/evals/agent/step`, {
+                    method: "POST",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({
+                      runId,
+                      model: test.model,
+                      toolsSchemas,
+                      messages: state.steps?.[state.steps.length - 1]?.messages || [
+                        { role: "system", content: "You are a helpful assistant with access to MCP tools." },
+                        { role: "user", content: test.prompt || "" },
+                      ],
+                      toolResultMessage: {
+                        role: "tool",
+                        content: [{
+                          type: "tool-result",
+                          toolCallId: state.toolCallId,
+                          toolName: name,
+                          output: result
+                        }],
+                      },
+                    }),
+                  });
+
+                  const stepJson: any = await stepRes.json();
+                  if (!stepJson.ok) {
+                    controller.enqueue(
+                      encoder.encode(
+                        `data: ${JSON.stringify({
+                          type: "result",
+                          testId: test.id,
+                          passed: false,
+                          error: (stepJson as any).error || "step failed"
+                        })}\n\n`,
+                      ),
+                    );
+                    throw new Error((stepJson as any).error || "step failed");
+                  }
+                  state = stepJson as any;
+                } catch (err) {
+                  throw new Error(`Tool '${name}' failed: ${err instanceof Error ? err.message : String(err)}`);
                 }
               }
-              const called = Array.from(calledTools);
+
+              const called = Array.from(calledTools).map((t) => normalizeToolName(t, serverIds));
               const missing = Array.from(expectedSet).filter(
-                (t) => !calledTools.has(t),
+                (t) => !called.includes(t),
               );
               const unexpected = called.filter((t) => !expectedSet.has(t));
               const passed = missing.length === 0 && unexpected.length === 0;
               if (!passed) failed = true;
+
               controller.enqueue(
                 encoder.encode(
-                  `data: ${JSON.stringify({ type: "result", testId: test.id, passed, calledTools: called, missingTools: missing, unexpectedTools: unexpected })}\n\n`,
+                  `data: ${JSON.stringify({
+                    type: "result",
+                    testId: test.id,
+                    passed,
+                    calledTools: called,
+                    missingTools: missing,
+                    unexpectedTools: unexpected
+                  })}\n\n`,
                 ),
               );
             } catch (err) {
