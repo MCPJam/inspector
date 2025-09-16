@@ -35,7 +35,6 @@ export function TestsTab({
   serverConfigsMap,
   allServerConfigsMap,
 }: TestsTabProps) {
-  
   const [currentModel, setCurrentModel] = useState<ModelDefinition | null>(
     null,
   );
@@ -335,8 +334,7 @@ export function TestsTab({
     const selectionMap = getServerSelectionMap();
     const hasServers =
       (selectionMap && Object.keys(selectionMap).length > 0) || serverConfig;
-    if (!hasServers || !currentModel || !prompt.trim())
-      return;
+    if (!hasServers || !currentModel || !prompt.trim()) return;
 
     // Create abort controller for this run
     const abortController = new AbortController();
@@ -359,7 +357,9 @@ export function TestsTab({
     ];
     const providerApiKeys = {} as any;
     const allServers =
-      allServerConfigsMap || serverConfigsMap || (serverConfig ? { test: serverConfig } : {});
+      allServerConfigsMap ||
+      serverConfigsMap ||
+      (serverConfig ? { test: serverConfig } : {});
 
     try {
       const response = await fetch("/api/mcp/tests/run-all", {
@@ -377,7 +377,8 @@ export function TestsTab({
           // Allow user to override backend URL via local storage for debugging
           backendHttpUrl:
             (typeof window !== "undefined" &&
-              localStorage.getItem("MCPJAM_BACKEND_HTTP")) || undefined,
+              localStorage.getItem("MCPJAM_BACKEND_HTTP")) ||
+            undefined,
         }),
       });
 
@@ -450,7 +451,7 @@ export function TestsTab({
     currentModel,
     prompt,
     expectedToolsInput,
-    
+
     advInstructions,
     advTemperature,
     advMaxSteps,
@@ -461,9 +462,7 @@ export function TestsTab({
 
   // Helper to resolve model+apiKey for a given modelId or fallback to current
   const resolveModelAndApiKey = useCallback(
-    (
-      modelId?: string | null,
-    ): { model: ModelDefinition | null } => {
+    (modelId?: string | null): { model: ModelDefinition | null } => {
       let model: ModelDefinition | null = null;
       // Selector manages available models; rely on current selection
       if (modelId && currentModel?.id === modelId) model = currentModel;
@@ -673,7 +672,7 @@ export function TestsTab({
     allServerConfigsMap,
     serverConfigsMap,
     serverConfig,
-    
+
     editingTestId,
     handleLoad,
   ]);

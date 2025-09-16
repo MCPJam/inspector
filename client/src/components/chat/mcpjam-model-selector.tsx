@@ -36,7 +36,10 @@ const PROVIDER_DISPLAY_NAME: Partial<Record<string, string>> = {
   deepseek: "DeepSeek",
 };
 
-function toDisplayName(provider: string, names?: Record<string, string>): string {
+function toDisplayName(
+  provider: string,
+  names?: Record<string, string>,
+): string {
   return names?.[provider] || PROVIDER_DISPLAY_NAME[provider] || provider;
 }
 
@@ -66,15 +69,15 @@ export function MCPJamModelSelector({
         await provRes.json().catch(() => ({ data: [] }));
         const modJson = await modRes.json().catch(() => ({ data: [] }));
         if (cancelled) return;
-        const mapped: ModelDefinition[] = (Array.isArray(modJson?.data)
-          ? modJson.data
-          : [])
+        const mapped: ModelDefinition[] = (
+          Array.isArray(modJson?.data) ? modJson.data : []
+        )
           .map((m: any) => {
             const id = m?.id || m?.canonical_slug || m?.name;
             const name = m?.name || String(id);
             const provider = String(id || "").includes("/")
               ? String(id).split("/")[0]
-              : (m?.canonical_slug?.split("/")?.[0] || "openrouter");
+              : m?.canonical_slug?.split("/")?.[0] || "openrouter";
             return { id, name, provider: provider as any } as ModelDefinition;
           })
           .filter((m: ModelDefinition) => !!m.id && !!m.name);
@@ -108,7 +111,9 @@ export function MCPJamModelSelector({
     }
     // Fallback: try to resolve by canonical id suffix (after provider/)
     const suffix = String(desiredModelId).split("/").pop();
-    const bySuffix = models.find((m) => String(m.id).split("/").pop() === suffix);
+    const bySuffix = models.find(
+      (m) => String(m.id).split("/").pop() === suffix,
+    );
     if (bySuffix) onModelChange(bySuffix);
   }, [desiredModelId, models]);
 
@@ -199,7 +204,9 @@ export function MCPJamModelSelector({
                   >
                     <div className="flex flex-col min-w-0">
                       <span className="font-medium truncate">{m.name}</span>
-                      <span className="text-[10px] text-muted-foreground truncate">{String(m.id)}</span>
+                      <span className="text-[10px] text-muted-foreground truncate">
+                        {String(m.id)}
+                      </span>
                     </div>
                     {current && m.id === current.id && (
                       <div className="ml-auto w-2 h-2 bg-primary rounded-full" />
@@ -216,5 +223,3 @@ export function MCPJamModelSelector({
 }
 
 export default MCPJamModelSelector;
-
-
