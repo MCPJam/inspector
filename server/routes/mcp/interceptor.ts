@@ -11,10 +11,23 @@ interceptor.post("/create", async (c) => {
     const urlObj = new URL(c.req.url);
     const useTunnel = urlObj.searchParams.get("tunnel") === "true";
     let finalTarget = targetUrl as string | undefined;
+    // Normalize manager id: ignore empty or 'none'
+    const mgrId =
+      typeof managerServerId === "string" && managerServerId.trim() !== "" && managerServerId !== "none"
+        ? managerServerId
+        : undefined;
 
     // If a manager-backed server is provided, we don't need an external URL at all.
-    if (managerServerId) {
-      finalTarget = `manager://${managerServerId}`;
+    if (mgrId) {
+      // Validate the server is connected before accepting
+      const status = c.mcpJamClientManager.getConnectionStatus(mgrId);
+      if (status !== "connected") {
+        return c.json(
+          { success: false, error: `Manager server '${mgrId}' is not connected` },
+          400,
+        );
+      }
+      finalTarget = `manager://${mgrId}`;
     }
 
     if (!finalTarget || typeof finalTarget !== "string") {
@@ -22,7 +35,7 @@ interceptor.post("/create", async (c) => {
     }
 
     // Only validate when proxying raw HTTP
-    if (!managerServerId) {
+    if (!mgrId) {
       try {
         const u = new URL(finalTarget);
         if (!["http:", "https:"].includes(u.protocol)) {
@@ -36,7 +49,7 @@ interceptor.post("/create", async (c) => {
       }
     }
 
-    const entry = interceptorStore.create(finalTarget, managerServerId);
+    const entry = interceptorStore.create(finalTarget, mgrId);
 
     // Compute local origin and optional public HTTPS origin via tunnel
     const localOrigin = urlObj.origin;
@@ -182,8 +195,8 @@ interceptor.all("/:id/proxy", async (c) => {
       const serverId = entry.managerServerId;
 
       let upstreamResponse: Response;
-      // Support plain GET to target root (some clients probe)
-      if (method === "GET") {
+      // Support plain GET/HEAD to target root (some clients probe)
+      if (method === "GET" || method === "HEAD") {
         upstreamResponse = new Response("OK", { status: 200 });
       } else if (jsonBody && jsonBody.method) {
         // Minimal JSON-RPC bridge: initialize and tools.list can be emulated
@@ -203,8 +216,16 @@ interceptor.all("/:id/proxy", async (c) => {
           upstreamResponse = new Response(JSON.stringify({ jsonrpc: "2.0", id: jsonBody.id ?? null, result }), { status: 200, headers: { "content-type": "application/json" } });
         } else if (jsonBody.method === "tools/list") {
           const toolsets = await clientManager.getToolsetsForServer(serverId);
-          const tools = Object.keys(toolsets).map((name) => ({ name, description: (toolsets as any)[name].description }));
-          upstreamResponse = new Response(JSON.stringify({ jsonrpc: "2.0", id: jsonBody.id ?? null, result: { tools } }), { status: 200, headers: { "content-type": "application/json" } });
+          const tools = Object.keys(toolsets).map((name) => ({
+            name,
+            description: (toolsets as any)[name].description,
+            inputSchema: (toolsets as any)[name].inputSchema,
+            outputSchema: (toolsets as any)[name].outputSchema,
+          }));
+          upstreamResponse = new Response(
+            JSON.stringify({ jsonrpc: "2.0", id: jsonBody.id ?? null, result: { tools } }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
         } else if (jsonBody.method === "tools/call" && jsonBody.params?.name) {
           try {
             const exec = await clientManager.executeToolDirect(`${serverId}:${jsonBody.params.name}`, jsonBody.params?.arguments || {});
@@ -212,6 +233,72 @@ interceptor.all("/:id/proxy", async (c) => {
           } catch (e) {
             upstreamResponse = new Response(JSON.stringify({ jsonrpc: "2.0", id: jsonBody.id ?? null, error: { code: -32000, message: (e as Error).message } }), { status: 200, headers: { "content-type": "application/json" } });
           }
+        } else if (jsonBody.method === "resources/list") {
+          const resources = clientManager
+            .getResourcesForServer(serverId)
+            .map((r) => ({
+              uri: r.uri,
+              name: r.name,
+              description: r.description,
+              mimeType: r.mimeType,
+            }));
+          upstreamResponse = new Response(
+            JSON.stringify({ jsonrpc: "2.0", id: jsonBody.id ?? null, result: { resources } }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        } else if (jsonBody.method === "resources/read" && jsonBody.params?.uri) {
+          try {
+            const content = await clientManager.getResource(jsonBody.params.uri, serverId);
+            upstreamResponse = new Response(
+              JSON.stringify({ jsonrpc: "2.0", id: jsonBody.id ?? null, result: content }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            );
+          } catch (e) {
+            upstreamResponse = new Response(
+              JSON.stringify({ jsonrpc: "2.0", id: jsonBody.id ?? null, error: { code: -32000, message: (e as Error).message } }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            );
+          }
+        } else if (jsonBody.method === "prompts/list") {
+          const prompts = clientManager
+            .getPromptsForServer(serverId)
+            .map((p) => ({ name: p.name, description: p.description, arguments: p.arguments }));
+          upstreamResponse = new Response(
+            JSON.stringify({ jsonrpc: "2.0", id: jsonBody.id ?? null, result: { prompts } }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        } else if (jsonBody.method === "prompts/get" && jsonBody.params?.name) {
+          try {
+            const content = await clientManager.getPrompt(
+              jsonBody.params.name,
+              serverId,
+              jsonBody.params?.arguments || {},
+            );
+            upstreamResponse = new Response(
+              JSON.stringify({ jsonrpc: "2.0", id: jsonBody.id ?? null, result: content }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            );
+          } catch (e) {
+            upstreamResponse = new Response(
+              JSON.stringify({ jsonrpc: "2.0", id: jsonBody.id ?? null, error: { code: -32000, message: (e as Error).message } }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            );
+          }
+        } else if (jsonBody.method === "roots/list") {
+          // Return empty roots; we are not exposing filesystem via proxy
+          upstreamResponse = new Response(
+            JSON.stringify({ jsonrpc: "2.0", id: jsonBody.id ?? null, result: { roots: [] } }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        } else if (jsonBody.method === "logging/setLevel") {
+          // Acknowledge without changing anything
+          upstreamResponse = new Response(
+            JSON.stringify({ jsonrpc: "2.0", id: jsonBody.id ?? null, result: { success: true } }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        } else if (jsonBody.method?.startsWith("notifications/")) {
+          // Acknowledge notifications without error to avoid client failures
+          upstreamResponse = new Response("", { status: 200 });
         } else {
           upstreamResponse = new Response(JSON.stringify({ jsonrpc: "2.0", id: jsonBody.id ?? null, error: { code: -32601, message: "Method not implemented in proxy" } }), { status: 200, headers: { "content-type": "application/json" } });
         }
@@ -302,5 +389,3 @@ interceptor.all("/:id/proxy", async (c) => {
 });
 
 export default interceptor;
-
-
