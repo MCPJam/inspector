@@ -84,10 +84,12 @@ export function InterceptorTab({
   }, []);
 
   const handleCreate = async () => {
+    // Treat the sentinel 'none' as no selection
+    const managerId = selectedServer && selectedServer !== "none" ? selectedServer : undefined;
     const res = await fetch(`${baseUrl}/create?tunnel=true`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ targetUrl, managerServerId: selectedServer || undefined }),
+      body: JSON.stringify({ targetUrl, managerServerId: managerId }),
     });
     const json = await res.json();
     if (!json.success) {
@@ -174,5 +176,4 @@ export function InterceptorTab({
     </div>
   );
 }
-
 
