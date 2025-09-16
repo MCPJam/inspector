@@ -36,6 +36,11 @@ const navigationSections = [
         icon: MessageCircle,
       },
       {
+        title: "Interceptor",
+        url: "#interceptor",
+        icon: Glasses,
+      },
+      {
         title: "Tracing",
         url: "#tracing",
         icon: Glasses,

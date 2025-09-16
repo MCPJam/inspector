@@ -8,6 +8,7 @@ import chat from "./chat";
 import tests from "./tests.ts";
 import oauth from "./oauth";
 import exporter from "./export";
+import interceptor from "./interceptor";
 
 const mcp = new Hono();
 
@@ -46,5 +47,8 @@ mcp.route("/oauth", oauth);
 
 // Export endpoints - REAL IMPLEMENTATION
 mcp.route("/export", exporter);
+
+// Interceptor endpoints - create proxy and stream logs
+mcp.route("/interceptor", interceptor);
 
 export default mcp;
