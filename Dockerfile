@@ -15,6 +15,7 @@ RUN cd server && npm install --include=dev
 FROM deps-base AS client-builder
 COPY shared/ ./shared/
 COPY client/ ./client/
+COPY .env.production ./
 RUN cd client && npm run build
 
 # Stage 3: Build server  
@@ -37,8 +38,11 @@ WORKDIR /app
 COPY --from=client-builder /app/dist/client ./dist/client
 COPY --from=server-builder /app/dist/server ./dist/server
 
-# Copy server package.json and install production dependencies at root
-COPY --from=server-builder /app/server/package.json ./package.json
+# Copy package.json files for dependencies
+COPY --from=deps-base /app/package.json ./package.json
+COPY --from=deps-base /app/server/package.json ./server/package.json
+
+# Install production dependencies from root package.json (includes external packages like fix-path)
 RUN npm install --production
 
 # Copy shared types
@@ -58,6 +62,10 @@ USER mcpjam
 # Expose port
 EXPOSE 3001
 
+# Set environment variables
+ENV PORT=3001
+ENV NODE_ENV=production
+
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD node -e "require('http').request('http://localhost:3001/health', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).end()"
@@ -66,4 +74,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 ENTRYPOINT ["dumb-init", "--"]
 
 # Start the application with production environment
-CMD ["sh", "-c", "NODE_ENV=production node dist/server/index.cjs"] 
+CMD ["sh", "-c", "NODE_ENV=production node dist/server/index.js"] 
