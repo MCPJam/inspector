@@ -5,10 +5,9 @@ import { Separator } from "./ui/separator";
 import { FlaskConical, Play, Clock, CheckCircle, XCircle } from "lucide-react";
 import { useQuery } from "convex/react";
 
-
 export function EvalsTab() {
   const evals = useQuery(
-    "evals/helpers:getCurrentUserEvals" as any
+    "evals/helpers:getCurrentUserEvals" as any,
   ) as unknown as {
     _id: string;
     createdBy: string;
@@ -41,9 +40,11 @@ export function EvalsTab() {
   };
 
   const getStatusColor = (status: string, passed: boolean) => {
-    if (status === "pending") return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200";
-    if (status === "cancelled") return "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200";
-    return passed 
+    if (status === "pending")
+      return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200";
+    if (status === "cancelled")
+      return "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200";
+    return passed
       ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
       : "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200";
   };
@@ -94,78 +95,94 @@ export function EvalsTab() {
             </CardContent>
           </Card>
         ) : (
-            evals.map((evalRecord) => (
-              <Card key={evalRecord._id} className="hover:shadow-md transition-shadow">
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-lg flex items-center space-x-2">
-                      {getStatusIcon(evalRecord.status, evalRecord.passed)}
-                      <span>Run {evalRecord.runId}</span>
-                    </CardTitle>
-                    <div className="flex items-center space-x-2">
-                      <Badge className={getStatusColor(evalRecord.status, evalRecord.passed)}>
-                        {evalRecord.status}
+          evals.map((evalRecord) => (
+            <Card
+              key={evalRecord._id}
+              className="hover:shadow-md transition-shadow"
+            >
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-lg flex items-center space-x-2">
+                    {getStatusIcon(evalRecord.status, evalRecord.passed)}
+                    <span>Run {evalRecord.runId}</span>
+                  </CardTitle>
+                  <div className="flex items-center space-x-2">
+                    <Badge
+                      className={getStatusColor(
+                        evalRecord.status,
+                        evalRecord.passed,
+                      )}
+                    >
+                      {evalRecord.status}
+                    </Badge>
+                    {evalRecord.status === "resolved" && (
+                      <Badge
+                        variant={evalRecord.passed ? "default" : "destructive"}
+                      >
+                        {evalRecord.passed ? "Passed" : "Failed"}
                       </Badge>
-                      {evalRecord.status === "resolved" && (
-                        <Badge variant={evalRecord.passed ? "default" : "destructive"}>
-                          {evalRecord.passed ? "Passed" : "Failed"}
-                        </Badge>
+                    )}
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 gap-4 text-sm">
+                  <div>
+                    <span className="font-medium text-muted-foreground">
+                      Last Updated:
+                    </span>
+                    <p>{formatTime(evalRecord.lastUpdatedAt)}</p>
+                  </div>
+                </div>
+
+                <Separator />
+
+                <div className="space-y-3">
+                  <div>
+                    <h4 className="font-medium mb-2">Expected Tool Calls:</h4>
+                    <div className="flex flex-wrap gap-1">
+                      {evalRecord.expectedToolCalls.length > 0 ? (
+                        evalRecord.expectedToolCalls.map((tool, index) => (
+                          <Badge key={index} variant="outline">
+                            {tool}
+                          </Badge>
+                        ))
+                      ) : (
+                        <span className="text-muted-foreground text-sm">
+                          None
+                        </span>
                       )}
                     </div>
                   </div>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid grid-cols-1 gap-4 text-sm">
-                    <div>
-                      <span className="font-medium text-muted-foreground">Last Updated:</span>
-                      <p>{formatTime(evalRecord.lastUpdatedAt)}</p>
+
+                  <div>
+                    <h4 className="font-medium mb-2">Actual Tool Calls:</h4>
+                    <div className="flex flex-wrap gap-1">
+                      {evalRecord.actualToolCalls.length > 0 ? (
+                        evalRecord.actualToolCalls.map((tool, index) => (
+                          <Badge key={index} variant="outline">
+                            {tool}
+                          </Badge>
+                        ))
+                      ) : (
+                        <span className="text-muted-foreground text-sm">
+                          None
+                        </span>
+                      )}
                     </div>
                   </div>
+                </div>
 
-                  <Separator />
-
-                  <div className="space-y-3">
-                    <div>
-                      <h4 className="font-medium mb-2">Expected Tool Calls:</h4>
-                      <div className="flex flex-wrap gap-1">
-                        {evalRecord.expectedToolCalls.length > 0 ? (
-                          evalRecord.expectedToolCalls.map((tool, index) => (
-                            <Badge key={index} variant="outline">
-                              {tool}
-                            </Badge>
-                          ))
-                        ) : (
-                          <span className="text-muted-foreground text-sm">None</span>
-                        )}
-                      </div>
-                    </div>
-
-                    <div>
-                      <h4 className="font-medium mb-2">Actual Tool Calls:</h4>
-                      <div className="flex flex-wrap gap-1">
-                        {evalRecord.actualToolCalls.length > 0 ? (
-                          evalRecord.actualToolCalls.map((tool, index) => (
-                            <Badge key={index} variant="outline">
-                              {tool}
-                            </Badge>
-                          ))
-                        ) : (
-                          <span className="text-muted-foreground text-sm">None</span>
-                        )}
-                      </div>
-                    </div>
+                {evalRecord.status === "resolved" && (
+                  <div className="pt-2">
+                    <Button variant="outline" size="sm" className="w-full">
+                      View Trace Details
+                    </Button>
                   </div>
-
-                  {evalRecord.status === "resolved" && (
-                    <div className="pt-2">
-                      <Button variant="outline" size="sm" className="w-full">
-                        View Trace Details
-                      </Button>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            ))
+                )}
+              </CardContent>
+            </Card>
+          ))
         )}
       </div>
     </div>

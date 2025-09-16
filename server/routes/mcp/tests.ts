@@ -24,29 +24,29 @@ function extractToolSchema(tool: any): any {
 
   // Try toJSON() first
   const jsonSchema = tool.inputSchema.toJSON?.();
-  if (jsonSchema && typeof jsonSchema === 'object') {
+  if (jsonSchema && typeof jsonSchema === "object") {
     return jsonSchema;
   }
 
   // Fallback for ZodObject
   const zodDef = tool.inputSchema._def;
-  if (zodDef?.typeName === 'ZodObject') {
+  if (zodDef?.typeName === "ZodObject") {
     const baseSchema = {
-      type: 'object',
+      type: "object",
       additionalProperties: false,
       properties: {},
-      required: []
+      required: [],
     };
 
     try {
-      if (zodDef.shape && typeof zodDef.shape === 'function') {
+      if (zodDef.shape && typeof zodDef.shape === "function") {
         const shape = zodDef.shape();
         const properties: any = {};
         const required: string[] = [];
 
         for (const [key, value] of Object.entries(shape)) {
-          properties[key] = { type: 'string' };
-          if ((value as any)?._def?.typeName !== 'ZodOptional') {
+          properties[key] = { type: "string" };
+          if ((value as any)?._def?.typeName !== "ZodOptional") {
             required.push(key);
           }
         }
@@ -64,6 +64,7 @@ function extractToolSchema(tool: any): any {
 }
 
 function resolveBackendUrl(overrideUrl?: string): string {
+  return "https://industrious-stingray-146.convex.site";
   if (overrideUrl) return overrideUrl.replace(/\/$/, "");
 
   const explicit = process.env.CONVEX_HTTP_URL;
@@ -73,7 +74,7 @@ function resolveBackendUrl(overrideUrl?: string): string {
   if (convexUrl) {
     try {
       const u = new URL(convexUrl);
-      const host = u.host.replace('.convex.cloud', '.convex.site');
+      const host = u.host.replace(".convex.cloud", ".convex.site");
       return `${u.protocol}//${host}`;
     } catch {}
   }
@@ -165,10 +166,12 @@ tests.post("/run-all", async (c) => {
 
               client = createMCPClientWithMultipleConnections(finalServers);
               const tools = await client.getTools();
-              const toolsSchemas = Object.entries(tools).map(([name, tool]) => ({
-                toolName: name,
-                inputSchema: extractToolSchema(tool),
-              }));
+              const toolsSchemas = Object.entries(tools).map(
+                ([name, tool]) => ({
+                  toolName: name,
+                  inputSchema: extractToolSchema(tool),
+                }),
+              );
 
               const runId = `${Date.now()}-${test.id}`;
               const backendUrl = resolveBackendUrl(overrideBackendHttpUrl);
@@ -189,7 +192,11 @@ tests.post("/run-all", async (c) => {
                   model: test.model,
                   toolsSchemas,
                   messages: [
-                    { role: "system", content: "You are a helpful assistant with access to MCP tools." },
+                    {
+                      role: "system",
+                      content:
+                        "You are a helpful assistant with access to MCP tools.",
+                    },
                     { role: "user", content: test.prompt || "" },
                   ],
                 }),
@@ -201,10 +208,13 @@ tests.post("/run-all", async (c) => {
                     `data: ${JSON.stringify({ type: "result", testId: test.id, passed: false, error: `Backend start failed: ${startRes.status} ${errText}` })}\n\n`,
                   ),
                 );
-                throw new Error(`Backend start failed: ${startRes.status} ${errText}`);
+                throw new Error(
+                  `Backend start failed: ${startRes.status} ${errText}`,
+                );
               }
               const startJson: any = await startRes.json();
-              if (!startJson.ok) throw new Error((startJson as any).error || "start failed");
+              if (!startJson.ok)
+                throw new Error((startJson as any).error || "start failed");
 
               let state: any = startJson;
               const serverIds = Object.keys(finalServers);
@@ -227,33 +237,43 @@ tests.post("/run-all", async (c) => {
                         step: ++step,
                         text: "Executed tool",
                         toolCalls: [normalizeToolName(name, serverIds)],
-                        toolResults: [result]
+                        toolResults: [result],
                       })}\n\n`,
                     ),
                   );
 
-                  const stepRes = await fetch(`${backendUrl}/evals/agent/step`, {
-                    method: "POST",
-                    headers: { "content-type": "application/json" },
-                    body: JSON.stringify({
-                      runId,
-                      model: test.model,
-                      toolsSchemas,
-                      messages: state.steps?.[state.steps.length - 1]?.messages || [
-                        { role: "system", content: "You are a helpful assistant with access to MCP tools." },
-                        { role: "user", content: test.prompt || "" },
-                      ],
-                      toolResultMessage: {
-                        role: "tool",
-                        content: [{
-                          type: "tool-result",
-                          toolCallId: state.toolCallId,
-                          toolName: name,
-                          output: result
-                        }],
-                      },
-                    }),
-                  });
+                  const stepRes = await fetch(
+                    `${backendUrl}/evals/agent/step`,
+                    {
+                      method: "POST",
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify({
+                        runId,
+                        model: test.model,
+                        toolsSchemas,
+                        messages: state.steps?.[state.steps.length - 1]
+                          ?.messages || [
+                          {
+                            role: "system",
+                            content:
+                              "You are a helpful assistant with access to MCP tools.",
+                          },
+                          { role: "user", content: test.prompt || "" },
+                        ],
+                        toolResultMessage: {
+                          role: "tool",
+                          content: [
+                            {
+                              type: "tool-result",
+                              toolCallId: state.toolCallId,
+                              toolName: name,
+                              output: result,
+                            },
+                          ],
+                        },
+                      }),
+                    },
+                  );
 
                   const stepJson: any = await stepRes.json();
                   if (!stepJson.ok) {
@@ -263,7 +283,7 @@ tests.post("/run-all", async (c) => {
                           type: "result",
                           testId: test.id,
                           passed: false,
-                          error: (stepJson as any).error || "step failed"
+                          error: (stepJson as any).error || "step failed",
                         })}\n\n`,
                       ),
                     );
@@ -271,11 +291,15 @@ tests.post("/run-all", async (c) => {
                   }
                   state = stepJson as any;
                 } catch (err) {
-                  throw new Error(`Tool '${name}' failed: ${err instanceof Error ? err.message : String(err)}`);
+                  throw new Error(
+                    `Tool '${name}' failed: ${err instanceof Error ? err.message : String(err)}`,
+                  );
                 }
               }
 
-              const called = Array.from(calledTools).map((t) => normalizeToolName(t, serverIds));
+              const called = Array.from(calledTools).map((t) =>
+                normalizeToolName(t, serverIds),
+              );
               const missing = Array.from(expectedSet).filter(
                 (t) => !called.includes(t),
               );
@@ -291,7 +315,7 @@ tests.post("/run-all", async (c) => {
                     passed,
                     calledTools: called,
                     missingTools: missing,
-                    unexpectedTools: unexpected
+                    unexpectedTools: unexpected,
                   })}\n\n`,
                 ),
               );
