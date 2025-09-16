@@ -31,12 +31,14 @@ type InterceptorEntry = {
   createdAt: number;
   logs: InterceptorLog[];
   subscribers: Set<SseSubscriber>;
+  // Optional manager-backed server identifier
+  managerServerId?: string;
 };
 
 class InterceptorStore {
   private interceptors: Map<string, InterceptorEntry> = new Map();
 
-  create(targetUrl: string) {
+  create(targetUrl: string, managerServerId?: string) {
     const id = randomUUID().slice(0, 8);
     const entry: InterceptorEntry = {
       id,
@@ -44,6 +46,7 @@ class InterceptorStore {
       createdAt: Date.now(),
       logs: [],
       subscribers: new Set(),
+      managerServerId,
     };
     this.interceptors.set(id, entry);
     return entry;
@@ -61,6 +64,7 @@ class InterceptorStore {
       targetUrl: e.targetUrl,
       createdAt: e.createdAt,
       logCount: e.logs.length,
+      managerServerId: e.managerServerId,
     };
   }
 

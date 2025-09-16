@@ -6,24 +6,34 @@ const interceptor = new Hono();
 // Create interceptor pointing to a target MCP server (HTTP)
 interceptor.post("/create", async (c) => {
   try {
-    const { targetUrl } = await c.req.json();
-    if (!targetUrl || typeof targetUrl !== "string") {
-      return c.json({ success: false, error: "targetUrl is required" }, 400);
-    }
-    try {
-      // Validate URL
-      const u = new URL(targetUrl);
-      if (!["http:", "https:"].includes(u.protocol)) {
-        return c.json(
-          { success: false, error: "Only HTTP/HTTPS MCP servers are supported" },
-          400,
-        );
-      }
-    } catch {
-      return c.json({ success: false, error: "Invalid URL" }, 400);
+    const { targetUrl, managerServerId } = await c.req.json();
+    let finalTarget = targetUrl as string | undefined;
+
+    // If a manager-backed server is provided, we don't need an external URL at all.
+    if (managerServerId) {
+      finalTarget = `manager://${managerServerId}`;
     }
 
-    const entry = interceptorStore.create(targetUrl);
+    if (!finalTarget || typeof finalTarget !== "string") {
+      return c.json({ success: false, error: "targetUrl is required when no managerServerId is provided" }, 400);
+    }
+
+    // Only validate when proxying raw HTTP
+    if (!managerServerId) {
+      try {
+        const u = new URL(finalTarget);
+        if (!["http:", "https:"].includes(u.protocol)) {
+          return c.json(
+            { success: false, error: "Only HTTP/HTTPS MCP servers are supported" },
+            400,
+          );
+        }
+      } catch {
+        return c.json({ success: false, error: "Invalid URL" }, 400);
+      }
+    }
+
+    const entry = interceptorStore.create(finalTarget, managerServerId);
 
     return c.json({
       success: true,
@@ -126,7 +136,88 @@ interceptor.all("/:id/proxy", async (c) => {
     body: requestBody,
   });
 
-  // forward to target (no body for GET/HEAD)
+  // If manager-backed, route through MCPJamClientManager to reuse OAuth and server connection
+  if (entry.managerServerId) {
+    try {
+      const { method } = req;
+      const isJson = (req.headers.get("content-type") || "").includes("application/json");
+      // Expect JSON-RPC
+      let jsonBody: any = undefined;
+      if (method !== "GET" && method !== "HEAD" && requestBody && isJson) {
+        try { jsonBody = JSON.parse(requestBody); } catch {}
+      }
+
+      const clientManager = c.mcpJamClientManager;
+      const serverId = entry.managerServerId;
+
+      let upstreamResponse: Response;
+      // Support plain GET to target root (some clients probe)
+      if (method === "GET") {
+        upstreamResponse = new Response("OK", { status: 200 });
+      } else if (jsonBody && jsonBody.method) {
+        // Minimal JSON-RPC bridge: initialize and tools.list can be emulated
+        if (jsonBody.method === "initialize") {
+          const result = {
+            protocolVersion: "2025-06-18",
+            capabilities: {
+              tools: true,
+              prompts: true,
+              resources: true,
+              logging: false,
+              elicitation: {},
+              roots: { listChanged: true },
+            },
+            serverInfo: { name: serverId, version: "mcpjam-proxy" },
+          };
+          upstreamResponse = new Response(JSON.stringify({ jsonrpc: "2.0", id: jsonBody.id ?? null, result }), { status: 200, headers: { "content-type": "application/json" } });
+        } else if (jsonBody.method === "tools/list") {
+          const toolsets = await clientManager.getToolsetsForServer(serverId);
+          const tools = Object.keys(toolsets).map((name) => ({ name, description: (toolsets as any)[name].description }));
+          upstreamResponse = new Response(JSON.stringify({ jsonrpc: "2.0", id: jsonBody.id ?? null, result: { tools } }), { status: 200, headers: { "content-type": "application/json" } });
+        } else if (jsonBody.method === "tools/call" && jsonBody.params?.name) {
+          try {
+            const exec = await clientManager.executeToolDirect(`${serverId}:${jsonBody.params.name}`, jsonBody.params?.arguments || {});
+            upstreamResponse = new Response(JSON.stringify({ jsonrpc: "2.0", id: jsonBody.id ?? null, result: exec.result }), { status: 200, headers: { "content-type": "application/json" } });
+          } catch (e) {
+            upstreamResponse = new Response(JSON.stringify({ jsonrpc: "2.0", id: jsonBody.id ?? null, error: { code: -32000, message: (e as Error).message } }), { status: 200, headers: { "content-type": "application/json" } });
+          }
+        } else {
+          upstreamResponse = new Response(JSON.stringify({ jsonrpc: "2.0", id: jsonBody.id ?? null, error: { code: -32601, message: "Method not implemented in proxy" } }), { status: 200, headers: { "content-type": "application/json" } });
+        }
+      } else {
+        upstreamResponse = new Response(JSON.stringify({ error: "Unsupported request" }), { status: 400, headers: { "content-type": "application/json" } });
+      }
+
+      // Log and return
+      const resClone = upstreamResponse.clone();
+      let responseBody: string | undefined;
+      try { responseBody = await resClone.text(); } catch {}
+      interceptorStore.appendLog(id, {
+        id: `${requestId}-res`,
+        timestamp: Date.now(),
+        direction: "response",
+        status: upstreamResponse.status,
+        statusText: upstreamResponse.statusText || "",
+        headers: Object.fromEntries(upstreamResponse.headers.entries()),
+        body: responseBody,
+      });
+      return upstreamResponse;
+    } catch (e) {
+      const body = JSON.stringify({ error: String(e) });
+      interceptorStore.appendLog(id, {
+        id: `${requestId}-err`,
+        timestamp: Date.now(),
+        direction: "response",
+        status: 500,
+        statusText: "Proxy Error",
+        headers: { "content-type": "application/json" },
+        body,
+      });
+      return new Response(body, { status: 500, headers: { "Content-Type": "application/json" } });
+    }
+  }
+
+  // Standard HTTP target proxy path
   const init: RequestInit = {
     method: req.method,
     headers: req.headers as any,
