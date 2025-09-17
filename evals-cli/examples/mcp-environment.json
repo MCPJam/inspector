@@ -4,7 +4,7 @@
       "url": "https://mcp.asana.com/sse",
       "requestInit": {
         "headers": {
-          "Authorization": "Bearer 1201180266784364:GoC80rWvmWmzeNkd:yotob9FhcHAg74JglirznW5NQ2Ghr8Cg"
+          "Authorization": "Bearer 12345"
         }
       }
     }

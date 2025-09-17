@@ -453,6 +453,7 @@ class MCPJamClientManager {
     let lastError: any = undefined;
     for (const args of attempts) {
       try {
+        console.log("args", args);
         const result = await tool.execute(args);
 
         // Check if the result indicates an error

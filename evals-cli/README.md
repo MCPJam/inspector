@@ -82,7 +82,7 @@ The CLI includes example configuration files in the `examples/` directory:
   "providerApiKeys": {
     "anthropic": "${ANTHROPIC_API_KEY}",
     "openai": "${OPENAI_API_KEY}",
-    "deepseek": "${DEEPSEEK_API_KEY}"
+    "openrouter": "${OPENROUTER_API_KEY}"
   }
 }
 ```
