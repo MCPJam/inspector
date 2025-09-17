@@ -15,12 +15,9 @@ evalsCommand
   .requiredOption("-t, --tests <file>", "Path to tests JSON file")
   .requiredOption("-e, --environment <file>", "Path to environment JSON file")
   .requiredOption("-l, --llms <file>", "Path to LLMs JSON file")
-  .requiredOption("-a, --api-key <key>", "Personal access key")
+  .option("-a, --api-key <key>", "Personal access key")
   .action(async (options) => {
     try {
-      Logger.header("v1.0.0");
-      console.log(`Running tests from ${options.tests}`);
-
       // Read and parse test file
       const testsContent = await readFile(resolve(options.tests), "utf8");
       const testsData = JSON.parse(testsContent);
@@ -33,7 +30,7 @@ evalsCommand
       const llmsContent = await readFile(resolve(options.llms), "utf8");
       const llmsData = JSON.parse(llmsContent);
 
-      // Read API token
+      // Read API token (optional)
       const apiKey = options.apiKey;
       runEvals(testsData, envData, llmsData, apiKey);
     } catch (error) {

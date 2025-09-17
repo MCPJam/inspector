@@ -1,11 +1,18 @@
 [
   {
-    "title": "HF",
-    "query": "Who am I in huggingface?",
+    "title": "Asana workspace",
+    "query": "What is my asana workspace?",
     "runs": 1,
-    "model": "anthropic/claude-3.5-sonnet",
-    "provider": "openrouter",
-    "expectedToolCalls": ["huggingface_whoami"],
-    "judgeRequirement": "The result was successfully returned"
+    "model": "claude-sonnet-4-0",
+    "provider": "anthropic",
+    "expectedToolCalls": ["asana_list_workspaces"]
+  },
+  {
+    "title": "Asana workspace and get users",
+    "query": "Can you figure out who is in the workspace? Start by listing the workspaces, then get the workspace users",
+    "runs": 1,
+    "model": "claude-sonnet-4-0",
+    "provider": "anthropic",
+    "expectedToolCalls": ["asana_list_workspaces", "asana_get_workspace_users"]
   }
 ]

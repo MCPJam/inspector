@@ -1,12 +1,12 @@
 {
   "servers": {
     "huggingface": {
-      "url": "https://huggingface.co/mcp"
-    },
-    "everything": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-everything"],
-      "env": {}
+      "url": "https://mcp.asana.com/sse",
+      "requestInit": {
+        "headers": {
+          "Authorization": "Bearer 1201180266784364:DjUCmcnu2dJAtGrD:tBvwVfAsQFWKxWPA0nxgdHXpAiGml6zB"
+        }
+      }
     }
   }
 }
