@@ -1,17 +1,11 @@
 [
   {
-    "title": "add 2 and 3",
-    "query": "Add 2 and 3",
+    "title": "HF",
+    "query": "Who am I in huggingface?",
     "runs": 1,
     "model": "anthropic/claude-3.5-sonnet",
     "provider": "openrouter",
-    "expectedToolCalls": ["add"],
-    "judgeRequirement": "The result was successfully returned",
-    "advancedConfig": {
-      "instructions": "You are a helpful weather assistant",
-      "temperature": 0.1,
-      "maxSteps": 5,
-      "toolChoice": "auto"
-    }
+    "expectedToolCalls": ["huggingface_whoami"],
+    "judgeRequirement": "The result was successfully returned"
   }
 ]
