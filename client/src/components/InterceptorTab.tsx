@@ -2,9 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Card } from "./ui/card";
-import { ActiveServerSelector } from "./ActiveServerSelector";
 import { ServerWithName } from "@/hooks/use-app-state";
-import { ServerFormData } from "@/shared/types.js";
 
 type InterceptorLog =
   | {
@@ -29,19 +27,11 @@ type InterceptorLog =
 type InterceptorTabProps = {
   connectedServerConfigs: Record<string, ServerWithName>;
   selectedServer: string;
-  selectedMultipleServers: string[];
-  onServerChange: (server: string) => void;
-  onMultiServerToggle: (server: string) => void;
-  onConnect: (formData: ServerFormData) => void;
 };
 
 export function InterceptorTab({
   connectedServerConfigs,
   selectedServer,
-  selectedMultipleServers,
-  onServerChange,
-  onMultiServerToggle,
-  onConnect,
 }: InterceptorTabProps) {
   const [targetUrl, setTargetUrl] = useState<string>("");
   const [interceptorId, setInterceptorId] = useState<string>("");
@@ -134,15 +124,11 @@ export function InterceptorTab({
             <p className="text-xs text-muted-foreground mb-2">
               Tunnel through a server you've already connected to in the inspector. Reuses OAuth and existing connections.
             </p>
-            <ActiveServerSelector
-              connectedServerConfigs={connectedServerConfigs}
-              selectedServer={selectedServer}
-              selectedMultipleServers={selectedMultipleServers}
-              isMultiSelectEnabled={false}
-              onServerChange={onServerChange}
-              onMultiServerToggle={onMultiServerToggle}
-              onConnect={onConnect}
-            />
+            <p className="text-xs text-muted-foreground">
+              {selectedServer && selectedServer !== "none"
+                ? `Using selected server: ${selectedServer}`
+                : "No server selected. Use the server selector above to choose a connected server."}
+            </p>
           </div>
 
           <div className="p-3 border rounded-md bg-muted/30">
