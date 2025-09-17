@@ -70,7 +70,6 @@ var Logger = class {
 // src/evals/runner.ts
 import { MCPClient } from "@mastra/mcp";
 import { generateText } from "ai";
-import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 
 // ../node_modules/convex/dist/esm/index.js
 var version = "1.26.2";
@@ -5777,7 +5776,7 @@ var _systemSchema = defineSchema({
 var api = anyApi;
 
 // src/db/user.ts
-var getUserIdOrNull = async (apiKey) => {
+var getUserIdFromApiKeyOrNull = async (apiKey) => {
   const db = dbClient();
   const user = await db.mutation(
     api.apiKeys.validateApiKeyAndReturnUserIdOrNull,
@@ -5789,8 +5788,36 @@ var getUserIdOrNull = async (apiKey) => {
   return user;
 };
 
-// src/utils/mcp-helpers.ts
+// src/utils/validators.ts
 import { z } from "zod";
+import { tool } from "ai";
+var AdvancedConfigSchema = z.object({
+  instructions: z.string().optional(),
+  temperature: z.number().optional(),
+  maxSteps: z.number().int().min(1).optional(),
+  toolChoice: z.string().optional()
+}).passthrough();
+var TestCaseSchema = z.object({
+  title: z.string(),
+  query: z.string(),
+  runs: z.number().int(),
+  model: z.string(),
+  provider: z.string(),
+  expectedToolCalls: z.array(z.string()),
+  judgeRequirement: z.string().optional(),
+  advancedConfig: AdvancedConfigSchema.optional()
+});
+function validateTestCase(value) {
+  try {
+    const result = z.array(TestCaseSchema).parse(value);
+    return result;
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      throw new Error(error.message);
+    }
+    throw new Error(error instanceof Error ? error.message : String(error));
+  }
+}
 var BaseServerOptionsSchema = z.object({
   logger: z.custom().optional(),
   timeout: z.number().optional(),
@@ -5851,11 +5878,7 @@ function validateAndNormalizeMCPClientConfiguration(value) {
     throw new Error(error instanceof Error ? error.message : String(error));
   }
 }
-
-// src/utils/mastra-to-vercel-tools.ts
-import { tool } from "ai";
-import { z as z2 } from "zod";
-var fallbackInputSchema = z2.object({}).passthrough();
+var fallbackInputSchema = z.object({}).passthrough();
 function isZodSchema(value) {
   return Boolean(
     value && typeof value === "object" && "safeParse" in value
@@ -5873,9 +5896,17 @@ function ensureOutputSchema(schema) {
   }
   return void 0;
 }
-function convertMastraToolToVercelTool(toolName, mastraTool) {
+function extractPureToolName(toolKey) {
+  const separatorIndex = toolKey.indexOf("_");
+  if (separatorIndex === -1 || separatorIndex === toolKey.length - 1) {
+    return toolKey;
+  }
+  return toolKey.slice(separatorIndex + 1);
+}
+function convertMastraToolToVercelTool(toolName, mastraTool, options) {
   const inputSchema = ensureInputSchema(mastraTool.inputSchema);
   const outputSchema = ensureOutputSchema(mastraTool.outputSchema);
+  const displayName = options?.originalName ?? toolName;
   const vercelToolConfig = {
     type: "dynamic",
     description: mastraTool.description,
@@ -5885,17 +5916,17 @@ function convertMastraToolToVercelTool(toolName, mastraTool) {
     vercelToolConfig.outputSchema = outputSchema;
   }
   if (typeof mastraTool.execute === "function") {
-    vercelToolConfig.execute = async (input, options) => {
+    vercelToolConfig.execute = async (input, options2) => {
       const executionArgs = { context: input };
-      if (options) {
-        executionArgs.runtimeContext = options;
+      if (options2) {
+        executionArgs.runtimeContext = options2;
       }
-      const result = await mastraTool.execute?.(executionArgs, options);
+      const result = await mastraTool.execute?.(executionArgs, options2);
       if (outputSchema) {
         const parsed = outputSchema.safeParse(result);
         if (!parsed.success) {
           throw new Error(
-            `Mastra tool '${toolName}' returned invalid output: ${parsed.error.message}`
+            `Mastra tool '${displayName}' returned invalid output: ${parsed.error.message}`
           );
         }
         return parsed.data;
@@ -5907,41 +5938,85 @@ function convertMastraToolToVercelTool(toolName, mastraTool) {
 }
 function convertMastraToolsToVercelTools(mastraTools) {
   return Object.fromEntries(
-    Object.entries(mastraTools).map(([name, mastraTool]) => [
-      name,
-      convertMastraToolToVercelTool(name, mastraTool)
-    ])
+    Object.entries(mastraTools).map(([name, mastraTool]) => {
+      const pureToolName = extractPureToolName(name);
+      return [
+        pureToolName,
+        convertMastraToolToVercelTool(pureToolName, mastraTool, {
+          originalName: name
+        })
+      ];
+    })
   );
 }
+var LlmsConfigSchema = z.object({
+  anthropic: z.string().optional(),
+  openai: z.string().optional(),
+  openrouter: z.string().optional()
+}).passthrough();
+function validateLlms(value) {
+  try {
+    const result = LlmsConfigSchema.parse(value);
+    return result;
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      throw new Error(`Invalid LLMs configuration: ${error.message}`);
+    }
+    throw new Error(error instanceof Error ? error.message : String(error));
+  }
+}
+
+// src/utils/helpers.ts
+import { createOpenRouter } from "@openrouter/ai-sdk-provider";
+import { createOpenAI } from "@ai-sdk/openai";
+import { createAnthropic } from "@ai-sdk/anthropic";
+var createLlmModel = (provider, model, llmsConfig) => {
+  if (!llmsConfig[provider]) {
+    throw new Error(`LLM API key not found for provider: ${provider}`);
+  }
+  switch (provider) {
+    case "anthropic":
+      return createAnthropic({ apiKey: llmsConfig.anthropic })(model);
+    case "openai":
+      return createOpenAI({ apiKey: llmsConfig.openai })(model);
+    case "openrouter":
+      return createOpenRouter({ apiKey: llmsConfig.openrouter })(model);
+    default:
+      throw new Error(`Unsupported provider: ${provider}`);
+  }
+};
 
 // src/evals/runner.ts
-var runEvals = async (tests, environment, userId) => {
-  await getUserIdOrNull(userId);
+var runEvals = async (tests, environment, llms, apiKey) => {
+  await getUserIdFromApiKeyOrNull(apiKey);
   const mcpClientOptions = validateAndNormalizeMCPClientConfiguration(environment);
+  const validatedTests = validateTestCase(tests);
+  const validatedLlmApiKeys = validateLlms(llms);
   const mcpClient = new MCPClient(mcpClientOptions);
   const mastraTools = await mcpClient.getTools();
   const vercelAiSdkTools = convertMastraToolsToVercelTools(mastraTools);
-  console.log(
-    `Converted ${Object.keys(vercelAiSdkTools).length} Mastra MCP tool(s) to Vercel AI SDK tools.`
-  );
-  const result = await generateText({
-    model: createOpenRouter({ apiKey: process.env.OPENROUTER_API_KEY })(
-      "anthropic/claude-sonnet-4"
-    ),
-    tools: vercelAiSdkTools,
-    messages: [
-      {
-        role: "user",
-        content: "Add 2 and 3"
-      }
-    ]
-  });
-  console.log(JSON.stringify(result, null, 2));
+  for (const test of validatedTests) {
+    const numberOfRuns = test.runs;
+    const llm = createLlmModel(test.provider, test.model, validatedLlmApiKeys);
+    for (let run = 0; run <= numberOfRuns; run++) {
+      const result = await generateText({
+        model: llm,
+        tools: vercelAiSdkTools,
+        messages: [
+          {
+            role: "user",
+            content: "Add 2 and 3"
+          }
+        ]
+      });
+      console.log(JSON.stringify(result, null, 2));
+    }
+  }
 };
 
 // src/evals/index.ts
 var evalsCommand = new Command("evals");
-evalsCommand.description("Run MCP evaluations").command("run").description("Run tests against MCP servers").requiredOption("-t, --tests <file>", "Path to tests JSON file").requiredOption("-e, --environment <file>", "Path to environment JSON file").requiredOption("-a, --api-key <key>", "Personal access key").action(async (options) => {
+evalsCommand.description("Run MCP evaluations").command("run").description("Run tests against MCP servers").requiredOption("-t, --tests <file>", "Path to tests JSON file").requiredOption("-e, --environment <file>", "Path to environment JSON file").requiredOption("-l, --llms <file>", "Path to LLMs JSON file").requiredOption("-a, --api-key <key>", "Personal access key").action(async (options) => {
   try {
     Logger.header("v1.0.0");
     console.log(`Running tests from ${options.tests}`);
@@ -5949,8 +6024,10 @@ evalsCommand.description("Run MCP evaluations").command("run").description("Run 
     const testsData = JSON.parse(testsContent);
     const envContent = await readFile(resolve(options.environment), "utf8");
     const envData = JSON.parse(envContent);
+    const llmsContent = await readFile(resolve(options.llms), "utf8");
+    const llmsData = JSON.parse(llmsContent);
     const apiKey = options.apiKey;
-    runEvals(testsData, envData, apiKey);
+    runEvals(testsData, envData, llmsData, apiKey);
   } catch (error) {
     Logger.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
