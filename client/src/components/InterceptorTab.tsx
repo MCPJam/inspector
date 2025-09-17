@@ -85,12 +85,12 @@ export function InterceptorTab({
 
   const handleCreate = async () => {
     // Treat the sentinel 'none' as no selection
-    const managerId = selectedServer && selectedServer !== "none" ? selectedServer : undefined;
+    const serverId = selectedServer && selectedServer !== "none" ? selectedServer : undefined;
 
     // Auto-detect target URL from selected server if not provided
     let finalTargetUrl = targetUrl;
-    if (managerId && !targetUrl && connectedServerConfigs[managerId]) {
-      const serverConfig = connectedServerConfigs[managerId].config;
+    if (serverId && !targetUrl && connectedServerConfigs[serverId]) {
+      const serverConfig = connectedServerConfigs[serverId].config;
       if (serverConfig.type === "http" && serverConfig.url) {
         finalTargetUrl = serverConfig.url;
         setTargetUrl(serverConfig.url); // Update UI to show the detected URL
@@ -100,7 +100,8 @@ export function InterceptorTab({
     const res = await fetch(`${baseUrl}/create?tunnel=true`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ targetUrl: finalTargetUrl, managerServerId: managerId }),
+      // Prefer server-side lookup by serverId to avoid exposing tokens
+      body: JSON.stringify({ targetUrl: finalTargetUrl, serverId }),
     });
     const json = await res.json();
     if (!json.success) {
@@ -214,4 +215,3 @@ export function InterceptorTab({
     </div>
   );
 }
-
