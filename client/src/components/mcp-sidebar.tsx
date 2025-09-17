@@ -8,6 +8,7 @@ import {
   MessageSquareCode,
   BookOpen,
   FlaskConical,
+  Activity
 } from "lucide-react";
 
 import { NavMain } from "@/components/sidebar/nav-main";
@@ -43,7 +44,7 @@ const navigationSections = [
       {
         title: "Tracing",
         url: "#tracing",
-        icon: Glasses,
+        icon: Activity,
       },
     ],
   },
