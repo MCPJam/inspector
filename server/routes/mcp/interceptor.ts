@@ -54,11 +54,16 @@ interceptor.post("/create", async (c) => {
       const connected = c.mcpJamClientManager.getConnectedServers();
       const serverMeta = connected[serverId];
       const cfg: any | undefined = serverMeta?.config;
-      if (!cfg || serverMeta?.status !== "connected" || !cfg.url) {
-        return c.json({ success: false, error: `Server '${serverId}' is not an HTTP server or not connected` }, 400);
+      if (!cfg || serverMeta?.status !== "connected") {
+        return c.json({ success: false, error: `Server '${serverId}' is not connected` }, 400);
       }
       if (!finalTarget) {
-        finalTarget = typeof cfg.url === "string" ? cfg.url : (cfg.url as URL).toString();
+        if (cfg.url) {
+          finalTarget = typeof cfg.url === "string" ? cfg.url : (cfg.url as URL).toString();
+        } else {
+          const origin = new URL(c.req.url).origin;
+          finalTarget = `${origin}/api/mcp/adapter-http/${encodeURIComponent(serverId)}`;
+        }
       }
       // Derive Authorization and custom headers
       const hdrs: Record<string, string> = {};
