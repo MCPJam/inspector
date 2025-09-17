@@ -4,6 +4,25 @@ import { ensureNgrokTunnel, getNgrokUrl } from "../../services/ngrok";
 
 const interceptor = new Hono();
 
+// Helper to add permissive CORS headers for public proxy endpoints
+function withCORS(res: Response): Response {
+  const headers = new Headers(res.headers);
+  headers.set("Access-Control-Allow-Origin", "*");
+  headers.set("Access-Control-Allow-Methods", "GET,POST,HEAD,OPTIONS");
+  // Be explicit: some clients won’t accept "*" for Authorization
+  headers.set(
+    "Access-Control-Allow-Headers",
+    "Authorization, Content-Type, Accept, Accept-Language",
+  );
+  headers.set("Access-Control-Expose-Headers", "*");
+  headers.set("Vary", "Origin, Access-Control-Request-Headers");
+  return new Response(res.body, {
+    status: res.status,
+    statusText: res.statusText,
+    headers,
+  });
+}
+
 // Create interceptor pointing to a target MCP server (HTTP)
 interceptor.post("/create", async (c) => {
   try {
@@ -17,7 +36,7 @@ interceptor.post("/create", async (c) => {
         ? managerServerId
         : undefined;
 
-    // If a manager-backed server is provided, we don't need an external URL at all.
+    // If a manager-backed server is provided, route via our local HTTP adapter
     if (mgrId) {
       // Validate the server is connected before accepting
       const status = c.mcpJamClientManager.getConnectionStatus(mgrId);
@@ -27,7 +46,8 @@ interceptor.post("/create", async (c) => {
           400,
         );
       }
-      finalTarget = `manager://${mgrId}`;
+      const origin = new URL(c.req.url).origin;
+      finalTarget = `${origin}/api/mcp/manager-http/${encodeURIComponent(mgrId)}`;
     }
 
     if (!finalTarget || typeof finalTarget !== "string") {
@@ -116,6 +136,7 @@ interceptor.get("/:id/stream", (c) => {
   if (!entry) return c.json({ success: false, error: "not found" }, 404);
 
   const encoder = new TextEncoder();
+  let unsubscribeFn: undefined | (() => void);
   const stream = new ReadableStream({
     start(controller) {
       // send history first
@@ -133,12 +154,11 @@ interceptor.get("/:id/stream", (c) => {
         close: () => controller.close(),
       };
       const unsubscribe = interceptorStore.subscribe(id, subscriber);
-      (controller as any)._unsubscribe = unsubscribe;
+      unsubscribeFn = unsubscribe;
     },
     cancel() {
-      const unsubscribe = (this as any)._unsubscribe as undefined | (() => void);
       try {
-        unsubscribe && unsubscribe();
+        unsubscribeFn && unsubscribeFn();
       } catch {}
     },
   });
@@ -147,12 +167,39 @@ interceptor.get("/:id/stream", (c) => {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
       Connection: "keep-alive",
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET,POST,HEAD,OPTIONS",
+      "Access-Control-Allow-Headers": "*, Authorization, Content-Type, Accept, Accept-Language",
+      "X-Accel-Buffering": "no",
     },
   });
 });
 
-// HTTP proxy for JSON-RPC
-interceptor.all("/:id/proxy", async (c) => {
+// CORS preflight for proxy endpoint
+interceptor.options("/:id/proxy", (c) => {
+  return c.body(null, 204, {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET,POST,HEAD,OPTIONS",
+    "Access-Control-Allow-Headers":
+      "Authorization, Content-Type, Accept, Accept-Language",
+    "Access-Control-Max-Age": "86400",
+    Vary: "Origin, Access-Control-Request-Headers",
+  });
+});
+
+// Also handle preflight on wildcard path
+interceptor.options("/:id/proxy/*", (c) => {
+  return c.body(null, 204, {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET,POST,HEAD,OPTIONS",
+    "Access-Control-Allow-Headers":
+      "Authorization, Content-Type, Accept, Accept-Language",
+    "Access-Control-Max-Age": "86400",
+    Vary: "Origin, Access-Control-Request-Headers",
+  });
+});
+
+async function handleProxy(c: any) {
   const id = c.req.param("id");
   const entry = interceptorStore.get(id);
   if (!entry) return c.json({ success: false, error: "not found" }, 404);
@@ -180,177 +227,86 @@ interceptor.all("/:id/proxy", async (c) => {
     body: requestBody,
   });
 
-  // If manager-backed, route through MCPJamClientManager to reuse OAuth and server connection
+  // Manager-backed now uses pure HTTP proxying to our local adapter endpoint
+
+  // Build upstream URL: preserve trailing path and query after /proxy/:id
+  let upstreamUrl = new URL(entry.targetUrl);
+  try {
+    const originalUrl = new URL(req.url);
+    const proxyBase = `/api/mcp/interceptor/${id}/proxy`;
+    const rest = originalUrl.pathname.startsWith(proxyBase)
+      ? originalUrl.pathname.slice(proxyBase.length)
+      : "";
+    const basePath = upstreamUrl.pathname.endsWith("/")
+      ? upstreamUrl.pathname.slice(0, -1)
+      : upstreamUrl.pathname;
+    const trailing = rest ? (rest.startsWith("/") ? rest : `/${rest}`) : "";
+    upstreamUrl.pathname = `${basePath}${trailing}`;
+    upstreamUrl.search = originalUrl.search;
+  } catch {}
+
+  // Filter hop-by-hop headers and forward Authorization. Drop content-length so Undici computes it.
+  const filtered = new Headers();
+  req.headers.forEach((value, key) => {
+    const k = key.toLowerCase();
+    if (
+      [
+        "connection",
+        "keep-alive",
+        "transfer-encoding",
+        "upgrade",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailer",
+      ].includes(k)
+    )
+      return;
+    if (k === "content-length") return;
+    // Let fetch set the correct Host for the upstream
+    if (k === "host") return;
+    filtered.set(key, value);
+  });
+
+  // For manager-backed SSE GET/HEAD, hint the adapter to emit an endpoint pointing back to this proxy
   if (entry.managerServerId) {
-    try {
-      const { method } = req;
-      const isJson = (req.headers.get("content-type") || "").includes("application/json");
-      // Expect JSON-RPC
-      let jsonBody: any = undefined;
-      if (method !== "GET" && method !== "HEAD" && requestBody && isJson) {
-        try { jsonBody = JSON.parse(requestBody); } catch {}
+    const accept = (req.headers.get("accept") || "").toLowerCase();
+    if (req.method === "HEAD" || accept.includes("text/event-stream")) {
+      const xfProto = req.headers.get("x-forwarded-proto");
+      const xfHost = req.headers.get("x-forwarded-host");
+      const host = xfHost || req.headers.get("host");
+      let proto = xfProto;
+      if (!proto) {
+        const originHeader = req.headers.get("origin");
+        if (originHeader && /^https:/i.test(originHeader)) proto = "https";
       }
-
-      const clientManager = c.mcpJamClientManager;
-      const serverId = entry.managerServerId;
-
-      let upstreamResponse: Response;
-      // Support plain GET/HEAD to target root (some clients probe)
-      if (method === "GET" || method === "HEAD") {
-        upstreamResponse = new Response("OK", { status: 200 });
-      } else if (jsonBody && jsonBody.method) {
-        // Minimal JSON-RPC bridge: initialize and tools.list can be emulated
-        if (jsonBody.method === "initialize") {
-          const result = {
-            protocolVersion: "2025-06-18",
-            capabilities: {
-              tools: true,
-              prompts: true,
-              resources: true,
-              logging: false,
-              elicitation: {},
-              roots: { listChanged: true },
-            },
-            serverInfo: { name: serverId, version: "mcpjam-proxy" },
-          };
-          upstreamResponse = new Response(JSON.stringify({ jsonrpc: "2.0", id: jsonBody.id ?? null, result }), { status: 200, headers: { "content-type": "application/json" } });
-        } else if (jsonBody.method === "tools/list") {
-          const toolsets = await clientManager.getToolsetsForServer(serverId);
-          const tools = Object.keys(toolsets).map((name) => ({
-            name,
-            description: (toolsets as any)[name].description,
-            inputSchema: (toolsets as any)[name].inputSchema,
-            outputSchema: (toolsets as any)[name].outputSchema,
-          }));
-          upstreamResponse = new Response(
-            JSON.stringify({ jsonrpc: "2.0", id: jsonBody.id ?? null, result: { tools } }),
-            { status: 200, headers: { "content-type": "application/json" } },
-          );
-        } else if (jsonBody.method === "tools/call" && jsonBody.params?.name) {
-          try {
-            const exec = await clientManager.executeToolDirect(`${serverId}:${jsonBody.params.name}`, jsonBody.params?.arguments || {});
-            upstreamResponse = new Response(JSON.stringify({ jsonrpc: "2.0", id: jsonBody.id ?? null, result: exec.result }), { status: 200, headers: { "content-type": "application/json" } });
-          } catch (e) {
-            upstreamResponse = new Response(JSON.stringify({ jsonrpc: "2.0", id: jsonBody.id ?? null, error: { code: -32000, message: (e as Error).message } }), { status: 200, headers: { "content-type": "application/json" } });
-          }
-        } else if (jsonBody.method === "resources/list") {
-          const resources = clientManager
-            .getResourcesForServer(serverId)
-            .map((r) => ({
-              uri: r.uri,
-              name: r.name,
-              description: r.description,
-              mimeType: r.mimeType,
-            }));
-          upstreamResponse = new Response(
-            JSON.stringify({ jsonrpc: "2.0", id: jsonBody.id ?? null, result: { resources } }),
-            { status: 200, headers: { "content-type": "application/json" } },
-          );
-        } else if (jsonBody.method === "resources/read" && jsonBody.params?.uri) {
-          try {
-            const content = await clientManager.getResource(jsonBody.params.uri, serverId);
-            upstreamResponse = new Response(
-              JSON.stringify({ jsonrpc: "2.0", id: jsonBody.id ?? null, result: content }),
-              { status: 200, headers: { "content-type": "application/json" } },
-            );
-          } catch (e) {
-            upstreamResponse = new Response(
-              JSON.stringify({ jsonrpc: "2.0", id: jsonBody.id ?? null, error: { code: -32000, message: (e as Error).message } }),
-              { status: 200, headers: { "content-type": "application/json" } },
-            );
-          }
-        } else if (jsonBody.method === "prompts/list") {
-          const prompts = clientManager
-            .getPromptsForServer(serverId)
-            .map((p) => ({ name: p.name, description: p.description, arguments: p.arguments }));
-          upstreamResponse = new Response(
-            JSON.stringify({ jsonrpc: "2.0", id: jsonBody.id ?? null, result: { prompts } }),
-            { status: 200, headers: { "content-type": "application/json" } },
-          );
-        } else if (jsonBody.method === "prompts/get" && jsonBody.params?.name) {
-          try {
-            const content = await clientManager.getPrompt(
-              jsonBody.params.name,
-              serverId,
-              jsonBody.params?.arguments || {},
-            );
-            upstreamResponse = new Response(
-              JSON.stringify({ jsonrpc: "2.0", id: jsonBody.id ?? null, result: content }),
-              { status: 200, headers: { "content-type": "application/json" } },
-            );
-          } catch (e) {
-            upstreamResponse = new Response(
-              JSON.stringify({ jsonrpc: "2.0", id: jsonBody.id ?? null, error: { code: -32000, message: (e as Error).message } }),
-              { status: 200, headers: { "content-type": "application/json" } },
-            );
-          }
-        } else if (jsonBody.method === "roots/list") {
-          // Return empty roots; we are not exposing filesystem via proxy
-          upstreamResponse = new Response(
-            JSON.stringify({ jsonrpc: "2.0", id: jsonBody.id ?? null, result: { roots: [] } }),
-            { status: 200, headers: { "content-type": "application/json" } },
-          );
-        } else if (jsonBody.method === "logging/setLevel") {
-          // Acknowledge without changing anything
-          upstreamResponse = new Response(
-            JSON.stringify({ jsonrpc: "2.0", id: jsonBody.id ?? null, result: { success: true } }),
-            { status: 200, headers: { "content-type": "application/json" } },
-          );
-        } else if (jsonBody.method?.startsWith("notifications/")) {
-          // Acknowledge notifications without error to avoid client failures
-          upstreamResponse = new Response("", { status: 200 });
-        } else {
-          upstreamResponse = new Response(JSON.stringify({ jsonrpc: "2.0", id: jsonBody.id ?? null, error: { code: -32601, message: "Method not implemented in proxy" } }), { status: 200, headers: { "content-type": "application/json" } });
-        }
-      } else {
-        upstreamResponse = new Response(JSON.stringify({ error: "Unsupported request" }), { status: 400, headers: { "content-type": "application/json" } });
-      }
-
-      // Log and return
-      const resClone = upstreamResponse.clone();
-      let responseBody: string | undefined;
-      try { responseBody = await resClone.text(); } catch {}
-      interceptorStore.appendLog(id, {
-        id: `${requestId}-res`,
-        timestamp: Date.now(),
-        direction: "response",
-        status: upstreamResponse.status,
-        statusText: upstreamResponse.statusText || "",
-        headers: Object.fromEntries(upstreamResponse.headers.entries()),
-        body: responseBody,
-      });
-      return upstreamResponse;
-    } catch (e) {
-      const body = JSON.stringify({ error: String(e) });
-      interceptorStore.appendLog(id, {
-        id: `${requestId}-err`,
-        timestamp: Date.now(),
-        direction: "response",
-        status: 500,
-        statusText: "Proxy Error",
-        headers: { "content-type": "application/json" },
-        body,
-      });
-      return new Response(body, { status: 500, headers: { "Content-Type": "application/json" } });
+      if (!proto) proto = "http";
+      const inOrigin = host ? `${proto}://${host}` : new URL(req.url).origin;
+      const endpointBase = `${inOrigin}/api/mcp/interceptor/${id}/proxy/messages`;
+      filtered.set("x-mcpjam-endpoint-base", endpointBase);
     }
   }
 
-  // Standard HTTP target proxy path
   const init: RequestInit = {
     method: req.method,
-    headers: req.headers as any,
+    headers: filtered,
   };
   if (req.method !== "GET" && req.method !== "HEAD") {
     init.body = requestBody;
   }
-  const targetReq = new Request(entry.targetUrl, init as any);
+  const targetReq = new Request(upstreamUrl.toString(), init as any);
 
   try {
     const res = await fetch(targetReq);
     const resClone = res.clone();
     let responseBody: string | undefined;
     try {
-      responseBody = await resClone.text();
+      const ct = (res.headers.get("content-type") || "").toLowerCase();
+      if (ct.includes("text/event-stream") || ct.includes("application/x-ndjson")) {
+        responseBody = "[stream]"; // avoid draining the stream
+      } else {
+        responseBody = await resClone.text();
+      }
     } catch {
       responseBody = undefined;
     }
@@ -369,7 +325,7 @@ interceptor.all("/:id/proxy", async (c) => {
       statusText: res.statusText,
       headers: new Headers(res.headers),
     });
-    return passthrough;
+    return withCORS(passthrough);
   } catch (error) {
     const body = JSON.stringify({ error: String(error) });
     interceptorStore.appendLog(id, {
@@ -381,11 +337,12 @@ interceptor.all("/:id/proxy", async (c) => {
       headers: { "content-type": "application/json" },
       body,
     });
-    return new Response(body, {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    });
+    return withCORS(new Response(body, { status: 500, headers: { "Content-Type": "application/json" } }));
   }
-});
+}
+
+// HTTP proxy for JSON-RPC
+interceptor.all("/:id/proxy", handleProxy);
+interceptor.all("/:id/proxy/*", handleProxy);
 
 export default interceptor;
