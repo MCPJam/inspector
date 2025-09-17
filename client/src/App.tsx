@@ -122,12 +122,13 @@ export default function App() {
           </header>
 
           <div className="flex-1">
-            {/* Active Server Selector - Only show on Tools, Resources, Prompts, and Auth pages */}
+            {/* Active Server Selector - Only show on Tools, Resources, Prompts, Auth, and Interceptor pages */}
             {(activeTab === "tools" ||
               activeTab === "resources" ||
               activeTab === "prompts" ||
               activeTab === "auth" ||
-              activeTab === "chat") && (
+              activeTab === "chat" ||
+              activeTab === "interceptor") && (
               <ActiveServerSelector
                 connectedServerConfigs={connectedServerConfigs}
                 selectedServer={appState.selectedServer}
@@ -206,10 +207,6 @@ export default function App() {
               <InterceptorTab
                 connectedServerConfigs={connectedServerConfigs}
                 selectedServer={appState.selectedServer}
-                selectedMultipleServers={appState.selectedMultipleServers}
-                onServerChange={setSelectedServer}
-                onMultiServerToggle={toggleServerSelection}
-                onConnect={handleConnect}
               />
             )}
 
