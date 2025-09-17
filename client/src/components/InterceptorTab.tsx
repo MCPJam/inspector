@@ -34,6 +34,8 @@ type InterceptorTabProps = {
   selectedServer: string;
 };
 
+const STORAGE_KEY = 'mcpjam-interceptor-proxies';
+
 export function InterceptorTab({
   connectedServerConfigs,
   selectedServer,
@@ -43,6 +45,15 @@ export function InterceptorTab({
 
   // Get current server's proxy state
   const currentProxy = selectedServer && selectedServer !== "none" ? serverProxies[selectedServer] : null;
+
+  // Save to localStorage whenever serverProxies changes
+  const saveToStorage = (proxies: Record<string, ServerProxyState>) => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(proxies));
+    } catch (e) {
+      console.error('Failed to save proxy state to localStorage:', e);
+    }
+  };
 
   const baseUrl = useMemo(() => {
     const u = new URL(window.location.href);
@@ -63,21 +74,29 @@ export function InterceptorTab({
         const payload = JSON.parse(ev.data);
         console.log(`Stream message for ${serverId}:`, payload);
         if (payload.type === "log" && payload.log) {
-          setServerProxies(prev => ({
-            ...prev,
-            [serverId]: {
-              ...prev[serverId],
-              logs: [...(prev[serverId]?.logs || []), payload.log]
-            }
-          }));
+          setServerProxies(prev => {
+            const newProxies = {
+              ...prev,
+              [serverId]: {
+                ...prev[serverId],
+                logs: [...(prev[serverId]?.logs || []), payload.log]
+              }
+            };
+            saveToStorage(newProxies);
+            return newProxies;
+          });
         } else if (payload.type === "cleared") {
-          setServerProxies(prev => ({
-            ...prev,
-            [serverId]: {
-              ...prev[serverId],
-              logs: []
-            }
-          }));
+          setServerProxies(prev => {
+            const newProxies = {
+              ...prev,
+              [serverId]: {
+                ...prev[serverId],
+                logs: []
+              }
+            };
+            saveToStorage(newProxies);
+            return newProxies;
+          });
         }
       } catch (e) {
         console.error('Error parsing stream message:', e);
@@ -92,7 +111,25 @@ export function InterceptorTab({
     eventSourceRefs.current[serverId] = es;
   };
 
+  // Load proxy state from localStorage on mount
   useEffect(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const savedProxies = JSON.parse(saved) as Record<string, ServerProxyState>;
+        setServerProxies(savedProxies);
+
+        // Reconnect streams for active proxies
+        Object.entries(savedProxies).forEach(([serverId, proxy]) => {
+          if (proxy.interceptorId && proxy.proxyUrl) {
+            connectStream(proxy.interceptorId, serverId);
+          }
+        });
+      }
+    } catch (e) {
+      console.error('Failed to load proxy state from localStorage:', e);
+    }
+
     return () => {
       // Close all event sources on cleanup
       Object.values(eventSourceRefs.current).forEach(es => es.close());
@@ -126,22 +163,24 @@ export function InterceptorTab({
     const id = json.id as string;
     const proxy = (json.publicProxyUrl as string | undefined) || (json.proxyUrl as string | undefined);
 
-    setServerProxies(prev => ({
-      ...prev,
+    const newProxies = {
+      ...serverProxies,
       [serverId]: {
         interceptorId: id,
         proxyUrl: proxy || `${baseUrl}/${id}/proxy`,
         logs: []
       }
-    }));
+    };
 
+    setServerProxies(newProxies);
+    saveToStorage(newProxies);
     connectStream(id, serverId);
   };
 
-  const handleClear = async () => {
+  const handleStop = async () => {
     if (!selectedServer || selectedServer === "none" || !currentProxy) return;
-
-    await fetch(`${baseUrl}/${currentProxy.interceptorId}/clear`, { method: "POST" });
+    // Stop and delete the interceptor on the server
+    try { await fetch(`${baseUrl}/${currentProxy.interceptorId}`, { method: "DELETE" }); } catch {}
 
     // Close the event source for this server
     if (eventSourceRefs.current[selectedServer]) {
@@ -149,11 +188,29 @@ export function InterceptorTab({
       delete eventSourceRefs.current[selectedServer];
     }
 
-    setServerProxies(prev => {
-      const newProxies = { ...prev };
-      delete newProxies[selectedServer];
-      return newProxies;
-    });
+    const newProxies = { ...serverProxies };
+    delete newProxies[selectedServer];
+    setServerProxies(newProxies);
+    saveToStorage(newProxies);
+  };
+
+  const handleClearLogs = async () => {
+    if (!selectedServer || selectedServer === "none" || !currentProxy) return;
+
+    try {
+      await fetch(`${baseUrl}/${currentProxy.interceptorId}/clear`, { method: "POST" });
+    } catch {}
+
+    // Clear logs in the UI
+    const newProxies = {
+      ...serverProxies,
+      [selectedServer]: {
+        ...serverProxies[selectedServer],
+        logs: []
+      }
+    };
+    setServerProxies(newProxies);
+    saveToStorage(newProxies);
   };
 
   return (
@@ -170,13 +227,15 @@ export function InterceptorTab({
                   <div className="text-sm font-medium text-green-800 dark:text-green-200">
                     Active Proxy for {connectedServerConfigs[selectedServer]?.name || selectedServer}
                   </div>
-                  <div className="text-xs text-green-700 dark:text-green-300">
-                    Proxy is running and ready to use • {currentProxy.logs.length} requests logged
-                  </div>
                 </div>
-                <Button variant="outline" size="sm" onClick={handleClear}>
-                  Stop Proxy
-                </Button>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" onClick={handleClearLogs}>
+                    Clear Logs
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={handleStop}>
+                    Stop Proxy
+                  </Button>
+                </div>
               </div>
               <div>
                 <label className="text-xs font-medium text-green-800 dark:text-green-200">Proxy URL</label>

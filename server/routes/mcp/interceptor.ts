@@ -155,6 +155,14 @@ interceptor.post("/:id/clear", (c) => {
   return c.json({ success: true });
 });
 
+// Destroy interceptor (stop proxy)
+interceptor.delete("/:id", (c) => {
+  const id = c.req.param("id");
+  const ok = interceptorStore.destroy(id);
+  if (!ok) return c.json({ success: false, error: "not found" }, 404);
+  return c.json({ success: true });
+});
+
 // SSE stream of logs
 interceptor.get("/:id/stream", (c) => {
   const id = c.req.param("id");

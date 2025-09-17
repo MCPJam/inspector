@@ -119,6 +119,23 @@ class InterceptorStore {
     return this.sessionIndex.get(sessionId);
   }
 
+  destroy(id: string): boolean {
+    const e = this.interceptors.get(id);
+    if (!e) return false;
+    // Close and remove subscribers
+    for (const sub of Array.from(e.subscribers)) {
+      try { sub.send({ type: "closed" }); } catch {}
+      try { sub.close(); } catch {}
+    }
+    e.subscribers.clear();
+    // Remove session mappings for this interceptor
+    for (const sid of Array.from(e.sessionEndpoints.keys())) {
+      this.sessionIndex.delete(sid);
+    }
+    this.interceptors.delete(id);
+    return true;
+  }
+
   private broadcast(e: InterceptorEntry, payload: any) {
     for (const sub of Array.from(e.subscribers)) {
       try {
