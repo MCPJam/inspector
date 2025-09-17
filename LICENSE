@@ -1,4 +1,9 @@
-Copyright 2025 MCPJam
+Copyright (c) 2025-present MCPJam Inc
+
+Portions of this software are licensed as follows: 
+
+* All content residing under the "evals-cli/" directory of this repository, if that directory exists, is licensed under the license defined in evals-cli/LICENSE. 
+* Content outside of the above mentioned directories or restrictions above is available under the "Apache License" license as defined below.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
