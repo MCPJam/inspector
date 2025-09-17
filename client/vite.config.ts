@@ -32,6 +32,8 @@ export default defineConfig({
     allowedHosts: [
       // Allow localtunnel HTTPS hostnames, e.g., *.loca.lt
       ".loca.lt",
+      // Allow ngrok HTTPS hostnames, e.g., *.ngrok-free.app
+      ".ngrok-free.app",
     ],
     proxy: {
       "/api": {

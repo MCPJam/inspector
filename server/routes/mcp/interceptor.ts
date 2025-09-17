@@ -36,9 +36,9 @@ interceptor.post("/create", async (c) => {
         ? managerServerId
         : undefined;
 
-    // If a manager-backed server is provided, route via our local HTTP adapter
-    if (mgrId) {
-      // Validate the server is connected before accepting
+    // Support two modes: direct proxy or manager-backed
+    if (mgrId && !targetUrl) {
+      // Manager-backed mode: route via our local HTTP adapter
       const status = c.mcpJamClientManager.getConnectionStatus(mgrId);
       if (status !== "connected") {
         return c.json(
@@ -48,13 +48,16 @@ interceptor.post("/create", async (c) => {
       }
       const origin = new URL(c.req.url).origin;
       finalTarget = `${origin}/api/mcp/manager-http/${encodeURIComponent(mgrId)}`;
+    } else if (targetUrl) {
+      // Direct proxy mode: use provided URL directly
+      finalTarget = targetUrl;
     }
 
     if (!finalTarget || typeof finalTarget !== "string") {
-      return c.json({ success: false, error: "targetUrl is required when no managerServerId is provided" }, 400);
+      return c.json({ success: false, error: "Either targetUrl or managerServerId is required" }, 400);
     }
 
-    // Only validate when proxying raw HTTP
+    // Only validate external URLs
     if (!mgrId) {
       try {
         const u = new URL(finalTarget);
@@ -75,9 +78,8 @@ interceptor.post("/create", async (c) => {
     const localOrigin = urlObj.origin;
     let publicOrigin: string | null = null;
     if (useTunnel) {
-      // derive port from local origin; default to 3000
-      const portStr = urlObj.port || "3000";
-      const port = parseInt(portStr || "3000", 10) || 3000;
+      // Always tunnel to the Node API port, not the Vite dev server.
+      const port = parseInt(process.env.PORT || "3000", 10) || 3000;
       try {
         publicOrigin = await ensureNgrokTunnel(port);
       } catch {}
@@ -227,23 +229,31 @@ async function handleProxy(c: any) {
     body: requestBody,
   });
 
-  // Manager-backed now uses pure HTTP proxying to our local adapter endpoint
-
-  // Build upstream URL: preserve trailing path and query after /proxy/:id
+  // Build upstream URL: preserve trailing path and query after /proxy/:id for direct mode
+  // For manager mode, just use the adapter URL as-is
   let upstreamUrl = new URL(entry.targetUrl);
-  try {
-    const originalUrl = new URL(req.url);
-    const proxyBase = `/api/mcp/interceptor/${id}/proxy`;
-    const rest = originalUrl.pathname.startsWith(proxyBase)
-      ? originalUrl.pathname.slice(proxyBase.length)
-      : "";
-    const basePath = upstreamUrl.pathname.endsWith("/")
-      ? upstreamUrl.pathname.slice(0, -1)
-      : upstreamUrl.pathname;
-    const trailing = rest ? (rest.startsWith("/") ? rest : `/${rest}`) : "";
-    upstreamUrl.pathname = `${basePath}${trailing}`;
-    upstreamUrl.search = originalUrl.search;
-  } catch {}
+  if (!entry.managerServerId) {
+    // Direct proxy mode: preserve path structure
+    try {
+      const originalUrl = new URL(req.url);
+      const proxyBase = `/api/mcp/interceptor/${id}/proxy`;
+      const rest = originalUrl.pathname.startsWith(proxyBase)
+        ? originalUrl.pathname.slice(proxyBase.length)
+        : "";
+      const basePath = upstreamUrl.pathname.endsWith("/")
+        ? upstreamUrl.pathname.slice(0, -1)
+        : upstreamUrl.pathname;
+      const trailing = rest ? (rest.startsWith("/") ? rest : `/${rest}`) : "";
+      upstreamUrl.pathname = `${basePath}${trailing}`;
+      upstreamUrl.search = originalUrl.search;
+    } catch {}
+  } else {
+    // Manager mode: preserve the original request path for the adapter
+    try {
+      const originalUrl = new URL(req.url);
+      upstreamUrl.search = originalUrl.search;
+    } catch {}
+  }
 
   // Filter hop-by-hop headers and forward Authorization. Drop content-length so Undici computes it.
   const filtered = new Headers();
@@ -270,21 +280,20 @@ async function handleProxy(c: any) {
 
   // For manager-backed SSE GET/HEAD, hint the adapter to emit an endpoint pointing back to this proxy
   if (entry.managerServerId) {
-    const accept = (req.headers.get("accept") || "").toLowerCase();
-    if (req.method === "HEAD" || accept.includes("text/event-stream")) {
-      const xfProto = req.headers.get("x-forwarded-proto");
-      const xfHost = req.headers.get("x-forwarded-host");
-      const host = xfHost || req.headers.get("host");
-      let proto = xfProto;
-      if (!proto) {
-        const originHeader = req.headers.get("origin");
-        if (originHeader && /^https:/i.test(originHeader)) proto = "https";
-      }
-      if (!proto) proto = "http";
-      const inOrigin = host ? `${proto}://${host}` : new URL(req.url).origin;
-      const endpointBase = `${inOrigin}/api/mcp/interceptor/${id}/proxy/messages`;
-      filtered.set("x-mcpjam-endpoint-base", endpointBase);
+    // Always advertise the proxy messages endpoint so the manager adapter
+    // can emit a correct endpoint URL regardless of Accept header quirks.
+    const xfProto = req.headers.get("x-forwarded-proto");
+    const xfHost = req.headers.get("x-forwarded-host");
+    const host = xfHost || req.headers.get("host");
+    let proto = xfProto;
+    if (!proto) {
+      const originHeader = req.headers.get("origin");
+      if (originHeader && /^https:/i.test(originHeader)) proto = "https";
     }
+    if (!proto) proto = "http";
+    const inOrigin = host ? `${proto}://${host}` : new URL(req.url).origin;
+    const endpointBase = `${inOrigin}/api/mcp/interceptor/${id}/proxy/messages`;
+    filtered.set("x-mcpjam-endpoint-base", endpointBase);
   }
 
   const init: RequestInit = {
