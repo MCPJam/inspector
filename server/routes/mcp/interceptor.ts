@@ -96,7 +96,7 @@ interceptor.post("/create", async (c) => {
       return c.json({ success: false, error: "Invalid URL" }, 400);
     }
 
-    const entry = interceptorStore.create(finalTarget, injectHeaders);
+    const entry = interceptorStore.create(finalTarget, injectHeaders, serverId);
 
     // Compute local origin and optional public HTTPS origin via tunnel
     const localOrigin = urlObj.origin;
@@ -161,6 +161,13 @@ interceptor.delete("/:id", (c) => {
   const ok = interceptorStore.destroy(id);
   if (!ok) return c.json({ success: false, error: "not found" }, 404);
   return c.json({ success: true });
+});
+
+// Destroy all interceptors created for a connected server
+interceptor.delete("/by-server/:serverId", (c) => {
+  const serverId = c.req.param("serverId");
+  const count = interceptorStore.destroyByServer(serverId);
+  return c.json({ success: true, count });
 });
 
 // SSE stream of logs

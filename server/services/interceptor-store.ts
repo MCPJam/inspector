@@ -35,13 +35,16 @@ type InterceptorEntry = {
   injectHeaders?: Record<string, string>;
   // Map sessionId -> upstream messages endpoint URL (rewritten SSE support)
   sessionEndpoints: Map<string, string>;
+  // Optional originating connected server id (for bulk cleanup)
+  serverId?: string;
 };
 
 class InterceptorStore {
   private interceptors: Map<string, InterceptorEntry> = new Map();
   private sessionIndex: Map<string, { interceptorId: string; url: string }> = new Map();
+  private byServer: Map<string, Set<string>> = new Map();
 
-  create(targetUrl: string, injectHeaders?: Record<string, string>) {
+  create(targetUrl: string, injectHeaders?: Record<string, string>, serverId?: string) {
     const id = randomUUID().slice(0, 8);
     const entry: InterceptorEntry = {
       id,
@@ -51,8 +54,13 @@ class InterceptorStore {
       subscribers: new Set(),
       injectHeaders,
       sessionEndpoints: new Map(),
+      serverId,
     };
     this.interceptors.set(id, entry);
+    if (serverId) {
+      if (!this.byServer.has(serverId)) this.byServer.set(serverId, new Set());
+      this.byServer.get(serverId)!.add(id);
+    }
     return entry;
   }
 
@@ -134,6 +142,17 @@ class InterceptorStore {
     }
     this.interceptors.delete(id);
     return true;
+  }
+
+  destroyByServer(serverId: string): number {
+    const set = this.byServer.get(serverId);
+    if (!set || set.size === 0) return 0;
+    let count = 0;
+    for (const id of Array.from(set)) {
+      if (this.destroy(id)) count++;
+    }
+    this.byServer.delete(serverId);
+    return count;
   }
 
   private broadcast(e: InterceptorEntry, payload: any) {

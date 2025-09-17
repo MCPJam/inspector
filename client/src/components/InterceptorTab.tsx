@@ -117,14 +117,22 @@ export function InterceptorTab({
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const savedProxies = JSON.parse(saved) as Record<string, ServerProxyState>;
-        setServerProxies(savedProxies);
 
-        // Reconnect streams for active proxies
+        // Only restore proxies for servers that are still connected
+        const validProxies: Record<string, ServerProxyState> = {};
         Object.entries(savedProxies).forEach(([serverId, proxy]) => {
-          if (proxy.interceptorId && proxy.proxyUrl) {
-            connectStream(proxy.interceptorId, serverId);
+          if (connectedServerConfigs[serverId]?.connectionStatus === 'connected') {
+            validProxies[serverId] = proxy;
+            if (proxy.interceptorId && proxy.proxyUrl) {
+              connectStream(proxy.interceptorId, serverId);
+            }
           }
         });
+
+        setServerProxies(validProxies);
+        if (Object.keys(validProxies).length !== Object.keys(savedProxies).length) {
+          saveToStorage(validProxies); // Update localStorage to remove invalid proxies
+        }
       }
     } catch (e) {
       console.error('Failed to load proxy state from localStorage:', e);
@@ -135,7 +143,44 @@ export function InterceptorTab({
       Object.values(eventSourceRefs.current).forEach(es => es.close());
       eventSourceRefs.current = {};
     };
-  }, []);
+  }, [connectedServerConfigs]);
+
+  // Clean up proxies when servers disconnect
+  useEffect(() => {
+    const disconnectedServers = Object.keys(serverProxies).filter(serverId => {
+      const serverConfig = connectedServerConfigs[serverId];
+      return !serverConfig || serverConfig.connectionStatus !== 'connected';
+    });
+
+    if (disconnectedServers.length > 0) {
+      const newProxies = { ...serverProxies };
+      let hasChanges = false;
+
+      disconnectedServers.forEach(serverId => {
+        console.log(`Server ${serverId} disconnected, cleaning up proxy`);
+
+        // Stop the proxy on server
+        if (newProxies[serverId]?.interceptorId) {
+          fetch(`${baseUrl}/${newProxies[serverId].interceptorId}`, { method: "DELETE" }).catch(() => {});
+        }
+
+        // Close event source
+        if (eventSourceRefs.current[serverId]) {
+          eventSourceRefs.current[serverId].close();
+          delete eventSourceRefs.current[serverId];
+        }
+
+        // Remove from state
+        delete newProxies[serverId];
+        hasChanges = true;
+      });
+
+      if (hasChanges) {
+        setServerProxies(newProxies);
+        saveToStorage(newProxies);
+      }
+    }
+  }, [connectedServerConfigs, serverProxies, baseUrl]);
 
   const handleCreate = async () => {
     // Only allow connected servers
@@ -247,7 +292,7 @@ export function InterceptorTab({
           ) : (
             <div className="p-3 bg-muted rounded border">
               <div className="text-sm font-medium mb-2">
-                {selectedServer ? `Create proxy for ${connectedServerConfigs[selectedServer]?.name}` : "No server selected"}
+                { selectedServer !== "none" ? `Create proxy for ${connectedServerConfigs[selectedServer]?.name}` : "No server selected"}
               </div>
               <div className="text-xs text-muted-foreground mb-3">
                 {selectedServer ? "This will create a proxy URL that tunnels requests to your connected server." : "Select a server above to create a proxy"}

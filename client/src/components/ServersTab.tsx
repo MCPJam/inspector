@@ -109,7 +109,13 @@ export function ServersTab({
             <ServerConnectionCard
               key={name}
               server={server}
-              onDisconnect={onDisconnect}
+              onDisconnect={async (serverName) => {
+                try {
+                  const u = new URL(window.location.href);
+                  await fetch(`${u.origin}/api/mcp/interceptor/by-server/${encodeURIComponent(serverName)}`, { method: 'DELETE' });
+                } catch {}
+                onDisconnect(serverName);
+              }}
               onReconnect={onReconnect}
               onEdit={handleEditServer}
               onRemove={onRemove}
