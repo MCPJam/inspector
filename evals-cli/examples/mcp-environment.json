@@ -1,12 +1,9 @@
 {
   "servers": {
-    "asana": {
-      "url": "https://mcp.asana.com/sse",
-      "requestInit": {
-        "headers": {
-          "Authorization": "Bearer 12345"
-        }
-      }
+    "everything": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-everything"],
+      "env": {}
     }
   }
 }
