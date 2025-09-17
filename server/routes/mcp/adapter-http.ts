@@ -1,5 +1,7 @@
 import { Hono } from "hono";
 import "../../types/hono";
+import { z } from "zod";
+import { zodToJsonSchema } from "zod-to-json-schema";
 
 // In-memory SSE session registry per serverId
 type Session = {
@@ -136,8 +138,8 @@ adapterHttp.post("/:serverId", async (c) => {
         const tools = Object.keys(toolsets).map((name) => ({
           name,
           description: (toolsets as any)[name].description,
-          inputSchema: (toolsets as any)[name].inputSchema,
-          outputSchema: (toolsets as any)[name].outputSchema,
+          inputSchema: toJsonSchemaMaybe((toolsets as any)[name].inputSchema),
+          outputSchema: toJsonSchemaMaybe((toolsets as any)[name].outputSchema),
         }));
         return respond({ jsonrpc: "2.0", id, result: { tools } });
       }
@@ -272,8 +274,8 @@ adapterHttp.post("/:serverId/messages", async (c) => {
         const tools = Object.keys(toolsets).map((name) => ({
           name,
           description: (toolsets as any)[name].description,
-          inputSchema: (toolsets as any)[name].inputSchema,
-          outputSchema: (toolsets as any)[name].outputSchema,
+          inputSchema: toJsonSchemaMaybe((toolsets as any)[name].inputSchema),
+          outputSchema: toJsonSchemaMaybe((toolsets as any)[name].outputSchema),
         }));
         return { jsonrpc: "2.0", id, result: { tools } };
       }
@@ -329,3 +331,14 @@ adapterHttp.post("/:serverId/messages", async (c) => {
     "Access-Control-Expose-Headers": "*",
   });
 });
+function toJsonSchemaMaybe(schema: any): any {
+  try {
+    if (schema && typeof schema === "object") {
+      // Detect Zod schema heuristically
+      if (schema instanceof z.ZodType || ("_def" in schema && "parse" in schema)) {
+        return zodToJsonSchema(schema as z.ZodType<any>);
+      }
+    }
+  } catch {}
+  return schema;
+}
