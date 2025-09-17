@@ -9,7 +9,6 @@ import tests from "./tests.ts";
 import oauth from "./oauth";
 import exporter from "./export";
 import interceptor from "./interceptor";
-import managerHttp from "./manager-http";
 
 const mcp = new Hono();
 
@@ -52,7 +51,7 @@ mcp.route("/export", exporter);
 // Interceptor endpoints - create proxy and stream logs
 mcp.route("/interceptor", interceptor);
 
-// Local HTTP adapter for manager-backed servers
-mcp.route("/manager-http", managerHttp);
+// Local HTTP adapter for manager-backed servers (disabled)
+// To re-enable, import and route here.
 
 export default mcp;

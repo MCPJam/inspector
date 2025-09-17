@@ -97,8 +97,9 @@ async function handleManagerHttp(c: any) {
         const sep = endpointBase.includes("?") ? "&" : "?";
         const url = `${endpointBase}${sep}sessionId=${sessionId}`;
         console.log("[manager-http] endpoint", { serverId, sessionId, url });
-        // Emit endpoint as a plain string URL for broad client compatibility.
-        send("endpoint", url);
+        // Emit endpoint as JSON (spec-friendly) then as a plain string (compat).
+        try { send("endpoint", JSON.stringify({ url, headers: {} })); } catch {}
+        try { send("endpoint", url); } catch {}
 
         // Periodic keepalive comments so proxies don’t buffer/close
         timer = setInterval(() => {
@@ -315,9 +316,6 @@ async function handleManagerHttp(c: any) {
   }
 }
 
-managerHttp.all("/:serverId", handleManagerHttp);
-managerHttp.all("/:serverId/*", handleManagerHttp);
-
 // Endpoint to receive client messages for SSE transport: /:serverId/messages?sessionId=...
 managerHttp.post("/:serverId/messages", async (c) => {
   const serverId = c.req.param("serverId");
@@ -331,12 +329,25 @@ managerHttp.post("/:serverId/messages", async (c) => {
       sess = sessions.get(`${serverId}:${fallbackId}`);
     }
   }
-  console.log("[manager-http] POST messages", { key, resolved: !!sess });
+  console.log("[manager-http] POST messages", {
+    key,
+    resolved: !!sess,
+    contentType: c.req.header("content-type"),
+  });
   if (!sess) {
     return c.json({ error: "Invalid session" }, 400);
   }
   let body: any;
-  try { body = await c.req.json(); } catch { body = undefined; }
+  try {
+    body = await c.req.json();
+  } catch {
+    try {
+      const txt = await c.req.text();
+      body = txt ? JSON.parse(txt) : undefined;
+    } catch {
+      body = undefined;
+    }
+  }
   const id = body?.id ?? null;
   const method = body?.method as string | undefined;
   const params = body?.params ?? {};
@@ -491,5 +502,9 @@ managerHttp.post("/:serverId/messages", async (c) => {
     });
   }
 });
+
+// Register catch-all handlers AFTER the messages route so it isn't shadowed
+managerHttp.all("/:serverId", handleManagerHttp);
+managerHttp.all("/:serverId/*", handleManagerHttp);
 
 export default managerHttp;
