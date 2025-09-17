@@ -86,10 +86,21 @@ export function InterceptorTab({
   const handleCreate = async () => {
     // Treat the sentinel 'none' as no selection
     const managerId = selectedServer && selectedServer !== "none" ? selectedServer : undefined;
+
+    // Auto-detect target URL from selected server if not provided
+    let finalTargetUrl = targetUrl;
+    if (managerId && !targetUrl && connectedServerConfigs[managerId]) {
+      const serverConfig = connectedServerConfigs[managerId].config;
+      if (serverConfig.type === "http" && serverConfig.url) {
+        finalTargetUrl = serverConfig.url;
+        setTargetUrl(serverConfig.url); // Update UI to show the detected URL
+      }
+    }
+
     const res = await fetch(`${baseUrl}/create?tunnel=true`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ targetUrl, managerServerId: managerId }),
+      body: JSON.stringify({ targetUrl: finalTargetUrl, managerServerId: managerId }),
     });
     const json = await res.json();
     if (!json.success) {
@@ -111,32 +122,59 @@ export function InterceptorTab({
 
   return (
     <div className="p-4 flex flex-col gap-4">
-      <Card className="p-4 flex flex-col gap-2">
+      <Card className="p-4 flex flex-col gap-4">
         <div className="text-sm text-muted-foreground">
-          Create an interceptor that proxies MCP HTTP JSON-RPC and streams logs.
+          Create an interceptor that proxies MCP HTTP JSON-RPC requests and logs all traffic. Choose between two modes:
         </div>
-        <ActiveServerSelector
-          connectedServerConfigs={connectedServerConfigs}
-          selectedServer={selectedServer}
-          selectedMultipleServers={selectedMultipleServers}
-          isMultiSelectEnabled={false}
-          onServerChange={onServerChange}
-          onMultiServerToggle={onMultiServerToggle}
-          onConnect={onConnect}
-        />
+
+        <div className="space-y-3">
+          <div className="p-3 border rounded-md bg-muted/30">
+            <h3 className="text-sm font-medium mb-2">🔗 Connected Server Mode</h3>
+            <p className="text-xs text-muted-foreground mb-2">
+              Tunnel through a server you've already connected to in the inspector. Reuses OAuth and existing connections.
+            </p>
+            <ActiveServerSelector
+              connectedServerConfigs={connectedServerConfigs}
+              selectedServer={selectedServer}
+              selectedMultipleServers={selectedMultipleServers}
+              isMultiSelectEnabled={false}
+              onServerChange={onServerChange}
+              onMultiServerToggle={onMultiServerToggle}
+              onConnect={onConnect}
+            />
+          </div>
+
+          <div className="p-3 border rounded-md bg-muted/30">
+            <h3 className="text-sm font-medium mb-2">🌐 External Server Mode</h3>
+            <p className="text-xs text-muted-foreground mb-2">
+              Direct proxy to any external MCP HTTP server URL.
+            </p>
+            <Input
+              placeholder="MCP HTTP URL (e.g., https://example.com/mcp)"
+              value={targetUrl}
+              onChange={(e) => setTargetUrl(e.target.value)}
+            />
+          </div>
+        </div>
+
         <div className="flex gap-2">
-          {/* In manager-backed mode, target URL is not required; keeping the field for raw HTTP targets */}
-          <Input placeholder="Target MCP HTTP URL (optional when tunneling an active server)" value={targetUrl} onChange={(e) => setTargetUrl(e.target.value)} />
-          <Button onClick={handleCreate} disabled={!targetUrl && !selectedServer}>
+          <Button onClick={handleCreate} disabled={!targetUrl && (!selectedServer || selectedServer === "none")}>
             Create Interceptor
           </Button>
           <Button variant="secondary" onClick={handleClear} disabled={!interceptorId}>
             Clear Logs
           </Button>
         </div>
+
         {proxyUrl && (
-          <div className="text-xs">
-            Add this as the MCP server URL in your client to route via proxy: <span className="font-mono break-all">{proxyUrl}</span>
+          <div className="p-3 border rounded-md bg-green-50 dark:bg-green-950/30">
+            <h4 className="text-sm font-medium text-green-800 dark:text-green-200 mb-1">✅ Proxy Ready</h4>
+            <p className="text-xs text-green-700 dark:text-green-300 mb-2">
+              Add this URL as your MCP server in Claude Desktop, Cursor, or any MCP client:
+            </p>
+            <code className="text-xs bg-green-100 dark:bg-green-900/50 p-2 rounded block break-all">
+              {proxyUrl}
+            </code>
           </div>
         )}
       </Card>

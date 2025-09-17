@@ -60,9 +60,18 @@ async function handleManagerHttp(c: any) {
     if (overrideBase && overrideBase.trim() !== "") {
       endpointBase = overrideBase.trim();
     } else {
-      // Compute an absolute endpoint based on the current origin to avoid
-      // path duplication when clients append extra segments (e.g., "/mcp").
-      const origin = incomingUrl.origin;
+      // Compute an absolute endpoint based on forwarded headers when present
+      // so direct ngrok/edge access (without the proxy) advertises a reachable URL.
+      const xfProto = c.req.header("x-forwarded-proto");
+      const xfHost = c.req.header("x-forwarded-host");
+      const host = xfHost || c.req.header("host");
+      let proto = xfProto;
+      if (!proto) {
+        const originHeader = c.req.header("origin");
+        if (originHeader && /^https:/i.test(originHeader)) proto = "https";
+      }
+      if (!proto) proto = "http";
+      const origin = host ? `${proto}://${host}` : incomingUrl.origin;
       endpointBase = `${origin}/api/mcp/manager-http/${serverId}/messages`;
     }
     const sessionId = crypto.randomUUID();
@@ -86,7 +95,10 @@ async function handleManagerHttp(c: any) {
         // Ping and endpoint per SSE transport handshake
         send("ping", "");
         const sep = endpointBase.includes("?") ? "&" : "?";
-        send("endpoint", `${endpointBase}${sep}sessionId=${sessionId}`);
+        const url = `${endpointBase}${sep}sessionId=${sessionId}`;
+        console.log("[manager-http] endpoint", { serverId, sessionId, url });
+        // Emit endpoint as a plain string URL for broad client compatibility.
+        send("endpoint", url);
 
         // Periodic keepalive comments so proxies don’t buffer/close
         timer = setInterval(() => {
@@ -175,13 +187,29 @@ async function handleManagerHttp(c: any) {
             `${serverId}:${params?.name}`,
             params?.arguments || {},
           );
-          return respond({ jsonrpc: "2.0", id, result: exec.result });
+          // Format response according to MCP CallToolResult spec
+          const result = {
+            content: [
+              {
+                type: "text",
+                text: typeof exec.result === 'string' ? exec.result : JSON.stringify(exec.result, null, 2)
+              }
+            ],
+            isError: false
+          };
+          return respond({ jsonrpc: "2.0", id, result });
         } catch (e: any) {
-          return respond({
-            jsonrpc: "2.0",
-            id,
-            error: { code: -32000, message: e?.message || String(e) },
-          });
+          // Return error as a successful CallToolResult with isError: true
+          const result = {
+            content: [
+              {
+                type: "text",
+                text: `Error: ${e?.message || String(e)}`
+              }
+            ],
+            isError: true
+          };
+          return respond({ jsonrpc: "2.0", id, result });
         }
       }
       case "resources/list": {
@@ -196,7 +224,17 @@ async function handleManagerHttp(c: any) {
       case "resources/read": {
         try {
           const content = await clientManager.getResource(params?.uri, serverId);
-          return respond({ jsonrpc: "2.0", id, result: content });
+          // Format response according to MCP ReadResourceResult spec
+          const result = {
+            contents: [
+              {
+                uri: params?.uri,
+                mimeType: content?.mimeType || "text/plain",
+                text: typeof content === 'string' ? content : JSON.stringify(content, null, 2)
+              }
+            ]
+          };
+          return respond({ jsonrpc: "2.0", id, result });
         } catch (e: any) {
           return respond({
             jsonrpc: "2.0",
@@ -218,7 +256,20 @@ async function handleManagerHttp(c: any) {
             serverId,
             params?.arguments || {},
           );
-          return respond({ jsonrpc: "2.0", id, result: content });
+          // Format response according to MCP GetPromptResult spec
+          const result = {
+            description: content?.description || `Prompt: ${params?.name}`,
+            messages: [
+              {
+                role: "user",
+                content: {
+                  type: "text",
+                  text: typeof content === 'string' ? content : JSON.stringify(content, null, 2)
+                }
+              }
+            ]
+          };
+          return respond({ jsonrpc: "2.0", id, result });
         } catch (e: any) {
           return respond({
             jsonrpc: "2.0",
@@ -233,9 +284,19 @@ async function handleManagerHttp(c: any) {
       case "logging/setLevel": {
         return respond({ jsonrpc: "2.0", id, result: { success: true } });
       }
+      case "notifications/initialized": {
+        // Client sends this after receiving initialize response
+        console.log("[manager-http] Client initialized", { serverId });
+        return c.body(null, 204, { "Access-Control-Allow-Origin": "*" });
+      }
+      case "ping": {
+        // Handle ping requests
+        return respond({ jsonrpc: "2.0", id, result: {} });
+      }
       default: {
-        // Notifications channel and misc
+        // Other notifications
         if (m.startsWith("notifications/")) {
+          console.log("[manager-http] Notification received", { method: m, serverId });
           return c.body(null, 204, { "Access-Control-Allow-Origin": "*" });
         }
         return respond({
@@ -312,9 +373,29 @@ managerHttp.post("/:serverId/messages", async (c) => {
       case "tools/call": {
         try {
           const exec = await c.mcpJamClientManager.executeToolDirect(`${serverId}:${params?.name}`, params?.arguments || {});
-          return { jsonrpc: "2.0", id, result: exec.result };
+          // Format response according to MCP CallToolResult spec
+          const result = {
+            content: [
+              {
+                type: "text",
+                text: typeof exec.result === 'string' ? exec.result : JSON.stringify(exec.result, null, 2)
+              }
+            ],
+            isError: false
+          };
+          return { jsonrpc: "2.0", id, result };
         } catch (e: any) {
-          return { jsonrpc: "2.0", id, error: { code: -32000, message: e?.message || String(e) } };
+          // Return error as a successful CallToolResult with isError: true
+          const result = {
+            content: [
+              {
+                type: "text",
+                text: `Error: ${e?.message || String(e)}`
+              }
+            ],
+            isError: true
+          };
+          return { jsonrpc: "2.0", id, result };
         }
       }
       case "resources/list": {
@@ -324,7 +405,17 @@ managerHttp.post("/:serverId/messages", async (c) => {
       case "resources/read": {
         try {
           const content = await c.mcpJamClientManager.getResource(params?.uri, serverId);
-          return { jsonrpc: "2.0", id, result: content };
+          // Format response according to MCP ReadResourceResult spec
+          const result = {
+            contents: [
+              {
+                uri: params?.uri,
+                mimeType: content?.mimeType || "text/plain",
+                text: typeof content === 'string' ? content : JSON.stringify(content, null, 2)
+              }
+            ]
+          };
+          return { jsonrpc: "2.0", id, result };
         } catch (e: any) {
           return { jsonrpc: "2.0", id, error: { code: -32000, message: e?.message || String(e) } };
         }
@@ -336,7 +427,20 @@ managerHttp.post("/:serverId/messages", async (c) => {
       case "prompts/get": {
         try {
           const content = await c.mcpJamClientManager.getPrompt(params?.name, serverId, params?.arguments || {});
-          return { jsonrpc: "2.0", id, result: content };
+          // Format response according to MCP GetPromptResult spec
+          const result = {
+            description: content?.description || `Prompt: ${params?.name}`,
+            messages: [
+              {
+                role: "user",
+                content: {
+                  type: "text",
+                  text: typeof content === 'string' ? content : JSON.stringify(content, null, 2)
+                }
+              }
+            ]
+          };
+          return { jsonrpc: "2.0", id, result };
         } catch (e: any) {
           return { jsonrpc: "2.0", id, error: { code: -32000, message: e?.message || String(e) } };
         }
@@ -347,8 +451,20 @@ managerHttp.post("/:serverId/messages", async (c) => {
       case "logging/setLevel": {
         return { jsonrpc: "2.0", id, result: { success: true } };
       }
+      case "notifications/initialized": {
+        // Client sends this after receiving initialize response
+        console.log("[manager-http] Client initialized via messages", { serverId });
+        return null; // no response for notifications
+      }
+      case "ping": {
+        // Handle ping requests
+        return { jsonrpc: "2.0", id, result: {} };
+      }
       default: {
-        if (method.startsWith("notifications/")) return null; // no response
+        if (method.startsWith("notifications/")) {
+          console.log("[manager-http] Notification received via messages", { method, serverId });
+          return null; // no response
+        }
         return { jsonrpc: "2.0", id, error: { code: -32601, message: `Method not implemented: ${method}` } };
       }
     }
