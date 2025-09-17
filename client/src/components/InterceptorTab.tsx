@@ -39,7 +39,7 @@ export function InterceptorTab({
   selectedServer,
 }: InterceptorTabProps) {
   const [serverProxies, setServerProxies] = useState<Record<string, ServerProxyState>>({});
-  const eventSourceRef = useRef<EventSource | null>(null);
+  const eventSourceRefs = useRef<Record<string, EventSource>>({});
 
   // Get current server's proxy state
   const currentProxy = selectedServer && selectedServer !== "none" ? serverProxies[selectedServer] : null;
@@ -50,15 +50,18 @@ export function InterceptorTab({
   }, []);
 
   const connectStream = (id: string, serverId: string) => {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
+    // Close existing stream for this server if it exists
+    if (eventSourceRefs.current[serverId]) {
+      eventSourceRefs.current[serverId].close();
+      delete eventSourceRefs.current[serverId];
     }
+
     const es = new EventSource(`${baseUrl}/${id}/stream`);
     es.onmessage = (ev) => {
       try {
         if (ev.data === "[DONE]") return;
         const payload = JSON.parse(ev.data);
+        console.log(`Stream message for ${serverId}:`, payload);
         if (payload.type === "log" && payload.log) {
           setServerProxies(prev => ({
             ...prev,
@@ -76,17 +79,24 @@ export function InterceptorTab({
             }
           }));
         }
-      } catch {}
+      } catch (e) {
+        console.error('Error parsing stream message:', e);
+      }
     };
-    es.onerror = () => {
-      // auto-reconnect with backoff not implemented for simplicity
+    es.onopen = () => {
+      console.log(`Stream connected for ${serverId} interceptor:`, id);
     };
-    eventSourceRef.current = es;
+    es.onerror = (e) => {
+      console.error(`Stream error for ${serverId}:`, e);
+    };
+    eventSourceRefs.current[serverId] = es;
   };
 
   useEffect(() => {
     return () => {
-      eventSourceRef.current?.close();
+      // Close all event sources on cleanup
+      Object.values(eventSourceRefs.current).forEach(es => es.close());
+      eventSourceRefs.current = {};
     };
   }, []);
 
@@ -133,6 +143,12 @@ export function InterceptorTab({
 
     await fetch(`${baseUrl}/${currentProxy.interceptorId}/clear`, { method: "POST" });
 
+    // Close the event source for this server
+    if (eventSourceRefs.current[selectedServer]) {
+      eventSourceRefs.current[selectedServer].close();
+      delete eventSourceRefs.current[selectedServer];
+    }
+
     setServerProxies(prev => {
       const newProxies = { ...prev };
       delete newProxies[selectedServer];
@@ -155,7 +171,7 @@ export function InterceptorTab({
                     Active Proxy for {connectedServerConfigs[selectedServer]?.name || selectedServer}
                   </div>
                   <div className="text-xs text-green-700 dark:text-green-300">
-                    Proxy is running and ready to use
+                    Proxy is running and ready to use • {currentProxy.logs.length} requests logged
                   </div>
                 </div>
                 <Button variant="outline" size="sm" onClick={handleClear}>
