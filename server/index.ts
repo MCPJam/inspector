@@ -50,6 +50,7 @@ function logBox(content: string, title?: string) {
 
 // Import routes and services
 import mcpRoutes from "./routes/mcp/index";
+import { interceptorStore } from "./services/interceptor-store";
 import { MCPJamClientManager } from "./services/mcpjam-client-manager";
 import "./types/hono"; // Type extensions
 
@@ -148,6 +149,50 @@ app.use(
 
 // API Routes
 app.route("/api/mcp", mcpRoutes);
+
+// Fallback for clients that post to "/sse/message" instead of the rewritten proxy messages URL.
+// We resolve the upstream messages endpoint via sessionId and forward with any injected auth.
+app.post("/sse/message", async (c) => {
+  try {
+    const url = new URL(c.req.url);
+    const sessionId = url.searchParams.get("sessionId") || url.searchParams.get("sid") || "";
+    if (!sessionId) {
+      return c.json({ error: "Missing sessionId" }, 400);
+    }
+    const mapping = interceptorStore.getSessionMapping(sessionId);
+    if (!mapping) {
+      return c.json({ error: "Unknown sessionId" }, 404);
+    }
+    const entry = interceptorStore.get(mapping.interceptorId);
+    if (!entry) {
+      return c.json({ error: "Interceptor not found" }, 404);
+    }
+
+    // Read body as text (JSON-RPC envelope) and forward
+    let bodyText = "";
+    try { bodyText = await c.req.text(); } catch {}
+    const headers = new Headers();
+    c.req.raw.headers.forEach((v, k) => {
+      const key = k.toLowerCase();
+      if (["connection","keep-alive","transfer-encoding","upgrade","proxy-authenticate","proxy-authorization","te","trailer","host","content-length"].includes(key)) return;
+      headers.set(k, v);
+    });
+    if (entry.injectHeaders) {
+      for (const [k, v] of Object.entries(entry.injectHeaders)) {
+        const key = k.toLowerCase();
+        if (["connection","keep-alive","transfer-encoding","upgrade","proxy-authenticate","proxy-authorization","te","trailer","host","content-length"].includes(key)) continue;
+        if (key === "authorization" && headers.has("authorization")) continue;
+        headers.set(k, v);
+      }
+    }
+    // Forward to upstream messages endpoint
+    try { await fetch(new Request(mapping.url, { method: "POST", headers, body: bodyText })); } catch {}
+    // Per spec semantics, reply 202 regardless (response arrives via SSE)
+    return c.body("Accepted", 202, { "Access-Control-Expose-Headers": "*" });
+  } catch (e: any) {
+    return c.json({ error: e?.message || "Forward error" }, 400);
+  }
+});
 
 // Health check
 app.get("/health", (c) => {

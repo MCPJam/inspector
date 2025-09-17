@@ -31,14 +31,17 @@ type InterceptorEntry = {
   createdAt: number;
   logs: InterceptorLog[];
   subscribers: Set<SseSubscriber>;
-  // Optional manager-backed server identifier
-  managerServerId?: string;
+  // Optional static headers to inject on every upstream request (e.g., Authorization)
+  injectHeaders?: Record<string, string>;
+  // Map sessionId -> upstream messages endpoint URL (rewritten SSE support)
+  sessionEndpoints: Map<string, string>;
 };
 
 class InterceptorStore {
   private interceptors: Map<string, InterceptorEntry> = new Map();
+  private sessionIndex: Map<string, { interceptorId: string; url: string }> = new Map();
 
-  create(targetUrl: string, managerServerId?: string) {
+  create(targetUrl: string, injectHeaders?: Record<string, string>) {
     const id = randomUUID().slice(0, 8);
     const entry: InterceptorEntry = {
       id,
@@ -46,7 +49,8 @@ class InterceptorStore {
       createdAt: Date.now(),
       logs: [],
       subscribers: new Set(),
-      managerServerId,
+      injectHeaders,
+      sessionEndpoints: new Map(),
     };
     this.interceptors.set(id, entry);
     return entry;
@@ -64,7 +68,7 @@ class InterceptorStore {
       targetUrl: e.targetUrl,
       createdAt: e.createdAt,
       logCount: e.logs.length,
-      managerServerId: e.managerServerId,
+      hasInjectedAuth: !!e.injectHeaders?.authorization,
     };
   }
 
@@ -98,6 +102,23 @@ class InterceptorStore {
     };
   }
 
+  setSessionEndpoint(id: string, sessionId: string, url: string) {
+    const e = this.interceptors.get(id);
+    if (!e) return false;
+    e.sessionEndpoints.set(sessionId, url);
+    this.sessionIndex.set(sessionId, { interceptorId: id, url });
+    return true;
+  }
+
+  getSessionEndpoint(id: string, sessionId: string): string | undefined {
+    const e = this.interceptors.get(id);
+    return e?.sessionEndpoints.get(sessionId);
+  }
+
+  getSessionMapping(sessionId: string): { interceptorId: string; url: string } | undefined {
+    return this.sessionIndex.get(sessionId);
+  }
+
   private broadcast(e: InterceptorEntry, payload: any) {
     for (const sub of Array.from(e.subscribers)) {
       try {
@@ -113,5 +134,3 @@ class InterceptorStore {
 }
 
 export const interceptorStore = new InterceptorStore();
-
-

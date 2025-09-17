@@ -23,15 +23,60 @@ function withCORS(res: Response): Response {
   });
 }
 
+function maskHeaders(orig: Headers): Record<string, string> {
+  const out: Record<string, string> = {};
+  orig.forEach((value, key) => {
+    if (key.toLowerCase() === "authorization") {
+      out[key] = value.startsWith("Bearer ") ? "Bearer ***" : "***";
+    } else {
+      out[key] = value;
+    }
+  });
+  return out;
+}
+
 // Create interceptor pointing to a target MCP server (HTTP)
 interceptor.post("/create", async (c) => {
   try {
-    const { targetUrl } = await c.req.json();
+    const body = await c.req.json();
+    const targetUrl = body?.targetUrl as string | undefined;
+    // Back-compat: accept `serverId` or legacy `managerServerId`
+    const serverId: string | undefined =
+      (body?.serverId as string | undefined) ||
+      (body?.managerServerId as string | undefined);
     const urlObj = new URL(c.req.url);
     const useTunnel = urlObj.searchParams.get("tunnel") === "true";
-    const finalTarget = typeof targetUrl === "string" ? targetUrl : undefined;
+    let finalTarget: string | undefined = targetUrl;
+    let injectHeaders: Record<string, string> | undefined;
+
+    if (!finalTarget && serverId) {
+      // Use stored config for a connected server
+      const connected = c.mcpJamClientManager.getConnectedServers();
+      const serverMeta = connected[serverId];
+      const cfg: any | undefined = serverMeta?.config;
+      if (!cfg || serverMeta?.status !== "connected" || !cfg.url) {
+        return c.json({ success: false, error: `Server '${serverId}' is not an HTTP server or not connected` }, 400);
+      }
+      finalTarget = typeof cfg.url === "string" ? cfg.url : (cfg.url as URL).toString();
+      // Derive Authorization and custom headers
+      const hdrs: Record<string, string> = {};
+      // Prefer explicit requestInit headers
+      const fromReqInit = cfg.requestInit?.headers as Record<string, string> | undefined;
+      if (fromReqInit) {
+        for (const [k, v] of Object.entries(fromReqInit)) {
+          if (typeof v === "string") hdrs[k.toLowerCase()] = v;
+        }
+      }
+      // Fallback to oauth access_token
+      const token: string | undefined = cfg?.oauth?.access_token || cfg?.oauth?.accessToken;
+      if (token && !hdrs["authorization"]) {
+        hdrs["authorization"] = `Bearer ${token}`;
+      }
+      injectHeaders = hdrs;
+    }
+
     if (!finalTarget) {
-      return c.json({ success: false, error: "targetUrl is required" }, 400);
+      return c.json({ success: false, error: "targetUrl or serverId is required" }, 400);
     }
     try {
       const u = new URL(finalTarget);
@@ -45,7 +90,7 @@ interceptor.post("/create", async (c) => {
       return c.json({ success: false, error: "Invalid URL" }, 400);
     }
 
-    const entry = interceptorStore.create(finalTarget);
+    const entry = interceptorStore.create(finalTarget, injectHeaders);
 
     // Compute local origin and optional public HTTPS origin via tunnel
     const localOrigin = urlObj.origin;
@@ -198,7 +243,7 @@ async function handleProxy(c: any) {
     direction: "request",
     method: req.method,
     url: entry.targetUrl,
-    headers: Object.fromEntries(req.headers.entries()),
+    headers: maskHeaders(req.headers),
     body: requestBody,
   });
 
@@ -214,8 +259,20 @@ async function handleProxy(c: any) {
       ? upstreamUrl.pathname.slice(0, -1)
       : upstreamUrl.pathname;
     const trailing = rest ? (rest.startsWith("/") ? rest : `/${rest}`) : "";
-    upstreamUrl.pathname = `${basePath}${trailing}`;
-    upstreamUrl.search = originalUrl.search;
+    // Special-case: if this is our rewritten messages endpoint, forward to the original upstream endpoint
+    if (trailing.startsWith("/messages")) {
+      const sessionId = new URL(req.url).searchParams.get("sessionId") || "";
+      const mapped = sessionId ? interceptorStore.getSessionEndpoint(id, sessionId) : undefined;
+      if (mapped) {
+        upstreamUrl = new URL(mapped);
+      } else {
+        upstreamUrl.pathname = `${basePath}${trailing}`;
+        upstreamUrl.search = originalUrl.search;
+      }
+    } else {
+      upstreamUrl.pathname = `${basePath}${trailing}`;
+      upstreamUrl.search = originalUrl.search;
+    }
   } catch {}
 
   // Filter hop-by-hop headers and forward Authorization. Drop content-length so Undici computes it.
@@ -241,6 +298,28 @@ async function handleProxy(c: any) {
     filtered.set(key, value);
   });
 
+  // Inject static headers (e.g., Authorization) if not already present from the client
+  if (entry.injectHeaders) {
+    for (const [key, value] of Object.entries(entry.injectHeaders)) {
+      const k = key.toLowerCase();
+      if (k === "host" || k === "content-length") continue;
+      if ([
+        "connection",
+        "keep-alive",
+        "transfer-encoding",
+        "upgrade",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailer",
+      ].includes(k))
+        continue;
+      // Do not override an explicit client Authorization header
+      if (k === "authorization" && filtered.has("authorization")) continue;
+      filtered.set(key, value);
+    }
+  }
+
   // No manager-backed mode: pure proxy only
 
   const init: RequestInit = {
@@ -255,9 +334,9 @@ async function handleProxy(c: any) {
   try {
     const res = await fetch(targetReq);
     const resClone = res.clone();
+    const ct = (res.headers.get("content-type") || "").toLowerCase();
     let responseBody: string | undefined;
     try {
-      const ct = (res.headers.get("content-type") || "").toLowerCase();
       if (ct.includes("text/event-stream") || ct.includes("application/x-ndjson")) {
         responseBody = "[stream]"; // avoid draining the stream
       } else {
@@ -275,12 +354,82 @@ async function handleProxy(c: any) {
       headers: Object.fromEntries(res.headers.entries()),
       body: responseBody,
     });
-    // Wrap in a fresh Response so downstream middleware (e.g., CORS) can mutate headers
-    const passthrough = new Response(res.body, {
-      status: res.status,
-      statusText: res.statusText,
-      headers: new Headers(res.headers),
-    });
+    // If this is an SSE stream, rewrite endpoint events to point back through the proxy
+    if (ct.includes("text/event-stream")) {
+      const upstreamBody = res.body;
+      if (!upstreamBody) {
+        return withCORS(new Response(null, { status: res.status, headers: res.headers }));
+      }
+      const encoder = new TextEncoder();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let lastEventType: string | null = null;
+      const proxyBasePath = `/api/mcp/interceptor/${id}/proxy`;
+      const origin = new URL(c.req.url).origin;
+      const rewriteStream = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          const reader = upstreamBody.getReader();
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              buffer += decoder.decode(value, { stream: true });
+              let idx: number;
+              while ((idx = buffer.indexOf("\n")) !== -1) {
+                const line = buffer.slice(0, idx + 1); // include newline
+                buffer = buffer.slice(idx + 1);
+                if (line.startsWith("event:")) {
+                  lastEventType = line.slice(6).trim();
+                  controller.enqueue(encoder.encode(line));
+                } else if (line.startsWith("data:") && lastEventType === "endpoint") {
+                  // Parse endpoint data (JSON or string)
+                  const raw = line.slice(5).trim();
+                  let endpointUrl: string | null = null;
+                  try {
+                    if (raw.startsWith("{") && raw.endsWith("}\n")) {
+                      const obj = JSON.parse(raw);
+                      endpointUrl = obj?.url || null;
+                    } else {
+                      endpointUrl = raw.replace(/\n$/, "");
+                    }
+                  } catch {
+                    endpointUrl = null;
+                  }
+                  if (endpointUrl) {
+                    try {
+                      const u = new URL(endpointUrl, origin);
+                      const sessionId = u.searchParams.get("sessionId") || u.searchParams.get("sid") || "";
+                      if (sessionId) {
+                        // Store mapping so POST /proxy/messages can forward to upstream
+                        interceptorStore.setSessionEndpoint(id, sessionId, u.toString());
+                      }
+                      const proxyEndpoint = `${origin}${proxyBasePath}/messages${u.search}`;
+                      // Emit both JSON and string for compatibility: JSON first, then string on next line
+                      controller.enqueue(encoder.encode(`data: ${JSON.stringify({ url: proxyEndpoint })}\n`));
+                      controller.enqueue(encoder.encode(`data: ${proxyEndpoint}\n`));
+                      continue; // skip original line
+                    } catch {
+                      // fall through to emit original line
+                    }
+                  }
+                  controller.enqueue(encoder.encode(line));
+                } else {
+                  controller.enqueue(encoder.encode(line));
+                }
+              }
+            }
+            if (buffer.length) controller.enqueue(encoder.encode(buffer));
+          } finally {
+            try { controller.close(); } catch {}
+          }
+        },
+      });
+      const headers = new Headers(res.headers);
+      return withCORS(new Response(rewriteStream as any, { status: res.status, statusText: res.statusText, headers }));
+    }
+
+    // Non-SSE: passthrough
+    const passthrough = new Response(res.body, { status: res.status, statusText: res.statusText, headers: new Headers(res.headers) });
     return withCORS(passthrough);
   } catch (error) {
     const body = JSON.stringify({ error: String(error) });
