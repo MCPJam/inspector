@@ -5792,9 +5792,8 @@ var getUserIdFromApiKeyOrNull = async (apiKey) => {
 import { z } from "zod";
 import { tool } from "ai";
 var AdvancedConfigSchema = z.object({
-  instructions: z.string().optional(),
+  system: z.string().optional(),
   temperature: z.number().optional(),
-  maxSteps: z.number().int().min(1).optional(),
   toolChoice: z.string().optional()
 }).passthrough();
 var TestCaseSchema = z.object({
@@ -5852,9 +5851,10 @@ function validateAndNormalizeMCPClientConfiguration(value) {
         if (server && typeof server === "object" && "url" in server) {
           MastraMCPServerDefinitionSchema.parse(server);
           const urlValue = server.url;
+          const normalizedUrl = typeof urlValue === "string" ? new URL(urlValue) : urlValue;
           const normalizedServer = {
             ...server,
-            url: typeof urlValue === "string" ? urlValue : urlValue.toString()
+            url: normalizedUrl
           };
           normalizedServers[name] = normalizedServer;
         } else {
@@ -5985,6 +5985,26 @@ var createLlmModel = (provider, model, llmsConfig) => {
       throw new Error(`Unsupported provider: ${provider}`);
   }
 };
+var extractToolNamesAsArray = (toolCalls) => {
+  return toolCalls.map((toolCall) => toolCall.toolName);
+};
+
+// src/evals/evaluator.ts
+var evaluateResults = (messages, expectedToolCalls, toolsCalled) => {
+  console.log("Expected tool calls: ", expectedToolCalls);
+  console.log("Tools called: ", toolsCalled);
+  console.log("Messages: ", messages);
+  if (expectedToolCalls.length > 0) {
+    if (expectedToolCalls.length !== toolsCalled.length) {
+      console.log("Expected tool calls and tools called do not match");
+    }
+    for (const expectedToolCall of expectedToolCalls) {
+      if (!toolsCalled.includes(expectedToolCall)) {
+        console.log("Expected tool call not found: ", expectedToolCall);
+      }
+    }
+  }
+};
 
 // src/evals/runner.ts
 var runEvals = async (tests, environment, llms, apiKey) => {
@@ -5992,24 +6012,46 @@ var runEvals = async (tests, environment, llms, apiKey) => {
   const mcpClientOptions = validateAndNormalizeMCPClientConfiguration(environment);
   const validatedTests = validateTestCase(tests);
   const validatedLlmApiKeys = validateLlms(llms);
+  console.log("mcpClientOptions: ", mcpClientOptions);
   const mcpClient = new MCPClient(mcpClientOptions);
-  const mastraTools = await mcpClient.getTools();
-  const vercelAiSdkTools = convertMastraToolsToVercelTools(mastraTools);
   for (const test of validatedTests) {
-    const numberOfRuns = test.runs;
-    const llm = createLlmModel(test.provider, test.model, validatedLlmApiKeys);
-    for (let run = 0; run <= numberOfRuns; run++) {
-      const result = await generateText({
-        model: llm,
-        tools: vercelAiSdkTools,
-        messages: [
-          {
-            role: "user",
-            content: "Add 2 and 3"
-          }
-        ]
+    const { runs, model, provider, advancedConfig, query } = test;
+    const numberOfRuns = runs;
+    const { system, temperature, toolChoice } = advancedConfig ?? {};
+    for (let run = 0; run < numberOfRuns; run++) {
+      const maxSteps = 20;
+      let stepCount = 0;
+      let messages = [
+        {
+          role: "user",
+          content: query
+        }
+      ];
+      let toolsCalled = [];
+      let result = await generateText({
+        model: createLlmModel(provider, model, validatedLlmApiKeys),
+        system,
+        temperature,
+        tools: convertMastraToolsToVercelTools(await mcpClient.getTools()),
+        toolChoice,
+        messages
       });
-      console.log(JSON.stringify(result, null, 2));
+      toolsCalled.push(...extractToolNamesAsArray(result.toolCalls));
+      messages.push(...result.response.messages);
+      while (result.finishReason === "tool-calls" && stepCount < maxSteps) {
+        stepCount++;
+        result = await generateText({
+          model: createLlmModel(provider, model, validatedLlmApiKeys),
+          system,
+          temperature,
+          tools: convertMastraToolsToVercelTools(await mcpClient.getTools()),
+          toolChoice,
+          messages
+        });
+        toolsCalled.push(...extractToolNamesAsArray(result.toolCalls));
+        messages.push(...result.response.messages);
+      }
+      evaluateResults(messages, test.expectedToolCalls, toolsCalled);
     }
   }
 };

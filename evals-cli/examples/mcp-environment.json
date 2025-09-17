@@ -1,5 +1,8 @@
 {
   "servers": {
+    "huggingface": {
+      "url": "https://huggingface.co/mcp"
+    },
     "everything": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-everything"],

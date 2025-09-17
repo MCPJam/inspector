@@ -33,7 +33,6 @@ evalsCommand
       const llmsContent = await readFile(resolve(options.llms), "utf8");
       const llmsData = JSON.parse(llmsContent);
 
-
       // Read API token
       const apiKey = options.apiKey;
       runEvals(testsData, envData, llmsData, apiKey);

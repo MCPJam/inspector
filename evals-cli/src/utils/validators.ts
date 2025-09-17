@@ -11,9 +11,8 @@ import { tool, type Tool as VercelTool, type ToolCallOptions } from "ai";
 
 export const AdvancedConfigSchema = z
   .object({
-    instructions: z.string().optional(),
+    system: z.string().optional(),
     temperature: z.number().optional(),
-    maxSteps: z.number().int().min(1).optional(),
     toolChoice: z.string().optional(),
   })
   .passthrough(); // Allow additional fields
@@ -95,12 +94,13 @@ export function validateAndNormalizeMCPClientConfiguration(
         if (server && typeof server === "object" && "url" in server) {
           MastraMCPServerDefinitionSchema.parse(server);
           const urlValue = (server as any).url;
+          const normalizedUrl =
+            typeof urlValue === "string"
+              ? new URL(urlValue)
+              : (urlValue as URL);
           const normalizedServer = {
             ...(server as Record<string, any>),
-            url:
-              typeof urlValue === "string"
-                ? urlValue
-                : (urlValue as URL).toString(),
+            url: normalizedUrl,
           } as Record<string, any>;
           normalizedServers[name] =
             normalizedServer as MastraMCPServerDefinition;
@@ -247,11 +247,13 @@ export function convertMastraToolsToVercelTools(
   );
 }
 
-export const LlmsConfigSchema = z.object({
-  anthropic: z.string().optional(),
-  openai: z.string().optional(),
-  openrouter: z.string().optional(),
-}).passthrough(); // Allow additional LLM providers
+export const LlmsConfigSchema = z
+  .object({
+    anthropic: z.string().optional(),
+    openai: z.string().optional(),
+    openrouter: z.string().optional(),
+  })
+  .passthrough(); // Allow additional LLM providers
 
 export type LlmsConfig = z.infer<typeof LlmsConfigSchema>;
 
