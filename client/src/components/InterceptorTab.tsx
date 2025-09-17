@@ -111,39 +111,45 @@ export function InterceptorTab({
     eventSourceRefs.current[serverId] = es;
   };
 
-  // Load proxy state from localStorage on mount
+  // Load proxy state from localStorage on mount and validate against server
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
+    let cancelled = false;
+    (async () => {
+      try {
+        const saved = localStorage.getItem(STORAGE_KEY);
+        if (!saved) return;
         const savedProxies = JSON.parse(saved) as Record<string, ServerProxyState>;
 
-        // Only restore proxies for servers that are still connected
-        const validProxies: Record<string, ServerProxyState> = {};
-        Object.entries(savedProxies).forEach(([serverId, proxy]) => {
-          if (connectedServerConfigs[serverId]?.connectionStatus === 'connected') {
-            validProxies[serverId] = proxy;
-            if (proxy.interceptorId && proxy.proxyUrl) {
+        const entries = Object.entries(savedProxies).filter(([serverId]) =>
+          connectedServerConfigs[serverId]?.connectionStatus === 'connected'
+        );
+
+        const validated: Record<string, ServerProxyState> = {};
+        await Promise.all(entries.map(async ([serverId, proxy]) => {
+          try {
+            const res = await fetch(`${baseUrl}/${proxy.interceptorId}`);
+            if (!cancelled && res.ok) {
+              validated[serverId] = proxy;
               connectStream(proxy.interceptorId, serverId);
             }
-          }
-        });
+          } catch {}
+        }));
 
-        setServerProxies(validProxies);
-        if (Object.keys(validProxies).length !== Object.keys(savedProxies).length) {
-          saveToStorage(validProxies); // Update localStorage to remove invalid proxies
+        if (!cancelled) {
+          setServerProxies(validated);
+          saveToStorage(validated);
         }
+      } catch (e) {
+        console.error('Failed to load proxy state from localStorage:', e);
       }
-    } catch (e) {
-      console.error('Failed to load proxy state from localStorage:', e);
-    }
+    })();
 
     return () => {
-      // Close all event sources on cleanup
+      cancelled = true;
       Object.values(eventSourceRefs.current).forEach(es => es.close());
       eventSourceRefs.current = {};
     };
-  }, [connectedServerConfigs]);
+  }, [connectedServerConfigs, baseUrl]);
 
   // Clean up proxies when servers disconnect
   useEffect(() => {
