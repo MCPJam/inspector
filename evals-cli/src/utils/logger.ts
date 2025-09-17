@@ -21,6 +21,14 @@ export class Logger {
     console.log(chalk.gray(`Tool called: ${toolName}`));
   }
 
+  static info(message: string): void {
+    console.log(chalk.blue(`ℹ ${message}`));
+  }
+
+  static success(message: string): void {
+    console.log(chalk.green(`✓ ${message}`));
+  }
+
   static error(message: string): void {
     console.log();
     console.log(chalk.red(`✕ Error: ${message}`));

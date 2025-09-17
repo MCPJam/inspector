@@ -1,6 +1,6 @@
 import { config } from "dotenv";
 import { Command } from "commander";
-import { evalsCommand } from "./commands/evals.js";
+import { evalsCommand } from "./evals/index";
 
 // Load environment variables from .env file
 config();
