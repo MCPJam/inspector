@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "./ui/button";
-import { Input } from "./ui/input";
 import { Card } from "./ui/card";
 import { ServerWithName } from "@/hooks/use-app-state";
 
@@ -24,6 +23,12 @@ type InterceptorLog =
       body?: string;
     };
 
+type ServerProxyState = {
+  interceptorId: string;
+  proxyUrl: string;
+  logs: InterceptorLog[];
+};
+
 type InterceptorTabProps = {
   connectedServerConfigs: Record<string, ServerWithName>;
   selectedServer: string;
@@ -33,18 +38,18 @@ export function InterceptorTab({
   connectedServerConfigs,
   selectedServer,
 }: InterceptorTabProps) {
-  const [targetUrl, setTargetUrl] = useState<string>("");
-  const [interceptorId, setInterceptorId] = useState<string>("");
-  const [proxyUrl, setProxyUrl] = useState<string>("");
-  const [logs, setLogs] = useState<InterceptorLog[]>([]);
+  const [serverProxies, setServerProxies] = useState<Record<string, ServerProxyState>>({});
   const eventSourceRef = useRef<EventSource | null>(null);
+
+  // Get current server's proxy state
+  const currentProxy = selectedServer && selectedServer !== "none" ? serverProxies[selectedServer] : null;
 
   const baseUrl = useMemo(() => {
     const u = new URL(window.location.href);
     return `${u.origin}/api/mcp/interceptor`;
   }, []);
 
-  const connectStream = (id: string) => {
+  const connectStream = (id: string, serverId: string) => {
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
@@ -55,9 +60,21 @@ export function InterceptorTab({
         if (ev.data === "[DONE]") return;
         const payload = JSON.parse(ev.data);
         if (payload.type === "log" && payload.log) {
-          setLogs((prev) => [...prev, payload.log]);
+          setServerProxies(prev => ({
+            ...prev,
+            [serverId]: {
+              ...prev[serverId],
+              logs: [...(prev[serverId]?.logs || []), payload.log]
+            }
+          }));
         } else if (payload.type === "cleared") {
-          setLogs([]);
+          setServerProxies(prev => ({
+            ...prev,
+            [serverId]: {
+              ...prev[serverId],
+              logs: []
+            }
+          }));
         }
       } catch {}
     };
@@ -74,24 +91,22 @@ export function InterceptorTab({
   }, []);
 
   const handleCreate = async () => {
-    // Treat the sentinel 'none' as no selection
-    const serverId = selectedServer && selectedServer !== "none" ? selectedServer : undefined;
+    // Only allow connected servers
+    if (!selectedServer || selectedServer === "none") {
+      alert("Please select a connected server");
+      return;
+    }
 
-    // Auto-detect target URL from selected server if not provided
-    let finalTargetUrl = targetUrl;
-    if (serverId && !targetUrl && connectedServerConfigs[serverId]) {
-      const serverConfig = connectedServerConfigs[serverId].config;
-      if (serverConfig.type === "http" && serverConfig.url) {
-        finalTargetUrl = serverConfig.url;
-        setTargetUrl(serverConfig.url); // Update UI to show the detected URL
-      }
+    const serverId = selectedServer;
+    if (!connectedServerConfigs[serverId]) {
+      alert("Selected server is not connected");
+      return;
     }
 
     const res = await fetch(`${baseUrl}/create?tunnel=true`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      // Prefer server-side lookup by serverId to avoid exposing tokens
-      body: JSON.stringify({ targetUrl: finalTargetUrl, serverId }),
+      body: JSON.stringify({ serverId }),
     });
     const json = await res.json();
     if (!json.success) {
@@ -99,102 +114,119 @@ export function InterceptorTab({
       return;
     }
     const id = json.id as string;
-    setInterceptorId(id);
     const proxy = (json.publicProxyUrl as string | undefined) || (json.proxyUrl as string | undefined);
-    setProxyUrl(proxy || `${baseUrl}/${id}/proxy`);
-    connectStream(id);
+
+    setServerProxies(prev => ({
+      ...prev,
+      [serverId]: {
+        interceptorId: id,
+        proxyUrl: proxy || `${baseUrl}/${id}/proxy`,
+        logs: []
+      }
+    }));
+
+    connectStream(id, serverId);
   };
 
   const handleClear = async () => {
-    if (!interceptorId) return;
-    await fetch(`${baseUrl}/${interceptorId}/clear`, { method: "POST" });
-    setLogs([]);
+    if (!selectedServer || selectedServer === "none" || !currentProxy) return;
+
+    await fetch(`${baseUrl}/${currentProxy.interceptorId}/clear`, { method: "POST" });
+
+    setServerProxies(prev => {
+      const newProxies = { ...prev };
+      delete newProxies[selectedServer];
+      return newProxies;
+    });
   };
 
   return (
-    <div className="p-4 flex flex-col gap-4">
-      <Card className="p-4 flex flex-col gap-4">
-        <div className="text-sm text-muted-foreground">
-          Create an interceptor that proxies MCP HTTP JSON-RPC requests and logs all traffic. Choose between two modes:
-        </div>
+    <div className="p-4 space-y-4">
+      {/* Proxy Configuration */}
+      <Card className="p-4">
+        <h2 className="text-lg font-semibold mb-3">Proxy Configuration</h2>
 
         <div className="space-y-3">
-          <div className="p-3 border rounded-md bg-muted/30">
-            <h3 className="text-sm font-medium mb-2">🔗 Connected Server Mode</h3>
-            <p className="text-xs text-muted-foreground mb-2">
-              Tunnel through a server you've already connected to in the inspector. Reuses OAuth and existing connections.
-            </p>
-            <p className="text-xs text-muted-foreground">
-              {selectedServer && selectedServer !== "none"
-                ? `Using selected server: ${selectedServer}`
-                : "No server selected. Use the server selector above to choose a connected server."}
-            </p>
-          </div>
-
-          <div className="p-3 border rounded-md bg-muted/30">
-            <h3 className="text-sm font-medium mb-2">🌐 External Server Mode</h3>
-            <p className="text-xs text-muted-foreground mb-2">
-              Direct proxy to any external MCP HTTP server URL.
-            </p>
-            <Input
-              placeholder="MCP HTTP URL (e.g., https://example.com/mcp)"
-              value={targetUrl}
-              onChange={(e) => setTargetUrl(e.target.value)}
-            />
-          </div>
+          {currentProxy ? (
+            <div className="p-3 bg-green-50 dark:bg-green-950/30 rounded border border-green-200 dark:border-green-800">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <div className="text-sm font-medium text-green-800 dark:text-green-200">
+                    Active Proxy for {connectedServerConfigs[selectedServer]?.name || selectedServer}
+                  </div>
+                  <div className="text-xs text-green-700 dark:text-green-300">
+                    Proxy is running and ready to use
+                  </div>
+                </div>
+                <Button variant="outline" size="sm" onClick={handleClear}>
+                  Stop Proxy
+                </Button>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-green-800 dark:text-green-200">Proxy URL</label>
+                <code className="block mt-1 p-2 bg-white dark:bg-green-900/50 border rounded text-sm break-all">
+                  {currentProxy.proxyUrl}
+                </code>
+              </div>
+            </div>
+          ) : (
+            <div className="p-3 bg-muted rounded border">
+              <div className="text-sm font-medium mb-2">
+                {selectedServer ? `Create proxy for ${connectedServerConfigs[selectedServer]?.name}` : "No server selected"}
+              </div>
+              <div className="text-xs text-muted-foreground mb-3">
+                {selectedServer ? "This will create a proxy URL that tunnels requests to your connected server." : "Select a server above to create a proxy"}
+              </div>
+              <Button
+                onClick={handleCreate}
+                disabled={!selectedServer || selectedServer === "none"}
+              >
+                Create Proxy
+              </Button>
+            </div>
+          )}
         </div>
-
-        <div className="flex gap-2">
-          <Button onClick={handleCreate} disabled={!targetUrl && (!selectedServer || selectedServer === "none")}>
-            Create Interceptor
-          </Button>
-          <Button variant="secondary" onClick={handleClear} disabled={!interceptorId}>
-            Clear Logs
-          </Button>
-        </div>
-
-        {proxyUrl && (
-          <div className="p-3 border rounded-md bg-green-50 dark:bg-green-950/30">
-            <h4 className="text-sm font-medium text-green-800 dark:text-green-200 mb-1">✅ Proxy Ready</h4>
-            <p className="text-xs text-green-700 dark:text-green-300 mb-2">
-              Add this URL as your MCP server in Claude Desktop, Cursor, or any MCP client:
-            </p>
-            <code className="text-xs bg-green-100 dark:bg-green-900/50 p-2 rounded block break-all">
-              {proxyUrl}
-            </code>
-          </div>
-        )}
       </Card>
 
-      <Card className="p-2">
-        <div className="max-h-[60vh] overflow-auto text-xs font-mono">
-          {logs.map((log) => (
-            <div key={log.id} className="border-b px-2 py-2">
-              <div className="flex items-center gap-2">
-                <span className="text-muted-foreground">
-                  {new Date(log.timestamp).toLocaleTimeString()}
-                </span>
-                <span className="uppercase text-[10px] px-1 rounded bg-muted">
-                  {log.direction}
-                </span>
-                {"method" in log ? (
-                  <span>{log.method}</span>
-                ) : (
-                  <span>
-                    {log.status} {log.statusText}
-                  </span>
-                )}
-              </div>
-              {"url" in log && (
-                <div className="text-muted-foreground truncate">{log.url}</div>
-              )}
-              {log.body && (
-                <pre className="mt-1 whitespace-pre-wrap break-words">{log.body}</pre>
-              )}
+      {/* Logs */}
+      <Card className="p-4">
+        <h2 className="text-lg font-semibold mb-3">Request Logs</h2>
+
+        <div className="border rounded-md bg-muted/30 max-h-[60vh] overflow-auto">
+          {!currentProxy?.logs || currentProxy.logs.length === 0 ? (
+            <div className="p-8 text-center text-muted-foreground">
+              No requests logged yet
             </div>
-          ))}
-          {logs.length === 0 && (
-            <div className="p-4 text-muted-foreground">No logs yet.</div>
+          ) : (
+            <div className="divide-y">
+              {currentProxy.logs.map((log) => (
+                <div key={log.id} className="p-3 text-sm">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-xs text-muted-foreground font-mono">
+                      {new Date(log.timestamp).toLocaleTimeString()}
+                    </span>
+                    <span className={`text-xs px-2 py-0.5 rounded font-mono ${
+                      log.direction === "request" ? "bg-blue-100 text-blue-800" : "bg-green-100 text-green-800"
+                    }`}>
+                      {log.direction}
+                    </span>
+                    {"method" in log ? (
+                      <span className="font-mono">{log.method}</span>
+                    ) : (
+                      <span className="font-mono">{log.status} {log.statusText}</span>
+                    )}
+                  </div>
+                  {"url" in log && (
+                    <div className="text-xs text-muted-foreground font-mono mb-1">{log.url}</div>
+                  )}
+                  {log.body && (
+                    <pre className="text-xs bg-background p-2 rounded border mt-1 overflow-auto">
+                      {log.body}
+                    </pre>
+                  )}
+                </div>
+              ))}
+            </div>
           )}
         </div>
       </Card>
