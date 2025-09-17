@@ -49,28 +49,29 @@ interceptor.post("/create", async (c) => {
     let finalTarget: string | undefined = targetUrl;
     let injectHeaders: Record<string, string> | undefined;
 
-    if (!finalTarget && serverId) {
-      // Use stored config for a connected server
+    if (serverId) {
+      // Use stored config for a connected server to derive headers and possibly URL
       const connected = c.mcpJamClientManager.getConnectedServers();
       const serverMeta = connected[serverId];
       const cfg: any | undefined = serverMeta?.config;
       if (!cfg || serverMeta?.status !== "connected" || !cfg.url) {
         return c.json({ success: false, error: `Server '${serverId}' is not an HTTP server or not connected` }, 400);
       }
-      finalTarget = typeof cfg.url === "string" ? cfg.url : (cfg.url as URL).toString();
+      if (!finalTarget) {
+        finalTarget = typeof cfg.url === "string" ? cfg.url : (cfg.url as URL).toString();
+      }
       // Derive Authorization and custom headers
       const hdrs: Record<string, string> = {};
-      // Prefer explicit requestInit headers
       const fromReqInit = cfg.requestInit?.headers as Record<string, string> | undefined;
       if (fromReqInit) {
         for (const [k, v] of Object.entries(fromReqInit)) {
           if (typeof v === "string") hdrs[k.toLowerCase()] = v;
         }
       }
-      // Fallback to oauth access_token
       const token: string | undefined = cfg?.oauth?.access_token || cfg?.oauth?.accessToken;
       if (token && !hdrs["authorization"]) {
         hdrs["authorization"] = `Bearer ${token}`;
+        hdrs["Authorization"] = `Bearer ${token}`; // be generous with casing
       }
       injectHeaders = hdrs;
     }
@@ -365,7 +366,26 @@ async function handleProxy(c: any) {
       let buffer = "";
       let lastEventType: string | null = null;
       const proxyBasePath = `/api/mcp/interceptor/${id}/proxy`;
-      const origin = new URL(c.req.url).origin;
+      // Derive proxy origin from forwarded headers to preserve ngrok host
+      const xfProto = c.req.header("x-forwarded-proto");
+      const xfHost = c.req.header("x-forwarded-host");
+      const reqHost = xfHost || c.req.header("host");
+      let reqProto = xfProto;
+      if (!reqProto) {
+        const originHeader = c.req.header("origin");
+        if (originHeader && /^https:/i.test(originHeader)) reqProto = "https";
+      }
+      if (!reqProto) reqProto = "http";
+      const proxyOrigin = reqHost ? `${reqProto}://${reqHost}` : new URL(c.req.url).origin;
+      // Prefer the resolved upstream response URL; fall back to request URL
+      let upstreamOrigin = (() => {
+        try {
+          const u = new URL((res as any).url || upstreamUrl.toString());
+          return `${u.protocol}//${u.host}`;
+        } catch {
+          try { return new URL(entry.targetUrl).origin; } catch { return ""; }
+        }
+      })();
       const rewriteStream = new ReadableStream<Uint8Array>({
         async start(controller) {
           const reader = upstreamBody.getReader();
@@ -381,37 +401,46 @@ async function handleProxy(c: any) {
                 if (line.startsWith("event:")) {
                   lastEventType = line.slice(6).trim();
                   controller.enqueue(encoder.encode(line));
-                } else if (line.startsWith("data:") && lastEventType === "endpoint") {
-                  // Parse endpoint data (JSON or string)
-                  const raw = line.slice(5).trim();
+                } else if (line.startsWith("data:")) {
+                  // Parse data lines for endpoint hints
+                  const rawLine = line.slice(5); // keep trailing newline
+                  const trimmed = rawLine.trim();
                   let endpointUrl: string | null = null;
                   try {
-                    if (raw.startsWith("{") && raw.endsWith("}\n")) {
-                      const obj = JSON.parse(raw);
-                      endpointUrl = obj?.url || null;
-                    } else {
-                      endpointUrl = raw.replace(/\n$/, "");
+                    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+                      const obj = JSON.parse(trimmed);
+                      // Accept various shapes
+                      endpointUrl =
+                        obj?.url ||
+                        obj?.endpoint?.url ||
+                        (obj?.type === "endpoint" && (obj?.data?.url || obj?.data));
                     }
-                  } catch {
-                    endpointUrl = null;
+                  } catch {}
+                  if (!endpointUrl) {
+                    // Heuristic: plain string containing "/message" looks like endpoint URL
+                    const str = trimmed;
+                    if (/message\?/.test(str) || /messages\?/.test(str)) {
+                      endpointUrl = str;
+                    }
                   }
                   if (endpointUrl) {
                     try {
-                      const u = new URL(endpointUrl, origin);
+                      const u = new URL(endpointUrl, upstreamOrigin || undefined);
                       const sessionId = u.searchParams.get("sessionId") || u.searchParams.get("sid") || "";
                       if (sessionId) {
-                        // Store mapping so POST /proxy/messages can forward to upstream
                         interceptorStore.setSessionEndpoint(id, sessionId, u.toString());
+                        try { console.log("[proxy] mapped session", { id, sessionId, upstream: u.toString() }); } catch {}
                       }
-                      const proxyEndpoint = `${origin}${proxyBasePath}/messages${u.search}`;
-                      // Emit both JSON and string for compatibility: JSON first, then string on next line
-                      controller.enqueue(encoder.encode(`data: ${JSON.stringify({ url: proxyEndpoint })}\n`));
-                      controller.enqueue(encoder.encode(`data: ${proxyEndpoint}\n`));
-                      continue; // skip original line
+                      const proxyEndpoint = `${proxyOrigin}${proxyBasePath}/messages${u.search}`;
+                      // Emit a single endpoint event with a plain string URL (most compatible)
+                      controller.enqueue(encoder.encode(`event: endpoint\n`));
+                      controller.enqueue(encoder.encode(`data: ${proxyEndpoint}\n\n`));
+                      continue; // skip original data line
                     } catch {
-                      // fall through to emit original line
+                      // fall through
                     }
                   }
+                  // Not an endpoint payload; pass through
                   controller.enqueue(encoder.encode(line));
                 } else {
                   controller.enqueue(encoder.encode(line));
