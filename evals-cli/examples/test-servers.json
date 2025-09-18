@@ -1,18 +1,18 @@
-{
-  "tests": [
-    {
-      "title": "Test workspaces",
-      "query": "Can you list my asana workspace?",
-      "runs": 1,
-      "model": "anthropic/claude-3.5-sonnet",
-      "expectedToolCalls": ["asana_list_workspaces"],
-      "judgeRequirement": "The workspace was successfully returned",
-      "advancedConfig": {
-        "instructions": "You are a helpful weather assistant",
-        "temperature": 0.1,
-        "maxSteps": 5,
-        "toolChoice": "auto"
-      }
-    }
-  ]
-}
+[
+  {
+    "title": "Workspace test",
+    "query": "What is my asana workspace?",
+    "runs": 1,
+    "model": "anthropic/claude-3.7-sonnet",
+    "provider": "openrouter",
+    "expectedToolCalls": ["asana_list_workspaces"]
+  },
+  {
+    "title": "Workspace users test",
+    "query": "Can you figure out who is in the workspace?",
+    "runs": 1,
+    "model": "anthropic/claude-3.7-sonnet",
+    "provider": "openrouter",
+    "expectedToolCalls": ["asana_list_workspaces", "asana_get_workspace_users"]
+  }
+]
