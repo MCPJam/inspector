@@ -356,6 +356,7 @@ async function handleProxy(c: any) {
     const res = await fetch(targetReq);
     const resClone = res.clone();
     const ct = (res.headers.get("content-type") || "").toLowerCase();
+    const isStreaming = ct.includes("text/event-stream") || ct.includes("application/x-ndjson");
     let responseBody: string | undefined;
     try {
       if (ct.includes("text/event-stream") || ct.includes("application/x-ndjson")) {
@@ -366,15 +367,18 @@ async function handleProxy(c: any) {
     } catch {
       responseBody = undefined;
     }
-    interceptorStore.appendLog(id, {
-      id: `${requestId}-res`,
-      timestamp: Date.now(),
-      direction: "response",
-      status: res.status,
-      statusText: res.statusText,
-      headers: Object.fromEntries(res.headers.entries()),
-      body: responseBody,
-    });
+    // For streaming responses, skip the placeholder log and rely on detailed SSE message logs
+    if (!isStreaming) {
+      interceptorStore.appendLog(id, {
+        id: `${requestId}-res`,
+        timestamp: Date.now(),
+        direction: "response",
+        status: res.status,
+        statusText: res.statusText,
+        headers: Object.fromEntries(res.headers.entries()),
+        body: responseBody,
+      });
+    }
     // If this is an SSE stream, rewrite endpoint events to point back through the proxy
     if (ct.includes("text/event-stream")) {
       const upstreamBody = res.body;
