@@ -5,6 +5,7 @@ import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import "react18-json-view/src/dark.css";
 import { Copy, Check, Loader2 } from "lucide-react";
+import { Badge } from "./ui/badge";
 import { ServerWithName } from "@/hooks/use-app-state";
 
 type InterceptorLog =
@@ -299,12 +300,13 @@ export function InterceptorTab({
 
         <div className="space-y-3">
           {currentProxy ? (
-            <div className="p-3 bg-green-50 dark:bg-green-950/30 rounded border border-green-200 dark:border-green-800">
+            <div className="p-3 rounded border">
               <div className="flex items-center justify-between mb-3">
-                <div>
-                  <div className="text-sm font-medium text-green-800 dark:text-green-200">
+                <div className="flex items-center gap-2">
+                  <div className="text-sm font-medium">
                     Active Proxy for {connectedServerConfigs[selectedServer]?.name || selectedServer}
                   </div>
+                  <span className="mr-1 inline-block size-1.5 rounded-full bg-orange-500" />
                 </div>
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" onClick={handleClearLogs}>
@@ -316,17 +318,17 @@ export function InterceptorTab({
                 </div>
               </div>
               <div>
-                <label className="text-xs font-medium text-green-800 dark:text-green-200 mb-1 block">Proxy URL</label>
+                <label className="text-xs font-medium mb-1 block text-muted-foreground">Proxy URL</label>
                 <div className="relative">
-                  <code className="block p-2 pr-10 bg-white dark:bg-green-900/50 border rounded text-sm break-all">
+                  <code className="block p-2 pr-10 bg-transparent border rounded text-sm break-all">
                     {currentProxy.proxyUrl}
                   </code>
                   <button
                     onClick={handleCopyUrl}
                     className={`absolute top-2 right-2 p-1 rounded transition-all duration-200 ${
                       copySuccess
-                        ? 'text-green-600 dark:text-green-400 scale-110'
-                        : 'text-green-700 dark:text-green-300 hover:text-green-800 dark:hover:text-green-200 hover:bg-green-100 dark:hover:bg-green-800/20'
+                        ? 'text-foreground scale-110'
+                        : 'text-muted-foreground hover:text-foreground hover:bg-muted'
                     }`}
                   >
                     {copySuccess ? (
