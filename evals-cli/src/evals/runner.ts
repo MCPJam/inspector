@@ -102,11 +102,19 @@ export const runEvals = async (
                   Logger.finishStreamingMessage();
                   assistantStreaming = false;
                 }
-                Logger.streamToolCall(chunk.chunk.toolName, chunk.chunk.input, 3);
+                Logger.streamToolCall(
+                  chunk.chunk.toolName,
+                  chunk.chunk.input,
+                  3,
+                );
                 break;
               }
               case "tool-result": {
-                Logger.streamToolResult(chunk.chunk.toolName, chunk.chunk.output, 3);
+                Logger.streamToolResult(
+                  chunk.chunk.toolName,
+                  chunk.chunk.output,
+                  3,
+                );
                 break;
               }
               default:
@@ -129,7 +137,8 @@ export const runEvals = async (
           toolsCalled.push(...toolNamesForStep);
         }
 
-        const responseMessages = ((await streamResult.response)?.messages ?? []) as ModelMessage[];
+        const responseMessages = ((await streamResult.response)?.messages ??
+          []) as ModelMessage[];
         if (responseMessages.length) {
           messageHistory.push(...responseMessages);
         }
@@ -144,10 +153,7 @@ export const runEvals = async (
 
       Logger.finishStreamingMessage();
 
-      const evaluation = evaluateResults(
-        test.expectedToolCalls,
-        toolsCalled,
-      );
+      const evaluation = evaluateResults(test.expectedToolCalls, toolsCalled);
 
       Logger.toolSummary({
         expected: evaluation.expectedToolCalls,
