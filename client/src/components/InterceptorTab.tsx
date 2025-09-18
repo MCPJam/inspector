@@ -4,7 +4,7 @@ import { Card } from "./ui/card";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import "react18-json-view/src/dark.css";
-import { Copy, Check } from "lucide-react";
+import { Copy, Check, Loader2 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 
 type InterceptorLog =
@@ -46,6 +46,7 @@ export function InterceptorTab({
 }: InterceptorTabProps) {
   const [serverProxies, setServerProxies] = useState<Record<string, ServerProxyState>>({});
   const eventSourceRefs = useRef<Record<string, EventSource>>({});
+  const [isCreating, setIsCreating] = useState(false);
 
   // Get current server's proxy state
   const currentProxy = selectedServer && selectedServer !== "none" ? serverProxies[selectedServer] : null;
@@ -205,31 +206,39 @@ export function InterceptorTab({
       return;
     }
 
-    const res = await fetch(`${baseUrl}/create?tunnel=true`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ serverId }),
-    });
-    const json = await res.json();
-    if (!json.success) {
-      alert(json.error || "Failed to create interceptor");
-      return;
-    }
-    const id = json.id as string;
-    const proxy = (json.publicProxyUrl as string | undefined) || (json.proxyUrl as string | undefined);
-
-    const newProxies = {
-      ...serverProxies,
-      [serverId]: {
-        interceptorId: id,
-        proxyUrl: proxy || `${baseUrl}/${id}/proxy`,
-        logs: []
+    setIsCreating(true);
+    try {
+      const res = await fetch(`${baseUrl}/create?tunnel=true`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ serverId }),
+      });
+      const json = await res.json();
+      if (!json.success) {
+        alert(json.error || "Failed to create interceptor");
+        return;
       }
-    };
+      const id = json.id as string;
+      const proxy = (json.publicProxyUrl as string | undefined) || (json.proxyUrl as string | undefined);
 
-    setServerProxies(newProxies);
-    saveToStorage(newProxies);
-    connectStream(id, serverId);
+      const newProxies = {
+        ...serverProxies,
+        [serverId]: {
+          interceptorId: id,
+          proxyUrl: proxy || `${baseUrl}/${id}/proxy`,
+          logs: []
+        }
+      };
+
+      setServerProxies(newProxies);
+      saveToStorage(newProxies);
+      connectStream(id, serverId);
+    } catch (e) {
+      console.error("Failed to create proxy:", e);
+      alert("Failed to create interceptor");
+    } finally {
+      setIsCreating(false);
+    }
   };
 
   const handleStop = async () => {
@@ -339,9 +348,16 @@ export function InterceptorTab({
               </div>
               <Button
                 onClick={handleCreate}
-                disabled={!selectedServer || selectedServer === "none"}
+                disabled={!selectedServer || selectedServer === "none" || isCreating}
               >
-                Create Proxy
+                {isCreating ? (
+                  <>
+                    <Loader2 className="animate-spin" />
+                    Creating...
+                  </>
+                ) : (
+                  <>Create Proxy</>
+                )}
               </Button>
             </div>
           )}
