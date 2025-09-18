@@ -6490,7 +6490,7 @@ evalsCommand.description("Run MCP evaluations").command("run").description("Run 
 // src/index.ts
 config();
 var program = new Command2();
-program.name("mcpjam").description("MCPJam CLI for programmatic MCP testing").version("1.0.0");
+program.name("mcpjam").description("MCPJam CLI for programmatic MCP testing").version("1.1.0");
 program.addCommand(evalsCommand);
 program.parse();
 //# sourceMappingURL=index.js.map
