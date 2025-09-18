@@ -366,14 +366,28 @@ export function InterceptorTab({
                       {new Date(log.timestamp).toLocaleTimeString()}
                     </span>
                     <span className={`text-xs px-2 py-0.5 rounded font-mono ${
-                      log.direction === "request" ? "bg-blue-100 text-blue-800" : "bg-green-100 text-green-800"
+                      log.direction === "request" ? "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300" : "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300"
                     }`}>
                       {log.direction}
                     </span>
                     {"method" in log ? (
-                      <span className="font-mono">{log.method}</span>
+                      <span className="font-mono">
+                        <span className="font-semibold text-orange-600 dark:text-orange-400">
+                          {log.method}
+                        </span>
+                        {(() => {
+                          try {
+                            const body = JSON.parse(log.body || '{}');
+                            return body.method ? (
+                              <span className="font-semibold text-foreground">{' '}{body.method}</span>
+                            ) : null;
+                          } catch {
+                            return null;
+                          }
+                        })()}
+                      </span>
                     ) : (
-                      <span className="font-mono">{log.status} {log.statusText}</span>
+                      <span className="font-mono font-semibold text-gray-600 dark:text-gray-400">{log.status} {log.statusText}</span>
                     )}
                   </div>
                   {"url" in log && (
@@ -391,25 +405,57 @@ export function InterceptorTab({
                     if (parsed) {
                       return (
                         <div className="text-xs bg-background p-2 rounded border mt-1 overflow-auto">
-                          <JsonView
-                            src={parsed}
-                            dark={true}
-                            theme="atom"
-                            enableClipboard={true}
-                            displaySize={true}
-                            collapsed={2}
-                            collapseStringsAfterLength={80}
-                            collapseObjectsAfterLength={10}
-                            style={{
-                              fontSize: "12px",
-                              fontFamily:
-                                "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                              backgroundColor: "hsl(var(--background))",
-                              padding: 0,
-                              borderRadius: 0,
-                              border: "none",
-                            }}
-                          />
+                          <style>{`
+                            /*
+                             * react18-json-view uses CSS variables on the root
+                             * element with class .json-view. We override them
+                             * within this scoped container to match the MCP JAM
+                             * orange + grey color scheme.
+                             */
+                            .json-viewer-mcpjam .json-view {
+                              /* Keys/properties in orange */
+                              --json-property: #E8622C; /* MCP JAM orange */
+                              /* Everything else in muted grey */
+                              --json-index: var(--muted-foreground);
+                              --json-number: var(--muted-foreground);
+                              --json-string: var(--muted-foreground);
+                              --json-boolean: var(--muted-foreground);
+                              --json-null: var(--muted-foreground);
+                              color: var(--muted-foreground) !important;
+                            }
+
+                            /* Ensure dark mode also follows the same palette */
+                            .dark .json-viewer-mcpjam .json-view {
+                              --json-property: #FF6B35; /* slightly brighter orange on dark */
+                              --json-index: var(--muted-foreground);
+                              --json-number: var(--muted-foreground);
+                              --json-string: var(--muted-foreground);
+                              --json-boolean: var(--muted-foreground);
+                              --json-null: var(--muted-foreground);
+                              color: var(--muted-foreground) !important;
+                            }
+                          `}</style>
+                          <div className="json-viewer-mcpjam">
+                            <JsonView
+                              src={parsed}
+                              dark={false}
+                              theme="default"
+                              enableClipboard={true}
+                              displaySize={true}
+                              collapsed={2}
+                              collapseStringsAfterLength={80}
+                              collapseObjectsAfterLength={10}
+                              style={{
+                                fontSize: "12px",
+                                fontFamily:
+                                  "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                                backgroundColor: "hsl(var(--background))",
+                                padding: 0,
+                                borderRadius: 0,
+                                border: "none",
+                              }}
+                            />
+                          </div>
                         </div>
                       );
                     }
