@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import { Card, CardContent } from "./ui/card";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { ScrollArea } from "./ui/scroll-area";
@@ -9,6 +8,7 @@ import {
   ResizableHandle,
 } from "./ui/resizable";
 import { FolderOpen, File, RefreshCw, ChevronRight, Eye } from "lucide-react";
+import { EmptyState } from "./ui/empty-state";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import { MastraMCPServerDefinition } from "@mastra/mcp";
@@ -38,11 +38,6 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
       fetchResources();
     }
   }, [serverConfig, serverName]);
-
-  const getServerConfig = (): MastraMCPServerDefinition | null => {
-    if (!serverConfig) return null;
-    return serverConfig;
-  };
 
   const fetchResources = async () => {
     if (!serverName) return;
@@ -106,13 +101,11 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
 
   if (!serverConfig || !serverName) {
     return (
-      <Card>
-        <CardContent className="pt-6">
-          <p className="text-center text-muted-foreground font-medium">
-            Please select a server to view resources
-          </p>
-        </CardContent>
-      </Card>
+      <EmptyState
+        icon={FolderOpen}
+        title="No Server Selected"
+        description="Connect to an MCP server to browse and explore its available resources."
+      />
     );
   }
 
