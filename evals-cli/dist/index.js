@@ -11,7 +11,27 @@ import { resolve } from "path";
 import chalk from "chalk";
 var MAX_CONTENT_LENGTH = 160;
 var Logger = class {
+  static activeStream = null;
+  static closeActiveStream() {
+    if (this.activeStream) {
+      process.stdout.write("\n");
+      this.activeStream = null;
+    }
+  }
+  static startStream(role, indentLevel) {
+    this.closeActiveStream();
+    const prefix = "  ".repeat(indentLevel) + this.colorRole(role) + ": ";
+    process.stdout.write(prefix);
+    this.activeStream = { role, indentLevel };
+  }
+  static appendToStream(text) {
+    if (!this.activeStream) {
+      this.startStream("assistant", 2);
+    }
+    process.stdout.write(text);
+  }
   static logLine(text, indentLevel = 0) {
+    this.closeActiveStream();
     const prefix = "  ".repeat(indentLevel);
     console.log(prefix + text);
   }
@@ -64,12 +84,14 @@ var Logger = class {
   }
   static conversation(options) {
     const { messages, indentLevel = 2 } = options;
+    this.closeActiveStream();
     if (!messages.length) {
       this.logLine(chalk.dim("(no messages)"), indentLevel);
       return;
     }
     messages.forEach((message, index) => {
       if (index > 0) {
+        this.closeActiveStream();
         console.log("");
       }
       const role = this.colorRole(message.role);
@@ -269,8 +291,45 @@ var Logger = class {
     const header = chalk.magentaBright(`[tool-call] ${toolCall.toolName}`);
     this.logLine(header, indentLevel);
     if (toolCall.args) {
-      this.logLine(chalk.magenta(this.truncate(toolCall.args)), indentLevel + 1);
+      this.logLine(chalk.gray(this.truncate(toolCall.args)), indentLevel + 1);
     }
+  }
+  static beginStreamingMessage(role, indentLevel = 2) {
+    this.startStream(role, indentLevel);
+  }
+  static appendStreamingText(text) {
+    if (!text) {
+      return;
+    }
+    this.appendToStream(text);
+  }
+  static finishStreamingMessage() {
+    this.closeActiveStream();
+  }
+  static streamToolCall(toolName, args, indentLevel = 3) {
+    const serializedArgs = args === void 0 ? void 0 : this.truncate(this.stringify(args));
+    this.closeActiveStream();
+    this.logToolCall({ toolName, args: serializedArgs }, indentLevel);
+  }
+  static streamToolResult(toolName, output, indentLevel = 3) {
+    this.closeActiveStream();
+    const header = chalk.magentaBright(`[tool-result] ${toolName}`);
+    this.logLine(header, indentLevel);
+    if (output !== void 0) {
+      this.logLine(
+        chalk.gray(this.truncate(this.stringify(output))),
+        indentLevel + 1
+      );
+    }
+  }
+  static streamToolError(toolName, error, indentLevel = 3) {
+    this.closeActiveStream();
+    const header = chalk.redBright(`[tool-error] ${toolName}`);
+    this.logLine(header, indentLevel);
+    this.logLine(
+      chalk.red(this.truncate(this.stringify(error ?? "Unknown error"))),
+      indentLevel + 1
+    );
   }
   static renderBox(lines, options) {
     if (!lines.length) {
@@ -342,7 +401,7 @@ var Logger = class {
 
 // src/evals/runner.ts
 import { MCPClient } from "@mastra/mcp";
-import { generateText } from "ai";
+import { streamText } from "ai";
 
 // ../node_modules/convex/dist/esm/index.js
 var version = "1.26.2";
@@ -6305,7 +6364,7 @@ var runEvals = async (tests, environment, llms, apiKey) => {
         temperature
       });
       const runStartedAt = Date.now();
-      const maxSteps = 5;
+      const maxSteps = 20;
       let stepCount = 0;
       if (system) {
         Logger.conversation({
@@ -6321,31 +6380,64 @@ var runEvals = async (tests, environment, llms, apiKey) => {
       const messageHistory = [userMessage];
       const toolsCalled = [];
       while (stepCount < maxSteps) {
-        const result = await generateText({
+        let assistantStreaming = false;
+        const streamResult = await streamText({
           model: createLlmModel(provider, model, validatedLlmApiKeys),
           system,
           temperature,
           tools: vercelTools,
           toolChoice,
-          messages: messageHistory
+          messages: messageHistory,
+          onChunk: async (chunk) => {
+            switch (chunk.chunk.type) {
+              case "text-delta":
+              case "reasoning-delta": {
+                if (!assistantStreaming) {
+                  Logger.beginStreamingMessage("assistant", 2);
+                  assistantStreaming = true;
+                }
+                Logger.appendStreamingText(chunk.chunk.text);
+                break;
+              }
+              case "tool-call": {
+                if (assistantStreaming) {
+                  Logger.finishStreamingMessage();
+                  assistantStreaming = false;
+                }
+                Logger.streamToolCall(chunk.chunk.toolName, chunk.chunk.input, 3);
+                break;
+              }
+              case "tool-result": {
+                Logger.streamToolResult(chunk.chunk.toolName, chunk.chunk.output, 3);
+                break;
+              }
+              default:
+                break;
+            }
+          }
         });
-        const toolNamesForStep = extractToolNamesAsArray(result.toolCalls);
+        await streamResult.consumeStream();
+        if (assistantStreaming) {
+          Logger.finishStreamingMessage();
+          assistantStreaming = false;
+        }
+        const toolNamesForStep = extractToolNamesAsArray(
+          await streamResult.toolCalls
+        );
         if (toolNamesForStep.length) {
           toolsCalled.push(...toolNamesForStep);
         }
-        const responseMessages = result.response?.messages ?? [];
+        const responseMessages = (await streamResult.response)?.messages ?? [];
         if (responseMessages.length) {
           messageHistory.push(...responseMessages);
-          Logger.conversation({
-            messages: responseMessages,
-            indentLevel: 2
-          });
         }
         stepCount++;
-        if (result.finishReason !== "tool-calls") {
+        const finishReason = await streamResult.finishReason;
+        if (finishReason !== "tool-calls") {
           break;
         }
       }
+      Logger.finishStreamingMessage();
       const evaluation = evaluateResults(
         test.expectedToolCalls,
         toolsCalled

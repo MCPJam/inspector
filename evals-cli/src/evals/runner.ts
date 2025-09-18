@@ -1,5 +1,5 @@
 import { MCPClient } from "@mastra/mcp";
-import { generateText, Tool, ToolChoice, ModelMessage } from "ai";
+import { streamText, Tool, ToolChoice, ModelMessage } from "ai";
 import { getUserIdFromApiKeyOrNull } from "../db/user";
 import {
   convertMastraToolsToVercelTools,
@@ -56,7 +56,7 @@ export const runEvals = async (
         temperature,
       });
       const runStartedAt = Date.now();
-      const maxSteps = 5;
+      const maxSteps = 20;
       let stepCount = 0;
 
       if (system) {
@@ -77,34 +77,72 @@ export const runEvals = async (
       const toolsCalled: string[] = [];
 
       while (stepCount < maxSteps) {
-        const result = await generateText({
+        let assistantStreaming = false;
+
+        const streamResult = await streamText({
           model: createLlmModel(provider, model, validatedLlmApiKeys),
           system,
           temperature,
           tools: vercelTools,
           toolChoice: toolChoice as ToolChoice<NoInfer<Record<string, Tool>>>,
           messages: messageHistory,
+          onChunk: async (chunk) => {
+            switch (chunk.chunk.type) {
+              case "text-delta":
+              case "reasoning-delta": {
+                if (!assistantStreaming) {
+                  Logger.beginStreamingMessage("assistant", 2);
+                  assistantStreaming = true;
+                }
+                Logger.appendStreamingText(chunk.chunk.text);
+                break;
+              }
+              case "tool-call": {
+                if (assistantStreaming) {
+                  Logger.finishStreamingMessage();
+                  assistantStreaming = false;
+                }
+                Logger.streamToolCall(chunk.chunk.toolName, chunk.chunk.input, 3);
+                break;
+              }
+              case "tool-result": {
+                Logger.streamToolResult(chunk.chunk.toolName, chunk.chunk.output, 3);
+                break;
+              }
+              default:
+                break;
+            }
+          },
         });
 
-        const toolNamesForStep = extractToolNamesAsArray(result.toolCalls);
+        await streamResult.consumeStream();
+
+        if (assistantStreaming) {
+          Logger.finishStreamingMessage();
+          assistantStreaming = false;
+        }
+
+        const toolNamesForStep = extractToolNamesAsArray(
+          await streamResult.toolCalls,
+        );
         if (toolNamesForStep.length) {
           toolsCalled.push(...toolNamesForStep);
         }
-        const responseMessages = (result.response?.messages ?? []) as ModelMessage[];
+
+        const responseMessages = ((await streamResult.response)?.messages ?? []) as ModelMessage[];
         if (responseMessages.length) {
           messageHistory.push(...responseMessages);
-          Logger.conversation({
-            messages: responseMessages,
-            indentLevel: 2,
-          });
         }
 
         stepCount++;
 
-        if (result.finishReason !== "tool-calls") {
+        const finishReason = await streamResult.finishReason;
+        if (finishReason !== "tool-calls") {
           break;
         }
       }
+
+      Logger.finishStreamingMessage();
 
       const evaluation = evaluateResults(
         test.expectedToolCalls,
