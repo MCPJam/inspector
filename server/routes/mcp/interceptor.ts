@@ -509,11 +509,24 @@ async function handleProxy(c: any) {
         },
       });
       const headers = new Headers(res.headers);
+      // For streaming responses, do not send Content-Length; Node will use chunked framing.
+      headers.delete('content-length');
+      headers.delete('Content-Length');
+      // Let the runtime decide Transfer-Encoding; keep-alive semantics for SSE
+      headers.delete('transfer-encoding');
+      headers.delete('Transfer-Encoding');
+      headers.set('Cache-Control', 'no-cache');
+      headers.set('Connection', 'keep-alive');
       return withCORS(new Response(rewriteStream as any, { status: res.status, statusText: res.statusText, headers }));
     }
 
-    // Non-SSE: passthrough
-    const passthrough = new Response(res.body, { status: res.status, statusText: res.statusText, headers: new Headers(res.headers) });
+    // Non-SSE: passthrough (avoid CL+TE conflict)
+    const nonSseHeaders = new Headers(res.headers);
+    if (nonSseHeaders.has('transfer-encoding') || nonSseHeaders.has('Transfer-Encoding')) {
+      nonSseHeaders.delete('content-length');
+      nonSseHeaders.delete('Content-Length');
+    }
+    const passthrough = new Response(res.body, { status: res.status, statusText: res.statusText, headers: nonSseHeaders });
     return withCORS(passthrough);
   } catch (error) {
     const body = JSON.stringify({ error: String(error) });
