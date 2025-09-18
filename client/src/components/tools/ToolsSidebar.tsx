@@ -87,37 +87,39 @@ export function ToolsSidebar({
           </div>
         </div>
 
+        <div className="px-4 py-4 border-b border-border bg-background space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Wrench className="h-3 w-3 text-muted-foreground" />
+              <h2 className="text-xs font-semibold text-foreground">Tools</h2>
+              <Badge variant="secondary" className="text-xs font-mono">
+                {activeTab === "tools"
+                  ? toolNames.length
+                  : savedRequests.length}
+              </Badge>
+            </div>
+            <Button
+              onClick={onRefresh}
+              variant="ghost"
+              size="sm"
+              disabled={fetchingTools}
+            >
+              {activeTab === "tools" && (
+                <RefreshCw
+                  className={`h-3 w-3 ${fetchingTools ? "animate-spin" : ""} cursor-pointer`}
+                />
+              )}
+            </Button>
+          </div>
+          <SearchInput
+            value={searchQuery}
+            onValueChange={onSearchQueryChange}
+            placeholder="Search tools by name or description"
+          />
+        </div>
+
         {activeTab === "tools" ? (
           <div className="h-[calc(100%-49px)] flex flex-col">
-            <div className="px-4 py-4 border-b border-border bg-background space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <Wrench className="h-3 w-3 text-muted-foreground" />
-                  <h2 className="text-xs font-semibold text-foreground">
-                    Tools
-                  </h2>
-                  <Badge variant="secondary" className="text-xs font-mono">
-                    {toolNames.length}
-                  </Badge>
-                </div>
-                <Button
-                  onClick={onRefresh}
-                  variant="ghost"
-                  size="sm"
-                  disabled={fetchingTools}
-                >
-                  <RefreshCw
-                    className={`h-3 w-3 ${fetchingTools ? "animate-spin" : ""} cursor-pointer`}
-                  />
-                </Button>
-              </div>
-              <SearchInput
-                value={searchQuery}
-                onValueChange={onSearchQueryChange}
-                placeholder="Search tools by name or description"
-              />
-            </div>
-
             <div className="flex-1 overflow-hidden">
               <ScrollArea className="h-full">
                 <div className="p-2">
