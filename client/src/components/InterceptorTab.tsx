@@ -1,6 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
+import JsonView from "react18-json-view";
+import "react18-json-view/src/style.css";
+import "react18-json-view/src/dark.css";
+import { Copy, Check } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 
 type InterceptorLog =
@@ -264,6 +268,20 @@ export function InterceptorTab({
     saveToStorage(newProxies);
   };
 
+  const [copySuccess, setCopySuccess] = useState(false);
+
+  const handleCopyUrl = async () => {
+    if (!currentProxy?.proxyUrl) return;
+
+    try {
+      await navigator.clipboard.writeText(currentProxy.proxyUrl);
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 1000);
+    } catch (err) {
+      console.error('Failed to copy proxy URL:', err);
+    }
+  };
+
   return (
     <div className="p-4 space-y-4">
       {/* Proxy Configuration */}
@@ -289,10 +307,26 @@ export function InterceptorTab({
                 </div>
               </div>
               <div>
-                <label className="text-xs font-medium text-green-800 dark:text-green-200">Proxy URL</label>
-                <code className="block mt-1 p-2 bg-white dark:bg-green-900/50 border rounded text-sm break-all">
-                  {currentProxy.proxyUrl}
-                </code>
+                <label className="text-xs font-medium text-green-800 dark:text-green-200 mb-1 block">Proxy URL</label>
+                <div className="relative">
+                  <code className="block p-2 pr-10 bg-white dark:bg-green-900/50 border rounded text-sm break-all">
+                    {currentProxy.proxyUrl}
+                  </code>
+                  <button
+                    onClick={handleCopyUrl}
+                    className={`absolute top-2 right-2 p-1 rounded transition-all duration-200 ${
+                      copySuccess
+                        ? 'text-green-600 dark:text-green-400 scale-110'
+                        : 'text-green-700 dark:text-green-300 hover:text-green-800 dark:hover:text-green-200 hover:bg-green-100 dark:hover:bg-green-800/20'
+                    }`}
+                  >
+                    {copySuccess ? (
+                      <Check className="h-3 w-3 animate-in fade-in duration-200" />
+                    ) : (
+                      <Copy className="h-3 w-3" />
+                    )}
+                  </button>
+                </div>
               </div>
             </div>
           ) : (
@@ -345,11 +379,46 @@ export function InterceptorTab({
                   {"url" in log && (
                     <div className="text-xs text-muted-foreground font-mono mb-1">{log.url}</div>
                   )}
-                  {log.body && (
-                    <pre className="text-xs bg-background p-2 rounded border mt-1 overflow-auto">
-                      {log.body}
-                    </pre>
-                  )}
+                  {log.body && (() => {
+                    let parsed: any = null;
+                    try {
+                      // Quick heuristic to avoid parsing non-JSON payloads
+                      const t = log.body.trim();
+                      if (t.startsWith("{") || t.startsWith("[")) {
+                        parsed = JSON.parse(t);
+                      }
+                    } catch {}
+                    if (parsed) {
+                      return (
+                        <div className="text-xs bg-background p-2 rounded border mt-1 overflow-auto">
+                          <JsonView
+                            src={parsed}
+                            dark={true}
+                            theme="atom"
+                            enableClipboard={true}
+                            displaySize={true}
+                            collapsed={2}
+                            collapseStringsAfterLength={80}
+                            collapseObjectsAfterLength={10}
+                            style={{
+                              fontSize: "12px",
+                              fontFamily:
+                                "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                              backgroundColor: "hsl(var(--background))",
+                              padding: 0,
+                              borderRadius: 0,
+                              border: "none",
+                            }}
+                          />
+                        </div>
+                      );
+                    }
+                    return (
+                      <pre className="text-xs bg-background p-2 rounded border mt-1 overflow-auto">
+                        {log.body}
+                      </pre>
+                    );
+                  })()}
                 </div>
               ))}
             </div>

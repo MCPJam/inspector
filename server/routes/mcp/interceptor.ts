@@ -385,6 +385,8 @@ async function handleProxy(c: any) {
       const decoder = new TextDecoder();
       let buffer = "";
       let lastEventType: string | null = null;
+      // Accumulate data lines for the current SSE event so we can log full payloads
+      let currentEventData: string[] = [];
       const proxyBasePath = `/api/mcp/interceptor/${id}/proxy`;
       // Derive proxy origin from forwarded headers to preserve ngrok host
       const xfProto = c.req.header("x-forwarded-proto");
@@ -425,6 +427,8 @@ async function handleProxy(c: any) {
                   // Parse data lines for endpoint hints
                   const rawLine = line.slice(5); // keep trailing newline
                   const trimmed = rawLine.trim();
+                  // Track data lines for this event so we can log at event boundary
+                  currentEventData.push(trimmed);
                   let endpointUrl: string | null = null;
                   try {
                     if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
@@ -455,12 +459,39 @@ async function handleProxy(c: any) {
                       // Emit a single endpoint event with a plain string URL (most compatible)
                       controller.enqueue(encoder.encode(`event: endpoint\n`));
                       controller.enqueue(encoder.encode(`data: ${proxyEndpoint}\n\n`));
+                      // Reset current event buffer since we emitted a translated event
+                      currentEventData = [];
                       continue; // skip original data line
                     } catch {
                       // fall through
                     }
                   }
                   // Not an endpoint payload; pass through
+                  controller.enqueue(encoder.encode(line));
+                } else if (line === "\n") {
+                  // End of an SSE event — if it was a message event, mirror it into logs
+                  if (lastEventType === "message") {
+                    const dataText = currentEventData.join("\n");
+                    let bodyText = dataText;
+                    try {
+                      // Many servers send a single JSON line; keep original text if parse fails
+                      const parsed = JSON.parse(dataText);
+                      bodyText = JSON.stringify(parsed);
+                    } catch {}
+                    try {
+                      interceptorStore.appendLog(id, {
+                        id: `${requestId}-sse-${Date.now()}`,
+                        timestamp: Date.now(),
+                        direction: "response",
+                        status: 200,
+                        statusText: "SSE message",
+                        headers: { "content-type": "text/event-stream" },
+                        body: bodyText,
+                      });
+                    } catch {}
+                  }
+                  currentEventData = [];
+                  lastEventType = null;
                   controller.enqueue(encoder.encode(line));
                 } else {
                   controller.enqueue(encoder.encode(line));
