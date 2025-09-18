@@ -386,9 +386,6 @@ export function InterceptorTab({
               {currentProxy.logs.map((log) => (
                 <div key={log.id} className="p-3 text-sm">
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="text-xs text-muted-foreground font-mono">
-                      {new Date(log.timestamp).toLocaleTimeString()}
-                    </span>
                     <span className={`text-xs px-2 py-0.5 rounded font-mono ${
                       log.direction === "request" ? "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300" : "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300"
                     }`}>
@@ -413,6 +410,9 @@ export function InterceptorTab({
                     ) : (
                       <span className="font-mono font-semibold text-gray-600 dark:text-gray-400">{log.status} {log.statusText}</span>
                     )}
+                    <span className="text-xs text-muted-foreground font-mono">
+                      {new Date(log.timestamp).toLocaleTimeString()}
+                    </span>
                   </div>
                   {"url" in log && (
                     <div className="text-xs text-muted-foreground font-mono mb-1">{log.url}</div>
