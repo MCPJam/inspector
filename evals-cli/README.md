@@ -64,7 +64,7 @@ The CLI includes example configuration files in the `examples/` directory:
 
 ```json
 {
-  "mcpServers": {
+  "servers": {
     "weather-server": {
       "command": "python",
       "args": ["weather_server.py"],
@@ -73,16 +73,13 @@ The CLI includes example configuration files in the `examples/` directory:
       }
     },
     "api-server": {
-      "url": "https://api.example.com/mcp",
-      "headers": {
-        "Authorization": "Bearer ${API_TOKEN}"
+      "url": "https://api.example.com/mcp/sse",
+      "requestInit": {
+        "headers": {
+          "Authorization": "Bearer ${API_TOKEN}"
+        }
       }
     }
-  },
-  "providerApiKeys": {
-    "anthropic": "${ANTHROPIC_API_KEY}",
-    "openai": "${OPENAI_API_KEY}",
-    "openrouter": "${OPENROUTER_API_KEY}"
   }
 }
 ```
@@ -129,3 +126,37 @@ Results: 2 passed, 1 failed (2.0s total)
 
 - **STDIO**: Local processes with command + args
 - **HTTP**: Remote servers with URL + headers authentication
+
+### Programmatic (TypeScript) configuration example for HTTP/SSE
+
+When using SSE endpoints that require custom headers (e.g., Authorization), you must provide `eventSourceInit` so the SSE connection includes those headers. If you use a JSON environment file with `requestInit.headers`, the CLI will automatically inject an `eventSourceInit.fetch` wrapper for you.
+
+```ts
+import { MCPClient } from "@mastra/mcp";
+
+const client = new MCPClient({
+  id: "example",
+  servers: {
+    exampleServer: {
+      url: new URL("https://your-mcp-server.com/sse"),
+      // Note: requestInit alone isn't enough for SSE
+      requestInit: {
+        headers: {
+          Authorization: "Bearer your-token",
+        },
+      },
+      // For programmatic usage, add eventSourceInit when using custom headers
+      eventSourceInit: {
+        fetch(input: Request | URL | string, init?: RequestInit) {
+          const headers = new Headers(init?.headers || {});
+          headers.set("Authorization", "Bearer your-token");
+          return fetch(input as any, {
+            ...init,
+            headers,
+          });
+        },
+      },
+    },
+  },
+});
+```
