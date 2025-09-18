@@ -340,25 +340,31 @@ export function InterceptorTab({
             </div>
           ) : (
             <div className="p-3 bg-muted rounded border">
-              <div className="text-sm font-medium mb-2">
-                { selectedServer !== "none" ? `Create proxy for ${connectedServerConfigs[selectedServer]?.name}` : "No server selected"}
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <div className="text-sm font-medium mb-1 truncate">
+                    { selectedServer !== "none" ? `Create proxy for ${connectedServerConfigs[selectedServer]?.name}` : "No server selected"}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {selectedServer ? "This will create a proxy URL that tunnels requests to your connected server." : "Select a server above to create a proxy"}
+                  </div>
+                </div>
+                <div className="shrink-0 self-start sm:self-auto">
+                  <Button
+                    onClick={handleCreate}
+                    disabled={!selectedServer || selectedServer === "none" || isCreating}
+                  >
+                    {isCreating ? (
+                      <>
+                        <Loader2 className="animate-spin" />
+                        Creating...
+                      </>
+                    ) : (
+                      <>Create Proxy</>
+                    )}
+                  </Button>
+                </div>
               </div>
-              <div className="text-xs text-muted-foreground mb-3">
-                {selectedServer ? "This will create a proxy URL that tunnels requests to your connected server." : "Select a server above to create a proxy"}
-              </div>
-              <Button
-                onClick={handleCreate}
-                disabled={!selectedServer || selectedServer === "none" || isCreating}
-              >
-                {isCreating ? (
-                  <>
-                    <Loader2 className="animate-spin" />
-                    Creating...
-                  </>
-                ) : (
-                  <>Create Proxy</>
-                )}
-              </Button>
             </div>
           )}
         </div>
