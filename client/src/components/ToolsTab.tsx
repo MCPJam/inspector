@@ -411,6 +411,13 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       })
     : toolNames;
 
+  const filteredSavedRequests = searchQuery.trim()
+    ? savedRequests.filter((tool) => {
+        const haystack = `${tool.title} ${tool?.description}`.toLowerCase();
+        return haystack.includes(searchQuery.trim().toLowerCase());
+      })
+    : savedRequests;
+
   const renderLeftPanel = () => (
     <ToolsSidebar
       activeTab={activeTab}
@@ -424,7 +431,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       onSearchQueryChange={setSearchQuery}
       onRefresh={fetchTools}
       onSelectTool={setSelectedTool}
-      savedRequests={savedRequests}
+      savedRequests={filteredSavedRequests}
       highlightedRequestId={highlightedRequestId}
       onLoadRequest={handleLoadRequest}
       onRenameRequest={handleRenameRequest}
