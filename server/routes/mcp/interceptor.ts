@@ -277,7 +277,9 @@ async function handleProxy(c: any) {
   try {
     const accept = (req.headers.get("accept") || "").toLowerCase();
     const wantsSSE = accept.includes("text/event-stream");
-    if (req.method === "HEAD" && wantsSSE) {
+    const targetPathname = new URL(entry.targetUrl).pathname;
+    const upstreamLooksLikeSse = /\/sse(\/|$)/i.test(targetPathname);
+    if (req.method === "HEAD" && wantsSSE && !upstreamLooksLikeSse) {
       const headers = new Headers({
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
@@ -289,7 +291,7 @@ async function handleProxy(c: any) {
       headers.delete('Transfer-Encoding');
       return withCORS(new Response(null, { status: 200, headers }));
     }
-    if (req.method === "GET" && wantsSSE) {
+    if (req.method === "GET" && wantsSSE && !upstreamLooksLikeSse) {
       const xfProto = req.headers.get("x-forwarded-proto");
       const xfHost = req.headers.get("x-forwarded-host");
       const host = xfHost || req.headers.get("host");
