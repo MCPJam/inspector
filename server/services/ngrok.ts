@@ -16,8 +16,7 @@ export async function ensureNgrokTunnel(
         "NGROK_AUTHTOKEN is required. Get one from https://dashboard.ngrok.com/get-started/your-authtoken"
       );
     }
-
-    // Use the official @ngrok/ngrok SDK like smithery
+    
     const ngrok = await import("@ngrok/ngrok");
 
     activeTunnel = await ngrok.default.forward({
