@@ -1,5 +1,5 @@
 {
-  "anthropic": "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",
-  "openai": "12345",
-  "openrouter": "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"
+  "anthropic": "<ANTHROPIC_API_KEY>",
+  "openai": "<OPENAI_API_KEY>",
+  "openrouter": "<OPENROUTER_API_KEY>"
 }

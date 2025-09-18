@@ -1,11 +1,21 @@
 {
   "servers": {
-    "huggingface": {
+    "asana": {
       "url": "https://mcp.asana.com/sse",
       "requestInit": {
         "headers": {
-          "Authorization": "Bearer 1201180266784364:DjUCmcnu2dJAtGrD:tBvwVfAsQFWKxWPA0nxgdHXpAiGml6zB"
+          "Authorization": "Bearer <ASANA_API_KEY>"
         }
+      }
+    },
+    "sequential-thinking": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-sequential-thinking"
+      ],
+      "env": {
+        "ENV_1": "<ENV_1>"
       }
     }
   }

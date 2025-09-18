@@ -46,7 +46,36 @@ type RunStartOptions = {
 const MAX_CONTENT_LENGTH = 160;
 
 export class Logger {
+  private static activeStream:
+    | { role: ModelMessage["role"]; indentLevel: number }
+    | null = null;
+
+  private static closeActiveStream(): void {
+    if (this.activeStream) {
+      process.stdout.write("\n");
+      this.activeStream = null;
+    }
+  }
+
+  private static startStream(
+    role: ModelMessage["role"],
+    indentLevel: number,
+  ): void {
+    this.closeActiveStream();
+    const prefix = "  ".repeat(indentLevel) + this.colorRole(role) + ": ";
+    process.stdout.write(prefix);
+    this.activeStream = { role, indentLevel };
+  }
+
+  private static appendToStream(text: string): void {
+    if (!this.activeStream) {
+      this.startStream("assistant", 2);
+    }
+    process.stdout.write(text);
+  }
+
   private static logLine(text: string, indentLevel = 0): void {
+    this.closeActiveStream();
     const prefix = "  ".repeat(indentLevel);
     console.log(prefix + text);
   }
@@ -115,6 +144,8 @@ export class Logger {
   static conversation(options: ConversationOptions): void {
     const { messages, indentLevel = 2 } = options;
 
+    this.closeActiveStream();
+
     if (!messages.length) {
       this.logLine(chalk.dim("(no messages)"), indentLevel);
       return;
@@ -122,6 +153,7 @@ export class Logger {
 
     messages.forEach((message, index) => {
       if (index > 0) {
+        this.closeActiveStream();
         console.log("");
       }
 
@@ -404,8 +436,64 @@ export class Logger {
     const header = chalk.magentaBright(`[tool-call] ${toolCall.toolName}`);
     this.logLine(header, indentLevel);
     if (toolCall.args) {
-      this.logLine(chalk.magenta(this.truncate(toolCall.args)), indentLevel + 1);
+      this.logLine(chalk.gray(this.truncate(toolCall.args)), indentLevel + 1);
     }
+  }
+
+  static beginStreamingMessage(role: ModelMessage["role"], indentLevel = 2): void {
+    this.startStream(role, indentLevel);
+  }
+
+  static appendStreamingText(text: string): void {
+    if (!text) {
+      return;
+    }
+    this.appendToStream(text);
+  }
+
+  static finishStreamingMessage(): void {
+    this.closeActiveStream();
+  }
+
+  static streamToolCall(
+    toolName: string,
+    args: unknown,
+    indentLevel = 3,
+  ): void {
+    const serializedArgs =
+      args === undefined ? undefined : this.truncate(this.stringify(args));
+    this.closeActiveStream();
+    this.logToolCall({ toolName, args: serializedArgs }, indentLevel);
+  }
+
+  static streamToolResult(
+    toolName: string,
+    output: unknown,
+    indentLevel = 3,
+  ): void {
+    this.closeActiveStream();
+    const header = chalk.magentaBright(`[tool-result] ${toolName}`);
+    this.logLine(header, indentLevel);
+    if (output !== undefined) {
+      this.logLine(
+        chalk.gray(this.truncate(this.stringify(output))),
+        indentLevel + 1,
+      );
+    }
+  }
+
+  static streamToolError(
+    toolName: string,
+    error: unknown,
+    indentLevel = 3,
+  ): void {
+    this.closeActiveStream();
+    const header = chalk.redBright(`[tool-error] ${toolName}`);
+    this.logLine(header, indentLevel);
+    this.logLine(
+      chalk.red(this.truncate(this.stringify(error ?? "Unknown error"))),
+      indentLevel + 1,
+    );
   }
 
   private static renderBox(
