@@ -16,6 +16,11 @@ function withCORS(res: Response): Response {
   );
   headers.set("Access-Control-Expose-Headers", "*");
   headers.set("Vary", "Origin, Access-Control-Request-Headers");
+  // Avoid CL+TE conflicts in dev proxies: prefer chunked framing decided by runtime
+  headers.delete('content-length');
+  headers.delete('Content-Length');
+  headers.delete('transfer-encoding');
+  headers.delete('Transfer-Encoding');
   return new Response(res.body, {
     status: res.status,
     statusText: res.statusText,
@@ -268,6 +273,77 @@ async function handleProxy(c: any) {
     body: requestBody,
   });
 
+  // Shim SSE for stateless servers (Cursor compatibility):
+  try {
+    const accept = (req.headers.get("accept") || "").toLowerCase();
+    const wantsSSE = accept.includes("text/event-stream");
+    if (req.method === "HEAD" && wantsSSE) {
+      const headers = new Headers({
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      });
+      headers.delete('content-length');
+      headers.delete('Content-Length');
+      headers.delete('transfer-encoding');
+      headers.delete('Transfer-Encoding');
+      return withCORS(new Response(null, { status: 200, headers }));
+    }
+    if (req.method === "GET" && wantsSSE) {
+      const xfProto = req.headers.get("x-forwarded-proto");
+      const xfHost = req.headers.get("x-forwarded-host");
+      const host = xfHost || req.headers.get("host");
+      let proto = xfProto;
+      if (!proto) {
+        const originHeader = req.headers.get("origin");
+        if (originHeader && /^https:/i.test(originHeader)) proto = "https";
+      }
+      if (!proto) proto = "http";
+      const proxyOrigin = host ? `${proto}://${host}` : new URL(req.url).origin;
+      const sessionId = crypto.randomUUID();
+      // Map session to upstream base URL (stateless POST endpoint)
+      interceptorStore.setSessionEndpoint(id, sessionId, new URL(entry.targetUrl).toString());
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode(`event: ping\n`));
+          controller.enqueue(encoder.encode(`data: \n\n`));
+          const endpoint = `${proxyOrigin}/api/mcp/interceptor/${id}/proxy/messages?sessionId=${sessionId}`;
+          // Some clients (Cursor) expect JSON {url: ...}; others (Claude) choke on JSON and use string.
+          const ua = c.req.header('user-agent') || '';
+          const isClaude = /claude/i.test(ua) || /anthropic/i.test(ua);
+          if (!isClaude) {
+            controller.enqueue(encoder.encode(`event: endpoint\n`));
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ url: endpoint })}\n\n`));
+          }
+          controller.enqueue(encoder.encode(`event: endpoint\n`));
+          controller.enqueue(encoder.encode(`data: ${endpoint}\n\n`));
+          const t = setInterval(() => {
+            try { controller.enqueue(encoder.encode(`: keepalive ${Date.now()}\n\n`)); } catch {}
+          }, 15000);
+          (controller as any)._t = t;
+        },
+        cancel() {
+          try { clearInterval((this as any)._t); } catch {}
+        },
+      });
+      {
+        const headers = new Headers({
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+          "X-Accel-Buffering": "no",
+        });
+        // Ensure no CL/TE conflict for dev proxies
+        headers.delete('content-length');
+        headers.delete('Content-Length');
+        headers.delete('transfer-encoding');
+        headers.delete('Transfer-Encoding');
+        return withCORS(new Response(stream as any, { headers }));
+      }
+    }
+  } catch {}
+
   // Build upstream URL: preserve trailing path (/messages etc.) and query after /proxy/:id
   let upstreamUrl = new URL(entry.targetUrl);
   try {
@@ -287,8 +363,9 @@ async function handleProxy(c: any) {
       if (mapped) {
         upstreamUrl = new URL(mapped);
       } else {
-        upstreamUrl.pathname = `${basePath}${trailing}`;
-        upstreamUrl.search = originalUrl.search;
+        // Stateless fallback: POST to upstream base URL (drop /messages path and local query)
+        upstreamUrl.pathname = `${basePath}`;
+        upstreamUrl.search = "";
       }
     } else {
       upstreamUrl.pathname = `${basePath}${trailing}`;
@@ -318,6 +395,20 @@ async function handleProxy(c: any) {
     if (k === "host") return;
     filtered.set(key, value);
   });
+
+  // Ensure Accept advertises both JSON and SSE for servers that require it (e.g., HF/Cloudflare)
+  try {
+    const acc = (filtered.get('accept') || '').toLowerCase();
+    const hasJson = acc.includes('application/json');
+    const hasSse = acc.includes('text/event-stream');
+    if (!hasJson || !hasSse) {
+      const parts: string[] = [];
+      if (!hasJson) parts.push('application/json');
+      if (!hasSse) parts.push('text/event-stream');
+      const suffix = parts.join(', ');
+      filtered.set('accept', acc ? `${acc}, ${suffix}` : suffix);
+    }
+  } catch {}
 
   // Inject static headers (e.g., Authorization) if not already present from the client
   if (entry.injectHeaders) {
@@ -520,12 +611,10 @@ async function handleProxy(c: any) {
       return withCORS(new Response(rewriteStream as any, { status: res.status, statusText: res.statusText, headers }));
     }
 
-    // Non-SSE: passthrough (avoid CL+TE conflict)
+    // Non-SSE: passthrough (avoid CL+TE conflict) — always drop Content-Length
     const nonSseHeaders = new Headers(res.headers);
-    if (nonSseHeaders.has('transfer-encoding') || nonSseHeaders.has('Transfer-Encoding')) {
-      nonSseHeaders.delete('content-length');
-      nonSseHeaders.delete('Content-Length');
-    }
+    nonSseHeaders.delete('content-length');
+    nonSseHeaders.delete('Content-Length');
     const passthrough = new Response(res.body, { status: res.status, statusText: res.statusText, headers: nonSseHeaders });
     return withCORS(passthrough);
   } catch (error) {
