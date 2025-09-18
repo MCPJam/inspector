@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/cli",
-  "version": "1.1.0",
+  "version": "1.1.2",
   "type": "module",
   "description": "MCPJam CLI for programmatic MCP testing and evals",
   "license": "Apache-2.0",
@@ -43,10 +43,12 @@
     "dotenv": "^17.2.2",
     "hono": "^4.6.11",
     "ollama-ai-provider": "^1.2.0",
+    "update-notifier": "^7.3.1",
     "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^20",
+    "@types/update-notifier": "^6.0.8",
     "tsup": "^8.3.5",
     "typescript": "^5"
   }

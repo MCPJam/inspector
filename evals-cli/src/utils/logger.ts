@@ -46,9 +46,10 @@ type RunStartOptions = {
 const MAX_CONTENT_LENGTH = 160;
 
 export class Logger {
-  private static activeStream:
-    | { role: ModelMessage["role"]; indentLevel: number }
-    | null = null;
+  private static activeStream: {
+    role: ModelMessage["role"];
+    indentLevel: number;
+  } | null = null;
 
   private static closeActiveStream(): void {
     if (this.activeStream) {
@@ -81,9 +82,7 @@ export class Logger {
   }
 
   private static logMultiline(text: string, indentLevel = 0): void {
-    text
-      .split("\n")
-      .forEach((line) => this.logLine(line, indentLevel));
+    text.split("\n").forEach((line) => this.logLine(line, indentLevel));
   }
 
   static suiteIntro(options: { testCount: number; startedAt: Date }): void {
@@ -121,7 +120,9 @@ export class Logger {
   }
 
   static startTests(count: number): void {
-    this.logLine(chalk.gray(`Running ${count} test${count === 1 ? "" : "s"}...`));
+    this.logLine(
+      chalk.gray(`Running ${count} test${count === 1 ? "" : "s"}...`),
+    );
     this.logLine("");
   }
 
@@ -130,7 +131,14 @@ export class Logger {
   }
 
   static testRunStart(options: RunStartOptions): void {
-    const { runNumber, totalRuns, provider, model, temperature, indentLevel = 1 } = options;
+    const {
+      runNumber,
+      totalRuns,
+      provider,
+      model,
+      temperature,
+      indentLevel = 1,
+    } = options;
     const parts = [`run ${runNumber}/${totalRuns}`];
     if (provider && model) {
       parts.push(`${provider}:${model}`);
@@ -179,18 +187,23 @@ export class Logger {
   }
 
   static toolSummary(options: ToolSummaryOptions): ToolSummaryResult {
-    const { expected, actual, passed, missing: providedMissing, unexpected: providedUnexpected, indentLevel = 2 } = options;
+    const {
+      expected,
+      actual,
+      passed,
+      missing: providedMissing,
+      unexpected: providedUnexpected,
+      indentLevel = 2,
+    } = options;
 
-    const missing = providedMissing ?? expected.filter((tool) => !actual.includes(tool));
-    const unexpected = providedUnexpected ?? actual.filter((tool) => !expected.includes(tool));
+    const missing =
+      providedMissing ?? expected.filter((tool) => !actual.includes(tool));
+    const unexpected =
+      providedUnexpected ?? actual.filter((tool) => !expected.includes(tool));
 
     const lines: string[] = [];
-    lines.push(
-      this.truncate(`Expected: [${expected.join(", ") || "—"}]`),
-    );
-    lines.push(
-      this.truncate(`Actual:   [${actual.join(", ") || "—"}]`),
-    );
+    lines.push(this.truncate(`Expected: [${expected.join(", ") || "—"}]`));
+    lines.push(this.truncate(`Actual:   [${actual.join(", ") || "—"}]`));
 
     if (missing.length) {
       lines.push(this.truncate(`Missing: ${missing.join(", ")}`));
@@ -283,7 +296,9 @@ export class Logger {
     }
 
     if (typeof content === "object") {
-      const typedContent = content as Record<string, unknown> & { type?: string };
+      const typedContent = content as Record<string, unknown> & {
+        type?: string;
+      };
 
       if (typeof typedContent.type === "string") {
         const type = typedContent.type;
@@ -294,13 +309,15 @@ export class Logger {
 
         if (type === "tool-call") {
           const toolName = typedContent.toolName ?? typedContent.name ?? "tool";
-          const args = typedContent.args ?? typedContent.input ?? typedContent.parameters;
+          const args =
+            typedContent.args ?? typedContent.input ?? typedContent.parameters;
           const details = args ? ` args=${this.stringify(args)}` : "";
           return this.truncate(`${toolName}${details}`);
         }
 
         if (type === "tool-result") {
-          const result = typedContent.result ?? typedContent.output ?? typedContent.data;
+          const result =
+            typedContent.result ?? typedContent.output ?? typedContent.data;
           return this.truncate(this.stringify(result));
         }
 
@@ -351,7 +368,8 @@ export class Logger {
             (typedValue.toolName as string) ||
             (typedValue.name as string) ||
             "tool";
-          const args = typedValue.args ?? typedValue.input ?? typedValue.parameters;
+          const args =
+            typedValue.args ?? typedValue.input ?? typedValue.parameters;
           toolCalls.push({
             toolName,
             args: args ? this.truncate(this.stringify(args)) : undefined,
@@ -376,7 +394,8 @@ export class Logger {
           typedValue.type === "tool-result" ||
           typedValue.type === "tool-error"
         ) {
-          const label = typedValue.type === "tool-error" ? "Tool error" : "Tool result";
+          const label =
+            typedValue.type === "tool-error" ? "Tool error" : "Tool result";
           textLines.push(
             `${label}: ${this.truncate(this.stringify(typedValue))}`,
           );
@@ -432,7 +451,10 @@ export class Logger {
     }
   }
 
-  private static logToolCall(toolCall: ToolCallSummary, indentLevel: number): void {
+  private static logToolCall(
+    toolCall: ToolCallSummary,
+    indentLevel: number,
+  ): void {
     const header = chalk.magentaBright(`[tool-call] ${toolCall.toolName}`);
     this.logLine(header, indentLevel);
     if (toolCall.args) {
@@ -440,7 +462,10 @@ export class Logger {
     }
   }
 
-  static beginStreamingMessage(role: ModelMessage["role"], indentLevel = 2): void {
+  static beginStreamingMessage(
+    role: ModelMessage["role"],
+    indentLevel = 2,
+  ): void {
     this.startStream(role, indentLevel);
   }
 
