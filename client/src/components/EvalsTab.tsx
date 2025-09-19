@@ -4,8 +4,15 @@ import { Badge } from "./ui/badge";
 import { Separator } from "./ui/separator";
 import { FlaskConical, Play, Clock, CheckCircle, XCircle } from "lucide-react";
 import { useQuery } from "convex/react";
+import { EmptyState } from "./ui/empty-state";
+import { MastraMCPServerDefinition } from "@mastra/mcp";
 
-export function EvalsTab() {
+interface EvalsTabProps {
+  serverConfig?: MastraMCPServerDefinition;
+  serverName?: string;
+}
+
+export function EvalsTab({ serverConfig, serverName }: EvalsTabProps) {
   const evals = useQuery(
     "evals/helpers:getCurrentUserEvals" as any,
   ) as unknown as {
@@ -53,6 +60,16 @@ export function EvalsTab() {
     return new Date(timestamp).toLocaleString();
   };
 
+  if (!serverConfig || !serverName) {
+    return (
+      <EmptyState
+        icon={FlaskConical}
+        title="No Server Selected"
+        description="Connect to an MCP server to run and monitor evaluations for testing your tools."
+      />
+    );
+  }
+
   if (isLoading) {
     return (
       <div className="p-6">
@@ -81,19 +98,12 @@ export function EvalsTab() {
 
       <div className="grid gap-4">
         {evals.length === 0 ? (
-          <Card>
-            <CardContent className="flex flex-col items-center justify-center py-12">
-              <FlaskConical className="h-12 w-12 text-muted-foreground mb-4" />
-              <h3 className="text-lg font-semibold mb-2">No evaluations yet</h3>
-              <p className="text-muted-foreground text-center mb-4">
-                Run your first evaluation to get started testing your MCP tools.
-              </p>
-              <Button>
-                <Play className="h-4 w-4 mr-2" />
-                Run Evaluation
-              </Button>
-            </CardContent>
-          </Card>
+          <EmptyState
+            icon={FlaskConical}
+            title="No Evaluations Yet"
+            description="Run your first evaluation to get started testing your MCP tools and monitor their performance."
+            className="h-[calc(100vh-200px)]"
+          />
         ) : (
           evals.map((evalRecord) => (
             <Card

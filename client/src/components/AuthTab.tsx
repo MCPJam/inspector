@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
-import { AlertCircle, RefreshCw } from "lucide-react";
+import { AlertCircle, RefreshCw, Shield } from "lucide-react";
+import { EmptyState } from "./ui/empty-state";
 import {
   AuthSettings,
   DEFAULT_AUTH_SETTINGS,
@@ -378,13 +379,11 @@ export const AuthTab = ({
 
   if (!serverConfig) {
     return (
-      <Card>
-        <CardContent className="pt-6">
-          <p className="text-center text-muted-foreground font-medium">
-            Please select a server to manage authentication
-          </p>
-        </CardContent>
-      </Card>
+      <EmptyState
+        icon={Shield}
+        title="No Server Selected"
+        description="Connect to an MCP server to manage authentication and OAuth settings."
+      />
     );
   }
 

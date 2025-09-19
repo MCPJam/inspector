@@ -170,16 +170,9 @@ export default function App() {
               />
             )}
             {activeTab === "evals" && (
-              <TestsTab
+              <EvalsTab
                 serverConfig={selectedMCPConfig}
-                serverConfigsMap={selectedMCPConfigsMap}
-                allServerConfigsMap={Object.fromEntries(
-                  Object.entries(connectedServerConfigs)
-                    .filter(
-                      ([, entry]) => entry.connectionStatus === "connected",
-                    )
-                    .map(([name, entry]) => [name, entry.config]),
-                )}
+                serverName={appState.selectedServer}
               />
             )}
             {activeTab === "resources" && (
