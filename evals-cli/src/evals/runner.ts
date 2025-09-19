@@ -11,6 +11,17 @@ import { createLlmModel, extractToolNamesAsArray } from "../utils/helpers";
 import { Logger } from "../utils/logger";
 import { evaluateResults } from "./evaluator";
 
+const accumulateTokenCount = (
+  current: number | undefined,
+  increment: number | undefined,
+): number | undefined => {
+  if (typeof increment !== "number" || Number.isNaN(increment)) {
+    return current;
+  }
+
+  return (current ?? 0) + increment;
+};
+
 export const runEvals = async (
   tests: any,
   environment: any,
@@ -33,8 +44,13 @@ export const runEvals = async (
   const serverCount = Object.keys(mcpClientOptions.servers).length;
   const toolCount = Object.keys(availableTools).length;
   const serverNames = Object.keys(mcpClientOptions.servers);
-  
-  Logger.initiateTestMessage(serverCount, toolCount, serverNames, validatedTests.length);
+
+  Logger.initiateTestMessage(
+    serverCount,
+    toolCount,
+    serverNames,
+    validatedTests.length,
+  );
 
   const vercelTools = convertMastraToolsToVercelTools(availableTools);
 
@@ -60,6 +76,9 @@ export const runEvals = async (
       const runStartedAt = Date.now();
       const maxSteps = 20;
       let stepCount = 0;
+      let inputTokensUsed: number | undefined;
+      let outputTokensUsed: number | undefined;
+      let totalTokensUsed: number | undefined;
 
       if (system) {
         Logger.conversation({
@@ -103,10 +122,7 @@ export const runEvals = async (
                   Logger.finishStreamingMessage();
                   assistantStreaming = false;
                 }
-                Logger.streamToolCall(
-                  chunk.chunk.toolName,
-                  chunk.chunk.input,
-                );
+                Logger.streamToolCall(chunk.chunk.toolName, chunk.chunk.input);
                 break;
               }
               case "tool-result": {
@@ -128,6 +144,22 @@ export const runEvals = async (
           Logger.finishStreamingMessage();
           assistantStreaming = false;
         }
+
+        const stepUsage = await streamResult.usage;
+        const cumulativeUsage = await streamResult.totalUsage;
+
+        inputTokensUsed = accumulateTokenCount(
+          inputTokensUsed,
+          stepUsage.inputTokens,
+        );
+        outputTokensUsed = accumulateTokenCount(
+          outputTokensUsed,
+          stepUsage.outputTokens,
+        );
+
+        const totalTokens =
+          stepUsage.totalTokens ?? cumulativeUsage.totalTokens;
+        totalTokensUsed = accumulateTokenCount(totalTokensUsed, totalTokens);
 
         const toolNamesForStep = extractToolNamesAsArray(
           await streamResult.toolCalls,
@@ -165,6 +197,16 @@ export const runEvals = async (
       Logger.testRunResult({
         passed: evaluation.passed,
         durationMs: Date.now() - runStartedAt,
+        usage:
+          inputTokensUsed !== undefined ||
+          outputTokensUsed !== undefined ||
+          totalTokensUsed !== undefined
+            ? {
+                inputTokens: inputTokensUsed,
+                outputTokens: outputTokensUsed,
+                totalTokens: totalTokensUsed,
+              }
+            : undefined,
       });
 
       if (evaluation.passed) {
