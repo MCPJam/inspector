@@ -8,6 +8,7 @@ import { TestsTab } from "./components/TestsTab";
 import { EvalsTab } from "./components/EvalsTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { TracingTab } from "./components/TracingTab";
+import { InterceptorTab } from "./components/InterceptorTab";
 import { AuthTab } from "./components/AuthTab";
 import OAuthDebugCallback from "./components/OAuthDebugCallback";
 import { MCPSidebar } from "./components/mcp-sidebar";
@@ -121,12 +122,13 @@ export default function App() {
           </header>
 
           <div className="flex-1">
-            {/* Active Server Selector - Only show on Tools, Resources, Prompts, and Auth pages */}
+            {/* Active Server Selector - Only show on Tools, Resources, Prompts, Auth, and Interceptor pages */}
             {(activeTab === "tools" ||
               activeTab === "resources" ||
               activeTab === "prompts" ||
               activeTab === "auth" ||
-              activeTab === "chat") && (
+              activeTab === "chat" ||
+              activeTab === "interceptor") && (
               <ActiveServerSelector
                 connectedServerConfigs={connectedServerConfigs}
                 selectedServer={appState.selectedServer}
@@ -199,6 +201,13 @@ export default function App() {
 
             {activeTab === "chat" && (
               <ChatTab serverConfigs={selectedMCPConfigsMap} />
+            )}
+
+            {activeTab === "interceptor" && (
+              <InterceptorTab
+                connectedServerConfigs={connectedServerConfigs}
+                selectedServer={appState.selectedServer}
+              />
             )}
 
             {activeTab === "tracing" && <TracingTab />}
