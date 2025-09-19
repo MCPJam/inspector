@@ -362,7 +362,16 @@ async function handleProxy(c: any) {
       }
     } else {
       upstreamUrl.pathname = `${basePath}${trailing}`;
-      upstreamUrl.search = originalUrl.search;
+      // Preserve target URL's query parameters (e.g., API keys) and merge with request params
+      const targetParams = new URLSearchParams(upstreamUrl.search);
+      const requestParams = new URLSearchParams(originalUrl.search);
+      // Add request params to target params (target params take precedence)
+      requestParams.forEach((value, key) => {
+        if (!targetParams.has(key)) {
+          targetParams.set(key, value);
+        }
+      });
+      upstreamUrl.search = targetParams.toString();
     }
   } catch {}
 
