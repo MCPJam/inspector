@@ -9,7 +9,12 @@ export async function ensureTunnel(port: number): Promise<string> {
   starting = (async () => {
     const lt = await import("localtunnel");
     const create = (lt as any)?.default || (lt as any);
-    const tunnel = await create({ port });
+    const opts: any = { port };
+    const sub = process.env.LT_SUBDOMAIN || process.env.LOCALTUNNEL_SUBDOMAIN;
+    const host = process.env.LT_HOST || process.env.LOCALTUNNEL_HOST;
+    if (sub) opts.subdomain = sub;
+    if (host) opts.host = host;
+    const tunnel = await create(opts);
     activeTunnel = tunnel;
     publicUrl = tunnel.url;
     if (!publicUrl) throw new Error("Failed to establish localtunnel");
@@ -39,4 +44,3 @@ export async function closeTunnel(): Promise<void> {
     publicUrl = null;
   }
 }
-

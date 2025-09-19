@@ -152,6 +152,17 @@ app.route("/api/mcp", mcpRoutes);
 
 // Fallback for clients that post to "/sse/message" instead of the rewritten proxy messages URL.
 // We resolve the upstream messages endpoint via sessionId and forward with any injected auth.
+// CORS preflight
+app.options("/sse/message", (c) => {
+  return c.body(null, 204, {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "POST,OPTIONS",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type, Accept, Accept-Language",
+    "Access-Control-Max-Age": "86400",
+    Vary: "Origin, Access-Control-Request-Headers",
+  });
+});
+
 app.post("/sse/message", async (c) => {
   try {
     const url = new URL(c.req.url);
@@ -188,9 +199,16 @@ app.post("/sse/message", async (c) => {
     // Forward to upstream messages endpoint
     try { await fetch(new Request(mapping.url, { method: "POST", headers, body: bodyText })); } catch {}
     // Per spec semantics, reply 202 regardless (response arrives via SSE)
-    return c.body("Accepted", 202, { "Access-Control-Expose-Headers": "*" });
+    return c.body("Accepted", 202, {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Expose-Headers": "*",
+    });
   } catch (e: any) {
-    return c.json({ error: e?.message || "Forward error" }, 400);
+    return c.body(JSON.stringify({ error: e?.message || "Forward error" }), 400, {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Expose-Headers": "*",
+    });
   }
 });
 
