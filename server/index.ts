@@ -157,7 +157,8 @@ app.options("/sse/message", (c) => {
   return c.body(null, 204, {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "POST,OPTIONS",
-    "Access-Control-Allow-Headers": "Authorization, Content-Type, Accept, Accept-Language",
+    "Access-Control-Allow-Headers":
+      "Authorization, Content-Type, Accept, Accept-Language",
     "Access-Control-Max-Age": "86400",
     Vary: "Origin, Access-Control-Request-Headers",
   });
@@ -166,7 +167,8 @@ app.options("/sse/message", (c) => {
 app.post("/sse/message", async (c) => {
   try {
     const url = new URL(c.req.url);
-    const sessionId = url.searchParams.get("sessionId") || url.searchParams.get("sid") || "";
+    const sessionId =
+      url.searchParams.get("sessionId") || url.searchParams.get("sid") || "";
     if (!sessionId) {
       return c.json({ error: "Missing sessionId" }, 400);
     }
@@ -181,34 +183,72 @@ app.post("/sse/message", async (c) => {
 
     // Read body as text (JSON-RPC envelope) and forward
     let bodyText = "";
-    try { bodyText = await c.req.text(); } catch {}
+    try {
+      bodyText = await c.req.text();
+    } catch {}
     const headers = new Headers();
     c.req.raw.headers.forEach((v, k) => {
       const key = k.toLowerCase();
-      if (["connection","keep-alive","transfer-encoding","upgrade","proxy-authenticate","proxy-authorization","te","trailer","host","content-length"].includes(key)) return;
+      if (
+        [
+          "connection",
+          "keep-alive",
+          "transfer-encoding",
+          "upgrade",
+          "proxy-authenticate",
+          "proxy-authorization",
+          "te",
+          "trailer",
+          "host",
+          "content-length",
+        ].includes(key)
+      )
+        return;
       headers.set(k, v);
     });
     if (entry.injectHeaders) {
       for (const [k, v] of Object.entries(entry.injectHeaders)) {
         const key = k.toLowerCase();
-        if (["connection","keep-alive","transfer-encoding","upgrade","proxy-authenticate","proxy-authorization","te","trailer","host","content-length"].includes(key)) continue;
+        if (
+          [
+            "connection",
+            "keep-alive",
+            "transfer-encoding",
+            "upgrade",
+            "proxy-authenticate",
+            "proxy-authorization",
+            "te",
+            "trailer",
+            "host",
+            "content-length",
+          ].includes(key)
+        )
+          continue;
         if (key === "authorization" && headers.has("authorization")) continue;
         headers.set(k, v);
       }
     }
     // Forward to upstream messages endpoint
-    try { await fetch(new Request(mapping.url, { method: "POST", headers, body: bodyText })); } catch {}
+    try {
+      await fetch(
+        new Request(mapping.url, { method: "POST", headers, body: bodyText }),
+      );
+    } catch {}
     // Per spec semantics, reply 202 regardless (response arrives via SSE)
     return c.body("Accepted", 202, {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Expose-Headers": "*",
     });
   } catch (e: any) {
-    return c.body(JSON.stringify({ error: e?.message || "Forward error" }), 400, {
-      "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Expose-Headers": "*",
-    });
+    return c.body(
+      JSON.stringify({ error: e?.message || "Forward error" }),
+      400,
+      {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Expose-Headers": "*",
+      },
+    );
   }
 });
 

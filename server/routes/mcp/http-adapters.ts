@@ -20,7 +20,8 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
     c.body(null, 204, {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET,POST,HEAD,OPTIONS",
-      "Access-Control-Allow-Headers": "*, Authorization, Content-Type, Accept, Accept-Language",
+      "Access-Control-Allow-Headers":
+        "*, Authorization, Content-Type, Accept, Accept-Language",
       "Access-Control-Expose-Headers": "*",
       "Access-Control-Max-Age": "86400",
     }),
@@ -31,7 +32,8 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
     c.body(null, 204, {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET,POST,HEAD,OPTIONS",
-      "Access-Control-Allow-Headers": "*, Authorization, Content-Type, Accept, Accept-Language",
+      "Access-Control-Allow-Headers":
+        "*, Authorization, Content-Type, Accept, Accept-Language",
       "Access-Control-Expose-Headers": "*",
       "Access-Control-Max-Age": "86400",
     }),
@@ -84,30 +86,48 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
             controller.enqueue(encoder.encode(`data: ${data}\n\n`));
           };
           const close = () => {
-            try { controller.close(); } catch {}
+            try {
+              controller.close();
+            } catch {}
           };
 
           // Register session
           sessions.set(`${serverId}:${sessionId}`, { send, close });
           latestSessionByServer.set(serverId, sessionId);
-          console.log(`[${routePrefix}] session registered`, { key: `${serverId}:${sessionId}` });
+          console.log(`[${routePrefix}] session registered`, {
+            key: `${serverId}:${sessionId}`,
+          });
 
           // Ping and endpoint per SSE transport handshake
           send("ping", "");
           const sep = endpointBase.includes("?") ? "&" : "?";
           const url = `${endpointBase}${sep}sessionId=${sessionId}`;
-          console.log(`[${routePrefix}] endpoint`, { serverId, sessionId, url });
+          console.log(`[${routePrefix}] endpoint`, {
+            serverId,
+            sessionId,
+            url,
+          });
           // Emit endpoint as JSON (spec-friendly) then as a plain string (compat).
-          try { send("endpoint", JSON.stringify({ url, headers: {} })); } catch {}
-          try { send("endpoint", url); } catch {}
+          try {
+            send("endpoint", JSON.stringify({ url, headers: {} }));
+          } catch {}
+          try {
+            send("endpoint", url);
+          } catch {}
 
           // Periodic keepalive comments so proxies don't buffer/close
           timer = setInterval(() => {
-            try { controller.enqueue(encoder.encode(`: keepalive ${Date.now()}\n\n`)); } catch {}
+            try {
+              controller.enqueue(
+                encoder.encode(`: keepalive ${Date.now()}\n\n`),
+              );
+            } catch {}
           }, 15000);
         },
         cancel() {
-          try { clearInterval(timer); } catch {}
+          try {
+            clearInterval(timer);
+          } catch {}
           console.log(`[${routePrefix}] SSE close`, { serverId, sessionId });
           sessions.delete(`${serverId}:${sessionId}`);
           // If this session was the latest for this server, clear pointer
@@ -138,7 +158,12 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
     } catch {}
 
     const clientManager = c.mcpJamClientManager;
-    const response = await handleJsonRpc(serverId, body as any, clientManager, mode);
+    const response = await handleJsonRpc(
+      serverId,
+      body as any,
+      clientManager,
+      mode,
+    );
     if (!response) {
       // Notification → 202 Accepted
       return c.body("Accepted", 202, { "Access-Control-Allow-Origin": "*" });
@@ -188,11 +213,20 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
 
     // Reuse the JSON-RPC handling via bridge
     try {
-      const responseMessage = await handleJsonRpc(serverId, { id, method, params }, c.mcpJamClientManager, mode);
+      const responseMessage = await handleJsonRpc(
+        serverId,
+        { id, method, params },
+        c.mcpJamClientManager,
+        mode,
+      );
       // If there is a JSON-RPC response, emit it over SSE to the client
       if (responseMessage) {
         try {
-          console.log(`[${routePrefix}] emit message`, { key, id: responseMessage.id, method });
+          console.log(`[${routePrefix}] emit message`, {
+            key,
+            id: responseMessage.id,
+            method,
+          });
           sess.send("message", JSON.stringify(responseMessage));
         } catch {}
       }

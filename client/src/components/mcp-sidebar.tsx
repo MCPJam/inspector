@@ -8,7 +8,7 @@ import {
   MessageSquareCode,
   BookOpen,
   FlaskConical,
-  Activity
+  Activity,
 } from "lucide-react";
 
 import { NavMain } from "@/components/sidebar/nav-main";

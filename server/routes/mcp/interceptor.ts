@@ -16,10 +16,10 @@ function withCORS(res: Response): Response {
   headers.set("Access-Control-Expose-Headers", "*");
   headers.set("Vary", "Origin, Access-Control-Request-Headers");
   // Avoid CL+TE conflicts in dev proxies: prefer chunked framing decided by runtime
-  headers.delete('content-length');
-  headers.delete('Content-Length');
-  headers.delete('transfer-encoding');
-  headers.delete('Transfer-Encoding');
+  headers.delete("content-length");
+  headers.delete("Content-Length");
+  headers.delete("transfer-encoding");
+  headers.delete("Transfer-Encoding");
   return new Response(res.body, {
     status: res.status,
     statusText: res.statusText,
@@ -58,11 +58,15 @@ interceptor.post("/create", async (c) => {
       const serverMeta = connected[serverId];
       const cfg: any | undefined = serverMeta?.config;
       if (!cfg || serverMeta?.status !== "connected") {
-        return c.json({ success: false, error: `Server '${serverId}' is not connected` }, 400);
+        return c.json(
+          { success: false, error: `Server '${serverId}' is not connected` },
+          400,
+        );
       }
       if (!finalTarget) {
         if (cfg.url) {
-          finalTarget = typeof cfg.url === "string" ? cfg.url : (cfg.url as URL).toString();
+          finalTarget =
+            typeof cfg.url === "string" ? cfg.url : (cfg.url as URL).toString();
         } else {
           const origin = new URL(c.req.url).origin;
           finalTarget = `${origin}/api/mcp/adapter-http/${encodeURIComponent(serverId)}`;
@@ -70,13 +74,16 @@ interceptor.post("/create", async (c) => {
       }
       // Derive Authorization and custom headers
       const hdrs: Record<string, string> = {};
-      const fromReqInit = cfg.requestInit?.headers as Record<string, string> | undefined;
+      const fromReqInit = cfg.requestInit?.headers as
+        | Record<string, string>
+        | undefined;
       if (fromReqInit) {
         for (const [k, v] of Object.entries(fromReqInit)) {
           if (typeof v === "string") hdrs[k.toLowerCase()] = v;
         }
       }
-      const token: string | undefined = cfg?.oauth?.access_token || cfg?.oauth?.accessToken;
+      const token: string | undefined =
+        cfg?.oauth?.access_token || cfg?.oauth?.accessToken;
       if (token && !hdrs["authorization"]) {
         hdrs["authorization"] = `Bearer ${token}`;
         hdrs["Authorization"] = `Bearer ${token}`; // be generous with casing
@@ -85,13 +92,19 @@ interceptor.post("/create", async (c) => {
     }
 
     if (!finalTarget) {
-      return c.json({ success: false, error: "targetUrl or serverId is required" }, 400);
+      return c.json(
+        { success: false, error: "targetUrl or serverId is required" },
+        400,
+      );
     }
     try {
       const u = new URL(finalTarget);
       if (!["http:", "https:"].includes(u.protocol)) {
         return c.json(
-          { success: false, error: "Only HTTP/HTTPS MCP servers are supported" },
+          {
+            success: false,
+            error: "Only HTTP/HTTPS MCP servers are supported",
+          },
           400,
         );
       }
@@ -140,7 +153,13 @@ interceptor.get("/:id", (c) => {
   const localProxyUrl = `${urlObj.origin}${proxyPath}`;
   const publicProxyUrl = publicOrigin ? `${publicOrigin}${proxyPath}` : null;
   const proxyUrl = publicProxyUrl || localProxyUrl;
-  return c.json({ success: true, ...info, proxyUrl, localProxyUrl, publicProxyUrl });
+  return c.json({
+    success: true,
+    ...info,
+    proxyUrl,
+    localProxyUrl,
+    publicProxyUrl,
+  });
 });
 
 // Clear logs
@@ -206,7 +225,8 @@ interceptor.get("/:id/stream", (c) => {
       Connection: "keep-alive",
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET,POST,HEAD,OPTIONS",
-      "Access-Control-Allow-Headers": "*, Authorization, Content-Type, Accept, Accept-Language",
+      "Access-Control-Allow-Headers":
+        "*, Authorization, Content-Type, Accept, Accept-Language",
       "X-Accel-Buffering": "no",
     },
   });
@@ -276,10 +296,10 @@ async function handleProxy(c: any) {
         "Cache-Control": "no-cache",
         Connection: "keep-alive",
       });
-      headers.delete('content-length');
-      headers.delete('Content-Length');
-      headers.delete('transfer-encoding');
-      headers.delete('Transfer-Encoding');
+      headers.delete("content-length");
+      headers.delete("Content-Length");
+      headers.delete("transfer-encoding");
+      headers.delete("Transfer-Encoding");
       return withCORS(new Response(null, { status: 200, headers }));
     }
     if (req.method === "GET" && wantsSSE && !upstreamLooksLikeSse) {
@@ -295,7 +315,11 @@ async function handleProxy(c: any) {
       const proxyOrigin = host ? `${proto}://${host}` : new URL(req.url).origin;
       const sessionId = crypto.randomUUID();
       // Map session to upstream base URL (stateless POST endpoint)
-      interceptorStore.setSessionEndpoint(id, sessionId, new URL(entry.targetUrl).toString());
+      interceptorStore.setSessionEndpoint(
+        id,
+        sessionId,
+        new URL(entry.targetUrl).toString(),
+      );
       const encoder = new TextEncoder();
       const stream = new ReadableStream<Uint8Array>({
         start(controller) {
@@ -303,21 +327,29 @@ async function handleProxy(c: any) {
           controller.enqueue(encoder.encode(`data: \n\n`));
           const endpoint = `${proxyOrigin}/api/mcp/interceptor/${id}/proxy/messages?sessionId=${sessionId}`;
           // Some clients (Cursor) expect JSON {url: ...}; others (Claude) choke on JSON and use string.
-          const ua = c.req.header('user-agent') || '';
+          const ua = c.req.header("user-agent") || "";
           const isClaude = /claude/i.test(ua) || /anthropic/i.test(ua);
           if (!isClaude) {
             controller.enqueue(encoder.encode(`event: endpoint\n`));
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ url: endpoint })}\n\n`));
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify({ url: endpoint })}\n\n`),
+            );
           }
           controller.enqueue(encoder.encode(`event: endpoint\n`));
           controller.enqueue(encoder.encode(`data: ${endpoint}\n\n`));
           const t = setInterval(() => {
-            try { controller.enqueue(encoder.encode(`: keepalive ${Date.now()}\n\n`)); } catch {}
+            try {
+              controller.enqueue(
+                encoder.encode(`: keepalive ${Date.now()}\n\n`),
+              );
+            } catch {}
           }, 15000);
           (controller as any)._t = t;
         },
         cancel() {
-          try { clearInterval((this as any)._t); } catch {}
+          try {
+            clearInterval((this as any)._t);
+          } catch {}
         },
       });
       {
@@ -328,10 +360,10 @@ async function handleProxy(c: any) {
           "X-Accel-Buffering": "no",
         });
         // Ensure no CL/TE conflict for dev proxies
-        headers.delete('content-length');
-        headers.delete('Content-Length');
-        headers.delete('transfer-encoding');
-        headers.delete('Transfer-Encoding');
+        headers.delete("content-length");
+        headers.delete("Content-Length");
+        headers.delete("transfer-encoding");
+        headers.delete("Transfer-Encoding");
         return withCORS(new Response(stream as any, { headers }));
       }
     }
@@ -352,7 +384,9 @@ async function handleProxy(c: any) {
     // Special-case: if this is our rewritten messages endpoint, forward to the original upstream endpoint
     if (trailing.startsWith("/messages")) {
       const sessionId = new URL(req.url).searchParams.get("sessionId") || "";
-      const mapped = sessionId ? interceptorStore.getSessionEndpoint(id, sessionId) : undefined;
+      const mapped = sessionId
+        ? interceptorStore.getSessionEndpoint(id, sessionId)
+        : undefined;
       if (mapped) {
         upstreamUrl = new URL(mapped);
       } else {
@@ -400,15 +434,15 @@ async function handleProxy(c: any) {
 
   // Ensure Accept advertises both JSON and SSE for servers that require it (e.g., HF/Cloudflare)
   try {
-    const acc = (filtered.get('accept') || '').toLowerCase();
-    const hasJson = acc.includes('application/json');
-    const hasSse = acc.includes('text/event-stream');
+    const acc = (filtered.get("accept") || "").toLowerCase();
+    const hasJson = acc.includes("application/json");
+    const hasSse = acc.includes("text/event-stream");
     if (!hasJson || !hasSse) {
       const parts: string[] = [];
-      if (!hasJson) parts.push('application/json');
-      if (!hasSse) parts.push('text/event-stream');
-      const suffix = parts.join(', ');
-      filtered.set('accept', acc ? `${acc}, ${suffix}` : suffix);
+      if (!hasJson) parts.push("application/json");
+      if (!hasSse) parts.push("text/event-stream");
+      const suffix = parts.join(", ");
+      filtered.set("accept", acc ? `${acc}, ${suffix}` : suffix);
     }
   } catch {}
 
@@ -417,16 +451,18 @@ async function handleProxy(c: any) {
     for (const [key, value] of Object.entries(entry.injectHeaders)) {
       const k = key.toLowerCase();
       if (k === "host" || k === "content-length") continue;
-      if ([
-        "connection",
-        "keep-alive",
-        "transfer-encoding",
-        "upgrade",
-        "proxy-authenticate",
-        "proxy-authorization",
-        "te",
-        "trailer",
-      ].includes(k))
+      if (
+        [
+          "connection",
+          "keep-alive",
+          "transfer-encoding",
+          "upgrade",
+          "proxy-authenticate",
+          "proxy-authorization",
+          "te",
+          "trailer",
+        ].includes(k)
+      )
         continue;
       // Do not override an explicit client Authorization header
       if (k === "authorization" && filtered.has("authorization")) continue;
@@ -449,10 +485,14 @@ async function handleProxy(c: any) {
     const res = await fetch(targetReq);
     const resClone = res.clone();
     const ct = (res.headers.get("content-type") || "").toLowerCase();
-    const isStreaming = ct.includes("text/event-stream") || ct.includes("application/x-ndjson");
+    const isStreaming =
+      ct.includes("text/event-stream") || ct.includes("application/x-ndjson");
     let responseBody: string | undefined;
     try {
-      if (ct.includes("text/event-stream") || ct.includes("application/x-ndjson")) {
+      if (
+        ct.includes("text/event-stream") ||
+        ct.includes("application/x-ndjson")
+      ) {
         responseBody = "[stream]"; // avoid draining the stream
       } else {
         responseBody = await resClone.text();
@@ -476,7 +516,9 @@ async function handleProxy(c: any) {
     if (ct.includes("text/event-stream")) {
       const upstreamBody = res.body;
       if (!upstreamBody) {
-        return withCORS(new Response(null, { status: res.status, headers: res.headers }));
+        return withCORS(
+          new Response(null, { status: res.status, headers: res.headers }),
+        );
       }
       const encoder = new TextEncoder();
       const decoder = new TextDecoder();
@@ -495,14 +537,20 @@ async function handleProxy(c: any) {
         if (originHeader && /^https:/i.test(originHeader)) reqProto = "https";
       }
       if (!reqProto) reqProto = "http";
-      const proxyOrigin = reqHost ? `${reqProto}://${reqHost}` : new URL(c.req.url).origin;
+      const proxyOrigin = reqHost
+        ? `${reqProto}://${reqHost}`
+        : new URL(c.req.url).origin;
       // Prefer the resolved upstream response URL; fall back to request URL
       let upstreamOrigin = (() => {
         try {
           const u = new URL((res as any).url || upstreamUrl.toString());
           return `${u.protocol}//${u.host}`;
         } catch {
-          try { return new URL(entry.targetUrl).origin; } catch { return ""; }
+          try {
+            return new URL(entry.targetUrl).origin;
+          } catch {
+            return "";
+          }
         }
       })();
       const rewriteStream = new ReadableStream<Uint8Array>({
@@ -534,7 +582,8 @@ async function handleProxy(c: any) {
                       endpointUrl =
                         obj?.url ||
                         obj?.endpoint?.url ||
-                        (obj?.type === "endpoint" && (obj?.data?.url || obj?.data));
+                        (obj?.type === "endpoint" &&
+                          (obj?.data?.url || obj?.data));
                     }
                   } catch {}
                   if (!endpointUrl) {
@@ -546,16 +595,34 @@ async function handleProxy(c: any) {
                   }
                   if (endpointUrl) {
                     try {
-                      const u = new URL(endpointUrl, upstreamOrigin || undefined);
-                      const sessionId = u.searchParams.get("sessionId") || u.searchParams.get("sid") || "";
+                      const u = new URL(
+                        endpointUrl,
+                        upstreamOrigin || undefined,
+                      );
+                      const sessionId =
+                        u.searchParams.get("sessionId") ||
+                        u.searchParams.get("sid") ||
+                        "";
                       if (sessionId) {
-                        interceptorStore.setSessionEndpoint(id, sessionId, u.toString());
-                        try { console.log("[proxy] mapped session", { id, sessionId, upstream: u.toString() }); } catch {}
+                        interceptorStore.setSessionEndpoint(
+                          id,
+                          sessionId,
+                          u.toString(),
+                        );
+                        try {
+                          console.log("[proxy] mapped session", {
+                            id,
+                            sessionId,
+                            upstream: u.toString(),
+                          });
+                        } catch {}
                       }
                       const proxyEndpoint = `${proxyOrigin}${proxyBasePath}/messages${u.search}`;
                       // Emit a single endpoint event with a plain string URL (most compatible)
                       controller.enqueue(encoder.encode(`event: endpoint\n`));
-                      controller.enqueue(encoder.encode(`data: ${proxyEndpoint}\n\n`));
+                      controller.enqueue(
+                        encoder.encode(`data: ${proxyEndpoint}\n\n`),
+                      );
                       // Reset current event buffer since we emitted a translated event
                       currentEventData = [];
                       continue; // skip original data line
@@ -597,27 +664,39 @@ async function handleProxy(c: any) {
             }
             if (buffer.length) controller.enqueue(encoder.encode(buffer));
           } finally {
-            try { controller.close(); } catch {}
+            try {
+              controller.close();
+            } catch {}
           }
         },
       });
       const headers = new Headers(res.headers);
       // For streaming responses, do not send Content-Length; Node will use chunked framing.
-      headers.delete('content-length');
-      headers.delete('Content-Length');
+      headers.delete("content-length");
+      headers.delete("Content-Length");
       // Let the runtime decide Transfer-Encoding; keep-alive semantics for SSE
-      headers.delete('transfer-encoding');
-      headers.delete('Transfer-Encoding');
-      headers.set('Cache-Control', 'no-cache');
-      headers.set('Connection', 'keep-alive');
-      return withCORS(new Response(rewriteStream as any, { status: res.status, statusText: res.statusText, headers }));
+      headers.delete("transfer-encoding");
+      headers.delete("Transfer-Encoding");
+      headers.set("Cache-Control", "no-cache");
+      headers.set("Connection", "keep-alive");
+      return withCORS(
+        new Response(rewriteStream as any, {
+          status: res.status,
+          statusText: res.statusText,
+          headers,
+        }),
+      );
     }
 
     // Non-SSE: passthrough (avoid CL+TE conflict) — always drop Content-Length
     const nonSseHeaders = new Headers(res.headers);
-    nonSseHeaders.delete('content-length');
-    nonSseHeaders.delete('Content-Length');
-    const passthrough = new Response(res.body, { status: res.status, statusText: res.statusText, headers: nonSseHeaders });
+    nonSseHeaders.delete("content-length");
+    nonSseHeaders.delete("Content-Length");
+    const passthrough = new Response(res.body, {
+      status: res.status,
+      statusText: res.statusText,
+      headers: nonSseHeaders,
+    });
     return withCORS(passthrough);
   } catch (error) {
     const body = JSON.stringify({ error: String(error) });
@@ -630,7 +709,12 @@ async function handleProxy(c: any) {
       headers: { "content-type": "application/json" },
       body,
     });
-    return withCORS(new Response(body, { status: 500, headers: { "Content-Type": "application/json" } }));
+    return withCORS(
+      new Response(body, {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
   }
 }
 

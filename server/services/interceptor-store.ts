@@ -41,10 +41,15 @@ type InterceptorEntry = {
 
 class InterceptorStore {
   private interceptors: Map<string, InterceptorEntry> = new Map();
-  private sessionIndex: Map<string, { interceptorId: string; url: string }> = new Map();
+  private sessionIndex: Map<string, { interceptorId: string; url: string }> =
+    new Map();
   private byServer: Map<string, Set<string>> = new Map();
 
-  create(targetUrl: string, injectHeaders?: Record<string, string>, serverId?: string) {
+  create(
+    targetUrl: string,
+    injectHeaders?: Record<string, string>,
+    serverId?: string,
+  ) {
     // Use a longer, hard-to-guess id (32 hex chars)
     const id = randomUUID().replace(/-/g, "");
     const entry: InterceptorEntry = {
@@ -124,7 +129,9 @@ class InterceptorStore {
     return e?.sessionEndpoints.get(sessionId);
   }
 
-  getSessionMapping(sessionId: string): { interceptorId: string; url: string } | undefined {
+  getSessionMapping(
+    sessionId: string,
+  ): { interceptorId: string; url: string } | undefined {
     return this.sessionIndex.get(sessionId);
   }
 
@@ -133,8 +140,12 @@ class InterceptorStore {
     if (!e) return false;
     // Close and remove subscribers
     for (const sub of Array.from(e.subscribers)) {
-      try { sub.send({ type: "closed" }); } catch {}
-      try { sub.close(); } catch {}
+      try {
+        sub.send({ type: "closed" });
+      } catch {}
+      try {
+        sub.close();
+      } catch {}
     }
     e.subscribers.clear();
     // Remove session mappings for this interceptor

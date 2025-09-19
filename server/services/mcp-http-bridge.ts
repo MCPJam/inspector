@@ -46,7 +46,10 @@ function toJsonSchemaMaybe(schema: any): any {
   try {
     if (schema && typeof schema === "object") {
       // Detect Zod schema heuristically
-      if (schema instanceof z.ZodType || ("_def" in schema && "parse" in schema)) {
+      if (
+        schema instanceof z.ZodType ||
+        ("_def" in schema && "parse" in schema)
+      ) {
         return zodToJsonSchema(schema as z.ZodType<any>);
       }
     }
@@ -123,21 +126,28 @@ export async function handleJsonRpc(
             };
             return respond({ result });
           }
-          return respond({ error: { code: -32000, message: e?.message || String(e) } });
+          return respond({
+            error: { code: -32000, message: e?.message || String(e) },
+          });
         }
       }
       case "resources/list": {
-        const resources = clientManager.getResourcesForServer(serverId).map((r) => ({
-          uri: r.uri,
-          name: r.name,
-          description: r.description,
-          mimeType: r.mimeType,
-        }));
+        const resources = clientManager
+          .getResourcesForServer(serverId)
+          .map((r) => ({
+            uri: r.uri,
+            name: r.name,
+            description: r.description,
+            mimeType: r.mimeType,
+          }));
         return respond({ result: { resources } });
       }
       case "resources/read": {
         try {
-          const content = await clientManager.getResource(params?.uri, serverId);
+          const content = await clientManager.getResource(
+            params?.uri,
+            serverId,
+          );
           if (mode === "manager") {
             const result = {
               contents: [
@@ -156,13 +166,19 @@ export async function handleJsonRpc(
           // adapter mode returns raw content
           return respond({ result: content });
         } catch (e: any) {
-          return respond({ error: { code: -32000, message: e?.message || String(e) } });
+          return respond({
+            error: { code: -32000, message: e?.message || String(e) },
+          });
         }
       }
       case "prompts/list": {
         const prompts = clientManager
           .getPromptsForServer(serverId)
-          .map((p) => ({ name: p.name, description: p.description, arguments: p.arguments }));
+          .map((p) => ({
+            name: p.name,
+            description: p.description,
+            arguments: p.arguments,
+          }));
         return respond({ result: { prompts } });
       }
       case "prompts/get": {
@@ -174,7 +190,8 @@ export async function handleJsonRpc(
           );
           if (mode === "manager") {
             const result = {
-              description: (content as any)?.description || `Prompt: ${params?.name}`,
+              description:
+                (content as any)?.description || `Prompt: ${params?.name}`,
               messages: [
                 {
                   role: "user",
@@ -193,7 +210,9 @@ export async function handleJsonRpc(
           // adapter mode returns raw content
           return respond({ result: content });
         } catch (e: any) {
-          return respond({ error: { code: -32000, message: e?.message || String(e) } });
+          return respond({
+            error: { code: -32000, message: e?.message || String(e) },
+          });
         }
       }
       case "roots/list": {
@@ -203,11 +222,14 @@ export async function handleJsonRpc(
         return respond({ result: { success: true } });
       }
       default: {
-        return respond({ error: { code: -32601, message: `Method not implemented: ${method}` } });
+        return respond({
+          error: { code: -32601, message: `Method not implemented: ${method}` },
+        });
       }
     }
   } catch (e: any) {
-    return respond({ error: { code: -32000, message: e?.message || String(e) } });
+    return respond({
+      error: { code: -32000, message: e?.message || String(e) },
+    });
   }
 }
-
