@@ -83,18 +83,19 @@ The test file is an array of tests.
 ### Run MCP Eval
 
 ```bash
-mcpjam evals run --tests tests.json --environment environment.json --api-key llms.json
+mcpjam evals run --tests tests.json --environment environment.json --llms llms.json
 ```
 
 #### Short flags
 
 ```bash
-mcpjam evals run -t tests.json -e environment.json -a llms.json
+mcpjam evals run -t tests.json -e environment.json -l llms.json
 ```
 
 #### CLI Options
 
 - `--tests, -t <file>`: Path to the tests configuration file (required)
 - `--environment, -e <file>`: Path to the environment configuration file (required)
+- `--llms, -l <file>`: Path to the LLM API key configuration file
 - `--help, -h`: Show help information
 - `--version, -V`: Display version number
