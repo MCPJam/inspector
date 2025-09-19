@@ -9,7 +9,7 @@ import tests from "./tests.ts";
 import oauth from "./oauth";
 import exporter from "./export";
 import interceptor from "./interceptor";
-import adapterHttp from "./adapter-http";
+import { adapterHttp, managerHttp } from "./http-adapters";
 
 const mcp = new Hono();
 
@@ -52,7 +52,8 @@ mcp.route("/export", exporter);
 // Interceptor endpoints - create proxy and stream logs
 mcp.route("/interceptor", interceptor);
 
-// Minimal in-process HTTP adapter for STDIO servers (stateless POST-only)
+// Unified HTTP bridges (SSE + POST) for connected servers
 mcp.route("/adapter-http", adapterHttp);
+mcp.route("/manager-http", managerHttp);
 
 export default mcp;

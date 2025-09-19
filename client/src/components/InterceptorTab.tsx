@@ -378,7 +378,7 @@ export function InterceptorTab({
                     { selectedServer !== "none" ? `Create proxy for ${connectedServerConfigs[selectedServer]?.name}` : "No server selected"}
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    {selectedServer ? "Create a local HTTP proxy URL to your connected server and get a ready-to-copy MCP config snippet." : "Select a server above to create a proxy"}
+                    {selectedServer ? "Create a local HTTP proxy URL to your connected server" : "Select a server above to create a proxy"}
                   </div>
                 </div>
                 <div className="shrink-0 self-start sm:self-auto">
