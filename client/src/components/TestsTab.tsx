@@ -823,80 +823,6 @@ export function TestsTab({
                   )}
                 </button>
               </div>
-
-              {/* Tracing Panel */}
-              <div className="border-t border-border p-6">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-xs font-semibold">Trace</h3>
-                  {traceEvents.length > 0 && (
-                    <Badge variant="secondary" className="text-xs">
-                      {traceEvents.length} steps
-                    </Badge>
-                  )}
-                </div>
-                {traceEvents.length === 0 ? (
-                  <div className="text-xs text-muted-foreground">
-                    No trace yet. Run a test to see agent steps and tool
-                    activity.
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {traceEvents.map((evt) => (
-                      <div
-                        key={evt.step}
-                        className="rounded-md border border-border p-3 bg-background"
-                      >
-                        <div className="flex items-center justify-between mb-1">
-                          <div className="text-[10px] font-semibold">
-                            Step {evt.step}
-                          </div>
-                        </div>
-                        {evt.text && (
-                          <div className="text-xs mb-2 whitespace-pre-wrap">
-                            {evt.text}
-                          </div>
-                        )}
-                        {evt.toolCalls && evt.toolCalls.length > 0 && (
-                          <div className="mb-1">
-                            <div className="text-[10px] font-semibold mb-1">
-                              Tool Calls
-                            </div>
-                            <div className="flex flex-wrap gap-1">
-                              {evt.toolCalls.map((c, i) => (
-                                <code
-                                  key={i}
-                                  className="font-mono text-[10px] bg-muted px-1 py-0.5 rounded border border-border"
-                                >
-                                  {c.name}
-                                </code>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                        {evt.toolResults && evt.toolResults.length > 0 && (
-                          <div className="mt-2">
-                            <div className="text-[10px] font-semibold mb-1">
-                              Tool Results
-                            </div>
-                            <div className="flex flex-col gap-2">
-                              {evt.toolResults.map((r, i) => (
-                                <div
-                                  key={i}
-                                  className="text-[10px] text-muted-foreground truncate"
-                                >
-                                  {r.error
-                                    ? `Error: ${r.error}`
-                                    : "Result received"}
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
               <ScrollArea className="h-[calc(100%-48px)]">
                 <div className="p-2 space-y-1">
                   {leftTab === "tests" ? (
@@ -1331,6 +1257,80 @@ export function TestsTab({
                 ) : (
                   <div className="text-xs text-muted-foreground">
                     Run a test to see results here
+                  </div>
+                )}
+              </div>
+
+              {/* Tracing Panel */}
+              <div className="border-t border-border p-6">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-xs font-semibold">Trace</h3>
+                  {traceEvents.length > 0 && (
+                    <Badge variant="secondary" className="text-xs">
+                      {traceEvents.length} steps
+                    </Badge>
+                  )}
+                </div>
+                {traceEvents.length === 0 ? (
+                  <div className="text-xs text-muted-foreground">
+                    No trace yet. Run a test to see agent steps and tool
+                    activity.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {traceEvents.map((evt) => (
+                      <div
+                        key={evt.step}
+                        className="rounded-md border border-border p-3 bg-background"
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="text-[10px] font-semibold">
+                            Step {evt.step}
+                          </div>
+                        </div>
+                        {evt.text && (
+                          <div className="text-xs mb-2 whitespace-pre-wrap">
+                            {evt.text}
+                          </div>
+                        )}
+                        {evt.toolCalls && evt.toolCalls.length > 0 && (
+                          <div className="mb-1">
+                            <div className="text-[10px] font-semibold mb-1">
+                              Tool Calls
+                            </div>
+                            <div className="flex flex-wrap gap-1">
+                              {evt.toolCalls.map((c, i) => (
+                                <code
+                                  key={i}
+                                  className="font-mono text-[10px] bg-muted px-1 py-0.5 rounded border border-border"
+                                >
+                                  {c.name}
+                                </code>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {evt.toolResults && evt.toolResults.length > 0 && (
+                          <div className="mt-2">
+                            <div className="text-[10px] font-semibold mb-1">
+                              Tool Results
+                            </div>
+                            <div className="flex flex-col gap-2">
+                              {evt.toolResults.map((r, i) => (
+                                <div
+                                  key={i}
+                                  className="text-[10px] text-muted-foreground truncate"
+                                >
+                                  {r.error
+                                    ? `Error: ${r.error}`
+                                    : "Result received"}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
