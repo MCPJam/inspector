@@ -17,6 +17,15 @@ interface ElicitationRequest {
   timestamp: string;
 }
 
+interface TraceEvent {
+  id: string;
+  step: number;
+  text?: string;
+  toolCalls?: Array<{ name: string; params: Record<string, unknown> }>;
+  toolResults?: Array<{ result: unknown; error?: string }>;
+  timestamp: string;
+}
+
 interface UseChatOptions {
   initialMessages?: ChatMessage[];
   systemPrompt?: string;
@@ -53,6 +62,7 @@ export function useChat(options: UseChatOptions = {}) {
   const [elicitationRequest, setElicitationRequest] =
     useState<ElicitationRequest | null>(null);
   const [elicitationLoading, setElicitationLoading] = useState(false);
+  const [traceEvents, setTraceEvents] = useState<TraceEvent[]>([]);
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesRef = useRef(state.messages);
   useEffect(() => {
@@ -231,7 +241,15 @@ export function useChat(options: UseChatOptions = {}) {
           break;
         }
         case "trace_step": {
-          // Optional: hook for UI tracing; currently ignored
+          const traceEvent: TraceEvent = {
+            id: `${evt.step}-${Date.now()}`,
+            step: evt.step,
+            text: evt.text,
+            toolCalls: evt.toolCalls,
+            toolResults: evt.toolResults,
+            timestamp: evt.timestamp,
+          };
+          setTraceEvents((prev) => [...prev, traceEvent]);
           break;
         }
         case "error": {
@@ -360,6 +378,11 @@ export function useChat(options: UseChatOptions = {}) {
         error: undefined,
       }));
 
+      // Only clear trace events if this is the first message (new conversation)
+      if (state.messages.length === 0) {
+        setTraceEvents([]);
+      }
+
       if (onMessageSent) {
         onMessageSent(userMessage);
       }
@@ -448,6 +471,7 @@ export function useChat(options: UseChatOptions = {}) {
       error: undefined,
     }));
     setInput("");
+    setTraceEvents([]);
   }, []);
 
   const handleElicitationResponse = useCallback(
@@ -531,6 +555,7 @@ export function useChat(options: UseChatOptions = {}) {
     hasValidApiKey: Boolean(currentApiKey),
     elicitationRequest,
     elicitationLoading,
+    traceEvents,
 
     // Actions
     sendMessage,
