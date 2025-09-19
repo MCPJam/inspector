@@ -1,4 +1,6 @@
 import { MCPJamClientManager } from "./mcpjam-client-manager";
+import { z } from "zod";
+import { zodToJsonSchema } from "zod-to-json-schema";
 
 // Unify JSON-RPC handling used by adapter-http and manager-http routes
 // while preserving their minor response-shape differences.
@@ -40,6 +42,18 @@ export function buildInitializeResult(serverId: string, mode: BridgeMode) {
   };
 }
 
+function toJsonSchemaMaybe(schema: any): any {
+  try {
+    if (schema && typeof schema === "object") {
+      // Detect Zod schema heuristically
+      if (schema instanceof z.ZodType || ("_def" in schema && "parse" in schema)) {
+        return zodToJsonSchema(schema as z.ZodType<any>);
+      }
+    }
+  } catch {}
+  return schema;
+}
+
 export async function handleJsonRpc(
   serverId: string,
   body: JsonRpcBody,
@@ -70,8 +84,8 @@ export async function handleJsonRpc(
         const tools = Object.keys(toolsets).map((name) => ({
           name,
           description: (toolsets as any)[name].description,
-          inputSchema: (toolsets as any)[name].inputSchema,
-          outputSchema: (toolsets as any)[name].outputSchema,
+          inputSchema: toJsonSchemaMaybe((toolsets as any)[name].inputSchema),
+          outputSchema: toJsonSchemaMaybe((toolsets as any)[name].outputSchema),
         }));
         return respond({ result: { tools } });
       }
