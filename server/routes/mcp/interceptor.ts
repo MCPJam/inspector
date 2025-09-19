@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import { interceptorStore } from "../../services/interceptor-store";
-import { ensureTunnel } from "../../services/tunnel";
 
 const interceptor = new Hono();
 
@@ -50,7 +49,6 @@ interceptor.post("/create", async (c) => {
       (body?.serverId as string | undefined) ||
       (body?.managerServerId as string | undefined);
     const urlObj = new URL(c.req.url);
-    const useTunnel = urlObj.searchParams.get("tunnel") === "true"; // Opt-in only
     let finalTarget: string | undefined = targetUrl;
     let injectHeaders: Record<string, string> | undefined;
 
@@ -105,17 +103,8 @@ interceptor.post("/create", async (c) => {
 
     // Compute local origin and optional public HTTPS origin via tunnel
     const localOrigin = urlObj.origin;
-    let publicOrigin: string | null = null;
-    if (useTunnel) {
-      // Always tunnel to the Node API port, not the Vite dev server.
-      const port = parseInt(process.env.PORT || "3000", 10) || 3000;
-      try {
-        publicOrigin = await ensureTunnel(port);
-      } catch {}
-    } else {
-      // Explicitly avoid using any existing tunnel for HTTP-only mode
-      publicOrigin = null;
-    }
+    // Tunneling disabled: always advertise local origin only
+    const publicOrigin: string | null = null;
 
     const proxyPath = `/api/mcp/interceptor/${entry.id}/proxy`;
     const localProxyUrl = `${localOrigin}${proxyPath}`;
