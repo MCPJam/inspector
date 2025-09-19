@@ -1,12 +1,12 @@
 import { useState, useEffect, useMemo } from "react";
 import { useLogger } from "@/hooks/use-logger";
-import { Card, CardContent } from "./ui/card";
 import {
   ResizablePanelGroup,
   ResizablePanel,
   ResizableHandle,
 } from "./ui/resizable";
 import { Wrench } from "lucide-react";
+import { EmptyState } from "./ui/empty-state";
 import "react18-json-view/src/style.css";
 import type { MCPToolType } from "@mastra/core/mcp";
 import { ElicitationDialog } from "./ElicitationDialog";
@@ -508,13 +508,11 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
 
   if (!serverConfig) {
     return (
-      <Card>
-        <CardContent className="pt-6">
-          <p className="text-center text-muted-foreground font-medium">
-            Please select a server to view tools
-          </p>
-        </CardContent>
-      </Card>
+      <EmptyState
+        icon={Wrench}
+        title="No Server Selected"
+        description="Connect to an MCP server to explore and test its available tools."
+      />
     );
   }
 

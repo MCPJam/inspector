@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import { Card, CardContent } from "./ui/card";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
@@ -18,6 +17,7 @@ import {
   ResizableHandle,
 } from "./ui/resizable";
 import { MessageSquare, Play, RefreshCw, ChevronRight } from "lucide-react";
+import { EmptyState } from "./ui/empty-state";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import { MastraMCPServerDefinition } from "@mastra/mcp";
@@ -193,13 +193,11 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
 
   if (!serverConfig || !serverName) {
     return (
-      <Card>
-        <CardContent className="pt-6">
-          <p className="text-center text-muted-foreground font-medium">
-            Please select a server to view prompts
-          </p>
-        </CardContent>
-      </Card>
+      <EmptyState
+        icon={MessageSquare}
+        title="No Server Selected"
+        description="Connect to an MCP server to explore and test its available prompts."
+      />
     );
   }
 
