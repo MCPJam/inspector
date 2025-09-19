@@ -37,11 +37,6 @@ const navigationSections = [
         icon: MessageCircle,
       },
       {
-        title: "Interceptor",
-        url: "#interceptor",
-        icon: Glasses,
-      },
-      {
         title: "Tracing",
         url: "#tracing",
         icon: Activity,
@@ -74,7 +69,6 @@ const navigationSections = [
       },
     ],
   },
-  // New bottom section with Evals (beta)
   {
     id: "evals",
     items: [
@@ -82,6 +76,11 @@ const navigationSections = [
         title: "Evals (beta)",
         url: "#evals",
         icon: FlaskConical,
+      },
+      {
+        title: "Interceptor (beta)",
+        url: "#interceptor",
+        icon: Glasses,
       },
     ],
   },
