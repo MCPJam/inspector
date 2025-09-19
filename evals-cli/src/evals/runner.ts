@@ -64,7 +64,6 @@ export const runEvals = async (
       if (system) {
         Logger.conversation({
           messages: [{ role: "system", content: system }],
-          indentLevel: 2,
         });
       }
 
@@ -73,7 +72,7 @@ export const runEvals = async (
         content: query,
       };
 
-      Logger.conversation({ messages: [userMessage], indentLevel: 2 });
+      Logger.conversation({ messages: [userMessage] });
 
       const messageHistory: ModelMessage[] = [userMessage];
       const toolsCalled: string[] = [];
@@ -93,7 +92,7 @@ export const runEvals = async (
               case "text-delta":
               case "reasoning-delta": {
                 if (!assistantStreaming) {
-                  Logger.beginStreamingMessage("assistant", 2);
+                  Logger.beginStreamingMessage("assistant");
                   assistantStreaming = true;
                 }
                 Logger.appendStreamingText(chunk.chunk.text);
@@ -107,7 +106,6 @@ export const runEvals = async (
                 Logger.streamToolCall(
                   chunk.chunk.toolName,
                   chunk.chunk.input,
-                  3,
                 );
                 break;
               }
@@ -115,7 +113,6 @@ export const runEvals = async (
                 Logger.streamToolResult(
                   chunk.chunk.toolName,
                   chunk.chunk.output,
-                  3,
                 );
                 break;
               }
@@ -163,13 +160,11 @@ export const runEvals = async (
         missing: evaluation.missing,
         unexpected: evaluation.unexpected,
         passed: evaluation.passed,
-        indentLevel: 2,
       });
 
       Logger.testRunResult({
         passed: evaluation.passed,
         durationMs: Date.now() - runStartedAt,
-        indentLevel: 2,
       });
 
       if (evaluation.passed) {

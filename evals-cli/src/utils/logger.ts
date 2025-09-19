@@ -15,12 +15,10 @@ type ToolSummaryOptions = {
   passed: boolean;
   missing?: string[];
   unexpected?: string[];
-  indentLevel?: number;
 };
 
 type ConversationOptions = {
   messages: ModelMessage[];
-  indentLevel?: number;
 };
 
 type ToolCallSummary = {
@@ -31,7 +29,6 @@ type ToolCallSummary = {
 type RunResultOptions = {
   passed: boolean;
   durationMs: number;
-  indentLevel?: number;
 };
 
 type RunStartOptions = {
@@ -40,7 +37,6 @@ type RunStartOptions = {
   provider?: string;
   model?: string;
   temperature?: number;
-  indentLevel?: number;
 };
 
 const MAX_CONTENT_LENGTH = 160;
@@ -48,7 +44,6 @@ const MAX_CONTENT_LENGTH = 160;
 export class Logger {
   private static activeStream: {
     role: ModelMessage["role"];
-    indentLevel: number;
   } | null = null;
 
   private static closeActiveStream(): void {
@@ -60,29 +55,27 @@ export class Logger {
 
   private static startStream(
     role: ModelMessage["role"],
-    indentLevel: number,
   ): void {
     this.closeActiveStream();
-    const prefix = "  ".repeat(indentLevel) + this.colorRole(role) + ": ";
+    const prefix = this.colorRole(role) + ": ";
     process.stdout.write(prefix);
-    this.activeStream = { role, indentLevel };
+    this.activeStream = { role };
   }
 
   private static appendToStream(text: string): void {
     if (!this.activeStream) {
-      this.startStream("assistant", 2);
+      this.startStream("assistant");
     }
     process.stdout.write(text);
   }
 
-  private static logLine(text: string, indentLevel = 0): void {
+  private static logLine(text: string): void {
     this.closeActiveStream();
-    const prefix = "  ".repeat(indentLevel);
-    console.log(prefix + text);
+    console.log(text);
   }
 
-  private static logMultiline(text: string, indentLevel = 0): void {
-    text.split("\n").forEach((line) => this.logLine(line, indentLevel));
+  private static logMultiline(text: string): void {
+    text.split("\n").forEach((line) => this.logLine(line));
   }
 
   static suiteIntro(options: { testCount: number; startedAt: Date }): void {
@@ -111,29 +104,38 @@ export class Logger {
     this.logLine("");
   }
 
-  static initiateTestMessage(serverCount: number, toolCount: number, serverNames: string[], testCount: number): void {
+  static initiateTestMessage(
+    serverCount: number,
+    toolCount: number,
+    serverNames: string[],
+    testCount: number,
+  ): void {
     this.logLine("");
     this.logLine(chalk.bold.blue("Running tests"));
-    
-    // Server connection summary
+
     const serverLabel = serverCount === 1 ? "server" : "servers";
     const serverList = serverNames.length > 0 ? serverNames.join(", ") : "none";
-    this.logLine(`Connected to ${chalk.white.bold(serverCount)} ${serverLabel}: ${chalk.gray(serverList)}`);
-    
-    // Tool availability
+    this.logLine(
+      `Connected to ${chalk.white.bold(serverCount)} ${serverLabel}: ${chalk.gray(serverList)}`,
+    );
+
     const toolLabel = toolCount === 1 ? "tool" : "tools";
     this.logLine(`Found ${chalk.white.bold(toolCount)} total ${toolLabel}`);
-    
-    // Test execution plan
+
     const testLabel = testCount === 1 ? "test" : "tests";
     this.logLine(`Running ${chalk.white.bold(testCount)} ${testLabel}`);
-    
+
     this.logLine("");
   }
 
-  static logTestGroupTitle(testNumber: number, testName: string, modelProvider: string, modelId: string): void {
-    this.logLine(chalk.white.bold(`Test ${testNumber}: ${testName}`));
-    this.logLine(chalk.gray(`Using ${modelProvider}:${modelId}`))
+  static logTestGroupTitle(
+    testNumber: number,
+    testName: string,
+    modelProvider: string,
+    modelId: string,
+  ): void {
+    this.logLine(chalk.cyan.bold(`Test ${testNumber}: ${testName}`));
+    this.logLine(chalk.gray(`Using ${modelProvider}:${modelId}`));
     this.logLine("");
   }
 
@@ -141,103 +143,65 @@ export class Logger {
     const {
       runNumber,
       totalRuns,
-      provider,
-      model,
-      temperature,
-      indentLevel = 1,
     } = options;
+
     const parts = [`run ${runNumber}/${totalRuns}`];
-    if (provider && model) {
-      parts.push(`${provider}:${model}`);
-    }
-    if (typeof temperature === "number") {
-      parts.push(`temp=${temperature}`);
-    }
-    this.logLine(chalk.gray(parts.join(" • ")), indentLevel);
+    this.logLine(chalk.cyanBright(parts.join(" • ")));
   }
 
   static conversation(options: ConversationOptions): void {
-    const { messages, indentLevel = 2 } = options;
+    const { messages } = options;
 
     this.closeActiveStream();
 
     if (!messages.length) {
-      this.logLine(chalk.dim("(no messages)"), indentLevel);
+      this.logLine(chalk.dim("(no messages)"));
       return;
     }
 
     messages.forEach((message, index) => {
       if (index > 0) {
-        this.closeActiveStream();
-        console.log("");
+        this.logLine("");
       }
 
-      const role = this.colorRole(message.role);
+      const roleLabel = this.colorRole(message.role);
 
       if (message.role === "assistant") {
         const summary = this.summarizeContent(
           message.content as MessageContent,
         );
-        this.logMessageLines(role, summary.textLines, indentLevel);
+
+        this.logMessageLines(roleLabel, summary.textLines);
         summary.toolCalls.forEach((toolCall) => {
-          this.logToolCall(toolCall, indentLevel + 1);
+          this.logToolCall(toolCall);
         });
         return;
       }
 
-      const content = this.formatMessageContent(
+      const formatted = this.formatMessageContent(
         message.content as MessageContent,
       );
-      const lines = content.split("\n");
-      this.logMessageLines(role, lines, indentLevel);
+      const lines = formatted ? formatted.split("\n") : [];
+      this.logMessageLines(roleLabel, lines);
     });
   }
 
-  static toolSummary(options: ToolSummaryOptions): ToolSummaryResult {
+  static toolSummary(options: ToolSummaryOptions) {
     const {
       expected,
       actual,
-      passed,
-      missing: providedMissing,
-      unexpected: providedUnexpected,
-      indentLevel = 2,
     } = options;
-
-    const missing =
-      providedMissing ?? expected.filter((tool) => !actual.includes(tool));
-    const unexpected =
-      providedUnexpected ?? actual.filter((tool) => !expected.includes(tool));
-
-    const lines: string[] = [];
-    lines.push(this.truncate(`Expected: [${expected.join(", ") || "—"}]`));
-    lines.push(this.truncate(`Actual:   [${actual.join(", ") || "—"}]`));
-
-    if (missing.length) {
-      lines.push(this.truncate(`Missing: ${missing.join(", ")}`));
-    }
-
-    if (unexpected.length) {
-      lines.push(this.truncate(`Unexpected: ${unexpected.join(", ")}`));
-    }
-
-    const statusText = passed ? "Status: PASS" : "Status: FAIL";
-    lines.push(statusText);
-
-    const borderColor = passed ? chalk.greenBright : chalk.redBright;
-    const statusColor = passed ? chalk.green : chalk.red;
-    this.renderBox(lines, {
-      borderColor,
-      statusColor,
-      indentLevel,
-    });
-
-    return { missing, unexpected, passed };
+    
+    this.logLine(`Expected: [${expected.join(", ") || "—"}]`);
+    this.logLine(`Actual:   [${actual.join(", ") || "—"}]`);
   }
 
   static testRunResult(options: RunResultOptions): void {
-    const { passed, durationMs, indentLevel = 2 } = options;
+    const { passed, durationMs } = options;
     const status = passed ? chalk.green("PASS") : chalk.red("FAIL");
-    this.logLine(`${status} (${this.formatDuration(durationMs)})`, indentLevel);
+    this.logLine(`${status} (${this.formatDuration(durationMs)})`);
+    this.logLine("");
+    this.logLine("");
   }
 
   static info(message: string): void {
@@ -445,35 +409,33 @@ export class Logger {
   private static logMessageLines(
     roleLabel: string,
     lines: string[],
-    indentLevel: number,
   ): void {
     if (!lines.length) {
-      this.logLine(`${roleLabel}:`, indentLevel);
+      this.logLine(`${roleLabel}:`);
       return;
     }
 
-    this.logLine(`${roleLabel}: ${lines[0]}`, indentLevel);
+    this.logLine(`${roleLabel}: ${lines[0]}`);
     for (let i = 1; i < lines.length; i++) {
-      this.logLine(lines[i] ?? "", indentLevel + 1);
+      this.logLine(lines[i] ?? "");
     }
   }
 
   private static logToolCall(
     toolCall: ToolCallSummary,
-    indentLevel: number,
   ): void {
-    const header = chalk.magentaBright(`[tool-call] ${toolCall.toolName}`);
-    this.logLine(header, indentLevel);
+    const header = chalk.whiteBright(`[tool-call] ${toolCall.toolName}`);
+    this.logLine(header);
+    const jsonArgs = toolCall.args ? JSON.parse(toolCall.args) : null;
     if (toolCall.args) {
-      this.logLine(chalk.gray(this.truncate(toolCall.args)), indentLevel + 1);
+      this.logLine(chalk.gray(this.truncate(toolCall.args)));
     }
   }
 
   static beginStreamingMessage(
     role: ModelMessage["role"],
-    indentLevel = 2,
   ): void {
-    this.startStream(role, indentLevel);
+    this.startStream(role);
   }
 
   static appendStreamingText(text: string): void {
@@ -490,26 +452,23 @@ export class Logger {
   static streamToolCall(
     toolName: string,
     args: unknown,
-    indentLevel = 3,
   ): void {
     const serializedArgs =
       args === undefined ? undefined : this.truncate(this.stringify(args));
     this.closeActiveStream();
-    this.logToolCall({ toolName, args: serializedArgs }, indentLevel);
+    this.logToolCall({ toolName, args: serializedArgs });
   }
 
   static streamToolResult(
     toolName: string,
     output: unknown,
-    indentLevel = 3,
   ): void {
     this.closeActiveStream();
-    const header = chalk.magentaBright(`[tool-result] ${toolName}`);
-    this.logLine(header, indentLevel);
+    const header = chalk.whiteBright(`[tool-result] ${toolName}`);
+    this.logLine(header);
     if (output !== undefined) {
       this.logLine(
         chalk.gray(this.truncate(this.stringify(output))),
-        indentLevel + 1,
       );
     }
   }
@@ -517,14 +476,12 @@ export class Logger {
   static streamToolError(
     toolName: string,
     error: unknown,
-    indentLevel = 3,
   ): void {
     this.closeActiveStream();
-    const header = chalk.redBright(`[tool-error] ${toolName}`);
-    this.logLine(header, indentLevel);
+    const header = chalk.whiteBright(`[tool-error] ${toolName}`);
+    this.logLine(header);
     this.logLine(
       chalk.red(this.truncate(this.stringify(error ?? "Unknown error"))),
-      indentLevel + 1,
     );
   }
 
@@ -533,18 +490,17 @@ export class Logger {
     options: {
       borderColor: (text: string) => string;
       statusColor: (text: string) => string;
-      indentLevel: number;
     },
   ): void {
     if (!lines.length) {
       return;
     }
 
-    const { borderColor, statusColor, indentLevel } = options;
+    const { borderColor, statusColor } = options;
     const statusIndex = lines.findIndex((line) => line.startsWith("Status:"));
     const width = lines.reduce((max, line) => Math.max(max, line.length), 0);
     const horizontal = borderColor(`+${"-".repeat(width + 2)}+`);
-    this.logLine(horizontal, indentLevel);
+    this.logLine(horizontal);
 
     lines.forEach((line, index) => {
       const padded = line.padEnd(width, " ");
@@ -554,11 +510,10 @@ export class Logger {
         : chalk.white(padded);
       this.logLine(
         `${borderColor("| ")}${colouredContent}${borderColor(" |")}`,
-        indentLevel,
       );
     });
 
-    this.logLine(horizontal, indentLevel);
+    this.logLine(horizontal);
   }
 
   private static stringify(value: unknown): string {
@@ -603,13 +558,13 @@ export class Logger {
   private static colorRole(role: ModelMessage["role"]): string {
     switch (role) {
       case "user":
-        return chalk.cyan("user");
+        return chalk.bold.whiteBright("user");
       case "assistant":
-        return chalk.cyan("assistant");
+        return chalk.bold.whiteBright("assistant");
       case "tool":
-        return chalk.cyan("tool");
+        return chalk.bold.whiteBright("tool");
       case "system":
-        return chalk.cyan("system");
+        return chalk.bold.whiteBright("system");
       default:
         return chalk.cyan(role);
     }
