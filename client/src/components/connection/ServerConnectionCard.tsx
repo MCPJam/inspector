@@ -190,7 +190,7 @@ export function ServerConnectionCard({
             <div className="flex items-center gap-2">
               <div className="flex items-center gap-2 pr-2 text-xs text-muted-foreground leading-none">
                 <Switch
-                  checked={server.enabled !== false}
+                  checked={server.connectionStatus === "connected"}
                   onCheckedChange={(checked) => {
                     if (!checked) {
                       onDisconnect(server.name);
