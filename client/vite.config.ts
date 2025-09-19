@@ -29,12 +29,6 @@ export default defineConfig({
     force: process.env.FORCE_OPTIMIZE === "true",
   },
   server: {
-    allowedHosts: [
-      // Allow localtunnel HTTPS hostnames, e.g., *.loca.lt
-      ".loca.lt",
-      // Allow ngrok HTTPS hostnames, e.g., *.ngrok-free.app
-      ".ngrok-free.app",
-    ],
     proxy: {
       "/api": {
         target: "http://localhost:3000",
