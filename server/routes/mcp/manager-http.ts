@@ -61,7 +61,7 @@ async function handleManagerHttp(c: any) {
       endpointBase = overrideBase.trim();
     } else {
       // Compute an absolute endpoint based on forwarded headers when present
-      // so direct ngrok/edge access (without the proxy) advertises a reachable URL.
+      // so direct public/edge access (without the proxy) advertises a reachable URL.
       const xfProto = c.req.header("x-forwarded-proto");
       const xfHost = c.req.header("x-forwarded-host");
       const host = xfHost || c.req.header("host");

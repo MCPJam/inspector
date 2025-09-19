@@ -45,7 +45,8 @@ class InterceptorStore {
   private byServer: Map<string, Set<string>> = new Map();
 
   create(targetUrl: string, injectHeaders?: Record<string, string>, serverId?: string) {
-    const id = randomUUID().slice(0, 8);
+    // Use a longer, hard-to-guess id (32 hex chars)
+    const id = randomUUID().replace(/-/g, "");
     const entry: InterceptorEntry = {
       id,
       targetUrl,
