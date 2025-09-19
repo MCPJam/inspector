@@ -209,7 +209,7 @@ export function InterceptorTab({
 
     setIsCreating(true);
     try {
-      const res = await fetch(`${baseUrl}/create?tunnel=true`, {
+      const res = await fetch(`${baseUrl}/create`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ serverId }),

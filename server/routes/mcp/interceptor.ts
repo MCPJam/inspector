@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { interceptorStore } from "../../services/interceptor-store";
-import { ensureTunnel, getTunnelUrl } from "../../services/tunnel";
+import { ensureTunnel } from "../../services/tunnel";
 
 const interceptor = new Hono();
 
@@ -50,7 +50,7 @@ interceptor.post("/create", async (c) => {
       (body?.serverId as string | undefined) ||
       (body?.managerServerId as string | undefined);
     const urlObj = new URL(c.req.url);
-    const useTunnel = true; // Tunnel by default for HTTPS public URLs
+    const useTunnel = urlObj.searchParams.get("tunnel") === "true"; // Opt-in only
     let finalTarget: string | undefined = targetUrl;
     let injectHeaders: Record<string, string> | undefined;
 
@@ -113,7 +113,8 @@ interceptor.post("/create", async (c) => {
         publicOrigin = await ensureTunnel(port);
       } catch {}
     } else {
-      publicOrigin = getTunnelUrl();
+      // Explicitly avoid using any existing tunnel for HTTP-only mode
+      publicOrigin = null;
     }
 
     const proxyPath = `/api/mcp/interceptor/${entry.id}/proxy`;
@@ -144,7 +145,8 @@ interceptor.get("/:id", (c) => {
   const info = interceptorStore.info(id);
   if (!info) return c.json({ success: false, error: "not found" }, 404);
   const urlObj = new URL(c.req.url);
-  const publicOrigin = getTunnelUrl();
+  // HTTP-only mode: do not surface tunnel URL here
+  const publicOrigin = null;
   const proxyPath = `/api/mcp/interceptor/${id}/proxy`;
   const localProxyUrl = `${urlObj.origin}${proxyPath}`;
   const publicProxyUrl = publicOrigin ? `${publicOrigin}${proxyPath}` : null;
@@ -485,7 +487,7 @@ async function handleProxy(c: any) {
       // Accumulate data lines for the current SSE event so we can log full payloads
       let currentEventData: string[] = [];
       const proxyBasePath = `/api/mcp/interceptor/${id}/proxy`;
-      // Derive proxy origin from forwarded headers to preserve the public host
+      // Derive proxy origin from forwarded/host headers for direct access.
       const xfProto = c.req.header("x-forwarded-proto");
       const xfHost = c.req.header("x-forwarded-host");
       const reqHost = xfHost || c.req.header("host");
