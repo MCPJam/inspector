@@ -32,8 +32,9 @@ export const runEvals = async (
   const availableTools = await mcpClient.getTools();
   const serverCount = Object.keys(mcpClientOptions.servers).length;
   const toolCount = Object.keys(availableTools).length;
-  Logger.serverConnection(serverCount, toolCount);
-  Logger.startTests(validatedTests.length);
+  const serverNames = Object.keys(mcpClientOptions.servers);
+  
+  Logger.initiateTestMessage(serverCount, toolCount, serverNames, validatedTests.length);
 
   const vercelTools = convertMastraToolsToVercelTools(availableTools);
 
@@ -41,9 +42,10 @@ export const runEvals = async (
   let passedRuns = 0;
   let failedRuns = 0;
 
+  let testNumber = 1;
   for (const test of validatedTests) {
     const { runs, model, provider, advancedConfig, query } = test;
-    Logger.testTitle(test.title);
+    Logger.logTestGroupTitle(testNumber, test.title, provider, model);
     const numberOfRuns = runs;
     const { system, temperature, toolChoice } = advancedConfig ?? {};
 
@@ -176,6 +178,7 @@ export const runEvals = async (
         failedRuns++;
       }
     }
+    testNumber++;
   }
 
   Logger.suiteComplete({
