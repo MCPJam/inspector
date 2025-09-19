@@ -29,6 +29,11 @@ type ToolCallSummary = {
 type RunResultOptions = {
   passed: boolean;
   durationMs: number;
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+  };
 };
 
 type RunStartOptions = {
@@ -53,9 +58,7 @@ export class Logger {
     }
   }
 
-  private static startStream(
-    role: ModelMessage["role"],
-  ): void {
+  private static startStream(role: ModelMessage["role"]): void {
     this.closeActiveStream();
     const prefix = this.colorRole(role) + ": ";
     process.stdout.write(prefix);
@@ -140,10 +143,7 @@ export class Logger {
   }
 
   static testRunStart(options: RunStartOptions): void {
-    const {
-      runNumber,
-      totalRuns,
-    } = options;
+    const { runNumber, totalRuns } = options;
 
     const parts = [`run ${runNumber}/${totalRuns}`];
     this.logLine(chalk.cyanBright(parts.join(" • ")));
@@ -187,19 +187,35 @@ export class Logger {
   }
 
   static toolSummary(options: ToolSummaryOptions) {
-    const {
-      expected,
-      actual,
-    } = options;
-    
+    const { expected, actual } = options;
+
     this.logLine(`Expected: [${expected.join(", ") || "—"}]`);
     this.logLine(`Actual:   [${actual.join(", ") || "—"}]`);
   }
 
   static testRunResult(options: RunResultOptions): void {
-    const { passed, durationMs } = options;
+    const { passed, durationMs, usage } = options;
     const status = passed ? chalk.green("PASS") : chalk.red("FAIL");
     this.logLine(`${status} (${this.formatDuration(durationMs)})`);
+    if (usage) {
+      const usageParts: string[] = [];
+
+      if (typeof usage.inputTokens === "number") {
+        usageParts.push(`input ${usage.inputTokens}`);
+      }
+
+      if (typeof usage.outputTokens === "number") {
+        usageParts.push(`output ${usage.outputTokens}`);
+      }
+
+      if (typeof usage.totalTokens === "number") {
+        usageParts.push(`total ${usage.totalTokens}`);
+      }
+
+      if (usageParts.length > 0) {
+        this.logLine(chalk.gray(`Tokens • ${usageParts.join(" • ")}`));
+      }
+    }
     this.logLine("");
     this.logLine("");
   }
@@ -406,10 +422,7 @@ export class Logger {
       .filter((line) => line.length > 0);
   }
 
-  private static logMessageLines(
-    roleLabel: string,
-    lines: string[],
-  ): void {
+  private static logMessageLines(roleLabel: string, lines: string[]): void {
     if (!lines.length) {
       this.logLine(`${roleLabel}:`);
       return;
@@ -421,9 +434,7 @@ export class Logger {
     }
   }
 
-  private static logToolCall(
-    toolCall: ToolCallSummary,
-  ): void {
+  private static logToolCall(toolCall: ToolCallSummary): void {
     const header = chalk.whiteBright(`[tool-call] ${toolCall.toolName}`);
     this.logLine(header);
     const jsonArgs = toolCall.args ? JSON.parse(toolCall.args) : null;
@@ -432,9 +443,7 @@ export class Logger {
     }
   }
 
-  static beginStreamingMessage(
-    role: ModelMessage["role"],
-  ): void {
+  static beginStreamingMessage(role: ModelMessage["role"]): void {
     this.startStream(role);
   }
 
@@ -449,34 +458,23 @@ export class Logger {
     this.closeActiveStream();
   }
 
-  static streamToolCall(
-    toolName: string,
-    args: unknown,
-  ): void {
+  static streamToolCall(toolName: string, args: unknown): void {
     const serializedArgs =
       args === undefined ? undefined : this.truncate(this.stringify(args));
     this.closeActiveStream();
     this.logToolCall({ toolName, args: serializedArgs });
   }
 
-  static streamToolResult(
-    toolName: string,
-    output: unknown,
-  ): void {
+  static streamToolResult(toolName: string, output: unknown): void {
     this.closeActiveStream();
     const header = chalk.whiteBright(`[tool-result] ${toolName}`);
     this.logLine(header);
     if (output !== undefined) {
-      this.logLine(
-        chalk.gray(this.truncate(this.stringify(output))),
-      );
+      this.logLine(chalk.gray(this.truncate(this.stringify(output))));
     }
   }
 
-  static streamToolError(
-    toolName: string,
-    error: unknown,
-  ): void {
+  static streamToolError(toolName: string, error: unknown): void {
     this.closeActiveStream();
     const header = chalk.whiteBright(`[tool-error] ${toolName}`);
     this.logLine(header);

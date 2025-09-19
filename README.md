@@ -9,6 +9,7 @@
 <br/>
 
 ## MCP Server Testing Tool
+
 www.mcpjam.com
 
 [![npm version](https://img.shields.io/npm/v/@mcpjam/inspector?style=for-the-badge&color=blue)](https://www.npmjs.com/package/@mcpjam/inspector)
