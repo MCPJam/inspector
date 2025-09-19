@@ -278,17 +278,42 @@ export function InterceptorTab({
     saveToStorage(newProxies);
   };
 
-  const [copySuccess, setCopySuccess] = useState(false);
+  const [copyConfigSuccess, setCopyConfigSuccess] = useState(false);
 
-  const handleCopyUrl = async () => {
-    if (!currentProxy?.proxyUrl) return;
+  // Copy handler for config entry overlay button is below
 
+  const buildConfigSnippet = () => {
+    const name = connectedServerConfigs[selectedServer]?.name || selectedServer || "server";
+    const url = currentProxy?.proxyUrl || "";
+    const lines = [
+      `"${name}": {`,
+      `  "type": "http",`,
+      `  "url": "${url}",`,
+      `  "headers": {}`,
+      `}`,
+    ];
+    return lines.join("\n");
+  };
+
+  const buildConfigObject = () => {
+    const name = connectedServerConfigs[selectedServer]?.name || selectedServer || "server";
+    const url = currentProxy?.proxyUrl || "";
+    return {
+      [name]: {
+        type: "http",
+        url,
+        headers: {},
+      },
+    } as Record<string, any>;
+  };
+
+  const handleCopyConfig = async () => {
     try {
-      await navigator.clipboard.writeText(currentProxy.proxyUrl);
-      setCopySuccess(true);
-      setTimeout(() => setCopySuccess(false), 1000);
+      await navigator.clipboard.writeText(buildConfigSnippet());
+      setCopyConfigSuccess(true);
+      setTimeout(() => setCopyConfigSuccess(false), 1000);
     } catch (err) {
-      console.error('Failed to copy proxy URL:', err);
+      console.error('Failed to copy config JSON:', err);
     }
   };
 
@@ -301,42 +326,47 @@ export function InterceptorTab({
         <div className="space-y-3">
           {currentProxy ? (
             <div className="p-3 rounded border">
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-3 mb-3">
                 <div className="flex items-center gap-2">
                   <div className="text-sm font-medium">
                     Active Proxy for {connectedServerConfigs[selectedServer]?.name || selectedServer}
                   </div>
                   <span className="mr-1 inline-block size-1.5 rounded-full bg-orange-500" />
                 </div>
-                <div className="flex gap-2">
-                  <Button variant="outline" size="sm" onClick={handleClearLogs}>
-                    Clear Logs
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={handleStop}>
-                    Stop Proxy
-                  </Button>
+                <div className="flex gap-2 ml-auto">
+                  <Button variant="outline" size="sm" onClick={handleStop}>Stop Proxy</Button>
                 </div>
               </div>
-              <div>
-                <label className="text-xs font-medium mb-1 block text-muted-foreground">Proxy URL</label>
-                <div className="relative">
-                  <code className="block p-2 pr-10 bg-transparent border rounded text-sm break-all">
-                    {currentProxy.proxyUrl}
-                  </code>
-                  <button
-                    onClick={handleCopyUrl}
-                    className={`absolute top-2 right-2 p-1 rounded transition-all duration-200 ${
-                      copySuccess
-                        ? 'text-foreground scale-110'
-                        : 'text-muted-foreground hover:text-foreground hover:bg-muted'
-                    }`}
-                  >
-                    {copySuccess ? (
-                      <Check className="h-3 w-3 animate-in fade-in duration-200" />
-                    ) : (
-                      <Copy className="h-3 w-3" />
-                    )}
-                  </button>
+              <div className="grid gap-4 sm:grid-cols-2 items-start">
+                <div className="text-sm text-muted-foreground leading-relaxed">
+                  <div className="mb-2 font-medium text-foreground">How this proxy works</div>
+                  <p>
+                    This creates a HTTP proxy that forwards requests to your connected MCP server. Add the JSON entry on the right in your client’s
+                    configuration. Auth credentials are the same as your server's and are injected automatically.
+                  </p>
+                </div>
+                <div className="sm:col-start-2">
+                  <label className="text-xs font-medium mb-1 block text-muted-foreground">MCP HTTP config entry (no outer braces)</label>
+                  <div className="relative">
+                    <pre className="block p-2 pr-10 bg-transparent border rounded text-xs whitespace-pre leading-relaxed font-mono">
+{buildConfigSnippet()}
+                    </pre>
+                    <button
+                      onClick={handleCopyConfig}
+                      title="Copy config entry"
+                      className={`absolute top-2 right-2 p-1 rounded transition-all duration-200 ${
+                        copyConfigSuccess
+                          ? 'text-foreground scale-110'
+                          : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+                      }`}
+                    >
+                      {copyConfigSuccess ? (
+                        <Check className="h-3 w-3" />
+                      ) : (
+                        <Copy className="h-3 w-3" />
+                      )}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -348,7 +378,7 @@ export function InterceptorTab({
                     { selectedServer !== "none" ? `Create proxy for ${connectedServerConfigs[selectedServer]?.name}` : "No server selected"}
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    {selectedServer ? "This will create a proxy URL that tunnels requests to your connected server." : "Select a server above to create a proxy"}
+                    {selectedServer ? "Create a local HTTP proxy URL to your connected server and get a ready-to-copy MCP config snippet." : "Select a server above to create a proxy"}
                   </div>
                 </div>
                 <div className="shrink-0 self-start sm:self-auto">
@@ -374,7 +404,12 @@ export function InterceptorTab({
 
       {/* Logs */}
       <Card className="p-4">
-        <h2 className="text-lg font-semibold mb-3">Request Logs</h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-semibold">Request Logs</h2>
+          <Button variant="outline" size="sm" onClick={handleClearLogs} disabled={!currentProxy}>
+            Clear Logs
+          </Button>
+        </div>
 
         <div className="border rounded-md bg-muted/30 max-h-[60vh] overflow-auto">
           {!currentProxy?.logs || currentProxy.logs.length === 0 ? (
