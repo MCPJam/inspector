@@ -80,7 +80,7 @@ export function SystemPromptSelector({
               value={draftPrompt}
               onChange={(e) => setDraftPrompt(e.target.value)}
               placeholder="You are a helpful assistant with access to MCP tools."
-              className="min-h-[140px] resize-none"
+              className="h-[140px] resize-none"
             />
           </div>
 
