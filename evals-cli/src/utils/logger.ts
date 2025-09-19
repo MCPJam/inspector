@@ -111,23 +111,30 @@ export class Logger {
     this.logLine("");
   }
 
-  static serverConnection(serverCount: number, toolCount: number): void {
-    this.logLine(
-      chalk.gray(
-        `Connecting to ${serverCount} server${serverCount === 1 ? "" : "s"} and ${toolCount} tool${toolCount === 1 ? "" : "s"}`,
-      ),
-    );
-  }
-
-  static startTests(count: number): void {
-    this.logLine(
-      chalk.gray(`Running ${count} test${count === 1 ? "" : "s"}...`),
-    );
+  static initiateTestMessage(serverCount: number, toolCount: number, serverNames: string[], testCount: number): void {
+    this.logLine("");
+    this.logLine(chalk.bold.blue("Running tests"));
+    
+    // Server connection summary
+    const serverLabel = serverCount === 1 ? "server" : "servers";
+    const serverList = serverNames.length > 0 ? serverNames.join(", ") : "none";
+    this.logLine(`Connected to ${chalk.white.bold(serverCount)} ${serverLabel}: ${chalk.gray(serverList)}`);
+    
+    // Tool availability
+    const toolLabel = toolCount === 1 ? "tool" : "tools";
+    this.logLine(`Found ${chalk.white.bold(toolCount)} total ${toolLabel}`);
+    
+    // Test execution plan
+    const testLabel = testCount === 1 ? "test" : "tests";
+    this.logLine(`Running ${chalk.white.bold(testCount)} ${testLabel}`);
+    
     this.logLine("");
   }
 
-  static testTitle(testName: string): void {
-    this.logLine(chalk.white.bold(`• ${testName}`));
+  static logTestGroupTitle(testNumber: number, testName: string, modelProvider: string, modelId: string): void {
+    this.logLine(chalk.white.bold(`Test ${testNumber}: ${testName}`));
+    this.logLine(chalk.gray(`Using ${modelProvider}:${modelId}`))
+    this.logLine("");
   }
 
   static testRunStart(options: RunStartOptions): void {
