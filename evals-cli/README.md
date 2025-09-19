@@ -1,7 +1,9 @@
 # MCPJam Evals Testing CLI
+
 We built a CLI that performs MCP evals and End to End (E2E) testing. The CLI creates a simulated end user’s environment and tests popular user flows.
 
 Evals helps you:
+
 - Discover workflows that are breaking your server and get actionable ways on resolving them.
 - Benchmark your server’s performance and catch regressions in future changes.
 - Programatically test queries on a MCP server with a command. No more doing QA one by one.
@@ -15,6 +17,7 @@ npm install -g @mcpjam/cli
 ### Set up tests
 
 To set up, create a new folder directory for your test. In that directory, create three files:
+
 - `environment.json` to set up your MCP server connections
 - `tests.json` to configure your tests
 - `llms.json` to store your LLM API keys
@@ -54,9 +57,9 @@ The test file is an array of tests.
   {
     "title": "Workspace test",
     "query": "What is my asana workspace?",
-    "runs": 1,  // Number of times to run this test
+    "runs": 1, // Number of times to run this test
     "model": "anthropic/claude-3.7-sonnet",
-    "provider": "openrouter",  // Provider name: "anthropic" | "openai" | "openrouter"
+    "provider": "openrouter", // Provider name: "anthropic" | "openai" | "openrouter"
     "expectedToolCalls": ["asana_list_workspaces"]
   },
   {

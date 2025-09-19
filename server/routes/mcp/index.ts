@@ -8,6 +8,8 @@ import chat from "./chat";
 import tests from "./tests.ts";
 import oauth from "./oauth";
 import exporter from "./export";
+import interceptor from "./interceptor";
+import { adapterHttp, managerHttp } from "./http-adapters";
 
 const mcp = new Hono();
 
@@ -46,5 +48,12 @@ mcp.route("/oauth", oauth);
 
 // Export endpoints - REAL IMPLEMENTATION
 mcp.route("/export", exporter);
+
+// Interceptor endpoints - create proxy and stream logs
+mcp.route("/interceptor", interceptor);
+
+// Unified HTTP bridges (SSE + POST) for connected servers
+mcp.route("/adapter-http", adapterHttp);
+mcp.route("/manager-http", managerHttp);
 
 export default mcp;
