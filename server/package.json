@@ -17,7 +17,7 @@
     "@mastra/core": "0.16.0",
     "@mastra/mcp": "0.11.4",
     "@modelcontextprotocol/sdk": "^1.17.3",
-    "@ngrok/ngrok": "^1.5.2",
+    "localtunnel": "^2.0.2",
     "ai": "^5.0.11",
     "hono": "^4.6.11",
     "ollama-ai-provider": "^1.2.0",

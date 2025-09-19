@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { interceptorStore } from "../../services/interceptor-store";
-import { ensureNgrokTunnel, getNgrokUrl } from "../../services/ngrok";
+import { ensureTunnel, getTunnelUrl } from "../../services/tunnel";
 
 const interceptor = new Hono();
 
@@ -50,7 +50,7 @@ interceptor.post("/create", async (c) => {
       (body?.serverId as string | undefined) ||
       (body?.managerServerId as string | undefined);
     const urlObj = new URL(c.req.url);
-    const useTunnel = urlObj.searchParams.get("tunnel") === "true";
+    const useTunnel = true; // Tunnel by default for HTTPS public URLs
     let finalTarget: string | undefined = targetUrl;
     let injectHeaders: Record<string, string> | undefined;
 
@@ -110,10 +110,10 @@ interceptor.post("/create", async (c) => {
       // Always tunnel to the Node API port, not the Vite dev server.
       const port = parseInt(process.env.PORT || "3000", 10) || 3000;
       try {
-        publicOrigin = await ensureNgrokTunnel(port);
+        publicOrigin = await ensureTunnel(port);
       } catch {}
     } else {
-      publicOrigin = getNgrokUrl();
+      publicOrigin = getTunnelUrl();
     }
 
     const proxyPath = `/api/mcp/interceptor/${entry.id}/proxy`;
@@ -144,7 +144,7 @@ interceptor.get("/:id", (c) => {
   const info = interceptorStore.info(id);
   if (!info) return c.json({ success: false, error: "not found" }, 404);
   const urlObj = new URL(c.req.url);
-  const publicOrigin = getNgrokUrl();
+  const publicOrigin = getTunnelUrl();
   const proxyPath = `/api/mcp/interceptor/${id}/proxy`;
   const localProxyUrl = `${urlObj.origin}${proxyPath}`;
   const publicProxyUrl = publicOrigin ? `${publicOrigin}${proxyPath}` : null;
@@ -485,7 +485,7 @@ async function handleProxy(c: any) {
       // Accumulate data lines for the current SSE event so we can log full payloads
       let currentEventData: string[] = [];
       const proxyBasePath = `/api/mcp/interceptor/${id}/proxy`;
-      // Derive proxy origin from forwarded headers to preserve ngrok host
+      // Derive proxy origin from forwarded headers to preserve the public host
       const xfProto = c.req.header("x-forwarded-proto");
       const xfHost = c.req.header("x-forwarded-host");
       const reqHost = xfHost || c.req.header("host");
