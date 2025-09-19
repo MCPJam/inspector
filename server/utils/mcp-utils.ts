@@ -38,10 +38,7 @@ export function validateServerConfig(serverConfig: any): ValidationResult {
     try {
       // Convert string URL to URL object if needed and strip query/hash
       if (typeof config.url === "string") {
-        const parsed = new URL(config.url);
-        parsed.search = "";
-        parsed.hash = "";
-        config.url = parsed;
+        config.url = new URL(config.url);
       } else if (typeof config.url === "object" && !config.url.href) {
         return {
           success: false,
