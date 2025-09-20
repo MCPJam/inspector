@@ -67,16 +67,16 @@ const navigationSections = [
         url: "#auth",
         icon: Key,
       },
-    ],
-  },
-  {
-    id: "evals",
-    items: [
       {
-        title: "Evals (beta)",
+        title: "Evals",
         url: "#evals",
         icon: FlaskConical,
       },
+    ],
+  },
+  {
+    id: "beta",
+    items: [
       {
         title: "Interceptor (beta)",
         url: "#interceptor",
