@@ -5700,7 +5700,7 @@ var runEvals = async (tests, environment, llms, apiKey) => {
   if (shouldSaveToDb) {
     try {
       testRunId = await db.action(
-        "evals:createEvalTestRunWithApiKey",
+        "evals:createEvalTestSuiteWithApiKey",
         {
           apiKey,
           name: void 0,
@@ -5737,7 +5737,7 @@ var runEvals = async (tests, environment, llms, apiKey) => {
         if (!testRunId) {
           try {
             testRunId = await db.action(
-              "evals:createEvalTestRunWithApiKey",
+              "evals:createEvalTestSuiteWithApiKey",
               {
                 apiKey,
                 name: void 0,
@@ -5770,7 +5770,7 @@ var runEvals = async (tests, environment, llms, apiKey) => {
       if (shouldSaveToDb) {
         try {
           evalTestId = await db.action(
-            "evals:createEvalTestWithApiKey",
+            "evals:createEvalTestIterationWithApiKey",
             {
               apiKey,
               testGroupId,
@@ -5895,7 +5895,7 @@ var runEvals = async (tests, environment, llms, apiKey) => {
       if (evalTestId && shouldSaveToDb) {
         try {
           await db.action(
-            "evals:updateEvalTestResultWithApiKey",
+            "evals:updateEvalTestIterationResultWithApiKey",
             {
               apiKey,
               testId: evalTestId,
@@ -5920,7 +5920,7 @@ var runEvals = async (tests, environment, llms, apiKey) => {
   if (testRunId && shouldSaveToDb) {
     try {
       await db.action(
-        "evals:updateEvalTestRunStatusWithApiKey",
+        "evals:updateEvalTestSuiteStatusWithApiKey",
         {
           apiKey,
           testRunId,
