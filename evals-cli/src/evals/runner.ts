@@ -9,7 +9,19 @@ import {
 } from "../utils/validators";
 import { createLlmModel, extractToolNamesAsArray } from "../utils/helpers";
 import { Logger } from "../utils/logger";
+import { dbClient } from "../db";
 import { evaluateResults } from "./evaluator";
+
+const accumulateTokenCount = (
+  current: number | undefined,
+  increment: number | undefined,
+): number | undefined => {
+  if (typeof increment !== "number" || Number.isNaN(increment)) {
+    return current;
+  }
+
+  return (current ?? 0) + increment;
+};
 
 export const runEvals = async (
   tests: any,
@@ -32,20 +44,93 @@ export const runEvals = async (
   const availableTools = await mcpClient.getTools();
   const serverCount = Object.keys(mcpClientOptions.servers).length;
   const toolCount = Object.keys(availableTools).length;
-  Logger.serverConnection(serverCount, toolCount);
-  Logger.startTests(validatedTests.length);
+  const serverNames = Object.keys(mcpClientOptions.servers);
+
+  Logger.initiateTestMessage(
+    serverCount,
+    toolCount,
+    serverNames,
+    validatedTests.length,
+  );
 
   const vercelTools = convertMastraToolsToVercelTools(availableTools);
 
   const suiteStartedAt = Date.now();
+  const totalPlannedTests = validatedTests.reduce(
+    (sum: number, t: any) => sum + (t?.runs ?? 0),
+    0,
+  );
+  const db = dbClient();
+  const shouldSaveToDb = Boolean(apiKey);
+  const configSummary = {
+    tests: validatedTests,
+    environment: { servers: Object.keys(mcpClientOptions.servers) },
+    llms: Object.keys(validatedLlmApiKeys ?? {}),
+  };
+
+  let testRunId: string | undefined;
+
+  if (shouldSaveToDb) {
+    try {
+      testRunId = await db.action(
+        "evals:createEvalTestSuiteWithApiKey" as any,
+        {
+          apiKey,
+          name: undefined,
+          config: configSummary,
+          totalTests: totalPlannedTests,
+        },
+      );
+    } catch (err) {
+      // Do not block CLI; just skip persistence if it fails
+      testRunId = undefined;
+    }
+  }
   let passedRuns = 0;
   let failedRuns = 0;
 
+  let testNumber = 1;
   for (const test of validatedTests) {
     const { runs, model, provider, advancedConfig, query } = test;
-    Logger.testTitle(test.title);
+    Logger.logTestGroupTitle(testNumber, test.title, provider, model);
     const numberOfRuns = runs;
     const { system, temperature, toolChoice } = advancedConfig ?? {};
+
+    // Create an eval test case for this test definition when persisting
+    let testCaseId: string | undefined;
+    if (shouldSaveToDb) {
+      try {
+        testCaseId = await db.action(
+          "evals:createEvalTestCaseWithApiKey" as any,
+          {
+            apiKey,
+            title: String(test.title ?? `Group ${testNumber}`),
+            query: String(query ?? ""),
+            provider: String(provider ?? ""),
+            model: String(model ?? ""),
+            runs: Number(numberOfRuns ?? 1),
+          },
+        );
+        // Fallback: if test run wasn't created earlier, create it now
+        if (!testRunId) {
+          try {
+            testRunId = await db.action(
+              "evals:createEvalTestSuiteWithApiKey" as any,
+              {
+                apiKey,
+                name: undefined,
+                config: configSummary,
+                totalTests: totalPlannedTests,
+              },
+            );
+          } catch {
+            // ignore; we'll proceed without a test run record
+          }
+        }
+      } catch {
+        testCaseId = undefined;
+      }
+    }
 
     for (let run = 0; run < numberOfRuns; run++) {
       Logger.testRunStart({
@@ -58,11 +143,34 @@ export const runEvals = async (
       const runStartedAt = Date.now();
       const maxSteps = 20;
       let stepCount = 0;
+      let inputTokensUsed: number | undefined;
+      let outputTokensUsed: number | undefined;
+      let totalTokensUsed: number | undefined;
+
+      // Create eval test record if persistence is enabled
+      let evalTestId: string | undefined;
+      if (shouldSaveToDb) {
+        try {
+          evalTestId = await db.action(
+            "evals:createEvalTestIterationWithApiKey" as any,
+            {
+              apiKey,
+              testCaseId,
+              startedAt: runStartedAt,
+              iterationNumber: run + 1,
+              blob: undefined,
+              actualToolCalls: [],
+              tokensUsed: 0,
+            },
+          );
+        } catch {
+          evalTestId = undefined;
+        }
+      }
 
       if (system) {
         Logger.conversation({
           messages: [{ role: "system", content: system }],
-          indentLevel: 2,
         });
       }
 
@@ -71,7 +179,7 @@ export const runEvals = async (
         content: query,
       };
 
-      Logger.conversation({ messages: [userMessage], indentLevel: 2 });
+      Logger.conversation({ messages: [userMessage] });
 
       const messageHistory: ModelMessage[] = [userMessage];
       const toolsCalled: string[] = [];
@@ -91,7 +199,7 @@ export const runEvals = async (
               case "text-delta":
               case "reasoning-delta": {
                 if (!assistantStreaming) {
-                  Logger.beginStreamingMessage("assistant", 2);
+                  Logger.beginStreamingMessage("assistant");
                   assistantStreaming = true;
                 }
                 Logger.appendStreamingText(chunk.chunk.text);
@@ -102,18 +210,13 @@ export const runEvals = async (
                   Logger.finishStreamingMessage();
                   assistantStreaming = false;
                 }
-                Logger.streamToolCall(
-                  chunk.chunk.toolName,
-                  chunk.chunk.input,
-                  3,
-                );
+                Logger.streamToolCall(chunk.chunk.toolName, chunk.chunk.input);
                 break;
               }
               case "tool-result": {
                 Logger.streamToolResult(
                   chunk.chunk.toolName,
                   chunk.chunk.output,
-                  3,
                 );
                 break;
               }
@@ -129,6 +232,22 @@ export const runEvals = async (
           Logger.finishStreamingMessage();
           assistantStreaming = false;
         }
+
+        const stepUsage = await streamResult.usage;
+        const cumulativeUsage = await streamResult.totalUsage;
+
+        inputTokensUsed = accumulateTokenCount(
+          inputTokensUsed,
+          stepUsage.inputTokens,
+        );
+        outputTokensUsed = accumulateTokenCount(
+          outputTokensUsed,
+          stepUsage.outputTokens,
+        );
+
+        const totalTokens =
+          stepUsage.totalTokens ?? cumulativeUsage.totalTokens;
+        totalTokensUsed = accumulateTokenCount(totalTokensUsed, totalTokens);
 
         const toolNamesForStep = extractToolNamesAsArray(
           await streamResult.toolCalls,
@@ -161,13 +280,21 @@ export const runEvals = async (
         missing: evaluation.missing,
         unexpected: evaluation.unexpected,
         passed: evaluation.passed,
-        indentLevel: 2,
       });
 
       Logger.testRunResult({
         passed: evaluation.passed,
         durationMs: Date.now() - runStartedAt,
-        indentLevel: 2,
+        usage:
+          inputTokensUsed !== undefined ||
+          outputTokensUsed !== undefined ||
+          totalTokensUsed !== undefined
+            ? {
+                inputTokens: inputTokensUsed,
+                outputTokens: outputTokensUsed,
+                totalTokens: totalTokensUsed,
+              }
+            : undefined,
       });
 
       if (evaluation.passed) {
@@ -175,7 +302,29 @@ export const runEvals = async (
       } else {
         failedRuns++;
       }
+
+      // Update eval test result if it exists
+      if (evalTestId && shouldSaveToDb) {
+        try {
+          await db.action(
+            "evals:updateEvalTestIterationResultWithApiKey" as any,
+            {
+              apiKey,
+              testId: evalTestId as any,
+              status: "completed",
+              result: evaluation.passed ? "passed" : "failed",
+              actualToolCalls: toolsCalled,
+              tokensUsed: totalTokensUsed ?? 0,
+              blob: undefined,
+              blobContent: { messages: messageHistory },
+            },
+          );
+        } catch {
+          // ignore persistence errors
+        }
+      }
     }
+    testNumber++;
   }
 
   Logger.suiteComplete({
@@ -183,4 +332,18 @@ export const runEvals = async (
     passed: passedRuns,
     failed: failedRuns,
   });
+
+  // Mark test run as completed
+  if (testRunId && shouldSaveToDb) {
+    try {
+      await db.action("evals:updateEvalTestSuiteStatusWithApiKey" as any, {
+        apiKey,
+        testRunId: testRunId as any,
+        status: "completed",
+        finishedAt: Date.now(),
+      });
+    } catch {
+      // ignore persistence errors
+    }
+  }
 };
