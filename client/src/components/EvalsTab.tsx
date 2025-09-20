@@ -1,4 +1,5 @@
 import { useMemo, useState, useCallback } from "react";
+import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery } from "convex/react";
 import { FlaskConical, CheckCircle, XCircle, Clock, Play } from "lucide-react";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -53,6 +54,7 @@ function formatTime(ts?: number) {
 
 export function EvalsTab() {
   const { isAuthenticated, isLoading } = useConvexAuth();
+  const { user } = useAuth();
 
   if (isLoading) {
     return (
@@ -400,5 +402,3 @@ function SuitesRow({
     </div>
   );
 }
-
-// (Legacy list components removed after vertical redesign)
