@@ -1,7 +1,14 @@
 import { useMemo, useState, useEffect } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useAction, useConvexAuth, useQuery } from "convex/react";
-import { FlaskConical, CheckCircle, XCircle, Clock, ChevronDown, ChevronRight } from "lucide-react";
+import {
+  FlaskConical,
+  CheckCircle,
+  XCircle,
+  Clock,
+  ChevronDown,
+  ChevronRight,
+} from "lucide-react";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
   Card,
@@ -103,15 +110,26 @@ function EvalsContent() {
 
   const metrics = useMemo(() => {
     const totalSuites = suites?.length ?? 0;
-    const runningSuites = suites?.filter((s) => s.status === "running").length ?? 0;
-    const completedSuites = suites?.filter((s) => s.status === "completed").length ?? 0;
-    const failedSuites = suites?.filter((s) => s.status === "failed").length ?? 0;
+    const runningSuites =
+      suites?.filter((s) => s.status === "running").length ?? 0;
+    const completedSuites =
+      suites?.filter((s) => s.status === "completed").length ?? 0;
+    const failedSuites =
+      suites?.filter((s) => s.status === "failed").length ?? 0;
 
-    const nonRunningIterations = iterations?.filter((i) => i.status !== "running") ?? [];
+    const nonRunningIterations =
+      iterations?.filter((i) => i.status !== "running") ?? [];
     const totalIterations = nonRunningIterations.length;
-    const passedIterations = nonRunningIterations.filter((i) => i.result === "passed").length;
-    const failedIterations = nonRunningIterations.filter((i) => i.result === "failed").length;
-    const totalTokens = (iterations ?? []).reduce((sum, i) => sum + (i.tokensUsed || 0), 0);
+    const passedIterations = nonRunningIterations.filter(
+      (i) => i.result === "passed",
+    ).length;
+    const failedIterations = nonRunningIterations.filter(
+      (i) => i.result === "failed",
+    ).length;
+    const totalTokens = (iterations ?? []).reduce(
+      (sum, i) => sum + (i.tokensUsed || 0),
+      0,
+    );
 
     return {
       totalSuites,
@@ -131,7 +149,9 @@ function EvalsContent() {
         <div className="flex items-center justify-center h-64">
           <div className="text-center">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto" />
-            <p className="mt-4 text-muted-foreground">Loading your eval data...</p>
+            <p className="mt-4 text-muted-foreground">
+              Loading your eval data...
+            </p>
           </div>
         </div>
       </div>
@@ -165,7 +185,9 @@ function EvalsContent() {
           <CardContent>
             <div className="flex items-center gap-2">
               <CheckCircle className="h-5 w-5 text-green-500" />
-              <span className="text-3xl font-semibold">{metrics.completedSuites}</span>
+              <span className="text-3xl font-semibold">
+                {metrics.completedSuites}
+              </span>
             </div>
           </CardContent>
         </Card>
@@ -177,7 +199,9 @@ function EvalsContent() {
           <CardContent>
             <div className="flex items-center gap-2">
               <XCircle className="h-5 w-5 text-red-500" />
-              <span className="text-3xl font-semibold">{metrics.failedSuites}</span>
+              <span className="text-3xl font-semibold">
+                {metrics.failedSuites}
+              </span>
             </div>
           </CardContent>
         </Card>
@@ -187,7 +211,9 @@ function EvalsContent() {
             <CardDescription>Across all iterations</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-semibold">{metrics.totalTokens.toLocaleString()}</div>
+            <div className="text-3xl font-semibold">
+              {metrics.totalTokens.toLocaleString()}
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -290,8 +316,12 @@ function SuitesBrowser({
 }) {
   const [selectedSuiteId, setSelectedSuiteId] = useState<string | null>(null);
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
-  const [selectedIterationId, setSelectedIterationId] = useState<string | null>(null);
-  const [expandedSuiteIds, setExpandedSuiteIds] = useState<Set<string>>(new Set());
+  const [selectedIterationId, setSelectedIterationId] = useState<string | null>(
+    null,
+  );
+  const [expandedSuiteIds, setExpandedSuiteIds] = useState<Set<string>>(
+    new Set(),
+  );
 
   const selectedSuite = selectedSuiteId
     ? suites.find((s) => s._id === selectedSuiteId) || null
@@ -351,18 +381,24 @@ function SuitesBrowser({
               const isExpanded = expandedSuiteIds.has(s._id);
               const perSuiteAgg = aggregateSuite(s, cases, iterations);
               return (
-                <div key={s._id} className={`border rounded-md ${isSelected ? "border-primary" : "border-border"}`}>
+                <div
+                  key={s._id}
+                  className={`border rounded-md ${isSelected ? "border-primary" : "border-border"}`}
+                >
                   <div className="flex items-stretch">
                     <button
                       className="flex-1 text-left p-3"
                       onClick={() => handleSelectSuite(s._id)}
                     >
                       <div className="flex items-center justify-between">
-                        <div className="font-medium">{formatTime(s.startedAt)}</div>
+                        <div className="font-medium">
+                          {formatTime(s.startedAt)}
+                        </div>
                         <Badge>{s.status}</Badge>
                       </div>
                       <div className="text-xs text-muted-foreground mt-0.5">
-                        Tests: {s.totalTests} • Finished {formatTime(s.finishedAt)}
+                        Tests: {s.totalTests} • Finished{" "}
+                        {formatTime(s.finishedAt)}
                       </div>
                     </button>
                     <button
@@ -386,7 +422,9 @@ function SuitesBrowser({
                         <button
                           key={c.testCaseId}
                           className={`w-full text-left text-sm rounded px-2 py-1 ${
-                            selectedCaseId === c.testCaseId && isSelected ? "bg-muted" : "hover:bg-muted"
+                            selectedCaseId === c.testCaseId && isSelected
+                              ? "bg-muted"
+                              : "hover:bg-muted"
                           }`}
                           onClick={() => {
                             handleSelectSuite(s._id);
@@ -439,7 +477,9 @@ function SuiteDetails({
       <CardHeader>
         <CardTitle>Suite started {formatTime(suite.startedAt)}</CardTitle>
         <CardDescription>
-          {aggregate.totals.passed} passed · {aggregate.totals.failed} failed · {aggregate.totals.cancelled} cancelled · {aggregate.totals.tokens.toLocaleString()} tokens
+          {aggregate.totals.passed} passed · {aggregate.totals.failed} failed ·{" "}
+          {aggregate.totals.cancelled} cancelled ·{" "}
+          {aggregate.totals.tokens.toLocaleString()} tokens
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -458,9 +498,13 @@ function SuiteDetails({
                 <span className="mx-2">·</span>
                 <span className="text-red-600">{c.failed} failed</span>
                 <span className="mx-2">·</span>
-                <span className="text-muted-foreground">{c.cancelled} cancelled</span>
+                <span className="text-muted-foreground">
+                  {c.cancelled} cancelled
+                </span>
                 <span className="mx-2">·</span>
-                <span className="text-muted-foreground">{c.tokens.toLocaleString()} tokens</span>
+                <span className="text-muted-foreground">
+                  {c.tokens.toLocaleString()} tokens
+                </span>
               </div>
             </div>
           ))}
@@ -491,7 +535,7 @@ function CaseDetails({
         acc.tokens += it.tokensUsed || 0;
         return acc;
       },
-      { passed: 0, failed: 0, cancelled: 0, tokens: 0 }
+      { passed: 0, failed: 0, cancelled: 0, tokens: 0 },
     );
   }, [iterations]);
 
@@ -505,11 +549,15 @@ function CaseDetails({
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="text-sm text-muted-foreground">
-          In suite started {formatTime(suite.startedAt)} • {counts.passed} passed · {counts.failed} failed · {counts.cancelled} cancelled · {counts.tokens.toLocaleString()} tokens
+          In suite started {formatTime(suite.startedAt)} • {counts.passed}{" "}
+          passed · {counts.failed} failed · {counts.cancelled} cancelled ·{" "}
+          {counts.tokens.toLocaleString()} tokens
         </div>
         <div className="space-y-2">
           {iterations.length === 0 ? (
-            <div className="text-sm text-muted-foreground">No iterations for this case in the selected suite.</div>
+            <div className="text-sm text-muted-foreground">
+              No iterations for this case in the selected suite.
+            </div>
           ) : (
             iterations.slice(0, 50).map((it) => (
               <button
@@ -518,9 +566,12 @@ function CaseDetails({
                 className="w-full flex items-center justify-between border rounded-md p-3 text-left hover:bg-muted"
               >
                 <div>
-                  <div className="font-medium">Iteration #{it.iterationNumber}</div>
+                  <div className="font-medium">
+                    Iteration #{it.iterationNumber}
+                  </div>
                   <div className="text-sm text-muted-foreground">
-                    {formatTime(it.startedAt)} • Tokens: {it.tokensUsed} • Tools: {it.actualToolCalls.length}
+                    {formatTime(it.startedAt)} • Tokens: {it.tokensUsed} •
+                    Tools: {it.actualToolCalls.length}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -553,9 +604,9 @@ function CaseDetails({
 }
 
 function IterationDetails({ iteration }: { iteration: EvalIteration }) {
-  const getBlob = useAction("evals:getEvalTestBlob" as any) as unknown as (
-    args: { blobId: string }
-  ) => Promise<any>;
+  const getBlob = useAction(
+    "evals:getEvalTestBlob" as any,
+  ) as unknown as (args: { blobId: string }) => Promise<any>;
 
   const [blob, setBlob] = useState<any>(null);
   const [loading, setLoading] = useState(false);
@@ -590,14 +641,17 @@ function IterationDetails({ iteration }: { iteration: EvalIteration }) {
       <CardHeader>
         <CardTitle>Iteration #{iteration.iterationNumber}</CardTitle>
         <CardDescription>
-          {formatTime(iteration.startedAt)} • Tokens: {iteration.tokensUsed} • Tools: {iteration.actualToolCalls.length}
+          {formatTime(iteration.startedAt)} • Tokens: {iteration.tokensUsed} •
+          Tools: {iteration.actualToolCalls.length}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="text-sm">
-          Status: <Badge className="ml-1 align-middle">{iteration.status}</Badge>
+          Status:{" "}
+          <Badge className="ml-1 align-middle">{iteration.status}</Badge>
           <span className="mx-2">·</span>
-          Result: <Badge className="ml-1 align-middle">{iteration.result}</Badge>
+          Result:{" "}
+          <Badge className="ml-1 align-middle">{iteration.result}</Badge>
         </div>
         <div className="border rounded-md p-3 bg-muted/50">
           {loading ? (
@@ -606,10 +660,12 @@ function IterationDetails({ iteration }: { iteration: EvalIteration }) {
             <div className="text-sm text-red-600">{error}</div>
           ) : iteration.blob ? (
             <pre className="text-xs overflow-auto max-h-[480px] whitespace-pre-wrap break-words">
-{JSON.stringify(blob, null, 2)}
+              {JSON.stringify(blob, null, 2)}
             </pre>
           ) : (
-            <div className="text-sm text-muted-foreground">No blob attached to this iteration.</div>
+            <div className="text-sm text-muted-foreground">
+              No blob attached to this iteration.
+            </div>
           )}
         </div>
       </CardContent>
