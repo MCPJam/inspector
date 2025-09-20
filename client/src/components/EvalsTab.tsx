@@ -43,7 +43,7 @@ type EvalIteration = {
   updatedAt: number;
   blob?: string;
   status: "running" | "completed" | "failed" | "cancelled";
-  result: "passed" | "failed" | "cancelled";
+  result: "pending" | "passed" | "failed" | "cancelled";
   actualToolCalls: string[];
   tokensUsed: number;
 };
@@ -108,10 +108,11 @@ function EvalsContent() {
     const completedSuites = suites?.filter((s) => s.status === "completed").length ?? 0;
     const failedSuites = suites?.filter((s) => s.status === "failed").length ?? 0;
 
-    const totalIterations = iterations?.length ?? 0;
-    const passedIterations = iterations?.filter((i) => i.result === "passed").length ?? 0;
-    const failedIterations = iterations?.filter((i) => i.result === "failed").length ?? 0;
-    const totalTokens = iterations?.reduce((sum, i) => sum + (i.tokensUsed || 0), 0) ?? 0;
+    const nonRunningIterations = iterations?.filter((i) => i.status !== "running") ?? [];
+    const totalIterations = nonRunningIterations.length;
+    const passedIterations = nonRunningIterations.filter((i) => i.result === "passed").length;
+    const failedIterations = nonRunningIterations.filter((i) => i.result === "failed").length;
+    const totalTokens = (iterations ?? []).reduce((sum, i) => sum + (i.tokensUsed || 0), 0);
 
     return {
       totalSuites,
@@ -145,10 +146,6 @@ function EvalsContent() {
           <FlaskConical className="h-6 w-6" />
           <h1 className="text-2xl font-bold">Evals</h1>
         </div>
-        <Button>
-          <Play className="h-4 w-4 mr-2" />
-          Run New Eval
-        </Button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -238,9 +235,12 @@ function aggregateSuite(
   const filtered = iterations.filter((it) => withinSuiteWindow(it, suite));
   const totals = filtered.reduce(
     (acc, it) => {
-      if (it.result === "passed") acc.passed += 1;
+      // Do not count running/pending iterations toward pass/fail/cancelled
+      if (it.status === "running" || it.result === "pending") {
+        // skip counting while in-flight
+      } else if (it.result === "passed") acc.passed += 1;
       else if (it.result === "failed") acc.failed += 1;
-      else acc.cancelled += 1;
+      else if (it.result === "cancelled") acc.cancelled += 1;
       acc.tokens += it.tokensUsed || 0;
       return acc;
     },
@@ -266,9 +266,11 @@ function aggregateSuite(
       });
     }
     const entry = byCaseMap.get(id)!;
-    if (it.result === "passed") entry.passed += 1;
+    if (it.status === "running" || it.result === "pending") {
+      // do not count pending/running
+    } else if (it.result === "passed") entry.passed += 1;
     else if (it.result === "failed") entry.failed += 1;
-    else entry.cancelled += 1;
+    else if (it.result === "cancelled") entry.cancelled += 1;
     entry.tokens += it.tokensUsed || 0;
   }
 
@@ -380,16 +382,24 @@ function SuitesRow({
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        {it.status === "running" ? (
-                          <Clock className="h-4 w-4 text-yellow-500" />
+                        {it.status === "running" || it.result === "pending" ? (
+                          <>
+                            <Clock className="h-4 w-4 text-yellow-500" />
+                            <Badge variant="outline">pending</Badge>
+                          </>
                         ) : it.result === "passed" ? (
-                          <CheckCircle className="h-4 w-4 text-green-500" />
+                          <>
+                            <CheckCircle className="h-4 w-4 text-green-500" />
+                            <Badge>passed</Badge>
+                          </>
+                        ) : it.result === "failed" ? (
+                          <>
+                            <XCircle className="h-4 w-4 text-red-500" />
+                            <Badge variant="destructive">failed</Badge>
+                          </>
                         ) : (
-                          <XCircle className="h-4 w-4 text-red-500" />
+                          <Badge variant="outline">cancelled</Badge>
                         )}
-                        <Badge variant={it.result === "passed" ? "default" : it.result === "failed" ? "destructive" : "outline"}>
-                          {it.result}
-                        </Badge>
                       </div>
                     </div>
                   ))}
