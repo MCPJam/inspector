@@ -24,7 +24,7 @@ import { PreferencesStoreProvider } from "./stores/preferences/preferences-provi
 import { Toaster } from "./components/ui/sonner";
 import { AuthButton } from "./components/AuthButton";
 import { useElectronOAuth } from "./hooks/useElectronOAuth";
-import { useEnsureConvexUser } from "./hooks/useEnsureConvexUser";
+import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
 
 // Import global styles
 import "./index.css";
@@ -34,7 +34,7 @@ export default function App() {
   // Set up Electron OAuth callback handling
   useElectronOAuth();
   // Ensure a `users` row exists after Convex auth
-  useEnsureConvexUser();
+  useEnsureDbUser();
   const isDebugCallback = useMemo(
     () => window.location.pathname.startsWith("/oauth/callback/debug"),
     [],
