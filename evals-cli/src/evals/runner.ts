@@ -73,7 +73,7 @@ export const runEvals = async (
   if (shouldSaveToDb) {
     try {
       testRunId = await db.action(
-        "evals:createEvalTestRunWithApiKey" as any,
+        "evals:createEvalTestSuiteWithApiKey" as any,
         {
           apiKey,
           name: undefined,
@@ -115,7 +115,7 @@ export const runEvals = async (
         if (!testRunId) {
           try {
             testRunId = await db.action(
-              "evals:createEvalTestRunWithApiKey" as any,
+              "evals:createEvalTestSuiteWithApiKey" as any,
               {
                 apiKey,
                 name: undefined,
@@ -152,7 +152,7 @@ export const runEvals = async (
       if (shouldSaveToDb) {
         try {
           evalTestId = await db.action(
-            "evals:createEvalTestWithApiKey" as any,
+            "evals:createEvalTestIterationWithApiKey" as any,
             {
               apiKey,
               testGroupId,
@@ -306,7 +306,7 @@ export const runEvals = async (
       if (evalTestId && shouldSaveToDb) {
         try {
           await db.action(
-            "evals:updateEvalTestResultWithApiKey" as any,
+            "evals:updateEvalTestIterationResultWithApiKey" as any,
             {
               apiKey,
               testId: evalTestId as any,
@@ -335,7 +335,7 @@ export const runEvals = async (
   if (testRunId && shouldSaveToDb) {
     try {
       await db.action(
-        "evals:updateEvalTestRunStatusWithApiKey" as any,
+        "evals:updateEvalTestSuiteStatusWithApiKey" as any,
         {
           apiKey,
           testRunId: testRunId as any,
