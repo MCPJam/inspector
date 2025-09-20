@@ -96,12 +96,12 @@ export const runEvals = async (
     const numberOfRuns = runs;
     const { system, temperature, toolChoice } = advancedConfig ?? {};
 
-    // Create an eval test group for this test definition when persisting
-    let testGroupId: string | undefined;
+  // Create an eval test case for this test definition when persisting
+  let testCaseId: string | undefined;
     if (shouldSaveToDb) {
       try {
-        testGroupId = await db.action(
-          "evals:createEvalTestGroupWithApiKey" as any,
+      testCaseId = await db.action(
+        "evals:createEvalTestCaseWithApiKey" as any,
           {
             apiKey,
             title: String(test.title ?? `Group ${testNumber}`),
@@ -128,7 +128,7 @@ export const runEvals = async (
           }
         }
       } catch {
-        testGroupId = undefined;
+        testCaseId = undefined;
       }
     }
 
@@ -155,7 +155,7 @@ export const runEvals = async (
             "evals:createEvalTestIterationWithApiKey" as any,
             {
               apiKey,
-              testGroupId,
+              testCaseId,
               startedAt: runStartedAt,
               iterationNumber: run + 1,
               blob: undefined,
