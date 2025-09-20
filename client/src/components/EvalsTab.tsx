@@ -1,94 +1,167 @@
-import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
-import { Button } from "./ui/button";
-import { Badge } from "./ui/badge";
-import { Separator } from "./ui/separator";
-import { FlaskConical, Play, Clock, CheckCircle, XCircle } from "lucide-react";
-import { useQuery } from "convex/react";
-import { EmptyState } from "./ui/empty-state";
-import { MastraMCPServerDefinition } from "@mastra/mcp";
+import { useMemo } from "react";
+import { useAuth } from "@workos-inc/authkit-react";
+import { useConvexAuth, useQuery } from "convex/react";
+import { FlaskConical, CheckCircle, XCircle, Clock, Play } from "lucide-react";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 
-interface EvalsTabProps {
-  serverConfig?: MastraMCPServerDefinition;
-  serverName?: string;
+type EvalSuite = {
+  _id: string;
+  createdBy: string;
+  status: "running" | "completed" | "failed" | "cancelled";
+  startedAt: number;
+  finishedAt?: number;
+  totalTests: number;
+  config: { tests: unknown; environment: unknown; llms: unknown };
+};
+
+type EvalCase = {
+  _id: string;
+  createdBy: string;
+  title: string;
+  query: string;
+  provider: string;
+  model: string;
+  runs: number;
+};
+
+type EvalIteration = {
+  _id: string;
+  testCaseId?: string;
+  createdBy: string;
+  createdAt: number;
+  startedAt: number;
+  iterationNumber: number;
+  updatedAt: number;
+  blob?: string;
+  status: "running" | "completed" | "failed" | "cancelled";
+  result: "passed" | "failed" | "cancelled";
+  actualToolCalls: string[];
+  tokensUsed: number;
+};
+
+function formatTime(ts?: number) {
+  return ts ? new Date(ts).toLocaleString() : "—";
 }
 
-export function EvalsTab({ serverConfig, serverName }: EvalsTabProps) {
-  const evals = useQuery(
-    "evals/helpers:getCurrentUserEvals" as any,
-  ) as unknown as {
-    _id: string;
-    createdBy: string;
-    lastUpdatedAt: number;
-    status: "pending" | "resolved" | "cancelled";
-    usageRecordId: string | null;
-    runId: string;
-    passed: boolean;
-    expectedToolCalls: string[];
-    actualToolCalls: string[];
-    traceBlob: string | null;
-  }[];
+export function EvalsTab() {
+  const { isAuthenticated, isLoading } = useConvexAuth();
+  const { user, signIn } = useAuth();
 
-  const isLoading = evals === undefined;
+  const suites = useQuery(
+    "evals:getCurrentUserEvalTestSuites" as any,
+  ) as unknown as EvalSuite[] | undefined;
+  const cases = useQuery(
+    "evals:getCurrentUserEvalTestGroups" as any,
+  ) as unknown as EvalCase[] | undefined;
+  const iterations = useQuery(
+    "evals:getCurrentUserEvalTestIterations" as any,
+  ) as unknown as EvalIteration[] | undefined;
 
-  console.log(evals);
+  const isDataLoading =
+    isLoading || suites === undefined || cases === undefined || iterations === undefined;
 
-  const getStatusIcon = (status: string, passed: boolean) => {
-    if (status === "pending") {
-      return <Clock className="h-4 w-4 text-yellow-500" />;
-    }
-    if (status === "cancelled") {
-      return <XCircle className="h-4 w-4 text-gray-500" />;
-    }
-    return passed ? (
-      <CheckCircle className="h-4 w-4 text-green-500" />
-    ) : (
-      <XCircle className="h-4 w-4 text-red-500" />
-    );
-  };
+  const metrics = useMemo(() => {
+    const totalSuites = suites?.length ?? 0;
+    const runningSuites = suites?.filter((s) => s.status === "running").length ?? 0;
+    const completedSuites = suites?.filter((s) => s.status === "completed").length ?? 0;
+    const failedSuites = suites?.filter((s) => s.status === "failed").length ?? 0;
 
-  const getStatusColor = (status: string, passed: boolean) => {
-    if (status === "pending")
-      return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200";
-    if (status === "cancelled")
-      return "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200";
-    return passed
-      ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
-      : "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200";
-  };
+    const totalIterations = iterations?.length ?? 0;
+    const passedIterations = iterations?.filter((i) => i.result === "passed").length ?? 0;
+    const failedIterations = iterations?.filter((i) => i.result === "failed").length ?? 0;
+    const totalTokens = iterations?.reduce((sum, i) => sum + (i.tokensUsed || 0), 0) ?? 0;
 
-  const formatTime = (timestamp: number) => {
-    return new Date(timestamp).toLocaleString();
-  };
-
-  if (!serverConfig || !serverName) {
-    return (
-      <EmptyState
-        icon={FlaskConical}
-        title="No Server Selected"
-        description="Connect to an MCP server to run and monitor evaluations for testing your tools."
-      />
-    );
-  }
+    return {
+      totalSuites,
+      runningSuites,
+      completedSuites,
+      failedSuites,
+      totalIterations,
+      passedIterations,
+      failedIterations,
+      totalTokens,
+    };
+  }, [suites, iterations]);
 
   if (isLoading) {
     return (
       <div className="p-6">
         <div className="flex items-center justify-center h-64">
           <div className="text-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
-            <p className="mt-4 text-muted-foreground">Loading evaluations...</p>
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto" />
+            <p className="mt-4 text-muted-foreground">Loading...</p>
           </div>
         </div>
       </div>
     );
   }
 
+  if (!isAuthenticated || !user) {
+    return (
+      <div className="p-6">
+        <EmptyState
+          icon={FlaskConical}
+          title="Sign in to view your evals"
+          description="Create an account or sign in to see previous runs and metrics."
+          className="h-[calc(100vh-200px)]"
+        />
+        <div className="flex items-center justify-center">
+          <Button onClick={() => signIn()}>Sign up / Sign in</Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (isDataLoading) {
+    return (
+      <div className="p-6">
+        <div className="flex items-center justify-center h-64">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto" />
+            <p className="mt-4 text-muted-foreground">Loading your eval data...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const getStatusBadge = (status: EvalSuite["status"]) => {
+    if (status === "running")
+      return (
+        <Badge className="bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
+          Running
+        </Badge>
+      );
+    if (status === "failed")
+      return (
+        <Badge variant="destructive">
+          Failed
+        </Badge>
+      );
+    if (status === "cancelled")
+      return (
+        <Badge className="bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200">
+          Cancelled
+        </Badge>
+      );
+    return <Badge>Completed</Badge>;
+  };
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-2">
           <FlaskConical className="h-6 w-6" />
-          <h1 className="text-2xl font-bold">Evaluations</h1>
+          <h1 className="text-2xl font-bold">Evals</h1>
         </div>
         <Button>
           <Play className="h-4 w-4 mr-2" />
@@ -96,104 +169,137 @@ export function EvalsTab({ serverConfig, serverName }: EvalsTabProps) {
         </Button>
       </div>
 
-      <div className="grid gap-4">
-        {evals.length === 0 ? (
-          <EmptyState
-            icon={FlaskConical}
-            title="No Evaluations Yet"
-            description="Run your first evaluation to get started testing your MCP tools and monitor their performance."
-            className="h-[calc(100vh-200px)]"
-          />
-        ) : (
-          evals.map((evalRecord) => (
-            <Card
-              key={evalRecord._id}
-              className="hover:shadow-md transition-shadow"
-            >
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-lg flex items-center space-x-2">
-                    {getStatusIcon(evalRecord.status, evalRecord.passed)}
-                    <span>Run {evalRecord.runId}</span>
-                  </CardTitle>
-                  <div className="flex items-center space-x-2">
-                    <Badge
-                      className={getStatusColor(
-                        evalRecord.status,
-                        evalRecord.passed,
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">Suites</CardTitle>
+            <CardDescription>Total runs</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-semibold">{metrics.totalSuites}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">Passed Runs</CardTitle>
+            <CardDescription>Completed suites</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center gap-2">
+              <CheckCircle className="h-5 w-5 text-green-500" />
+              <span className="text-3xl font-semibold">{metrics.completedSuites}</span>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">Failed Runs</CardTitle>
+            <CardDescription>Suites marked failed</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center gap-2">
+              <XCircle className="h-5 w-5 text-red-500" />
+              <span className="text-3xl font-semibold">{metrics.failedSuites}</span>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">Tokens Used</CardTitle>
+            <CardDescription>Across all iterations</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-semibold">{metrics.totalTokens.toLocaleString()}</div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        <Card className="xl:col-span-1">
+          <CardHeader>
+            <CardTitle>Suites</CardTitle>
+            <CardDescription>Historical runs</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {suites && suites.length > 0 ? (
+              <div className="space-y-3">
+                {suites.map((s) => (
+                  <div key={s._id} className="flex items-center justify-between border rounded-md p-3">
+                    <div>
+                      <div className="font-medium">Started {formatTime(s.startedAt)}</div>
+                      <div className="text-sm text-muted-foreground">
+                        Tests: {s.totalTests} • Finished {formatTime(s.finishedAt)}
+                      </div>
+                    </div>
+                    {getStatusBadge(s.status)}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-sm text-muted-foreground">No suites yet.</div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="xl:col-span-1">
+          <CardHeader>
+            <CardTitle>Test Cases</CardTitle>
+            <CardDescription>Reusable prompts and configs</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {cases && cases.length > 0 ? (
+              <div className="space-y-3">
+                {cases.map((c) => (
+                  <div key={c._id} className="border rounded-md p-3">
+                    <div className="font-medium">{c.title}</div>
+                    <div className="text-sm text-muted-foreground">
+                      {c.provider}/{c.model} • Planned runs: {c.runs}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-sm text-muted-foreground">No test cases yet.</div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="xl:col-span-1">
+          <CardHeader>
+            <CardTitle>Iterations</CardTitle>
+            <CardDescription>Latest executions</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {iterations && iterations.length > 0 ? (
+              <div className="space-y-3">
+                {iterations.map((it) => (
+                  <div key={it._id} className="flex items-center justify-between border rounded-md p-3">
+                    <div>
+                      <div className="font-medium">Iteration #{it.iterationNumber}</div>
+                      <div className="text-sm text-muted-foreground">
+                        {formatTime(it.startedAt)} • Tokens: {it.tokensUsed} • Tools: {it.actualToolCalls.length}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {it.status === "running" ? (
+                        <Clock className="h-4 w-4 text-yellow-500" />
+                      ) : it.result === "passed" ? (
+                        <CheckCircle className="h-4 w-4 text-green-500" />
+                      ) : (
+                        <XCircle className="h-4 w-4 text-red-500" />
                       )}
-                    >
-                      {evalRecord.status}
-                    </Badge>
-                    {evalRecord.status === "resolved" && (
-                      <Badge
-                        variant={evalRecord.passed ? "default" : "destructive"}
-                      >
-                        {evalRecord.passed ? "Passed" : "Failed"}
+                      <Badge variant={it.result === "passed" ? "default" : it.result === "failed" ? "destructive" : "outline"}>
+                        {it.result}
                       </Badge>
-                    )}
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 gap-4 text-sm">
-                  <div>
-                    <span className="font-medium text-muted-foreground">
-                      Last Updated:
-                    </span>
-                    <p>{formatTime(evalRecord.lastUpdatedAt)}</p>
-                  </div>
-                </div>
-
-                <Separator />
-
-                <div className="space-y-3">
-                  <div>
-                    <h4 className="font-medium mb-2">Expected Tool Calls:</h4>
-                    <div className="flex flex-wrap gap-1">
-                      {evalRecord.expectedToolCalls.length > 0 ? (
-                        evalRecord.expectedToolCalls.map((tool, index) => (
-                          <Badge key={index} variant="outline">
-                            {tool}
-                          </Badge>
-                        ))
-                      ) : (
-                        <span className="text-muted-foreground text-sm">
-                          None
-                        </span>
-                      )}
                     </div>
                   </div>
-
-                  <div>
-                    <h4 className="font-medium mb-2">Actual Tool Calls:</h4>
-                    <div className="flex flex-wrap gap-1">
-                      {evalRecord.actualToolCalls.length > 0 ? (
-                        evalRecord.actualToolCalls.map((tool, index) => (
-                          <Badge key={index} variant="outline">
-                            {tool}
-                          </Badge>
-                        ))
-                      ) : (
-                        <span className="text-muted-foreground text-sm">
-                          None
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {evalRecord.status === "resolved" && (
-                  <div className="pt-2">
-                    <Button variant="outline" size="sm" className="w-full">
-                      View Trace Details
-                    </Button>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          ))
-        )}
+                ))}
+              </div>
+            ) : (
+              <div className="text-sm text-muted-foreground">No iterations yet.</div>
+            )}
+          </CardContent>
+        </Card>
       </div>
     </div>
   );
