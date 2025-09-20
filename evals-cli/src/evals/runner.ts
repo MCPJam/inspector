@@ -96,12 +96,12 @@ export const runEvals = async (
     const numberOfRuns = runs;
     const { system, temperature, toolChoice } = advancedConfig ?? {};
 
-  // Create an eval test case for this test definition when persisting
-  let testCaseId: string | undefined;
+    // Create an eval test case for this test definition when persisting
+    let testCaseId: string | undefined;
     if (shouldSaveToDb) {
       try {
-      testCaseId = await db.action(
-        "evals:createEvalTestCaseWithApiKey" as any,
+        testCaseId = await db.action(
+          "evals:createEvalTestCaseWithApiKey" as any,
           {
             apiKey,
             title: String(test.title ?? `Group ${testNumber}`),
@@ -336,15 +336,12 @@ export const runEvals = async (
   // Mark test run as completed
   if (testRunId && shouldSaveToDb) {
     try {
-      await db.action(
-        "evals:updateEvalTestSuiteStatusWithApiKey" as any,
-        {
-          apiKey,
-          testRunId: testRunId as any,
-          status: "completed",
-          finishedAt: Date.now(),
-        },
-      );
+      await db.action("evals:updateEvalTestSuiteStatusWithApiKey" as any, {
+        apiKey,
+        testRunId: testRunId as any,
+        status: "completed",
+        finishedAt: Date.now(),
+      });
     } catch {
       // ignore persistence errors
     }
