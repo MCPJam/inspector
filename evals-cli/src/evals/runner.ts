@@ -157,6 +157,7 @@ export const runEvals = async (
               apiKey,
               testGroupId,
               startedAt: runStartedAt,
+              iterationNumber: run + 1,
               blob: undefined,
               actualToolCalls: [],
               tokensUsed: 0,
