@@ -1,5 +1,4 @@
 import { useMemo, useState, useCallback } from "react";
-import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery } from "convex/react";
 import { FlaskConical, CheckCircle, XCircle, Clock, Play } from "lucide-react";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -54,7 +53,6 @@ function formatTime(ts?: number) {
 
 export function EvalsTab() {
   const { isAuthenticated, isLoading } = useConvexAuth();
-  const { user, signIn } = useAuth();
 
   if (isLoading) {
     return (
@@ -78,9 +76,6 @@ export function EvalsTab() {
           description="Create an account or sign in to see previous runs and metrics."
           className="h-[calc(100vh-200px)]"
         />
-        <div className="flex items-center justify-center">
-          <Button onClick={() => signIn()}>Sign up / Sign in</Button>
-        </div>
       </div>
     );
   }
