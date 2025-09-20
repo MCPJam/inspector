@@ -18,7 +18,7 @@ const LOG_LEVEL_ORDER = ["error", "warn", "info", "debug", "trace"];
 export function TracingTab() {
   const { entries } = useLoggerState();
   const [expandedEntries, setExpandedEntries] = useState<Set<number>>(
-    new Set()
+    new Set(),
   );
   const [levelFilter, setLevelFilter] = useState<LogLevel | "all">("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -44,16 +44,9 @@ export function TracingTab() {
         entry.message.toLowerCase().includes(queryLower) ||
         entry.context.toLowerCase().includes(queryLower) ||
         (entry.data &&
-          JSON.stringify(entry.data).toLowerCase().includes(queryLower))
+          JSON.stringify(entry.data).toLowerCase().includes(queryLower)),
     );
   }, [entries, levelFilter, searchQuery]);
-
-  // Auto-scroll to bottom when new entries arrive
-  useEffect(() => {
-    if (bottomRef.current) {
-      bottomRef.current.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [entries.length]);
 
   // Handle scroll events to show/hide scroll to top button
   useEffect(() => {
