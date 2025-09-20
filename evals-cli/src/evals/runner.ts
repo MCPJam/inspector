@@ -62,6 +62,11 @@ export const runEvals = async (
   );
   const db = dbClient();
   const shouldSaveToDb = Boolean(apiKey);
+  const configSummary = {
+    tests: validatedTests,
+    environment: { servers: Object.keys(mcpClientOptions.servers) },
+    llms: Object.keys(validatedLlmApiKeys ?? {}),
+  };
 
   let testRunId: string | undefined;
 
@@ -72,11 +77,7 @@ export const runEvals = async (
         {
           apiKey,
           name: undefined,
-          config: {
-            tests,
-            environment: mcpClientOptions,
-            llms,
-          },
+          config: configSummary,
           totalTests: totalPlannedTests,
         },
       );
@@ -94,6 +95,42 @@ export const runEvals = async (
     Logger.logTestGroupTitle(testNumber, test.title, provider, model);
     const numberOfRuns = runs;
     const { system, temperature, toolChoice } = advancedConfig ?? {};
+
+    // Create an eval test group for this test definition when persisting
+    let testGroupId: string | undefined;
+    if (shouldSaveToDb) {
+      try {
+        testGroupId = await db.action(
+          "evals:createEvalTestGroupWithApiKey" as any,
+          {
+            apiKey,
+            title: String(test.title ?? `Group ${testNumber}`),
+            query: String(query ?? ""),
+            provider: String(provider ?? ""),
+            model: String(model ?? ""),
+            runs: Number(numberOfRuns ?? 1),
+          },
+        );
+        // Fallback: if test run wasn't created earlier, create it now
+        if (!testRunId) {
+          try {
+            testRunId = await db.action(
+              "evals:createEvalTestRunWithApiKey" as any,
+              {
+                apiKey,
+                name: undefined,
+                config: configSummary,
+                totalTests: totalPlannedTests,
+              },
+            );
+          } catch {
+            // ignore; we'll proceed without a test run record
+          }
+        }
+      } catch {
+        testGroupId = undefined;
+      }
+    }
 
     for (let run = 0; run < numberOfRuns; run++) {
       Logger.testRunStart({
@@ -118,7 +155,7 @@ export const runEvals = async (
             "evals:createEvalTestWithApiKey" as any,
             {
               apiKey,
-              testGroupId: undefined,
+              testGroupId,
               startedAt: runStartedAt,
               blob: undefined,
               actualToolCalls: [],
