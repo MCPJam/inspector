@@ -5691,6 +5691,11 @@ var runEvals = async (tests, environment, llms, apiKey) => {
   );
   const db = dbClient();
   const shouldSaveToDb = Boolean(apiKey);
+  const configSummary = {
+    tests: validatedTests,
+    environment: { servers: Object.keys(mcpClientOptions.servers) },
+    llms: Object.keys(validatedLlmApiKeys ?? {})
+  };
   let testRunId;
   if (shouldSaveToDb) {
     try {
@@ -5699,11 +5704,7 @@ var runEvals = async (tests, environment, llms, apiKey) => {
         {
           apiKey,
           name: void 0,
-          config: {
-            tests,
-            environment: mcpClientOptions,
-            llms
-          },
+          config: configSummary,
           totalTests: totalPlannedTests
         }
       );
@@ -5719,6 +5720,38 @@ var runEvals = async (tests, environment, llms, apiKey) => {
     Logger.logTestGroupTitle(testNumber, test.title, provider, model);
     const numberOfRuns = runs;
     const { system, temperature, toolChoice } = advancedConfig ?? {};
+    let testGroupId;
+    if (shouldSaveToDb) {
+      try {
+        testGroupId = await db.action(
+          "evals:createEvalTestGroupWithApiKey",
+          {
+            apiKey,
+            title: String(test.title ?? `Group ${testNumber}`),
+            query: String(query ?? ""),
+            provider: String(provider ?? ""),
+            model: String(model ?? ""),
+            runs: Number(numberOfRuns ?? 1)
+          }
+        );
+        if (!testRunId) {
+          try {
+            testRunId = await db.action(
+              "evals:createEvalTestRunWithApiKey",
+              {
+                apiKey,
+                name: void 0,
+                config: configSummary,
+                totalTests: totalPlannedTests
+              }
+            );
+          } catch {
+          }
+        }
+      } catch {
+        testGroupId = void 0;
+      }
+    }
     for (let run = 0; run < numberOfRuns; run++) {
       Logger.testRunStart({
         runNumber: run + 1,
@@ -5740,7 +5773,7 @@ var runEvals = async (tests, environment, llms, apiKey) => {
             "evals:createEvalTestWithApiKey",
             {
               apiKey,
-              testGroupId: void 0,
+              testGroupId,
               startedAt: runStartedAt,
               blob: void 0,
               actualToolCalls: [],
