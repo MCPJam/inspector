@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState, useCallback } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery } from "convex/react";
 import { FlaskConical, CheckCircle, XCircle, Clock, Play } from "lucide-react";
@@ -134,27 +134,7 @@ export function EvalsTab() {
     );
   }
 
-  const getStatusBadge = (status: EvalSuite["status"]) => {
-    if (status === "running")
-      return (
-        <Badge className="bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
-          Running
-        </Badge>
-      );
-    if (status === "failed")
-      return (
-        <Badge variant="destructive">
-          Failed
-        </Badge>
-      );
-    if (status === "cancelled")
-      return (
-        <Badge className="bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200">
-          Cancelled
-        </Badge>
-      );
-    return <Badge>Completed</Badge>;
-  };
+  // Status badge renderer was used by legacy list; removed in vertical redesign
 
   return (
     <div className="p-6 space-y-6">
@@ -214,93 +194,211 @@ export function EvalsTab() {
         </Card>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        <Card className="xl:col-span-1">
-          <CardHeader>
-            <CardTitle>Suites</CardTitle>
-            <CardDescription>Historical runs</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {suites && suites.length > 0 ? (
-              <div className="space-y-3">
-                {suites.map((s) => (
-                  <div key={s._id} className="flex items-center justify-between border rounded-md p-3">
-                    <div>
-                      <div className="font-medium">Started {formatTime(s.startedAt)}</div>
-                      <div className="text-sm text-muted-foreground">
-                        Tests: {s.totalTests} • Finished {formatTime(s.finishedAt)}
-                      </div>
-                    </div>
-                    {getStatusBadge(s.status)}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-sm text-muted-foreground">No suites yet.</div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className="xl:col-span-1">
-          <CardHeader>
-            <CardTitle>Test Cases</CardTitle>
-            <CardDescription>Reusable prompts and configs</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {cases && cases.length > 0 ? (
-              <div className="space-y-3">
-                {cases.map((c) => (
-                  <div key={c._id} className="border rounded-md p-3">
-                    <div className="font-medium">{c.title}</div>
-                    <div className="text-sm text-muted-foreground">
-                      {c.provider}/{c.model} • Planned runs: {c.runs}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-sm text-muted-foreground">No test cases yet.</div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className="xl:col-span-1">
-          <CardHeader>
-            <CardTitle>Iterations</CardTitle>
-            <CardDescription>Latest executions</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {iterations && iterations.length > 0 ? (
-              <div className="space-y-3">
-                {iterations.map((it) => (
-                  <div key={it._id} className="flex items-center justify-between border rounded-md p-3">
-                    <div>
-                      <div className="font-medium">Iteration #{it.iterationNumber}</div>
-                      <div className="text-sm text-muted-foreground">
-                        {formatTime(it.startedAt)} • Tokens: {it.tokensUsed} • Tools: {it.actualToolCalls.length}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {it.status === "running" ? (
-                        <Clock className="h-4 w-4 text-yellow-500" />
-                      ) : it.result === "passed" ? (
-                        <CheckCircle className="h-4 w-4 text-green-500" />
-                      ) : (
-                        <XCircle className="h-4 w-4 text-red-500" />
-                      )}
-                      <Badge variant={it.result === "passed" ? "default" : it.result === "failed" ? "destructive" : "outline"}>
-                        {it.result}
-                      </Badge>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-sm text-muted-foreground">No iterations yet.</div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+      {/* Suites section moved below global metrics and stacked vertically */}
+      <SuitesRow
+        suites={suites || []}
+        cases={cases || []}
+        iterations={iterations || []}
+      />
     </div>
   );
 }
+
+// --- Helper and subcomponents ---
+
+function withinSuiteWindow(it: EvalIteration, suite: EvalSuite): boolean {
+  const started = suite.startedAt ?? 0;
+  const finished = suite.finishedAt ?? Number.MAX_SAFE_INTEGER;
+  return it.startedAt >= started && it.startedAt <= finished;
+}
+
+type SuiteAggregate = {
+  filteredIterations: EvalIteration[];
+  totals: { passed: number; failed: number; cancelled: number; tokens: number };
+  byCase: Array<{
+    testCaseId: string;
+    title: string;
+    provider: string;
+    model: string;
+    runs: number;
+    passed: number;
+    failed: number;
+    cancelled: number;
+    tokens: number;
+  }>;
+};
+
+function aggregateSuite(
+  suite: EvalSuite,
+  cases: EvalCase[],
+  iterations: EvalIteration[],
+): SuiteAggregate {
+  const filtered = iterations.filter((it) => withinSuiteWindow(it, suite));
+  const totals = filtered.reduce(
+    (acc, it) => {
+      if (it.result === "passed") acc.passed += 1;
+      else if (it.result === "failed") acc.failed += 1;
+      else acc.cancelled += 1;
+      acc.tokens += it.tokensUsed || 0;
+      return acc;
+    },
+    { passed: 0, failed: 0, cancelled: 0, tokens: 0 },
+  );
+
+  const byCaseMap = new Map<string, SuiteAggregate["byCase"][number]>();
+  for (const it of filtered) {
+    const id = it.testCaseId;
+    if (!id) continue;
+    if (!byCaseMap.has(id)) {
+      const c = cases.find((x) => x._id === id);
+      byCaseMap.set(id, {
+        testCaseId: id,
+        title: c?.title || "Untitled",
+        provider: c?.provider || "",
+        model: c?.model || "",
+        runs: c?.runs || 0,
+        passed: 0,
+        failed: 0,
+        cancelled: 0,
+        tokens: 0,
+      });
+    }
+    const entry = byCaseMap.get(id)!;
+    if (it.result === "passed") entry.passed += 1;
+    else if (it.result === "failed") entry.failed += 1;
+    else entry.cancelled += 1;
+    entry.tokens += it.tokensUsed || 0;
+  }
+
+  return {
+    filteredIterations: filtered,
+    totals,
+    byCase: Array.from(byCaseMap.values()),
+  };
+}
+
+function SuitesRow({
+  suites,
+  cases,
+  iterations,
+}: {
+  suites: EvalSuite[];
+  cases: EvalCase[];
+  iterations: EvalIteration[];
+}) {
+  const [expandedSuiteId, setExpandedSuiteId] = useState<string | null>(null);
+
+  const toggle = useCallback((id: string) => {
+    setExpandedSuiteId((prev) => (prev === id ? null : id));
+  }, []);
+
+  const expandedSuite = suites.find((s) => s._id === expandedSuiteId) || null;
+  const aggregate = expandedSuite
+    ? aggregateSuite(expandedSuite, cases, iterations)
+    : null;
+
+  return (
+    <div className="space-y-4">
+      <h2 className="text-base font-semibold">Suites</h2>
+
+      {suites.length === 0 ? (
+        <div className="text-sm text-muted-foreground">No suites yet.</div>
+      ) : (
+        <div className="space-y-3">
+          {suites.map((s) => (
+            <button
+              key={s._id}
+              onClick={() => toggle(s._id)}
+              className={`w-full text-left border rounded-xl p-4 hover:shadow-sm transition-shadow ${
+                expandedSuiteId === s._id ? "border-primary" : "border-border"
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <div className="font-medium">{formatTime(s.startedAt)}</div>
+                <div>
+                  <Badge className="ml-2">{s.status}</Badge>
+                </div>
+              </div>
+              <div className="text-sm text-muted-foreground mt-1">
+                Tests: {s.totalTests} • Finished {formatTime(s.finishedAt)}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {expandedSuite && aggregate && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Suite started {formatTime(expandedSuite.startedAt)}</CardTitle>
+            <CardDescription>
+              {aggregate.totals.passed} passed · {aggregate.totals.failed} failed · {aggregate.totals.cancelled} cancelled · {aggregate.totals.tokens.toLocaleString()} tokens
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div>
+              <div className="text-sm font-medium mb-2">Per test case</div>
+              {aggregate.byCase.length === 0 ? (
+                <div className="text-sm text-muted-foreground">No case-level results in this window.</div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {aggregate.byCase.map((c) => (
+                    <div key={c.testCaseId} className="border rounded-md p-3">
+                      <div className="font-medium">{c.title}</div>
+                      <div className="text-xs text-muted-foreground mb-1">
+                        {c.provider}/{c.model} • Planned runs: {c.runs}
+                      </div>
+                      <div className="text-sm">
+                        <span className="text-green-600">{c.passed} passed</span>
+                        <span className="mx-2">·</span>
+                        <span className="text-red-600">{c.failed} failed</span>
+                        <span className="mx-2">·</span>
+                        <span className="text-muted-foreground">{c.cancelled} cancelled</span>
+                        <span className="mx-2">·</span>
+                        <span className="text-muted-foreground">{c.tokens.toLocaleString()} tokens</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div>
+              <div className="text-sm font-medium mb-2">Iterations in suite window</div>
+              {aggregate.filteredIterations.length === 0 ? (
+                <div className="text-sm text-muted-foreground">No iterations found.</div>
+              ) : (
+                <div className="space-y-2">
+                  {aggregate.filteredIterations.slice(0, 20).map((it) => (
+                    <div key={it._id} className="flex items-center justify-between border rounded-md p-3">
+                      <div>
+                        <div className="font-medium">Iteration #{it.iterationNumber}</div>
+                        <div className="text-sm text-muted-foreground">
+                          {formatTime(it.startedAt)} • Tokens: {it.tokensUsed} • Tools: {it.actualToolCalls.length}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {it.status === "running" ? (
+                          <Clock className="h-4 w-4 text-yellow-500" />
+                        ) : it.result === "passed" ? (
+                          <CheckCircle className="h-4 w-4 text-green-500" />
+                        ) : (
+                          <XCircle className="h-4 w-4 text-red-500" />
+                        )}
+                        <Badge variant={it.result === "passed" ? "default" : it.result === "failed" ? "destructive" : "outline"}>
+                          {it.result}
+                        </Badge>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// (Legacy list components removed after vertical redesign)
