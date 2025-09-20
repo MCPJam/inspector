@@ -872,7 +872,7 @@ function convexToJson(value) {
   return convexToJsonInternal(value, value, "", false);
 }
 
-// ../node_modules/convex/dist/esm/values/validators.js
+// ../node_modules/convex/dist/esm/values/errors.js
 var __defProp = Object.defineProperty;
 var __defNormalProp = (obj, key, value) =>
   key in obj
@@ -885,453 +885,25 @@ var __defNormalProp = (obj, key, value) =>
     : (obj[key] = value);
 var __publicField = (obj, key, value) =>
   __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
-var BaseValidator = class {
-  constructor({ isOptional }) {
-    __publicField(this, "type");
-    __publicField(this, "fieldPaths");
-    __publicField(this, "isOptional");
-    __publicField(this, "isConvexValidator");
-    this.isOptional = isOptional;
-    this.isConvexValidator = true;
-  }
-  /** @deprecated - use isOptional instead */
-  get optional() {
-    return this.isOptional === "optional" ? true : false;
-  }
-};
-var VId = class _VId extends BaseValidator {
-  /**
-   * Usually you'd use `v.id(tableName)` instead.
-   */
-  constructor({ isOptional, tableName }) {
-    super({ isOptional });
-    __publicField(this, "tableName");
-    __publicField(this, "kind", "id");
-    if (typeof tableName !== "string") {
-      throw new Error("v.id(tableName) requires a string");
-    }
-    this.tableName = tableName;
-  }
-  /** @internal */
-  get json() {
-    return { type: "id", tableName: this.tableName };
-  }
-  /** @internal */
-  asOptional() {
-    return new _VId({
-      isOptional: "optional",
-      tableName: this.tableName,
-    });
-  }
-};
-var VFloat64 = class _VFloat64 extends BaseValidator {
-  constructor() {
-    super(...arguments);
-    __publicField(this, "kind", "float64");
-  }
-  /** @internal */
-  get json() {
-    return { type: "number" };
-  }
-  /** @internal */
-  asOptional() {
-    return new _VFloat64({
-      isOptional: "optional",
-    });
-  }
-};
-var VInt64 = class _VInt64 extends BaseValidator {
-  constructor() {
-    super(...arguments);
-    __publicField(this, "kind", "int64");
-  }
-  /** @internal */
-  get json() {
-    return { type: "bigint" };
-  }
-  /** @internal */
-  asOptional() {
-    return new _VInt64({ isOptional: "optional" });
-  }
-};
-var VBoolean = class _VBoolean extends BaseValidator {
-  constructor() {
-    super(...arguments);
-    __publicField(this, "kind", "boolean");
-  }
-  /** @internal */
-  get json() {
-    return { type: this.kind };
-  }
-  /** @internal */
-  asOptional() {
-    return new _VBoolean({
-      isOptional: "optional",
-    });
-  }
-};
-var VBytes = class _VBytes extends BaseValidator {
-  constructor() {
-    super(...arguments);
-    __publicField(this, "kind", "bytes");
-  }
-  /** @internal */
-  get json() {
-    return { type: this.kind };
-  }
-  /** @internal */
-  asOptional() {
-    return new _VBytes({ isOptional: "optional" });
-  }
-};
-var VString = class _VString extends BaseValidator {
-  constructor() {
-    super(...arguments);
-    __publicField(this, "kind", "string");
-  }
-  /** @internal */
-  get json() {
-    return { type: this.kind };
-  }
-  /** @internal */
-  asOptional() {
-    return new _VString({
-      isOptional: "optional",
-    });
-  }
-};
-var VNull = class _VNull extends BaseValidator {
-  constructor() {
-    super(...arguments);
-    __publicField(this, "kind", "null");
-  }
-  /** @internal */
-  get json() {
-    return { type: this.kind };
-  }
-  /** @internal */
-  asOptional() {
-    return new _VNull({ isOptional: "optional" });
-  }
-};
-var VAny = class _VAny extends BaseValidator {
-  constructor() {
-    super(...arguments);
-    __publicField(this, "kind", "any");
-  }
-  /** @internal */
-  get json() {
-    return {
-      type: this.kind,
-    };
-  }
-  /** @internal */
-  asOptional() {
-    return new _VAny({
-      isOptional: "optional",
-    });
-  }
-};
-var VObject = class _VObject extends BaseValidator {
-  /**
-   * Usually you'd use `v.object({ ... })` instead.
-   */
-  constructor({ isOptional, fields }) {
-    super({ isOptional });
-    __publicField(this, "fields");
-    __publicField(this, "kind", "object");
-    globalThis.Object.values(fields).forEach((v2) => {
-      if (!v2.isConvexValidator) {
-        throw new Error("v.object() entries must be valiators");
-      }
-    });
-    this.fields = fields;
-  }
-  /** @internal */
-  get json() {
-    return {
-      type: this.kind,
-      value: globalThis.Object.fromEntries(
-        globalThis.Object.entries(this.fields).map(([k, v2]) => [
-          k,
-          {
-            fieldType: v2.json,
-            optional: v2.isOptional === "optional" ? true : false,
-          },
-        ]),
-      ),
-    };
-  }
-  /** @internal */
-  asOptional() {
-    return new _VObject({
-      isOptional: "optional",
-      fields: this.fields,
-    });
-  }
-};
-var VLiteral = class _VLiteral extends BaseValidator {
-  /**
-   * Usually you'd use `v.literal(value)` instead.
-   */
-  constructor({ isOptional, value }) {
-    super({ isOptional });
-    __publicField(this, "value");
-    __publicField(this, "kind", "literal");
-    if (
-      typeof value !== "string" &&
-      typeof value !== "boolean" &&
-      typeof value !== "number" &&
-      typeof value !== "bigint"
-    ) {
-      throw new Error("v.literal(value) must be a string, number, or boolean");
-    }
-    this.value = value;
-  }
-  /** @internal */
-  get json() {
-    return {
-      type: this.kind,
-      value: convexToJson(this.value),
-    };
-  }
-  /** @internal */
-  asOptional() {
-    return new _VLiteral({
-      isOptional: "optional",
-      value: this.value,
-    });
-  }
-};
-var VArray = class _VArray extends BaseValidator {
-  /**
-   * Usually you'd use `v.array(element)` instead.
-   */
-  constructor({ isOptional, element }) {
-    super({ isOptional });
-    __publicField(this, "element");
-    __publicField(this, "kind", "array");
-    this.element = element;
-  }
-  /** @internal */
-  get json() {
-    return {
-      type: this.kind,
-      value: this.element.json,
-    };
-  }
-  /** @internal */
-  asOptional() {
-    return new _VArray({
-      isOptional: "optional",
-      element: this.element,
-    });
-  }
-};
-var VRecord = class _VRecord extends BaseValidator {
-  /**
-   * Usually you'd use `v.record(key, value)` instead.
-   */
-  constructor({ isOptional, key, value }) {
-    super({ isOptional });
-    __publicField(this, "key");
-    __publicField(this, "value");
-    __publicField(this, "kind", "record");
-    if (key.isOptional === "optional") {
-      throw new Error("Record validator cannot have optional keys");
-    }
-    if (value.isOptional === "optional") {
-      throw new Error("Record validator cannot have optional values");
-    }
-    if (!key.isConvexValidator || !value.isConvexValidator) {
-      throw new Error("Key and value of v.record() but be validators");
-    }
-    this.key = key;
-    this.value = value;
-  }
-  /** @internal */
-  get json() {
-    return {
-      type: this.kind,
-      // This cast is needed because TypeScript thinks the key type is too wide
-      keys: this.key.json,
-      values: {
-        fieldType: this.value.json,
-        optional: false,
-      },
-    };
-  }
-  /** @internal */
-  asOptional() {
-    return new _VRecord({
-      isOptional: "optional",
-      key: this.key,
-      value: this.value,
-    });
-  }
-};
-var VUnion = class _VUnion extends BaseValidator {
-  /**
-   * Usually you'd use `v.union(...members)` instead.
-   */
-  constructor({ isOptional, members }) {
-    super({ isOptional });
-    __publicField(this, "members");
-    __publicField(this, "kind", "union");
-    members.forEach((member) => {
-      if (!member.isConvexValidator) {
-        throw new Error("All members of v.union() must be validators");
-      }
-    });
-    this.members = members;
-  }
-  /** @internal */
-  get json() {
-    return {
-      type: this.kind,
-      value: this.members.map((v2) => v2.json),
-    };
-  }
-  /** @internal */
-  asOptional() {
-    return new _VUnion({
-      isOptional: "optional",
-      members: this.members,
-    });
+var _a;
+var _b;
+var IDENTIFYING_FIELD = Symbol.for("ConvexError");
+var ConvexError = class extends ((_b = Error), (_a = IDENTIFYING_FIELD), _b) {
+  constructor(data) {
+    super(typeof data === "string" ? data : stringifyValueForError(data));
+    __publicField(this, "name", "ConvexError");
+    __publicField(this, "data");
+    __publicField(this, _a, true);
+    this.data = data;
   }
 };
 
-// ../node_modules/convex/dist/esm/values/validator.js
-function isValidator(v2) {
-  return !!v2.isConvexValidator;
-}
-var v = {
-  /**
-   * Validates that the value corresponds to an ID of a document in given table.
-   * @param tableName The name of the table.
-   */
-  id: (tableName) => {
-    return new VId({
-      isOptional: "required",
-      tableName,
-    });
-  },
-  /**
-   * Validates that the value is of type Null.
-   */
-  null: () => {
-    return new VNull({ isOptional: "required" });
-  },
-  /**
-   * Validates that the value is of Convex type Float64 (Number in JS).
-   *
-   * Alias for `v.float64()`
-   */
-  number: () => {
-    return new VFloat64({ isOptional: "required" });
-  },
-  /**
-   * Validates that the value is of Convex type Float64 (Number in JS).
-   */
-  float64: () => {
-    return new VFloat64({ isOptional: "required" });
-  },
-  /**
-   * @deprecated Use `v.int64()` instead
-   */
-  bigint: () => {
-    return new VInt64({ isOptional: "required" });
-  },
-  /**
-   * Validates that the value is of Convex type Int64 (BigInt in JS).
-   */
-  int64: () => {
-    return new VInt64({ isOptional: "required" });
-  },
-  /**
-   * Validates that the value is of type Boolean.
-   */
-  boolean: () => {
-    return new VBoolean({ isOptional: "required" });
-  },
-  /**
-   * Validates that the value is of type String.
-   */
-  string: () => {
-    return new VString({ isOptional: "required" });
-  },
-  /**
-   * Validates that the value is of Convex type Bytes (constructed in JS via `ArrayBuffer`).
-   */
-  bytes: () => {
-    return new VBytes({ isOptional: "required" });
-  },
-  /**
-   * Validates that the value is equal to the given literal value.
-   * @param literal The literal value to compare against.
-   */
-  literal: (literal) => {
-    return new VLiteral({ isOptional: "required", value: literal });
-  },
-  /**
-   * Validates that the value is an Array of the given element type.
-   * @param element The validator for the elements of the array.
-   */
-  array: (element) => {
-    return new VArray({ isOptional: "required", element });
-  },
-  /**
-   * Validates that the value is an Object with the given properties.
-   * @param fields An object specifying the validator for each property.
-   */
-  object: (fields) => {
-    return new VObject({ isOptional: "required", fields });
-  },
-  /**
-   * Validates that the value is a Record with keys and values that match the given types.
-   * @param keys The validator for the keys of the record. This cannot contain string literals.
-   * @param values The validator for the values of the record.
-   */
-  record: (keys, values) => {
-    return new VRecord({
-      isOptional: "required",
-      key: keys,
-      value: values,
-    });
-  },
-  /**
-   * Validates that the value matches one of the given validators.
-   * @param members The validators to match against.
-   */
-  union: (...members) => {
-    return new VUnion({
-      isOptional: "required",
-      members,
-    });
-  },
-  /**
-   * Does not validate the value.
-   */
-  any: () => {
-    return new VAny({ isOptional: "required" });
-  },
-  /**
-   * Allows not specifying a value for a property in an Object.
-   * @param value The property value validator to make optional.
-   *
-   * ```typescript
-   * const objectWithOptionalFields = v.object({
-   *   requiredField: v.string(),
-   *   optionalField: v.optional(v.string()),
-   * });
-   * ```
-   */
-  optional: (value) => {
-    return value.asOptional();
-  },
-};
+// ../node_modules/convex/dist/esm/values/compare_utf8.js
+var arr = () => Array.from({ length: 4 }, () => 0);
+var aBytes = arr();
+var bBytes = arr();
 
-// ../node_modules/convex/dist/esm/values/errors.js
+// ../node_modules/convex/dist/esm/browser/logging.js
 var __defProp2 = Object.defineProperty;
 var __defNormalProp2 = (obj, key, value) =>
   key in obj
@@ -1344,37 +916,6 @@ var __defNormalProp2 = (obj, key, value) =>
     : (obj[key] = value);
 var __publicField2 = (obj, key, value) =>
   __defNormalProp2(obj, typeof key !== "symbol" ? key + "" : key, value);
-var _a;
-var _b;
-var IDENTIFYING_FIELD = Symbol.for("ConvexError");
-var ConvexError = class extends ((_b = Error), (_a = IDENTIFYING_FIELD), _b) {
-  constructor(data) {
-    super(typeof data === "string" ? data : stringifyValueForError(data));
-    __publicField2(this, "name", "ConvexError");
-    __publicField2(this, "data");
-    __publicField2(this, _a, true);
-    this.data = data;
-  }
-};
-
-// ../node_modules/convex/dist/esm/values/compare_utf8.js
-var arr = () => Array.from({ length: 4 }, () => 0);
-var aBytes = arr();
-var bBytes = arr();
-
-// ../node_modules/convex/dist/esm/browser/logging.js
-var __defProp3 = Object.defineProperty;
-var __defNormalProp3 = (obj, key, value) =>
-  key in obj
-    ? __defProp3(obj, key, {
-        enumerable: true,
-        configurable: true,
-        writable: true,
-        value,
-      })
-    : (obj[key] = value);
-var __publicField3 = (obj, key, value) =>
-  __defNormalProp3(obj, typeof key !== "symbol" ? key + "" : key, value);
 var INFO_COLOR = "color:rgb(0, 145, 255)";
 function prefix_for_source(source) {
   switch (source) {
@@ -1390,8 +931,8 @@ function prefix_for_source(source) {
 }
 var DefaultLogger = class {
   constructor(options) {
-    __publicField3(this, "_onLogLineFuncs");
-    __publicField3(this, "_verbose");
+    __publicField2(this, "_onLogLineFuncs");
+    __publicField2(this, "_verbose");
     this._onLogLineFuncs = {};
     this._verbose = options.verbose;
   }
@@ -1566,23 +1107,23 @@ function createApi(pathParts = []) {
 var anyApi = createApi();
 
 // ../node_modules/convex/dist/esm/browser/long.js
-var __defProp4 = Object.defineProperty;
-var __defNormalProp4 = (obj, key, value) =>
+var __defProp3 = Object.defineProperty;
+var __defNormalProp3 = (obj, key, value) =>
   key in obj
-    ? __defProp4(obj, key, {
+    ? __defProp3(obj, key, {
         enumerable: true,
         configurable: true,
         writable: true,
         value,
       })
     : (obj[key] = value);
-var __publicField4 = (obj, key, value) =>
-  __defNormalProp4(obj, typeof key !== "symbol" ? key + "" : key, value);
+var __publicField3 = (obj, key, value) =>
+  __defNormalProp3(obj, typeof key !== "symbol" ? key + "" : key, value);
 var Long = class _Long {
   constructor(low, high) {
-    __publicField4(this, "low");
-    __publicField4(this, "high");
-    __publicField4(this, "__isUnsignedLong__");
+    __publicField3(this, "low");
+    __publicField3(this, "high");
+    __publicField3(this, "__isUnsignedLong__");
     this.low = low | 0;
     this.high = high | 0;
     this.__isUnsignedLong__ = true;
@@ -1671,18 +1212,18 @@ import { createRequire } from "module";
 import { resolve as nodePathResolve } from "path";
 
 // ../node_modules/convex/dist/esm/browser/http_client.js
-var __defProp5 = Object.defineProperty;
-var __defNormalProp5 = (obj, key, value) =>
+var __defProp4 = Object.defineProperty;
+var __defNormalProp4 = (obj, key, value) =>
   key in obj
-    ? __defProp5(obj, key, {
+    ? __defProp4(obj, key, {
         enumerable: true,
         configurable: true,
         writable: true,
         value,
       })
     : (obj[key] = value);
-var __publicField5 = (obj, key, value) =>
-  __defNormalProp5(obj, typeof key !== "symbol" ? key + "" : key, value);
+var __publicField4 = (obj, key, value) =>
+  __defNormalProp4(obj, typeof key !== "symbol" ? key + "" : key, value);
 var STATUS_CODE_UDF_FAILED = 560;
 var specifiedFetch = void 0;
 var ConvexHttpClient = class {
@@ -1705,15 +1246,15 @@ var ConvexHttpClient = class {
    * but for short-lived clients it's convenient to specify this value here.
    */
   constructor(address, options) {
-    __publicField5(this, "address");
-    __publicField5(this, "auth");
-    __publicField5(this, "adminAuth");
-    __publicField5(this, "encodedTsPromise");
-    __publicField5(this, "debug");
-    __publicField5(this, "fetchOptions");
-    __publicField5(this, "logger");
-    __publicField5(this, "mutationQueue", []);
-    __publicField5(this, "isProcessingQueue", false);
+    __publicField4(this, "address");
+    __publicField4(this, "auth");
+    __publicField4(this, "adminAuth");
+    __publicField4(this, "encodedTsPromise");
+    __publicField4(this, "debug");
+    __publicField4(this, "fetchOptions");
+    __publicField4(this, "logger");
+    __publicField4(this, "mutationQueue", []);
+    __publicField4(this, "isProcessingQueue", false);
     if (typeof options === "boolean") {
       throw new Error(
         "skipConvexDeploymentUrlCheck as the second argument is no longer supported. Please pass an options object, `{ skipConvexDeploymentUrlCheck: true }`.",
@@ -2143,7 +1684,7 @@ function setDefaultWebSocketConstructor(ws) {
 // ../node_modules/convex/dist/esm/browser/simple_client-node.js
 var require2 = createRequire(nodePathResolve("."));
 var __create = Object.create;
-var __defProp6 = Object.defineProperty;
+var __defProp5 = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
@@ -2171,7 +1712,7 @@ var __copyProps = (to, from, except, desc) => {
   if ((from && typeof from === "object") || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
       if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp6(to, key, {
+        __defProp5(to, key, {
           get: () => from[key],
           enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable,
         });
@@ -2186,7 +1727,7 @@ var __toESM = (mod, isNodeMode, target) => (
     // compatible transform (i.e. "__esModule" has not been set), then set
     // "default" to the CommonJS "module.exports" for node compatibility.
     isNodeMode || !mod || !mod.__esModule
-      ? __defProp6(target, "default", { value: mod, enumerable: true })
+      ? __defProp5(target, "default", { value: mod, enumerable: true })
       : target,
     mod,
   )
@@ -6240,227 +5781,11 @@ var dbClient = () => {
   return new ConvexHttpClient(convexUrl);
 };
 
-// ../node_modules/convex/dist/esm/server/pagination.js
-var paginationOptsValidator = v.object({
-  numItems: v.number(),
-  cursor: v.union(v.string(), v.null()),
-  endCursor: v.optional(v.union(v.string(), v.null())),
-  id: v.optional(v.number()),
-  maximumRowsRead: v.optional(v.number()),
-  maximumBytesRead: v.optional(v.number()),
-});
-
-// ../node_modules/convex/dist/esm/server/schema.js
-var __defProp7 = Object.defineProperty;
-var __defNormalProp6 = (obj, key, value) =>
-  key in obj
-    ? __defProp7(obj, key, {
-        enumerable: true,
-        configurable: true,
-        writable: true,
-        value,
-      })
-    : (obj[key] = value);
-var __publicField6 = (obj, key, value) =>
-  __defNormalProp6(obj, typeof key !== "symbol" ? key + "" : key, value);
-var TableDefinition = class {
-  /**
-   * @internal
-   */
-  constructor(documentType) {
-    __publicField6(this, "indexes");
-    __publicField6(this, "stagedDbIndexes");
-    __publicField6(this, "searchIndexes");
-    __publicField6(this, "stagedSearchIndexes");
-    __publicField6(this, "vectorIndexes");
-    __publicField6(this, "stagedVectorIndexes");
-    __publicField6(this, "validator");
-    this.indexes = [];
-    this.stagedDbIndexes = [];
-    this.searchIndexes = [];
-    this.stagedSearchIndexes = [];
-    this.vectorIndexes = [];
-    this.stagedVectorIndexes = [];
-    this.validator = documentType;
-  }
-  /**
-   * This API is experimental: it may change or disappear.
-   *
-   * Returns indexes defined on this table.
-   * Intended for the advanced use cases of dynamically deciding which index to use for a query.
-   * If you think you need this, please chime in on ths issue in the Convex JS GitHub repo.
-   * https://github.com/get-convex/convex-js/issues/49
-   */
-  " indexes"() {
-    return this.indexes;
-  }
-  index(name2, indexConfig) {
-    if (Array.isArray(indexConfig)) {
-      this.indexes.push({
-        indexDescriptor: name2,
-        fields: indexConfig,
-      });
-    } else if (indexConfig.staged) {
-      this.stagedDbIndexes.push({
-        indexDescriptor: name2,
-        fields: indexConfig.fields,
-      });
-    } else {
-      this.indexes.push({
-        indexDescriptor: name2,
-        fields: indexConfig.fields,
-      });
-    }
-    return this;
-  }
-  searchIndex(name2, indexConfig) {
-    if (indexConfig.staged) {
-      this.stagedSearchIndexes.push({
-        indexDescriptor: name2,
-        searchField: indexConfig.searchField,
-        filterFields: indexConfig.filterFields || [],
-      });
-    } else {
-      this.searchIndexes.push({
-        indexDescriptor: name2,
-        searchField: indexConfig.searchField,
-        filterFields: indexConfig.filterFields || [],
-      });
-    }
-    return this;
-  }
-  vectorIndex(name2, indexConfig) {
-    if (indexConfig.staged) {
-      this.stagedVectorIndexes.push({
-        indexDescriptor: name2,
-        vectorField: indexConfig.vectorField,
-        dimensions: indexConfig.dimensions,
-        filterFields: indexConfig.filterFields || [],
-      });
-    } else {
-      this.vectorIndexes.push({
-        indexDescriptor: name2,
-        vectorField: indexConfig.vectorField,
-        dimensions: indexConfig.dimensions,
-        filterFields: indexConfig.filterFields || [],
-      });
-    }
-    return this;
-  }
-  /**
-   * Work around for https://github.com/microsoft/TypeScript/issues/57035
-   */
-  self() {
-    return this;
-  }
-  /**
-   * Export the contents of this definition.
-   *
-   * This is called internally by the Convex framework.
-   * @internal
-   */
-  export() {
-    const documentType = this.validator.json;
-    if (typeof documentType !== "object") {
-      throw new Error(
-        "Invalid validator: please make sure that the parameter of `defineTable` is valid (see https://docs.convex.dev/database/schemas)",
-      );
-    }
-    return {
-      indexes: this.indexes,
-      stagedDbIndexes: this.stagedDbIndexes,
-      searchIndexes: this.searchIndexes,
-      stagedSearchIndexes: this.stagedSearchIndexes,
-      vectorIndexes: this.vectorIndexes,
-      stagedVectorIndexes: this.stagedVectorIndexes,
-      documentType,
-    };
-  }
-};
-function defineTable(documentSchema) {
-  if (isValidator(documentSchema)) {
-    return new TableDefinition(documentSchema);
-  } else {
-    return new TableDefinition(v.object(documentSchema));
-  }
-}
-var SchemaDefinition = class {
-  /**
-   * @internal
-   */
-  constructor(tables, options) {
-    __publicField6(this, "tables");
-    __publicField6(this, "strictTableNameTypes");
-    __publicField6(this, "schemaValidation");
-    this.tables = tables;
-    this.schemaValidation =
-      options?.schemaValidation === void 0 ? true : options.schemaValidation;
-  }
-  /**
-   * Export the contents of this definition.
-   *
-   * This is called internally by the Convex framework.
-   * @internal
-   */
-  export() {
-    return JSON.stringify({
-      tables: Object.entries(this.tables).map(([tableName, definition]) => {
-        const {
-          indexes,
-          stagedDbIndexes,
-          searchIndexes,
-          stagedSearchIndexes,
-          vectorIndexes,
-          stagedVectorIndexes,
-          documentType,
-        } = definition.export();
-        return {
-          tableName,
-          indexes,
-          stagedDbIndexes,
-          searchIndexes,
-          stagedSearchIndexes,
-          vectorIndexes,
-          stagedVectorIndexes,
-          documentType,
-        };
-      }),
-      schemaValidation: this.schemaValidation,
-    });
-  }
-};
-function defineSchema(schema, options) {
-  return new SchemaDefinition(schema, options);
-}
-var _systemSchema = defineSchema({
-  _scheduled_functions: defineTable({
-    name: v.string(),
-    args: v.array(v.any()),
-    scheduledTime: v.float64(),
-    completedTime: v.optional(v.float64()),
-    state: v.union(
-      v.object({ kind: v.literal("pending") }),
-      v.object({ kind: v.literal("inProgress") }),
-      v.object({ kind: v.literal("success") }),
-      v.object({ kind: v.literal("failed"), error: v.string() }),
-      v.object({ kind: v.literal("canceled") }),
-    ),
-  }),
-  _storage: defineTable({
-    sha256: v.string(),
-    size: v.float64(),
-    contentType: v.optional(v.string()),
-  }),
-});
-
-// _generated/api.js
-var api = anyApi;
-
 // src/db/user.ts
 var getUserIdFromApiKeyOrNull = async (apiKey) => {
   const db = dbClient();
   const user = await db.mutation(
-    api.apiKeys.validateApiKeyAndReturnUserIdOrNull,
+    "apiKeys:validateApiKeyAndReturnUserIdOrNull",
     { apiKey },
   );
   if (!user) {
@@ -6720,6 +6045,30 @@ var runEvals = async (tests, environment, llms, apiKey) => {
   );
   const vercelTools = convertMastraToolsToVercelTools(availableTools);
   const suiteStartedAt = Date.now();
+  const totalPlannedTests = validatedTests.reduce(
+    (sum, t) => sum + (t?.runs ?? 0),
+    0,
+  );
+  const db = dbClient();
+  const shouldSaveToDb = Boolean(apiKey);
+  const configSummary = {
+    tests: validatedTests,
+    environment: { servers: Object.keys(mcpClientOptions.servers) },
+    llms: Object.keys(validatedLlmApiKeys ?? {}),
+  };
+  let testRunId;
+  if (shouldSaveToDb) {
+    try {
+      testRunId = await db.action("evals:createEvalTestSuiteWithApiKey", {
+        apiKey,
+        name: void 0,
+        config: configSummary,
+        totalTests: totalPlannedTests,
+      });
+    } catch (err) {
+      testRunId = void 0;
+    }
+  }
   let passedRuns = 0;
   let failedRuns = 0;
   let testNumber = 1;
@@ -6728,6 +6077,31 @@ var runEvals = async (tests, environment, llms, apiKey) => {
     Logger.logTestGroupTitle(testNumber, test.title, provider, model);
     const numberOfRuns = runs;
     const { system, temperature, toolChoice } = advancedConfig ?? {};
+    let testCaseId;
+    if (shouldSaveToDb) {
+      try {
+        testCaseId = await db.action("evals:createEvalTestCaseWithApiKey", {
+          apiKey,
+          title: String(test.title ?? `Group ${testNumber}`),
+          query: String(query ?? ""),
+          provider: String(provider ?? ""),
+          model: String(model ?? ""),
+          runs: Number(numberOfRuns ?? 1),
+        });
+        if (!testRunId) {
+          try {
+            testRunId = await db.action("evals:createEvalTestSuiteWithApiKey", {
+              apiKey,
+              name: void 0,
+              config: configSummary,
+              totalTests: totalPlannedTests,
+            });
+          } catch {}
+        }
+      } catch {
+        testCaseId = void 0;
+      }
+    }
     for (let run = 0; run < numberOfRuns; run++) {
       Logger.testRunStart({
         runNumber: run + 1,
@@ -6742,6 +6116,25 @@ var runEvals = async (tests, environment, llms, apiKey) => {
       let inputTokensUsed;
       let outputTokensUsed;
       let totalTokensUsed;
+      let evalTestId;
+      if (shouldSaveToDb) {
+        try {
+          evalTestId = await db.action(
+            "evals:createEvalTestIterationWithApiKey",
+            {
+              apiKey,
+              testCaseId,
+              startedAt: runStartedAt,
+              iterationNumber: run + 1,
+              blob: void 0,
+              actualToolCalls: [],
+              tokensUsed: 0,
+            },
+          );
+        } catch {
+          evalTestId = void 0;
+        }
+      }
       if (system) {
         Logger.conversation({
           messages: [{ role: "system", content: system }],
@@ -6856,6 +6249,20 @@ var runEvals = async (tests, environment, llms, apiKey) => {
       } else {
         failedRuns++;
       }
+      if (evalTestId && shouldSaveToDb) {
+        try {
+          await db.action("evals:updateEvalTestIterationResultWithApiKey", {
+            apiKey,
+            testId: evalTestId,
+            status: "completed",
+            result: evaluation.passed ? "passed" : "failed",
+            actualToolCalls: toolsCalled,
+            tokensUsed: totalTokensUsed ?? 0,
+            blob: void 0,
+            blobContent: { messages: messageHistory },
+          });
+        } catch {}
+      }
     }
     testNumber++;
   }
@@ -6864,6 +6271,16 @@ var runEvals = async (tests, environment, llms, apiKey) => {
     passed: passedRuns,
     failed: failedRuns,
   });
+  if (testRunId && shouldSaveToDb) {
+    try {
+      await db.action("evals:updateEvalTestSuiteStatusWithApiKey", {
+        apiKey,
+        testRunId,
+        status: "completed",
+        finishedAt: Date.now(),
+      });
+    } catch {}
+  }
 };
 
 // src/evals/index.ts
