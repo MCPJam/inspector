@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useAction, useConvexAuth, useQuery } from "convex/react";
-import { FlaskConical, CheckCircle, XCircle, Clock } from "lucide-react";
+import { FlaskConical, CheckCircle, XCircle, Clock, ChevronDown, ChevronRight } from "lucide-react";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
   Card,
@@ -291,6 +291,7 @@ function SuitesBrowser({
   const [selectedSuiteId, setSelectedSuiteId] = useState<string | null>(null);
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
   const [selectedIterationId, setSelectedIterationId] = useState<string | null>(null);
+  const [expandedSuiteIds, setExpandedSuiteIds] = useState<Set<string>>(new Set());
 
   const selectedSuite = selectedSuiteId
     ? suites.find((s) => s._id === selectedSuiteId) || null
@@ -328,6 +329,15 @@ function SuitesBrowser({
     setSelectedIterationId(id);
   };
 
+  const toggleExpanded = (id: string) => {
+    setExpandedSuiteIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
       <div className="md:col-span-1 border rounded-xl p-3">
@@ -338,37 +348,50 @@ function SuitesBrowser({
           <div className="space-y-2">
             {suites.map((s) => {
               const isSelected = s._id === selectedSuiteId;
+              const isExpanded = expandedSuiteIds.has(s._id);
+              const perSuiteAgg = aggregateSuite(s, cases, iterations);
               return (
                 <div key={s._id} className={`border rounded-md ${isSelected ? "border-primary" : "border-border"}`}>
-                  <button
-                    className="w-full text-left p-3"
-                    onClick={() => handleSelectSuite(s._id)}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="font-medium">{formatTime(s.startedAt)}</div>
-                      <Badge>{s.status}</Badge>
-                    </div>
-                    <div className="text-xs text-muted-foreground mt-0.5">
-                      Tests: {s.totalTests} • Finished {formatTime(s.finishedAt)}
-                    </div>
-                  </button>
-                  {isSelected && suiteAgg && (
+                  <div className="flex items-stretch">
+                    <button
+                      className="flex-1 text-left p-3"
+                      onClick={() => handleSelectSuite(s._id)}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="font-medium">{formatTime(s.startedAt)}</div>
+                        <Badge>{s.status}</Badge>
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-0.5">
+                        Tests: {s.totalTests} • Finished {formatTime(s.finishedAt)}
+                      </div>
+                    </button>
+                    <button
+                      className="px-2 text-muted-foreground hover:text-foreground"
+                      aria-label="Toggle test cases"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleExpanded(s._id);
+                      }}
+                    >
+                      {isExpanded ? (
+                        <ChevronDown className="h-5 w-5" />
+                      ) : (
+                        <ChevronRight className="h-5 w-5" />
+                      )}
+                    </button>
+                  </div>
+                  {isExpanded && (
                     <div className="border-t p-2 space-y-1">
-                      <button
-                        className={`w-full text-left text-sm rounded px-2 py-1 ${
-                          !selectedCaseId ? "bg-muted" : "hover:bg-muted"
-                        }`}
-                        onClick={() => setSelectedCaseId(null)}
-                      >
-                        Suite metadata
-                      </button>
-                      {suiteAgg.byCase.map((c) => (
+                      {perSuiteAgg.byCase.map((c) => (
                         <button
                           key={c.testCaseId}
                           className={`w-full text-left text-sm rounded px-2 py-1 ${
-                            selectedCaseId === c.testCaseId ? "bg-muted" : "hover:bg-muted"
+                            selectedCaseId === c.testCaseId && isSelected ? "bg-muted" : "hover:bg-muted"
                           }`}
-                          onClick={() => handleSelectCase(c.testCaseId)}
+                          onClick={() => {
+                            handleSelectSuite(s._id);
+                            handleSelectCase(c.testCaseId);
+                          }}
                         >
                           {c.title}
                         </button>
