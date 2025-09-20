@@ -9,6 +9,7 @@ import {
 } from "../utils/validators";
 import { createLlmModel, extractToolNamesAsArray } from "../utils/helpers";
 import { Logger } from "../utils/logger";
+import { dbClient } from "../db";
 import { evaluateResults } from "./evaluator";
 
 const accumulateTokenCount = (
@@ -55,6 +56,35 @@ export const runEvals = async (
   const vercelTools = convertMastraToolsToVercelTools(availableTools);
 
   const suiteStartedAt = Date.now();
+  const totalPlannedTests = validatedTests.reduce(
+    (sum: number, t: any) => sum + (t?.runs ?? 0),
+    0,
+  );
+  const db = dbClient();
+  const shouldSaveToDb = Boolean(apiKey);
+
+  let testRunId: string | undefined;
+
+  if (shouldSaveToDb) {
+    try {
+      testRunId = await db.action(
+        "evals:createEvalTestRunWithApiKey" as any,
+        {
+          apiKey,
+          name: undefined,
+          config: {
+            tests,
+            environment: mcpClientOptions,
+            llms,
+          },
+          totalTests: totalPlannedTests,
+        },
+      );
+    } catch (err) {
+      // Do not block CLI; just skip persistence if it fails
+      testRunId = undefined;
+    }
+  }
   let passedRuns = 0;
   let failedRuns = 0;
 
@@ -79,6 +109,26 @@ export const runEvals = async (
       let inputTokensUsed: number | undefined;
       let outputTokensUsed: number | undefined;
       let totalTokensUsed: number | undefined;
+
+      // Create eval test record if persistence is enabled
+      let evalTestId: string | undefined;
+      if (shouldSaveToDb) {
+        try {
+          evalTestId = await db.action(
+            "evals:createEvalTestWithApiKey" as any,
+            {
+              apiKey,
+              testGroupId: undefined,
+              startedAt: runStartedAt,
+              blob: undefined,
+              actualToolCalls: [],
+              tokensUsed: 0,
+            },
+          );
+        } catch {
+          evalTestId = undefined;
+        }
+      }
 
       if (system) {
         Logger.conversation({
@@ -214,6 +264,26 @@ export const runEvals = async (
       } else {
         failedRuns++;
       }
+
+      // Update eval test result if it exists
+      if (evalTestId && shouldSaveToDb) {
+        try {
+          await db.action(
+            "evals:updateEvalTestResultWithApiKey" as any,
+            {
+              apiKey,
+              testId: evalTestId as any,
+              status: "completed",
+              result: evaluation.passed ? "passed" : "failed",
+              actualToolCalls: toolsCalled,
+              tokensUsed: totalTokensUsed ?? 0,
+              blob: undefined,
+            },
+          );
+        } catch {
+          // ignore persistence errors
+        }
+      }
     }
     testNumber++;
   }
@@ -223,4 +293,21 @@ export const runEvals = async (
     passed: passedRuns,
     failed: failedRuns,
   });
+
+  // Mark test run as completed
+  if (testRunId && shouldSaveToDb) {
+    try {
+      await db.action(
+        "evals:updateEvalTestRunStatusWithApiKey" as any,
+        {
+          apiKey,
+          testRunId: testRunId as any,
+          status: "completed",
+          finishedAt: Date.now(),
+        },
+      );
+    } catch {
+      // ignore persistence errors
+    }
+  }
 };
