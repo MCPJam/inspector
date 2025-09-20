@@ -316,6 +316,7 @@ export const runEvals = async (
               actualToolCalls: toolsCalled,
               tokensUsed: totalTokensUsed ?? 0,
               blob: undefined,
+              blobContent: { messages: messageHistory },
             },
           );
         } catch {

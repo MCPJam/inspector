@@ -5720,11 +5720,11 @@ var runEvals = async (tests, environment, llms, apiKey) => {
     Logger.logTestGroupTitle(testNumber, test.title, provider, model);
     const numberOfRuns = runs;
     const { system, temperature, toolChoice } = advancedConfig ?? {};
-    let testGroupId;
+    let testCaseId;
     if (shouldSaveToDb) {
       try {
-        testGroupId = await db.action(
-          "evals:createEvalTestGroupWithApiKey",
+        testCaseId = await db.action(
+          "evals:createEvalTestCaseWithApiKey",
           {
             apiKey,
             title: String(test.title ?? `Group ${testNumber}`),
@@ -5749,7 +5749,7 @@ var runEvals = async (tests, environment, llms, apiKey) => {
           }
         }
       } catch {
-        testGroupId = void 0;
+        testCaseId = void 0;
       }
     }
     for (let run = 0; run < numberOfRuns; run++) {
@@ -5773,8 +5773,9 @@ var runEvals = async (tests, environment, llms, apiKey) => {
             "evals:createEvalTestIterationWithApiKey",
             {
               apiKey,
-              testGroupId,
+              testCaseId,
               startedAt: runStartedAt,
+              iterationNumber: run + 1,
               blob: void 0,
               actualToolCalls: [],
               tokensUsed: 0
@@ -5903,7 +5904,8 @@ var runEvals = async (tests, environment, llms, apiKey) => {
               result: evaluation.passed ? "passed" : "failed",
               actualToolCalls: toolsCalled,
               tokensUsed: totalTokensUsed ?? 0,
-              blob: void 0
+              blob: void 0,
+              blobContent: { messages: messageHistory }
             }
           );
         } catch {
