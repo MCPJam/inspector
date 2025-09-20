@@ -7,7 +7,7 @@ import { useAuth } from "@workos-inc/authkit-react";
  * - Runs only after Convex auth is established
  * - Idempotent and re-runs when the authenticated user changes
  */
-export function useEnsureConvexUser() {
+export function useEnsureDbUser() {
   const { user } = useAuth();
   const { isAuthenticated, isLoading } = useConvexAuth();
   const ensureUser = useMutation("users:ensureUser" as any);
@@ -31,7 +31,6 @@ export function useEnsureConvexUser() {
     ensureUser()
       .then((id: string | null) => {
         // eslint-disable-next-line no-console
-        console.log("[auth] ensured Convex user", { id, email: user.email });
         lastEnsuredUserIdRef.current = user.id;
       })
       .catch((err: unknown) => {
