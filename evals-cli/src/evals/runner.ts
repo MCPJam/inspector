@@ -11,6 +11,17 @@ import { createLlmModel, extractToolNamesAsArray } from "../utils/helpers";
 import { Logger } from "../utils/logger";
 import { evaluateResults } from "./evaluator";
 
+const accumulateTokenCount = (
+  current: number | undefined,
+  increment: number | undefined,
+): number | undefined => {
+  if (typeof increment !== "number" || Number.isNaN(increment)) {
+    return current;
+  }
+
+  return (current ?? 0) + increment;
+};
+
 export const runEvals = async (
   tests: any,
   environment: any,
@@ -32,8 +43,14 @@ export const runEvals = async (
   const availableTools = await mcpClient.getTools();
   const serverCount = Object.keys(mcpClientOptions.servers).length;
   const toolCount = Object.keys(availableTools).length;
-  Logger.serverConnection(serverCount, toolCount);
-  Logger.startTests(validatedTests.length);
+  const serverNames = Object.keys(mcpClientOptions.servers);
+
+  Logger.initiateTestMessage(
+    serverCount,
+    toolCount,
+    serverNames,
+    validatedTests.length,
+  );
 
   const vercelTools = convertMastraToolsToVercelTools(availableTools);
 
@@ -41,9 +58,10 @@ export const runEvals = async (
   let passedRuns = 0;
   let failedRuns = 0;
 
+  let testNumber = 1;
   for (const test of validatedTests) {
     const { runs, model, provider, advancedConfig, query } = test;
-    Logger.testTitle(test.title);
+    Logger.logTestGroupTitle(testNumber, test.title, provider, model);
     const numberOfRuns = runs;
     const { system, temperature, toolChoice } = advancedConfig ?? {};
 
@@ -58,11 +76,13 @@ export const runEvals = async (
       const runStartedAt = Date.now();
       const maxSteps = 20;
       let stepCount = 0;
+      let inputTokensUsed: number | undefined;
+      let outputTokensUsed: number | undefined;
+      let totalTokensUsed: number | undefined;
 
       if (system) {
         Logger.conversation({
           messages: [{ role: "system", content: system }],
-          indentLevel: 2,
         });
       }
 
@@ -71,7 +91,7 @@ export const runEvals = async (
         content: query,
       };
 
-      Logger.conversation({ messages: [userMessage], indentLevel: 2 });
+      Logger.conversation({ messages: [userMessage] });
 
       const messageHistory: ModelMessage[] = [userMessage];
       const toolsCalled: string[] = [];
@@ -91,7 +111,7 @@ export const runEvals = async (
               case "text-delta":
               case "reasoning-delta": {
                 if (!assistantStreaming) {
-                  Logger.beginStreamingMessage("assistant", 2);
+                  Logger.beginStreamingMessage("assistant");
                   assistantStreaming = true;
                 }
                 Logger.appendStreamingText(chunk.chunk.text);
@@ -102,18 +122,13 @@ export const runEvals = async (
                   Logger.finishStreamingMessage();
                   assistantStreaming = false;
                 }
-                Logger.streamToolCall(
-                  chunk.chunk.toolName,
-                  chunk.chunk.input,
-                  3,
-                );
+                Logger.streamToolCall(chunk.chunk.toolName, chunk.chunk.input);
                 break;
               }
               case "tool-result": {
                 Logger.streamToolResult(
                   chunk.chunk.toolName,
                   chunk.chunk.output,
-                  3,
                 );
                 break;
               }
@@ -129,6 +144,22 @@ export const runEvals = async (
           Logger.finishStreamingMessage();
           assistantStreaming = false;
         }
+
+        const stepUsage = await streamResult.usage;
+        const cumulativeUsage = await streamResult.totalUsage;
+
+        inputTokensUsed = accumulateTokenCount(
+          inputTokensUsed,
+          stepUsage.inputTokens,
+        );
+        outputTokensUsed = accumulateTokenCount(
+          outputTokensUsed,
+          stepUsage.outputTokens,
+        );
+
+        const totalTokens =
+          stepUsage.totalTokens ?? cumulativeUsage.totalTokens;
+        totalTokensUsed = accumulateTokenCount(totalTokensUsed, totalTokens);
 
         const toolNamesForStep = extractToolNamesAsArray(
           await streamResult.toolCalls,
@@ -161,13 +192,21 @@ export const runEvals = async (
         missing: evaluation.missing,
         unexpected: evaluation.unexpected,
         passed: evaluation.passed,
-        indentLevel: 2,
       });
 
       Logger.testRunResult({
         passed: evaluation.passed,
         durationMs: Date.now() - runStartedAt,
-        indentLevel: 2,
+        usage:
+          inputTokensUsed !== undefined ||
+          outputTokensUsed !== undefined ||
+          totalTokensUsed !== undefined
+            ? {
+                inputTokens: inputTokensUsed,
+                outputTokens: outputTokensUsed,
+                totalTokens: totalTokensUsed,
+              }
+            : undefined,
       });
 
       if (evaluation.passed) {
@@ -176,6 +215,7 @@ export const runEvals = async (
         failedRuns++;
       }
     }
+    testNumber++;
   }
 
   Logger.suiteComplete({

@@ -93,6 +93,7 @@ export function validateAndNormalizeMCPClientConfiguration(
       try {
         if (server && typeof server === "object" && "url" in server) {
           MastraMCPServerDefinitionSchema.parse(server);
+          server.enableServerLogs = false;
           const urlValue = (server as any).url;
           const normalizedUrl =
             typeof urlValue === "string"
@@ -106,6 +107,7 @@ export function validateAndNormalizeMCPClientConfiguration(
             normalizedServer as MastraMCPServerDefinition;
         } else {
           MastraMCPServerDefinitionSchema.parse(server);
+          server.enableServerLogs = false;
           normalizedServers[name] = server;
         }
       } catch (error) {
