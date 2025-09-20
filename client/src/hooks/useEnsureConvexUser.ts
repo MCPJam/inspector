@@ -31,5 +31,3 @@ export function useEnsureConvexUser() {
       });
   }, [isAuthenticated, isLoading, user, ensureUser]);
 }
-
-
