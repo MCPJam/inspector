@@ -56,42 +56,6 @@ export function EvalsTab() {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const { user, signIn } = useAuth();
 
-  const suites = useQuery(
-    "evals:getCurrentUserEvalTestSuites" as any,
-  ) as unknown as EvalSuite[] | undefined;
-  const cases = useQuery(
-    "evals:getCurrentUserEvalTestGroups" as any,
-  ) as unknown as EvalCase[] | undefined;
-  const iterations = useQuery(
-    "evals:getCurrentUserEvalTestIterations" as any,
-  ) as unknown as EvalIteration[] | undefined;
-
-  const isDataLoading =
-    isLoading || suites === undefined || cases === undefined || iterations === undefined;
-
-  const metrics = useMemo(() => {
-    const totalSuites = suites?.length ?? 0;
-    const runningSuites = suites?.filter((s) => s.status === "running").length ?? 0;
-    const completedSuites = suites?.filter((s) => s.status === "completed").length ?? 0;
-    const failedSuites = suites?.filter((s) => s.status === "failed").length ?? 0;
-
-    const totalIterations = iterations?.length ?? 0;
-    const passedIterations = iterations?.filter((i) => i.result === "passed").length ?? 0;
-    const failedIterations = iterations?.filter((i) => i.result === "failed").length ?? 0;
-    const totalTokens = iterations?.reduce((sum, i) => sum + (i.tokensUsed || 0), 0) ?? 0;
-
-    return {
-      totalSuites,
-      runningSuites,
-      completedSuites,
-      failedSuites,
-      totalIterations,
-      passedIterations,
-      failedIterations,
-      totalTokens,
-    };
-  }, [suites, iterations]);
-
   if (isLoading) {
     return (
       <div className="p-6">
@@ -121,6 +85,49 @@ export function EvalsTab() {
     );
   }
 
+  return <EvalsContent />;
+}
+
+function EvalsContent() {
+  const suites = useQuery(
+    "evals:getCurrentUserEvalTestSuites" as any,
+    {} as any,
+  ) as unknown as EvalSuite[] | undefined;
+  const cases = useQuery(
+    "evals:getCurrentUserEvalTestGroups" as any,
+    {} as any,
+  ) as unknown as EvalCase[] | undefined;
+  const iterations = useQuery(
+    "evals:getCurrentUserEvalTestIterations" as any,
+    {} as any,
+  ) as unknown as EvalIteration[] | undefined;
+
+  const isDataLoading =
+    suites === undefined || cases === undefined || iterations === undefined;
+
+  const metrics = useMemo(() => {
+    const totalSuites = suites?.length ?? 0;
+    const runningSuites = suites?.filter((s) => s.status === "running").length ?? 0;
+    const completedSuites = suites?.filter((s) => s.status === "completed").length ?? 0;
+    const failedSuites = suites?.filter((s) => s.status === "failed").length ?? 0;
+
+    const totalIterations = iterations?.length ?? 0;
+    const passedIterations = iterations?.filter((i) => i.result === "passed").length ?? 0;
+    const failedIterations = iterations?.filter((i) => i.result === "failed").length ?? 0;
+    const totalTokens = iterations?.reduce((sum, i) => sum + (i.tokensUsed || 0), 0) ?? 0;
+
+    return {
+      totalSuites,
+      runningSuites,
+      completedSuites,
+      failedSuites,
+      totalIterations,
+      passedIterations,
+      failedIterations,
+      totalTokens,
+    };
+  }, [suites, iterations]);
+
   if (isDataLoading) {
     return (
       <div className="p-6">
@@ -133,8 +140,6 @@ export function EvalsTab() {
       </div>
     );
   }
-
-  // Status badge renderer was used by legacy list; removed in vertical redesign
 
   return (
     <div className="p-6 space-y-6">
