@@ -16,9 +16,9 @@ import { LogLevelBadge } from "./logging/log-level-badge";
 const LOG_LEVEL_ORDER = ["error", "warn", "info", "debug", "trace"];
 
 export function TracingTab() {
-  const { entries, getFilteredEntries } = useLoggerState();
+  const { entries } = useLoggerState();
   const [expandedEntries, setExpandedEntries] = useState<Set<number>>(
-    new Set(),
+    new Set()
   );
   const [levelFilter, setLevelFilter] = useState<LogLevel | "all">("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -44,7 +44,7 @@ export function TracingTab() {
         entry.message.toLowerCase().includes(queryLower) ||
         entry.context.toLowerCase().includes(queryLower) ||
         (entry.data &&
-          JSON.stringify(entry.data).toLowerCase().includes(queryLower)),
+          JSON.stringify(entry.data).toLowerCase().includes(queryLower))
     );
   }, [entries, levelFilter, searchQuery]);
 
