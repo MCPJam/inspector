@@ -15,7 +15,12 @@ const { name, version } = require("../package.json") as {
 
 updateNotifier({ pkg: { name, version } }).notify();
 
-config();
+// Load environment-specific .env file
+const envFile =
+  process.env.NODE_ENV === "production"
+    ? ".env.production"
+    : ".env.development";
+config({ path: envFile });
 
 const program = new Command();
 
