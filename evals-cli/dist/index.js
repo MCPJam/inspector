@@ -6952,7 +6952,11 @@ var require3 = createRequire2(import.meta.url);
 updateNotifier({ pkg: package_default, updateCheckInterval: 0 }).notify();
 var { name, version: version2 } = require3("../package.json");
 updateNotifier({ pkg: { name, version: version2 } }).notify();
-config();
+var envFile =
+  process.env.NODE_ENV === "production"
+    ? ".env.production"
+    : ".env.development";
+config({ path: envFile });
 var program = new Command2();
 program
   .name("mcpjam")
