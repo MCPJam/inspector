@@ -175,9 +175,7 @@ export default function App() {
                 )}
               />
             )}
-            {activeTab === "evals" && (
-              <EvalsTab/>
-            )}
+            {activeTab === "evals" && <EvalsTab />}
             {activeTab === "resources" && (
               <ResourcesTab
                 serverConfig={selectedMCPConfig}

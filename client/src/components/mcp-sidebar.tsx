@@ -71,7 +71,7 @@ const navigationSections = [
         title: "Evals",
         url: "#evals",
         icon: FlaskConical,
-      }
+      },
     ],
   },
   {
