@@ -9,6 +9,7 @@ import {
 } from "../utils/validators";
 import { createLlmModel, extractToolNamesAsArray } from "../utils/helpers";
 import { Logger } from "../utils/logger";
+import { dbClient } from "../db";
 import { evaluateResults } from "./evaluator";
 
 const accumulateTokenCount = (
@@ -55,6 +56,36 @@ export const runEvals = async (
   const vercelTools = convertMastraToolsToVercelTools(availableTools);
 
   const suiteStartedAt = Date.now();
+  const totalPlannedTests = validatedTests.reduce(
+    (sum: number, t: any) => sum + (t?.runs ?? 0),
+    0,
+  );
+  const db = dbClient();
+  const shouldSaveToDb = Boolean(apiKey);
+  const configSummary = {
+    tests: validatedTests,
+    environment: { servers: Object.keys(mcpClientOptions.servers) },
+    llms: Object.keys(validatedLlmApiKeys ?? {}),
+  };
+
+  let testRunId: string | undefined;
+
+  if (shouldSaveToDb) {
+    try {
+      testRunId = await db.action(
+        "evals:createEvalTestSuiteWithApiKey" as any,
+        {
+          apiKey,
+          name: undefined,
+          config: configSummary,
+          totalTests: totalPlannedTests,
+        },
+      );
+    } catch (err) {
+      // Do not block CLI; just skip persistence if it fails
+      testRunId = undefined;
+    }
+  }
   let passedRuns = 0;
   let failedRuns = 0;
 
@@ -64,6 +95,42 @@ export const runEvals = async (
     Logger.logTestGroupTitle(testNumber, test.title, provider, model);
     const numberOfRuns = runs;
     const { system, temperature, toolChoice } = advancedConfig ?? {};
+
+    // Create an eval test case for this test definition when persisting
+    let testCaseId: string | undefined;
+    if (shouldSaveToDb) {
+      try {
+        testCaseId = await db.action(
+          "evals:createEvalTestCaseWithApiKey" as any,
+          {
+            apiKey,
+            title: String(test.title ?? `Group ${testNumber}`),
+            query: String(query ?? ""),
+            provider: String(provider ?? ""),
+            model: String(model ?? ""),
+            runs: Number(numberOfRuns ?? 1),
+          },
+        );
+        // Fallback: if test run wasn't created earlier, create it now
+        if (!testRunId) {
+          try {
+            testRunId = await db.action(
+              "evals:createEvalTestSuiteWithApiKey" as any,
+              {
+                apiKey,
+                name: undefined,
+                config: configSummary,
+                totalTests: totalPlannedTests,
+              },
+            );
+          } catch {
+            // ignore; we'll proceed without a test run record
+          }
+        }
+      } catch {
+        testCaseId = undefined;
+      }
+    }
 
     for (let run = 0; run < numberOfRuns; run++) {
       Logger.testRunStart({
@@ -79,6 +146,27 @@ export const runEvals = async (
       let inputTokensUsed: number | undefined;
       let outputTokensUsed: number | undefined;
       let totalTokensUsed: number | undefined;
+
+      // Create eval test record if persistence is enabled
+      let evalTestId: string | undefined;
+      if (shouldSaveToDb) {
+        try {
+          evalTestId = await db.action(
+            "evals:createEvalTestIterationWithApiKey" as any,
+            {
+              apiKey,
+              testCaseId,
+              startedAt: runStartedAt,
+              iterationNumber: run + 1,
+              blob: undefined,
+              actualToolCalls: [],
+              tokensUsed: 0,
+            },
+          );
+        } catch {
+          evalTestId = undefined;
+        }
+      }
 
       if (system) {
         Logger.conversation({
@@ -214,6 +302,27 @@ export const runEvals = async (
       } else {
         failedRuns++;
       }
+
+      // Update eval test result if it exists
+      if (evalTestId && shouldSaveToDb) {
+        try {
+          await db.action(
+            "evals:updateEvalTestIterationResultWithApiKey" as any,
+            {
+              apiKey,
+              testId: evalTestId as any,
+              status: "completed",
+              result: evaluation.passed ? "passed" : "failed",
+              actualToolCalls: toolsCalled,
+              tokensUsed: totalTokensUsed ?? 0,
+              blob: undefined,
+              blobContent: { messages: messageHistory },
+            },
+          );
+        } catch {
+          // ignore persistence errors
+        }
+      }
     }
     testNumber++;
   }
@@ -223,4 +332,18 @@ export const runEvals = async (
     passed: passedRuns,
     failed: failedRuns,
   });
+
+  // Mark test run as completed
+  if (testRunId && shouldSaveToDb) {
+    try {
+      await db.action("evals:updateEvalTestSuiteStatusWithApiKey" as any, {
+        apiKey,
+        testRunId: testRunId as any,
+        status: "completed",
+        finishedAt: Date.now(),
+      });
+    } catch {
+      // ignore persistence errors
+    }
+  }
 };
