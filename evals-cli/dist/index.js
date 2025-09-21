@@ -6077,6 +6077,8 @@ var runEvals = async (tests, environment, llms, apiKey) => {
     Logger.logTestGroupTitle(testNumber, test.title, provider, model);
     const numberOfRuns = runs;
     const { system, temperature, toolChoice } = advancedConfig ?? {};
+    let casePassedRuns = 0;
+    let caseFailedRuns = 0;
     let testCaseId;
     if (shouldSaveToDb) {
       try {
@@ -6246,8 +6248,20 @@ var runEvals = async (tests, environment, llms, apiKey) => {
       });
       if (evaluation.passed) {
         passedRuns++;
+        casePassedRuns++;
       } else {
         failedRuns++;
+        caseFailedRuns++;
+        if (shouldSaveToDb && testRunId) {
+          try {
+            await db.action("evals:updateEvalTestSuiteStatusWithApiKey", {
+              apiKey,
+              testRunId,
+              status: "running",
+              result: "failed",
+            });
+          } catch {}
+        }
       }
       if (evalTestId && shouldSaveToDb) {
         try {
@@ -6264,6 +6278,15 @@ var runEvals = async (tests, environment, llms, apiKey) => {
         } catch {}
       }
     }
+    if (shouldSaveToDb && testCaseId) {
+      try {
+        await db.action("evals:updateEvalTestCaseResultWithApiKey", {
+          apiKey,
+          testCaseId,
+          result: caseFailedRuns > 0 ? "failed" : "passed",
+        });
+      } catch {}
+    }
     testNumber++;
   }
   Logger.suiteComplete({
@@ -6277,6 +6300,7 @@ var runEvals = async (tests, environment, llms, apiKey) => {
         apiKey,
         testRunId,
         status: "completed",
+        result: failedRuns > 0 ? "failed" : "passed",
         finishedAt: Date.now(),
       });
     } catch {}

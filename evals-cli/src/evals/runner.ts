@@ -96,6 +96,10 @@ export const runEvals = async (
     const numberOfRuns = runs;
     const { system, temperature, toolChoice } = advancedConfig ?? {};
 
+    // Track pass/fail for this specific test case
+    let casePassedRuns = 0;
+    let caseFailedRuns = 0;
+
     // Create an eval test case for this test definition when persisting
     let testCaseId: string | undefined;
     if (shouldSaveToDb) {
@@ -299,8 +303,60 @@ export const runEvals = async (
 
       if (evaluation.passed) {
         passedRuns++;
+        casePassedRuns++;
       } else {
         failedRuns++;
+        caseFailedRuns++;
+        // Mark suite result as failed immediately, but keep status running
+        if (shouldSaveToDb && testRunId) {
+          try {
+            await db.action(
+              "evals:updateEvalTestSuiteStatusWithApiKey" as any,
+              {
+                apiKey,
+                testRunId: testRunId as any,
+                status: "running",
+                result: "failed",
+              },
+            );
+          } catch {
+            // ignore
+          }
+        }
+      }
+
+      // Update eval test result if it exists
+      if (evalTestId && shouldSaveToDb) {
+        try {
+          await db.action(
+            "evals:updateEvalTestIterationResultWithApiKey" as any,
+            {
+              apiKey,
+              testId: evalTestId as any,
+              status: "completed",
+              result: evaluation.passed ? "passed" : "failed",
+              actualToolCalls: toolsCalled,
+              tokensUsed: totalTokensUsed ?? 0,
+              blob: undefined,
+              blobContent: { messages: messageHistory },
+            },
+          );
+        } catch {
+          // ignore persistence errors
+        }
+      }
+    }
+
+    // After completing runs of this test case, set the case result when persisting
+    if (shouldSaveToDb && testCaseId) {
+      try {
+        await db.action("evals:updateEvalTestCaseResultWithApiKey" as any, {
+          apiKey,
+          testCaseId: testCaseId as any,
+          result: caseFailedRuns > 0 ? "failed" : "passed",
+        });
+      } catch {
+        // ignore persistence errors
       }
 
       // Update eval test result if it exists
@@ -333,13 +389,14 @@ export const runEvals = async (
     failed: failedRuns,
   });
 
-  // Mark test run as completed
+  // Mark test run as completed with final result
   if (testRunId && shouldSaveToDb) {
     try {
       await db.action("evals:updateEvalTestSuiteStatusWithApiKey" as any, {
         apiKey,
         testRunId: testRunId as any,
         status: "completed",
+        result: failedRuns > 0 ? "failed" : "passed",
         finishedAt: Date.now(),
       });
     } catch {
