@@ -9,7 +9,7 @@
     "start": "node ../dist/server/index.js"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^1.2.12",
+    "@ai-sdk/anthropic": "^2.0.17",
     "@ai-sdk/deepseek": "^1.0.5",
     "@ai-sdk/google": "^1.2.22",
     "@ai-sdk/openai": "^2.0.32",
