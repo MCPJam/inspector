@@ -182,7 +182,6 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
   { id: Model.GPT_4_1_NANO, name: "GPT-4.1 Nano", provider: "openai" },
   { id: Model.GPT_4O, name: "GPT-4o", provider: "openai" },
   { id: Model.GPT_4O_MINI, name: "GPT-4o Mini", provider: "openai" },
-  { id: Model.GPT_5, name: "GPT-5", provider: "openai" },
   { id: Model.DEEPSEEK_CHAT, name: "DeepSeek Chat", provider: "deepseek" },
   {
     id: Model.DEEPSEEK_REASONER,
