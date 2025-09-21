@@ -1,5 +1,6 @@
 import { ModelDefinition } from "@/shared/types";
 import { createAnthropic } from "@ai-sdk/anthropic";
+import { createDeepSeek } from "@ai-sdk/deepseek";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOllama } from "ollama-ai-provider";
@@ -21,9 +22,7 @@ export const createLlmModel = (
     case "openai":
       return createOpenAI({ apiKey })(modelDefinition.id);
     case "deepseek":
-      return createOpenAI({ apiKey, baseURL: "https://api.deepseek.com/v1" })(
-        modelDefinition.id,
-      );
+      return createDeepSeek({ apiKey })(modelDefinition.id);
     case "google":
       return createGoogleGenerativeAI({ apiKey })(modelDefinition.id);
     case "ollama":
