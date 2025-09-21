@@ -1,3 +1,4 @@
 local-examples
 .env
 node_modules
+dist
