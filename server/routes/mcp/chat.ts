@@ -72,48 +72,51 @@ const handleAgentStepFinish = (
   text: string,
   toolCalls: any[] | undefined,
   toolResults: any[] | undefined,
+  emitToolEvents: boolean = true,
 ) => {
   try {
-    // Handle tool calls
-    if (toolCalls && Array.isArray(toolCalls)) {
-      for (const call of toolCalls) {
-        const currentToolCallId = ++streamingContext.toolCallId;
-        streamingContext.lastEmittedToolCallId = currentToolCallId;
+    if (emitToolEvents) {
+      // Handle tool calls
+      if (toolCalls && Array.isArray(toolCalls)) {
+        for (const call of toolCalls) {
+          const currentToolCallId = ++streamingContext.toolCallId;
+          streamingContext.lastEmittedToolCallId = currentToolCallId;
 
-        if (streamingContext.controller && streamingContext.encoder) {
-          sendSseEvent(streamingContext.controller, streamingContext.encoder, {
-            type: "tool_call",
-            toolCall: {
-              id: currentToolCallId,
-              name: call.name || call.toolName,
-              parameters: call.params || call.args || {},
-              timestamp: new Date().toISOString(),
-              status: "executing",
-            },
-          });
+          if (streamingContext.controller && streamingContext.encoder) {
+            sendSseEvent(streamingContext.controller, streamingContext.encoder, {
+              type: "tool_call",
+              toolCall: {
+                id: currentToolCallId,
+                name: call.name || call.toolName,
+                parameters: call.params || call.args || {},
+                timestamp: new Date().toISOString(),
+                status: "executing",
+              },
+            });
+          }
         }
       }
-    }
 
-    // Handle tool results
-    if (toolResults && Array.isArray(toolResults)) {
-      for (const result of toolResults) {
-        const currentToolCallId =
-          streamingContext.lastEmittedToolCallId != null
-            ? streamingContext.lastEmittedToolCallId
-            : ++streamingContext.toolCallId;
+      // Handle tool results
+      if (toolResults && Array.isArray(toolResults)) {
+        for (const result of toolResults) {
+          const currentToolCallId =
+            streamingContext.lastEmittedToolCallId != null
+              ? streamingContext.lastEmittedToolCallId
+              : ++streamingContext.toolCallId;
 
-        if (streamingContext.controller && streamingContext.encoder) {
-          sendSseEvent(streamingContext.controller, streamingContext.encoder, {
-            type: "tool_result",
-            toolResult: {
-              id: currentToolCallId,
-              toolCallId: currentToolCallId,
-              result: result.result,
-              error: (result as any).error,
-              timestamp: new Date().toISOString(),
-            },
-          });
+          if (streamingContext.controller && streamingContext.encoder) {
+            sendSseEvent(streamingContext.controller, streamingContext.encoder, {
+              type: "tool_result",
+              toolResult: {
+                id: currentToolCallId,
+                toolCallId: currentToolCallId,
+                result: result.result,
+                error: (result as any).error,
+                timestamp: new Date().toISOString(),
+              },
+            });
+          }
         }
       }
     }
@@ -195,8 +198,12 @@ const createStreamingResponse = async (
             }
             break;
           }
-          case "tool-call":
           case "tool-input-start": {
+            // Do not emit a tool_call for input-start; wait for the concrete tool-call
+            dbg("tool-input-start (suppressed)");
+            break;
+          }
+          case "tool-call": {
             const currentToolCallId = ++streamingContext.toolCallId;
             streamingContext.lastEmittedToolCallId = currentToolCallId;
             const name = (chunk.chunk as any).toolName || (chunk.chunk as any).name;
@@ -249,6 +256,7 @@ const createStreamingResponse = async (
       accumulatedText,
       iterationToolCalls,
       iterationToolResults,
+      false,
     );
 
     const resp = await streamResult.response;
