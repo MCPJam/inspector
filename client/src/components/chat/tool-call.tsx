@@ -199,7 +199,7 @@ export function ToolCallDisplay({
           <div className="relative">
             <Clock className="h-4 w-4 text-blue-600/70 dark:text-blue-400/70 animate-spin" />
             <div className="absolute inset-0 animate-ping">
-              <Clock className="h-4 w-4 text-blue-600/70 dark:text-blue-400/70 opacity-20" />
+              <div className="h-4 w-4 bg-blue-600/30 dark:bg-blue-400/30 rounded-full" />
             </div>
           </div>
         );
@@ -217,7 +217,7 @@ export function ToolCallDisplay({
         effectiveStatus === "error" &&
           "border-red-200/50 dark:border-red-800/50",
         effectiveStatus === "executing" &&
-          "border-blue-200/50 dark:border-blue-800/50",
+          "border-blue-200/50 dark:border-blue-800/50 shadow-md animate-pulse",
         className,
       )}
     >
@@ -232,6 +232,11 @@ export function ToolCallDisplay({
           </div>
           <div className="flex items-center gap-3">
             <span className="font-semibold text-sm">{toolCall.name}</span>
+            {effectiveStatus === "executing" && (
+              <span className="text-xs text-blue-600/70 dark:text-blue-400/70 font-medium">
+                Running...
+              </span>
+            )}
             {getStatusIcon()}
           </div>
         </div>
