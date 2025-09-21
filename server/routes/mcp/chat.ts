@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { Agent } from "@mastra/core/agent";
+import { streamText } from "ai";
 import {
   ChatMessage,
   ModelDefinition,
@@ -7,9 +7,10 @@ import {
 } from "../../../shared/types";
 import { TextEncoder } from "util";
 import { getDefaultTemperatureByProvider } from "../../../client/src/lib/chat-utils";
-import { stepCountIs } from "ai-v5";
 import { createLlmModel } from "../../utils/chat-helpers";
 import { SSEvent } from "../../../shared/sse";
+import { convertMastraToolsToVercelTools } from "../../../shared/tools";
+import type { ModelMessage, Tool } from "ai";
 
 // Types
 interface ElicitationResponse {
@@ -140,239 +141,125 @@ const handleAgentStepFinish = (
   }
 };
 
-/**
- * Streams content from the agent's streamVNext response
- */
-const streamAgentResponse = async (
+const createStreamingResponse = async (
+  model: any,
+  vercelTools: Record<string, Tool>,
+  messages: ChatMessage[],
   streamingContext: StreamingContext,
-  stream: any,
+  provider: ModelProvider,
+  temperature?: number,
+  systemPrompt?: string,
 ) => {
-  let hasContent = false;
-  let chunkCount = 0;
+  const messageHistory: ModelMessage[] = (messages || []).map((m) => {
+    switch (m.role) {
+      case "system":
+        return { role: "system", content: m.content } as ModelMessage;
+      case "user":
+        return { role: "user", content: m.content } as ModelMessage;
+      case "assistant":
+        return { role: "assistant", content: m.content } as ModelMessage;
+      default:
+        return { role: "user", content: m.content } as ModelMessage;
+    }
+  });
 
-  for await (const chunk of stream.fullStream) {
-    chunkCount++;
+  let steps = 0;
+  while (steps < MAX_AGENT_STEPS) {
+    let accumulatedText = "";
+    const iterationToolCalls: any[] = [];
+    const iterationToolResults: any[] = [];
 
-    // Handle text content
-    if (chunk.type === "text-delta" && chunk.textDelta) {
-      hasContent = true;
-      sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
-        type: "text",
-        content: chunk.textDelta,
-      });
+    const streamResult = await streamText({
+      model,
+      system: systemPrompt || "You are a helpful assistant with access to MCP tools.",
+      temperature:
+        temperature == null || undefined
+          ? getDefaultTemperatureByProvider(provider)
+          : temperature,
+      tools: vercelTools,
+      messages: messageHistory,
+      onChunk: async (chunk) => {
+        switch (chunk.chunk.type) {
+          case "text-delta":
+          case "reasoning-delta": {
+            const text = chunk.chunk.text;
+            if (text) {
+              accumulatedText += text;
+              sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
+                type: "text",
+                content: text,
+              });
+            }
+            break;
+          }
+          case "tool-call": {
+            const currentToolCallId = ++streamingContext.toolCallId;
+            streamingContext.lastEmittedToolCallId = currentToolCallId;
+            const name = chunk.chunk.toolName;
+            const parameters = chunk.chunk.input || {};
+            iterationToolCalls.push({ name, params: parameters });
+            sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
+              type: "tool_call",
+              toolCall: {
+                id: currentToolCallId,
+                name,
+                parameters,
+                timestamp: new Date().toISOString(),
+                status: "executing",
+              },
+            });
+            break;
+          }
+          case "tool-result": {
+            const result = chunk.chunk.output;
+            const currentToolCallId =
+              streamingContext.lastEmittedToolCallId != null
+                ? streamingContext.lastEmittedToolCallId
+                : streamingContext.toolCallId;
+            iterationToolResults.push({ result });
+            sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
+              type: "tool_result",
+              toolResult: {
+                id: currentToolCallId,
+                toolCallId: currentToolCallId,
+                result,
+                timestamp: new Date().toISOString(),
+              },
+            });
+            break;
+          }
+          default:
+            break;
+        }
+      },
+    });
+
+    await streamResult.consumeStream();
+
+    handleAgentStepFinish(
+      streamingContext,
+      accumulatedText,
+      iterationToolCalls,
+      iterationToolResults,
+    );
+
+    const responseMessages = ((await streamResult.response)?.messages || []) as ModelMessage[];
+    if (responseMessages.length) {
+      messageHistory.push(...responseMessages);
     }
 
-    // Handle tool calls from streamVNext
-    if (chunk.type === "tool-call" && chunk.toolName) {
-      const currentToolCallId = ++streamingContext.toolCallId;
-      sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
-        type: "tool_call",
-        toolCall: {
-          id: currentToolCallId,
-          name: chunk.toolName,
-          parameters: chunk.args || {},
-          timestamp: new Date().toISOString(),
-          status: "executing",
-        },
-      });
-    }
-
-    // Handle tool results from streamVNext
-    if (chunk.type === "tool-result" && chunk.result !== undefined) {
-      const currentToolCallId = streamingContext.toolCallId;
-      sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
-        type: "tool_result",
-        toolResult: {
-          id: currentToolCallId,
-          toolCallId: currentToolCallId,
-          result: chunk.result,
-          timestamp: new Date().toISOString(),
-        },
-      });
-    }
-
-    // Handle errors from streamVNext
-    if (chunk.type === "error" && chunk.error) {
-      sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
-        type: "error",
-        error:
-          chunk.error instanceof Error
-            ? chunk.error.message
-            : String(chunk.error),
-      });
-    }
-
-    // Handle finish event
-    if (chunk.type === "finish") {
-      // Stream completion will be handled by the main function
+    steps++;
+    const finishReason = await streamResult.finishReason;
+    if (finishReason !== "tool-calls") {
       break;
     }
   }
 
-  dbg("Streaming finished", { hasContent, chunkCount });
-  return { hasContent, chunkCount };
-};
-
-/**
- * Falls back to regular completion when streaming fails
- */
-const fallbackToCompletion = async (
-  agent: Agent,
-  messages: ChatMessage[],
-  streamingContext: StreamingContext,
-  provider: ModelProvider,
-  temperature?: number,
-) => {
-  try {
-    const result = await agent.generate(messages, {
-      temperature:
-        temperature == null || undefined
-          ? getDefaultTemperatureByProvider(provider)
-          : temperature,
-    });
-    console.log("result", result);
-    if (result.text && result.text.trim()) {
-      sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
-        type: "text",
-        content: result.text,
-      });
-    }
-  } catch (fallbackErr) {
-    sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
-      type: "error",
-      error:
-        fallbackErr instanceof Error ? fallbackErr.message : "Unknown error",
-    });
-  }
-};
-
-/**
- * Falls back to the regular stream method for V1 models
- */
-const fallbackToStreamV1Method = async (
-  agent: Agent,
-  messages: ChatMessage[],
-  streamingContext: StreamingContext,
-  provider: ModelProvider,
-  temperature?: number,
-) => {
-  try {
-    const stream = await agent.stream(messages, {
-      maxSteps: MAX_AGENT_STEPS,
-      temperature:
-        temperature == null || undefined
-          ? getDefaultTemperatureByProvider(provider)
-          : temperature,
-      onStepFinish: ({ text, toolCalls, toolResults }) => {
-        handleAgentStepFinish(streamingContext, text, toolCalls, toolResults);
-      },
-    });
-
-    let hasContent = false;
-    let chunkCount = 0;
-
-    for await (const chunk of stream.textStream) {
-      if (chunk && chunk.trim()) {
-        hasContent = true;
-        chunkCount++;
-        sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
-          type: "text",
-          content: chunk,
-        });
-      }
-    }
-
-    dbg("Stream method finished", { hasContent, chunkCount });
-
-    // Fall back to completion if no content was streamed
-    if (!hasContent) {
-      dbg("No content from textStream; falling back to completion");
-      await fallbackToCompletion(
-        agent,
-        messages,
-        streamingContext,
-        provider,
-        temperature,
-      );
-    }
-  } catch (streamErr) {
-    dbg("Stream method failed", streamErr);
-    await fallbackToCompletion(
-      agent,
-      messages,
-      streamingContext,
-      provider,
-      temperature,
-    );
-  }
-};
-
-const createStreamingResponse = async (
-  agent: Agent,
-  messages: ChatMessage[],
-  streamingContext: StreamingContext,
-  provider: ModelProvider,
-  temperature?: number,
-) => {
-  try {
-    // Try streamVNext first (works with AI SDK v2 models)
-    const stream = await agent.streamVNext(messages, {
-      stopWhen: stepCountIs(MAX_AGENT_STEPS),
-      modelSettings: {
-        temperature:
-          temperature == null || undefined
-            ? getDefaultTemperatureByProvider(provider)
-            : temperature,
-      },
-      onStepFinish: ({ text, toolCalls, toolResults }) => {
-        handleAgentStepFinish(streamingContext, text, toolCalls, toolResults);
-      },
-    });
-
-    const { hasContent } = await streamAgentResponse(streamingContext, stream);
-
-    if (!hasContent) {
-      dbg("No content from fullStream; falling back to completion");
-      await fallbackToCompletion(
-        agent,
-        messages,
-        streamingContext,
-        provider,
-        temperature,
-      );
-    }
-  } catch (error) {
-    // If streamVNext fails (e.g., V1 models), fall back to the regular stream method
-    if (
-      error instanceof Error &&
-      error.message.includes("V1 models are not supported for streamVNext")
-    ) {
-      dbg(
-        "streamVNext not supported for this model, falling back to stream method",
-      );
-      await fallbackToStreamV1Method(
-        agent,
-        messages,
-        streamingContext,
-        provider,
-        temperature,
-      );
-    } else {
-      throw error;
-    }
-  }
-
-  // Stream elicitation completion
   sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
     type: "elicitation_complete",
   });
 
-  // End stream
-  sendSseEvent(
-    streamingContext.controller,
-    streamingContext.encoder!,
-    "[DONE]",
-  );
+  sendSseEvent(streamingContext.controller, streamingContext.encoder!, "[DONE]");
 };
 
 // Main chat endpoint
@@ -438,14 +325,7 @@ chat.post("/", async (c) => {
 
     const toolsets =
       await mcpClientManager.getFlattenedToolsetsForEnabledServers();
-
-    const agent = new Agent({
-      name: "MCP Chat Agent",
-      instructions:
-        systemPrompt || "You are a helpful assistant with access to MCP tools.",
-      model: llmModel,
-      tools: toolsets,
-    });
+    const vercelTools = convertMastraToolsToVercelTools(toolsets as any);
 
     // Create streaming response
     const encoder = new TextEncoder();
@@ -505,11 +385,13 @@ chat.post("/", async (c) => {
 
         try {
           await createStreamingResponse(
-            agent,
+            llmModel,
+            vercelTools,
             messages,
             streamingContext,
             provider,
             temperature,
+            systemPrompt,
           );
         } catch (error) {
           sendSseEvent(controller, encoder, {
