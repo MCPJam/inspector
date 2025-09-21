@@ -25,14 +25,13 @@ export const createLlmModel = (
       return createDeepSeek({ apiKey })(modelDefinition.id);
     case "google":
       return createGoogleGenerativeAI({ apiKey })(modelDefinition.id);
-    case "ollama":
-      {
-        const raw = ollamaBaseUrl || "http://localhost:11434/api";
-        const normalized = /\/api\/?$/.test(raw)
-          ? raw
-          : `${raw.replace(/\/+$/, "")}/api`;
-        return createOllama({ baseURL: normalized })(modelDefinition.id);
-      }
+    case "ollama": {
+      const raw = ollamaBaseUrl || "http://localhost:11434/api";
+      const normalized = /\/api\/?$/.test(raw)
+        ? raw
+        : `${raw.replace(/\/+$/, "")}/api`;
+      return createOllama({ baseURL: normalized })(modelDefinition.id);
+    }
     default:
       throw new Error(
         `Unsupported provider: ${modelDefinition.provider} for model: ${modelDefinition.id}`,
