@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState, useEffect } from "react";
 import Denque from "denque";
+import mock from "./logs.json";
 
 export type LogLevel = "error" | "warn" | "info" | "debug" | "trace";
 
@@ -42,7 +43,7 @@ class LoggerState {
     maxBufferSize: 1000,
   };
 
-  private buffer = new Denque<LogEntry>([], {
+  private buffer = new Denque<LogEntry>(mock, {
     capacity: this.config.maxBufferSize,
   });
 
@@ -130,7 +131,7 @@ export function useLogger(context: string = "Unknown"): Logger {
         outputToConsole(entry);
       }
     },
-    [context],
+    [context]
   );
 
   const logger = useMemo(
@@ -142,7 +143,7 @@ export function useLogger(context: string = "Unknown"): Logger {
       trace: createLogFunction("trace"),
       context,
     }),
-    [createLogFunction, context],
+    [createLogFunction, context]
   );
 
   return logger;
@@ -225,10 +226,15 @@ export const LoggerUtils = {
 
 // Hook for components that need to observe log changes
 export function useLoggerState() {
+  const [entries, setEntries] = useState(loggerState.getEntries());
+  const [config, setConfigState] = useState(loggerState.getConfig());
+
   const [, forceUpdate] = useState({});
 
   useEffect(() => {
     const unsubscribe = loggerState.subscribe(() => {
+      setEntries(loggerState.getEntries());
+      setConfigState(loggerState.getConfig());
       forceUpdate({});
     });
     return () => {
@@ -237,8 +243,8 @@ export function useLoggerState() {
   }, []);
 
   return {
-    entries: loggerState.getEntries(),
-    config: loggerState.getConfig(),
+    entries: useMemo(() => entries, [entries]),
+    config: useMemo(() => config, [config]),
     setConfig: loggerState.setConfig.bind(loggerState),
     clearBuffer: loggerState.clearBuffer.bind(loggerState),
   };
