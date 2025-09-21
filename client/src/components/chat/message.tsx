@@ -292,38 +292,38 @@ const PureMessage = ({
                   {/* Assistant Actions */}
                   {showActions && !isReadonly && (
                     <div className="flex items-center gap-1">
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="px-2 h-7 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all"
-                                onClick={handleCopy}
-                              >
-                                <Copy size={14} />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>Copy</TooltipContent>
-                          </Tooltip>
-                          {onRegenerate && (
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="px-2 h-7 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all"
-                                  onClick={handleRegenerate}
-                                >
-                                  <RotateCcw size={14} />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>Regenerate</TooltipContent>
-                            </Tooltip>
-                          )}
-                        </div>
-                    )}
-                  </div>
-                )}
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="px-2 h-7 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all"
+                            onClick={handleCopy}
+                          >
+                            <Copy size={14} />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Copy</TooltipContent>
+                      </Tooltip>
+                      {onRegenerate && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="px-2 h-7 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all"
+                              onClick={handleRegenerate}
+                            >
+                              <RotateCcw size={14} />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Regenerate</TooltipContent>
+                        </Tooltip>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {mode === "edit" && (
                 /* Edit Mode for Assistant */

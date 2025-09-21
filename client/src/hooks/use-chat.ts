@@ -166,7 +166,8 @@ export function useChat(options: UseChatOptions = {}) {
           assistantContentRef.current += evt.content;
 
           // Add or update current text block
-          const lastBlock = contentBlocksRef.current[contentBlocksRef.current.length - 1];
+          const lastBlock =
+            contentBlocksRef.current[contentBlocksRef.current.length - 1];
           if (lastBlock && lastBlock.type === "text") {
             // Update existing text block
             lastBlock.content = (lastBlock.content || "") + evt.content;
@@ -190,7 +191,7 @@ export function useChat(options: UseChatOptions = {}) {
                 ? {
                     ...msg,
                     content: assistantContentRef.current,
-                    contentBlocks: [...contentBlocksRef.current]
+                    contentBlocks: [...contentBlocksRef.current],
                   }
                 : msg,
             ),
@@ -222,7 +223,7 @@ export function useChat(options: UseChatOptions = {}) {
                 ? {
                     ...msg,
                     toolCalls: [...toolCallsRef.current],
-                    contentBlocks: [...contentBlocksRef.current]
+                    contentBlocks: [...contentBlocksRef.current],
                   }
                 : msg,
             ),
@@ -246,7 +247,8 @@ export function useChat(options: UseChatOptions = {}) {
 
           // Update corresponding tool call block with result
           contentBlocksRef.current = contentBlocksRef.current.map((block) =>
-            block.type === "tool_call" && block.toolCall?.id === toolResult.toolCallId
+            block.type === "tool_call" &&
+            block.toolCall?.id === toolResult.toolCallId
               ? {
                   ...block,
                   toolCall: {
