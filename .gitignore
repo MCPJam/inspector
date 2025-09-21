@@ -59,7 +59,6 @@ next-env.d.ts
 
 # vite
 .vite/
-.env.development
 
 # convex (generated client code)
 convex/
