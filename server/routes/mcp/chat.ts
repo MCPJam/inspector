@@ -165,6 +165,7 @@ const createStreamingResponse = async (
 
   let steps = 0;
   while (steps < MAX_AGENT_STEPS) {
+    dbg("step:start", { step: steps + 1 });
     let accumulatedText = "";
     const iterationToolCalls: any[] = [];
     const iterationToolResults: any[] = [];
@@ -179,12 +180,14 @@ const createStreamingResponse = async (
       tools: vercelTools,
       messages: messageHistory,
       onChunk: async (chunk) => {
+        dbg("chunk", { type: chunk.chunk.type });
         switch (chunk.chunk.type) {
           case "text-delta":
           case "reasoning-delta": {
             const text = chunk.chunk.text;
             if (text) {
               accumulatedText += text;
+              dbg("text-delta", { len: text.length });
               sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
                 type: "text",
                 content: text,
@@ -192,12 +195,15 @@ const createStreamingResponse = async (
             }
             break;
           }
-          case "tool-call": {
+          case "tool-call":
+          case "tool-input-start": {
             const currentToolCallId = ++streamingContext.toolCallId;
             streamingContext.lastEmittedToolCallId = currentToolCallId;
-            const name = chunk.chunk.toolName;
-            const parameters = chunk.chunk.input || {};
+            const name = (chunk.chunk as any).toolName || (chunk.chunk as any).name;
+            const parameters =
+              (chunk.chunk as any).input ?? (chunk.chunk as any).parameters ?? (chunk.chunk as any).args ?? {};
             iterationToolCalls.push({ name, params: parameters });
+            dbg("tool-call", { name, params: parameters });
             sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
               type: "tool_call",
               toolCall: {
@@ -211,12 +217,14 @@ const createStreamingResponse = async (
             break;
           }
           case "tool-result": {
-            const result = chunk.chunk.output;
+            const result =
+              (chunk.chunk as any).output ?? (chunk.chunk as any).result ?? (chunk.chunk as any).value;
             const currentToolCallId =
               streamingContext.lastEmittedToolCallId != null
                 ? streamingContext.lastEmittedToolCallId
                 : streamingContext.toolCallId;
             iterationToolResults.push({ result });
+            dbg("tool-result", { hasResult: result != null });
             sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
               type: "tool_result",
               toolResult: {
@@ -243,16 +251,58 @@ const createStreamingResponse = async (
       iterationToolResults,
     );
 
-    const responseMessages = ((await streamResult.response)?.messages || []) as ModelMessage[];
+    const resp = await streamResult.response;
+    const responseMessages = ((resp)?.messages || []) as ModelMessage[];
+    dbg("response:finish", {
+      hasMessages: Boolean(responseMessages.length),
+      toolCallsLen: Array.isArray((resp as any)?.toolCalls)
+        ? (resp as any).toolCalls.length
+        : undefined,
+      toolResultsLen: Array.isArray((resp as any)?.toolResults)
+        ? (resp as any).toolResults.length
+        : undefined,
+    });
     if (responseMessages.length) {
       messageHistory.push(...responseMessages);
+
+      // Some providers (e.g., Ollama v2) place tool outputs as ToolModelMessages
+      // in the response rather than streaming a tool-result chunk.
+      for (const m of responseMessages) {
+        if ((m as any).role === "tool") {
+          const currentToolCallId =
+            streamingContext.lastEmittedToolCallId != null
+              ? streamingContext.lastEmittedToolCallId
+              : ++streamingContext.toolCallId;
+          const value = (m as any).content;
+          dbg("tool-message", { hasContent: value != null });
+          iterationToolResults.push({ result: value });
+          sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
+            type: "tool_result",
+            toolResult: {
+              id: currentToolCallId,
+              toolCallId: currentToolCallId,
+              result: value,
+              timestamp: new Date().toISOString(),
+            },
+          });
+        }
+      }
     }
 
     steps++;
     const finishReason = await streamResult.finishReason;
-    if (finishReason !== "tool-calls") {
-      break;
-    }
+    dbg("step:end", {
+      step: steps,
+      accumulatedTextLen: accumulatedText.length,
+      toolCalls: iterationToolCalls.length,
+      toolResults: iterationToolResults.length,
+      finishReason,
+    });
+    const shouldContinue =
+      finishReason === "tool-calls" ||
+      (accumulatedText.length === 0 && iterationToolResults.length > 0);
+
+    if (!shouldContinue) break;
   }
 
   sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
