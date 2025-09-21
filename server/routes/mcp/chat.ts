@@ -42,14 +42,8 @@ interface ChatRequest {
 }
 
 // Constants
-const DEBUG_ENABLED = process.env.MCP_DEBUG !== "false";
 const ELICITATION_TIMEOUT = 300000; // 5 minutes
 const MAX_AGENT_STEPS = 10;
-
-// Debug logging helper
-const dbg = (...args: any[]) => {
-  if (DEBUG_ENABLED) console.log("[mcp/chat]", ...args);
-};
 
 try {
   (process as any).setMaxListeners?.(50);
@@ -139,9 +133,7 @@ const handleAgentStepFinish = (
         timestamp: new Date().toISOString(),
       });
     }
-  } catch (err) {
-    dbg("onStepFinish error", err);
-  }
+  } catch {}
 };
 
 const createStreamingResponse = async (
@@ -168,7 +160,6 @@ const createStreamingResponse = async (
 
   let steps = 0;
   while (steps < MAX_AGENT_STEPS) {
-    dbg("step:start", { step: steps + 1 });
     let accumulatedText = "";
     const iterationToolCalls: any[] = [];
     const iterationToolResults: any[] = [];
@@ -183,14 +174,12 @@ const createStreamingResponse = async (
       tools: vercelTools,
       messages: messageHistory,
       onChunk: async (chunk) => {
-        dbg("chunk", { type: chunk.chunk.type });
         switch (chunk.chunk.type) {
           case "text-delta":
           case "reasoning-delta": {
             const text = chunk.chunk.text;
             if (text) {
               accumulatedText += text;
-              dbg("text-delta", { len: text.length });
               sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
                 type: "text",
                 content: text,
@@ -200,7 +189,6 @@ const createStreamingResponse = async (
           }
           case "tool-input-start": {
             // Do not emit a tool_call for input-start; wait for the concrete tool-call
-            dbg("tool-input-start (suppressed)");
             break;
           }
           case "tool-call": {
@@ -210,7 +198,6 @@ const createStreamingResponse = async (
             const parameters =
               (chunk.chunk as any).input ?? (chunk.chunk as any).parameters ?? (chunk.chunk as any).args ?? {};
             iterationToolCalls.push({ name, params: parameters });
-            dbg("tool-call", { name, params: parameters });
             sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
               type: "tool_call",
               toolCall: {
@@ -231,7 +218,6 @@ const createStreamingResponse = async (
                 ? streamingContext.lastEmittedToolCallId
                 : streamingContext.toolCallId;
             iterationToolResults.push({ result });
-            dbg("tool-result", { hasResult: result != null });
             sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
               type: "tool_result",
               toolResult: {
@@ -261,15 +247,6 @@ const createStreamingResponse = async (
 
     const resp = await streamResult.response;
     const responseMessages = ((resp)?.messages || []) as ModelMessage[];
-    dbg("response:finish", {
-      hasMessages: Boolean(responseMessages.length),
-      toolCallsLen: Array.isArray((resp as any)?.toolCalls)
-        ? (resp as any).toolCalls.length
-        : undefined,
-      toolResultsLen: Array.isArray((resp as any)?.toolResults)
-        ? (resp as any).toolResults.length
-        : undefined,
-    });
     if (responseMessages.length) {
       messageHistory.push(...responseMessages);
 
@@ -282,7 +259,6 @@ const createStreamingResponse = async (
               ? streamingContext.lastEmittedToolCallId
               : ++streamingContext.toolCallId;
           const value = (m as any).content;
-          dbg("tool-message", { hasContent: value != null });
           iterationToolResults.push({ result: value });
           sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
             type: "tool_result",
@@ -299,13 +275,6 @@ const createStreamingResponse = async (
 
     steps++;
     const finishReason = await streamResult.finishReason;
-    dbg("step:end", {
-      step: steps,
-      accumulatedTextLen: accumulatedText.length,
-      toolCalls: iterationToolCalls.length,
-      toolResults: iterationToolResults.length,
-      finishReason,
-    });
     const shouldContinue =
       finishReason === "tool-calls" ||
       (accumulatedText.length === 0 && iterationToolResults.length > 0);
