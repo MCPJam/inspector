@@ -194,17 +194,23 @@ const PureMessage = ({
               {/* Tool Calls */}
               {message.toolCalls && message.toolCalls.length > 0 && (
                 <div className="space-y-2">
-                  {message.toolCalls.map((toolCall) => {
+                  {message.toolCalls.map((toolCall, index) => {
                     const toolResult = message.toolResults?.find(
                       (tr) => tr.toolCallId === toolCall.id,
                     );
                     return (
-                      <ToolCallDisplay
+                      <motion.div
                         key={toolCall.id}
-                        toolCall={toolCall}
-                        toolResult={toolResult}
-                        serverConfigs={serverConfigs}
-                      />
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.3, delay: index * 0.1 }}
+                      >
+                        <ToolCallDisplay
+                          toolCall={toolCall}
+                          toolResult={toolResult}
+                          serverConfigs={serverConfigs}
+                        />
+                      </motion.div>
                     );
                   })}
                 </div>
