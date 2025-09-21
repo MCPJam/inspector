@@ -120,5 +120,3 @@ export function convertMastraToolsToVercelTools(
     }),
   );
 }
-
-

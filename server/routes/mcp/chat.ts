@@ -77,16 +77,20 @@ const handleAgentStepFinish = (
           streamingContext.lastEmittedToolCallId = currentToolCallId;
 
           if (streamingContext.controller && streamingContext.encoder) {
-            sendSseEvent(streamingContext.controller, streamingContext.encoder, {
-              type: "tool_call",
-              toolCall: {
-                id: currentToolCallId,
-                name: call.name || call.toolName,
-                parameters: call.params || call.args || {},
-                timestamp: new Date().toISOString(),
-                status: "executing",
+            sendSseEvent(
+              streamingContext.controller,
+              streamingContext.encoder,
+              {
+                type: "tool_call",
+                toolCall: {
+                  id: currentToolCallId,
+                  name: call.name || call.toolName,
+                  parameters: call.params || call.args || {},
+                  timestamp: new Date().toISOString(),
+                  status: "executing",
+                },
               },
-            });
+            );
           }
         }
       }
@@ -100,16 +104,20 @@ const handleAgentStepFinish = (
               : ++streamingContext.toolCallId;
 
           if (streamingContext.controller && streamingContext.encoder) {
-            sendSseEvent(streamingContext.controller, streamingContext.encoder, {
-              type: "tool_result",
-              toolResult: {
-                id: currentToolCallId,
-                toolCallId: currentToolCallId,
-                result: result.result,
-                error: (result as any).error,
-                timestamp: new Date().toISOString(),
+            sendSseEvent(
+              streamingContext.controller,
+              streamingContext.encoder,
+              {
+                type: "tool_result",
+                toolResult: {
+                  id: currentToolCallId,
+                  toolCallId: currentToolCallId,
+                  result: result.result,
+                  error: (result as any).error,
+                  timestamp: new Date().toISOString(),
+                },
               },
-            });
+            );
           }
         }
       }
@@ -166,7 +174,8 @@ const createStreamingResponse = async (
 
     const streamResult = await streamText({
       model,
-      system: systemPrompt || "You are a helpful assistant with access to MCP tools.",
+      system:
+        systemPrompt || "You are a helpful assistant with access to MCP tools.",
       temperature:
         temperature == null || undefined
           ? getDefaultTemperatureByProvider(provider)
@@ -180,10 +189,14 @@ const createStreamingResponse = async (
             const text = chunk.chunk.text;
             if (text) {
               accumulatedText += text;
-              sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
-                type: "text",
-                content: text,
-              });
+              sendSseEvent(
+                streamingContext.controller,
+                streamingContext.encoder!,
+                {
+                  type: "text",
+                  content: text,
+                },
+              );
             }
             break;
           }
@@ -194,39 +207,53 @@ const createStreamingResponse = async (
           case "tool-call": {
             const currentToolCallId = ++streamingContext.toolCallId;
             streamingContext.lastEmittedToolCallId = currentToolCallId;
-            const name = (chunk.chunk as any).toolName || (chunk.chunk as any).name;
+            const name =
+              (chunk.chunk as any).toolName || (chunk.chunk as any).name;
             const parameters =
-              (chunk.chunk as any).input ?? (chunk.chunk as any).parameters ?? (chunk.chunk as any).args ?? {};
+              (chunk.chunk as any).input ??
+              (chunk.chunk as any).parameters ??
+              (chunk.chunk as any).args ??
+              {};
             iterationToolCalls.push({ name, params: parameters });
-            sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
-              type: "tool_call",
-              toolCall: {
-                id: currentToolCallId,
-                name,
-                parameters,
-                timestamp: new Date().toISOString(),
-                status: "executing",
+            sendSseEvent(
+              streamingContext.controller,
+              streamingContext.encoder!,
+              {
+                type: "tool_call",
+                toolCall: {
+                  id: currentToolCallId,
+                  name,
+                  parameters,
+                  timestamp: new Date().toISOString(),
+                  status: "executing",
+                },
               },
-            });
+            );
             break;
           }
           case "tool-result": {
             const result =
-              (chunk.chunk as any).output ?? (chunk.chunk as any).result ?? (chunk.chunk as any).value;
+              (chunk.chunk as any).output ??
+              (chunk.chunk as any).result ??
+              (chunk.chunk as any).value;
             const currentToolCallId =
               streamingContext.lastEmittedToolCallId != null
                 ? streamingContext.lastEmittedToolCallId
                 : streamingContext.toolCallId;
             iterationToolResults.push({ result });
-            sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
-              type: "tool_result",
-              toolResult: {
-                id: currentToolCallId,
-                toolCallId: currentToolCallId,
-                result,
-                timestamp: new Date().toISOString(),
+            sendSseEvent(
+              streamingContext.controller,
+              streamingContext.encoder!,
+              {
+                type: "tool_result",
+                toolResult: {
+                  id: currentToolCallId,
+                  toolCallId: currentToolCallId,
+                  result,
+                  timestamp: new Date().toISOString(),
+                },
               },
-            });
+            );
             break;
           }
           default:
@@ -246,7 +273,7 @@ const createStreamingResponse = async (
     );
 
     const resp = await streamResult.response;
-    const responseMessages = ((resp)?.messages || []) as ModelMessage[];
+    const responseMessages = (resp?.messages || []) as ModelMessage[];
     if (responseMessages.length) {
       messageHistory.push(...responseMessages);
 
@@ -286,7 +313,11 @@ const createStreamingResponse = async (
     type: "elicitation_complete",
   });
 
-  sendSseEvent(streamingContext.controller, streamingContext.encoder!, "[DONE]");
+  sendSseEvent(
+    streamingContext.controller,
+    streamingContext.encoder!,
+    "[DONE]",
+  );
 };
 
 // Main chat endpoint
