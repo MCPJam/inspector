@@ -23,6 +23,7 @@ type EvalSuite = {
   _id: string;
   createdBy: string;
   status: "running" | "completed" | "failed" | "cancelled";
+  result: "pending" | "passed" | "failed" | "cancelled";
   startedAt: number;
   finishedAt?: number;
   totalTests: number;
@@ -37,6 +38,7 @@ type EvalCase = {
   provider: string;
   model: string;
   runs: number;
+  result: "pending" | "passed" | "failed" | "cancelled";
 };
 
 type EvalIteration = {
@@ -113,9 +115,9 @@ function EvalsContent() {
     const runningSuites =
       suites?.filter((s) => s.status === "running").length ?? 0;
     const completedSuites =
-      suites?.filter((s) => s.status === "completed").length ?? 0;
+      suites?.filter((s) => s.status === "completed" && s.result === "passed").length ?? 0;
     const failedSuites =
-      suites?.filter((s) => s.status === "failed").length ?? 0;
+      suites?.filter((s) => s.status === "failed" || s.result === "failed").length ?? 0;
 
     const nonRunningIterations =
       iterations?.filter((i) => i.status !== "running") ?? [];
@@ -394,7 +396,10 @@ function SuitesBrowser({
                         <div className="font-medium">
                           {formatTime(s.startedAt)}
                         </div>
-                        <Badge>{s.status}</Badge>
+                        <div className="flex items-center gap-2">
+                          <Badge>{s.status}</Badge>
+                          {s.result && <Badge variant={s.result === "failed" ? "destructive" : s.result === "passed" ? "default" : "outline"}>{s.result}</Badge>}
+                        </div>
                       </div>
                       <div className="text-xs text-muted-foreground mt-0.5">
                         Tests: {s.totalTests} • Finished{" "}
@@ -485,6 +490,8 @@ function SuiteDetails({
       <CardContent className="space-y-3">
         <div className="text-sm text-muted-foreground">
           Status: <Badge className="ml-1 align-middle">{suite.status}</Badge>
+          <span className="mx-2">·</span>
+          Result: <Badge className="ml-1 align-middle" variant={suite.result === "failed" ? "destructive" : suite.result === "passed" ? "default" : "outline"}>{suite.result}</Badge>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
           {aggregate.byCase.map((c) => (
