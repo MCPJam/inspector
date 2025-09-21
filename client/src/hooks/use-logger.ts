@@ -130,7 +130,7 @@ export function useLogger(context: string = "Unknown"): Logger {
         outputToConsole(entry);
       }
     },
-    [context]
+    [context],
   );
 
   const logger = useMemo(
@@ -142,7 +142,7 @@ export function useLogger(context: string = "Unknown"): Logger {
       trace: createLogFunction("trace"),
       context,
     }),
-    [createLogFunction, context]
+    [createLogFunction, context],
   );
 
   return logger;
