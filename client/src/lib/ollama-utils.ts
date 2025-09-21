@@ -22,13 +22,17 @@ interface OllamaShowResponse {
 
 export class OllamaClient {
   private baseUrl: string;
+  private static normalizeBaseUrl(raw: string): string {
+    const trimmed = (raw || "").replace(/\/+$/, "");
+    return /\/api$/.test(trimmed) ? trimmed : `${trimmed}/api`;
+  }
 
   constructor(baseUrl: string = "http://localhost:11434/api") {
-    this.baseUrl = baseUrl;
+    this.baseUrl = OllamaClient.normalizeBaseUrl(baseUrl);
   }
 
   setBaseUrl(baseUrl: string) {
-    this.baseUrl = baseUrl;
+    this.baseUrl = OllamaClient.normalizeBaseUrl(baseUrl);
   }
 
   async isOllamaRunning(): Promise<boolean> {
