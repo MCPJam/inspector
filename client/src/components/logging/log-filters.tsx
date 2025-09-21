@@ -22,12 +22,12 @@ interface LogFiltersProps {
 const LogFilters = ({ filters, onFilterUpdate }: LogFiltersProps) => {
   const searchQuery = useMemo(
     () => (filters.find((f) => f.id === "message")?.value as string) || "",
-    [filters]
+    [filters],
   );
 
   const logLevel = useMemo(
     () => (filters.find((f) => f.id === "level")?.value as string) || "all",
-    [filters]
+    [filters],
   );
 
   return (

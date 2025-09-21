@@ -37,11 +37,11 @@ export default function App() {
   useEnsureDbUser();
   const isDebugCallback = useMemo(
     () => window.location.pathname.startsWith("/oauth/callback/debug"),
-    []
+    [],
   );
   const isOAuthCallback = useMemo(
     () => window.location.pathname === "/callback",
-    []
+    [],
   );
 
   const {
@@ -168,9 +168,9 @@ export default function App() {
                 allServerConfigsMap={Object.fromEntries(
                   Object.entries(connectedServerConfigs)
                     .filter(
-                      ([, entry]) => entry.connectionStatus === "connected"
+                      ([, entry]) => entry.connectionStatus === "connected",
                     )
-                    .map(([name, entry]) => [name, entry.config])
+                    .map(([name, entry]) => [name, entry.config]),
                 )}
               />
             )}

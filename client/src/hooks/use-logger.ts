@@ -1,6 +1,5 @@
 import { useCallback, useMemo, useState, useEffect } from "react";
 import Denque from "denque";
-import mock from "./logs.json";
 
 export type LogLevel = "error" | "warn" | "info" | "debug" | "trace";
 
@@ -43,7 +42,7 @@ class LoggerState {
     maxBufferSize: 1000,
   };
 
-  private buffer = new Denque<LogEntry>(mock, {
+  private buffer = new Denque<LogEntry>([], {
     capacity: this.config.maxBufferSize,
   });
 
