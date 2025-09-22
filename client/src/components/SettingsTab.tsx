@@ -4,7 +4,6 @@ import { useState } from "react";
 import { ProvidersTable } from "./setting/ProvidersTable";
 import { ProviderConfigDialog } from "./setting/ProviderConfigDialog";
 import { OllamaConfigDialog } from "./setting/OllamaConfigDialog";
-import { Button } from "@/components/ui/button";
 import { AccountApiKeySection } from "./setting/AccountApiKeySection";
 
 interface ProviderConfig {
@@ -40,7 +39,7 @@ export function SettingsTab() {
       name: "OpenAI",
       logo: "/openai_logo.png",
       logoAlt: "OpenAI",
-      description: "GPT models for general-purpose AI tasks",
+      description: "GPT-4, GPT-4o, GPT-4o-mini, GPT-4.1, GPT-5, etc.",
       placeholder: "sk-...",
       getApiKeyUrl: "https://platform.openai.com/api-keys",
     },
@@ -49,7 +48,7 @@ export function SettingsTab() {
       name: "Anthropic",
       logo: "/claude_logo.png",
       logoAlt: "Claude",
-      description: "Claude AI models for advanced reasoning",
+      description: "Claude 3.5, Claude 3.7, Claude Opus 4, etc.",
       placeholder: "sk-ant-...",
       getApiKeyUrl: "https://console.anthropic.com/",
     },
@@ -58,7 +57,7 @@ export function SettingsTab() {
       name: "DeepSeek",
       logo: "/deepseek_logo.svg",
       logoAlt: "DeepSeek",
-      description: "DeepSeek AI models for coding and reasoning",
+      description: "DeepSeek Chat, DeepSeek Reasoner, etc.",
       placeholder: "sk-...",
       getApiKeyUrl: "https://platform.deepseek.com/api_keys",
     },
@@ -67,7 +66,7 @@ export function SettingsTab() {
       name: "Google AI",
       logo: "/google_logo.png",
       logoAlt: "Google AI",
-      description: "Gemini & Gemma models for multimodal AI and coding tasks",
+      description: "Gemini 2.5, Gemini 2.5 Flash, Gemini 2.5 Flash Lite",
       placeholder: "AI...",
       getApiKeyUrl: "https://aistudio.google.com/app/apikey",
     },
@@ -85,9 +84,6 @@ export function SettingsTab() {
   const handleSave = () => {
     if (selectedProvider) {
       setToken(selectedProvider.id as keyof typeof tokens, editingValue);
-      // Store timestamp when API key is saved
-      const timestamp = new Date().toLocaleString();
-      localStorage.setItem(`${selectedProvider.id}_timestamp`, timestamp);
       setDialogOpen(false);
       setSelectedProvider(null);
       setEditingValue("");
@@ -102,8 +98,6 @@ export function SettingsTab() {
 
   const handleDelete = (providerId: string) => {
     clearToken(providerId as keyof typeof tokens);
-    // Remove timestamp when API key is deleted
-    localStorage.removeItem(`${providerId}_timestamp`);
   };
 
   const handleOllamaEdit = () => {
@@ -127,14 +121,6 @@ export function SettingsTab() {
     return `****${key.slice(-4)}`;
   };
 
-  const getCreatedDate = (providerId: string) => {
-    if (hasToken(providerId as keyof typeof tokens)) {
-      const timestamp = localStorage.getItem(`${providerId}_timestamp`);
-      return timestamp || "N/A";
-    }
-    return "N/A";
-  };
-
   return (
     <div className="container mx-auto p-6 max-w-6xl space-y-8">
       <div className="flex items-center gap-3 mb-6">
@@ -146,20 +132,12 @@ export function SettingsTab() {
 
       <div className="space-y-4">
         <div>
-          <h3 className="text-lg font-semibold">AI Providers</h3>
-          <p className="text-muted-foreground">
-            Click the + button next to any provider to configure it.
-          </p>
+          <h3 className="text-lg font-semibold">Configure LLM API Keys</h3>
         </div>
 
         <ProvidersTable
           providerConfigs={providerConfigs}
           hasToken={(providerId) => hasToken(providerId as keyof typeof tokens)}
-          getToken={(providerId) =>
-            tokens[providerId as keyof typeof tokens] || ""
-          }
-          getCreatedDate={getCreatedDate}
-          maskApiKey={maskApiKey}
           onEditProvider={handleEdit}
           onDeleteProvider={handleDelete}
           ollamaBaseUrl={getOllamaBaseUrl()}

@@ -166,7 +166,6 @@ function EvalsContent() {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-2">
-          <FlaskConical className="h-6 w-6" />
           <h1 className="text-2xl font-bold">Evals</h1>
         </div>
       </div>
