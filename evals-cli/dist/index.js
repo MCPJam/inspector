@@ -5586,97 +5586,11 @@ var finalizeSuiteStatus = async (persistence, failedRuns) => {
 };
 
 // src/utils/validators.ts
+import { z as z2 } from "zod";
+
+// ../shared/tools.ts
 import { z } from "zod";
 import { tool } from "ai";
-var AdvancedConfigSchema = z.object({
-  system: z.string().optional(),
-  temperature: z.number().optional(),
-  toolChoice: z.string().optional()
-}).passthrough();
-var TestCaseSchema = z.object({
-  title: z.string(),
-  query: z.string(),
-  runs: z.number().int(),
-  model: z.string(),
-  provider: z.string(),
-  expectedToolCalls: z.array(z.string()),
-  judgeRequirement: z.string().optional(),
-  advancedConfig: AdvancedConfigSchema.optional()
-});
-function validateTestCase(value) {
-  try {
-    const result = z.array(TestCaseSchema).parse(value);
-    return result;
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      throw new Error(error.message);
-    }
-    throw new Error(error instanceof Error ? error.message : String(error));
-  }
-}
-var BaseServerOptionsSchema = z.object({
-  logger: z.custom().optional(),
-  timeout: z.number().optional(),
-  capabilities: z.custom().optional(),
-  enableServerLogs: z.boolean().optional()
-});
-var StdioServerDefinitionSchema = BaseServerOptionsSchema.extend({
-  command: z.string(),
-  args: z.array(z.string()).optional(),
-  env: z.record(z.string(), z.string()).optional()
-}).strict();
-var HttpServerDefinitionSchema = BaseServerOptionsSchema.extend({
-  // Accept either a URL object or a string URL, but we'll normalize to string
-  url: z.union([z.string().url(), z.instanceof(URL)]),
-  requestInit: z.custom().optional(),
-  eventSourceInit: z.custom().optional(),
-  authProvider: z.custom().optional(),
-  reconnectionOptions: z.custom().optional(),
-  sessionId: z.custom().optional()
-}).strict();
-var MCPClientOptionsSchema = z.custom();
-var MastraMCPServerDefinitionSchema = z.union([
-  StdioServerDefinitionSchema,
-  HttpServerDefinitionSchema
-]);
-function validateAndNormalizeMCPClientConfiguration(value) {
-  try {
-    const envParsed = MCPClientOptionsSchema.parse(value);
-    const normalizedServers = {};
-    for (const [name2, server] of Object.entries(envParsed.servers)) {
-      try {
-        if (server && typeof server === "object" && "url" in server) {
-          MastraMCPServerDefinitionSchema.parse(server);
-          server.enableServerLogs = false;
-          const urlValue = server.url;
-          const normalizedUrl = typeof urlValue === "string" ? new URL(urlValue) : urlValue;
-          const normalizedServer = {
-            ...server,
-            url: normalizedUrl
-          };
-          normalizedServers[name2] = normalizedServer;
-        } else {
-          MastraMCPServerDefinitionSchema.parse(server);
-          server.enableServerLogs = false;
-          normalizedServers[name2] = server;
-        }
-      } catch (error) {
-        if (error instanceof z.ZodError) {
-          throw new Error(
-            `Invalid server configuration for '${name2}': ${error.message}`
-          );
-        }
-        throw new Error(`Invalid server configuration for '${name2}': ${error}`);
-      }
-    }
-    return {
-      ...envParsed,
-      servers: normalizedServers
-    };
-  } catch (error) {
-    throw new Error(error instanceof Error ? error.message : String(error));
-  }
-}
 var fallbackInputSchema = z.object({}).passthrough();
 function isZodSchema(value) {
   return Boolean(
@@ -5748,17 +5662,108 @@ function convertMastraToolsToVercelTools(mastraTools) {
     })
   );
 }
-var LlmsConfigSchema = z.object({
-  anthropic: z.string().optional(),
-  openai: z.string().optional(),
-  openrouter: z.string().optional()
+
+// src/utils/validators.ts
+var AdvancedConfigSchema = z2.object({
+  system: z2.string().optional(),
+  temperature: z2.number().optional(),
+  toolChoice: z2.string().optional()
+}).passthrough();
+var TestCaseSchema = z2.object({
+  title: z2.string(),
+  query: z2.string(),
+  runs: z2.number().int(),
+  model: z2.string(),
+  provider: z2.string(),
+  expectedToolCalls: z2.array(z2.string()),
+  judgeRequirement: z2.string().optional(),
+  advancedConfig: AdvancedConfigSchema.optional()
+});
+function validateTestCase(value) {
+  try {
+    const result = z2.array(TestCaseSchema).parse(value);
+    return result;
+  } catch (error) {
+    if (error instanceof z2.ZodError) {
+      throw new Error(error.message);
+    }
+    throw new Error(error instanceof Error ? error.message : String(error));
+  }
+}
+var BaseServerOptionsSchema = z2.object({
+  logger: z2.custom().optional(),
+  timeout: z2.number().optional(),
+  capabilities: z2.custom().optional(),
+  enableServerLogs: z2.boolean().optional()
+});
+var StdioServerDefinitionSchema = BaseServerOptionsSchema.extend({
+  command: z2.string(),
+  args: z2.array(z2.string()).optional(),
+  env: z2.record(z2.string(), z2.string()).optional()
+}).strict();
+var HttpServerDefinitionSchema = BaseServerOptionsSchema.extend({
+  // Accept either a URL object or a string URL, but we'll normalize to string
+  url: z2.union([z2.string().url(), z2.instanceof(URL)]),
+  requestInit: z2.custom().optional(),
+  eventSourceInit: z2.custom().optional(),
+  authProvider: z2.custom().optional(),
+  reconnectionOptions: z2.custom().optional(),
+  sessionId: z2.custom().optional()
+}).strict();
+var MCPClientOptionsSchema = z2.custom();
+var MastraMCPServerDefinitionSchema = z2.union([
+  StdioServerDefinitionSchema,
+  HttpServerDefinitionSchema
+]);
+function validateAndNormalizeMCPClientConfiguration(value) {
+  try {
+    const envParsed = MCPClientOptionsSchema.parse(value);
+    const normalizedServers = {};
+    for (const [name2, server] of Object.entries(envParsed.servers)) {
+      try {
+        if (server && typeof server === "object" && "url" in server) {
+          MastraMCPServerDefinitionSchema.parse(server);
+          server.enableServerLogs = false;
+          const urlValue = server.url;
+          const normalizedUrl = typeof urlValue === "string" ? new URL(urlValue) : urlValue;
+          const normalizedServer = {
+            ...server,
+            url: normalizedUrl
+          };
+          normalizedServers[name2] = normalizedServer;
+        } else {
+          MastraMCPServerDefinitionSchema.parse(server);
+          server.enableServerLogs = false;
+          normalizedServers[name2] = server;
+        }
+      } catch (error) {
+        if (error instanceof z2.ZodError) {
+          throw new Error(
+            `Invalid server configuration for '${name2}': ${error.message}`
+          );
+        }
+        throw new Error(`Invalid server configuration for '${name2}': ${error}`);
+      }
+    }
+    return {
+      ...envParsed,
+      servers: normalizedServers
+    };
+  } catch (error) {
+    throw new Error(error instanceof Error ? error.message : String(error));
+  }
+}
+var LlmsConfigSchema = z2.object({
+  anthropic: z2.string().optional(),
+  openai: z2.string().optional(),
+  openrouter: z2.string().optional()
 }).passthrough();
 function validateLlms(value) {
   try {
     const result = LlmsConfigSchema.parse(value);
     return result;
   } catch (error) {
-    if (error instanceof z.ZodError) {
+    if (error instanceof z2.ZodError) {
       throw new Error(`Invalid LLMs configuration: ${error.message}`);
     }
     throw new Error(error instanceof Error ? error.message : String(error));
@@ -6116,7 +6121,7 @@ var package_default = {
     commander: "^12.0.0",
     dotenv: "^17.2.2",
     hono: "^4.6.11",
-    "ollama-ai-provider": "^1.2.0",
+    "ollama-ai-provider-v2": "^1.3.1",
     "update-notifier": "^7.3.1",
     zod: "^3.25.76"
   },

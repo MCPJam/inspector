@@ -159,15 +159,40 @@ export function useChat(options: UseChatOptions = {}) {
       assistantContentRef: { current: string },
       toolCallsRef: { current: any[] },
       toolResultsRef: { current: any[] },
+      contentBlocksRef: { current: any[] },
     ) => {
       switch (evt.type) {
         case "text": {
           assistantContentRef.current += evt.content;
+
+          // Add or update current text block
+          const lastBlock =
+            contentBlocksRef.current[contentBlocksRef.current.length - 1];
+          if (lastBlock && lastBlock.type === "text") {
+            // Update existing text block
+            lastBlock.content = (lastBlock.content || "") + evt.content;
+          } else {
+            // Create new text block
+            contentBlocksRef.current = [
+              ...contentBlocksRef.current,
+              {
+                id: `text-${Date.now()}`,
+                type: "text" as const,
+                content: evt.content,
+                timestamp: new Date(),
+              },
+            ];
+          }
+
           setState((prev) => ({
             ...prev,
             messages: prev.messages.map((msg) =>
               msg.id === assistantMessage.id
-                ? { ...msg, content: assistantContentRef.current }
+                ? {
+                    ...msg,
+                    content: assistantContentRef.current,
+                    contentBlocks: [...contentBlocksRef.current],
+                  }
                 : msg,
             ),
           }));
@@ -179,11 +204,27 @@ export function useChat(options: UseChatOptions = {}) {
             timestamp: new Date(evt.toolCall.timestamp),
           };
           toolCallsRef.current = [...toolCallsRef.current, toolCall];
+
+          // Add tool call block
+          contentBlocksRef.current = [
+            ...contentBlocksRef.current,
+            {
+              id: `tool-call-${toolCall.id}`,
+              type: "tool_call" as const,
+              toolCall,
+              timestamp: new Date(),
+            },
+          ];
+
           setState((prev) => ({
             ...prev,
             messages: prev.messages.map((msg) =>
               msg.id === assistantMessage.id
-                ? { ...msg, toolCalls: [...toolCallsRef.current] }
+                ? {
+                    ...msg,
+                    toolCalls: [...toolCallsRef.current],
+                    contentBlocks: [...contentBlocksRef.current],
+                  }
                 : msg,
             ),
           }));
@@ -203,6 +244,22 @@ export function useChat(options: UseChatOptions = {}) {
                 }
               : tc,
           );
+
+          // Update corresponding tool call block with result
+          contentBlocksRef.current = contentBlocksRef.current.map((block) =>
+            block.type === "tool_call" &&
+            block.toolCall?.id === toolResult.toolCallId
+              ? {
+                  ...block,
+                  toolCall: {
+                    ...block.toolCall,
+                    status: toolResult.error ? "error" : "completed",
+                  },
+                  toolResult,
+                }
+              : block,
+          );
+
           setState((prev) => ({
             ...prev,
             messages: prev.messages.map((msg) =>
@@ -211,6 +268,7 @@ export function useChat(options: UseChatOptions = {}) {
                     ...msg,
                     toolCalls: [...toolCallsRef.current],
                     toolResults: [...toolResultsRef.current],
+                    contentBlocks: [...contentBlocksRef.current],
                   }
                 : msg,
             ),
@@ -292,6 +350,7 @@ export function useChat(options: UseChatOptions = {}) {
         const assistantContent = { current: "" };
         const toolCalls = { current: [] as any[] };
         const toolResults = { current: [] as any[] };
+        const contentBlocks = { current: [] as any[] };
         if (reader) {
           for await (const evt of parseSSEStream(reader)) {
             if (evt === "[DONE]") break;
@@ -302,6 +361,7 @@ export function useChat(options: UseChatOptions = {}) {
                 assistantContent,
                 toolCalls,
                 toolResults,
+                contentBlocks,
               );
             } catch (parseError) {
               console.warn("Failed applying SSE event", parseError);
