@@ -10,7 +10,7 @@ import { TextEncoder } from "util";
 // import { createLlmModel } from "../../utils/chat-helpers";
 import { SSEvent } from "../../../shared/sse";
 // import { convertMastraToolsToVercelTools } from "../../../shared/tools";
-import { hasUnresolvedToolCalls } from "./chat_helpers";
+import { hasUnresolvedToolCalls, executeToolCalls } from "../../../shared/tool-calls";
 import { zodToJsonSchema } from "@alcyone-labs/zod-to-json-schema";
 import type { ModelMessage } from "ai";
 
@@ -347,12 +347,11 @@ const createConvexPlannedResponse = async (
     }
   });
 
-  // Collect serializable tool definitions for Convex planner
-  const toolsets = await mcpClientManager.getFlattenedToolsetsForEnabledServers();
-  const toolDefs = Object.keys(toolsets).map((name) => ({
+  const flatTools = await mcpClientManager.getFlattenedToolsetsForEnabledServers();
+  const toolDefs = Object.keys(flatTools).map((name) => ({
     name,
-    description: (toolsets as any)[name]?.description,
-    inputSchema: zodToJsonSchema((toolsets as any)[name]?.inputSchema),
+    description: (flatTools as any)[name]?.description,
+    inputSchema: zodToJsonSchema((flatTools as any)[name]?.inputSchema),
   }));
 
   const baseUrl = process.env.CONVEX_HTTP_URL;
@@ -419,7 +418,7 @@ const createConvexPlannedResponse = async (
     const beforeLen = messageHistory.length;
     if (hasUnresolvedToolCalls(messageHistory as any)) {
       console.log("[mcp/chat] Unresolved tool calls found; executing locally");
-      await mcpClientManager.executeToolCallsFromMessages(messageHistory);
+      await executeToolCalls(messageHistory as any, { tools: flatTools as any });
       const newMsgs = messageHistory.slice(beforeLen);
       console.log("[mcp/chat] Appended tool results", newMsgs.length);
       for (const m of newMsgs) {
