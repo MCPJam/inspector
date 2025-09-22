@@ -24,6 +24,7 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
   );
 
   const [temperatureState, setTemperatureState] = useState(1.0);
+  const [useConvexPlanner, setUseConvexPlanner] = useState(false);
   const noServersConnected =
     Object.keys(serverConfigs || {}).length === 0 || !serverConfigs;
 
@@ -46,6 +47,7 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
   } = useChat({
     systemPrompt: systemPromptState,
     temperature: temperatureState,
+    useConvexPlanner,
     onError: (error) => {
       toast.error(error);
     },
@@ -124,6 +126,15 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
             transition={{ duration: 0.5, delay: 0.1 }}
             className="w-full max-w-3xl"
           >
+            <div className="flex items-center justify-end mb-2">
+              <button
+                className={`text-xs px-3 py-1 rounded border ${useConvexPlanner ? 'bg-primary text-primary-foreground' : 'bg-background'}`}
+                onClick={() => setUseConvexPlanner((v) => !v)}
+                title="Use Convex backend with x-ai/grok-4-fast:free"
+              >
+                {useConvexPlanner ? 'Using Convex planner' : 'Use Convex planner'}
+              </button>
+            </div>
             <ChatInput
               value={input}
               onChange={setInput}

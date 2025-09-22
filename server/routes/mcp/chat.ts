@@ -1,16 +1,18 @@
 import { Hono } from "hono";
-import { streamText } from "ai";
+// import { streamText } from "ai";
 import {
   ChatMessage,
   ModelDefinition,
   ModelProvider,
 } from "../../../shared/types";
 import { TextEncoder } from "util";
-import { getDefaultTemperatureByProvider } from "../../../client/src/lib/chat-utils";
-import { createLlmModel } from "../../utils/chat-helpers";
+// import { getDefaultTemperatureByProvider } from "../../../client/src/lib/chat-utils";
+// import { createLlmModel } from "../../utils/chat-helpers";
 import { SSEvent } from "../../../shared/sse";
-import { convertMastraToolsToVercelTools } from "../../../shared/tools";
-import type { ModelMessage, Tool } from "ai";
+// import { convertMastraToolsToVercelTools } from "../../../shared/tools";
+import { hasUnresolvedToolCalls } from "./chat_helpers";
+import { zodToJsonSchema } from "@alcyone-labs/zod-to-json-schema";
+import type { ModelMessage } from "ai";
 
 // Types
 interface ElicitationResponse {
@@ -39,6 +41,7 @@ interface ChatRequest {
   action?: string;
   requestId?: string;
   response?: any;
+  useConvexPlanner?: boolean;
 }
 
 // Constants
@@ -61,6 +64,7 @@ const sendSseEvent = (
   controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
 };
 
+/*
 const handleAgentStepFinish = (
   streamingContext: StreamingContext,
   text: string,
@@ -143,7 +147,9 @@ const handleAgentStepFinish = (
     }
   } catch {}
 };
+*/
 
+/*
 const createStreamingResponse = async (
   model: any,
   vercelTools: Record<string, Tool>,
@@ -319,6 +325,138 @@ const createStreamingResponse = async (
     "[DONE]",
   );
 };
+*/
+
+// Non-streaming planner via Convex backend; still emits SSE for UI
+const createConvexPlannedResponse = async (
+  messages: ChatMessage[],
+  streamingContext: StreamingContext,
+  mcpClientManager: any,
+): Promise<void> => {
+  // Build message history
+  const messageHistory: ModelMessage[] = (messages || []).map((m) => {
+    switch (m.role) {
+      case "system":
+        return { role: "system", content: m.content } as ModelMessage;
+      case "user":
+        return { role: "user", content: m.content } as ModelMessage;
+      case "assistant":
+        return { role: "assistant", content: m.content } as ModelMessage;
+      default:
+        return { role: "user", content: m.content } as ModelMessage;
+    }
+  });
+
+  // Collect serializable tool definitions for Convex planner
+  const toolsets = await mcpClientManager.getFlattenedToolsetsForEnabledServers();
+  const toolDefs = Object.keys(toolsets).map((name) => ({
+    name,
+    description: (toolsets as any)[name]?.description,
+    inputSchema: zodToJsonSchema((toolsets as any)[name]?.inputSchema),
+  }));
+
+  const baseUrl = process.env.CONVEX_HTTP_URL;
+  if (!baseUrl) {
+    throw new Error("CONVEX_HTTP_URL is not set");
+  }
+  console.log(`[mcp/chat] Using Convex at ${baseUrl}/streaming`);
+
+  let steps = 0;
+  while (steps < MAX_AGENT_STEPS) {
+    // Call Convex backend for next assistant messages
+    console.log("[mcp/chat] Convex planner iteration", { step: steps, messageCount: messageHistory.length });
+    const res = await fetch(`${baseUrl}/streaming`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ tools: toolDefs, messages: JSON.stringify(messageHistory) }),
+    });
+    console.log("[mcp/chat] Convex response status", res.status);
+
+    let data: any = {};
+    try {
+      data = await res.json();
+      console.log("[mcp/chat] Convex response json ok:", Boolean(data?.ok), Array.isArray(data?.messages) ? data.messages.length : "no-messages");
+    } catch {
+      // fallback
+      const text = await res.text();
+      console.log("[mcp/chat] Convex response text len", text.length);
+      try { data = JSON.parse(text); } catch { data = { ok: false }; }
+    }
+
+    if (data?.ok && Array.isArray(data.messages)) {
+      // Append assistant messages and emit their text/tool_call events
+      for (const msg of data.messages as ModelMessage[]) {
+        messageHistory.push(msg);
+        if ((msg as any).role === "assistant" && Array.isArray((msg as any).content)) {
+          for (const c of (msg as any).content) {
+            if (c?.type === "text" && typeof c.text === "string") {
+              sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
+                type: "text",
+                content: c.text,
+              });
+            } else if (c?.type === "tool-call") {
+              const currentToolCallId = ++streamingContext.toolCallId;
+              streamingContext.lastEmittedToolCallId = currentToolCallId;
+              sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
+                type: "tool_call",
+                toolCall: {
+                  id: currentToolCallId,
+                  name: c.toolName || c.name,
+                  parameters: c.input || c.parameters || c.args || {},
+                  timestamp: new Date().toISOString(),
+                  status: "executing",
+                },
+              });
+            }
+          }
+        }
+      }
+    } else {
+      break;
+    }
+
+    // Execute unresolved tool calls locally and emit tool_result events
+    const beforeLen = messageHistory.length;
+    if (hasUnresolvedToolCalls(messageHistory as any)) {
+      console.log("[mcp/chat] Unresolved tool calls found; executing locally");
+      await mcpClientManager.executeToolCallsFromMessages(messageHistory);
+      const newMsgs = messageHistory.slice(beforeLen);
+      console.log("[mcp/chat] Appended tool results", newMsgs.length);
+      for (const m of newMsgs) {
+        if ((m as any).role === "tool" && Array.isArray((m as any).content)) {
+          for (const tc of (m as any).content) {
+            if (tc.type === "tool-result") {
+              const currentToolCallId =
+                streamingContext.lastEmittedToolCallId != null
+                  ? streamingContext.lastEmittedToolCallId
+                  : ++streamingContext.toolCallId;
+              const out = tc.output;
+              const value = out && typeof out === "object" && "value" in out ? out.value : out;
+              sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
+                type: "tool_result",
+                toolResult: {
+                  id: currentToolCallId,
+                  toolCallId: currentToolCallId,
+                  result: value,
+                  timestamp: new Date().toISOString(),
+                },
+              });
+            }
+          }
+        }
+      }
+    } else {
+      break;
+    }
+
+    steps++;
+  }
+
+  sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
+    type: "elicitation_complete",
+  });
+  sendSseEvent(streamingContext.controller, streamingContext.encoder!, "[DONE]");
+};
 
 // Main chat endpoint
 chat.post("/", async (c) => {
@@ -327,12 +465,12 @@ chat.post("/", async (c) => {
     const requestData: ChatRequest = await c.req.json();
     const {
       model,
-      provider,
-      apiKey,
-      systemPrompt,
-      temperature,
+      provider: _provider_unused,
+      apiKey: _apiKey_unused,
+      systemPrompt: _systemPrompt_unused,
+      temperature: _temperature_unused,
       messages,
-      ollamaBaseUrl,
+      ollamaBaseUrl: _ollama_unused,
       action,
       requestId,
       response,
@@ -368,22 +506,24 @@ chat.post("/", async (c) => {
     }
 
     // Validate required parameters
-    if (!model?.id || !apiKey || !messages) {
+    if (!messages) {
       return c.json(
         {
           success: false,
-          error: "model (with id), apiKey, and messages are required",
+          error: "messages are required",
         },
         400,
       );
     }
-
-    // Create LLM model
-    const llmModel = createLlmModel(model, apiKey, ollamaBaseUrl);
-
-    const toolsets =
-      await mcpClientManager.getFlattenedToolsetsForEnabledServers();
-    const vercelTools = convertMastraToolsToVercelTools(toolsets as any);
+    if (!requestData.useConvexPlanner && (!model?.id || !requestData.apiKey)) {
+      return c.json(
+        {
+          success: false,
+          error: "model (with id) and apiKey are required",
+        },
+        400,
+      );
+    }
 
     // Create streaming response
     const encoder = new TextEncoder();
@@ -442,14 +582,11 @@ chat.post("/", async (c) => {
         });
 
         try {
-          await createStreamingResponse(
-            llmModel,
-            vercelTools,
+          // Temporarily force the Convex-planned flow for all chat calls
+          await createConvexPlannedResponse(
             messages,
             streamingContext,
-            provider,
-            temperature,
-            systemPrompt,
+            mcpClientManager,
           );
         } catch (error) {
           sendSseEvent(controller, encoder, {
