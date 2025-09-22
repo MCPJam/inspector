@@ -1,4 +1,5 @@
 import { serve } from "@hono/node-server";
+import dotenv from "dotenv";
 import fixPath from "fix-path";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -120,6 +121,19 @@ try {
 } catch {}
 
 const app = new Hono();
+
+// Load environment variables early. Prefer .env.production in production.
+try {
+  const envFile = process.env.NODE_ENV === "production" ? ".env.production" : ".env.local";
+  dotenv.config({ path: envFile });
+  // Fallback to default if specific file not found
+  if (!process.env.CONVEX_HTTP_URL) {
+    dotenv.config();
+  }
+  console.log(
+    `[startup] ENV loaded (NODE_ENV=${process.env.NODE_ENV}). CONVEX_HTTP_URL=${process.env.CONVEX_HTTP_URL || "<undefined>"}`,
+  );
+} catch {}
 
 // Initialize centralized MCPJam Client Manager
 const mcpJamClientManager = new MCPJamClientManager();
