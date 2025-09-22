@@ -1,5 +1,5 @@
 import { ModelMessage } from '@ai-sdk/provider-utils';
-import { MCPJamClientManager } from '../../services/mcpjam-client-manager';
+import { executeToolCalls } from '../../../shared/tool-calls';
 
 // Helper function to check if there are unresolved tool calls
 export const hasUnresolvedToolCalls = (messages: ModelMessage[]): boolean => {
@@ -46,7 +46,7 @@ export const hasUnresolvedToolCalls = (messages: ModelMessage[]): boolean => {
 // Helper function to execute tool calls
 export const executeToolCallsFromMessages = async (
   messages: ModelMessage[],
-  manager: MCPJamClientManager,
+  toolsOrOptions: any,
 ): Promise<void> => {
-  await manager.executeToolCallsFromMessages(messages);
+  await executeToolCalls(messages as any, toolsOrOptions as any);
 };
