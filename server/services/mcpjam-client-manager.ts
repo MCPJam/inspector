@@ -1,4 +1,6 @@
 import { MCPClient, MastraMCPServerDefinition } from "@mastra/mcp";
+import { ModelMessage } from "@ai-sdk/provider-utils";
+import { LanguageModelV2ToolResultOutput } from "@ai-sdk/provider-v5";
 import { validateServerConfig } from "../utils/mcp-utils";
 import { DynamicArgument } from "@mastra/core/base";
 import { ToolsInput } from "@mastra/core/agent";
@@ -471,6 +473,156 @@ class MCPJamClientManager {
       }
     }
     throw lastError;
+  }
+
+  /**
+   * Execute unresolved tool-calls found in a list of messages by discovering
+   * tools across all connected MCP servers and appending corresponding
+   * tool-result messages. Mutates the provided messages array by pushing
+   * new tool messages at the end.
+   */
+  async executeToolCallsFromMessages(
+    messages: ModelMessage[],
+    options?: { serverId?: string; client?: MCPClient; tools?: Record<string, any> },
+  ): Promise<void> {
+    console.log("executing unresolved tool calls");
+
+    // Build a map of available tools across all connected servers
+    const nameToTool: Record<string, any> = {};
+    const populateFromClient = async (client: MCPClient, serverIdLabel?: string) => {
+      try {
+        const toolsets = await client.getToolsets();
+        const flattened = this.flattenToolsets(toolsets);
+        for (const [toolName, tool] of Object.entries<any>(flattened)) {
+          if (tool && typeof tool === "object" && "execute" in tool) {
+            if (!(toolName in nameToTool)) nameToTool[toolName] = tool;
+          }
+        }
+      } catch (err) {
+        console.warn(
+          `Failed to enumerate tools for ${serverIdLabel || "client"}:`,
+          err,
+        );
+      }
+    };
+
+    if (options?.tools && typeof options.tools === "object") {
+      for (const [toolName, tool] of Object.entries<any>(options.tools)) {
+        if (tool && typeof tool === "object" && "execute" in tool) {
+          if (!(toolName in nameToTool)) nameToTool[toolName] = tool;
+        }
+      }
+    } else if (options?.client) {
+      await populateFromClient(options.client, "provided-client");
+    } else if (options?.serverId) {
+      const resolved = this.resolveServerId(options.serverId);
+      if (!resolved) throw new Error(`No MCP client available for server: ${options.serverId}`);
+      const client = this.mcpClients.get(resolved);
+      if (!client) throw new Error(`No MCP client available for server: ${options.serverId}`);
+      await populateFromClient(client, resolved);
+    } else {
+      for (const [serverId, client] of this.mcpClients.entries()) {
+        if (this.getConnectionStatus(serverId) !== "connected") continue;
+        await populateFromClient(client, serverId);
+      }
+    }
+
+    // Collect existing tool-result IDs to avoid re-executing
+    const existingToolResultIds = new Set<string>();
+    for (const msg of messages) {
+      if (!msg || msg.role !== "tool" || !Array.isArray((msg as any).content)) {
+        continue;
+      }
+      for (const content of (msg as any).content) {
+        if (content.type === "tool-result") {
+          existingToolResultIds.add(content.toolCallId);
+        }
+      }
+    }
+
+    const toolResultsToAdd: ModelMessage[] = [];
+
+    // Find unresolved tool-calls and execute them
+    for (const msg of messages) {
+      if (!msg || msg.role !== "assistant" || !Array.isArray((msg as any).content)) {
+        continue;
+      }
+      for (const content of (msg as any).content) {
+        if (
+          content.type === "tool-call" &&
+          !existingToolResultIds.has(content.toolCallId)
+        ) {
+          try {
+            const toolName: string = content.toolName;
+            console.log(
+              `Executing unresolved tool call: ${toolName} (${content.toolCallId})`,
+            );
+
+            const tool = nameToTool[toolName];
+            if (!tool) {
+              throw new Error(`Tool '${toolName}' not found`);
+            }
+
+            // Use input property as per AI SDK spec
+            const input = content.input || {};
+            const result = await tool.execute({ context: input });
+
+            // Create proper LanguageModelV2ToolResultOutput based on result
+            let output: LanguageModelV2ToolResultOutput;
+            if (result && typeof result === "object" && (result as any).content) {
+              const rc: any = (result as any).content;
+              if (rc && typeof rc === "object" && "text" in rc && typeof rc.text === "string") {
+                output = { type: "text", value: rc.text } as any;
+              } else if (rc && typeof rc === "object" && "type" in rc && "value" in rc) {
+                output = {
+                  type: (rc.type as any) || "text",
+                  value: rc.value,
+                } as any;
+              } else {
+                output = { type: "text", value: JSON.stringify(rc) } as any;
+              }
+            } else {
+              output = { type: "text", value: String(result) } as any;
+            }
+
+            const toolResultMessage: ModelMessage = {
+              role: "tool" as const,
+              content: [
+                {
+                  type: "tool-result",
+                  toolCallId: content.toolCallId,
+                  toolName: toolName,
+                  output: output,
+                },
+              ],
+            } as any;
+
+            toolResultsToAdd.push(toolResultMessage);
+          } catch (error: any) {
+            console.error(`Error executing tool ${content.toolName}:`, error);
+            const errorOutput: LanguageModelV2ToolResultOutput = {
+              type: "error-text",
+              value: error instanceof Error ? error.message : String(error),
+            } as any;
+            const errorToolResultMessage: ModelMessage = {
+              role: "tool" as const,
+              content: [
+                {
+                  type: "tool-result",
+                  toolCallId: content.toolCallId,
+                  toolName: content.toolName,
+                  output: errorOutput,
+                },
+              ],
+            } as any;
+            toolResultsToAdd.push(errorToolResultMessage);
+          }
+        }
+      }
+    }
+
+    // Append generated tool-result messages
+    messages.push(...toolResultsToAdd);
   }
 
   async getResource(
