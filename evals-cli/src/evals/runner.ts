@@ -2,6 +2,19 @@ import { MCPClient } from "@mastra/mcp";
 import { streamText, Tool, ToolChoice, ModelMessage } from "ai";
 import { getUserIdFromApiKeyOrNull } from "../db/user";
 import {
+  createPersistenceContext,
+  ensureSuiteRecord,
+  createTestCaseRecord,
+  createIterationRecord,
+  updateIterationResult,
+  updateTestCaseResult,
+  markSuiteFailed,
+  finalizeSuiteStatus,
+  type ConfigSummary,
+  type PersistenceContext,
+  type UsageTotals,
+} from "../db/tests";
+import {
   convertMastraToolsToVercelTools,
   validateAndNormalizeMCPClientConfiguration,
   validateLlms,
@@ -11,36 +24,12 @@ import {
 } from "../utils/validators";
 import { createLlmModel, extractToolNamesAsArray } from "../utils/helpers";
 import { Logger } from "../utils/logger";
-import { dbClient } from "../db";
 import { evaluateResults } from "./evaluator";
 
 const MAX_STEPS = 20;
 
 type ToolMap = Record<string, Tool>;
 type EvaluationResult = ReturnType<typeof evaluateResults>;
-
-type UsageTotals = {
-  inputTokens?: number;
-  outputTokens?: number;
-  totalTokens?: number;
-};
-
-type ConfigSummary = {
-  tests: TestCase[];
-  environment: { servers: string[] };
-  llms: string[];
-};
-
-type DbClient = ReturnType<typeof dbClient> | null;
-
-type PersistenceContext = {
-  enabled: boolean;
-  apiKey?: string;
-  db: DbClient;
-  testRunId?: string;
-  configSummary: ConfigSummary;
-  totalPlannedTests: number;
-};
 
 const accumulateTokenCount = (
   current: number | undefined,
@@ -89,205 +78,7 @@ const prepareSuite = async (
     validatedLlms,
     vercelTools,
     serverNames,
-    mcpClientOptions,
   };
-};
-
-const createPersistenceContext = (
-  apiKey: string | undefined,
-  configSummary: ConfigSummary,
-  totalPlannedTests: number,
-): PersistenceContext => ({
-  enabled: Boolean(apiKey),
-  apiKey,
-  db: apiKey ? dbClient() : null,
-  configSummary,
-  totalPlannedTests,
-});
-
-const runDbAction = async <T>(
-  persistence: PersistenceContext,
-  action: string,
-  payload: Record<string, unknown>,
-): Promise<T | undefined> => {
-  if (!persistence.enabled || !persistence.db) {
-    return undefined;
-  }
-
-  try {
-    return await (persistence.db as any).action(action, payload);
-  } catch {
-    return undefined;
-  }
-};
-
-const ensureSuiteRecord = async (persistence: PersistenceContext) => {
-  if (
-    !persistence.enabled ||
-    !persistence.apiKey ||
-    persistence.testRunId ||
-    !persistence.configSummary
-  ) {
-    return;
-  }
-
-  const createdId = await runDbAction<string>(
-    persistence,
-    "evals:createEvalTestSuiteWithApiKey",
-    {
-      apiKey: persistence.apiKey,
-      name: undefined,
-      config: persistence.configSummary,
-      totalTests: persistence.totalPlannedTests,
-    },
-  );
-
-  if (createdId) {
-    persistence.testRunId = createdId;
-  }
-};
-
-const createTestCaseRecord = async (
-  persistence: PersistenceContext,
-  test: TestCase,
-  testNumber: number,
-) => {
-  if (!persistence.enabled || !persistence.apiKey) {
-    return undefined;
-  }
-
-  const testCaseId = await runDbAction<string>(
-    persistence,
-    "evals:createEvalTestCaseWithApiKey",
-    {
-      apiKey: persistence.apiKey,
-      title: String(test.title ?? `Group ${testNumber}`),
-      query: String(test.query ?? ""),
-      provider: String(test.provider ?? ""),
-      model: String(test.model ?? ""),
-      runs: Number(test.runs ?? 1),
-    },
-  );
-
-  if (!persistence.testRunId) {
-    await ensureSuiteRecord(persistence);
-  }
-
-  return testCaseId;
-};
-
-const createIterationRecord = async (
-  persistence: PersistenceContext,
-  testCaseId: string | undefined,
-  iterationNumber: number,
-  startedAt: number,
-) => {
-  if (!persistence.enabled || !persistence.apiKey || !testCaseId) {
-    return undefined;
-  }
-
-  return await runDbAction<string>(
-    persistence,
-    "evals:createEvalTestIterationWithApiKey",
-    {
-      apiKey: persistence.apiKey,
-      testCaseId,
-      startedAt,
-      iterationNumber,
-      blob: undefined,
-      actualToolCalls: [],
-      tokensUsed: 0,
-    },
-  );
-};
-
-const updateIterationResult = async (
-  persistence: PersistenceContext,
-  evalTestId: string | undefined,
-  passed: boolean,
-  toolsCalled: string[],
-  tokensUsed: UsageTotals,
-  messages: ModelMessage[],
-) => {
-  if (!persistence.enabled || !persistence.apiKey || !evalTestId) {
-    return;
-  }
-
-  await runDbAction(
-    persistence,
-    "evals:updateEvalTestIterationResultWithApiKey",
-    {
-      apiKey: persistence.apiKey,
-      testId: evalTestId,
-      status: "completed",
-      result: passed ? "passed" : "failed",
-      actualToolCalls: toolsCalled,
-      tokensUsed: tokensUsed.totalTokens ?? 0,
-      blob: undefined,
-      blobContent: { messages },
-    },
-  );
-};
-
-const updateTestCaseResult = async (
-  persistence: PersistenceContext,
-  testCaseId: string | undefined,
-  passedRuns: number,
-  failedRuns: number,
-) => {
-  if (!persistence.enabled || !persistence.apiKey || !testCaseId) {
-    return;
-  }
-
-  const result = failedRuns > 0 ? "failed" : "passed";
-
-  await runDbAction(
-    persistence,
-    "evals:updateEvalTestCaseResultWithApiKey",
-    {
-      apiKey: persistence.apiKey,
-      testCaseId,
-      result,
-    },
-  );
-};
-
-const markSuiteFailed = async (persistence: PersistenceContext) => {
-  if (!persistence.enabled || !persistence.apiKey || !persistence.testRunId) {
-    return;
-  }
-
-  await runDbAction(
-    persistence,
-    "evals:updateEvalTestSuiteStatusWithApiKey",
-    {
-      apiKey: persistence.apiKey,
-      testRunId: persistence.testRunId,
-      status: "running",
-      result: "failed",
-    },
-  );
-};
-
-const finalizeSuiteStatus = async (
-  persistence: PersistenceContext,
-  failedRuns: number,
-) => {
-  if (!persistence.enabled || !persistence.apiKey || !persistence.testRunId) {
-    return;
-  }
-
-  await runDbAction(
-    persistence,
-    "evals:updateEvalTestSuiteStatusWithApiKey",
-    {
-      apiKey: persistence.apiKey,
-      testRunId: persistence.testRunId,
-      status: "completed",
-      result: failedRuns > 0 ? "failed" : "passed",
-      finishedAt: Date.now(),
-    },
-  );
 };
 
 type RunIterationParams = {
@@ -555,8 +346,10 @@ export const runEvals = async (
 
   for (let index = 0; index < validatedTests.length; index++) {
     const test = validatedTests[index];
-    if(test) {
-      const { passedRuns: casePassed, failedRuns: caseFailed } =
+    if (!test) {
+      continue;
+    }
+    const { passedRuns: casePassed, failedRuns: caseFailed } =
       await runTestCase({
         test,
         testIndex: index + 1,
@@ -564,9 +357,8 @@ export const runEvals = async (
         tools: vercelTools,
         persistence,
       });
-      passedRuns += casePassed;
-      failedRuns += caseFailed;
-    }
+    passedRuns += casePassed;
+    failedRuns += caseFailed;
   }
 
   Logger.suiteComplete({
