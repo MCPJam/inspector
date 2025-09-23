@@ -1,3 +1,12 @@
+export interface ContentBlock {
+  id: string;
+  type: "text" | "tool_call" | "tool_result";
+  content?: string;
+  toolCall?: ToolCall;
+  toolResult?: ToolResult;
+  timestamp: Date;
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system";
@@ -6,6 +15,7 @@ export interface ChatMessage {
   attachments?: Attachment[];
   toolCalls?: ToolCall[];
   toolResults?: ToolResult[];
+  contentBlocks?: ContentBlock[];
   metadata?: MessageMetadata;
 }
 
