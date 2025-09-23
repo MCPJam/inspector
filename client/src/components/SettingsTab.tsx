@@ -1,4 +1,3 @@
-import { Settings } from "lucide-react";
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
 import { useState } from "react";
 import { ProvidersTable } from "./setting/ProvidersTable";
@@ -116,15 +115,9 @@ export function SettingsTab() {
     setOllamaUrl("");
   };
 
-  const maskApiKey = (key: string) => {
-    if (!key || key.length <= 8) return key;
-    return `****${key.slice(-4)}`;
-  };
-
   return (
     <div className="container mx-auto p-6 max-w-6xl space-y-8">
       <div className="flex items-center gap-3 mb-6">
-        <Settings className="h-6 w-6" />
         <h1 className="text-2xl font-bold">Settings</h1>
       </div>
 
@@ -132,7 +125,7 @@ export function SettingsTab() {
 
       <div className="space-y-4">
         <div>
-          <h3 className="text-lg font-semibold">Configure LLM API Keys</h3>
+          <h3 className="text-lg font-semibold">LLM Provider API Keys</h3>
         </div>
 
         <ProvidersTable
