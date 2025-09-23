@@ -1,4 +1,4 @@
-import { KeyRound, Copy, RefreshCw, Eye, Check } from "lucide-react";
+import { Copy, RefreshCw, Eye, Check } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -67,7 +67,6 @@ export function AccountApiKeySection() {
     return (
       <div className="space-y-3 rounded-md border p-4">
         <div className="flex items-center gap-2">
-          <KeyRound className="h-5 w-5" />
           <h3 className="text-lg font-semibold">MCPJam API Key</h3>
         </div>
         <p className="text-sm text-muted-foreground">
@@ -83,7 +82,6 @@ export function AccountApiKeySection() {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
-        <KeyRound className="h-5 w-5" />
         <h3 className="text-lg font-semibold">MCPJam API Key</h3>
       </div>
       <p className="text-muted-foreground text-sm">
