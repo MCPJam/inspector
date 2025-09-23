@@ -191,27 +191,88 @@ const PureMessage = ({
                 </div>
               )}
 
-              {/* Tool Calls */}
-              {message.toolCalls && message.toolCalls.length > 0 && (
-                <div className="space-y-2">
-                  {message.toolCalls.map((toolCall) => {
-                    const toolResult = message.toolResults?.find(
-                      (tr) => tr.toolCallId === toolCall.id,
-                    );
-                    return (
-                      <ToolCallDisplay
-                        key={toolCall.id}
-                        toolCall={toolCall}
-                        toolResult={toolResult}
-                        serverConfigs={serverConfigs}
-                      />
-                    );
+              {/* Interleaved Content Blocks or Fallback */}
+              {message.contentBlocks && message.contentBlocks.length > 0 ? (
+                <div className="space-y-4">
+                  {message.contentBlocks.map((block, index) => {
+                    if (block.type === "text" && block.content) {
+                      return (
+                        <motion.div
+                          key={block.id}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.3, delay: index * 0.05 }}
+                          className="prose prose-sm max-w-none dark:prose-invert prose-p:leading-relaxed prose-pre:bg-muted/50 prose-pre:border prose-pre:border-border/30 flex-1 min-w-0"
+                        >
+                          <Markdown>{sanitizeText(block.content)}</Markdown>
+                        </motion.div>
+                      );
+                    } else if (block.type === "tool_call" && block.toolCall) {
+                      return (
+                        <motion.div
+                          key={block.id}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.3, delay: index * 0.05 }}
+                        >
+                          <ToolCallDisplay
+                            toolCall={block.toolCall}
+                            toolResult={block.toolResult}
+                            serverConfigs={serverConfigs}
+                          />
+                        </motion.div>
+                      );
+                    }
+                    return null;
                   })}
                 </div>
+              ) : (
+                <>
+                  {/* Fallback to old structure for backwards compatibility */}
+                  {/* Tool Calls */}
+                  {message.toolCalls && message.toolCalls.length > 0 && (
+                    <div className="space-y-2">
+                      {message.toolCalls.map((toolCall, index) => {
+                        const toolResult = message.toolResults?.find(
+                          (tr) => tr.toolCallId === toolCall.id,
+                        );
+                        return (
+                          <motion.div
+                            key={toolCall.id}
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.3, delay: index * 0.1 }}
+                          >
+                            <ToolCallDisplay
+                              toolCall={toolCall}
+                              toolResult={toolResult}
+                              serverConfigs={serverConfigs}
+                            />
+                          </motion.div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Assistant Message Text or Thinking Indicator */}
+                  {shouldShowThinking ? (
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ duration: 0.3 }}
+                    >
+                      <ThinkingIndicator />
+                    </motion.div>
+                  ) : mode === "view" && message.content ? (
+                    <div className="prose prose-sm max-w-none dark:prose-invert prose-p:leading-relaxed prose-pre:bg-muted/50 prose-pre:border prose-pre:border-border/30 flex-1 min-w-0">
+                      <Markdown>{sanitizeText(message.content)}</Markdown>
+                    </div>
+                  ) : null}
+                </>
               )}
 
-              {/* Assistant Message Text or Thinking Indicator */}
-              {shouldShowThinking ? (
+              {/* Thinking Indicator for interleaved content */}
+              {shouldShowThinking && message.contentBlocks && (
                 <motion.div
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
@@ -219,59 +280,52 @@ const PureMessage = ({
                 >
                   <ThinkingIndicator />
                 </motion.div>
-              ) : mode === "view" ? (
-                <div className="relative">
-                  <div
-                    data-testid="message-content"
-                    className="prose prose-sm max-w-none dark:prose-invert prose-p:leading-relaxed prose-pre:bg-muted/50 prose-pre:border prose-pre:border-border/30 flex-1 min-w-0"
-                  >
-                    <Markdown>{sanitizeText(message.content)}</Markdown>
+              )}
+
+              {/* Timestamp and Actions - Positioned below content */}
+              {mode === "view" && isHovered && (
+                <div className="flex items-center justify-between mt-4">
+                  <div className="text-xs text-muted-foreground/60">
+                    {formatTimestamp(message.timestamp)}
                   </div>
 
-                  {/* Timestamp and Actions - Absolute positioned below message */}
-                  {isHovered && (
-                    <div className="absolute -bottom-6 left-0 right-0 flex items-center justify-between">
-                      <div className="text-xs text-muted-foreground/60">
-                        {formatTimestamp(message.timestamp)}
-                      </div>
-
-                      {/* Assistant Actions */}
-                      {showActions && !isReadonly && (
-                        <div className="flex items-center gap-1">
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="px-2 h-7 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all"
-                                onClick={handleCopy}
-                              >
-                                <Copy size={14} />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>Copy</TooltipContent>
-                          </Tooltip>
-                          {onRegenerate && (
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="px-2 h-7 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all"
-                                  onClick={handleRegenerate}
-                                >
-                                  <RotateCcw size={14} />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>Regenerate</TooltipContent>
-                            </Tooltip>
-                          )}
-                        </div>
+                  {/* Assistant Actions */}
+                  {showActions && !isReadonly && (
+                    <div className="flex items-center gap-1">
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="px-2 h-7 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all"
+                            onClick={handleCopy}
+                          >
+                            <Copy size={14} />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Copy</TooltipContent>
+                      </Tooltip>
+                      {onRegenerate && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="px-2 h-7 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all"
+                              onClick={handleRegenerate}
+                            >
+                              <RotateCcw size={14} />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Regenerate</TooltipContent>
+                        </Tooltip>
                       )}
                     </div>
                   )}
                 </div>
-              ) : (
+              )}
+
+              {mode === "edit" && (
                 /* Edit Mode for Assistant */
                 <div className="flex flex-row gap-2 items-start">
                   <MessageEditor

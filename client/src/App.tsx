@@ -5,6 +5,7 @@ import { ResourcesTab } from "./components/ResourcesTab";
 import { PromptsTab } from "./components/PromptsTab";
 import { ChatTab } from "./components/ChatTab";
 import { TestsTab } from "./components/TestsTab";
+import { PrevEvalsTab } from "./components/PrevEvalsTab";
 import { EvalsTab } from "./components/EvalsTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { TracingTab } from "./components/TracingTab";
@@ -174,12 +175,7 @@ export default function App() {
                 )}
               />
             )}
-            {activeTab === "evals" && (
-              <EvalsTab
-                serverConfig={selectedMCPConfig}
-                serverName={appState.selectedServer}
-              />
-            )}
+            {activeTab === "evals" && <EvalsTab />}
             {activeTab === "resources" && (
               <ResourcesTab
                 serverConfig={selectedMCPConfig}

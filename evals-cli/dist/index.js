@@ -5794,103 +5794,158 @@ var getUserIdFromApiKeyOrNull = async (apiKey) => {
   return user;
 };
 
+// src/db/tests.ts
+var runDbAction = async (persistence, action, payload) => {
+  if (!persistence.enabled || !persistence.db) {
+    return void 0;
+  }
+  try {
+    return await persistence.db.action(action, payload);
+  } catch {
+    return void 0;
+  }
+};
+var createPersistenceContext = (apiKey, configSummary, totalPlannedTests) => ({
+  enabled: Boolean(apiKey),
+  apiKey,
+  db: apiKey ? dbClient() : null,
+  configSummary,
+  totalPlannedTests,
+});
+var ensureSuiteRecord = async (persistence) => {
+  if (!persistence.enabled || !persistence.apiKey || persistence.testRunId) {
+    return;
+  }
+  const createdId = await runDbAction(
+    persistence,
+    "evals:createEvalTestSuiteWithApiKey",
+    {
+      apiKey: persistence.apiKey,
+      name: void 0,
+      config: persistence.configSummary,
+      totalTests: persistence.totalPlannedTests,
+    },
+  );
+  if (createdId) {
+    persistence.testRunId = createdId;
+  }
+};
+var createTestCaseRecord = async (persistence, test, testNumber) => {
+  if (!persistence.enabled || !persistence.apiKey) {
+    return void 0;
+  }
+  const testCaseId = await runDbAction(
+    persistence,
+    "evals:createEvalTestCaseWithApiKey",
+    {
+      apiKey: persistence.apiKey,
+      title: String(test.title ?? `Group ${testNumber}`),
+      query: String(test.query ?? ""),
+      provider: String(test.provider ?? ""),
+      model: String(test.model ?? ""),
+      runs: Number(test.runs ?? 1),
+    },
+  );
+  if (!persistence.testRunId) {
+    await ensureSuiteRecord(persistence);
+  }
+  return testCaseId;
+};
+var createIterationRecord = async (
+  persistence,
+  testCaseId,
+  iterationNumber,
+  startedAt,
+) => {
+  if (!persistence.enabled || !persistence.apiKey || !testCaseId) {
+    return void 0;
+  }
+  return await runDbAction(
+    persistence,
+    "evals:createEvalTestIterationWithApiKey",
+    {
+      apiKey: persistence.apiKey,
+      testCaseId,
+      startedAt,
+      iterationNumber,
+      blob: void 0,
+      actualToolCalls: [],
+      tokensUsed: 0,
+    },
+  );
+};
+var updateIterationResult = async (
+  persistence,
+  evalTestId,
+  passed,
+  toolsCalled,
+  tokensUsed,
+  messages,
+) => {
+  if (!persistence.enabled || !persistence.apiKey || !evalTestId) {
+    return;
+  }
+  await runDbAction(
+    persistence,
+    "evals:updateEvalTestIterationResultWithApiKey",
+    {
+      apiKey: persistence.apiKey,
+      testId: evalTestId,
+      status: "completed",
+      result: passed ? "passed" : "failed",
+      actualToolCalls: toolsCalled,
+      tokensUsed: tokensUsed.totalTokens ?? 0,
+      blob: void 0,
+      blobContent: { messages },
+    },
+  );
+};
+var updateTestCaseResult = async (
+  persistence,
+  testCaseId,
+  passedRuns,
+  failedRuns,
+) => {
+  if (!persistence.enabled || !persistence.apiKey || !testCaseId) {
+    return;
+  }
+  const result = failedRuns > 0 ? "failed" : "passed";
+  await runDbAction(persistence, "evals:updateEvalTestCaseResultWithApiKey", {
+    apiKey: persistence.apiKey,
+    testCaseId,
+    result,
+  });
+};
+var markSuiteFailed = async (persistence) => {
+  if (!persistence.enabled || !persistence.apiKey || !persistence.testRunId) {
+    return;
+  }
+  await runDbAction(persistence, "evals:updateEvalTestSuiteStatusWithApiKey", {
+    apiKey: persistence.apiKey,
+    testRunId: persistence.testRunId,
+    status: "running",
+    result: "failed",
+  });
+};
+var finalizeSuiteStatus = async (persistence, failedRuns) => {
+  if (!persistence.enabled || !persistence.apiKey || !persistence.testRunId) {
+    return;
+  }
+  await runDbAction(persistence, "evals:updateEvalTestSuiteStatusWithApiKey", {
+    apiKey: persistence.apiKey,
+    testRunId: persistence.testRunId,
+    status: "completed",
+    result: failedRuns > 0 ? "failed" : "passed",
+    finishedAt: Date.now(),
+  });
+};
+
 // src/utils/validators.ts
+import { z as z2 } from "zod";
+
+// ../shared/tools.ts
 import { z } from "zod";
 import { tool } from "ai";
-var AdvancedConfigSchema = z
-  .object({
-    system: z.string().optional(),
-    temperature: z.number().optional(),
-    toolChoice: z.string().optional(),
-  })
-  .passthrough();
-var TestCaseSchema = z.object({
-  title: z.string(),
-  query: z.string(),
-  runs: z.number().int(),
-  model: z.string(),
-  provider: z.string(),
-  expectedToolCalls: z.array(z.string()),
-  judgeRequirement: z.string().optional(),
-  advancedConfig: AdvancedConfigSchema.optional(),
-});
-function validateTestCase(value) {
-  try {
-    const result = z.array(TestCaseSchema).parse(value);
-    return result;
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      throw new Error(error.message);
-    }
-    throw new Error(error instanceof Error ? error.message : String(error));
-  }
-}
-var BaseServerOptionsSchema = z.object({
-  logger: z.custom().optional(),
-  timeout: z.number().optional(),
-  capabilities: z.custom().optional(),
-  enableServerLogs: z.boolean().optional(),
-});
-var StdioServerDefinitionSchema = BaseServerOptionsSchema.extend({
-  command: z.string(),
-  args: z.array(z.string()).optional(),
-  env: z.record(z.string(), z.string()).optional(),
-}).strict();
-var HttpServerDefinitionSchema = BaseServerOptionsSchema.extend({
-  // Accept either a URL object or a string URL, but we'll normalize to string
-  url: z.union([z.string().url(), z.instanceof(URL)]),
-  requestInit: z.custom().optional(),
-  eventSourceInit: z.custom().optional(),
-  authProvider: z.custom().optional(),
-  reconnectionOptions: z.custom().optional(),
-  sessionId: z.custom().optional(),
-}).strict();
-var MCPClientOptionsSchema = z.custom();
-var MastraMCPServerDefinitionSchema = z.union([
-  StdioServerDefinitionSchema,
-  HttpServerDefinitionSchema,
-]);
-function validateAndNormalizeMCPClientConfiguration(value) {
-  try {
-    const envParsed = MCPClientOptionsSchema.parse(value);
-    const normalizedServers = {};
-    for (const [name2, server] of Object.entries(envParsed.servers)) {
-      try {
-        if (server && typeof server === "object" && "url" in server) {
-          MastraMCPServerDefinitionSchema.parse(server);
-          server.enableServerLogs = false;
-          const urlValue = server.url;
-          const normalizedUrl =
-            typeof urlValue === "string" ? new URL(urlValue) : urlValue;
-          const normalizedServer = {
-            ...server,
-            url: normalizedUrl,
-          };
-          normalizedServers[name2] = normalizedServer;
-        } else {
-          MastraMCPServerDefinitionSchema.parse(server);
-          server.enableServerLogs = false;
-          normalizedServers[name2] = server;
-        }
-      } catch (error) {
-        if (error instanceof z.ZodError) {
-          throw new Error(
-            `Invalid server configuration for '${name2}': ${error.message}`,
-          );
-        }
-        throw new Error(
-          `Invalid server configuration for '${name2}': ${error}`,
-        );
-      }
-    }
-    return {
-      ...envParsed,
-      servers: normalizedServers,
-    };
-  } catch (error) {
-    throw new Error(error instanceof Error ? error.message : String(error));
-  }
-}
 var fallbackInputSchema = z.object({}).passthrough();
 function isZodSchema(value) {
   return Boolean(value && typeof value === "object" && "safeParse" in value);
@@ -5960,11 +6015,107 @@ function convertMastraToolsToVercelTools(mastraTools) {
     }),
   );
 }
-var LlmsConfigSchema = z
+
+// src/utils/validators.ts
+var AdvancedConfigSchema = z2
   .object({
-    anthropic: z.string().optional(),
-    openai: z.string().optional(),
-    openrouter: z.string().optional(),
+    system: z2.string().optional(),
+    temperature: z2.number().optional(),
+    toolChoice: z2.string().optional(),
+  })
+  .passthrough();
+var TestCaseSchema = z2.object({
+  title: z2.string(),
+  query: z2.string(),
+  runs: z2.number().int(),
+  model: z2.string(),
+  provider: z2.string(),
+  expectedToolCalls: z2.array(z2.string()),
+  judgeRequirement: z2.string().optional(),
+  advancedConfig: AdvancedConfigSchema.optional(),
+});
+function validateTestCase(value) {
+  try {
+    const result = z2.array(TestCaseSchema).parse(value);
+    return result;
+  } catch (error) {
+    if (error instanceof z2.ZodError) {
+      throw new Error(error.message);
+    }
+    throw new Error(error instanceof Error ? error.message : String(error));
+  }
+}
+var BaseServerOptionsSchema = z2.object({
+  logger: z2.custom().optional(),
+  timeout: z2.number().optional(),
+  capabilities: z2.custom().optional(),
+  enableServerLogs: z2.boolean().optional(),
+});
+var StdioServerDefinitionSchema = BaseServerOptionsSchema.extend({
+  command: z2.string(),
+  args: z2.array(z2.string()).optional(),
+  env: z2.record(z2.string(), z2.string()).optional(),
+}).strict();
+var HttpServerDefinitionSchema = BaseServerOptionsSchema.extend({
+  // Accept either a URL object or a string URL, but we'll normalize to string
+  url: z2.union([z2.string().url(), z2.instanceof(URL)]),
+  requestInit: z2.custom().optional(),
+  eventSourceInit: z2.custom().optional(),
+  authProvider: z2.custom().optional(),
+  reconnectionOptions: z2.custom().optional(),
+  sessionId: z2.custom().optional(),
+}).strict();
+var MCPClientOptionsSchema = z2.custom();
+var MastraMCPServerDefinitionSchema = z2.union([
+  StdioServerDefinitionSchema,
+  HttpServerDefinitionSchema,
+]);
+function validateAndNormalizeMCPClientConfiguration(value) {
+  try {
+    const envParsed = MCPClientOptionsSchema.parse(value);
+    const normalizedServers = {};
+    for (const [name2, server] of Object.entries(envParsed.servers)) {
+      try {
+        if (server && typeof server === "object" && "url" in server) {
+          MastraMCPServerDefinitionSchema.parse(server);
+          server.enableServerLogs = false;
+          const urlValue = server.url;
+          const normalizedUrl =
+            typeof urlValue === "string" ? new URL(urlValue) : urlValue;
+          const normalizedServer = {
+            ...server,
+            url: normalizedUrl,
+          };
+          normalizedServers[name2] = normalizedServer;
+        } else {
+          MastraMCPServerDefinitionSchema.parse(server);
+          server.enableServerLogs = false;
+          normalizedServers[name2] = server;
+        }
+      } catch (error) {
+        if (error instanceof z2.ZodError) {
+          throw new Error(
+            `Invalid server configuration for '${name2}': ${error.message}`,
+          );
+        }
+        throw new Error(
+          `Invalid server configuration for '${name2}': ${error}`,
+        );
+      }
+    }
+    return {
+      ...envParsed,
+      servers: normalizedServers,
+    };
+  } catch (error) {
+    throw new Error(error instanceof Error ? error.message : String(error));
+  }
+}
+var LlmsConfigSchema = z2
+  .object({
+    anthropic: z2.string().optional(),
+    openai: z2.string().optional(),
+    openrouter: z2.string().optional(),
   })
   .passthrough();
 function validateLlms(value) {
@@ -5972,7 +6123,7 @@ function validateLlms(value) {
     const result = LlmsConfigSchema.parse(value);
     return result;
   } catch (error) {
-    if (error instanceof z.ZodError) {
+    if (error instanceof z2.ZodError) {
       throw new Error(`Invalid LLMs configuration: ${error.message}`);
     }
     throw new Error(error instanceof Error ? error.message : String(error));
@@ -6018,269 +6169,256 @@ var evaluateResults = (expectedToolCalls, toolsCalled) => {
 };
 
 // src/evals/runner.ts
+var MAX_STEPS = 20;
 var accumulateTokenCount = (current, increment) => {
   if (typeof increment !== "number" || Number.isNaN(increment)) {
     return current;
   }
   return (current ?? 0) + increment;
 };
-var runEvals = async (tests, environment, llms, apiKey) => {
-  if (apiKey) {
-    await getUserIdFromApiKeyOrNull(apiKey);
+var ensureApiKeyIsValid = async (apiKey) => {
+  if (!apiKey) {
+    return;
   }
+  await getUserIdFromApiKeyOrNull(apiKey);
+};
+var prepareSuite = async (tests, environment, llms) => {
   const mcpClientOptions =
     validateAndNormalizeMCPClientConfiguration(environment);
   const validatedTests = validateTestCase(tests);
-  const validatedLlmApiKeys = validateLlms(llms);
+  const validatedLlms = validateLlms(llms);
   const mcpClient = new MCPClient(mcpClientOptions);
   const availableTools = await mcpClient.getTools();
-  const serverCount = Object.keys(mcpClientOptions.servers).length;
-  const toolCount = Object.keys(availableTools).length;
+  const vercelTools = convertMastraToolsToVercelTools(availableTools);
   const serverNames = Object.keys(mcpClientOptions.servers);
   Logger.initiateTestMessage(
-    serverCount,
-    toolCount,
+    serverNames.length,
+    Object.keys(availableTools).length,
     serverNames,
     validatedTests.length,
   );
-  const vercelTools = convertMastraToolsToVercelTools(availableTools);
-  const suiteStartedAt = Date.now();
-  const totalPlannedTests = validatedTests.reduce(
-    (sum, t) => sum + (t?.runs ?? 0),
-    0,
-  );
-  const db = dbClient();
-  const shouldSaveToDb = Boolean(apiKey);
-  const configSummary = {
-    tests: validatedTests,
-    environment: { servers: Object.keys(mcpClientOptions.servers) },
-    llms: Object.keys(validatedLlmApiKeys ?? {}),
+  return {
+    validatedTests,
+    validatedLlms,
+    vercelTools,
+    serverNames,
   };
-  let testRunId;
-  if (shouldSaveToDb) {
-    try {
-      testRunId = await db.action("evals:createEvalTestSuiteWithApiKey", {
-        apiKey,
-        name: void 0,
-        config: configSummary,
-        totalTests: totalPlannedTests,
-      });
-    } catch (err) {
-      testRunId = void 0;
+};
+var runIteration = async ({
+  test,
+  runIndex,
+  totalRuns,
+  llms,
+  tools,
+  persistence,
+  testCaseId,
+}) => {
+  const { provider, model, advancedConfig, query } = test;
+  const { system, temperature, toolChoice } = advancedConfig ?? {};
+  Logger.testRunStart({
+    runNumber: runIndex + 1,
+    totalRuns,
+    provider,
+    model,
+    temperature,
+  });
+  if (system) {
+    Logger.conversation({ messages: [{ role: "system", content: system }] });
+  }
+  const userMessage = {
+    role: "user",
+    content: query,
+  };
+  Logger.conversation({ messages: [userMessage] });
+  const messageHistory = [userMessage];
+  const toolsCalled = [];
+  let inputTokensUsed;
+  let outputTokensUsed;
+  let totalTokensUsed;
+  let stepCount = 0;
+  const runStartedAt = Date.now();
+  const evalTestId = await createIterationRecord(
+    persistence,
+    testCaseId,
+    runIndex + 1,
+    runStartedAt,
+  );
+  while (stepCount < MAX_STEPS) {
+    let assistantStreaming = false;
+    const streamResult = await streamText({
+      model: createLlmModel(provider, model, llms),
+      system,
+      temperature,
+      tools,
+      toolChoice,
+      messages: messageHistory,
+      onChunk: async (chunk) => {
+        switch (chunk.chunk.type) {
+          case "text-delta":
+          case "reasoning-delta": {
+            if (!assistantStreaming) {
+              Logger.beginStreamingMessage("assistant");
+              assistantStreaming = true;
+            }
+            Logger.appendStreamingText(chunk.chunk.text);
+            break;
+          }
+          case "tool-call": {
+            if (assistantStreaming) {
+              Logger.finishStreamingMessage();
+              assistantStreaming = false;
+            }
+            Logger.streamToolCall(chunk.chunk.toolName, chunk.chunk.input);
+            break;
+          }
+          case "tool-result": {
+            Logger.streamToolResult(chunk.chunk.toolName, chunk.chunk.output);
+            break;
+          }
+          default:
+            break;
+        }
+      },
+    });
+    await streamResult.consumeStream();
+    if (assistantStreaming) {
+      Logger.finishStreamingMessage();
+      assistantStreaming = false;
+    }
+    const stepUsage = await streamResult.usage;
+    const cumulativeUsage = await streamResult.totalUsage;
+    inputTokensUsed = accumulateTokenCount(
+      inputTokensUsed,
+      stepUsage.inputTokens,
+    );
+    outputTokensUsed = accumulateTokenCount(
+      outputTokensUsed,
+      stepUsage.outputTokens,
+    );
+    const totalTokens = stepUsage.totalTokens ?? cumulativeUsage.totalTokens;
+    totalTokensUsed = accumulateTokenCount(totalTokensUsed, totalTokens);
+    const toolNamesForStep = extractToolNamesAsArray(
+      await streamResult.toolCalls,
+    );
+    if (toolNamesForStep.length) {
+      toolsCalled.push(...toolNamesForStep);
+    }
+    const responseMessages = (await streamResult.response)?.messages ?? [];
+    if (responseMessages.length) {
+      messageHistory.push(...responseMessages);
+    }
+    stepCount++;
+    const finishReason = await streamResult.finishReason;
+    if (finishReason !== "tool-calls") {
+      break;
     }
   }
+  Logger.finishStreamingMessage();
+  const evaluation = evaluateResults(test.expectedToolCalls, toolsCalled);
+  const usage = {
+    inputTokens: inputTokensUsed,
+    outputTokens: outputTokensUsed,
+    totalTokens: totalTokensUsed,
+  };
+  Logger.toolSummary({
+    expected: evaluation.expectedToolCalls,
+    actual: evaluation.toolsCalled,
+    missing: evaluation.missing,
+    unexpected: evaluation.unexpected,
+    passed: evaluation.passed,
+  });
+  Logger.testRunResult({
+    passed: evaluation.passed,
+    durationMs: Date.now() - runStartedAt,
+    usage:
+      usage.inputTokens !== void 0 ||
+      usage.outputTokens !== void 0 ||
+      usage.totalTokens !== void 0
+        ? usage
+        : void 0,
+  });
+  if (!evaluation.passed) {
+    await markSuiteFailed(persistence);
+  }
+  await updateIterationResult(
+    persistence,
+    evalTestId,
+    evaluation.passed,
+    toolsCalled,
+    usage,
+    messageHistory,
+  );
+  return evaluation;
+};
+var runTestCase = async ({ test, testIndex, llms, tools, persistence }) => {
+  const { runs, model, provider } = test;
+  Logger.logTestGroupTitle(testIndex, test.title, provider, model);
   let passedRuns = 0;
   let failedRuns = 0;
-  let testNumber = 1;
-  for (const test of validatedTests) {
-    const { runs, model, provider, advancedConfig, query } = test;
-    Logger.logTestGroupTitle(testNumber, test.title, provider, model);
-    const numberOfRuns = runs;
-    const { system, temperature, toolChoice } = advancedConfig ?? {};
-    let testCaseId;
-    if (shouldSaveToDb) {
-      try {
-        testCaseId = await db.action("evals:createEvalTestCaseWithApiKey", {
-          apiKey,
-          title: String(test.title ?? `Group ${testNumber}`),
-          query: String(query ?? ""),
-          provider: String(provider ?? ""),
-          model: String(model ?? ""),
-          runs: Number(numberOfRuns ?? 1),
-        });
-        if (!testRunId) {
-          try {
-            testRunId = await db.action("evals:createEvalTestSuiteWithApiKey", {
-              apiKey,
-              name: void 0,
-              config: configSummary,
-              totalTests: totalPlannedTests,
-            });
-          } catch {}
-        }
-      } catch {
-        testCaseId = void 0;
-      }
+  const testCaseId = await createTestCaseRecord(persistence, test, testIndex);
+  for (let runIndex = 0; runIndex < runs; runIndex++) {
+    const evaluation = await runIteration({
+      test,
+      runIndex,
+      totalRuns: runs,
+      llms,
+      tools,
+      persistence,
+      testCaseId,
+    });
+    if (evaluation.passed) {
+      passedRuns++;
+    } else {
+      failedRuns++;
     }
-    for (let run = 0; run < numberOfRuns; run++) {
-      Logger.testRunStart({
-        runNumber: run + 1,
-        totalRuns: numberOfRuns,
-        provider,
-        model,
-        temperature,
-      });
-      const runStartedAt = Date.now();
-      const maxSteps = 20;
-      let stepCount = 0;
-      let inputTokensUsed;
-      let outputTokensUsed;
-      let totalTokensUsed;
-      let evalTestId;
-      if (shouldSaveToDb) {
-        try {
-          evalTestId = await db.action(
-            "evals:createEvalTestIterationWithApiKey",
-            {
-              apiKey,
-              testCaseId,
-              startedAt: runStartedAt,
-              iterationNumber: run + 1,
-              blob: void 0,
-              actualToolCalls: [],
-              tokensUsed: 0,
-            },
-          );
-        } catch {
-          evalTestId = void 0;
-        }
-      }
-      if (system) {
-        Logger.conversation({
-          messages: [{ role: "system", content: system }],
-        });
-      }
-      const userMessage = {
-        role: "user",
-        content: query,
-      };
-      Logger.conversation({ messages: [userMessage] });
-      const messageHistory = [userMessage];
-      const toolsCalled = [];
-      while (stepCount < maxSteps) {
-        let assistantStreaming = false;
-        const streamResult = await streamText({
-          model: createLlmModel(provider, model, validatedLlmApiKeys),
-          system,
-          temperature,
-          tools: vercelTools,
-          toolChoice,
-          messages: messageHistory,
-          onChunk: async (chunk) => {
-            switch (chunk.chunk.type) {
-              case "text-delta":
-              case "reasoning-delta": {
-                if (!assistantStreaming) {
-                  Logger.beginStreamingMessage("assistant");
-                  assistantStreaming = true;
-                }
-                Logger.appendStreamingText(chunk.chunk.text);
-                break;
-              }
-              case "tool-call": {
-                if (assistantStreaming) {
-                  Logger.finishStreamingMessage();
-                  assistantStreaming = false;
-                }
-                Logger.streamToolCall(chunk.chunk.toolName, chunk.chunk.input);
-                break;
-              }
-              case "tool-result": {
-                Logger.streamToolResult(
-                  chunk.chunk.toolName,
-                  chunk.chunk.output,
-                );
-                break;
-              }
-              default:
-                break;
-            }
-          },
-        });
-        await streamResult.consumeStream();
-        if (assistantStreaming) {
-          Logger.finishStreamingMessage();
-          assistantStreaming = false;
-        }
-        const stepUsage = await streamResult.usage;
-        const cumulativeUsage = await streamResult.totalUsage;
-        inputTokensUsed = accumulateTokenCount(
-          inputTokensUsed,
-          stepUsage.inputTokens,
-        );
-        outputTokensUsed = accumulateTokenCount(
-          outputTokensUsed,
-          stepUsage.outputTokens,
-        );
-        const totalTokens =
-          stepUsage.totalTokens ?? cumulativeUsage.totalTokens;
-        totalTokensUsed = accumulateTokenCount(totalTokensUsed, totalTokens);
-        const toolNamesForStep = extractToolNamesAsArray(
-          await streamResult.toolCalls,
-        );
-        if (toolNamesForStep.length) {
-          toolsCalled.push(...toolNamesForStep);
-        }
-        const responseMessages = (await streamResult.response)?.messages ?? [];
-        if (responseMessages.length) {
-          messageHistory.push(...responseMessages);
-        }
-        stepCount++;
-        const finishReason = await streamResult.finishReason;
-        if (finishReason !== "tool-calls") {
-          break;
-        }
-      }
-      Logger.finishStreamingMessage();
-      const evaluation = evaluateResults(test.expectedToolCalls, toolsCalled);
-      Logger.toolSummary({
-        expected: evaluation.expectedToolCalls,
-        actual: evaluation.toolsCalled,
-        missing: evaluation.missing,
-        unexpected: evaluation.unexpected,
-        passed: evaluation.passed,
-      });
-      Logger.testRunResult({
-        passed: evaluation.passed,
-        durationMs: Date.now() - runStartedAt,
-        usage:
-          inputTokensUsed !== void 0 ||
-          outputTokensUsed !== void 0 ||
-          totalTokensUsed !== void 0
-            ? {
-                inputTokens: inputTokensUsed,
-                outputTokens: outputTokensUsed,
-                totalTokens: totalTokensUsed,
-              }
-            : void 0,
-      });
-      if (evaluation.passed) {
-        passedRuns++;
-      } else {
-        failedRuns++;
-      }
-      if (evalTestId && shouldSaveToDb) {
-        try {
-          await db.action("evals:updateEvalTestIterationResultWithApiKey", {
-            apiKey,
-            testId: evalTestId,
-            status: "completed",
-            result: evaluation.passed ? "passed" : "failed",
-            actualToolCalls: toolsCalled,
-            tokensUsed: totalTokensUsed ?? 0,
-            blob: void 0,
-            blobContent: { messages: messageHistory },
-          });
-        } catch {}
-      }
+  }
+  await updateTestCaseResult(persistence, testCaseId, passedRuns, failedRuns);
+  return { passedRuns, failedRuns };
+};
+var runEvals = async (tests, environment, llms, apiKey) => {
+  await ensureApiKeyIsValid(apiKey);
+  const { validatedTests, validatedLlms, vercelTools, serverNames } =
+    await prepareSuite(tests, environment, llms);
+  const suiteStartedAt = Date.now();
+  const totalPlannedTests = validatedTests.reduce(
+    (sum, current) => sum + (current?.runs ?? 0),
+    0,
+  );
+  const configSummary = {
+    tests: validatedTests,
+    environment: { servers: serverNames },
+    llms: Object.keys(validatedLlms ?? {}),
+  };
+  const persistence = createPersistenceContext(
+    apiKey,
+    configSummary,
+    totalPlannedTests,
+  );
+  await ensureSuiteRecord(persistence);
+  let passedRuns = 0;
+  let failedRuns = 0;
+  for (let index = 0; index < validatedTests.length; index++) {
+    const test = validatedTests[index];
+    if (!test) {
+      continue;
     }
-    testNumber++;
+    const { passedRuns: casePassed, failedRuns: caseFailed } =
+      await runTestCase({
+        test,
+        testIndex: index + 1,
+        llms: validatedLlms,
+        tools: vercelTools,
+        persistence,
+      });
+    passedRuns += casePassed;
+    failedRuns += caseFailed;
   }
   Logger.suiteComplete({
     durationMs: Date.now() - suiteStartedAt,
     passed: passedRuns,
     failed: failedRuns,
   });
-  if (testRunId && shouldSaveToDb) {
-    try {
-      await db.action("evals:updateEvalTestSuiteStatusWithApiKey", {
-        apiKey,
-        testRunId,
-        status: "completed",
-        finishedAt: Date.now(),
-      });
-    } catch {}
-  }
+  await finalizeSuiteStatus(persistence, failedRuns);
 };
 
 // src/evals/index.ts
@@ -6335,7 +6473,7 @@ var package_default = {
     build: "tsup",
     dev: "tsup --watch",
     "build-and-test": "npm run build && npm run test",
-    test: "node bin/mcpjam.js evals run -t local-examples/test-servers.json -e local-examples/mcp-environment.json -l local-examples/llms.json",
+    test: "node bin/mcpjam.js evals run -t local-examples/test-servers.json -e local-examples/mcp-environment.json -l local-examples/llms.json -a mcpjam_5DC167_c6772af9e7b34b425c628caa87ed5a9a7844ab118ae6c6ed",
     start: "node bin/mcpjam.js",
   },
   dependencies: {
@@ -6352,7 +6490,7 @@ var package_default = {
     commander: "^12.0.0",
     dotenv: "^17.2.2",
     hono: "^4.6.11",
-    "ollama-ai-provider": "^1.2.0",
+    "ollama-ai-provider-v2": "^1.3.1",
     "update-notifier": "^7.3.1",
     zod: "^3.25.76",
   },
