@@ -56,14 +56,8 @@ export const createPersistenceContext = (
   totalPlannedTests,
 });
 
-export const ensureSuiteRecord = async (
-  persistence: PersistenceContext,
-) => {
-  if (
-    !persistence.enabled ||
-    !persistence.apiKey ||
-    persistence.testRunId
-  ) {
+export const ensureSuiteRecord = async (persistence: PersistenceContext) => {
+  if (!persistence.enabled || !persistence.apiKey || persistence.testRunId) {
     return;
   }
 
@@ -177,15 +171,11 @@ export const updateTestCaseResult = async (
 
   const result = failedRuns > 0 ? "failed" : "passed";
 
-  await runDbAction(
-    persistence,
-    "evals:updateEvalTestCaseResultWithApiKey",
-    {
-      apiKey: persistence.apiKey,
-      testCaseId,
-      result,
-    },
-  );
+  await runDbAction(persistence, "evals:updateEvalTestCaseResultWithApiKey", {
+    apiKey: persistence.apiKey,
+    testCaseId,
+    result,
+  });
 };
 
 export const markSuiteFailed = async (persistence: PersistenceContext) => {
@@ -193,16 +183,12 @@ export const markSuiteFailed = async (persistence: PersistenceContext) => {
     return;
   }
 
-  await runDbAction(
-    persistence,
-    "evals:updateEvalTestSuiteStatusWithApiKey",
-    {
-      apiKey: persistence.apiKey,
-      testRunId: persistence.testRunId,
-      status: "running",
-      result: "failed",
-    },
-  );
+  await runDbAction(persistence, "evals:updateEvalTestSuiteStatusWithApiKey", {
+    apiKey: persistence.apiKey,
+    testRunId: persistence.testRunId,
+    status: "running",
+    result: "failed",
+  });
 };
 
 export const finalizeSuiteStatus = async (
@@ -213,15 +199,11 @@ export const finalizeSuiteStatus = async (
     return;
   }
 
-  await runDbAction(
-    persistence,
-    "evals:updateEvalTestSuiteStatusWithApiKey",
-    {
-      apiKey: persistence.apiKey,
-      testRunId: persistence.testRunId,
-      status: "completed",
-      result: failedRuns > 0 ? "failed" : "passed",
-      finishedAt: Date.now(),
-    },
-  );
+  await runDbAction(persistence, "evals:updateEvalTestSuiteStatusWithApiKey", {
+    apiKey: persistence.apiKey,
+    testRunId: persistence.testRunId,
+    status: "completed",
+    result: failedRuns > 0 ? "failed" : "passed",
+    finishedAt: Date.now(),
+  });
 };

@@ -195,8 +195,7 @@ const runIteration = async ({
       stepUsage.outputTokens,
     );
 
-    const totalTokens =
-      stepUsage.totalTokens ?? cumulativeUsage.totalTokens;
+    const totalTokens = stepUsage.totalTokens ?? cumulativeUsage.totalTokens;
     totalTokensUsed = accumulateTokenCount(totalTokensUsed, totalTokens);
 
     const toolNamesForStep = extractToolNamesAsArray(
