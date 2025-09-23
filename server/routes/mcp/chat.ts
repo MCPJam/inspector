@@ -10,7 +10,7 @@ import { TextEncoder } from "util";
 // import { createLlmModel } from "../../utils/chat-helpers";
 import { SSEvent } from "../../../shared/sse";
 // import { convertMastraToolsToVercelTools } from "../../../shared/tools";
-import { hasUnresolvedToolCalls, executeToolCalls } from "../../../shared/tool-calls";
+import { hasUnresolvedToolCalls, executeToolCallsFromMessages } from "../../../shared/http-tool-calls";
 import { zodToJsonSchema } from "@alcyone-labs/zod-to-json-schema";
 import type { ModelMessage } from "ai";
 
@@ -418,7 +418,7 @@ const createConvexPlannedResponse = async (
     const beforeLen = messageHistory.length;
     if (hasUnresolvedToolCalls(messageHistory as any)) {
       console.log("[mcp/chat] Unresolved tool calls found; executing locally");
-      await executeToolCalls(messageHistory as any, { tools: flatTools as any });
+      await executeToolCallsFromMessages(messageHistory as ModelMessage[], { tools: flatTools as any });
       const newMsgs = messageHistory.slice(beforeLen);
       console.log("[mcp/chat] Appended tool results", newMsgs.length);
       for (const m of newMsgs) {

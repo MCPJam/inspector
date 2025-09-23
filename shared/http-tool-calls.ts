@@ -47,7 +47,7 @@ export const hasUnresolvedToolCalls = (messages: ModelMessage[]): boolean => {
   return false;
 };
 
-export async function executeToolCalls(
+export async function executeToolCallsFromMessages(
   messages: ModelMessage[],
   options:
     | { tools: ToolsMap }
@@ -58,6 +58,7 @@ export async function executeToolCalls(
 
   // Build tools index
   let tools: ToolsMap = {};
+  console.log("options", options);
   if ((options as any).client) {
     const toolsets = await (options as any).client.getToolsets();
     tools = flattenToolsets(toolsets as any);
