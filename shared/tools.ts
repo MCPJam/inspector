@@ -180,8 +180,10 @@ export function convertMastraToolToVercelTool(
     }
 
     if (vercelToolConfig.outputSchema) {
-      const { outputSchema: _unusedOutputSchema, ...configWithoutOutputSchema } =
-        vercelToolConfig;
+      const {
+        outputSchema: _unusedOutputSchema,
+        ...configWithoutOutputSchema
+      } = vercelToolConfig;
 
       try {
         return tool(configWithoutOutputSchema);
