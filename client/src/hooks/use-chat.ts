@@ -340,13 +340,6 @@ export function useChat(options: UseChatOptions = {}) {
           }
         }
 
-        console.debug("[useChat] sending chat request", {
-          model: model?.id,
-          provider: model?.provider,
-          routeThroughBackend,
-          hasAuthHeader: !!authHeader,
-        });
-
         const response = await fetch("/api/mcp/chat", {
           method: "POST",
           headers: {
@@ -365,11 +358,6 @@ export function useChat(options: UseChatOptions = {}) {
             sendMessagesToBackend: routeThroughBackend,
           }),
           signal: abortControllerRef.current?.signal,
-        });
-
-        console.debug("[useChat] chat response headers", {
-          status: response.status,
-          ok: response.ok,
         });
 
         if (!response.ok) {
@@ -393,7 +381,6 @@ export function useChat(options: UseChatOptions = {}) {
           for await (const evt of parseSSEStream(reader)) {
             if (evt === "[DONE]") break;
             try {
-              console.debug("[useChat] SSE event", evt);
               applySseEvent(
                 evt,
                 assistantMessage,
