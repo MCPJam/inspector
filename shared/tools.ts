@@ -45,9 +45,14 @@ function isDirectlyUnrepresentable(schema: ZodTypeAny): boolean {
 }
 
 function canConvertToJSONSchema(schema: ZodTypeAny): boolean {
-  const toJSONSchema = (z as unknown as {
-    toJSONSchema?: (schema: ZodTypeAny, options?: Record<string, unknown>) => unknown;
-  }).toJSONSchema;
+  const toJSONSchema = (
+    z as unknown as {
+      toJSONSchema?: (
+        schema: ZodTypeAny,
+        options?: Record<string, unknown>,
+      ) => unknown;
+    }
+  ).toJSONSchema;
 
   if (typeof toJSONSchema === "function") {
     try {
