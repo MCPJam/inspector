@@ -25,7 +25,7 @@ interface UseChatOptions {
   onMessageReceived?: (message: ChatMessage) => void;
   onError?: (error: string) => void;
   onModelChange?: (model: ModelDefinition) => void;
-  useConvexPlanner?: boolean;
+  sendMessagesToBackend?: boolean;
 }
 
 export function useChat(options: UseChatOptions = {}) {
@@ -39,7 +39,7 @@ export function useChat(options: UseChatOptions = {}) {
     onMessageReceived,
     onError,
     onModelChange,
-    useConvexPlanner = false,
+    sendMessagesToBackend = false,
   } = options;
 
   const [state, setState] = useState<ChatState>({
@@ -309,7 +309,7 @@ export function useChat(options: UseChatOptions = {}) {
 
   const sendChatRequest = useCallback(
     async (userMessage: ChatMessage) => {
-      if (!useConvexPlanner && (!model || !currentApiKey)) {
+      if (!sendMessagesToBackend && (!model || !currentApiKey)) {
         throw new Error(
           "Missing required configuration: model and apiKey are required",
         );
@@ -337,7 +337,7 @@ export function useChat(options: UseChatOptions = {}) {
             temperature,
             messages: messagesRef.current.concat(userMessage),
             ollamaBaseUrl: getOllamaBaseUrl(),
-            useConvexPlanner,
+            sendMessagesToBackend,
           }),
           signal: abortControllerRef.current?.signal,
         });
