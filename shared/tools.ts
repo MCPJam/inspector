@@ -1,4 +1,5 @@
 import { z, ZodTypeAny } from "zod";
+import { zodToJsonSchema } from "@alcyone-labs/zod-to-json-schema";
 import { tool, type Tool as VercelTool, type ToolCallOptions } from "ai";
 
 type MastraToolExecuteArgs = {
@@ -18,26 +19,91 @@ type MastraToolInstance = {
 
 const fallbackInputSchema = z.object({}).passthrough();
 
+const UNREPRESENTABLE_JSON_SCHEMA_MESSAGES = [
+  "Custom types cannot be represented in JSON Schema",
+  "Function types cannot be represented in JSON Schema",
+];
+
+function isUnrepresentableSchemaError(error: unknown): error is Error {
+  return (
+    error instanceof Error &&
+    UNREPRESENTABLE_JSON_SCHEMA_MESSAGES.some((message) =>
+      error.message.includes(message),
+    )
+  );
+}
+
 function isZodSchema(value: unknown): value is ZodTypeAny {
   return Boolean(
     value && typeof value === "object" && "safeParse" in (value as ZodTypeAny),
   );
 }
 
-function ensureInputSchema(schema: unknown): ZodTypeAny {
-  if (isZodSchema(schema)) {
-    return schema;
+function isDirectlyUnrepresentable(schema: ZodTypeAny): boolean {
+  const schemaType = (schema as any)?._def?.type;
+  return schemaType === "custom" || schemaType === "function";
+}
+
+function canConvertToJSONSchema(schema: ZodTypeAny): boolean {
+  const toJSONSchema = (z as unknown as {
+    toJSONSchema?: (schema: ZodTypeAny, options?: Record<string, unknown>) => unknown;
+  }).toJSONSchema;
+
+  if (typeof toJSONSchema === "function") {
+    try {
+      toJSONSchema(schema);
+      return true;
+    } catch (error) {
+      if (isUnrepresentableSchemaError(error)) {
+        return false;
+      }
+
+      throw error;
+    }
   }
 
-  return fallbackInputSchema;
+  try {
+    zodToJsonSchema(schema);
+    return true;
+  } catch (error) {
+    if (isUnrepresentableSchemaError(error)) {
+      return false;
+    }
+
+    throw error;
+  }
+}
+
+function ensureInputSchema(schema: unknown): ZodTypeAny {
+  if (!isZodSchema(schema)) {
+    return fallbackInputSchema;
+  }
+
+  if (isDirectlyUnrepresentable(schema)) {
+    return fallbackInputSchema;
+  }
+
+  if (!canConvertToJSONSchema(schema)) {
+    return fallbackInputSchema;
+  }
+
+  return schema;
 }
 
 function ensureOutputSchema(schema: unknown): ZodTypeAny | undefined {
-  if (isZodSchema(schema)) {
-    return schema;
+  if (!isZodSchema(schema)) {
+    return undefined;
   }
 
-  return undefined;
+  if (isDirectlyUnrepresentable(schema)) {
+    return undefined;
+  }
+
+  if (!canConvertToJSONSchema(schema)) {
+    return undefined;
+  }
+
+  return schema;
 }
 
 function extractPureToolName(toolKey: string): string {
@@ -101,7 +167,23 @@ export function convertMastraToolToVercelTool(
     };
   }
 
-  return tool(vercelToolConfig);
+  try {
+    return tool(vercelToolConfig);
+  } catch (error) {
+    if (!isUnrepresentableSchemaError(error)) {
+      throw error;
+    }
+
+    const { outputSchema: _unusedOutputSchema, ...configWithoutOutputSchema } =
+      vercelToolConfig;
+
+    const fallbackConfig = {
+      ...configWithoutOutputSchema,
+      inputSchema: fallbackInputSchema,
+    };
+
+    return tool(fallbackConfig);
+  }
 }
 
 export function convertMastraToolsToVercelTools(
