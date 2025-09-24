@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { ModelDefinition, ModelProvider } from "@/shared/types.js";
 import { ProviderLogo } from "./provider-logo";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
+import { useConvexAuth } from "convex/react";
 
 interface ModelSelectorProps {
   currentModel: ModelDefinition;
@@ -64,6 +65,7 @@ export function ModelSelector({
 }: ModelSelectorProps) {
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false);
   const currentModelData = currentModel;
+  const { isAuthenticated } = useConvexAuth();
 
   // Group models by provider
   const groupedModels = groupModelsByProvider(availableModels);
@@ -129,7 +131,11 @@ export function ModelSelector({
                 collisionPadding={8}
               >
                 {models.map((model) => {
-                  const isDisabled = !!model.disabled;
+                  const isMeta = model.provider === "meta";
+                  const isDisabled = !!model.disabled || (isMeta && !isAuthenticated);
+                  const computedReason = isMeta && !isAuthenticated
+                    ? "Sign in to use MCPJam provided models"
+                    : model.disabledReason;
 
                   const item = (
                     <DropdownMenuItem
@@ -156,7 +162,7 @@ export function ModelSelector({
                         <div className="pointer-events-auto">{item}</div>
                       </TooltipTrigger>
                       <TooltipContent side="right">
-                        {model.disabledReason}
+                        {computedReason}
                       </TooltipContent>
                     </Tooltip>
                   ) : (
