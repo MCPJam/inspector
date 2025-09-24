@@ -36,6 +36,7 @@
     "build:server": "cd server && npm run build",
     "start": "NODE_ENV=production node bin/start.js",
     "prettier-fix": "prettier --write .",
+    "postinstall": "node scripts/apply-patches.mjs",
     "install:deps": "cd server && npm install && cd ../client && npm install",
     "docker:build": "docker build -t mcpjam/mcp-inspector:latest .",
     "docker:build:dev": "docker build -f Dockerfile.dev -t mcpjam/mcp-inspector:dev .",
@@ -115,6 +116,15 @@
     "zod": "^4.0.16",
     "@alcyone-labs/zod-to-json-schema": "^4.0.10",
     "zustand": "^5.0.6"
+  },
+  "overrides": {
+    "tmp": "0.2.5",
+    "@mastra/core": {
+      "zod": "3.25.76"
+    },
+    "@mastra/mcp": {
+      "zod": "3.25.76"
+    }
   },
   "devDependencies": {
     "@electron-forge/cli": "^7.8.2",
