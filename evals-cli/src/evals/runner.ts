@@ -25,6 +25,8 @@ import {
 import { createLlmModel, extractToolNamesAsArray } from "../utils/helpers";
 import { Logger } from "../utils/logger";
 import { evaluateResults } from "./evaluator";
+import { getUserId } from "../utils/user-id";
+import { hogClient } from "../utils/hog";
 
 const MAX_STEPS = 20;
 
@@ -359,7 +361,13 @@ export const runEvals = async (
     passedRuns += casePassed;
     failedRuns += caseFailed;
   }
-
+  hogClient.capture({
+    distinctId: getUserId(),
+    event: "evals suite complete",
+    properties: {
+      environment: process.env.ENVIRONMENT,
+    },
+  });
   Logger.suiteComplete({
     durationMs: Date.now() - suiteStartedAt,
     passed: passedRuns,

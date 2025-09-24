@@ -2,6 +2,9 @@
 import { config } from "dotenv";
 import { Command as Command2 } from "commander";
 import { createRequire as createRequire2 } from "module";
+import path from "path";
+import { existsSync as existsSync2 } from "fs";
+import { fileURLToPath } from "url";
 
 // src/evals/index.ts
 import { Command } from "commander";
@@ -414,7 +417,7 @@ import { MCPClient } from "@mastra/mcp";
 import { streamText } from "ai";
 
 // ../node_modules/convex/dist/esm/index.js
-var version = "1.27.1";
+var version = "1.27.3";
 
 // ../node_modules/convex/dist/esm/values/base64.js
 var lookup = [];
@@ -1088,12 +1091,12 @@ function createApi(pathParts = []) {
             `API path is expected to be of the form \`api.moduleName.functionName\`. Found: \`${found}\``,
           );
         }
-        const path = pathParts.slice(0, -1).join("/");
+        const path2 = pathParts.slice(0, -1).join("/");
         const exportName = pathParts[pathParts.length - 1];
         if (exportName === "default") {
-          return path;
+          return path2;
         } else {
-          return path + ":" + exportName;
+          return path2 + ":" + exportName;
         }
       } else if (prop === Symbol.toStringTag) {
         return "FunctionReference";
@@ -1861,7 +1864,7 @@ var require_node_gyp_build = __commonJS({
     module,
   ) {
     var fs = __require("fs");
-    var path = __require("path");
+    var path2 = __require("path");
     var os = __require("os");
     var runtimeRequire =
       typeof __webpack_require__ === "function"
@@ -1884,23 +1887,23 @@ var require_node_gyp_build = __commonJS({
       return runtimeRequire(load.resolve(dir));
     }
     load.resolve = load.path = function (dir) {
-      dir = path.resolve(dir || ".");
+      dir = path2.resolve(dir || ".");
       try {
-        var name2 = runtimeRequire(path.join(dir, "package.json"))
+        var name2 = runtimeRequire(path2.join(dir, "package.json"))
           .name.toUpperCase()
           .replace(/-/g, "_");
         if (process.env[name2 + "_PREBUILD"])
           dir = process.env[name2 + "_PREBUILD"];
       } catch (err) {}
       if (!prebuildsOnly) {
-        var release = getFirst(path.join(dir, "build/Release"), matchBuild);
+        var release = getFirst(path2.join(dir, "build/Release"), matchBuild);
         if (release) return release;
-        var debug = getFirst(path.join(dir, "build/Debug"), matchBuild);
+        var debug = getFirst(path2.join(dir, "build/Debug"), matchBuild);
         if (debug) return debug;
       }
       var prebuild = resolve2(dir);
       if (prebuild) return prebuild;
-      var nearby = resolve2(path.dirname(process.execPath));
+      var nearby = resolve2(path2.dirname(process.execPath));
       if (nearby) return nearby;
       var target = [
         "platform=" + platform,
@@ -1927,16 +1930,16 @@ var require_node_gyp_build = __commonJS({
           "\n",
       );
       function resolve2(dir2) {
-        var tuples = readdirSync(path.join(dir2, "prebuilds")).map(parseTuple);
+        var tuples = readdirSync(path2.join(dir2, "prebuilds")).map(parseTuple);
         var tuple = tuples
           .filter(matchTuple(platform, arch))
           .sort(compareTuples)[0];
         if (!tuple) return;
-        var prebuilds = path.join(dir2, "prebuilds", tuple.name);
+        var prebuilds = path2.join(dir2, "prebuilds", tuple.name);
         var parsed = readdirSync(prebuilds).map(parseTags);
         var candidates = parsed.filter(matchTags(runtime, abi));
         var winner = candidates.sort(compareTags(runtime))[0];
-        if (winner) return path.join(prebuilds, winner.file);
+        if (winner) return path2.join(prebuilds, winner.file);
       }
     };
     function readdirSync(dir) {
@@ -1948,7 +1951,7 @@ var require_node_gyp_build = __commonJS({
     }
     function getFirst(dir, filter) {
       var files = readdirSync(dir).filter(filter);
-      return files[0] && path.join(dir, files[0]);
+      return files[0] && path2.join(dir, files[0]);
     }
     function matchBuild(name2) {
       return /\.node$/.test(name2);
@@ -6170,6 +6173,44 @@ var evaluateResults = (expectedToolCalls, toolsCalled) => {
   };
 };
 
+// src/utils/user-id.ts
+import { randomUUID } from "crypto";
+import { homedir } from "os";
+import { join } from "path";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+var CONFIG_DIR = join(homedir(), ".mcpjam");
+var USER_ID_FILE = join(CONFIG_DIR, "user-id.json");
+function getUserId() {
+  try {
+    if (!existsSync(CONFIG_DIR)) {
+      mkdirSync(CONFIG_DIR, { recursive: true });
+    }
+    if (existsSync(USER_ID_FILE)) {
+      const configData = readFileSync(USER_ID_FILE, "utf8");
+      const config2 = JSON.parse(configData);
+      if (config2.userId && typeof config2.userId === "string") {
+        return config2.userId;
+      }
+    }
+    const newUserId = randomUUID();
+    const newConfig = {
+      userId: newUserId,
+      createdAt: /* @__PURE__ */ new Date().toISOString(),
+    };
+    writeFileSync(USER_ID_FILE, JSON.stringify(newConfig, null, 2));
+    return newUserId;
+  } catch (error) {
+    console.warn("Failed to persist user ID, using session-based ID:", error);
+    return randomUUID();
+  }
+}
+
+// src/utils/hog.ts
+import { PostHog } from "posthog-node";
+var hogClient = new PostHog("phc_dTOPniyUNU2kD8Jx8yHMXSqiZHM8I91uWopTMX6EBE9", {
+  host: "https://us.i.posthog.com",
+});
+
 // src/evals/runner.ts
 var MAX_STEPS = 20;
 var accumulateTokenCount = (current, increment) => {
@@ -6415,6 +6456,13 @@ var runEvals = async (tests, environment, llms, apiKey) => {
     passedRuns += casePassed;
     failedRuns += caseFailed;
   }
+  hogClient.capture({
+    distinctId: getUserId(),
+    event: "evals suite complete",
+    properties: {
+      environment: process.env.ENVIRONMENT,
+    },
+  });
   Logger.suiteComplete({
     durationMs: Date.now() - suiteStartedAt,
     passed: passedRuns,
@@ -6435,6 +6483,13 @@ evalsCommand
   .option("-a, --api-key <key>", "Personal access key")
   .action(async (options) => {
     try {
+      hogClient.capture({
+        distinctId: getUserId(),
+        event: "evals cli ran",
+        properties: {
+          environment: process.env.ENVIRONMENT,
+        },
+      });
       const testsContent = await readFile(resolve(options.tests), "utf8");
       const testsData = JSON.parse(testsContent);
       const envContent = await readFile(resolve(options.environment), "utf8");
@@ -6455,7 +6510,7 @@ import updateNotifier from "update-notifier";
 // package.json
 var package_default = {
   name: "@mcpjam/cli",
-  version: "1.1.2",
+  version: "1.1.6",
   type: "module",
   description: "MCPJam CLI for programmatic MCP testing and evals",
   license: "Apache-2.0",
@@ -6470,12 +6525,12 @@ var package_default = {
   bin: {
     mcpjam: "bin/mcpjam.js",
   },
-  files: ["bin", "dist", "package.json", "README.md"],
+  files: ["bin", "dist", "package.json", "README.md", ".env.production"],
   scripts: {
     build: "tsup",
     dev: "tsup --watch",
     "build-and-test": "npm run build && npm run test",
-    test: "node bin/mcpjam.js evals run -t local-examples/test-servers.json -e local-examples/mcp-environment.json -l local-examples/llms.json -a mcpjam_5DC167_c6772af9e7b34b425c628caa87ed5a9a7844ab118ae6c6ed",
+    test: "node bin/mcpjam.js evals run -t local-examples/tests.json -e local-examples/environment.json -l local-examples/llms.json",
     start: "node bin/mcpjam.js",
   },
   dependencies: {
@@ -6493,6 +6548,7 @@ var package_default = {
     dotenv: "^17.2.2",
     hono: "^4.6.11",
     "ollama-ai-provider-v2": "^1.3.1",
+    "posthog-node": "^5.9.1",
     "update-notifier": "^7.3.1",
     zod: "^4.0.16",
   },
@@ -6509,10 +6565,12 @@ var require3 = createRequire2(import.meta.url);
 updateNotifier({ pkg: package_default, updateCheckInterval: 0 }).notify();
 var { name, version: version2 } = require3("../package.json");
 updateNotifier({ pkg: { name, version: version2 } }).notify();
-var envFile =
-  process.env.NODE_ENV === "production"
-    ? ".env.production"
-    : ".env.development";
+var __filename = fileURLToPath(import.meta.url);
+var __dirname2 = path.dirname(__filename);
+var packageRootDir = path.resolve(__dirname2, "..");
+var devEnvPath = path.join(packageRootDir, ".env.development");
+var prodEnvPath = path.join(packageRootDir, ".env.production");
+var envFile = existsSync2(devEnvPath) ? devEnvPath : prodEnvPath;
 config({ path: envFile });
 var program = new Command2();
 program
