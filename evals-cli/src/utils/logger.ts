@@ -3,12 +3,6 @@ import type { ModelMessage } from "ai";
 
 type MessageContent = string | Record<string, unknown> | MessageContent[];
 
-type ToolSummaryResult = {
-  missing: string[];
-  unexpected: string[];
-  passed: boolean;
-};
-
 type ToolSummaryOptions = {
   expected: string[];
   actual: string[];

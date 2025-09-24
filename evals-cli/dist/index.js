@@ -414,7 +414,7 @@ import { MCPClient } from "@mastra/mcp";
 import { streamText } from "ai";
 
 // ../node_modules/convex/dist/esm/index.js
-var version = "1.27.1";
+var version = "1.27.3";
 
 // ../node_modules/convex/dist/esm/values/base64.js
 var lookup = [];
@@ -6423,6 +6423,44 @@ var runEvals = async (tests, environment, llms, apiKey) => {
   await finalizeSuiteStatus(persistence, failedRuns);
 };
 
+// src/utils/hog.ts
+import { PostHog } from "posthog-node";
+var hogClient = new PostHog("phc_dTOPniyUNU2kD8Jx8yHMXSqiZHM8I91uWopTMX6EBE9", {
+  host: "https://us.i.posthog.com",
+});
+
+// src/utils/user-id.ts
+import { randomUUID } from "crypto";
+import { homedir } from "os";
+import { join } from "path";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+var CONFIG_DIR = join(homedir(), ".mcpjam");
+var USER_ID_FILE = join(CONFIG_DIR, "user-id.json");
+function getUserId() {
+  try {
+    if (!existsSync(CONFIG_DIR)) {
+      mkdirSync(CONFIG_DIR, { recursive: true });
+    }
+    if (existsSync(USER_ID_FILE)) {
+      const configData = readFileSync(USER_ID_FILE, "utf8");
+      const config2 = JSON.parse(configData);
+      if (config2.userId && typeof config2.userId === "string") {
+        return config2.userId;
+      }
+    }
+    const newUserId = randomUUID();
+    const newConfig = {
+      userId: newUserId,
+      createdAt: /* @__PURE__ */ new Date().toISOString(),
+    };
+    writeFileSync(USER_ID_FILE, JSON.stringify(newConfig, null, 2));
+    return newUserId;
+  } catch (error) {
+    console.warn("Failed to persist user ID, using session-based ID:", error);
+    return randomUUID();
+  }
+}
+
 // src/evals/index.ts
 var evalsCommand = new Command("evals");
 evalsCommand
@@ -6435,6 +6473,15 @@ evalsCommand
   .option("-a, --api-key <key>", "Personal access key")
   .action(async (options) => {
     try {
+      hogClient.capture({
+        distinctId: getUserId(),
+        event: "evals cli ran",
+        properties: {
+          tests: options.tests,
+          environment: options.environment,
+          llms: options.llms,
+        },
+      });
       const testsContent = await readFile(resolve(options.tests), "utf8");
       const testsData = JSON.parse(testsContent);
       const envContent = await readFile(resolve(options.environment), "utf8");
@@ -6475,7 +6522,7 @@ var package_default = {
     build: "tsup",
     dev: "tsup --watch",
     "build-and-test": "npm run build && npm run test",
-    test: "node bin/mcpjam.js evals run -t local-examples/test-servers.json -e local-examples/mcp-environment.json -l local-examples/llms.json -a mcpjam_5DC167_c6772af9e7b34b425c628caa87ed5a9a7844ab118ae6c6ed",
+    test: "node bin/mcpjam.js evals run -t local-examples/tests.json -e local-examples/environment.json -l local-examples/llms.json",
     start: "node bin/mcpjam.js",
   },
   dependencies: {
@@ -6493,6 +6540,7 @@ var package_default = {
     dotenv: "^17.2.2",
     hono: "^4.6.11",
     "ollama-ai-provider-v2": "^1.3.1",
+    "posthog-node": "^5.9.1",
     "update-notifier": "^7.3.1",
     zod: "^4.0.16",
   },
