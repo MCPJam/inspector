@@ -24,10 +24,8 @@ evalsCommand
         distinctId: getUserId(),
         event: "evals cli ran",
         properties: {
-          tests: options.tests,
-          environment: options.environment,
-          llms: options.llms,
-        },
+          environment: process.env.ENVIRONMENT,
+        }
       });
       const testsContent = await readFile(resolve(options.tests), "utf8");
       const testsData = JSON.parse(testsContent);
