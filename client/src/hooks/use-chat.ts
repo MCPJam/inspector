@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { useAuth } from "@workos-inc/authkit-react";
 import { ChatMessage, ChatState, Attachment } from "@/lib/chat-types";
 import { createMessage } from "@/lib/chat-utils";
 import { Model, ModelDefinition, SUPPORTED_MODELS } from "@/shared/types.js";
@@ -57,6 +58,7 @@ export function useChat(options: UseChatOptions = {}) {
   const [elicitationLoading, setElicitationLoading] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesRef = useRef(state.messages);
+  const { getAccessToken } = useAuth();
   useEffect(() => {
     messagesRef.current = state.messages;
   }, [state.messages]);
@@ -309,7 +311,10 @@ export function useChat(options: UseChatOptions = {}) {
 
   const sendChatRequest = useCallback(
     async (userMessage: ChatMessage) => {
-      if (!sendMessagesToBackend && (!model || !currentApiKey)) {
+      const routeThroughBackend =
+        sendMessagesToBackend || model?.provider === "meta";
+
+      if (!routeThroughBackend && (!model || !currentApiKey)) {
         throw new Error(
           "Missing required configuration: model and apiKey are required",
         );
@@ -323,11 +328,31 @@ export function useChat(options: UseChatOptions = {}) {
       }));
 
       try {
+        let authHeader: string | null = null;
+        if (routeThroughBackend && getAccessToken) {
+          try {
+            const token = await getAccessToken();
+            if (token) {
+              authHeader = `Bearer ${token}`;
+            }
+          } catch (tokenError) {
+            console.warn("[useChat] failed to retrieve access token", tokenError);
+          }
+        }
+
+        console.debug("[useChat] sending chat request", {
+          model: model?.id,
+          provider: model?.provider,
+          routeThroughBackend,
+          hasAuthHeader: !!authHeader,
+        });
+
         const response = await fetch("/api/mcp/chat", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             Accept: "text/event-stream",
+            ...(authHeader ? { Authorization: authHeader } : {}),
           },
           body: JSON.stringify({
             model: model!,
@@ -337,9 +362,14 @@ export function useChat(options: UseChatOptions = {}) {
             temperature,
             messages: messagesRef.current.concat(userMessage),
             ollamaBaseUrl: getOllamaBaseUrl(),
-            sendMessagesToBackend,
+            sendMessagesToBackend: routeThroughBackend,
           }),
           signal: abortControllerRef.current?.signal,
+        });
+
+        console.debug("[useChat] chat response headers", {
+          status: response.status,
+          ok: response.ok,
         });
 
         if (!response.ok) {
@@ -363,6 +393,7 @@ export function useChat(options: UseChatOptions = {}) {
           for await (const evt of parseSSEStream(reader)) {
             if (evt === "[DONE]") break;
             try {
+              console.debug("[useChat] SSE event", evt);
               applySseEvent(
                 evt,
                 assistantMessage,
@@ -412,6 +443,8 @@ export function useChat(options: UseChatOptions = {}) {
       onMessageReceived,
       applySseEvent,
       getOllamaBaseUrl,
+      sendMessagesToBackend,
+      getAccessToken,
     ],
   );
 

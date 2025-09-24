@@ -328,6 +328,8 @@ const sendMessagesToBackend = async (
   messages: ChatMessage[],
   streamingContext: StreamingContext,
   mcpClientManager: any,
+  baseUrl: string,
+  authHeader?: string,
 ): Promise<void> => {
   // Build message history
   const messageHistory: ModelMessage[] = (messages || []).map((m) => {
@@ -350,15 +352,29 @@ const sendMessagesToBackend = async (
     inputSchema: zodToJsonSchema((flatTools as any)[name]?.inputSchema),
   }));
 
-  const baseUrl = process.env.CONVEX_HTTP_URL;
   if (!baseUrl) {
     throw new Error("CONVEX_HTTP_URL is not set");
   }
+  console.log(
+    "[mcp/chat] sendMessagesToBackend: initialized",
+    JSON.stringify({
+      baseUrl,
+      inputMessages: messageHistory.length,
+      toolCount: toolDefs.length,
+    }),
+  );
   let steps = 0;
   while (steps < MAX_AGENT_STEPS) {
+    console.log(
+      "[mcp/chat] sendMessagesToBackend: issuing request",
+      JSON.stringify({ step: steps + 1 }),
+    );
     const res = await fetch(`${baseUrl}/streaming`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        ...(authHeader ? { Authorization: authHeader } : {}),
+      },
       body: JSON.stringify({ tools: toolDefs, messages: JSON.stringify(messageHistory) }),
     });
 
@@ -369,6 +385,17 @@ const sendMessagesToBackend = async (
       const text = await res.text();
       try { data = JSON.parse(text); } catch { data = { ok: false }; }
     }
+
+    console.log(
+      "[mcp/chat] sendMessagesToBackend: response",
+      JSON.stringify({
+        step: steps + 1,
+        status: res.status,
+        ok: data?.ok,
+        messageCount: Array.isArray(data?.messages) ? data.messages.length : 0,
+        error: data?.error,
+      }),
+    );
 
     if (data?.ok && Array.isArray(data.messages)) {
       // Append assistant messages and emit their text/tool_call events
@@ -443,6 +470,10 @@ const sendMessagesToBackend = async (
     type: "elicitation_complete",
   });
   sendSseEvent(streamingContext.controller, streamingContext.encoder!, "[DONE]");
+  console.log(
+    "[mcp/chat] sendMessagesToBackend: completed",
+    JSON.stringify({ totalSteps: steps, finalMessages: messageHistory.length }),
+  );
 };
 
 // Main chat endpoint
@@ -450,6 +481,16 @@ chat.post("/", async (c) => {
   const mcpClientManager = c.mcpJamClientManager;
   try {
     const requestData: ChatRequest = await c.req.json();
+    console.log(
+      "[mcp/chat] incoming auth context",
+      JSON.stringify({
+        authHeader: c.req.header("authorization") ? "present" : "missing",
+        cookieNames: (c.req.header("cookie") || "")
+          .split(";")
+          .map((part) => part.trim().split("=")[0])
+          .filter(Boolean),
+      }),
+    );
     const {
       model,
       provider,
@@ -502,7 +543,9 @@ chat.post("/", async (c) => {
         400,
       );
     }
-    if (!requestData.sendMessagesToBackend && (!model?.id || !requestData.apiKey)) {
+    const sendToBackend = provider === "meta" && requestData.sendMessagesToBackend;
+
+    if (!sendToBackend && (!model?.id || !requestData.apiKey)) {
       return c.json(
         {
           success: false,
@@ -512,8 +555,19 @@ chat.post("/", async (c) => {
       );
     }
 
+    if (sendToBackend && !process.env.CONVEX_HTTP_URL) {
+      return c.json(
+        {
+          success: false,
+          error: "Server missing CONVEX_HTTP_URL configuration",
+        },
+        500,
+      );
+    }
+
     // Create streaming response
     const encoder = new TextEncoder();
+    const authHeader = c.req.header("authorization") || undefined;
     const readableStream = new ReadableStream({
       async start(controller) {
         const streamingContext: StreamingContext = {
@@ -569,11 +623,13 @@ chat.post("/", async (c) => {
         });
 
         try {
-          if (provider === "meta") {
+          if (sendToBackend) {
             await sendMessagesToBackend(
               messages,
               streamingContext,
               mcpClientManager,
+              process.env.CONVEX_HTTP_URL!,
+              authHeader,
             );
           } else {
             // Use existing streaming path with tools
