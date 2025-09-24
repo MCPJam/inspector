@@ -2,6 +2,9 @@
 import { config } from "dotenv";
 import { Command as Command2 } from "commander";
 import { createRequire as createRequire2 } from "module";
+import path from "path";
+import { existsSync as existsSync2 } from "fs";
+import { fileURLToPath } from "url";
 
 // src/evals/index.ts
 import { Command } from "commander";
@@ -1005,12 +1008,12 @@ function createApi(pathParts = []) {
             `API path is expected to be of the form \`api.moduleName.functionName\`. Found: \`${found}\``
           );
         }
-        const path = pathParts.slice(0, -1).join("/");
+        const path2 = pathParts.slice(0, -1).join("/");
         const exportName = pathParts[pathParts.length - 1];
         if (exportName === "default") {
-          return path;
+          return path2;
         } else {
-          return path + ":" + exportName;
+          return path2 + ":" + exportName;
         }
       } else if (prop === Symbol.toStringTag) {
         return "FunctionReference";
@@ -1709,7 +1712,7 @@ var require_constants = __commonJS({
 var require_node_gyp_build = __commonJS({
   "../common/temp/node_modules/.pnpm/node-gyp-build@4.8.4/node_modules/node-gyp-build/node-gyp-build.js"(exports, module) {
     var fs = __require("fs");
-    var path = __require("path");
+    var path2 = __require("path");
     var os = __require("os");
     var runtimeRequire = typeof __webpack_require__ === "function" ? __non_webpack_require__ : __require;
     var vars = process.config && process.config.variables || {};
@@ -1726,21 +1729,21 @@ var require_node_gyp_build = __commonJS({
       return runtimeRequire(load.resolve(dir));
     }
     load.resolve = load.path = function(dir) {
-      dir = path.resolve(dir || ".");
+      dir = path2.resolve(dir || ".");
       try {
-        var name2 = runtimeRequire(path.join(dir, "package.json")).name.toUpperCase().replace(/-/g, "_");
+        var name2 = runtimeRequire(path2.join(dir, "package.json")).name.toUpperCase().replace(/-/g, "_");
         if (process.env[name2 + "_PREBUILD"]) dir = process.env[name2 + "_PREBUILD"];
       } catch (err) {
       }
       if (!prebuildsOnly) {
-        var release = getFirst(path.join(dir, "build/Release"), matchBuild);
+        var release = getFirst(path2.join(dir, "build/Release"), matchBuild);
         if (release) return release;
-        var debug = getFirst(path.join(dir, "build/Debug"), matchBuild);
+        var debug = getFirst(path2.join(dir, "build/Debug"), matchBuild);
         if (debug) return debug;
       }
       var prebuild = resolve2(dir);
       if (prebuild) return prebuild;
-      var nearby = resolve2(path.dirname(process.execPath));
+      var nearby = resolve2(path2.dirname(process.execPath));
       if (nearby) return nearby;
       var target = [
         "platform=" + platform,
@@ -1757,14 +1760,14 @@ var require_node_gyp_build = __commonJS({
       ].filter(Boolean).join(" ");
       throw new Error("No native build was found for " + target + "\n    loaded from: " + dir + "\n");
       function resolve2(dir2) {
-        var tuples = readdirSync(path.join(dir2, "prebuilds")).map(parseTuple);
+        var tuples = readdirSync(path2.join(dir2, "prebuilds")).map(parseTuple);
         var tuple = tuples.filter(matchTuple(platform, arch)).sort(compareTuples)[0];
         if (!tuple) return;
-        var prebuilds = path.join(dir2, "prebuilds", tuple.name);
+        var prebuilds = path2.join(dir2, "prebuilds", tuple.name);
         var parsed = readdirSync(prebuilds).map(parseTags);
         var candidates = parsed.filter(matchTags(runtime, abi));
         var winner = candidates.sort(compareTags(runtime))[0];
-        if (winner) return path.join(prebuilds, winner.file);
+        if (winner) return path2.join(prebuilds, winner.file);
       }
     };
     function readdirSync(dir) {
@@ -1776,7 +1779,7 @@ var require_node_gyp_build = __commonJS({
     }
     function getFirst(dir, filter) {
       var files = readdirSync(dir).filter(filter);
-      return files[0] && path.join(dir, files[0]);
+      return files[0] && path2.join(dir, files[0]);
     }
     function matchBuild(name2) {
       return /\.node$/.test(name2);
@@ -6122,7 +6125,7 @@ import updateNotifier from "update-notifier";
 // package.json
 var package_default = {
   name: "@mcpjam/cli",
-  version: "1.1.3",
+  version: "1.1.6",
   type: "module",
   description: "MCPJam CLI for programmatic MCP testing and evals",
   license: "Apache-2.0",
@@ -6141,7 +6144,8 @@ var package_default = {
     "bin",
     "dist",
     "package.json",
-    "README.md"
+    "README.md",
+    ".env.production"
   ],
   scripts: {
     build: "tsup",
@@ -6182,7 +6186,12 @@ var require3 = createRequire2(import.meta.url);
 updateNotifier({ pkg: package_default, updateCheckInterval: 0 }).notify();
 var { name, version: version2 } = require3("../package.json");
 updateNotifier({ pkg: { name, version: version2 } }).notify();
-var envFile = process.env.NODE_ENV === "production" ? ".env.production" : ".env.development";
+var __filename = fileURLToPath(import.meta.url);
+var __dirname2 = path.dirname(__filename);
+var packageRootDir = path.resolve(__dirname2, "..");
+var devEnvPath = path.join(packageRootDir, ".env.development");
+var prodEnvPath = path.join(packageRootDir, ".env.production");
+var envFile = existsSync2(devEnvPath) ? devEnvPath : prodEnvPath;
 config({ path: envFile });
 var program = new Command2();
 program.name("mcpjam").description("MCPJam CLI for programmatic MCP testing").version(version2);
