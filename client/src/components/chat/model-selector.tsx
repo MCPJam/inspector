@@ -48,6 +48,8 @@ const getProviderDisplayName = (provider: ModelProvider): string => {
       return "Google AI";
     case "ollama":
       return "Ollama";
+    case "meta":
+      return "Meta";
     default:
       return provider;
   }
@@ -68,6 +70,13 @@ export function ModelSelector({
 
   // Get sorted provider keys for consistent ordering
   const sortedProviders = Array.from(groupedModels.keys()).sort();
+  const MCPJAM_PROVIDERS: ModelProvider[] = ["meta"];
+  const mcpjamProviders = sortedProviders.filter((p) =>
+    MCPJAM_PROVIDERS.includes(p),
+  );
+  const otherProviders = sortedProviders.filter(
+    (p) => !MCPJAM_PROVIDERS.includes(p),
+  );
 
   return (
     <DropdownMenu
@@ -90,7 +99,84 @@ export function ModelSelector({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="min-w-[200px]">
-        {sortedProviders.map((provider) => {
+        {/* MCPJam-provided models */}
+        {mcpjamProviders.length > 0 && (
+          <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+            MCPJam
+          </div>
+        )}
+        {mcpjamProviders.map((provider) => {
+          const models = groupedModels.get(provider) || [];
+          const modelCount = models.length;
+
+          return (
+            <DropdownMenuSub key={provider}>
+              <DropdownMenuSubTrigger className="flex items-center gap-3 text-sm cursor-pointer">
+                <ProviderLogo provider={provider} />
+                <div className="flex flex-col flex-1">
+                  <span className="font-medium">
+                    {getProviderDisplayName(provider)}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {modelCount} model{modelCount !== 1 ? "s" : ""}
+                  </span>
+                </div>
+              </DropdownMenuSubTrigger>
+
+              <DropdownMenuSubContent
+                className="min-w-[200px] max-h-[180px] overflow-y-auto"
+                avoidCollisions={true}
+                collisionPadding={8}
+              >
+                {models.map((model) => {
+                  const isDisabled = !!model.disabled;
+
+                  const item = (
+                    <DropdownMenuItem
+                      key={model.id}
+                      onSelect={() => {
+                        onModelChange(model);
+                        setIsModelSelectorOpen(false);
+                      }}
+                      className="flex items-center gap-3 text-sm cursor-pointer"
+                      disabled={isDisabled}
+                    >
+                      <div className="flex flex-col flex-1">
+                        <span className="font-medium">{model.name}</span>
+                      </div>
+                      {model.id === currentModel.id && (
+                        <div className="ml-auto w-2 h-2 bg-primary rounded-full" />
+                      )}
+                    </DropdownMenuItem>
+                  );
+
+                  return isDisabled ? (
+                    <Tooltip key={model.id}>
+                      <TooltipTrigger asChild>
+                        <div className="pointer-events-auto">{item}</div>
+                      </TooltipTrigger>
+                      <TooltipContent side="right">
+                        {model.disabledReason}
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    item
+                  );
+                })}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+          );
+        })}
+        {mcpjamProviders.length > 0 && otherProviders.length > 0 && (
+          <div className="my-1 h-px bg-muted/50" />
+        )}
+        {/* User-configured providers */}
+        {otherProviders.length > 0 && (
+          <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+            Your providers
+          </div>
+        )}
+        {otherProviders.map((provider) => {
           const models = groupedModels.get(provider) || [];
           const modelCount = models.length;
 

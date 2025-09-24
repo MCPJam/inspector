@@ -110,6 +110,10 @@ export function useChat(options: UseChatOptions = {}) {
   const getApiKeyForModel = useCallback(
     (m: ModelDefinition | null) => {
       if (!m) return "";
+      // Router-backed model requires no user token; backend provides it
+      if (m.provider === "meta") {
+        return "router"; // sentinel token to pass client validation
+      }
       if (m.provider === "ollama") {
         const available =
           isOllamaRunning &&
@@ -146,6 +150,7 @@ export function useChat(options: UseChatOptions = {}) {
       deepseek: hasToken("deepseek"),
       google: hasToken("google"),
       ollama: isOllamaRunning,
+      meta: true, // always available; uses backend-provided key
     } as const;
 
     const cloud = SUPPORTED_MODELS.filter((m) => providerHasKey[m.provider]);
