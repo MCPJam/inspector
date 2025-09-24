@@ -179,11 +179,28 @@ export function convertMastraToolToVercelTool(
       throw error;
     }
 
-    const { outputSchema: _unusedOutputSchema, ...configWithoutOutputSchema } =
-      vercelToolConfig;
+    if (vercelToolConfig.outputSchema) {
+      const { outputSchema: _unusedOutputSchema, ...configWithoutOutputSchema } =
+        vercelToolConfig;
+
+      try {
+        return tool(configWithoutOutputSchema);
+      } catch (errorWithoutOutputSchema) {
+        if (!isUnrepresentableSchemaError(errorWithoutOutputSchema)) {
+          throw errorWithoutOutputSchema;
+        }
+
+        const fallbackConfig = {
+          ...configWithoutOutputSchema,
+          inputSchema: fallbackInputSchema,
+        };
+
+        return tool(fallbackConfig);
+      }
+    }
 
     const fallbackConfig = {
-      ...configWithoutOutputSchema,
+      ...vercelToolConfig,
       inputSchema: fallbackInputSchema,
     };
 
