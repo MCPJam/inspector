@@ -225,9 +225,8 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     name: "Gemini 1.5 Flash",
     provider: "google",
   },
-  // Router-backed free model (no user setup required)
   {
-    id: "meta-llama/llama-3.3-70b-instruct:free",
+    id: "meta-llama/llama-3.3-70b-instruct",
     name: "Llama 3.3 70B (Free)",
     provider: "meta",
   },

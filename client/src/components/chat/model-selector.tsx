@@ -102,7 +102,7 @@ export function ModelSelector({
         {/* MCPJam-provided models */}
         {mcpjamProviders.length > 0 && (
           <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
-            MCPJam
+            MCPJam Provided Models
           </div>
         )}
         {mcpjamProviders.map((provider) => {
