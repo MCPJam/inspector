@@ -322,13 +322,6 @@ function SuitesOverview({
 
   return (
     <div className="space-y-4">
-      <div>
-        <h2 className="text-xl font-semibold">Evaluation suites</h2>
-        <p className="text-sm text-muted-foreground">
-          Select a suite to inspect every test iteration.
-        </p>
-      </div>
-
       <div className="overflow-hidden rounded-xl border">
         <div className="grid grid-cols-[minmax(0,1.2fr)_140px_140px_220px_160px] items-center gap-3 border-b bg-muted/50 px-4 py-2 text-xs font-semibold uppercase text-muted-foreground">
           <div>Suite started</div>
