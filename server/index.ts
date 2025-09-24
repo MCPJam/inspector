@@ -133,10 +133,10 @@ app.use("*", async (c, next) => {
 // Middleware
 app.use("*", logger());
 // Dynamic CORS origin based on PORT environment variable
-const serverPort = process.env.PORT || "3000";
+const serverPort = process.env.PORT || "3001";
 const corsOrigins = [
   `http://localhost:${serverPort}`,
-  "http://localhost:3000", // Keep for development
+  "http://localhost:3000", // Keep for frontend development
 ];
 
 app.use(
@@ -306,7 +306,7 @@ if (process.env.NODE_ENV === "production") {
   });
 }
 
-const port = parseInt(process.env.PORT || "3000");
+const port = parseInt(process.env.PORT || "3001");
 
 // Default to localhost unless explicitly running in production
 const hostname =
