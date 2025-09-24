@@ -45,8 +45,8 @@ var Logger = class {
     const { testCount, startedAt } = options;
     this.logLine(
       chalk.bold.blue(
-        `\u25B8 Running ${testCount} test${testCount === 1 ? "" : "s"} (${startedAt.toISOString()})`
-      )
+        `\u25B8 Running ${testCount} test${testCount === 1 ? "" : "s"} (${startedAt.toISOString()})`,
+      ),
     );
   }
   static suiteComplete(options) {
@@ -66,7 +66,7 @@ var Logger = class {
     const serverLabel = serverCount === 1 ? "server" : "servers";
     const serverList = serverNames.length > 0 ? serverNames.join(", ") : "none";
     this.logLine(
-      `Connected to ${chalk.white.bold(serverCount)} ${serverLabel}: ${chalk.gray(serverList)}`
+      `Connected to ${chalk.white.bold(serverCount)} ${serverLabel}: ${chalk.gray(serverList)}`,
     );
     const toolLabel = toolCount === 1 ? "tool" : "tools";
     this.logLine(`Found ${chalk.white.bold(toolCount)} total ${toolLabel}`);
@@ -97,18 +97,14 @@ var Logger = class {
       }
       const roleLabel = this.colorRole(message.role);
       if (message.role === "assistant") {
-        const summary = this.summarizeContent(
-          message.content
-        );
+        const summary = this.summarizeContent(message.content);
         this.logMessageLines(roleLabel, summary.textLines);
         summary.toolCalls.forEach((toolCall) => {
           this.logToolCall(toolCall);
         });
         return;
       }
-      const formatted = this.formatMessageContent(
-        message.content
-      );
+      const formatted = this.formatMessageContent(message.content);
       const lines = formatted ? formatted.split("\n") : [];
       this.logMessageLines(roleLabel, lines);
     });
@@ -134,7 +130,9 @@ var Logger = class {
         usageParts.push(`total ${usage.totalTokens}`);
       }
       if (usageParts.length > 0) {
-        this.logLine(chalk.gray(`Tokens \u2022 ${usageParts.join(" \u2022 ")}`));
+        this.logLine(
+          chalk.gray(`Tokens \u2022 ${usageParts.join(" \u2022 ")}`),
+        );
       }
     }
     this.logLine("");
@@ -161,7 +159,9 @@ var Logger = class {
     this.logLine(chalk.red(`  \u2715 ${testName} failed: ${error}`));
   }
   static connectionError(serverName, error) {
-    this.logLine(chalk.red(`  \u2715 Failed to connect to ${serverName}: ${error}`));
+    this.logLine(
+      chalk.red(`  \u2715 Failed to connect to ${serverName}: ${error}`),
+    );
   }
   static apiKeyError(provider, error) {
     this.logLine(chalk.red(`  \u2715 API key error for ${provider}: ${error}`));
@@ -169,8 +169,8 @@ var Logger = class {
   static modelCreationError(provider, modelId, error) {
     this.logLine(
       chalk.red(
-        `  \u2715 Failed to create ${provider} model "${modelId}": ${error}`
-      )
+        `  \u2715 Failed to create ${provider} model "${modelId}": ${error}`,
+      ),
     );
   }
   static formatMessageContent(content) {
@@ -181,7 +181,9 @@ var Logger = class {
       return this.truncate(content);
     }
     if (Array.isArray(content)) {
-      const pieces = content.map((part) => this.formatMessageContent(part)).filter(Boolean);
+      const pieces = content
+        .map((part) => this.formatMessageContent(part))
+        .filter(Boolean);
       return this.truncate(pieces.join("\n"));
     }
     if (typeof content === "object") {
@@ -193,12 +195,14 @@ var Logger = class {
         }
         if (type === "tool-call") {
           const toolName = typedContent.toolName ?? typedContent.name ?? "tool";
-          const args = typedContent.args ?? typedContent.input ?? typedContent.parameters;
+          const args =
+            typedContent.args ?? typedContent.input ?? typedContent.parameters;
           const details = args ? ` args=${this.stringify(args)}` : "";
           return this.truncate(`${toolName}${details}`);
         }
         if (type === "tool-result") {
-          const result = typedContent.result ?? typedContent.output ?? typedContent.data;
+          const result =
+            typedContent.result ?? typedContent.output ?? typedContent.data;
           return this.truncate(this.stringify(result));
         }
         if (type === "reasoning" && typeof typedContent.text === "string") {
@@ -231,10 +235,11 @@ var Logger = class {
         const typedValue = value;
         if (typedValue.type === "tool-call") {
           const toolName = typedValue.toolName || typedValue.name || "tool";
-          const args = typedValue.args ?? typedValue.input ?? typedValue.parameters;
+          const args =
+            typedValue.args ?? typedValue.input ?? typedValue.parameters;
           toolCalls.push({
             toolName,
-            args: args ? this.truncate(this.stringify(args)) : void 0
+            args: args ? this.truncate(this.stringify(args)) : void 0,
           });
           return;
         }
@@ -242,14 +247,21 @@ var Logger = class {
           textLines.push(...this.splitAndTrim(this.truncate(typedValue.text)));
           return;
         }
-        if (typedValue.type === "reasoning" && typeof typedValue.text === "string") {
+        if (
+          typedValue.type === "reasoning" &&
+          typeof typedValue.text === "string"
+        ) {
           textLines.push(...this.splitAndTrim(this.truncate(typedValue.text)));
           return;
         }
-        if (typedValue.type === "tool-result" || typedValue.type === "tool-error") {
-          const label = typedValue.type === "tool-error" ? "Tool error" : "Tool result";
+        if (
+          typedValue.type === "tool-result" ||
+          typedValue.type === "tool-error"
+        ) {
+          const label =
+            typedValue.type === "tool-error" ? "Tool error" : "Tool result";
           textLines.push(
-            `${label}: ${this.truncate(this.stringify(typedValue))}`
+            `${label}: ${this.truncate(this.stringify(typedValue))}`,
           );
           return;
         }
@@ -263,14 +275,21 @@ var Logger = class {
       textLines.push(this.truncate(String(value)));
     };
     visit(content);
-    const normalizedTextLines = textLines.length ? textLines : toolCalls.length ? [] : [this.truncate("(no content)")];
+    const normalizedTextLines = textLines.length
+      ? textLines
+      : toolCalls.length
+        ? []
+        : [this.truncate("(no content)")];
     return {
       textLines: normalizedTextLines,
-      toolCalls
+      toolCalls,
     };
   }
   static splitAndTrim(text) {
-    return text.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
+    return text
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
   }
   static logMessageLines(roleLabel, lines) {
     if (!lines.length) {
@@ -303,7 +322,8 @@ var Logger = class {
     this.closeActiveStream();
   }
   static streamToolCall(toolName, args) {
-    const serializedArgs = args === void 0 ? void 0 : this.truncate(this.stringify(args));
+    const serializedArgs =
+      args === void 0 ? void 0 : this.truncate(this.stringify(args));
     this.closeActiveStream();
     this.logToolCall({ toolName, args: serializedArgs });
   }
@@ -320,7 +340,7 @@ var Logger = class {
     const header = chalk.whiteBright(`[tool-error] ${toolName}`);
     this.logLine(header);
     this.logLine(
-      chalk.red(this.truncate(this.stringify(error ?? "Unknown error")))
+      chalk.red(this.truncate(this.stringify(error ?? "Unknown error"))),
     );
   }
   static renderBox(lines, options) {
@@ -335,9 +355,11 @@ var Logger = class {
     lines.forEach((line, index) => {
       const padded = line.padEnd(width, " ");
       const isStatusLine = index === statusIndex;
-      const colouredContent = isStatusLine ? statusColor(padded) : chalk.white(padded);
+      const colouredContent = isStatusLine
+        ? statusColor(padded)
+        : chalk.white(padded);
       this.logLine(
-        `${borderColor("| ")}${colouredContent}${borderColor(" |")}`
+        `${borderColor("| ")}${colouredContent}${borderColor(" |")}`,
       );
     });
     this.logLine(horizontal);
@@ -417,11 +439,11 @@ function getLens(b64) {
   }
   var validLen = b64.indexOf("=");
   if (validLen === -1) validLen = len;
-  var placeHoldersLen = validLen === len ? 0 : 4 - validLen % 4;
+  var placeHoldersLen = validLen === len ? 0 : 4 - (validLen % 4);
   return [validLen, placeHoldersLen];
 }
 function _byteLength(_b64, validLen, placeHoldersLen) {
-  return (validLen + placeHoldersLen) * 3 / 4 - placeHoldersLen;
+  return ((validLen + placeHoldersLen) * 3) / 4 - placeHoldersLen;
 }
 function toByteArray(b64) {
   var tmp;
@@ -433,30 +455,47 @@ function toByteArray(b64) {
   var len = placeHoldersLen > 0 ? validLen - 4 : validLen;
   var i;
   for (i = 0; i < len; i += 4) {
-    tmp = revLookup[b64.charCodeAt(i)] << 18 | revLookup[b64.charCodeAt(i + 1)] << 12 | revLookup[b64.charCodeAt(i + 2)] << 6 | revLookup[b64.charCodeAt(i + 3)];
-    arr2[curByte++] = tmp >> 16 & 255;
-    arr2[curByte++] = tmp >> 8 & 255;
+    tmp =
+      (revLookup[b64.charCodeAt(i)] << 18) |
+      (revLookup[b64.charCodeAt(i + 1)] << 12) |
+      (revLookup[b64.charCodeAt(i + 2)] << 6) |
+      revLookup[b64.charCodeAt(i + 3)];
+    arr2[curByte++] = (tmp >> 16) & 255;
+    arr2[curByte++] = (tmp >> 8) & 255;
     arr2[curByte++] = tmp & 255;
   }
   if (placeHoldersLen === 2) {
-    tmp = revLookup[b64.charCodeAt(i)] << 2 | revLookup[b64.charCodeAt(i + 1)] >> 4;
+    tmp =
+      (revLookup[b64.charCodeAt(i)] << 2) |
+      (revLookup[b64.charCodeAt(i + 1)] >> 4);
     arr2[curByte++] = tmp & 255;
   }
   if (placeHoldersLen === 1) {
-    tmp = revLookup[b64.charCodeAt(i)] << 10 | revLookup[b64.charCodeAt(i + 1)] << 4 | revLookup[b64.charCodeAt(i + 2)] >> 2;
-    arr2[curByte++] = tmp >> 8 & 255;
+    tmp =
+      (revLookup[b64.charCodeAt(i)] << 10) |
+      (revLookup[b64.charCodeAt(i + 1)] << 4) |
+      (revLookup[b64.charCodeAt(i + 2)] >> 2);
+    arr2[curByte++] = (tmp >> 8) & 255;
     arr2[curByte++] = tmp & 255;
   }
   return arr2;
 }
 function tripletToBase64(num) {
-  return lookup[num >> 18 & 63] + lookup[num >> 12 & 63] + lookup[num >> 6 & 63] + lookup[num & 63];
+  return (
+    lookup[(num >> 18) & 63] +
+    lookup[(num >> 12) & 63] +
+    lookup[(num >> 6) & 63] +
+    lookup[num & 63]
+  );
 }
 function encodeChunk(uint8, start, end) {
   var tmp;
   var output = [];
   for (var i = start; i < end; i += 3) {
-    tmp = (uint8[i] << 16 & 16711680) + (uint8[i + 1] << 8 & 65280) + (uint8[i + 2] & 255);
+    tmp =
+      ((uint8[i] << 16) & 16711680) +
+      ((uint8[i + 1] << 8) & 65280) +
+      (uint8[i + 2] & 255);
     output.push(tripletToBase64(tmp));
   }
   return output.join("");
@@ -472,17 +511,20 @@ function fromByteArray(uint8) {
       encodeChunk(
         uint8,
         i,
-        i + maxChunkLength > len2 ? len2 : i + maxChunkLength
-      )
+        i + maxChunkLength > len2 ? len2 : i + maxChunkLength,
+      ),
     );
   }
   if (extraBytes === 1) {
     tmp = uint8[len - 1];
-    parts.push(lookup[tmp >> 2] + lookup[tmp << 4 & 63] + "==");
+    parts.push(lookup[tmp >> 2] + lookup[(tmp << 4) & 63] + "==");
   } else if (extraBytes === 2) {
     tmp = (uint8[len - 2] << 8) + uint8[len - 1];
     parts.push(
-      lookup[tmp >> 10] + lookup[tmp >> 4 & 63] + lookup[tmp << 2 & 63] + "="
+      lookup[tmp >> 10] +
+        lookup[(tmp >> 4) & 63] +
+        lookup[(tmp << 2) & 63] +
+        "=",
     );
   }
   return parts.join("");
@@ -495,7 +537,7 @@ function parseArgs(args) {
   }
   if (!isSimpleObject(args)) {
     throw new Error(
-      `The arguments to a Convex function must be an object. Received: ${args}`
+      `The arguments to a Convex function must be an object. Received: ${args}`,
     );
   }
   return args;
@@ -503,38 +545,40 @@ function parseArgs(args) {
 function validateDeploymentUrl(deploymentUrl) {
   if (typeof deploymentUrl === "undefined") {
     throw new Error(
-      `Client created with undefined deployment address. If you used an environment variable, check that it's set.`
+      `Client created with undefined deployment address. If you used an environment variable, check that it's set.`,
     );
   }
   if (typeof deploymentUrl !== "string") {
-    throw new Error(
-      `Invalid deployment address: found ${deploymentUrl}".`
-    );
+    throw new Error(`Invalid deployment address: found ${deploymentUrl}".`);
   }
-  if (!(deploymentUrl.startsWith("http:") || deploymentUrl.startsWith("https:"))) {
+  if (
+    !(deploymentUrl.startsWith("http:") || deploymentUrl.startsWith("https:"))
+  ) {
     throw new Error(
-      `Invalid deployment address: Must start with "https://" or "http://". Found "${deploymentUrl}".`
+      `Invalid deployment address: Must start with "https://" or "http://". Found "${deploymentUrl}".`,
     );
   }
   try {
     new URL(deploymentUrl);
   } catch {
     throw new Error(
-      `Invalid deployment address: "${deploymentUrl}" is not a valid URL. If you believe this URL is correct, use the \`skipConvexDeploymentUrlCheck\` option to bypass this.`
+      `Invalid deployment address: "${deploymentUrl}" is not a valid URL. If you believe this URL is correct, use the \`skipConvexDeploymentUrlCheck\` option to bypass this.`,
     );
   }
   if (deploymentUrl.endsWith(".convex.site")) {
     throw new Error(
-      `Invalid deployment address: "${deploymentUrl}" ends with .convex.site, which is used for HTTP Actions. Convex deployment URLs typically end with .convex.cloud? If you believe this URL is correct, use the \`skipConvexDeploymentUrlCheck\` option to bypass this.`
+      `Invalid deployment address: "${deploymentUrl}" ends with .convex.site, which is used for HTTP Actions. Convex deployment URLs typically end with .convex.cloud? If you believe this URL is correct, use the \`skipConvexDeploymentUrlCheck\` option to bypass this.`,
     );
   }
 }
 function isSimpleObject(value) {
   const isObject = typeof value === "object";
   const prototype = Object.getPrototypeOf(value);
-  const isSimple = prototype === null || prototype === Object.prototype || // Objects generated from other contexts (e.g. across Node.js `vm` modules) will not satisfy the previous
-  // conditions but are still simple objects.
-  prototype?.constructor?.name === "Object";
+  const isSimple =
+    prototype === null ||
+    prototype === Object.prototype || // Objects generated from other contexts (e.g. across Node.js `vm` modules) will not satisfy the previous
+    // conditions but are still simple objects.
+    prototype?.constructor?.name === "Object";
   return isObject && isSimple;
 }
 
@@ -566,7 +610,7 @@ function slowBase64ToBigInt(encoded) {
   const integerBytes = toByteArray(encoded);
   if (integerBytes.byteLength !== 8) {
     throw new Error(
-      `Received ${integerBytes.byteLength} bytes, expected 8 for $integer`
+      `Received ${integerBytes.byteLength} bytes, expected 8 for $integer`,
     );
   }
   let value = ZERO;
@@ -583,7 +627,7 @@ function slowBase64ToBigInt(encoded) {
 function modernBigIntToBase64(value) {
   if (value < MIN_INT64 || MAX_INT64 < value) {
     throw new Error(
-      `BigInt ${value} does not fit into a 64-bit signed integer.`
+      `BigInt ${value} does not fit into a 64-bit signed integer.`,
     );
   }
   const buffer = new ArrayBuffer(8);
@@ -594,19 +638,23 @@ function modernBase64ToBigInt(encoded) {
   const integerBytes = toByteArray(encoded);
   if (integerBytes.byteLength !== 8) {
     throw new Error(
-      `Received ${integerBytes.byteLength} bytes, expected 8 for $integer`
+      `Received ${integerBytes.byteLength} bytes, expected 8 for $integer`,
     );
   }
   const intBytesView = new DataView(integerBytes.buffer);
   return intBytesView.getBigInt64(0, true);
 }
-var bigIntToBase64 = DataView.prototype.setBigInt64 ? modernBigIntToBase64 : slowBigIntToBase64;
-var base64ToBigInt = DataView.prototype.getBigInt64 ? modernBase64ToBigInt : slowBase64ToBigInt;
+var bigIntToBase64 = DataView.prototype.setBigInt64
+  ? modernBigIntToBase64
+  : slowBigIntToBase64;
+var base64ToBigInt = DataView.prototype.getBigInt64
+  ? modernBase64ToBigInt
+  : slowBase64ToBigInt;
 var MAX_IDENTIFIER_LEN = 1024;
 function validateObjectField(k) {
   if (k.length > MAX_IDENTIFIER_LEN) {
     throw new Error(
-      `Field name ${k} exceeds maximum field name length ${MAX_IDENTIFIER_LEN}.`
+      `Field name ${k} exceeds maximum field name length ${MAX_IDENTIFIER_LEN}.`,
     );
   }
   if (k.startsWith("$")) {
@@ -616,7 +664,7 @@ function validateObjectField(k) {
     const charCode = k.charCodeAt(i);
     if (charCode < 32 || charCode >= 127) {
       throw new Error(
-        `Field name ${k} has invalid character '${k[i]}': Field names can only contain non-control ASCII characters`
+        `Field name ${k} has invalid character '${k[i]}': Field names can only contain non-control ASCII characters`,
       );
     }
   }
@@ -662,7 +710,7 @@ function jsonToConvex(value) {
       const floatBytes = toByteArray(value.$float);
       if (floatBytes.byteLength !== 8) {
         throw new Error(
-          `Received ${floatBytes.byteLength} bytes, expected 8 for $float`
+          `Received ${floatBytes.byteLength} bytes, expected 8 for $float`,
         );
       }
       const floatBytesView = new DataView(floatBytes.buffer);
@@ -674,12 +722,12 @@ function jsonToConvex(value) {
     }
     if (key === "$set") {
       throw new Error(
-        `Received a Set which is no longer supported as a Convex type.`
+        `Received a Set which is no longer supported as a Convex type.`,
       );
     }
     if (key === "$map") {
       throw new Error(
-        `Received a Map which is no longer supported as a Convex type.`
+        `Received a Map which is no longer supported as a Convex type.`,
       );
     }
   }
@@ -701,13 +749,20 @@ function stringifyValueForError(value) {
     return value2;
   });
 }
-function convexToJsonInternal(value, originalValue, context, includeTopLevelUndefined) {
+function convexToJsonInternal(
+  value,
+  originalValue,
+  context,
+  includeTopLevelUndefined,
+) {
   if (value === void 0) {
-    const contextText = context && ` (present at path ${context} in original object ${stringifyValueForError(
-      originalValue
-    )})`;
+    const contextText =
+      context &&
+      ` (present at path ${context} in original object ${stringifyValueForError(
+        originalValue,
+      )})`;
     throw new Error(
-      `undefined is not a valid Convex value${contextText}. To learn about Convex's supported types, see https://docs.convex.dev/using/types.`
+      `undefined is not a valid Convex value${contextText}. To learn about Convex's supported types, see https://docs.convex.dev/using/types.`,
     );
   }
   if (value === null) {
@@ -716,7 +771,7 @@ function convexToJsonInternal(value, originalValue, context, includeTopLevelUnde
   if (typeof value === "bigint") {
     if (value < MIN_INT64 || MAX_INT64 < value) {
       throw new Error(
-        `BigInt ${value} does not fit into a 64-bit signed integer.`
+        `BigInt ${value} does not fit into a 64-bit signed integer.`,
       );
     }
     return { $integer: bigIntToBase64(value) };
@@ -740,55 +795,65 @@ function convexToJsonInternal(value, originalValue, context, includeTopLevelUnde
     return { $bytes: fromByteArray(new Uint8Array(value)) };
   }
   if (Array.isArray(value)) {
-    return value.map(
-      (value2, i) => convexToJsonInternal(value2, originalValue, context + `[${i}]`, false)
+    return value.map((value2, i) =>
+      convexToJsonInternal(value2, originalValue, context + `[${i}]`, false),
     );
   }
   if (value instanceof Set) {
     throw new Error(
-      errorMessageForUnsupportedType(context, "Set", [...value], originalValue)
+      errorMessageForUnsupportedType(context, "Set", [...value], originalValue),
     );
   }
   if (value instanceof Map) {
     throw new Error(
-      errorMessageForUnsupportedType(context, "Map", [...value], originalValue)
+      errorMessageForUnsupportedType(context, "Map", [...value], originalValue),
     );
   }
   if (!isSimpleObject(value)) {
     const theType = value?.constructor?.name;
     const typeName = theType ? `${theType} ` : "";
     throw new Error(
-      errorMessageForUnsupportedType(context, typeName, value, originalValue)
+      errorMessageForUnsupportedType(context, typeName, value, originalValue),
     );
   }
   const out = {};
   const entries = Object.entries(value);
-  entries.sort(([k1, _v1], [k2, _v2]) => k1 === k2 ? 0 : k1 < k2 ? -1 : 1);
+  entries.sort(([k1, _v1], [k2, _v2]) => (k1 === k2 ? 0 : k1 < k2 ? -1 : 1));
   for (const [k, v2] of entries) {
     if (v2 !== void 0) {
       validateObjectField(k);
-      out[k] = convexToJsonInternal(v2, originalValue, context + `.${k}`, false);
+      out[k] = convexToJsonInternal(
+        v2,
+        originalValue,
+        context + `.${k}`,
+        false,
+      );
     } else if (includeTopLevelUndefined) {
       validateObjectField(k);
       out[k] = convexOrUndefinedToJsonInternal(
         v2,
         originalValue,
-        context + `.${k}`
+        context + `.${k}`,
       );
     }
   }
   return out;
 }
-function errorMessageForUnsupportedType(context, typeName, value, originalValue) {
+function errorMessageForUnsupportedType(
+  context,
+  typeName,
+  value,
+  originalValue,
+) {
   if (context) {
     return `${typeName}${stringifyValueForError(
-      value
+      value,
     )} is not a supported Convex type (present at path ${context} in original object ${stringifyValueForError(
-      originalValue
+      originalValue,
     )}). To learn about Convex's supported types, see https://docs.convex.dev/using/types.`;
   } else {
     return `${typeName}${stringifyValueForError(
-      value
+      value,
     )} is not a supported Convex type.`;
   }
 }
@@ -799,8 +864,8 @@ function convexOrUndefinedToJsonInternal(value, originalValue, context) {
     if (originalValue === void 0) {
       throw new Error(
         `Programming error. Current value is ${stringifyValueForError(
-          value
-        )} but original value is undefined`
+          value,
+        )} but original value is undefined`,
       );
     }
     return convexToJsonInternal(value, originalValue, context, false);
@@ -812,12 +877,21 @@ function convexToJson(value) {
 
 // ../node_modules/convex/dist/esm/values/errors.js
 var __defProp = Object.defineProperty;
-var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
-var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
+var __defNormalProp = (obj, key, value) =>
+  key in obj
+    ? __defProp(obj, key, {
+        enumerable: true,
+        configurable: true,
+        writable: true,
+        value,
+      })
+    : (obj[key] = value);
+var __publicField = (obj, key, value) =>
+  __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 var _a;
 var _b;
 var IDENTIFYING_FIELD = Symbol.for("ConvexError");
-var ConvexError = class extends (_b = Error, _a = IDENTIFYING_FIELD, _b) {
+var ConvexError = class extends ((_b = Error), (_a = IDENTIFYING_FIELD), _b) {
   constructor(data) {
     super(typeof data === "string" ? data : stringifyValueForError(data));
     __publicField(this, "name", "ConvexError");
@@ -834,8 +908,17 @@ var bBytes = arr();
 
 // ../node_modules/convex/dist/esm/browser/logging.js
 var __defProp2 = Object.defineProperty;
-var __defNormalProp2 = (obj, key, value) => key in obj ? __defProp2(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
-var __publicField2 = (obj, key, value) => __defNormalProp2(obj, typeof key !== "symbol" ? key + "" : key, value);
+var __defNormalProp2 = (obj, key, value) =>
+  key in obj
+    ? __defProp2(obj, key, {
+        enumerable: true,
+        configurable: true,
+        writable: true,
+        value,
+      })
+    : (obj[key] = value);
+var __publicField2 = (obj, key, value) =>
+  __defNormalProp2(obj, typeof key !== "symbol" ? key + "" : key, value);
 var INFO_COLOR = "color:rgb(0, 145, 255)";
 function prefix_for_source(source) {
   switch (source) {
@@ -872,7 +955,7 @@ var DefaultLogger = class {
   logVerbose(...args) {
     if (this._verbose) {
       for (const func of Object.values(this._onLogLineFuncs)) {
-        func("debug", `${(/* @__PURE__ */ new Date()).toISOString()}`, ...args);
+        func("debug", `${/* @__PURE__ */ new Date().toISOString()}`, ...args);
       }
     }
   }
@@ -928,7 +1011,7 @@ function logForFunction(logger, type, source, udfPath, message) {
     const match = message.match(/^\[.*?\] /);
     if (match === null) {
       logger.error(
-        `[CONVEX ${prefix}(${udfPath})] Could not parse console.log`
+        `[CONVEX ${prefix}(${udfPath})] Could not parse console.log`,
       );
       return;
     }
@@ -977,15 +1060,15 @@ function getFunctionName(functionReference) {
   if (address.name === void 0) {
     if (address.functionHandle !== void 0) {
       throw new Error(
-        `Expected function reference like "api.file.func" or "internal.file.func", but received function handle ${address.functionHandle}`
+        `Expected function reference like "api.file.func" or "internal.file.func", but received function handle ${address.functionHandle}`,
       );
     } else if (address.reference !== void 0) {
       throw new Error(
-        `Expected function reference in the current component like "api.file.func" or "internal.file.func", but received reference ${address.reference}`
+        `Expected function reference in the current component like "api.file.func" or "internal.file.func", but received reference ${address.reference}`,
       );
     }
     throw new Error(
-      `Expected function reference like "api.file.func" or "internal.file.func", but received ${JSON.stringify(address)}`
+      `Expected function reference like "api.file.func" or "internal.file.func", but received ${JSON.stringify(address)}`,
     );
   }
   if (typeof functionReference === "string") return functionReference;
@@ -1005,7 +1088,7 @@ function createApi(pathParts = []) {
         if (pathParts.length < 2) {
           const found = ["api", ...pathParts].join(".");
           throw new Error(
-            `API path is expected to be of the form \`api.moduleName.functionName\`. Found: \`${found}\``
+            `API path is expected to be of the form \`api.moduleName.functionName\`. Found: \`${found}\``,
           );
         }
         const path2 = pathParts.slice(0, -1).join("/");
@@ -1020,7 +1103,7 @@ function createApi(pathParts = []) {
       } else {
         return void 0;
       }
-    }
+    },
   };
   return new Proxy({}, handler);
 }
@@ -1028,8 +1111,17 @@ var anyApi = createApi();
 
 // ../node_modules/convex/dist/esm/browser/long.js
 var __defProp3 = Object.defineProperty;
-var __defNormalProp3 = (obj, key, value) => key in obj ? __defProp3(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
-var __publicField3 = (obj, key, value) => __defNormalProp3(obj, typeof key !== "symbol" ? key + "" : key, value);
+var __defNormalProp3 = (obj, key, value) =>
+  key in obj
+    ? __defProp3(obj, key, {
+        enumerable: true,
+        configurable: true,
+        writable: true,
+        value,
+      })
+    : (obj[key] = value);
+var __publicField3 = (obj, key, value) =>
+  __defNormalProp3(obj, typeof key !== "symbol" ? key + "" : key, value);
 var Long = class _Long {
   constructor(low, high) {
     __publicField3(this, "low");
@@ -1068,10 +1160,13 @@ var Long = class _Long {
     if (isNaN(value)) return UZERO;
     if (value < 0) return UZERO;
     if (value >= TWO_PWR_64_DBL) return MAX_UNSIGNED_VALUE;
-    return new _Long(value % TWO_PWR_32_DBL | 0, value / TWO_PWR_32_DBL | 0);
+    return new _Long(value % TWO_PWR_32_DBL | 0, (value / TWO_PWR_32_DBL) | 0);
   }
   toString() {
-    return (BigInt(this.high) * BigInt(TWO_PWR_32_DBL) + BigInt(this.low)).toString();
+    return (
+      BigInt(this.high) * BigInt(TWO_PWR_32_DBL) +
+      BigInt(this.low)
+    ).toString();
   }
   equals(other) {
     if (!_Long.isLong(other)) other = _Long.fromValue(other);
@@ -1084,13 +1179,18 @@ var Long = class _Long {
   comp(other) {
     if (!_Long.isLong(other)) other = _Long.fromValue(other);
     if (this.equals(other)) return 0;
-    return other.high >>> 0 > this.high >>> 0 || other.high === this.high && other.low >>> 0 > this.low >>> 0 ? -1 : 1;
+    return other.high >>> 0 > this.high >>> 0 ||
+      (other.high === this.high && other.low >>> 0 > this.low >>> 0)
+      ? -1
+      : 1;
   }
   lessThanOrEqual(other) {
-    return this.comp(
-      /* validates */
-      other
-    ) <= 0;
+    return (
+      this.comp(
+        /* validates */
+        other,
+      ) <= 0
+    );
   }
   static fromValue(val) {
     if (typeof val === "number") return _Long.fromNumber(val);
@@ -1104,8 +1204,7 @@ var TWO_PWR_64_DBL = TWO_PWR_32_DBL * TWO_PWR_32_DBL;
 var MAX_UNSIGNED_VALUE = new Long(4294967295 | 0, 4294967295 | 0);
 
 // ../node_modules/jwt-decode/build/esm/index.js
-var InvalidTokenError = class extends Error {
-};
+var InvalidTokenError = class extends Error {};
 InvalidTokenError.prototype.name = "InvalidTokenError";
 
 // ../node_modules/convex/dist/esm/browser/sync/authentication_manager.js
@@ -1117,8 +1216,17 @@ import { resolve as nodePathResolve } from "path";
 
 // ../node_modules/convex/dist/esm/browser/http_client.js
 var __defProp4 = Object.defineProperty;
-var __defNormalProp4 = (obj, key, value) => key in obj ? __defProp4(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
-var __publicField4 = (obj, key, value) => __defNormalProp4(obj, typeof key !== "symbol" ? key + "" : key, value);
+var __defNormalProp4 = (obj, key, value) =>
+  key in obj
+    ? __defProp4(obj, key, {
+        enumerable: true,
+        configurable: true,
+        writable: true,
+        value,
+      })
+    : (obj[key] = value);
+var __publicField4 = (obj, key, value) =>
+  __defNormalProp4(obj, typeof key !== "symbol" ? key + "" : key, value);
 var STATUS_CODE_UDF_FAILED = 560;
 var specifiedFetch = void 0;
 var ConvexHttpClient = class {
@@ -1152,14 +1260,19 @@ var ConvexHttpClient = class {
     __publicField4(this, "isProcessingQueue", false);
     if (typeof options === "boolean") {
       throw new Error(
-        "skipConvexDeploymentUrlCheck as the second argument is no longer supported. Please pass an options object, `{ skipConvexDeploymentUrlCheck: true }`."
+        "skipConvexDeploymentUrlCheck as the second argument is no longer supported. Please pass an options object, `{ skipConvexDeploymentUrlCheck: true }`.",
       );
     }
     const opts = options ?? {};
     if (opts.skipConvexDeploymentUrlCheck !== true) {
       validateDeploymentUrl(address);
     }
-    this.logger = options?.logger === false ? instantiateNoopLogger({ verbose: false }) : options?.logger !== true && options?.logger ? options.logger : instantiateDefaultLogger({ verbose: false });
+    this.logger =
+      options?.logger === false
+        ? instantiateNoopLogger({ verbose: false })
+        : options?.logger !== true && options?.logger
+          ? options.logger
+          : instantiateDefaultLogger({ verbose: false });
     this.address = address;
     this.debug = true;
     this.auth = void 0;
@@ -1264,18 +1377,18 @@ var ConvexHttpClient = class {
     if (this.encodedTsPromise) {
       return this.encodedTsPromise;
     }
-    return this.encodedTsPromise = this.getTimestampInner();
+    return (this.encodedTsPromise = this.getTimestampInner());
   }
   async getTimestampInner() {
     const localFetch = specifiedFetch || fetch;
     const headers = {
       "Content-Type": "application/json",
-      "Convex-Client": `npm-${version}`
+      "Convex-Client": `npm-${version}`,
     };
     const response = await localFetch(`${this.address}/api/query_ts`, {
       ...this.fetchOptions,
       method: "POST",
-      headers
+      headers,
     });
     if (!response.ok) {
       throw new Error(await response.text());
@@ -1300,7 +1413,7 @@ var ConvexHttpClient = class {
     const args = [convexToJson(queryArgs)];
     const headers = {
       "Content-Type": "application/json",
-      "Convex-Client": `npm-${version}`
+      "Convex-Client": `npm-${version}`,
     };
     if (this.adminAuth) {
       headers["Authorization"] = `Convex ${this.adminAuth}`;
@@ -1308,19 +1421,23 @@ var ConvexHttpClient = class {
       headers["Authorization"] = `Bearer ${this.auth}`;
     }
     const localFetch = specifiedFetch || fetch;
-    const timestamp = options.timestampPromise ? await options.timestampPromise : void 0;
+    const timestamp = options.timestampPromise
+      ? await options.timestampPromise
+      : void 0;
     const body = JSON.stringify({
       path: name2,
       format: "convex_encoded_json",
       args,
-      ...timestamp ? { ts: timestamp } : {}
+      ...(timestamp ? { ts: timestamp } : {}),
     });
-    const endpoint = timestamp ? `${this.address}/api/query_at_ts` : `${this.address}/api/query`;
+    const endpoint = timestamp
+      ? `${this.address}/api/query_at_ts`
+      : `${this.address}/api/query`;
     const response = await localFetch(endpoint, {
       ...this.fetchOptions,
       body,
       method: "POST",
-      headers
+      headers,
     });
     if (!response.ok && response.status !== STATUS_CODE_UDF_FAILED) {
       throw new Error(await response.text());
@@ -1338,7 +1455,7 @@ var ConvexHttpClient = class {
         if (respJSON.errorData !== void 0) {
           throw forwardErrorData(
             respJSON.errorData,
-            new ConvexError(respJSON.errorMessage)
+            new ConvexError(respJSON.errorMessage),
           );
         }
         throw new Error(respJSON.errorMessage);
@@ -1351,11 +1468,11 @@ var ConvexHttpClient = class {
     const body = JSON.stringify({
       path: name2,
       format: "convex_encoded_json",
-      args: [convexToJson(mutationArgs)]
+      args: [convexToJson(mutationArgs)],
     });
     const headers = {
       "Content-Type": "application/json",
-      "Convex-Client": `npm-${version}`
+      "Convex-Client": `npm-${version}`,
     };
     if (this.adminAuth) {
       headers["Authorization"] = `Convex ${this.adminAuth}`;
@@ -1367,7 +1484,7 @@ var ConvexHttpClient = class {
       ...this.fetchOptions,
       body,
       method: "POST",
-      headers
+      headers,
     });
     if (!response.ok && response.status !== STATUS_CODE_UDF_FAILED) {
       throw new Error(await response.text());
@@ -1385,7 +1502,7 @@ var ConvexHttpClient = class {
         if (respJSON.errorData !== void 0) {
           throw forwardErrorData(
             respJSON.errorData,
-            new ConvexError(respJSON.errorMessage)
+            new ConvexError(respJSON.errorMessage),
           );
         }
         throw new Error(respJSON.errorMessage);
@@ -1399,7 +1516,12 @@ var ConvexHttpClient = class {
     }
     this.isProcessingQueue = true;
     while (this.mutationQueue.length > 0) {
-      const { mutation, args, resolve: resolve2, reject } = this.mutationQueue.shift();
+      const {
+        mutation,
+        args,
+        resolve: resolve2,
+        reject,
+      } = this.mutationQueue.shift();
       try {
         const result = await this.mutationInner(mutation, args);
         resolve2(result);
@@ -1448,11 +1570,11 @@ var ConvexHttpClient = class {
     const body = JSON.stringify({
       path: name2,
       format: "convex_encoded_json",
-      args: [convexToJson(actionArgs)]
+      args: [convexToJson(actionArgs)],
     });
     const headers = {
       "Content-Type": "application/json",
-      "Convex-Client": `npm-${version}`
+      "Convex-Client": `npm-${version}`,
     };
     if (this.adminAuth) {
       headers["Authorization"] = `Convex ${this.adminAuth}`;
@@ -1464,7 +1586,7 @@ var ConvexHttpClient = class {
       ...this.fetchOptions,
       body,
       method: "POST",
-      headers
+      headers,
     });
     if (!response.ok && response.status !== STATUS_CODE_UDF_FAILED) {
       throw new Error(await response.text());
@@ -1482,7 +1604,7 @@ var ConvexHttpClient = class {
         if (respJSON.errorData !== void 0) {
           throw forwardErrorData(
             respJSON.errorData,
-            new ConvexError(respJSON.errorMessage)
+            new ConvexError(respJSON.errorMessage),
           );
         }
         throw new Error(respJSON.errorMessage);
@@ -1502,16 +1624,19 @@ var ConvexHttpClient = class {
    */
   async function(anyFunction, componentPath, ...args) {
     const functionArgs = parseArgs(args[0]);
-    const name2 = typeof anyFunction === "string" ? anyFunction : getFunctionName(anyFunction);
+    const name2 =
+      typeof anyFunction === "string"
+        ? anyFunction
+        : getFunctionName(anyFunction);
     const body = JSON.stringify({
       componentPath,
       path: name2,
       format: "convex_encoded_json",
-      args: convexToJson(functionArgs)
+      args: convexToJson(functionArgs),
     });
     const headers = {
       "Content-Type": "application/json",
-      "Convex-Client": `npm-${version}`
+      "Convex-Client": `npm-${version}`,
     };
     if (this.adminAuth) {
       headers["Authorization"] = `Convex ${this.adminAuth}`;
@@ -1523,7 +1648,7 @@ var ConvexHttpClient = class {
       ...this.fetchOptions,
       body,
       method: "POST",
-      headers
+      headers,
     });
     if (!response.ok && response.status !== STATUS_CODE_UDF_FAILED) {
       throw new Error(await response.text());
@@ -1541,7 +1666,7 @@ var ConvexHttpClient = class {
         if (respJSON.errorData !== void 0) {
           throw forwardErrorData(
             respJSON.errorData,
-            new ConvexError(respJSON.errorMessage)
+            new ConvexError(respJSON.errorMessage),
           );
         }
         throw new Error(respJSON.errorMessage);
@@ -1569,33 +1694,54 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __require = /* @__PURE__ */ ((x) => typeof require2 !== "undefined" ? require2 : typeof Proxy !== "undefined" ? new Proxy(x, {
-  get: (a, b) => (typeof require2 !== "undefined" ? require2 : a)[b]
-}) : x)(function(x) {
+var __require = /* @__PURE__ */ ((x) =>
+  typeof require2 !== "undefined"
+    ? require2
+    : typeof Proxy !== "undefined"
+      ? new Proxy(x, {
+          get: (a, b) => (typeof require2 !== "undefined" ? require2 : a)[b],
+        })
+      : x)(function (x) {
   if (typeof require2 !== "undefined") return require2.apply(this, arguments);
   throw Error('Dynamic require of "' + x + '" is not supported');
 });
-var __commonJS = (cb, mod) => function __require2() {
-  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
-};
+var __commonJS = (cb, mod) =>
+  function __require2() {
+    return (
+      mod ||
+        (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod),
+      mod.exports
+    );
+  };
 var __copyProps = (to, from, except, desc) => {
-  if (from && typeof from === "object" || typeof from === "function") {
+  if ((from && typeof from === "object") || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
       if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp5(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+        __defProp5(to, key, {
+          get: () => from[key],
+          enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable,
+        });
   }
   return to;
 };
-var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
-  // If the importer is in node compatibility mode or this is not an ESM
-  // file that has been converted to a CommonJS file using a Babel-
-  // compatible transform (i.e. "__esModule" has not been set), then set
-  // "default" to the CommonJS "module.exports" for node compatibility.
-  isNodeMode || !mod || !mod.__esModule ? __defProp5(target, "default", { value: mod, enumerable: true }) : target,
-  mod
-));
+var __toESM = (mod, isNodeMode, target) => (
+  (target = mod != null ? __create(__getProtoOf(mod)) : {}),
+  __copyProps(
+    // If the importer is in node compatibility mode or this is not an ESM
+    // file that has been converted to a CommonJS file using a Babel-
+    // compatible transform (i.e. "__esModule" has not been set), then set
+    // "default" to the CommonJS "module.exports" for node compatibility.
+    isNodeMode || !mod || !mod.__esModule
+      ? __defProp5(target, "default", { value: mod, enumerable: true })
+      : target,
+    mod,
+  )
+);
 var require_stream = __commonJS({
-  "../common/temp/node_modules/.pnpm/ws@8.18.0_bufferutil@4.0.9_utf-8-validate@5.0.10/node_modules/ws/lib/stream.js"(exports, module) {
+  "../common/temp/node_modules/.pnpm/ws@8.18.0_bufferutil@4.0.9_utf-8-validate@5.0.10/node_modules/ws/lib/stream.js"(
+    exports,
+    module,
+  ) {
     "use strict";
     var { Duplex } = __require("stream");
     function emitClose(stream) {
@@ -1620,10 +1766,11 @@ var require_stream = __commonJS({
         autoDestroy: false,
         emitClose: false,
         objectMode: false,
-        writableObjectMode: false
+        writableObjectMode: false,
       });
       ws.on("message", function message(msg, isBinary) {
-        const data = !isBinary && duplex._readableState.objectMode ? msg.toString() : msg;
+        const data =
+          !isBinary && duplex._readableState.objectMode ? msg.toString() : msg;
         if (!duplex.push(data)) ws.pause();
       });
       ws.once("error", function error(err) {
@@ -1635,7 +1782,7 @@ var require_stream = __commonJS({
         if (duplex.destroyed) return;
         duplex.push(null);
       });
-      duplex._destroy = function(err, callback) {
+      duplex._destroy = function (err, callback) {
         if (ws.readyState === ws.CLOSED) {
           callback(err);
           process.nextTick(emitClose, duplex);
@@ -1652,7 +1799,7 @@ var require_stream = __commonJS({
         });
         if (terminateOnDestroy) ws.terminate();
       };
-      duplex._final = function(callback) {
+      duplex._final = function (callback) {
         if (ws.readyState === ws.CONNECTING) {
           ws.once("open", function open() {
             duplex._final(callback);
@@ -1670,10 +1817,10 @@ var require_stream = __commonJS({
           ws.close();
         }
       };
-      duplex._read = function() {
+      duplex._read = function () {
         if (ws.isPaused) ws.resume();
       };
-      duplex._write = function(chunk, encoding, callback) {
+      duplex._write = function (chunk, encoding, callback) {
         if (ws.readyState === ws.CONNECTING) {
           ws.once("open", function open() {
             duplex._write(chunk, encoding, callback);
@@ -1687,10 +1834,13 @@ var require_stream = __commonJS({
       return duplex;
     }
     module.exports = createWebSocketStream2;
-  }
+  },
 });
 var require_constants = __commonJS({
-  "../common/temp/node_modules/.pnpm/ws@8.18.0_bufferutil@4.0.9_utf-8-validate@5.0.10/node_modules/ws/lib/constants.js"(exports, module) {
+  "../common/temp/node_modules/.pnpm/ws@8.18.0_bufferutil@4.0.9_utf-8-validate@5.0.10/node_modules/ws/lib/constants.js"(
+    exports,
+    module,
+  ) {
     "use strict";
     var BINARY_TYPES = ["nodebuffer", "arraybuffer", "fragments"];
     var hasBlob = typeof Blob !== "undefined";
@@ -1704,37 +1854,47 @@ var require_constants = __commonJS({
       kListener: Symbol("kListener"),
       kStatusCode: Symbol("status-code"),
       kWebSocket: Symbol("websocket"),
-      NOOP: () => {
-      }
+      NOOP: () => {},
     };
-  }
+  },
 });
 var require_node_gyp_build = __commonJS({
-  "../common/temp/node_modules/.pnpm/node-gyp-build@4.8.4/node_modules/node-gyp-build/node-gyp-build.js"(exports, module) {
+  "../common/temp/node_modules/.pnpm/node-gyp-build@4.8.4/node_modules/node-gyp-build/node-gyp-build.js"(
+    exports,
+    module,
+  ) {
     var fs = __require("fs");
     var path2 = __require("path");
     var os = __require("os");
-    var runtimeRequire = typeof __webpack_require__ === "function" ? __non_webpack_require__ : __require;
-    var vars = process.config && process.config.variables || {};
+    var runtimeRequire =
+      typeof __webpack_require__ === "function"
+        ? __non_webpack_require__
+        : __require;
+    var vars = (process.config && process.config.variables) || {};
     var prebuildsOnly = !!process.env.PREBUILDS_ONLY;
     var abi = process.versions.modules;
     var runtime = isElectron() ? "electron" : isNwjs() ? "node-webkit" : "node";
     var arch = process.env.npm_config_arch || os.arch();
     var platform = process.env.npm_config_platform || os.platform();
     var libc = process.env.LIBC || (isAlpine(platform) ? "musl" : "glibc");
-    var armv = process.env.ARM_VERSION || (arch === "arm64" ? "8" : vars.arm_version) || "";
+    var armv =
+      process.env.ARM_VERSION ||
+      (arch === "arm64" ? "8" : vars.arm_version) ||
+      "";
     var uv = (process.versions.uv || "").split(".")[0];
     module.exports = load;
     function load(dir) {
       return runtimeRequire(load.resolve(dir));
     }
-    load.resolve = load.path = function(dir) {
+    load.resolve = load.path = function (dir) {
       dir = path2.resolve(dir || ".");
       try {
-        var name2 = runtimeRequire(path2.join(dir, "package.json")).name.toUpperCase().replace(/-/g, "_");
-        if (process.env[name2 + "_PREBUILD"]) dir = process.env[name2 + "_PREBUILD"];
-      } catch (err) {
-      }
+        var name2 = runtimeRequire(path2.join(dir, "package.json"))
+          .name.toUpperCase()
+          .replace(/-/g, "_");
+        if (process.env[name2 + "_PREBUILD"])
+          dir = process.env[name2 + "_PREBUILD"];
+      } catch (err) {}
       if (!prebuildsOnly) {
         var release = getFirst(path2.join(dir, "build/Release"), matchBuild);
         if (release) return release;
@@ -1754,14 +1914,26 @@ var require_node_gyp_build = __commonJS({
         armv ? "armv=" + armv : "",
         "libc=" + libc,
         "node=" + process.versions.node,
-        process.versions.electron ? "electron=" + process.versions.electron : "",
-        typeof __webpack_require__ === "function" ? "webpack=true" : ""
+        process.versions.electron
+          ? "electron=" + process.versions.electron
+          : "",
+        typeof __webpack_require__ === "function" ? "webpack=true" : "",
         // eslint-disable-line
-      ].filter(Boolean).join(" ");
-      throw new Error("No native build was found for " + target + "\n    loaded from: " + dir + "\n");
+      ]
+        .filter(Boolean)
+        .join(" ");
+      throw new Error(
+        "No native build was found for " +
+          target +
+          "\n    loaded from: " +
+          dir +
+          "\n",
+      );
       function resolve2(dir2) {
         var tuples = readdirSync(path2.join(dir2, "prebuilds")).map(parseTuple);
-        var tuple = tuples.filter(matchTuple(platform, arch)).sort(compareTuples)[0];
+        var tuple = tuples
+          .filter(matchTuple(platform, arch))
+          .sort(compareTuples)[0];
         if (!tuple) return;
         var prebuilds = path2.join(dir2, "prebuilds", tuple.name);
         var parsed = readdirSync(prebuilds).map(parseTags);
@@ -1795,7 +1967,7 @@ var require_node_gyp_build = __commonJS({
       return { name: name2, platform: platform2, architectures };
     }
     function matchTuple(platform2, arch2) {
-      return function(tuple) {
+      return function (tuple) {
         if (tuple == null) return false;
         if (tuple.platform !== platform2) return false;
         return tuple.architectures.includes(arch2);
@@ -1831,9 +2003,10 @@ var require_node_gyp_build = __commonJS({
       return tags;
     }
     function matchTags(runtime2, abi2) {
-      return function(tags) {
+      return function (tags) {
         if (tags == null) return false;
-        if (tags.runtime && tags.runtime !== runtime2 && !runtimeAgnostic(tags)) return false;
+        if (tags.runtime && tags.runtime !== runtime2 && !runtimeAgnostic(tags))
+          return false;
         if (tags.abi && tags.abi !== abi2 && !tags.napi) return false;
         if (tags.uv && tags.uv !== uv) return false;
         if (tags.armv && tags.armv !== armv) return false;
@@ -1845,7 +2018,7 @@ var require_node_gyp_build = __commonJS({
       return tags.runtime === "node" && tags.napi;
     }
     function compareTags(runtime2) {
-      return function(a, b) {
+      return function (a, b) {
         if (a.runtime !== b.runtime) {
           return a.runtime === runtime2 ? -1 : 1;
         } else if (a.abi !== b.abi) {
@@ -1863,7 +2036,11 @@ var require_node_gyp_build = __commonJS({
     function isElectron() {
       if (process.versions && process.versions.electron) return true;
       if (process.env.ELECTRON_RUN_AS_NODE) return true;
-      return typeof window !== "undefined" && window.process && window.process.type === "renderer";
+      return (
+        typeof window !== "undefined" &&
+        window.process &&
+        window.process.type === "renderer"
+      );
     }
     function isAlpine(platform2) {
       return platform2 === "linux" && fs.existsSync("/etc/alpine-release");
@@ -1874,20 +2051,29 @@ var require_node_gyp_build = __commonJS({
     load.parseTuple = parseTuple;
     load.matchTuple = matchTuple;
     load.compareTuples = compareTuples;
-  }
+  },
 });
 var require_node_gyp_build2 = __commonJS({
-  "../common/temp/node_modules/.pnpm/node-gyp-build@4.8.4/node_modules/node-gyp-build/index.js"(exports, module) {
-    var runtimeRequire = typeof __webpack_require__ === "function" ? __non_webpack_require__ : __require;
+  "../common/temp/node_modules/.pnpm/node-gyp-build@4.8.4/node_modules/node-gyp-build/index.js"(
+    exports,
+    module,
+  ) {
+    var runtimeRequire =
+      typeof __webpack_require__ === "function"
+        ? __non_webpack_require__
+        : __require;
     if (typeof runtimeRequire.addon === "function") {
       module.exports = runtimeRequire.addon.bind(runtimeRequire);
     } else {
       module.exports = require_node_gyp_build();
     }
-  }
+  },
 });
 var require_fallback = __commonJS({
-  "../common/temp/node_modules/.pnpm/bufferutil@4.0.9/node_modules/bufferutil/fallback.js"(exports, module) {
+  "../common/temp/node_modules/.pnpm/bufferutil@4.0.9/node_modules/bufferutil/fallback.js"(
+    exports,
+    module,
+  ) {
     "use strict";
     var mask = (source, mask2, output, offset, length) => {
       for (var i = 0; i < length; i++) {
@@ -1901,20 +2087,26 @@ var require_fallback = __commonJS({
       }
     };
     module.exports = { mask, unmask };
-  }
+  },
 });
 var require_bufferutil = __commonJS({
-  "../common/temp/node_modules/.pnpm/bufferutil@4.0.9/node_modules/bufferutil/index.js"(exports, module) {
+  "../common/temp/node_modules/.pnpm/bufferutil@4.0.9/node_modules/bufferutil/index.js"(
+    exports,
+    module,
+  ) {
     "use strict";
     try {
       module.exports = require_node_gyp_build2()(__dirname);
     } catch (e) {
       module.exports = require_fallback();
     }
-  }
+  },
 });
 var require_buffer_util = __commonJS({
-  "../common/temp/node_modules/.pnpm/ws@8.18.0_bufferutil@4.0.9_utf-8-validate@5.0.10/node_modules/ws/lib/buffer-util.js"(exports, module) {
+  "../common/temp/node_modules/.pnpm/ws@8.18.0_bufferutil@4.0.9_utf-8-validate@5.0.10/node_modules/ws/lib/buffer-util.js"(
+    exports,
+    module,
+  ) {
     "use strict";
     var { EMPTY_BUFFER } = require_constants();
     var FastBuffer = Buffer[Symbol.species];
@@ -1968,26 +2160,28 @@ var require_buffer_util = __commonJS({
       mask: _mask,
       toArrayBuffer,
       toBuffer,
-      unmask: _unmask
+      unmask: _unmask,
     };
     if (!process.env.WS_NO_BUFFER_UTIL) {
       try {
         const bufferUtil = require_bufferutil();
-        module.exports.mask = function(source, mask, output, offset, length) {
+        module.exports.mask = function (source, mask, output, offset, length) {
           if (length < 48) _mask(source, mask, output, offset, length);
           else bufferUtil.mask(source, mask, output, offset, length);
         };
-        module.exports.unmask = function(buffer, mask) {
+        module.exports.unmask = function (buffer, mask) {
           if (buffer.length < 32) _unmask(buffer, mask);
           else bufferUtil.unmask(buffer, mask);
         };
-      } catch (e) {
-      }
+      } catch (e) {}
     }
-  }
+  },
 });
 var require_limiter = __commonJS({
-  "../common/temp/node_modules/.pnpm/ws@8.18.0_bufferutil@4.0.9_utf-8-validate@5.0.10/node_modules/ws/lib/limiter.js"(exports, module) {
+  "../common/temp/node_modules/.pnpm/ws@8.18.0_bufferutil@4.0.9_utf-8-validate@5.0.10/node_modules/ws/lib/limiter.js"(
+    exports,
+    module,
+  ) {
     "use strict";
     var kDone = Symbol("kDone");
     var kRun = Symbol("kRun");
@@ -2032,10 +2226,13 @@ var require_limiter = __commonJS({
       }
     };
     module.exports = Limiter;
-  }
+  },
 });
 var require_permessage_deflate = __commonJS({
-  "../common/temp/node_modules/.pnpm/ws@8.18.0_bufferutil@4.0.9_utf-8-validate@5.0.10/node_modules/ws/lib/permessage-deflate.js"(exports, module) {
+  "../common/temp/node_modules/.pnpm/ws@8.18.0_bufferutil@4.0.9_utf-8-validate@5.0.10/node_modules/ws/lib/permessage-deflate.js"(
+    exports,
+    module,
+  ) {
     "use strict";
     var zlib = __require("zlib");
     var bufferUtil = require_buffer_util();
@@ -2077,13 +2274,17 @@ var require_permessage_deflate = __commonJS({
       constructor(options, isServer, maxPayload) {
         this._maxPayload = maxPayload | 0;
         this._options = options || {};
-        this._threshold = this._options.threshold !== void 0 ? this._options.threshold : 1024;
+        this._threshold =
+          this._options.threshold !== void 0 ? this._options.threshold : 1024;
         this._isServer = !!isServer;
         this._deflate = null;
         this._inflate = null;
         this.params = null;
         if (!zlibLimiter) {
-          const concurrency = this._options.concurrencyLimit !== void 0 ? this._options.concurrencyLimit : 10;
+          const concurrency =
+            this._options.concurrencyLimit !== void 0
+              ? this._options.concurrencyLimit
+              : 10;
           zlibLimiter = new Limiter(concurrency);
         }
       }
@@ -2126,7 +2327,9 @@ var require_permessage_deflate = __commonJS({
        */
       accept(configurations) {
         configurations = this.normalizeParams(configurations);
-        this.params = this._isServer ? this.acceptAsServer(configurations) : this.acceptAsClient(configurations);
+        this.params = this._isServer
+          ? this.acceptAsServer(configurations)
+          : this.acceptAsClient(configurations);
         return this.params;
       }
       /**
@@ -2146,8 +2349,8 @@ var require_permessage_deflate = __commonJS({
           if (callback) {
             callback(
               new Error(
-                "The deflate stream was closed while data was being processed"
-              )
+                "The deflate stream was closed while data was being processed",
+              ),
             );
           }
         }
@@ -2162,7 +2365,16 @@ var require_permessage_deflate = __commonJS({
       acceptAsServer(offers) {
         const opts = this._options;
         const accepted = offers.find((params) => {
-          if (opts.serverNoContextTakeover === false && params.server_no_context_takeover || params.server_max_window_bits && (opts.serverMaxWindowBits === false || typeof opts.serverMaxWindowBits === "number" && opts.serverMaxWindowBits > params.server_max_window_bits) || typeof opts.clientMaxWindowBits === "number" && !params.client_max_window_bits) {
+          if (
+            (opts.serverNoContextTakeover === false &&
+              params.server_no_context_takeover) ||
+            (params.server_max_window_bits &&
+              (opts.serverMaxWindowBits === false ||
+                (typeof opts.serverMaxWindowBits === "number" &&
+                  opts.serverMaxWindowBits > params.server_max_window_bits))) ||
+            (typeof opts.clientMaxWindowBits === "number" &&
+              !params.client_max_window_bits)
+          ) {
             return false;
           }
           return true;
@@ -2181,7 +2393,10 @@ var require_permessage_deflate = __commonJS({
         }
         if (typeof opts.clientMaxWindowBits === "number") {
           accepted.client_max_window_bits = opts.clientMaxWindowBits;
-        } else if (accepted.client_max_window_bits === true || opts.clientMaxWindowBits === false) {
+        } else if (
+          accepted.client_max_window_bits === true ||
+          opts.clientMaxWindowBits === false
+        ) {
           delete accepted.client_max_window_bits;
         }
         return accepted;
@@ -2195,16 +2410,23 @@ var require_permessage_deflate = __commonJS({
        */
       acceptAsClient(response) {
         const params = response[0];
-        if (this._options.clientNoContextTakeover === false && params.client_no_context_takeover) {
+        if (
+          this._options.clientNoContextTakeover === false &&
+          params.client_no_context_takeover
+        ) {
           throw new Error('Unexpected parameter "client_no_context_takeover"');
         }
         if (!params.client_max_window_bits) {
           if (typeof this._options.clientMaxWindowBits === "number") {
             params.client_max_window_bits = this._options.clientMaxWindowBits;
           }
-        } else if (this._options.clientMaxWindowBits === false || typeof this._options.clientMaxWindowBits === "number" && params.client_max_window_bits > this._options.clientMaxWindowBits) {
+        } else if (
+          this._options.clientMaxWindowBits === false ||
+          (typeof this._options.clientMaxWindowBits === "number" &&
+            params.client_max_window_bits > this._options.clientMaxWindowBits)
+        ) {
           throw new Error(
-            'Unexpected or invalid parameter "client_max_window_bits"'
+            'Unexpected or invalid parameter "client_max_window_bits"',
           );
         }
         return params;
@@ -2221,7 +2443,9 @@ var require_permessage_deflate = __commonJS({
           Object.keys(params).forEach((key) => {
             let value = params[key];
             if (value.length > 1) {
-              throw new Error(`Parameter "${key}" must have only a single value`);
+              throw new Error(
+                `Parameter "${key}" must have only a single value`,
+              );
             }
             value = value[0];
             if (key === "client_max_window_bits") {
@@ -2229,27 +2453,30 @@ var require_permessage_deflate = __commonJS({
                 const num = +value;
                 if (!Number.isInteger(num) || num < 8 || num > 15) {
                   throw new TypeError(
-                    `Invalid value for parameter "${key}": ${value}`
+                    `Invalid value for parameter "${key}": ${value}`,
                   );
                 }
                 value = num;
               } else if (!this._isServer) {
                 throw new TypeError(
-                  `Invalid value for parameter "${key}": ${value}`
+                  `Invalid value for parameter "${key}": ${value}`,
                 );
               }
             } else if (key === "server_max_window_bits") {
               const num = +value;
               if (!Number.isInteger(num) || num < 8 || num > 15) {
                 throw new TypeError(
-                  `Invalid value for parameter "${key}": ${value}`
+                  `Invalid value for parameter "${key}": ${value}`,
                 );
               }
               value = num;
-            } else if (key === "client_no_context_takeover" || key === "server_no_context_takeover") {
+            } else if (
+              key === "client_no_context_takeover" ||
+              key === "server_no_context_takeover"
+            ) {
               if (value !== true) {
                 throw new TypeError(
-                  `Invalid value for parameter "${key}": ${value}`
+                  `Invalid value for parameter "${key}": ${value}`,
                 );
               }
             } else {
@@ -2304,10 +2531,13 @@ var require_permessage_deflate = __commonJS({
         const endpoint = this._isServer ? "client" : "server";
         if (!this._inflate) {
           const key = `${endpoint}_max_window_bits`;
-          const windowBits = typeof this.params[key] !== "number" ? zlib.Z_DEFAULT_WINDOWBITS : this.params[key];
+          const windowBits =
+            typeof this.params[key] !== "number"
+              ? zlib.Z_DEFAULT_WINDOWBITS
+              : this.params[key];
           this._inflate = zlib.createInflateRaw({
             ...this._options.zlibInflateOptions,
-            windowBits
+            windowBits,
           });
           this._inflate[kPerMessageDeflate] = this;
           this._inflate[kTotalLength] = 0;
@@ -2328,7 +2558,7 @@ var require_permessage_deflate = __commonJS({
           }
           const data2 = bufferUtil.concat(
             this._inflate[kBuffers],
-            this._inflate[kTotalLength]
+            this._inflate[kTotalLength],
           );
           if (this._inflate._readableState.endEmitted) {
             this._inflate.close();
@@ -2355,10 +2585,13 @@ var require_permessage_deflate = __commonJS({
         const endpoint = this._isServer ? "server" : "client";
         if (!this._deflate) {
           const key = `${endpoint}_max_window_bits`;
-          const windowBits = typeof this.params[key] !== "number" ? zlib.Z_DEFAULT_WINDOWBITS : this.params[key];
+          const windowBits =
+            typeof this.params[key] !== "number"
+              ? zlib.Z_DEFAULT_WINDOWBITS
+              : this.params[key];
           this._deflate = zlib.createDeflateRaw({
             ...this._options.zlibDeflateOptions,
-            windowBits
+            windowBits,
           });
           this._deflate[kTotalLength] = 0;
           this._deflate[kBuffers] = [];
@@ -2372,10 +2605,14 @@ var require_permessage_deflate = __commonJS({
           }
           let data2 = bufferUtil.concat(
             this._deflate[kBuffers],
-            this._deflate[kTotalLength]
+            this._deflate[kTotalLength],
           );
           if (fin) {
-            data2 = new FastBuffer(data2.buffer, data2.byteOffset, data2.length - 4);
+            data2 = new FastBuffer(
+              data2.buffer,
+              data2.byteOffset,
+              data2.length - 4,
+            );
           }
           this._deflate[kCallback] = null;
           this._deflate[kTotalLength] = 0;
@@ -2394,7 +2631,10 @@ var require_permessage_deflate = __commonJS({
     }
     function inflateOnData(chunk) {
       this[kTotalLength] += chunk.length;
-      if (this[kPerMessageDeflate]._maxPayload < 1 || this[kTotalLength] <= this[kPerMessageDeflate]._maxPayload) {
+      if (
+        this[kPerMessageDeflate]._maxPayload < 1 ||
+        this[kTotalLength] <= this[kPerMessageDeflate]._maxPayload
+      ) {
         this[kBuffers].push(chunk);
         return;
       }
@@ -2409,10 +2649,13 @@ var require_permessage_deflate = __commonJS({
       err[kStatusCode] = 1007;
       this[kCallback](err);
     }
-  }
+  },
 });
 var require_fallback2 = __commonJS({
-  "../common/temp/node_modules/.pnpm/utf-8-validate@5.0.10/node_modules/utf-8-validate/fallback.js"(exports, module) {
+  "../common/temp/node_modules/.pnpm/utf-8-validate@5.0.10/node_modules/utf-8-validate/fallback.js"(
+    exports,
+    module,
+  ) {
     "use strict";
     function isValidUTF8(buf) {
       const len = buf.length;
@@ -2421,19 +2664,35 @@ var require_fallback2 = __commonJS({
         if ((buf[i] & 128) === 0) {
           i++;
         } else if ((buf[i] & 224) === 192) {
-          if (i + 1 === len || (buf[i + 1] & 192) !== 128 || (buf[i] & 254) === 192) {
+          if (
+            i + 1 === len ||
+            (buf[i + 1] & 192) !== 128 ||
+            (buf[i] & 254) === 192
+          ) {
             return false;
           }
           i += 2;
         } else if ((buf[i] & 240) === 224) {
-          if (i + 2 >= len || (buf[i + 1] & 192) !== 128 || (buf[i + 2] & 192) !== 128 || buf[i] === 224 && (buf[i + 1] & 224) === 128 || // overlong
-          buf[i] === 237 && (buf[i + 1] & 224) === 160) {
+          if (
+            i + 2 >= len ||
+            (buf[i + 1] & 192) !== 128 ||
+            (buf[i + 2] & 192) !== 128 ||
+            (buf[i] === 224 && (buf[i + 1] & 224) === 128) || // overlong
+            (buf[i] === 237 && (buf[i + 1] & 224) === 160)
+          ) {
             return false;
           }
           i += 3;
         } else if ((buf[i] & 248) === 240) {
-          if (i + 3 >= len || (buf[i + 1] & 192) !== 128 || (buf[i + 2] & 192) !== 128 || (buf[i + 3] & 192) !== 128 || buf[i] === 240 && (buf[i + 1] & 240) === 128 || // overlong
-          buf[i] === 244 && buf[i + 1] > 143 || buf[i] > 244) {
+          if (
+            i + 3 >= len ||
+            (buf[i + 1] & 192) !== 128 ||
+            (buf[i + 2] & 192) !== 128 ||
+            (buf[i + 3] & 192) !== 128 ||
+            (buf[i] === 240 && (buf[i + 1] & 240) === 128) || // overlong
+            (buf[i] === 244 && buf[i + 1] > 143) ||
+            buf[i] > 244
+          ) {
             return false;
           }
           i += 4;
@@ -2444,163 +2703,56 @@ var require_fallback2 = __commonJS({
       return true;
     }
     module.exports = isValidUTF8;
-  }
+  },
 });
 var require_utf_8_validate = __commonJS({
-  "../common/temp/node_modules/.pnpm/utf-8-validate@5.0.10/node_modules/utf-8-validate/index.js"(exports, module) {
+  "../common/temp/node_modules/.pnpm/utf-8-validate@5.0.10/node_modules/utf-8-validate/index.js"(
+    exports,
+    module,
+  ) {
     "use strict";
     try {
       module.exports = require_node_gyp_build2()(__dirname);
     } catch (e) {
       module.exports = require_fallback2();
     }
-  }
+  },
 });
 var require_validation = __commonJS({
-  "../common/temp/node_modules/.pnpm/ws@8.18.0_bufferutil@4.0.9_utf-8-validate@5.0.10/node_modules/ws/lib/validation.js"(exports, module) {
+  "../common/temp/node_modules/.pnpm/ws@8.18.0_bufferutil@4.0.9_utf-8-validate@5.0.10/node_modules/ws/lib/validation.js"(
+    exports,
+    module,
+  ) {
     "use strict";
     var { isUtf8 } = __require("buffer");
     var { hasBlob } = require_constants();
     var tokenChars = [
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
       // 0 - 15
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
       // 16 - 31
-      0,
-      1,
-      0,
-      1,
-      1,
-      1,
-      1,
-      1,
-      0,
-      0,
-      1,
-      1,
-      0,
-      1,
-      1,
-      0,
+      0, 1, 0, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 1, 0,
       // 32 - 47
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      0,
-      0,
-      0,
-      0,
-      0,
-      0,
+      1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0,
       // 48 - 63
-      0,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
+      0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
       // 64 - 79
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      0,
-      0,
-      0,
-      1,
-      1,
+      1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1,
       // 80 - 95
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
+      1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
       // 96 - 111
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      1,
-      0,
-      1,
-      0,
-      1,
-      0
+      1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0,
       // 112 - 127
     ];
     function isValidStatusCode(code2) {
-      return code2 >= 1e3 && code2 <= 1014 && code2 !== 1004 && code2 !== 1005 && code2 !== 1006 || code2 >= 3e3 && code2 <= 4999;
+      return (
+        (code2 >= 1e3 &&
+          code2 <= 1014 &&
+          code2 !== 1004 &&
+          code2 !== 1005 &&
+          code2 !== 1006) ||
+        (code2 >= 3e3 && code2 <= 4999)
+      );
     }
     function _isValidUTF8(buf) {
       const len = buf.length;
@@ -2609,19 +2761,35 @@ var require_validation = __commonJS({
         if ((buf[i] & 128) === 0) {
           i++;
         } else if ((buf[i] & 224) === 192) {
-          if (i + 1 === len || (buf[i + 1] & 192) !== 128 || (buf[i] & 254) === 192) {
+          if (
+            i + 1 === len ||
+            (buf[i + 1] & 192) !== 128 ||
+            (buf[i] & 254) === 192
+          ) {
             return false;
           }
           i += 2;
         } else if ((buf[i] & 240) === 224) {
-          if (i + 2 >= len || (buf[i + 1] & 192) !== 128 || (buf[i + 2] & 192) !== 128 || buf[i] === 224 && (buf[i + 1] & 224) === 128 || // Overlong
-          buf[i] === 237 && (buf[i + 1] & 224) === 160) {
+          if (
+            i + 2 >= len ||
+            (buf[i + 1] & 192) !== 128 ||
+            (buf[i + 2] & 192) !== 128 ||
+            (buf[i] === 224 && (buf[i + 1] & 224) === 128) || // Overlong
+            (buf[i] === 237 && (buf[i + 1] & 224) === 160)
+          ) {
             return false;
           }
           i += 3;
         } else if ((buf[i] & 248) === 240) {
-          if (i + 3 >= len || (buf[i + 1] & 192) !== 128 || (buf[i + 2] & 192) !== 128 || (buf[i + 3] & 192) !== 128 || buf[i] === 240 && (buf[i + 1] & 240) === 128 || // Overlong
-          buf[i] === 244 && buf[i + 1] > 143 || buf[i] > 244) {
+          if (
+            i + 3 >= len ||
+            (buf[i + 1] & 192) !== 128 ||
+            (buf[i + 2] & 192) !== 128 ||
+            (buf[i + 3] & 192) !== 128 ||
+            (buf[i] === 240 && (buf[i + 1] & 240) === 128) || // Overlong
+            (buf[i] === 244 && buf[i + 1] > 143) ||
+            buf[i] > 244
+          ) {
             return false;
           }
           i += 4;
@@ -2632,40 +2800,46 @@ var require_validation = __commonJS({
       return true;
     }
     function isBlob(value) {
-      return hasBlob && typeof value === "object" && typeof value.arrayBuffer === "function" && typeof value.type === "string" && typeof value.stream === "function" && (value[Symbol.toStringTag] === "Blob" || value[Symbol.toStringTag] === "File");
+      return (
+        hasBlob &&
+        typeof value === "object" &&
+        typeof value.arrayBuffer === "function" &&
+        typeof value.type === "string" &&
+        typeof value.stream === "function" &&
+        (value[Symbol.toStringTag] === "Blob" ||
+          value[Symbol.toStringTag] === "File")
+      );
     }
     module.exports = {
       isBlob,
       isValidStatusCode,
       isValidUTF8: _isValidUTF8,
-      tokenChars
+      tokenChars,
     };
     if (isUtf8) {
-      module.exports.isValidUTF8 = function(buf) {
+      module.exports.isValidUTF8 = function (buf) {
         return buf.length < 24 ? _isValidUTF8(buf) : isUtf8(buf);
       };
     } else if (!process.env.WS_NO_UTF_8_VALIDATE) {
       try {
         const isValidUTF8 = require_utf_8_validate();
-        module.exports.isValidUTF8 = function(buf) {
+        module.exports.isValidUTF8 = function (buf) {
           return buf.length < 32 ? _isValidUTF8(buf) : isValidUTF8(buf);
         };
-      } catch (e) {
-      }
+      } catch (e) {}
     }
-  }
+  },
 });
 var require_receiver = __commonJS({
-  "../common/temp/node_modules/.pnpm/ws@8.18.0_bufferutil@4.0.9_utf-8-validate@5.0.10/node_modules/ws/lib/receiver.js"(exports, module) {
+  "../common/temp/node_modules/.pnpm/ws@8.18.0_bufferutil@4.0.9_utf-8-validate@5.0.10/node_modules/ws/lib/receiver.js"(
+    exports,
+    module,
+  ) {
     "use strict";
     var { Writable } = __require("stream");
     var PerMessageDeflate = require_permessage_deflate();
-    var {
-      BINARY_TYPES,
-      EMPTY_BUFFER,
-      kStatusCode,
-      kWebSocket
-    } = require_constants();
+    var { BINARY_TYPES, EMPTY_BUFFER, kStatusCode, kWebSocket } =
+      require_constants();
     var { concat, toArrayBuffer, unmask } = require_buffer_util();
     var { isValidStatusCode, isValidUTF8 } = require_validation();
     var FastBuffer = Buffer[Symbol.species];
@@ -2695,7 +2869,10 @@ var require_receiver = __commonJS({
        */
       constructor(options = {}) {
         super();
-        this._allowSynchronousEvents = options.allowSynchronousEvents !== void 0 ? options.allowSynchronousEvents : true;
+        this._allowSynchronousEvents =
+          options.allowSynchronousEvents !== void 0
+            ? options.allowSynchronousEvents
+            : true;
         this._binaryType = options.binaryType || BINARY_TYPES[0];
         this._extensions = options.extensions || {};
         this._isServer = !!options.isServer;
@@ -2747,7 +2924,7 @@ var require_receiver = __commonJS({
           this._buffers[0] = new FastBuffer(
             buf.buffer,
             buf.byteOffset + n,
-            buf.length - n
+            buf.length - n,
           );
           return new FastBuffer(buf.buffer, buf.byteOffset, n);
         }
@@ -2762,7 +2939,7 @@ var require_receiver = __commonJS({
             this._buffers[0] = new FastBuffer(
               buf.buffer,
               buf.byteOffset + n,
-              buf.length - n
+              buf.length - n,
             );
           }
           n -= buf.length;
@@ -2820,7 +2997,7 @@ var require_receiver = __commonJS({
             "RSV2 and RSV3 must be clear",
             true,
             1002,
-            "WS_ERR_UNEXPECTED_RSV_2_3"
+            "WS_ERR_UNEXPECTED_RSV_2_3",
           );
           cb(error);
           return;
@@ -2832,7 +3009,7 @@ var require_receiver = __commonJS({
             "RSV1 must be clear",
             true,
             1002,
-            "WS_ERR_UNEXPECTED_RSV_1"
+            "WS_ERR_UNEXPECTED_RSV_1",
           );
           cb(error);
           return;
@@ -2847,7 +3024,7 @@ var require_receiver = __commonJS({
               "RSV1 must be clear",
               true,
               1002,
-              "WS_ERR_UNEXPECTED_RSV_1"
+              "WS_ERR_UNEXPECTED_RSV_1",
             );
             cb(error);
             return;
@@ -2858,7 +3035,7 @@ var require_receiver = __commonJS({
               "invalid opcode 0",
               true,
               1002,
-              "WS_ERR_INVALID_OPCODE"
+              "WS_ERR_INVALID_OPCODE",
             );
             cb(error);
             return;
@@ -2871,7 +3048,7 @@ var require_receiver = __commonJS({
               `invalid opcode ${this._opcode}`,
               true,
               1002,
-              "WS_ERR_INVALID_OPCODE"
+              "WS_ERR_INVALID_OPCODE",
             );
             cb(error);
             return;
@@ -2884,7 +3061,7 @@ var require_receiver = __commonJS({
               "FIN must be set",
               true,
               1002,
-              "WS_ERR_EXPECTED_FIN"
+              "WS_ERR_EXPECTED_FIN",
             );
             cb(error);
             return;
@@ -2895,18 +3072,21 @@ var require_receiver = __commonJS({
               "RSV1 must be clear",
               true,
               1002,
-              "WS_ERR_UNEXPECTED_RSV_1"
+              "WS_ERR_UNEXPECTED_RSV_1",
             );
             cb(error);
             return;
           }
-          if (this._payloadLength > 125 || this._opcode === 8 && this._payloadLength === 1) {
+          if (
+            this._payloadLength > 125 ||
+            (this._opcode === 8 && this._payloadLength === 1)
+          ) {
             const error = this.createError(
               RangeError,
               `invalid payload length ${this._payloadLength}`,
               true,
               1002,
-              "WS_ERR_INVALID_CONTROL_PAYLOAD_LENGTH"
+              "WS_ERR_INVALID_CONTROL_PAYLOAD_LENGTH",
             );
             cb(error);
             return;
@@ -2917,7 +3097,7 @@ var require_receiver = __commonJS({
             `invalid opcode ${this._opcode}`,
             true,
             1002,
-            "WS_ERR_INVALID_OPCODE"
+            "WS_ERR_INVALID_OPCODE",
           );
           cb(error);
           return;
@@ -2931,7 +3111,7 @@ var require_receiver = __commonJS({
               "MASK must be set",
               true,
               1002,
-              "WS_ERR_EXPECTED_MASK"
+              "WS_ERR_EXPECTED_MASK",
             );
             cb(error);
             return;
@@ -2942,13 +3122,14 @@ var require_receiver = __commonJS({
             "MASK must be clear",
             true,
             1002,
-            "WS_ERR_UNEXPECTED_MASK"
+            "WS_ERR_UNEXPECTED_MASK",
           );
           cb(error);
           return;
         }
         if (this._payloadLength === 126) this._state = GET_PAYLOAD_LENGTH_16;
-        else if (this._payloadLength === 127) this._state = GET_PAYLOAD_LENGTH_64;
+        else if (this._payloadLength === 127)
+          this._state = GET_PAYLOAD_LENGTH_64;
         else this.haveLength(cb);
       }
       /**
@@ -2984,7 +3165,7 @@ var require_receiver = __commonJS({
             "Unsupported WebSocket frame: payload length > 2^53 - 1",
             false,
             1009,
-            "WS_ERR_UNSUPPORTED_DATA_PAYLOAD_LENGTH"
+            "WS_ERR_UNSUPPORTED_DATA_PAYLOAD_LENGTH",
           );
           cb(error);
           return;
@@ -3001,13 +3182,16 @@ var require_receiver = __commonJS({
       haveLength(cb) {
         if (this._payloadLength && this._opcode < 8) {
           this._totalPayloadLength += this._payloadLength;
-          if (this._totalPayloadLength > this._maxPayload && this._maxPayload > 0) {
+          if (
+            this._totalPayloadLength > this._maxPayload &&
+            this._maxPayload > 0
+          ) {
             const error = this.createError(
               RangeError,
               "Max payload size exceeded",
               false,
               1009,
-              "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH"
+              "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH",
             );
             cb(error);
             return;
@@ -3043,7 +3227,11 @@ var require_receiver = __commonJS({
             return;
           }
           data = this.consume(this._payloadLength);
-          if (this._masked && (this._mask[0] | this._mask[1] | this._mask[2] | this._mask[3]) !== 0) {
+          if (
+            this._masked &&
+            (this._mask[0] | this._mask[1] | this._mask[2] | this._mask[3]) !==
+              0
+          ) {
             unmask(data, this._mask);
           }
         }
@@ -3070,18 +3258,22 @@ var require_receiver = __commonJS({
        * @private
        */
       decompress(data, cb) {
-        const perMessageDeflate = this._extensions[PerMessageDeflate.extensionName];
+        const perMessageDeflate =
+          this._extensions[PerMessageDeflate.extensionName];
         perMessageDeflate.decompress(data, this._fin, (err, buf) => {
           if (err) return cb(err);
           if (buf.length) {
             this._messageLength += buf.length;
-            if (this._messageLength > this._maxPayload && this._maxPayload > 0) {
+            if (
+              this._messageLength > this._maxPayload &&
+              this._maxPayload > 0
+            ) {
               const error = this.createError(
                 RangeError,
                 "Max payload size exceeded",
                 false,
                 1009,
-                "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH"
+                "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH",
               );
               cb(error);
               return;
@@ -3139,7 +3331,7 @@ var require_receiver = __commonJS({
               "invalid UTF-8 sequence",
               true,
               1007,
-              "WS_ERR_INVALID_UTF8"
+              "WS_ERR_INVALID_UTF8",
             );
             cb(error);
             return;
@@ -3178,7 +3370,7 @@ var require_receiver = __commonJS({
                 `invalid status code ${code2}`,
                 true,
                 1002,
-                "WS_ERR_INVALID_CLOSE_CODE"
+                "WS_ERR_INVALID_CLOSE_CODE",
               );
               cb(error);
               return;
@@ -3186,7 +3378,7 @@ var require_receiver = __commonJS({
             const buf = new FastBuffer(
               data.buffer,
               data.byteOffset + 2,
-              data.length - 2
+              data.length - 2,
             );
             if (!this._skipUTF8Validation && !isValidUTF8(buf)) {
               const error = this.createError(
@@ -3194,7 +3386,7 @@ var require_receiver = __commonJS({
                 "invalid UTF-8 sequence",
                 true,
                 1007,
-                "WS_ERR_INVALID_UTF8"
+                "WS_ERR_INVALID_UTF8",
               );
               cb(error);
               return;
@@ -3234,7 +3426,7 @@ var require_receiver = __commonJS({
         this._loop = false;
         this._errored = true;
         const err = new ErrorCtor(
-          prefix ? `Invalid WebSocket frame: ${message}` : message
+          prefix ? `Invalid WebSocket frame: ${message}` : message,
         );
         Error.captureStackTrace(err, this.createError);
         err.code = errorCode;
@@ -3243,10 +3435,13 @@ var require_receiver = __commonJS({
       }
     };
     module.exports = Receiver2;
-  }
+  },
 });
 var require_sender = __commonJS({
-  "../common/temp/node_modules/.pnpm/ws@8.18.0_bufferutil@4.0.9_utf-8-validate@5.0.10/node_modules/ws/lib/sender.js"(exports, module) {
+  "../common/temp/node_modules/.pnpm/ws@8.18.0_bufferutil@4.0.9_utf-8-validate@5.0.10/node_modules/ws/lib/sender.js"(
+    exports,
+    module,
+  ) {
     "use strict";
     var { Duplex } = __require("stream");
     var { randomFillSync } = __require("crypto");
@@ -3334,7 +3529,10 @@ var require_sender = __commonJS({
         }
         let dataLength;
         if (typeof data === "string") {
-          if ((!options.mask || skipMasking) && options[kByteLength] !== void 0) {
+          if (
+            (!options.mask || skipMasking) &&
+            options[kByteLength] !== void 0
+          ) {
             dataLength = options[kByteLength];
           } else {
             data = Buffer.from(data);
@@ -3390,14 +3588,18 @@ var require_sender = __commonJS({
         if (code2 === void 0) {
           buf = EMPTY_BUFFER;
         } else if (typeof code2 !== "number" || !isValidStatusCode(code2)) {
-          throw new TypeError("First argument must be a valid error code number");
+          throw new TypeError(
+            "First argument must be a valid error code number",
+          );
         } else if (data === void 0 || !data.length) {
           buf = Buffer.allocUnsafe(2);
           buf.writeUInt16BE(code2, 0);
         } else {
           const length = Buffer.byteLength(data);
           if (length > 123) {
-            throw new RangeError("The message must not be greater than 123 bytes");
+            throw new RangeError(
+              "The message must not be greater than 123 bytes",
+            );
           }
           buf = Buffer.allocUnsafe(2 + length);
           buf.writeUInt16BE(code2, 0);
@@ -3415,7 +3617,7 @@ var require_sender = __commonJS({
           maskBuffer: this._maskBuffer,
           opcode: 8,
           readOnly: false,
-          rsv1: false
+          rsv1: false,
         };
         if (this._state !== DEFAULT) {
           this.enqueue([this.dispatch, buf, false, options, cb]);
@@ -3446,7 +3648,9 @@ var require_sender = __commonJS({
           readOnly = toBuffer.readOnly;
         }
         if (byteLength > 125) {
-          throw new RangeError("The data size must not be greater than 125 bytes");
+          throw new RangeError(
+            "The data size must not be greater than 125 bytes",
+          );
         }
         const options = {
           [kByteLength]: byteLength,
@@ -3456,7 +3660,7 @@ var require_sender = __commonJS({
           maskBuffer: this._maskBuffer,
           opcode: 9,
           readOnly,
-          rsv1: false
+          rsv1: false,
         };
         if (isBlob(data)) {
           if (this._state !== DEFAULT) {
@@ -3493,7 +3697,9 @@ var require_sender = __commonJS({
           readOnly = toBuffer.readOnly;
         }
         if (byteLength > 125) {
-          throw new RangeError("The data size must not be greater than 125 bytes");
+          throw new RangeError(
+            "The data size must not be greater than 125 bytes",
+          );
         }
         const options = {
           [kByteLength]: byteLength,
@@ -3503,7 +3709,7 @@ var require_sender = __commonJS({
           maskBuffer: this._maskBuffer,
           opcode: 10,
           readOnly,
-          rsv1: false
+          rsv1: false,
         };
         if (isBlob(data)) {
           if (this._state !== DEFAULT) {
@@ -3534,7 +3740,8 @@ var require_sender = __commonJS({
        * @public
        */
       send(data, options, cb) {
-        const perMessageDeflate = this._extensions[PerMessageDeflate.extensionName];
+        const perMessageDeflate =
+          this._extensions[PerMessageDeflate.extensionName];
         let opcode = options.binary ? 2 : 1;
         let rsv1 = options.compress;
         let byteLength;
@@ -3552,7 +3759,15 @@ var require_sender = __commonJS({
         }
         if (this._firstFragment) {
           this._firstFragment = false;
-          if (rsv1 && perMessageDeflate && perMessageDeflate.params[perMessageDeflate._isServer ? "server_no_context_takeover" : "client_no_context_takeover"]) {
+          if (
+            rsv1 &&
+            perMessageDeflate &&
+            perMessageDeflate.params[
+              perMessageDeflate._isServer
+                ? "server_no_context_takeover"
+                : "client_no_context_takeover"
+            ]
+          ) {
             rsv1 = byteLength >= perMessageDeflate._threshold;
           }
           this._compress = rsv1;
@@ -3569,7 +3784,7 @@ var require_sender = __commonJS({
           maskBuffer: this._maskBuffer,
           opcode,
           readOnly,
-          rsv1
+          rsv1,
         };
         if (isBlob(data)) {
           if (this._state !== DEFAULT) {
@@ -3609,26 +3824,29 @@ var require_sender = __commonJS({
       getBlobData(blob, compress, options, cb) {
         this._bufferedBytes += options[kByteLength];
         this._state = GET_BLOB_DATA;
-        blob.arrayBuffer().then((arrayBuffer) => {
-          if (this._socket.destroyed) {
-            const err = new Error(
-              "The socket was closed while the blob was being read"
-            );
-            process.nextTick(callCallbacks, this, err, cb);
-            return;
-          }
-          this._bufferedBytes -= options[kByteLength];
-          const data = toBuffer(arrayBuffer);
-          if (!compress) {
-            this._state = DEFAULT;
-            this.sendFrame(_Sender.frame(data, options), cb);
-            this.dequeue();
-          } else {
-            this.dispatch(data, compress, options, cb);
-          }
-        }).catch((err) => {
-          process.nextTick(onError, this, err, cb);
-        });
+        blob
+          .arrayBuffer()
+          .then((arrayBuffer) => {
+            if (this._socket.destroyed) {
+              const err = new Error(
+                "The socket was closed while the blob was being read",
+              );
+              process.nextTick(callCallbacks, this, err, cb);
+              return;
+            }
+            this._bufferedBytes -= options[kByteLength];
+            const data = toBuffer(arrayBuffer);
+            if (!compress) {
+              this._state = DEFAULT;
+              this.sendFrame(_Sender.frame(data, options), cb);
+              this.dequeue();
+            } else {
+              this.dispatch(data, compress, options, cb);
+            }
+          })
+          .catch((err) => {
+            process.nextTick(onError, this, err, cb);
+          });
       }
       /**
        * Dispatches a message.
@@ -3658,13 +3876,14 @@ var require_sender = __commonJS({
           this.sendFrame(_Sender.frame(data, options), cb);
           return;
         }
-        const perMessageDeflate = this._extensions[PerMessageDeflate.extensionName];
+        const perMessageDeflate =
+          this._extensions[PerMessageDeflate.extensionName];
         this._bufferedBytes += options[kByteLength];
         this._state = DEFLATING;
         perMessageDeflate.compress(data, options.fin, (_, buf) => {
           if (this._socket.destroyed) {
             const err = new Error(
-              "The socket was closed while data was being compressed"
+              "The socket was closed while data was being compressed",
             );
             callCallbacks(this, err, cb);
             return;
@@ -3729,10 +3948,13 @@ var require_sender = __commonJS({
       callCallbacks(sender, err, cb);
       sender.onerror(err);
     }
-  }
+  },
 });
 var require_event_target = __commonJS({
-  "../common/temp/node_modules/.pnpm/ws@8.18.0_bufferutil@4.0.9_utf-8-validate@5.0.10/node_modules/ws/lib/event-target.js"(exports, module) {
+  "../common/temp/node_modules/.pnpm/ws@8.18.0_bufferutil@4.0.9_utf-8-validate@5.0.10/node_modules/ws/lib/event-target.js"(
+    exports,
+    module,
+  ) {
     "use strict";
     var { kForOnEventAttribute, kListener } = require_constants();
     var kCode = Symbol("kCode");
@@ -3787,7 +4009,8 @@ var require_event_target = __commonJS({
         super(type);
         this[kCode] = options.code === void 0 ? 0 : options.code;
         this[kReason] = options.reason === void 0 ? "" : options.reason;
-        this[kWasClean] = options.wasClean === void 0 ? false : options.wasClean;
+        this[kWasClean] =
+          options.wasClean === void 0 ? false : options.wasClean;
       }
       /**
        * @type {Number}
@@ -3810,7 +4033,9 @@ var require_event_target = __commonJS({
     };
     Object.defineProperty(CloseEvent.prototype, "code", { enumerable: true });
     Object.defineProperty(CloseEvent.prototype, "reason", { enumerable: true });
-    Object.defineProperty(CloseEvent.prototype, "wasClean", { enumerable: true });
+    Object.defineProperty(CloseEvent.prototype, "wasClean", {
+      enumerable: true,
+    });
     var ErrorEvent = class extends Event {
       /**
        * Create a new `ErrorEvent`.
@@ -3840,7 +4065,9 @@ var require_event_target = __commonJS({
       }
     };
     Object.defineProperty(ErrorEvent.prototype, "error", { enumerable: true });
-    Object.defineProperty(ErrorEvent.prototype, "message", { enumerable: true });
+    Object.defineProperty(ErrorEvent.prototype, "message", {
+      enumerable: true,
+    });
     var MessageEvent = class extends Event {
       /**
        * Create a new `MessageEvent`.
@@ -3877,7 +4104,11 @@ var require_event_target = __commonJS({
        */
       addEventListener(type, handler, options = {}) {
         for (const listener of this.listeners(type)) {
-          if (!options[kForOnEventAttribute] && listener[kListener] === handler && !listener[kForOnEventAttribute]) {
+          if (
+            !options[kForOnEventAttribute] &&
+            listener[kListener] === handler &&
+            !listener[kForOnEventAttribute]
+          ) {
             return;
           }
         }
@@ -3885,7 +4116,7 @@ var require_event_target = __commonJS({
         if (type === "message") {
           wrapper = function onMessage(data, isBinary) {
             const event = new MessageEvent("message", {
-              data: isBinary ? data : data.toString()
+              data: isBinary ? data : data.toString(),
             });
             event[kTarget] = this;
             callListener(handler, this, event);
@@ -3895,7 +4126,7 @@ var require_event_target = __commonJS({
             const event = new CloseEvent("close", {
               code: code2,
               reason: message.toString(),
-              wasClean: this._closeFrameReceived && this._closeFrameSent
+              wasClean: this._closeFrameReceived && this._closeFrameSent,
             });
             event[kTarget] = this;
             callListener(handler, this, event);
@@ -3904,7 +4135,7 @@ var require_event_target = __commonJS({
           wrapper = function onError(error) {
             const event = new ErrorEvent("error", {
               error,
-              message: error.message
+              message: error.message,
             });
             event[kTarget] = this;
             callListener(handler, this, event);
@@ -3935,19 +4166,22 @@ var require_event_target = __commonJS({
        */
       removeEventListener(type, handler) {
         for (const listener of this.listeners(type)) {
-          if (listener[kListener] === handler && !listener[kForOnEventAttribute]) {
+          if (
+            listener[kListener] === handler &&
+            !listener[kForOnEventAttribute]
+          ) {
             this.removeListener(type, listener);
             break;
           }
         }
-      }
+      },
     };
     module.exports = {
       CloseEvent,
       ErrorEvent,
       Event,
       EventTarget,
-      MessageEvent
+      MessageEvent,
     };
     function callListener(listener, thisArg, event) {
       if (typeof listener === "object" && listener.handleEvent) {
@@ -3956,10 +4190,13 @@ var require_event_target = __commonJS({
         listener.call(thisArg, event);
       }
     }
-  }
+  },
 });
 var require_extension = __commonJS({
-  "../common/temp/node_modules/.pnpm/ws@8.18.0_bufferutil@4.0.9_utf-8-validate@5.0.10/node_modules/ws/lib/extension.js"(exports, module) {
+  "../common/temp/node_modules/.pnpm/ws@8.18.0_bufferutil@4.0.9_utf-8-validate@5.0.10/node_modules/ws/lib/extension.js"(
+    exports,
+    module,
+  ) {
     "use strict";
     var { tokenChars } = require_validation();
     function push(dest, name2, elem) {
@@ -4092,25 +4329,36 @@ var require_extension = __commonJS({
       return offers;
     }
     function format(extensions) {
-      return Object.keys(extensions).map((extension) => {
-        let configurations = extensions[extension];
-        if (!Array.isArray(configurations)) configurations = [configurations];
-        return configurations.map((params) => {
-          return [extension].concat(
-            Object.keys(params).map((k) => {
-              let values = params[k];
-              if (!Array.isArray(values)) values = [values];
-              return values.map((v2) => v2 === true ? k : `${k}=${v2}`).join("; ");
+      return Object.keys(extensions)
+        .map((extension) => {
+          let configurations = extensions[extension];
+          if (!Array.isArray(configurations)) configurations = [configurations];
+          return configurations
+            .map((params) => {
+              return [extension]
+                .concat(
+                  Object.keys(params).map((k) => {
+                    let values = params[k];
+                    if (!Array.isArray(values)) values = [values];
+                    return values
+                      .map((v2) => (v2 === true ? k : `${k}=${v2}`))
+                      .join("; ");
+                  }),
+                )
+                .join("; ");
             })
-          ).join("; ");
-        }).join(", ");
-      }).join(", ");
+            .join(", ");
+        })
+        .join(", ");
     }
     module.exports = { format, parse };
-  }
+  },
 });
 var require_websocket = __commonJS({
-  "../common/temp/node_modules/.pnpm/ws@8.18.0_bufferutil@4.0.9_utf-8-validate@5.0.10/node_modules/ws/lib/websocket.js"(exports, module) {
+  "../common/temp/node_modules/.pnpm/ws@8.18.0_bufferutil@4.0.9_utf-8-validate@5.0.10/node_modules/ws/lib/websocket.js"(
+    exports,
+    module,
+  ) {
     "use strict";
     var EventEmitter = __require("events");
     var https = __require("https");
@@ -4132,10 +4380,10 @@ var require_websocket = __commonJS({
       kListener,
       kStatusCode,
       kWebSocket,
-      NOOP
+      NOOP,
     } = require_constants();
     var {
-      EventTarget: { addEventListener, removeEventListener }
+      EventTarget: { addEventListener, removeEventListener },
     } = require_event_target();
     var { format, parse } = require_extension();
     var { toBuffer } = require_buffer_util();
@@ -4290,9 +4538,13 @@ var require_websocket = __commonJS({
           extensions: this._extensions,
           isServer: this._isServer,
           maxPayload: options.maxPayload,
-          skipUTF8Validation: options.skipUTF8Validation
+          skipUTF8Validation: options.skipUTF8Validation,
         });
-        const sender = new Sender2(socket, this._extensions, options.generateMask);
+        const sender = new Sender2(
+          socket,
+          this._extensions,
+          options.generateMask,
+        );
         this._receiver = receiver;
         this._sender = sender;
         this._socket = socket;
@@ -4357,12 +4609,17 @@ var require_websocket = __commonJS({
       close(code2, data) {
         if (this.readyState === _WebSocket.CLOSED) return;
         if (this.readyState === _WebSocket.CONNECTING) {
-          const msg = "WebSocket was closed before the connection was established";
+          const msg =
+            "WebSocket was closed before the connection was established";
           abortHandshake(this, this._req, msg);
           return;
         }
         if (this.readyState === _WebSocket.CLOSING) {
-          if (this._closeFrameSent && (this._closeFrameReceived || this._receiver._writableState.errorEmitted)) {
+          if (
+            this._closeFrameSent &&
+            (this._closeFrameReceived ||
+              this._receiver._writableState.errorEmitted)
+          ) {
             this._socket.end();
           }
           return;
@@ -4371,7 +4628,10 @@ var require_websocket = __commonJS({
         this._sender.close(code2, data, !this._isServer, (err) => {
           if (err) return;
           this._closeFrameSent = true;
-          if (this._closeFrameReceived || this._receiver._writableState.errorEmitted) {
+          if (
+            this._closeFrameReceived ||
+            this._receiver._writableState.errorEmitted
+          ) {
             this._socket.end();
           }
         });
@@ -4383,7 +4643,10 @@ var require_websocket = __commonJS({
        * @public
        */
       pause() {
-        if (this.readyState === _WebSocket.CONNECTING || this.readyState === _WebSocket.CLOSED) {
+        if (
+          this.readyState === _WebSocket.CONNECTING ||
+          this.readyState === _WebSocket.CLOSED
+        ) {
           return;
         }
         this._paused = true;
@@ -4449,7 +4712,10 @@ var require_websocket = __commonJS({
        * @public
        */
       resume() {
-        if (this.readyState === _WebSocket.CONNECTING || this.readyState === _WebSocket.CLOSED) {
+        if (
+          this.readyState === _WebSocket.CONNECTING ||
+          this.readyState === _WebSocket.CLOSED
+        ) {
           return;
         }
         this._paused = false;
@@ -4488,7 +4754,7 @@ var require_websocket = __commonJS({
           mask: !this._isServer,
           compress: true,
           fin: true,
-          ...options
+          ...options,
         };
         if (!this._extensions[PerMessageDeflate.extensionName]) {
           opts.compress = false;
@@ -4503,7 +4769,8 @@ var require_websocket = __commonJS({
       terminate() {
         if (this.readyState === _WebSocket.CLOSED) return;
         if (this.readyState === _WebSocket.CONNECTING) {
-          const msg = "WebSocket was closed before the connection was established";
+          const msg =
+            "WebSocket was closed before the connection was established";
           abortHandshake(this, this._req, msg);
           return;
         }
@@ -4515,35 +4782,35 @@ var require_websocket = __commonJS({
     };
     Object.defineProperty(WebSocket2, "CONNECTING", {
       enumerable: true,
-      value: readyStates.indexOf("CONNECTING")
+      value: readyStates.indexOf("CONNECTING"),
     });
     Object.defineProperty(WebSocket2.prototype, "CONNECTING", {
       enumerable: true,
-      value: readyStates.indexOf("CONNECTING")
+      value: readyStates.indexOf("CONNECTING"),
     });
     Object.defineProperty(WebSocket2, "OPEN", {
       enumerable: true,
-      value: readyStates.indexOf("OPEN")
+      value: readyStates.indexOf("OPEN"),
     });
     Object.defineProperty(WebSocket2.prototype, "OPEN", {
       enumerable: true,
-      value: readyStates.indexOf("OPEN")
+      value: readyStates.indexOf("OPEN"),
     });
     Object.defineProperty(WebSocket2, "CLOSING", {
       enumerable: true,
-      value: readyStates.indexOf("CLOSING")
+      value: readyStates.indexOf("CLOSING"),
     });
     Object.defineProperty(WebSocket2.prototype, "CLOSING", {
       enumerable: true,
-      value: readyStates.indexOf("CLOSING")
+      value: readyStates.indexOf("CLOSING"),
     });
     Object.defineProperty(WebSocket2, "CLOSED", {
       enumerable: true,
-      value: readyStates.indexOf("CLOSED")
+      value: readyStates.indexOf("CLOSED"),
     });
     Object.defineProperty(WebSocket2.prototype, "CLOSED", {
       enumerable: true,
-      value: readyStates.indexOf("CLOSED")
+      value: readyStates.indexOf("CLOSED"),
     });
     [
       "binaryType",
@@ -4552,9 +4819,11 @@ var require_websocket = __commonJS({
       "isPaused",
       "protocol",
       "readyState",
-      "url"
+      "url",
     ].forEach((property) => {
-      Object.defineProperty(WebSocket2.prototype, property, { enumerable: true });
+      Object.defineProperty(WebSocket2.prototype, property, {
+        enumerable: true,
+      });
     });
     ["open", "error", "close", "message"].forEach((method) => {
       Object.defineProperty(WebSocket2.prototype, `on${method}`, {
@@ -4574,9 +4843,9 @@ var require_websocket = __commonJS({
           }
           if (typeof handler !== "function") return;
           this.addEventListener(method, handler, {
-            [kForOnEventAttribute]: true
+            [kForOnEventAttribute]: true,
           });
-        }
+        },
       });
     });
     WebSocket2.prototype.addEventListener = addEventListener;
@@ -4600,12 +4869,12 @@ var require_websocket = __commonJS({
         method: "GET",
         host: void 0,
         path: void 0,
-        port: void 0
+        port: void 0,
       };
       websocket._autoPong = opts.autoPong;
       if (!protocolVersions.includes(opts.protocolVersion)) {
         throw new RangeError(
-          `Unsupported protocol version: ${opts.protocolVersion} (supported versions: ${protocolVersions.join(", ")})`
+          `Unsupported protocol version: ${opts.protocolVersion} (supported versions: ${protocolVersions.join(", ")})`,
         );
       }
       let parsedUrl;
@@ -4648,16 +4917,19 @@ var require_websocket = __commonJS({
       const request = isSecure ? https.request : http.request;
       const protocolSet = /* @__PURE__ */ new Set();
       let perMessageDeflate;
-      opts.createConnection = opts.createConnection || (isSecure ? tlsConnect : netConnect);
+      opts.createConnection =
+        opts.createConnection || (isSecure ? tlsConnect : netConnect);
       opts.defaultPort = opts.defaultPort || defaultPort;
       opts.port = parsedUrl.port || defaultPort;
-      opts.host = parsedUrl.hostname.startsWith("[") ? parsedUrl.hostname.slice(1, -1) : parsedUrl.hostname;
+      opts.host = parsedUrl.hostname.startsWith("[")
+        ? parsedUrl.hostname.slice(1, -1)
+        : parsedUrl.hostname;
       opts.headers = {
         ...opts.headers,
         "Sec-WebSocket-Version": opts.protocolVersion,
         "Sec-WebSocket-Key": key,
         Connection: "Upgrade",
-        Upgrade: "websocket"
+        Upgrade: "websocket",
       };
       opts.path = parsedUrl.pathname + parsedUrl.search;
       opts.timeout = opts.handshakeTimeout;
@@ -4665,17 +4937,21 @@ var require_websocket = __commonJS({
         perMessageDeflate = new PerMessageDeflate(
           opts.perMessageDeflate !== true ? opts.perMessageDeflate : {},
           false,
-          opts.maxPayload
+          opts.maxPayload,
         );
         opts.headers["Sec-WebSocket-Extensions"] = format({
-          [PerMessageDeflate.extensionName]: perMessageDeflate.offer()
+          [PerMessageDeflate.extensionName]: perMessageDeflate.offer(),
         });
       }
       if (protocols.length) {
         for (const protocol of protocols) {
-          if (typeof protocol !== "string" || !subprotocolRegex.test(protocol) || protocolSet.has(protocol)) {
+          if (
+            typeof protocol !== "string" ||
+            !subprotocolRegex.test(protocol) ||
+            protocolSet.has(protocol)
+          ) {
             throw new SyntaxError(
-              "An invalid or duplicated subprotocol was specified"
+              "An invalid or duplicated subprotocol was specified",
             );
           }
           protocolSet.add(protocol);
@@ -4702,7 +4978,9 @@ var require_websocket = __commonJS({
         if (websocket._redirects === 0) {
           websocket._originalIpc = isIpcUrl;
           websocket._originalSecure = isSecure;
-          websocket._originalHostOrSocketPath = isIpcUrl ? opts.socketPath : parsedUrl.host;
+          websocket._originalHostOrSocketPath = isIpcUrl
+            ? opts.socketPath
+            : parsedUrl.host;
           const headers = options && options.headers;
           options = { ...options, headers: {} };
           if (headers) {
@@ -4711,8 +4989,14 @@ var require_websocket = __commonJS({
             }
           }
         } else if (websocket.listenerCount("redirect") === 0) {
-          const isSameHost = isIpcUrl ? websocket._originalIpc ? opts.socketPath === websocket._originalHostOrSocketPath : false : websocket._originalIpc ? false : parsedUrl.host === websocket._originalHostOrSocketPath;
-          if (!isSameHost || websocket._originalSecure && !isSecure) {
+          const isSameHost = isIpcUrl
+            ? websocket._originalIpc
+              ? opts.socketPath === websocket._originalHostOrSocketPath
+              : false
+            : websocket._originalIpc
+              ? false
+              : parsedUrl.host === websocket._originalHostOrSocketPath;
+          if (!isSameHost || (websocket._originalSecure && !isSecure)) {
             delete opts.headers.authorization;
             delete opts.headers.cookie;
             if (!isSameHost) delete opts.headers.host;
@@ -4720,7 +5004,8 @@ var require_websocket = __commonJS({
           }
         }
         if (opts.auth && !options.headers.authorization) {
-          options.headers.authorization = "Basic " + Buffer.from(opts.auth).toString("base64");
+          options.headers.authorization =
+            "Basic " + Buffer.from(opts.auth).toString("base64");
         }
         req = websocket._req = request(opts);
         if (websocket._redirects) {
@@ -4742,7 +5027,12 @@ var require_websocket = __commonJS({
       req.on("response", (res) => {
         const location = res.headers.location;
         const statusCode = res.statusCode;
-        if (location && opts.followRedirects && statusCode >= 300 && statusCode < 400) {
+        if (
+          location &&
+          opts.followRedirects &&
+          statusCode >= 300 &&
+          statusCode < 400
+        ) {
           if (++websocket._redirects > opts.maxRedirects) {
             abortHandshake(websocket, req, "Maximum redirects exceeded");
             return;
@@ -4761,7 +5051,7 @@ var require_websocket = __commonJS({
           abortHandshake(
             websocket,
             req,
-            `Unexpected server response: ${res.statusCode}`
+            `Unexpected server response: ${res.statusCode}`,
           );
         }
       });
@@ -4774,9 +5064,15 @@ var require_websocket = __commonJS({
           abortHandshake(websocket, socket, "Invalid Upgrade header");
           return;
         }
-        const digest = createHash("sha1").update(key + GUID).digest("base64");
+        const digest = createHash("sha1")
+          .update(key + GUID)
+          .digest("base64");
         if (res.headers["sec-websocket-accept"] !== digest) {
-          abortHandshake(websocket, socket, "Invalid Sec-WebSocket-Accept header");
+          abortHandshake(
+            websocket,
+            socket,
+            "Invalid Sec-WebSocket-Accept header",
+          );
           return;
         }
         const serverProt = res.headers["sec-websocket-protocol"];
@@ -4798,7 +5094,8 @@ var require_websocket = __commonJS({
         const secWebSocketExtensions = res.headers["sec-websocket-extensions"];
         if (secWebSocketExtensions !== void 0) {
           if (!perMessageDeflate) {
-            const message = "Server sent a Sec-WebSocket-Extensions header but no extension was requested";
+            const message =
+              "Server sent a Sec-WebSocket-Extensions header but no extension was requested";
             abortHandshake(websocket, socket, message);
             return;
           }
@@ -4811,25 +5108,32 @@ var require_websocket = __commonJS({
             return;
           }
           const extensionNames = Object.keys(extensions);
-          if (extensionNames.length !== 1 || extensionNames[0] !== PerMessageDeflate.extensionName) {
-            const message = "Server indicated an extension that was not requested";
+          if (
+            extensionNames.length !== 1 ||
+            extensionNames[0] !== PerMessageDeflate.extensionName
+          ) {
+            const message =
+              "Server indicated an extension that was not requested";
             abortHandshake(websocket, socket, message);
             return;
           }
           try {
-            perMessageDeflate.accept(extensions[PerMessageDeflate.extensionName]);
+            perMessageDeflate.accept(
+              extensions[PerMessageDeflate.extensionName],
+            );
           } catch (err) {
             const message = "Invalid Sec-WebSocket-Extensions header";
             abortHandshake(websocket, socket, message);
             return;
           }
-          websocket._extensions[PerMessageDeflate.extensionName] = perMessageDeflate;
+          websocket._extensions[PerMessageDeflate.extensionName] =
+            perMessageDeflate;
         }
         websocket.setSocket(socket, head, {
           allowSynchronousEvents: opts.allowSynchronousEvents,
           generateMask: opts.generateMask,
           maxPayload: opts.maxPayload,
-          skipUTF8Validation: opts.skipUTF8Validation
+          skipUTF8Validation: opts.skipUTF8Validation,
         });
       });
       if (opts.finishRequest) {
@@ -4880,7 +5184,7 @@ var require_websocket = __commonJS({
       }
       if (cb) {
         const err = new Error(
-          `WebSocket is not open: readyState ${websocket.readyState} (${readyStates[websocket.readyState]})`
+          `WebSocket is not open: readyState ${websocket.readyState} (${readyStates[websocket.readyState]})`,
         );
         process.nextTick(cb, err);
       }
@@ -4945,7 +5249,7 @@ var require_websocket = __commonJS({
     function setCloseTimer(websocket) {
       websocket._closeTimer = setTimeout(
         websocket._socket.destroy.bind(websocket._socket),
-        closeTimeout
+        closeTimeout,
       );
     }
     function socketOnClose() {
@@ -4955,13 +5259,21 @@ var require_websocket = __commonJS({
       this.removeListener("end", socketOnEnd);
       websocket._readyState = WebSocket2.CLOSING;
       let chunk;
-      if (!this._readableState.endEmitted && !websocket._closeFrameReceived && !websocket._receiver._writableState.errorEmitted && (chunk = websocket._socket.read()) !== null) {
+      if (
+        !this._readableState.endEmitted &&
+        !websocket._closeFrameReceived &&
+        !websocket._receiver._writableState.errorEmitted &&
+        (chunk = websocket._socket.read()) !== null
+      ) {
         websocket._receiver.write(chunk);
       }
       websocket._receiver.end();
       this[kWebSocket] = void 0;
       clearTimeout(websocket._closeTimer);
-      if (websocket._receiver._writableState.finished || websocket._receiver._writableState.errorEmitted) {
+      if (
+        websocket._receiver._writableState.finished ||
+        websocket._receiver._writableState.errorEmitted
+      ) {
         websocket.emitClose();
       } else {
         websocket._receiver.on("error", receiverOnFinish);
@@ -4988,10 +5300,13 @@ var require_websocket = __commonJS({
         this.destroy();
       }
     }
-  }
+  },
 });
 var require_subprotocol = __commonJS({
-  "../common/temp/node_modules/.pnpm/ws@8.18.0_bufferutil@4.0.9_utf-8-validate@5.0.10/node_modules/ws/lib/subprotocol.js"(exports, module) {
+  "../common/temp/node_modules/.pnpm/ws@8.18.0_bufferutil@4.0.9_utf-8-validate@5.0.10/node_modules/ws/lib/subprotocol.js"(
+    exports,
+    module,
+  ) {
     "use strict";
     var { tokenChars } = require_validation();
     function parse(header) {
@@ -5012,7 +5327,9 @@ var require_subprotocol = __commonJS({
           if (end === -1) end = i;
           const protocol2 = header.slice(start, end);
           if (protocols.has(protocol2)) {
-            throw new SyntaxError(`The "${protocol2}" subprotocol is duplicated`);
+            throw new SyntaxError(
+              `The "${protocol2}" subprotocol is duplicated`,
+            );
           }
           protocols.add(protocol2);
           start = end = -1;
@@ -5031,10 +5348,13 @@ var require_subprotocol = __commonJS({
       return protocols;
     }
     module.exports = { parse };
-  }
+  },
 });
 var require_websocket_server = __commonJS({
-  "../common/temp/node_modules/.pnpm/ws@8.18.0_bufferutil@4.0.9_utf-8-validate@5.0.10/node_modules/ws/lib/websocket-server.js"(exports, module) {
+  "../common/temp/node_modules/.pnpm/ws@8.18.0_bufferutil@4.0.9_utf-8-validate@5.0.10/node_modules/ws/lib/websocket-server.js"(
+    exports,
+    module,
+  ) {
     "use strict";
     var EventEmitter = __require("events");
     var http = __require("http");
@@ -5100,11 +5420,15 @@ var require_websocket_server = __commonJS({
           path: null,
           port: null,
           WebSocket: WebSocket2,
-          ...options
+          ...options,
         };
-        if (options.port == null && !options.server && !options.noServer || options.port != null && (options.server || options.noServer) || options.server && options.noServer) {
+        if (
+          (options.port == null && !options.server && !options.noServer) ||
+          (options.port != null && (options.server || options.noServer)) ||
+          (options.server && options.noServer)
+        ) {
           throw new TypeError(
-            'One and only one of the "port", "server", or "noServer" options must be specified'
+            'One and only one of the "port", "server", or "noServer" options must be specified',
           );
         }
         if (options.port != null) {
@@ -5112,7 +5436,7 @@ var require_websocket_server = __commonJS({
             const body = http.STATUS_CODES[426];
             res.writeHead(426, {
               "Content-Length": body.length,
-              "Content-Type": "text/plain"
+              "Content-Type": "text/plain",
             });
             res.end(body);
           });
@@ -5120,7 +5444,7 @@ var require_websocket_server = __commonJS({
             options.port,
             options.host,
             options.backlog,
-            callback
+            callback,
           );
         } else if (options.server) {
           this._server = options.server;
@@ -5132,7 +5456,7 @@ var require_websocket_server = __commonJS({
             error: this.emit.bind(this, "error"),
             upgrade: (req, socket, head) => {
               this.handleUpgrade(req, socket, head, emitConnection);
-            }
+            },
           });
         }
         if (options.perMessageDeflate === true) options.perMessageDeflate = {};
@@ -5268,11 +5592,14 @@ var require_websocket_server = __commonJS({
         }
         const secWebSocketExtensions = req.headers["sec-websocket-extensions"];
         const extensions = {};
-        if (this.options.perMessageDeflate && secWebSocketExtensions !== void 0) {
+        if (
+          this.options.perMessageDeflate &&
+          secWebSocketExtensions !== void 0
+        ) {
           const perMessageDeflate = new PerMessageDeflate(
             this.options.perMessageDeflate,
             true,
-            this.options.maxPayload
+            this.options.maxPayload,
           );
           try {
             const offers = extension.parse(secWebSocketExtensions);
@@ -5281,35 +5608,43 @@ var require_websocket_server = __commonJS({
               extensions[PerMessageDeflate.extensionName] = perMessageDeflate;
             }
           } catch (err) {
-            const message = "Invalid or unacceptable Sec-WebSocket-Extensions header";
+            const message =
+              "Invalid or unacceptable Sec-WebSocket-Extensions header";
             abortHandshakeOrEmitwsClientError(this, req, socket, 400, message);
             return;
           }
         }
         if (this.options.verifyClient) {
           const info = {
-            origin: req.headers[`${version3 === 8 ? "sec-websocket-origin" : "origin"}`],
+            origin:
+              req.headers[
+                `${version3 === 8 ? "sec-websocket-origin" : "origin"}`
+              ],
             secure: !!(req.socket.authorized || req.socket.encrypted),
-            req
+            req,
           };
           if (this.options.verifyClient.length === 2) {
-            this.options.verifyClient(info, (verified, code2, message, headers) => {
-              if (!verified) {
-                return abortHandshake(socket, code2 || 401, message, headers);
-              }
-              this.completeUpgrade(
-                extensions,
-                key,
-                protocols,
-                req,
-                socket,
-                head,
-                cb
-              );
-            });
+            this.options.verifyClient(
+              info,
+              (verified, code2, message, headers) => {
+                if (!verified) {
+                  return abortHandshake(socket, code2 || 401, message, headers);
+                }
+                this.completeUpgrade(
+                  extensions,
+                  key,
+                  protocols,
+                  req,
+                  socket,
+                  head,
+                  cb,
+                );
+              },
+            );
             return;
           }
-          if (!this.options.verifyClient(info)) return abortHandshake(socket, 401);
+          if (!this.options.verifyClient(info))
+            return abortHandshake(socket, 401);
         }
         this.completeUpgrade(extensions, key, protocols, req, socket, head, cb);
       }
@@ -5330,20 +5665,24 @@ var require_websocket_server = __commonJS({
         if (!socket.readable || !socket.writable) return socket.destroy();
         if (socket[kWebSocket]) {
           throw new Error(
-            "server.handleUpgrade() was called more than once with the same socket, possibly due to a misconfiguration"
+            "server.handleUpgrade() was called more than once with the same socket, possibly due to a misconfiguration",
           );
         }
         if (this._state > RUNNING) return abortHandshake(socket, 503);
-        const digest = createHash("sha1").update(key + GUID).digest("base64");
+        const digest = createHash("sha1")
+          .update(key + GUID)
+          .digest("base64");
         const headers = [
           "HTTP/1.1 101 Switching Protocols",
           "Upgrade: websocket",
           "Connection: Upgrade",
-          `Sec-WebSocket-Accept: ${digest}`
+          `Sec-WebSocket-Accept: ${digest}`,
         ];
         const ws = new this.options.WebSocket(null, void 0, this.options);
         if (protocols.size) {
-          const protocol = this.options.handleProtocols ? this.options.handleProtocols(protocols, req) : protocols.values().next().value;
+          const protocol = this.options.handleProtocols
+            ? this.options.handleProtocols(protocols, req)
+            : protocols.values().next().value;
           if (protocol) {
             headers.push(`Sec-WebSocket-Protocol: ${protocol}`);
             ws._protocol = protocol;
@@ -5352,7 +5691,7 @@ var require_websocket_server = __commonJS({
         if (extensions[PerMessageDeflate.extensionName]) {
           const params = extensions[PerMessageDeflate.extensionName].params;
           const value = extension.format({
-            [PerMessageDeflate.extensionName]: [params]
+            [PerMessageDeflate.extensionName]: [params],
           });
           headers.push(`Sec-WebSocket-Extensions: ${value}`);
           ws._extensions = extensions;
@@ -5363,7 +5702,7 @@ var require_websocket_server = __commonJS({
         ws.setSocket(socket, head, {
           allowSynchronousEvents: this.options.allowSynchronousEvents,
           maxPayload: this.options.maxPayload,
-          skipUTF8Validation: this.options.skipUTF8Validation
+          skipUTF8Validation: this.options.skipUTF8Validation,
         });
         if (this.clients) {
           this.clients.add(ws);
@@ -5399,15 +5738,26 @@ var require_websocket_server = __commonJS({
         Connection: "close",
         "Content-Type": "text/html",
         "Content-Length": Buffer.byteLength(message),
-        ...headers
+        ...headers,
       };
       socket.once("finish", socket.destroy);
       socket.end(
         `HTTP/1.1 ${code2} ${http.STATUS_CODES[code2]}\r
-` + Object.keys(headers).map((h) => `${h}: ${headers[h]}`).join("\r\n") + "\r\n\r\n" + message
+` +
+          Object.keys(headers)
+            .map((h) => `${h}: ${headers[h]}`)
+            .join("\r\n") +
+          "\r\n\r\n" +
+          message,
       );
     }
-    function abortHandshakeOrEmitwsClientError(server, req, socket, code2, message) {
+    function abortHandshakeOrEmitwsClientError(
+      server,
+      req,
+      socket,
+      code2,
+      message,
+    ) {
       if (server.listenerCount("wsClientError")) {
         const err = new Error(message);
         Error.captureStackTrace(err, abortHandshakeOrEmitwsClientError);
@@ -5416,7 +5766,7 @@ var require_websocket_server = __commonJS({
         abortHandshake(socket, code2, message);
       }
     }
-  }
+  },
 });
 var import_stream = __toESM(require_stream(), 1);
 var import_receiver = __toESM(require_receiver(), 1);
@@ -5441,7 +5791,7 @@ var getUserIdFromApiKeyOrNull = async (apiKey) => {
   const db = dbClient();
   const user = await db.mutation(
     "apiKeys:validateApiKeyAndReturnUserIdOrNull",
-    { apiKey }
+    { apiKey },
   );
   if (!user) {
     throw new Error("Invalid API key");
@@ -5465,7 +5815,7 @@ var createPersistenceContext = (apiKey, configSummary, totalPlannedTests) => ({
   apiKey,
   db: apiKey ? dbClient() : null,
   configSummary,
-  totalPlannedTests
+  totalPlannedTests,
 });
 var ensureSuiteRecord = async (persistence) => {
   if (!persistence.enabled || !persistence.apiKey || persistence.testRunId) {
@@ -5478,8 +5828,8 @@ var ensureSuiteRecord = async (persistence) => {
       apiKey: persistence.apiKey,
       name: void 0,
       config: persistence.configSummary,
-      totalTests: persistence.totalPlannedTests
-    }
+      totalTests: persistence.totalPlannedTests,
+    },
   );
   if (createdId) {
     persistence.testRunId = createdId;
@@ -5498,15 +5848,20 @@ var createTestCaseRecord = async (persistence, test, testNumber) => {
       query: String(test.query ?? ""),
       provider: String(test.provider ?? ""),
       model: String(test.model ?? ""),
-      runs: Number(test.runs ?? 1)
-    }
+      runs: Number(test.runs ?? 1),
+    },
   );
   if (!persistence.testRunId) {
     await ensureSuiteRecord(persistence);
   }
   return testCaseId;
 };
-var createIterationRecord = async (persistence, testCaseId, iterationNumber, startedAt) => {
+var createIterationRecord = async (
+  persistence,
+  testCaseId,
+  iterationNumber,
+  startedAt,
+) => {
   if (!persistence.enabled || !persistence.apiKey || !testCaseId) {
     return void 0;
   }
@@ -5520,11 +5875,18 @@ var createIterationRecord = async (persistence, testCaseId, iterationNumber, sta
       iterationNumber,
       blob: void 0,
       actualToolCalls: [],
-      tokensUsed: 0
-    }
+      tokensUsed: 0,
+    },
   );
 };
-var updateIterationResult = async (persistence, evalTestId, passed, toolsCalled, tokensUsed, messages) => {
+var updateIterationResult = async (
+  persistence,
+  evalTestId,
+  passed,
+  toolsCalled,
+  tokensUsed,
+  messages,
+) => {
   if (!persistence.enabled || !persistence.apiKey || !evalTestId) {
     return;
   }
@@ -5539,11 +5901,16 @@ var updateIterationResult = async (persistence, evalTestId, passed, toolsCalled,
       actualToolCalls: toolsCalled,
       tokensUsed: tokensUsed.totalTokens ?? 0,
       blob: void 0,
-      blobContent: { messages }
-    }
+      blobContent: { messages },
+    },
   );
 };
-var updateTestCaseResult = async (persistence, testCaseId, passedRuns, failedRuns) => {
+var updateTestCaseResult = async (
+  persistence,
+  testCaseId,
+  passedRuns,
+  failedRuns,
+) => {
   if (!persistence.enabled || !persistence.apiKey || !testCaseId) {
     return;
   }
@@ -5551,7 +5918,7 @@ var updateTestCaseResult = async (persistence, testCaseId, passedRuns, failedRun
   await runDbAction(persistence, "evals:updateEvalTestCaseResultWithApiKey", {
     apiKey: persistence.apiKey,
     testCaseId,
-    result
+    result,
   });
 };
 var markSuiteFailed = async (persistence) => {
@@ -5562,7 +5929,7 @@ var markSuiteFailed = async (persistence) => {
     apiKey: persistence.apiKey,
     testRunId: persistence.testRunId,
     status: "running",
-    result: "failed"
+    result: "failed",
   });
 };
 var finalizeSuiteStatus = async (persistence, failedRuns) => {
@@ -5574,7 +5941,7 @@ var finalizeSuiteStatus = async (persistence, failedRuns) => {
     testRunId: persistence.testRunId,
     status: "completed",
     result: failedRuns > 0 ? "failed" : "passed",
-    finishedAt: Date.now()
+    finishedAt: Date.now(),
   });
 };
 
@@ -5586,9 +5953,7 @@ import { z } from "zod";
 import { tool } from "ai";
 var fallbackInputSchema = z.object({}).passthrough();
 function isZodSchema(value) {
-  return Boolean(
-    value && typeof value === "object" && "safeParse" in value
-  );
+  return Boolean(value && typeof value === "object" && "safeParse" in value);
 }
 function ensureInputSchema(schema) {
   if (isZodSchema(schema)) {
@@ -5616,7 +5981,7 @@ function convertMastraToolToVercelTool(toolName, mastraTool, options) {
   const vercelToolConfig = {
     type: "dynamic",
     description: mastraTool.description,
-    inputSchema
+    inputSchema,
   };
   if (outputSchema) {
     vercelToolConfig.outputSchema = outputSchema;
@@ -5632,7 +5997,7 @@ function convertMastraToolToVercelTool(toolName, mastraTool, options) {
         const parsed = outputSchema.safeParse(result);
         if (!parsed.success) {
           throw new Error(
-            `Mastra tool '${displayName}' returned invalid output: ${parsed.error.message}`
+            `Mastra tool '${displayName}' returned invalid output: ${parsed.error.message}`,
           );
         }
         return parsed.data;
@@ -5649,19 +6014,21 @@ function convertMastraToolsToVercelTools(mastraTools) {
       return [
         pureToolName,
         convertMastraToolToVercelTool(pureToolName, mastraTool, {
-          originalName: name2
-        })
+          originalName: name2,
+        }),
       ];
-    })
+    }),
   );
 }
 
 // src/utils/validators.ts
-var AdvancedConfigSchema = z2.object({
-  system: z2.string().optional(),
-  temperature: z2.number().optional(),
-  toolChoice: z2.string().optional()
-}).passthrough();
+var AdvancedConfigSchema = z2
+  .object({
+    system: z2.string().optional(),
+    temperature: z2.number().optional(),
+    toolChoice: z2.string().optional(),
+  })
+  .passthrough();
 var TestCaseSchema = z2.object({
   title: z2.string(),
   query: z2.string(),
@@ -5670,7 +6037,7 @@ var TestCaseSchema = z2.object({
   provider: z2.string(),
   expectedToolCalls: z2.array(z2.string()),
   judgeRequirement: z2.string().optional(),
-  advancedConfig: AdvancedConfigSchema.optional()
+  advancedConfig: AdvancedConfigSchema.optional(),
 });
 function validateTestCase(value) {
   try {
@@ -5687,12 +6054,12 @@ var BaseServerOptionsSchema = z2.object({
   logger: z2.custom().optional(),
   timeout: z2.number().optional(),
   capabilities: z2.custom().optional(),
-  enableServerLogs: z2.boolean().optional()
+  enableServerLogs: z2.boolean().optional(),
 });
 var StdioServerDefinitionSchema = BaseServerOptionsSchema.extend({
   command: z2.string(),
   args: z2.array(z2.string()).optional(),
-  env: z2.record(z2.string(), z2.string()).optional()
+  env: z2.record(z2.string(), z2.string()).optional(),
 }).strict();
 var HttpServerDefinitionSchema = BaseServerOptionsSchema.extend({
   // Accept either a URL object or a string URL, but we'll normalize to string
@@ -5701,12 +6068,12 @@ var HttpServerDefinitionSchema = BaseServerOptionsSchema.extend({
   eventSourceInit: z2.custom().optional(),
   authProvider: z2.custom().optional(),
   reconnectionOptions: z2.custom().optional(),
-  sessionId: z2.custom().optional()
+  sessionId: z2.custom().optional(),
 }).strict();
 var MCPClientOptionsSchema = z2.custom();
 var MastraMCPServerDefinitionSchema = z2.union([
   StdioServerDefinitionSchema,
-  HttpServerDefinitionSchema
+  HttpServerDefinitionSchema,
 ]);
 function validateAndNormalizeMCPClientConfiguration(value) {
   try {
@@ -5718,10 +6085,11 @@ function validateAndNormalizeMCPClientConfiguration(value) {
           MastraMCPServerDefinitionSchema.parse(server);
           server.enableServerLogs = false;
           const urlValue = server.url;
-          const normalizedUrl = typeof urlValue === "string" ? new URL(urlValue) : urlValue;
+          const normalizedUrl =
+            typeof urlValue === "string" ? new URL(urlValue) : urlValue;
           const normalizedServer = {
             ...server,
-            url: normalizedUrl
+            url: normalizedUrl,
           };
           normalizedServers[name2] = normalizedServer;
         } else {
@@ -5732,25 +6100,29 @@ function validateAndNormalizeMCPClientConfiguration(value) {
       } catch (error) {
         if (error instanceof z2.ZodError) {
           throw new Error(
-            `Invalid server configuration for '${name2}': ${error.message}`
+            `Invalid server configuration for '${name2}': ${error.message}`,
           );
         }
-        throw new Error(`Invalid server configuration for '${name2}': ${error}`);
+        throw new Error(
+          `Invalid server configuration for '${name2}': ${error}`,
+        );
       }
     }
     return {
       ...envParsed,
-      servers: normalizedServers
+      servers: normalizedServers,
     };
   } catch (error) {
     throw new Error(error instanceof Error ? error.message : String(error));
   }
 }
-var LlmsConfigSchema = z2.object({
-  anthropic: z2.string().optional(),
-  openai: z2.string().optional(),
-  openrouter: z2.string().optional()
-}).passthrough();
+var LlmsConfigSchema = z2
+  .object({
+    anthropic: z2.string().optional(),
+    openai: z2.string().optional(),
+    openrouter: z2.string().optional(),
+  })
+  .passthrough();
 function validateLlms(value) {
   try {
     const result = LlmsConfigSchema.parse(value);
@@ -5792,8 +6164,12 @@ var evaluateResults = (expectedToolCalls, toolsCalled) => {
     expectedToolCalls,
     toolsCalled,
     missing: expectedToolCalls.filter((tool2) => !toolsCalled.includes(tool2)),
-    unexpected: toolsCalled.filter((tool2) => !expectedToolCalls.includes(tool2)),
-    passed: expectedToolCalls.length === toolsCalled.length && expectedToolCalls.every((tool2) => toolsCalled.includes(tool2))
+    unexpected: toolsCalled.filter(
+      (tool2) => !expectedToolCalls.includes(tool2),
+    ),
+    passed:
+      expectedToolCalls.length === toolsCalled.length &&
+      expectedToolCalls.every((tool2) => toolsCalled.includes(tool2)),
   };
 };
 
@@ -5819,7 +6195,7 @@ function getUserId() {
     const newUserId = randomUUID();
     const newConfig = {
       userId: newUserId,
-      createdAt: (/* @__PURE__ */ new Date()).toISOString()
+      createdAt: /* @__PURE__ */ new Date().toISOString(),
     };
     writeFileSync(USER_ID_FILE, JSON.stringify(newConfig, null, 2));
     return newUserId;
@@ -5831,10 +6207,9 @@ function getUserId() {
 
 // src/utils/hog.ts
 import { PostHog } from "posthog-node";
-var hogClient = new PostHog(
-  "phc_dTOPniyUNU2kD8Jx8yHMXSqiZHM8I91uWopTMX6EBE9",
-  { host: "https://us.i.posthog.com" }
-);
+var hogClient = new PostHog("phc_dTOPniyUNU2kD8Jx8yHMXSqiZHM8I91uWopTMX6EBE9", {
+  host: "https://us.i.posthog.com",
+});
 
 // src/evals/runner.ts
 var MAX_STEPS = 20;
@@ -5851,7 +6226,8 @@ var ensureApiKeyIsValid = async (apiKey) => {
   await getUserIdFromApiKeyOrNull(apiKey);
 };
 var prepareSuite = async (tests, environment, llms) => {
-  const mcpClientOptions = validateAndNormalizeMCPClientConfiguration(environment);
+  const mcpClientOptions =
+    validateAndNormalizeMCPClientConfiguration(environment);
   const validatedTests = validateTestCase(tests);
   const validatedLlms = validateLlms(llms);
   const mcpClient = new MCPClient(mcpClientOptions);
@@ -5862,13 +6238,13 @@ var prepareSuite = async (tests, environment, llms) => {
     serverNames.length,
     Object.keys(availableTools).length,
     serverNames,
-    validatedTests.length
+    validatedTests.length,
   );
   return {
     validatedTests,
     validatedLlms,
     vercelTools,
-    serverNames
+    serverNames,
   };
 };
 var runIteration = async ({
@@ -5878,7 +6254,7 @@ var runIteration = async ({
   llms,
   tools,
   persistence,
-  testCaseId
+  testCaseId,
 }) => {
   const { provider, model, advancedConfig, query } = test;
   const { system, temperature, toolChoice } = advancedConfig ?? {};
@@ -5887,14 +6263,14 @@ var runIteration = async ({
     totalRuns,
     provider,
     model,
-    temperature
+    temperature,
   });
   if (system) {
     Logger.conversation({ messages: [{ role: "system", content: system }] });
   }
   const userMessage = {
     role: "user",
-    content: query
+    content: query,
   };
   Logger.conversation({ messages: [userMessage] });
   const messageHistory = [userMessage];
@@ -5908,7 +6284,7 @@ var runIteration = async ({
     persistence,
     testCaseId,
     runIndex + 1,
-    runStartedAt
+    runStartedAt,
   );
   while (stepCount < MAX_STEPS) {
     let assistantStreaming = false;
@@ -5945,7 +6321,7 @@ var runIteration = async ({
           default:
             break;
         }
-      }
+      },
     });
     await streamResult.consumeStream();
     if (assistantStreaming) {
@@ -5956,16 +6332,16 @@ var runIteration = async ({
     const cumulativeUsage = await streamResult.totalUsage;
     inputTokensUsed = accumulateTokenCount(
       inputTokensUsed,
-      stepUsage.inputTokens
+      stepUsage.inputTokens,
     );
     outputTokensUsed = accumulateTokenCount(
       outputTokensUsed,
-      stepUsage.outputTokens
+      stepUsage.outputTokens,
     );
     const totalTokens = stepUsage.totalTokens ?? cumulativeUsage.totalTokens;
     totalTokensUsed = accumulateTokenCount(totalTokensUsed, totalTokens);
     const toolNamesForStep = extractToolNamesAsArray(
-      await streamResult.toolCalls
+      await streamResult.toolCalls,
     );
     if (toolNamesForStep.length) {
       toolsCalled.push(...toolNamesForStep);
@@ -5985,19 +6361,24 @@ var runIteration = async ({
   const usage = {
     inputTokens: inputTokensUsed,
     outputTokens: outputTokensUsed,
-    totalTokens: totalTokensUsed
+    totalTokens: totalTokensUsed,
   };
   Logger.toolSummary({
     expected: evaluation.expectedToolCalls,
     actual: evaluation.toolsCalled,
     missing: evaluation.missing,
     unexpected: evaluation.unexpected,
-    passed: evaluation.passed
+    passed: evaluation.passed,
   });
   Logger.testRunResult({
     passed: evaluation.passed,
     durationMs: Date.now() - runStartedAt,
-    usage: usage.inputTokens !== void 0 || usage.outputTokens !== void 0 || usage.totalTokens !== void 0 ? usage : void 0
+    usage:
+      usage.inputTokens !== void 0 ||
+      usage.outputTokens !== void 0 ||
+      usage.totalTokens !== void 0
+        ? usage
+        : void 0,
   });
   if (!evaluation.passed) {
     await markSuiteFailed(persistence);
@@ -6008,17 +6389,11 @@ var runIteration = async ({
     evaluation.passed,
     toolsCalled,
     usage,
-    messageHistory
+    messageHistory,
   );
   return evaluation;
 };
-var runTestCase = async ({
-  test,
-  testIndex,
-  llms,
-  tools,
-  persistence
-}) => {
+var runTestCase = async ({ test, testIndex, llms, tools, persistence }) => {
   const { runs, model, provider } = test;
   Logger.logTestGroupTitle(testIndex, test.title, provider, model);
   let passedRuns = 0;
@@ -6032,7 +6407,7 @@ var runTestCase = async ({
       llms,
       tools,
       persistence,
-      testCaseId
+      testCaseId,
     });
     if (evaluation.passed) {
       passedRuns++;
@@ -6045,21 +6420,22 @@ var runTestCase = async ({
 };
 var runEvals = async (tests, environment, llms, apiKey) => {
   await ensureApiKeyIsValid(apiKey);
-  const { validatedTests, validatedLlms, vercelTools, serverNames } = await prepareSuite(tests, environment, llms);
+  const { validatedTests, validatedLlms, vercelTools, serverNames } =
+    await prepareSuite(tests, environment, llms);
   const suiteStartedAt = Date.now();
   const totalPlannedTests = validatedTests.reduce(
     (sum, current) => sum + (current?.runs ?? 0),
-    0
+    0,
   );
   const configSummary = {
     tests: validatedTests,
     environment: { servers: serverNames },
-    llms: Object.keys(validatedLlms ?? {})
+    llms: Object.keys(validatedLlms ?? {}),
   };
   const persistence = createPersistenceContext(
     apiKey,
     configSummary,
-    totalPlannedTests
+    totalPlannedTests,
   );
   await ensureSuiteRecord(persistence);
   let passedRuns = 0;
@@ -6069,13 +6445,14 @@ var runEvals = async (tests, environment, llms, apiKey) => {
     if (!test) {
       continue;
     }
-    const { passedRuns: casePassed, failedRuns: caseFailed } = await runTestCase({
-      test,
-      testIndex: index + 1,
-      llms: validatedLlms,
-      tools: vercelTools,
-      persistence
-    });
+    const { passedRuns: casePassed, failedRuns: caseFailed } =
+      await runTestCase({
+        test,
+        testIndex: index + 1,
+        llms: validatedLlms,
+        tools: vercelTools,
+        persistence,
+      });
     passedRuns += casePassed;
     failedRuns += caseFailed;
   }
@@ -6083,41 +6460,49 @@ var runEvals = async (tests, environment, llms, apiKey) => {
     distinctId: getUserId(),
     event: "evals suite complete",
     properties: {
-      environment: process.env.ENVIRONMENT
-    }
+      environment: process.env.ENVIRONMENT,
+    },
   });
   Logger.suiteComplete({
     durationMs: Date.now() - suiteStartedAt,
     passed: passedRuns,
-    failed: failedRuns
+    failed: failedRuns,
   });
   await finalizeSuiteStatus(persistence, failedRuns);
 };
 
 // src/evals/index.ts
 var evalsCommand = new Command("evals");
-evalsCommand.description("Run MCP evaluations").command("run").description("Run tests against MCP servers").requiredOption("-t, --tests <file>", "Path to tests JSON file").requiredOption("-e, --environment <file>", "Path to environment JSON file").requiredOption("-l, --llms <file>", "Path to LLMs JSON file").option("-a, --api-key <key>", "Personal access key").action(async (options) => {
-  try {
-    hogClient.capture({
-      distinctId: getUserId(),
-      event: "evals cli ran",
-      properties: {
-        environment: process.env.ENVIRONMENT
-      }
-    });
-    const testsContent = await readFile(resolve(options.tests), "utf8");
-    const testsData = JSON.parse(testsContent);
-    const envContent = await readFile(resolve(options.environment), "utf8");
-    const envData = JSON.parse(envContent);
-    const llmsContent = await readFile(resolve(options.llms), "utf8");
-    const llmsData = JSON.parse(llmsContent);
-    const apiKey = options.apiKey;
-    runEvals(testsData, envData, llmsData, apiKey);
-  } catch (error) {
-    Logger.error(error instanceof Error ? error.message : String(error));
-    process.exit(1);
-  }
-});
+evalsCommand
+  .description("Run MCP evaluations")
+  .command("run")
+  .description("Run tests against MCP servers")
+  .requiredOption("-t, --tests <file>", "Path to tests JSON file")
+  .requiredOption("-e, --environment <file>", "Path to environment JSON file")
+  .requiredOption("-l, --llms <file>", "Path to LLMs JSON file")
+  .option("-a, --api-key <key>", "Personal access key")
+  .action(async (options) => {
+    try {
+      hogClient.capture({
+        distinctId: getUserId(),
+        event: "evals cli ran",
+        properties: {
+          environment: process.env.ENVIRONMENT,
+        },
+      });
+      const testsContent = await readFile(resolve(options.tests), "utf8");
+      const testsData = JSON.parse(testsContent);
+      const envContent = await readFile(resolve(options.environment), "utf8");
+      const envData = JSON.parse(envContent);
+      const llmsContent = await readFile(resolve(options.llms), "utf8");
+      const llmsData = JSON.parse(llmsContent);
+      const apiKey = options.apiKey;
+      runEvals(testsData, envData, llmsData, apiKey);
+    } catch (error) {
+      Logger.error(error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    }
+  });
 
 // src/index.ts
 import updateNotifier from "update-notifier";
@@ -6134,25 +6519,19 @@ var package_default = {
   repository: {
     type: "git",
     url: "https://github.com/MCPJam/inspector.git",
-    directory: "cli"
+    directory: "cli",
   },
   main: "dist/index.js",
   bin: {
-    mcpjam: "bin/mcpjam.js"
+    mcpjam: "bin/mcpjam.js",
   },
-  files: [
-    "bin",
-    "dist",
-    "package.json",
-    "README.md",
-    ".env.production"
-  ],
+  files: ["bin", "dist", "package.json", "README.md", ".env.production"],
   scripts: {
     build: "tsup",
     dev: "tsup --watch",
     "build-and-test": "npm run build && npm run test",
     test: "node bin/mcpjam.js evals run -t local-examples/tests.json -e local-examples/environment.json -l local-examples/llms.json",
-    start: "node bin/mcpjam.js"
+    start: "node bin/mcpjam.js",
   },
   dependencies: {
     "@ai-sdk/anthropic": "^2.0.17",
@@ -6171,14 +6550,14 @@ var package_default = {
     "ollama-ai-provider-v2": "^1.3.1",
     "posthog-node": "^5.9.1",
     "update-notifier": "^7.3.1",
-    zod: "^4.0.16"
+    zod: "^4.0.16",
   },
   devDependencies: {
     "@types/node": "^20",
     "@types/update-notifier": "^6.0.8",
     tsup: "^8.3.5",
-    typescript: "^5"
-  }
+    typescript: "^5",
+  },
 };
 
 // src/index.ts
@@ -6194,7 +6573,10 @@ var prodEnvPath = path.join(packageRootDir, ".env.production");
 var envFile = existsSync2(devEnvPath) ? devEnvPath : prodEnvPath;
 config({ path: envFile });
 var program = new Command2();
-program.name("mcpjam").description("MCPJam CLI for programmatic MCP testing").version(version2);
+program
+  .name("mcpjam")
+  .description("MCPJam CLI for programmatic MCP testing")
+  .version(version2);
 program.addCommand(evalsCommand);
 program.parse();
 //# sourceMappingURL=index.js.map
