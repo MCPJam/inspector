@@ -5,7 +5,6 @@ import { formatDate } from "@/lib/date-utils";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import "react18-json-view/src/dark.css";
-import { useTheme } from "next-themes";
 import { LogLevelBadge } from "./log-level-badge";
 
 interface LogCardProps {
@@ -16,7 +15,6 @@ interface LogCardProps {
 
 export function LogCard({ entry, isExpanded, onToggleExpand }: LogCardProps) {
   const hasExtra = entry.data !== undefined || entry.error !== undefined;
-  const { theme } = useTheme();
 
   return (
     <div className="border rounded-lg font-mono">

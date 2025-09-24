@@ -16,7 +16,7 @@ import { LogLevelBadge } from "./logging/log-level-badge";
 const LOG_LEVEL_ORDER = ["error", "warn", "info", "debug", "trace"];
 
 export function TracingTab() {
-  const { entries, getFilteredEntries } = useLoggerState();
+  const { entries } = useLoggerState();
   const [expandedEntries, setExpandedEntries] = useState<Set<number>>(
     new Set(),
   );
@@ -47,13 +47,6 @@ export function TracingTab() {
           JSON.stringify(entry.data).toLowerCase().includes(queryLower)),
     );
   }, [entries, levelFilter, searchQuery]);
-
-  // Auto-scroll to bottom when new entries arrive
-  useEffect(() => {
-    if (bottomRef.current) {
-      bottomRef.current.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [entries.length]);
 
   // Handle scroll events to show/hide scroll to top button
   useEffect(() => {
