@@ -1,23 +1,10 @@
-import { useMemo, useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useAction, useConvexAuth, useQuery } from "convex/react";
-import {
-  FlaskConical,
-  CheckCircle,
-  XCircle,
-  Clock,
-  ChevronDown,
-  ChevronRight,
-} from "lucide-react";
+import { FlaskConical, CheckCircle, XCircle, Clock } from "lucide-react";
 import { EmptyState } from "@/components/ui/empty-state";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 
 type EvalSuite = {
   _id: string;
@@ -170,57 +157,6 @@ function EvalsContent() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">Suites</CardTitle>
-            <CardDescription>Total runs</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-semibold">{metrics.totalSuites}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">Passed Runs</CardTitle>
-            <CardDescription>Completed suites</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center gap-2">
-              <CheckCircle className="h-5 w-5 text-green-500" />
-              <span className="text-3xl font-semibold">
-                {metrics.completedSuites}
-              </span>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">Failed Runs</CardTitle>
-            <CardDescription>Suites marked failed</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center gap-2">
-              <XCircle className="h-5 w-5 text-red-500" />
-              <span className="text-3xl font-semibold">
-                {metrics.failedSuites}
-              </span>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">Tokens Used</CardTitle>
-            <CardDescription>Across all iterations</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-semibold">
-              {metrics.totalTokens.toLocaleString()}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
       <SuitesBrowser
         suites={suites || []}
         cases={cases || []}
@@ -318,195 +254,176 @@ function SuitesBrowser({
   iterations: EvalIteration[];
 }) {
   const [selectedSuiteId, setSelectedSuiteId] = useState<string | null>(null);
-  const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
-  const [selectedIterationId, setSelectedIterationId] = useState<string | null>(
-    null,
-  );
-  const [expandedSuiteIds, setExpandedSuiteIds] = useState<Set<string>>(
-    new Set(),
-  );
 
-  const selectedSuite = selectedSuiteId
-    ? suites.find((s) => s._id === selectedSuiteId) || null
-    : null;
-  const selectedCase = selectedCaseId
-    ? cases.find((c) => c._id === selectedCaseId) || null
-    : null;
-  const selectedIteration = selectedIterationId
-    ? iterations.find((i) => i._id === selectedIterationId) || null
-    : null;
+  const selectedSuite = useMemo(() => {
+    if (!selectedSuiteId) return null;
+    return suites.find((suite) => suite._id === selectedSuiteId) ?? null;
+  }, [selectedSuiteId, suites]);
 
-  const suiteAgg = selectedSuite
-    ? aggregateSuite(selectedSuite, cases, iterations)
-    : null;
-
-  const iterationsForSelectedCase = useMemo(() => {
-    if (!selectedSuite || !selectedCase) return [] as EvalIteration[];
+  const iterationsForSelectedSuite = useMemo(() => {
+    if (!selectedSuite) return [];
     return iterations
-      .filter((it) => withinSuiteWindow(it, selectedSuite))
-      .filter((it) => it.testCaseId === selectedCase._id);
-  }, [iterations, selectedSuite, selectedCase]);
+      .filter((iteration) => withinSuiteWindow(iteration, selectedSuite))
+      .sort((a, b) => b.startedAt - a.startedAt);
+  }, [iterations, selectedSuite]);
 
-  const handleSelectSuite = (id: string) => {
-    setSelectedSuiteId(id);
-    setSelectedCaseId(null);
-    setSelectedIterationId(null);
-  };
+  const suiteAggregate = useMemo(() => {
+    if (!selectedSuite) return null;
+    return aggregateSuite(selectedSuite, cases, iterations);
+  }, [selectedSuite, cases, iterations]);
 
-  const handleSelectCase = (id: string) => {
-    setSelectedCaseId(id);
-    setSelectedIterationId(null);
-  };
-
-  const handleSelectIteration = (id: string) => {
-    setSelectedIterationId(id);
-  };
-
-  const toggleExpanded = (id: string) => {
-    setExpandedSuiteIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
+  if (!selectedSuite) {
+    return (
+      <SuitesOverview
+        suites={suites}
+        cases={cases}
+        iterations={iterations}
+        onSelectSuite={setSelectedSuiteId}
+      />
+    );
+  }
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-      <div className="md:col-span-1 border rounded-xl p-3">
-        <div className="text-sm font-medium mb-2">Suites</div>
-        {suites.length === 0 ? (
-          <div className="text-sm text-muted-foreground">No suites yet.</div>
-        ) : (
-          <div className="space-y-2">
-            {suites.map((s) => {
-              const isSelected = s._id === selectedSuiteId;
-              const isExpanded = expandedSuiteIds.has(s._id);
-              const perSuiteAgg = aggregateSuite(s, cases, iterations);
-              return (
-                <div
-                  key={s._id}
-                  className={`border rounded-md ${isSelected ? "border-primary" : "border-border"}`}
-                >
-                  <div className="flex items-stretch">
-                    <button
-                      className="flex-1 text-left p-3"
-                      onClick={() => handleSelectSuite(s._id)}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="font-medium">
-                          {formatTime(s.startedAt)}
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Badge>{s.status}</Badge>
-                          {s.result && (
-                            <Badge
-                              variant={
-                                s.result === "failed"
-                                  ? "destructive"
-                                  : s.result === "passed"
-                                    ? "default"
-                                    : "outline"
-                              }
-                            >
-                              {s.result}
-                            </Badge>
-                          )}
-                        </div>
-                      </div>
-                      <div className="text-xs text-muted-foreground mt-0.5">
-                        Tests: {s.totalTests} • Finished{" "}
-                        {formatTime(s.finishedAt)}
-                      </div>
-                    </button>
-                    <button
-                      className="px-2 text-muted-foreground hover:text-foreground"
-                      aria-label="Toggle test cases"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleExpanded(s._id);
-                      }}
-                    >
-                      {isExpanded ? (
-                        <ChevronDown className="h-5 w-5" />
-                      ) : (
-                        <ChevronRight className="h-5 w-5" />
-                      )}
-                    </button>
-                  </div>
-                  {isExpanded && (
-                    <div className="border-t p-2 space-y-1">
-                      {perSuiteAgg.byCase.map((c) => (
-                        <button
-                          key={c.testCaseId}
-                          className={`w-full text-left text-sm rounded px-2 py-1 ${
-                            selectedCaseId === c.testCaseId && isSelected
-                              ? "bg-muted"
-                              : "hover:bg-muted"
-                          }`}
-                          onClick={() => {
-                            handleSelectSuite(s._id);
-                            handleSelectCase(c.testCaseId);
-                          }}
-                        >
-                          {c.title}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
+    <SuiteIterationsView
+      suite={selectedSuite}
+      cases={cases}
+      iterations={iterationsForSelectedSuite}
+      aggregate={suiteAggregate}
+      onBack={() => setSelectedSuiteId(null)}
+    />
+  );
+}
+
+function SuitesOverview({
+  suites,
+  cases,
+  iterations,
+  onSelectSuite,
+}: {
+  suites: EvalSuite[];
+  cases: EvalCase[];
+  iterations: EvalIteration[];
+  onSelectSuite: (id: string) => void;
+}) {
+  if (suites.length === 0) {
+    return (
+      <div className="h-[calc(100vh-220px)] flex items-center justify-center rounded-xl border border-dashed">
+        <div className="text-center space-y-2">
+          <div className="text-lg font-semibold">No evaluation suites yet</div>
+          <p className="text-sm text-muted-foreground">
+            Trigger a test run to see your evaluation history here.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const sortedSuites = [...suites].sort((a, b) => b.startedAt - a.startedAt);
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-xl font-semibold">Evaluation suites</h2>
+        <p className="text-sm text-muted-foreground">
+          Select a suite to inspect every test iteration.
+        </p>
       </div>
 
-      <div className="md:col-span-2">
-        {!selectedSuite ? (
-          <div className="h-[420px] flex items-center justify-center border rounded-xl">
-            <div className="text-muted-foreground">Empty State</div>
-          </div>
-        ) : !selectedCase ? (
-          <SuiteDetails suite={selectedSuite} aggregate={suiteAgg!} />
-        ) : !selectedIteration ? (
-          <CaseDetails
-            suite={selectedSuite}
-            testCase={selectedCase}
-            iterations={iterationsForSelectedCase}
-            onSelectIteration={handleSelectIteration}
-          />
-        ) : (
-          <IterationDetails iteration={selectedIteration} />
-        )}
+      <div className="overflow-hidden rounded-xl border">
+        <div className="grid grid-cols-[minmax(0,1.2fr)_140px_140px_220px_160px] items-center gap-3 border-b bg-muted/50 px-4 py-2 text-xs font-semibold uppercase text-muted-foreground">
+          <div>Suite started</div>
+          <div>Status</div>
+          <div>Result</div>
+          <div>Summary</div>
+          <div>Tokens used</div>
+        </div>
+        <div className="divide-y">
+          {sortedSuites.map((suite) => {
+            const { totals } = aggregateSuite(suite, cases, iterations);
+            return (
+              <button
+                key={suite._id}
+                onClick={() => onSelectSuite(suite._id)}
+                className="grid w-full grid-cols-[minmax(0,1.2fr)_140px_140px_220px_160px] items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+              >
+                <div>
+                  <div className="font-medium">{formatTime(suite.startedAt)}</div>
+                  <div className="text-xs text-muted-foreground">
+                    Tests: {suite.totalTests} · Finished {formatTime(suite.finishedAt)}
+                  </div>
+                </div>
+                <div>
+                  <Badge className="capitalize">{suite.status}</Badge>
+                </div>
+                <div>
+                  <Badge
+                    className="capitalize"
+                    variant={
+                      suite.result === "failed"
+                        ? "destructive"
+                        : suite.result === "passed"
+                          ? "default"
+                          : "outline"
+                    }
+                  >
+                    {suite.result}
+                  </Badge>
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  <span className="text-foreground font-medium">{totals.passed}</span> passed ·
+                  <span className="ml-1 text-foreground font-medium">{totals.failed}</span> failed ·
+                  <span className="ml-1">{totals.cancelled}</span> cancelled
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  {totals.tokens.toLocaleString()}
+                </div>
+              </button>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
 }
 
-function SuiteDetails({
+function SuiteIterationsView({
   suite,
+  cases,
+  iterations,
   aggregate,
+  onBack,
 }: {
   suite: EvalSuite;
-  aggregate: SuiteAggregate;
+  cases: EvalCase[];
+  iterations: EvalIteration[];
+  aggregate: SuiteAggregate | null;
+  onBack: () => void;
 }) {
+  const [openIterationId, setOpenIterationId] = useState<string | null>(null);
+
+  const caseById = useMemo(() => {
+    return new Map(cases.map((testCase) => [testCase._id, testCase]));
+  }, [cases]);
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Suite started {formatTime(suite.startedAt)}</CardTitle>
-        <CardDescription>
-          {aggregate.totals.passed} passed · {aggregate.totals.failed} failed ·{" "}
-          {aggregate.totals.cancelled} cancelled ·{" "}
-          {aggregate.totals.tokens.toLocaleString()} tokens
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="text-sm text-muted-foreground">
-          Status: <Badge className="ml-1 align-middle">{suite.status}</Badge>
-          <span className="mx-2">·</span>
-          Result:{" "}
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="sm" onClick={onBack}>
+            ← Back to suites
+          </Button>
+          <div>
+            <h2 className="text-xl font-semibold">Suite started {formatTime(suite.startedAt)}</h2>
+            <p className="text-sm text-muted-foreground">
+              {aggregate?.totals.passed ?? 0} passed · {aggregate?.totals.failed ?? 0} failed · {aggregate?.totals.cancelled ?? 0} cancelled ·
+              {(aggregate?.totals.tokens ?? 0).toLocaleString()} tokens · Result {suite.result}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Badge className="capitalize">{suite.status}</Badge>
           <Badge
-            className="ml-1 align-middle"
+            className="capitalize"
             variant={
               suite.result === "failed"
                 ? "destructive"
@@ -518,120 +435,95 @@ function SuiteDetails({
             {suite.result}
           </Badge>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-          {aggregate.byCase.map((c) => (
-            <div key={c.testCaseId} className="border rounded-md p-3">
-              <div className="font-medium">{c.title}</div>
-              <div className="text-xs text-muted-foreground mb-1">
-                {c.provider}/{c.model} • Planned runs: {c.runs}
-              </div>
-              <div className="text-sm">
-                <span className="text-green-600">{c.passed} passed</span>
-                <span className="mx-2">·</span>
-                <span className="text-red-600">{c.failed} failed</span>
-                <span className="mx-2">·</span>
-                <span className="text-muted-foreground">
-                  {c.cancelled} cancelled
-                </span>
-                <span className="mx-2">·</span>
-                <span className="text-muted-foreground">
-                  {c.tokens.toLocaleString()} tokens
-                </span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
+      </div>
 
-function CaseDetails({
-  suite,
-  testCase,
-  iterations,
-  onSelectIteration,
-}: {
-  suite: EvalSuite;
-  testCase: EvalCase;
-  iterations: EvalIteration[];
-  onSelectIteration: (id: string) => void;
-}) {
-  const counts = useMemo(() => {
-    return iterations.reduce(
-      (acc, it) => {
-        if (it.status === "running" || it.result === "pending") return acc;
-        if (it.result === "passed") acc.passed += 1;
-        else if (it.result === "failed") acc.failed += 1;
-        else if (it.result === "cancelled") acc.cancelled += 1;
-        acc.tokens += it.tokensUsed || 0;
-        return acc;
-      },
-      { passed: 0, failed: 0, cancelled: 0, tokens: 0 },
-    );
-  }, [iterations]);
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{testCase.title}</CardTitle>
-        <CardDescription>
-          {testCase.provider}/{testCase.model} • Planned runs: {testCase.runs}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="text-sm text-muted-foreground">
-          In suite started {formatTime(suite.startedAt)} • {counts.passed}{" "}
-          passed · {counts.failed} failed · {counts.cancelled} cancelled ·{" "}
-          {counts.tokens.toLocaleString()} tokens
+      <div className="rounded-xl border">
+        <div className="border-b bg-muted/40 px-4 py-2 text-xs font-semibold uppercase text-muted-foreground">
+          Iterations ({iterations.length})
         </div>
-        <div className="space-y-2">
+        <div className="divide-y">
           {iterations.length === 0 ? (
-            <div className="text-sm text-muted-foreground">
-              No iterations for this case in the selected suite.
+            <div className="px-4 py-8 text-sm text-muted-foreground">
+              No iterations recorded for this suite yet.
             </div>
           ) : (
-            iterations.slice(0, 50).map((it) => (
-              <button
-                key={it._id}
-                onClick={() => onSelectIteration(it._id)}
-                className="w-full flex items-center justify-between border rounded-md p-3 text-left hover:bg-muted"
-              >
-                <div>
-                  <div className="font-medium">
-                    Iteration #{it.iterationNumber}
-                  </div>
-                  <div className="text-sm text-muted-foreground">
-                    {formatTime(it.startedAt)} • Tokens: {it.tokensUsed} •
-                    Tools: {it.actualToolCalls.length}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  {it.status === "running" || it.result === "pending" ? (
-                    <>
-                      <Clock className="h-4 w-4 text-yellow-500" />
-                      <Badge variant="outline">pending</Badge>
-                    </>
-                  ) : it.result === "passed" ? (
-                    <>
-                      <CheckCircle className="h-4 w-4 text-green-500" />
-                      <Badge>passed</Badge>
-                    </>
-                  ) : it.result === "failed" ? (
-                    <>
-                      <XCircle className="h-4 w-4 text-red-500" />
-                      <Badge variant="destructive">failed</Badge>
-                    </>
-                  ) : (
-                    <Badge variant="outline">cancelled</Badge>
-                  )}
-                </div>
-              </button>
+            iterations.map((iteration) => (
+              <IterationCard
+                key={iteration._id}
+                iteration={iteration}
+                testCase={iteration.testCaseId ? caseById.get(iteration.testCaseId) ?? null : null}
+                isOpen={openIterationId === iteration._id}
+                onToggle={() =>
+                  setOpenIterationId((current) =>
+                    current === iteration._id ? null : iteration._id,
+                  )
+                }
+              />
             ))
           )}
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
+  );
+}
+
+function IterationCard({
+  iteration,
+  testCase,
+  isOpen,
+  onToggle,
+}: {
+  iteration: EvalIteration;
+  testCase: EvalCase | null;
+  isOpen: boolean;
+  onToggle: () => void;
+}) {
+  const isPending = iteration.status === "running" || iteration.result === "pending";
+
+  return (
+    <div className={`transition-colors ${isOpen ? "bg-muted/50" : "bg-background"}`}>
+      <button
+        onClick={onToggle}
+        className="flex w-full items-center justify-between gap-4 px-4 py-3 text-left hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+      >
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <div className="font-semibold">
+              Iteration #{iteration.iterationNumber}
+            </div>
+            {testCase ? (
+              <span className="text-xs text-muted-foreground">{testCase.title}</span>
+            ) : null}
+          </div>
+          <div className="text-xs text-muted-foreground">
+            Started {formatTime(iteration.startedAt)} · Tokens {Number(iteration.tokensUsed || 0).toLocaleString()} · Tools {iteration.actualToolCalls.length}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {isPending ? (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Clock className="h-4 w-4 text-yellow-500" />
+              <span className="capitalize">{iteration.status}</span>
+            </div>
+          ) : iteration.result === "failed" ? (
+            <div className="flex items-center gap-2 text-xs text-red-600">
+              <XCircle className="h-4 w-4" />
+              <span className="capitalize">{iteration.result}</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-xs text-green-600">
+              <CheckCircle className="h-4 w-4" />
+              <span className="capitalize">{iteration.result}</span>
+            </div>
+          )}
+        </div>
+      </button>
+      {isOpen ? (
+        <div className="px-4 pb-4">
+          <IterationDetails iteration={iteration} />
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -669,38 +561,35 @@ function IterationDetails({ iteration }: { iteration: EvalIteration }) {
   }, [iteration.blob, getBlob]);
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Iteration #{iteration.iterationNumber}</CardTitle>
-        <CardDescription>
-          {formatTime(iteration.startedAt)} • Tokens: {iteration.tokensUsed} •
-          Tools: {iteration.actualToolCalls.length}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="text-sm">
-          Status:{" "}
-          <Badge className="ml-1 align-middle">{iteration.status}</Badge>
-          <span className="mx-2">·</span>
-          Result:{" "}
-          <Badge className="ml-1 align-middle">{iteration.result}</Badge>
-        </div>
-        <div className="border rounded-md p-3 bg-muted/50">
-          {loading ? (
-            <div className="text-sm text-muted-foreground">Loading blob…</div>
-          ) : error ? (
-            <div className="text-sm text-red-600">{error}</div>
-          ) : iteration.blob ? (
-            <pre className="text-xs overflow-auto max-h-[480px] whitespace-pre-wrap break-words">
-              {JSON.stringify(blob, null, 2)}
-            </pre>
-          ) : (
-            <div className="text-sm text-muted-foreground">
-              No blob attached to this iteration.
-            </div>
-          )}
-        </div>
-      </CardContent>
-    </Card>
+    <div className="space-y-3 rounded-lg border border-border bg-background p-4 shadow-sm">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="font-semibold">Status</span>
+        <Badge className="capitalize">{iteration.status}</Badge>
+        <span className="mx-1 text-muted-foreground">·</span>
+        <span className="font-semibold">Result</span>
+        <Badge className="capitalize">{iteration.result}</Badge>
+      </div>
+      <div className="grid gap-2 text-sm text-muted-foreground sm:grid-cols-2">
+        <div>Started {formatTime(iteration.startedAt)}</div>
+        <div>Updated {formatTime(iteration.updatedAt)}</div>
+        <div>Tokens {Number(iteration.tokensUsed || 0).toLocaleString()}</div>
+        <div>Tool calls {iteration.actualToolCalls.length}</div>
+      </div>
+      <div className="rounded-md border bg-muted/40 p-3">
+        {loading ? (
+          <div className="text-sm text-muted-foreground">Loading blob…</div>
+        ) : error ? (
+          <div className="text-sm text-red-600">{error}</div>
+        ) : iteration.blob ? (
+          <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap break-words text-xs">
+            {JSON.stringify(blob, null, 2)}
+          </pre>
+        ) : (
+          <div className="text-sm text-muted-foreground">
+            No blob attached to this iteration.
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
