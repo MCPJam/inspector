@@ -3,14 +3,15 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { LlmsConfig } from "./validators";
 import { LanguageModel, ToolSet, TypedToolCall } from "ai";
+import { Logger } from "./logger";
 
 export const createLlmModel = (
   provider: string,
   model: string,
   llmsConfig: LlmsConfig,
-): LanguageModel => {
+): LanguageModel | undefined => {
   if (!llmsConfig[provider]) {
-    throw new Error(`LLM API key not found for provider: ${provider}`);
+    Logger.errorWithExit(`LLM API key not found for provider: ${provider}`);
   }
   switch (provider) {
     case "anthropic":
@@ -20,7 +21,7 @@ export const createLlmModel = (
     case "openrouter":
       return createOpenRouter({ apiKey: llmsConfig.openrouter })(model);
     default:
-      throw new Error(`Unsupported provider: ${provider}`);
+      Logger.errorWithExit(`Unsupported provider: ${provider}`);
   }
 };
 
