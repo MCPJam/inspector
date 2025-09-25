@@ -20,7 +20,11 @@ export function ThemeSwitcher() {
       onClick={handleValueChange}
       className="cursor-pointer"
     >
-      {themeMode === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+      {themeMode === "dark" ? (
+        <Sun className="h-4 w-4" />
+      ) : (
+        <Moon className="h-4 w-4" />
+      )}
       <span>{themeMode === "dark" ? "Light mode" : "Dark mode"}</span>
     </SidebarMenuButton>
   );
