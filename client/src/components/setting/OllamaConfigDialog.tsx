@@ -40,7 +40,7 @@ export function OllamaConfigDialog({
               />
             </div>
             <div>
-              <DialogTitle className="text-left">
+              <DialogTitle className="text-left pb-2">
                 Configure Ollama URL
               </DialogTitle>
               <DialogDescription className="text-left">

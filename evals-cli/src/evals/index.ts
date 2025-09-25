@@ -3,6 +3,8 @@ import { readFile } from "fs/promises";
 import { resolve } from "path";
 import { Logger } from "../utils/logger.js";
 import { runEvals } from "./runner.js";
+import { hogClient } from "../utils/hog.js";
+import { getUserId } from "../utils/user-id.js";
 
 // node dist/index.js evals run -t examples/test-servers.json -e examples/mcp-environment.json
 
@@ -18,7 +20,13 @@ evalsCommand
   .option("-a, --api-key <key>", "Personal access key")
   .action(async (options) => {
     try {
-      // Read and parse test file
+      hogClient.capture({
+        distinctId: getUserId(),
+        event: "evals cli ran",
+        properties: {
+          environment: process.env.ENVIRONMENT,
+        },
+      });
       const testsContent = await readFile(resolve(options.tests), "utf8");
       const testsData = JSON.parse(testsContent);
 
