@@ -9,6 +9,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { getDefaultTemperatureForModel } from "@/lib/chat-utils";
 import { MastraMCPServerDefinition } from "@mastra/mcp";
+import { useConvexAuth } from "convex/react";
 
 interface ChatTabProps {
   serverConfigs?: Record<string, MastraMCPServerDefinition>;
@@ -18,6 +19,7 @@ interface ChatTabProps {
 export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
+  const { isAuthenticated } = useConvexAuth();
 
   const [systemPromptState, setSystemPromptState] = useState(
     systemPrompt || "You are a helpful assistant with access to MCP tools.",
@@ -50,6 +52,16 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
       toast.error(error);
     },
   });
+
+  const isUsingMcpjamProvidedModel = model?.provider === "meta";
+  const showSignInPrompt = isUsingMcpjamProvidedModel && !isAuthenticated;
+  const signInPromptMessage = "Sign in to use MCPJam provided models";
+
+  useEffect(() => {
+    if (showSignInPrompt) {
+      setInput("");
+    }
+  }, [showSignInPrompt, setInput]);
 
   // Update temperature when model changes
   useEffect(() => {
@@ -124,25 +136,30 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
             transition={{ duration: 0.5, delay: 0.1 }}
             className="w-full max-w-3xl"
           >
-            <ChatInput
-              value={input}
-              onChange={setInput}
-              onSubmit={sendMessage}
-              onStop={stopGeneration}
-              disabled={availableModels.length === 0 || noServersConnected}
-              isLoading={isLoading}
-              placeholder="Send a message..."
-              className="border-2 shadow-lg bg-background/80 backdrop-blur-sm"
-              currentModel={model || null}
-              availableModels={availableModels}
-              onModelChange={setModel}
-              onClearChat={clearChat}
-              hasMessages={false}
-              systemPrompt={systemPromptState}
-              onSystemPromptChange={setSystemPromptState}
-              temperature={temperatureState}
-              onTemperatureChange={setTemperatureState}
-            />
+            <div>
+              <ChatInput
+                value={input}
+                onChange={setInput}
+                onSubmit={sendMessage}
+                onStop={stopGeneration}
+                disabled={availableModels.length === 0 || noServersConnected}
+                isLoading={isLoading}
+                placeholder={
+                  showSignInPrompt ? signInPromptMessage : "Send a message..."
+                }
+                className="border-2 shadow-lg bg-background/80 backdrop-blur-sm"
+                currentModel={model || null}
+                availableModels={availableModels}
+                onModelChange={setModel}
+                onClearChat={clearChat}
+                hasMessages={false}
+                systemPrompt={systemPromptState}
+                onSystemPromptChange={setSystemPromptState}
+                temperature={temperatureState}
+                onTemperatureChange={setTemperatureState}
+                isSendBlocked={showSignInPrompt}
+              />
+            </div>
             {/* System prompt editor shown inline above input */}
             {availableModels.length === 0 && (
               <motion.p
@@ -248,25 +265,30 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
         {/* Fixed Bottom Input - Absolute positioned */}
         <div className="absolute bottom-0 left-0 right-0 border-t border-border/50 bg-background/80 backdrop-blur-sm">
           <div className="max-w-4xl mx-auto p-4">
-            <ChatInput
-              value={input}
-              onChange={setInput}
-              onSubmit={sendMessage}
-              onStop={stopGeneration}
-              disabled={availableModels.length === 0 || noServersConnected}
-              isLoading={isLoading}
-              placeholder="Send a message..."
-              className="border-2 shadow-sm"
-              currentModel={model}
-              availableModels={availableModels}
-              onModelChange={setModel}
-              onClearChat={clearChat}
-              hasMessages={hasMessages}
-              systemPrompt={systemPromptState}
-              onSystemPromptChange={setSystemPromptState}
-              temperature={temperatureState}
-              onTemperatureChange={setTemperatureState}
-            />
+            <div>
+              <ChatInput
+                value={input}
+                onChange={setInput}
+                onSubmit={sendMessage}
+                onStop={stopGeneration}
+                disabled={availableModels.length === 0 || noServersConnected}
+                isLoading={isLoading}
+                placeholder={
+                  showSignInPrompt ? signInPromptMessage : "Send a message..."
+                }
+                className="border-2 shadow-sm"
+                currentModel={model}
+                availableModels={availableModels}
+                onModelChange={setModel}
+                onClearChat={clearChat}
+                hasMessages={hasMessages}
+                systemPrompt={systemPromptState}
+                onSystemPromptChange={setSystemPromptState}
+                temperature={temperatureState}
+                onTemperatureChange={setTemperatureState}
+                isSendBlocked={showSignInPrompt}
+              />
+            </div>
           </div>
         </div>
 

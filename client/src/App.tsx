@@ -19,7 +19,6 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "./components/ui/sidebar";
-import { ThemeSwitcher } from "./components/sidebar/theme-switcher";
 import { useAppState } from "./hooks/use-app-state";
 import { PreferencesStoreProvider } from "./stores/preferences/preferences-provider";
 import { Toaster } from "./components/ui/sonner";
@@ -119,7 +118,6 @@ export default function App() {
                 <SidebarTrigger className="-ml-1" />
               </div>
               <div className="flex items-center gap-2">
-                <ThemeSwitcher />
                 <AuthButton />
               </div>
             </div>
