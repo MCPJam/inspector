@@ -10,7 +10,10 @@ import { getDefaultTemperatureByProvider } from "../../../client/src/lib/chat-ut
 import { createLlmModel } from "../../utils/chat-helpers";
 import { SSEvent } from "../../../shared/sse";
 import { convertMastraToolsToVercelTools } from "../../../shared/tools";
-import { hasUnresolvedToolCalls, executeToolCallsFromMessages } from "../../../shared/http-tool-calls";
+import {
+  hasUnresolvedToolCalls,
+  executeToolCallsFromMessages,
+} from "../../../shared/http-tool-calls";
 import { zodToJsonSchema } from "@alcyone-labs/zod-to-json-schema";
 import type { ModelMessage, Tool } from "ai";
 
@@ -322,7 +325,6 @@ const createStreamingResponse = async (
     "[DONE]",
   );
 };
- 
 
 const sendMessagesToBackend = async (
   messages: ChatMessage[],
@@ -345,7 +347,8 @@ const sendMessagesToBackend = async (
     }
   });
 
-  const flatTools = await mcpClientManager.getFlattenedToolsetsForEnabledServers();
+  const flatTools =
+    await mcpClientManager.getFlattenedToolsetsForEnabledServers();
   const toolDefs = Object.keys(flatTools).map((name) => ({
     name,
     description: (flatTools as any)[name]?.description,
@@ -363,7 +366,10 @@ const sendMessagesToBackend = async (
         "content-type": "application/json",
         ...(authHeader ? { Authorization: authHeader } : {}),
       },
-      body: JSON.stringify({ tools: toolDefs, messages: JSON.stringify(messageHistory) }),
+      body: JSON.stringify({
+        tools: toolDefs,
+        messages: JSON.stringify(messageHistory),
+      }),
     });
 
     let data: any = {};
@@ -371,33 +377,48 @@ const sendMessagesToBackend = async (
       data = await res.json();
     } catch {
       const text = await res.text();
-      try { data = JSON.parse(text); } catch { data = { ok: false }; }
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = { ok: false };
+      }
     }
 
     if (data?.ok && Array.isArray(data.messages)) {
       // Append assistant messages and emit their text/tool_call events
       for (const msg of data.messages as ModelMessage[]) {
         messageHistory.push(msg);
-        if ((msg as any).role === "assistant" && Array.isArray((msg as any).content)) {
+        if (
+          (msg as any).role === "assistant" &&
+          Array.isArray((msg as any).content)
+        ) {
           for (const c of (msg as any).content) {
             if (c?.type === "text" && typeof c.text === "string") {
-              sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
-                type: "text",
-                content: c.text,
-              });
+              sendSseEvent(
+                streamingContext.controller,
+                streamingContext.encoder!,
+                {
+                  type: "text",
+                  content: c.text,
+                },
+              );
             } else if (c?.type === "tool-call") {
               const currentToolCallId = ++streamingContext.toolCallId;
               streamingContext.lastEmittedToolCallId = currentToolCallId;
-              sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
-                type: "tool_call",
-                toolCall: {
-                  id: currentToolCallId,
-                  name: c.toolName || c.name,
-                  parameters: c.input || c.parameters || c.args || {},
-                  timestamp: new Date().toISOString(),
-                  status: "executing",
+              sendSseEvent(
+                streamingContext.controller,
+                streamingContext.encoder!,
+                {
+                  type: "tool_call",
+                  toolCall: {
+                    id: currentToolCallId,
+                    name: c.toolName || c.name,
+                    parameters: c.input || c.parameters || c.args || {},
+                    timestamp: new Date().toISOString(),
+                    status: "executing",
+                  },
                 },
-              });
+              );
             }
           }
         }
@@ -409,7 +430,9 @@ const sendMessagesToBackend = async (
     // Execute unresolved tool calls locally and emit tool_result events
     const beforeLen = messageHistory.length;
     if (hasUnresolvedToolCalls(messageHistory as any)) {
-      await executeToolCallsFromMessages(messageHistory as ModelMessage[], { tools: flatTools as any });
+      await executeToolCallsFromMessages(messageHistory as ModelMessage[], {
+        tools: flatTools as any,
+      });
       const newMsgs = messageHistory.slice(beforeLen);
       for (const m of newMsgs) {
         if ((m as any).role === "tool" && Array.isArray((m as any).content)) {
@@ -420,16 +443,23 @@ const sendMessagesToBackend = async (
                   ? streamingContext.lastEmittedToolCallId
                   : ++streamingContext.toolCallId;
               const out = tc.output;
-              const value = out && typeof out === "object" && "value" in out ? out.value : out;
-              sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
-                type: "tool_result",
-                toolResult: {
-                  id: currentToolCallId,
-                  toolCallId: currentToolCallId,
-                  result: value,
-                  timestamp: new Date().toISOString(),
+              const value =
+                out && typeof out === "object" && "value" in out
+                  ? out.value
+                  : out;
+              sendSseEvent(
+                streamingContext.controller,
+                streamingContext.encoder!,
+                {
+                  type: "tool_result",
+                  toolResult: {
+                    id: currentToolCallId,
+                    toolCallId: currentToolCallId,
+                    result: value,
+                    timestamp: new Date().toISOString(),
+                  },
                 },
-              });
+              );
             }
           }
         }
@@ -444,7 +474,11 @@ const sendMessagesToBackend = async (
   sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
     type: "elicitation_complete",
   });
-  sendSseEvent(streamingContext.controller, streamingContext.encoder!, "[DONE]");
+  sendSseEvent(
+    streamingContext.controller,
+    streamingContext.encoder!,
+    "[DONE]",
+  );
 };
 
 // Main chat endpoint
@@ -504,7 +538,8 @@ chat.post("/", async (c) => {
         400,
       );
     }
-    const sendToBackend = provider === "meta" && requestData.sendMessagesToBackend;
+    const sendToBackend =
+      provider === "meta" && requestData.sendMessagesToBackend;
 
     if (!sendToBackend && (!model?.id || !requestData.apiKey)) {
       return c.json(
@@ -594,10 +629,16 @@ chat.post("/", async (c) => {
             );
           } else {
             // Use existing streaming path with tools
-            const flatTools = await mcpClientManager.getFlattenedToolsetsForEnabledServers();
-            const vercelTools: Record<string, Tool> = convertMastraToolsToVercelTools(flatTools as any);
+            const flatTools =
+              await mcpClientManager.getFlattenedToolsetsForEnabledServers();
+            const vercelTools: Record<string, Tool> =
+              convertMastraToolsToVercelTools(flatTools as any);
 
-            const llmModel = createLlmModel(model as ModelDefinition, apiKey || "", _ollama_unused);
+            const llmModel = createLlmModel(
+              model as ModelDefinition,
+              apiKey || "",
+              _ollama_unused,
+            );
             await createStreamingResponse(
               llmModel,
               vercelTools,

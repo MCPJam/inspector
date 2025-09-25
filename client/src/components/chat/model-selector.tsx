@@ -132,10 +132,12 @@ export function ModelSelector({
               >
                 {models.map((model) => {
                   const isMeta = model.provider === "meta";
-                  const isDisabled = !!model.disabled || (isMeta && !isAuthenticated);
-                  const computedReason = isMeta && !isAuthenticated
-                    ? "Sign in to use MCPJam provided models"
-                    : model.disabledReason;
+                  const isDisabled =
+                    !!model.disabled || (isMeta && !isAuthenticated);
+                  const computedReason =
+                    isMeta && !isAuthenticated
+                      ? "Sign in to use MCPJam provided models"
+                      : model.disabledReason;
 
                   const item = (
                     <DropdownMenuItem
