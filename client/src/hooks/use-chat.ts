@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { useAuth } from "@workos-inc/authkit-react";
 import { ChatMessage, ChatState, Attachment } from "@/lib/chat-types";
 import { createMessage } from "@/lib/chat-utils";
 import { Model, ModelDefinition, SUPPORTED_MODELS } from "@/shared/types.js";
@@ -25,6 +26,7 @@ interface UseChatOptions {
   onMessageReceived?: (message: ChatMessage) => void;
   onError?: (error: string) => void;
   onModelChange?: (model: ModelDefinition) => void;
+  sendMessagesToBackend?: boolean;
 }
 
 export function useChat(options: UseChatOptions = {}) {
@@ -38,6 +40,7 @@ export function useChat(options: UseChatOptions = {}) {
     onMessageReceived,
     onError,
     onModelChange,
+    sendMessagesToBackend = false,
   } = options;
 
   const [state, setState] = useState<ChatState>({
@@ -55,6 +58,7 @@ export function useChat(options: UseChatOptions = {}) {
   const [elicitationLoading, setElicitationLoading] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesRef = useRef(state.messages);
+  const { getAccessToken } = useAuth();
   useEffect(() => {
     messagesRef.current = state.messages;
   }, [state.messages]);
@@ -108,6 +112,10 @@ export function useChat(options: UseChatOptions = {}) {
   const getApiKeyForModel = useCallback(
     (m: ModelDefinition | null) => {
       if (!m) return "";
+      // Router-backed model requires no user token; backend provides it
+      if (m.provider === "meta") {
+        return "router"; // sentinel token to pass client validation
+      }
       if (m.provider === "ollama") {
         const available =
           isOllamaRunning &&
@@ -144,6 +152,7 @@ export function useChat(options: UseChatOptions = {}) {
       deepseek: hasToken("deepseek"),
       google: hasToken("google"),
       ollama: isOllamaRunning,
+      meta: true, // always available; uses backend-provided key
     } as const;
 
     const cloud = SUPPORTED_MODELS.filter((m) => providerHasKey[m.provider]);
@@ -302,7 +311,10 @@ export function useChat(options: UseChatOptions = {}) {
 
   const sendChatRequest = useCallback(
     async (userMessage: ChatMessage) => {
-      if (!model || !currentApiKey) {
+      const routeThroughBackend =
+        sendMessagesToBackend || model?.provider === "meta";
+
+      if (!routeThroughBackend && (!model || !currentApiKey)) {
         throw new Error(
           "Missing required configuration: model and apiKey are required",
         );
@@ -316,20 +328,37 @@ export function useChat(options: UseChatOptions = {}) {
       }));
 
       try {
+        let authHeader: string | null = null;
+        if (routeThroughBackend && getAccessToken) {
+          try {
+            const token = await getAccessToken();
+            if (token) {
+              authHeader = `Bearer ${token}`;
+            }
+          } catch (tokenError) {
+            console.warn(
+              "[useChat] failed to retrieve access token",
+              tokenError,
+            );
+          }
+        }
+
         const response = await fetch("/api/mcp/chat", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             Accept: "text/event-stream",
+            ...(authHeader ? { Authorization: authHeader } : {}),
           },
           body: JSON.stringify({
-            model,
-            provider: model.provider,
+            model: model!,
+            provider: model!.provider,
             apiKey: currentApiKey,
             systemPrompt,
             temperature,
             messages: messagesRef.current.concat(userMessage),
             ollamaBaseUrl: getOllamaBaseUrl(),
+            sendMessagesToBackend: routeThroughBackend,
           }),
           signal: abortControllerRef.current?.signal,
         });
@@ -404,6 +433,8 @@ export function useChat(options: UseChatOptions = {}) {
       onMessageReceived,
       applySseEvent,
       getOllamaBaseUrl,
+      sendMessagesToBackend,
+      getAccessToken,
     ],
   );
 
