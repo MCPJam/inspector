@@ -102,7 +102,8 @@ export type ModelProvider =
   | "openai"
   | "ollama"
   | "deepseek"
-  | "google";
+  | "google"
+  | "meta";
 
 export interface ModelDefinition {
   id: Model | string;
@@ -223,6 +224,11 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     id: Model.GEMINI_1_5_FLASH,
     name: "Gemini 1.5 Flash",
     provider: "google",
+  },
+  {
+    id: "meta-llama/llama-3.3-70b-instruct",
+    name: "Llama 3.3 70B (Free)",
+    provider: "meta",
   },
 ];
 

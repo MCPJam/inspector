@@ -3,6 +3,7 @@ import claudeLogo from "/claude_logo.png";
 import openaiLogo from "/openai_logo.png";
 import deepseekLogo from "/deepseek_logo.svg";
 import googleLogo from "/google_logo.png";
+import metaLogo from "/meta_logo.png";
 import ollamaLogo from "/ollama_logo.svg";
 import ollamaDarkLogo from "/ollama_dark.png";
 
@@ -31,6 +32,8 @@ export const getProviderLogoFromProvider = (
       }
       // Default to light logo for light mode or when themeMode is not provided
       return ollamaLogo;
+    case "meta":
+      return metaLogo;
     default:
       return null;
   }

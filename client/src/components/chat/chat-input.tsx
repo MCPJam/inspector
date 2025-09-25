@@ -35,6 +35,8 @@ interface ChatInputProps {
   // Temperature props
   temperature?: number;
   onTemperatureChange?: (temperature: number) => void;
+  // Messaging availability
+  isSendBlocked?: boolean;
 }
 
 export function ChatInput({
@@ -55,6 +57,7 @@ export function ChatInput({
   onSystemPromptChange,
   temperature,
   onTemperatureChange,
+  isSendBlocked = false,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -82,7 +85,13 @@ export function ChatInput({
   };
 
   const handleSubmit = useCallback(() => {
-    if (!value.trim() || disabled || isLoading || uploadQueue.length > 0)
+    if (
+      !value.trim() ||
+      disabled ||
+      isLoading ||
+      uploadQueue.length > 0 ||
+      isSendBlocked
+    )
       return;
 
     onSubmit(value.trim(), attachments.length > 0 ? attachments : undefined);
@@ -102,6 +111,7 @@ export function ChatInput({
     onSubmit,
     attachments,
     onChange,
+    isSendBlocked,
   ]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -219,20 +229,27 @@ export function ChatInput({
         <Textarea
           ref={textareaRef}
           value={value}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => {
+            if (isSendBlocked) return;
+            onChange(e.target.value);
+          }}
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
           disabled={disabled}
+          readOnly={disabled || isSendBlocked}
           className={cn(
             "min-h-[56px] max-h-[120px] resize-none pl-16 pr-14 py-4 rounded-3xl",
             "border-border/30 bg-background/50 focus-visible:border-border/50",
             "focus-visible:ring-0 focus-visible:ring-offset-0",
             "transition-all duration-200 ease-in-out overflow-y-auto",
             "text-base placeholder:text-muted-foreground/60",
+            isSendBlocked
+              ? "cursor-not-allowed bg-muted/30 text-muted-foreground"
+              : "",
             className,
           )}
           rows={1}
-          autoFocus
+          autoFocus={!isSendBlocked}
         />
 
         {/* Attachment button - positioned on the left side of text input */}
@@ -245,7 +262,7 @@ export function ChatInput({
                 size="sm"
                 className="h-8 w-8 p-0 rounded-full hover:bg-muted/80 transition-colors cursor-pointer"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={disabled || isLoading}
+                disabled={disabled || isLoading || isSendBlocked}
               >
                 <Paperclip size={16} />
               </Button>
@@ -280,12 +297,20 @@ export function ChatInput({
                   size="sm"
                   className={cn(
                     "h-8 w-8 p-0 rounded-full transition-all duration-200 cursor-pointer",
-                    value.trim() && !disabled && uploadQueue.length === 0
+                    value.trim() &&
+                      !disabled &&
+                      uploadQueue.length === 0 &&
+                      !isSendBlocked
                       ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm"
                       : "bg-muted text-muted-foreground cursor-not-allowed",
                   )}
                   onClick={handleSubmit}
-                  disabled={!value.trim() || disabled || uploadQueue.length > 0}
+                  disabled={
+                    !value.trim() ||
+                    disabled ||
+                    uploadQueue.length > 0 ||
+                    isSendBlocked
+                  }
                 >
                   <ArrowUp size={16} />
                 </Button>
