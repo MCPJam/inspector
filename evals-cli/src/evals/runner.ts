@@ -1,5 +1,5 @@
-import { MCPClient } from "@mastra/mcp";
-import { streamText, Tool, ToolChoice, ModelMessage } from "ai";
+import { MCPClient, MCPClientOptions } from "@mastra/mcp";
+import { streamText, Tool, ToolChoice, ModelMessage, LanguageModel } from "ai";
 import { getUserIdFromApiKeyOrNull } from "../db/user";
 import {
   createPersistenceContext,
@@ -57,10 +57,11 @@ const prepareSuite = async (
   environment: unknown,
   llms: unknown,
 ) => {
-  const mcpClientOptions =
-    validateAndNormalizeMCPClientConfiguration(environment);
-  const validatedTests = validateTestCase(tests);
-  const validatedLlms = validateLlms(llms);
+  const mcpClientOptions = validateAndNormalizeMCPClientConfiguration(
+    environment,
+  ) as MCPClientOptions;
+  const validatedTests = validateTestCase(tests) as TestCase[];
+  const validatedLlms = validateLlms(llms) as LlmsConfig;
 
   const mcpClient = new MCPClient(mcpClientOptions);
   const availableTools = await mcpClient.getTools();
@@ -143,7 +144,7 @@ const runIteration = async ({
     let assistantStreaming = false;
 
     const streamResult = await streamText({
-      model: createLlmModel(provider, model, llms),
+      model: createLlmModel(provider, model, llms) as LanguageModel,
       system,
       temperature,
       tools,
