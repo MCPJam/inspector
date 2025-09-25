@@ -298,9 +298,9 @@ export function ChatInput({
                   className={cn(
                     "h-8 w-8 p-0 rounded-full transition-all duration-200 cursor-pointer",
                     value.trim() &&
-                    !disabled &&
-                    uploadQueue.length === 0 &&
-                    !isSendBlocked
+                      !disabled &&
+                      uploadQueue.length === 0 &&
+                      !isSendBlocked
                       ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm"
                       : "bg-muted text-muted-foreground cursor-not-allowed",
                   )}
