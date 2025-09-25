@@ -142,9 +142,7 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
                 onChange={setInput}
                 onSubmit={sendMessage}
                 onStop={stopGeneration}
-                disabled={
-                  availableModels.length === 0 || noServersConnected
-                }
+                disabled={availableModels.length === 0 || noServersConnected}
                 isLoading={isLoading}
                 placeholder={
                   showSignInPrompt ? signInPromptMessage : "Send a message..."
@@ -273,9 +271,7 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
                 onChange={setInput}
                 onSubmit={sendMessage}
                 onStop={stopGeneration}
-                disabled={
-                  availableModels.length === 0 || noServersConnected
-                }
+                disabled={availableModels.length === 0 || noServersConnected}
                 isLoading={isLoading}
                 placeholder={
                   showSignInPrompt ? signInPromptMessage : "Send a message..."
