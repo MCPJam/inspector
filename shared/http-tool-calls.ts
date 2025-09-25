@@ -54,11 +54,8 @@ export async function executeToolCallsFromMessages(
     | { toolsets: Toolsets }
     | { client: MCPClient },
 ): Promise<void> {
-  console.log("executing unresolved tool calls");
-
   // Build tools index
   let tools: ToolsMap = {};
-  console.log("options", options);
   if ((options as any).client) {
     const toolsets = await (options as any).client.getToolsets();
     tools = flattenToolsets(toolsets as any);
@@ -85,7 +82,6 @@ export async function executeToolCallsFromMessages(
       if (content?.type === "tool-call" && !existingToolResultIds.has(content.toolCallId)) {
         try {
           const toolName: string = content.toolName;
-          console.log(`Executing unresolved tool call: ${toolName} (${content.toolCallId})`);
           const tool = index[toolName];
           if (!tool) throw new Error(`Tool '${toolName}' not found`);
           const input = content.input || {};
@@ -118,7 +114,6 @@ export async function executeToolCallsFromMessages(
           } as any;
           toolResultsToAdd.push(toolResultMessage);
         } catch (error: any) {
-          console.error(`Error executing tool ${content?.toolName}:`, error);
           const errorOutput: LanguageModelV2ToolResultOutput = {
             type: "error-text",
             value: error instanceof Error ? error.message : String(error),
