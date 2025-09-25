@@ -17,9 +17,12 @@ import {
   SidebarContent,
   SidebarFooter,
   SidebarHeader,
+  SidebarMenu,
+  SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { MCPIcon } from "@/components/ui/mcp-icon";
+import { ThemeSwitcher } from "@/components/sidebar/theme-switcher";
 
 // Define sections with their respective items
 const navigationSections = [
@@ -151,7 +154,13 @@ export function MCPSidebar({
           </React.Fragment>
         ))}
       </SidebarContent>
-      <SidebarFooter>{/* <NavUser user={data.user} /> */}</SidebarFooter>
+      <SidebarFooter>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <ThemeSwitcher />
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarFooter>
     </Sidebar>
   );
 }

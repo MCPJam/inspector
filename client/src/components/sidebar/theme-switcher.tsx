@@ -1,6 +1,6 @@
 import { Moon, Sun } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
+import { SidebarMenuButton } from "@/components/ui/sidebar";
 import { updateThemeMode } from "@/lib/theme-utils";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
@@ -15,8 +15,17 @@ export function ThemeSwitcher() {
   };
 
   return (
-    <Button size="icon" onClick={handleValueChange} className="cursor-pointer">
-      {themeMode === "dark" ? <Sun /> : <Moon />}
-    </Button>
+    <SidebarMenuButton
+      tooltip={`Switch to ${themeMode === "dark" ? "light" : "dark"} mode`}
+      onClick={handleValueChange}
+      className="cursor-pointer"
+    >
+      {themeMode === "dark" ? (
+        <Sun className="h-4 w-4" />
+      ) : (
+        <Moon className="h-4 w-4" />
+      )}
+      <span>{themeMode === "dark" ? "Light mode" : "Dark mode"}</span>
+    </SidebarMenuButton>
   );
 }
