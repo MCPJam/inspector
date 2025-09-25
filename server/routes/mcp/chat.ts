@@ -355,20 +355,8 @@ const sendMessagesToBackend = async (
   if (!baseUrl) {
     throw new Error("CONVEX_HTTP_URL is not set");
   }
-  console.log(
-    "[mcp/chat] sendMessagesToBackend: initialized",
-    JSON.stringify({
-      baseUrl,
-      inputMessages: messageHistory.length,
-      toolCount: toolDefs.length,
-    }),
-  );
   let steps = 0;
   while (steps < MAX_AGENT_STEPS) {
-    console.log(
-      "[mcp/chat] sendMessagesToBackend: issuing request",
-      JSON.stringify({ step: steps + 1 }),
-    );
     const res = await fetch(`${baseUrl}/streaming`, {
       method: "POST",
       headers: {
@@ -385,17 +373,6 @@ const sendMessagesToBackend = async (
       const text = await res.text();
       try { data = JSON.parse(text); } catch { data = { ok: false }; }
     }
-
-    console.log(
-      "[mcp/chat] sendMessagesToBackend: response",
-      JSON.stringify({
-        step: steps + 1,
-        status: res.status,
-        ok: data?.ok,
-        messageCount: Array.isArray(data?.messages) ? data.messages.length : 0,
-        error: data?.error,
-      }),
-    );
 
     if (data?.ok && Array.isArray(data.messages)) {
       // Append assistant messages and emit their text/tool_call events
@@ -432,10 +409,8 @@ const sendMessagesToBackend = async (
     // Execute unresolved tool calls locally and emit tool_result events
     const beforeLen = messageHistory.length;
     if (hasUnresolvedToolCalls(messageHistory as any)) {
-      console.log("[mcp/chat] Unresolved tool calls found; executing locally");
       await executeToolCallsFromMessages(messageHistory as ModelMessage[], { tools: flatTools as any });
       const newMsgs = messageHistory.slice(beforeLen);
-      console.log("[mcp/chat] Appended tool results", newMsgs.length);
       for (const m of newMsgs) {
         if ((m as any).role === "tool" && Array.isArray((m as any).content)) {
           for (const tc of (m as any).content) {
@@ -470,10 +445,6 @@ const sendMessagesToBackend = async (
     type: "elicitation_complete",
   });
   sendSseEvent(streamingContext.controller, streamingContext.encoder!, "[DONE]");
-  console.log(
-    "[mcp/chat] sendMessagesToBackend: completed",
-    JSON.stringify({ totalSteps: steps, finalMessages: messageHistory.length }),
-  );
 };
 
 // Main chat endpoint
@@ -481,16 +452,6 @@ chat.post("/", async (c) => {
   const mcpClientManager = c.mcpJamClientManager;
   try {
     const requestData: ChatRequest = await c.req.json();
-    console.log(
-      "[mcp/chat] incoming auth context",
-      JSON.stringify({
-        authHeader: c.req.header("authorization") ? "present" : "missing",
-        cookieNames: (c.req.header("cookie") || "")
-          .split(";")
-          .map((part) => part.trim().split("=")[0])
-          .filter(Boolean),
-      }),
-    );
     const {
       model,
       provider,
