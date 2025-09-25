@@ -25,7 +25,7 @@ const packageRootDir = path.resolve(__dirname, "..");
 const devEnvPath = path.join(packageRootDir, ".env.development");
 const prodEnvPath = path.join(packageRootDir, ".env.production");
 const envFile = existsSync(devEnvPath) ? devEnvPath : prodEnvPath;
-config({ path: envFile });
+config({ path: envFile, quiet: true });
 
 const program = new Command();
 

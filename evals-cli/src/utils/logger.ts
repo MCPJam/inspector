@@ -227,6 +227,12 @@ export class Logger {
     this.logLine(chalk.red(`✕ Error: ${message}`));
   }
 
+  static errorWithExit(message: string): void {
+    this.logLine("");
+    this.logLine(chalk.red(`✕ Error: ${message}`));
+    process.exit(1);
+  }
+
   static progress(current: number, total: number, testName: string): void {
     const progress = `[${current}/${total}]`;
     this.logLine(chalk.gray(`${progress} ${testName}...`));
