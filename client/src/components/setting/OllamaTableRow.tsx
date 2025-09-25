@@ -1,7 +1,6 @@
-import { Edit3 } from "lucide-react";
 import { Button } from "../ui/button";
-import { Badge } from "../ui/badge";
-import { TableCell, TableRow } from "../ui/table";
+import { Card } from "../ui/card";
+import { cn } from "@/lib/utils";
 
 interface OllamaTableRowProps {
   baseUrl: string;
@@ -9,39 +8,46 @@ interface OllamaTableRowProps {
 }
 
 export function OllamaTableRow({ baseUrl, onEdit }: OllamaTableRowProps) {
+  const isConfigured = Boolean(baseUrl);
+
   return (
-    <TableRow>
-      <TableCell>
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-white p-1 border">
-            <img
-              src="/ollama_logo.svg"
-              alt="Ollama"
-              className="w-full h-full object-contain"
-            />
+    <Card
+      className={cn(
+        "group h-full gap-4 border bg-card px-6 py-6 transition-all hover:border-primary/40 hover:shadow-md dark:hover:shadow-xl",
+        isConfigured
+          ? "border-green-200/80 dark:border-green-400/30"
+          : "border-border/60",
+      )}
+    >
+      <div className="flex items-start justify-between gap-6">
+        <div className="flex items-center gap-4">
+          <img
+            src="/ollama_logo.svg"
+            alt="Ollama"
+            className="size-6 object-contain"
+          />
+          <div className="">
+            <h3 className="text-md font-semibold text-foreground pb-1">
+              Ollama {isConfigured && <span className="text-md">✔️</span>}
+            </h3>
+            <p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+              {isConfigured
+                ? "Local models available"
+                : "Install and connect Ollama locally"}
+            </p>
           </div>
-          <span className="font-medium">Ollama</span>
         </div>
-      </TableCell>
-      <TableCell>
-        <Badge
-          variant="secondary"
-          className="bg-blue-100 text-blue-800 border-blue-200"
+      </div>
+      <div className="space-y-4">
+        <Button
+          size="sm"
+          variant={isConfigured ? "outline" : "secondary"}
+          className="w-full"
+          onClick={onEdit}
         >
-          Local
-        </Badge>
-      </TableCell>
-      <TableCell>
-        <span className="text-sm text-muted-foreground">{baseUrl}</span>
-      </TableCell>
-      <TableCell>
-        <span className="text-sm text-muted-foreground">Local Instance</span>
-      </TableCell>
-      <TableCell>
-        <Button size="sm" variant="ghost" onClick={onEdit}>
-          <Edit3 className="w-4 h-4" />
+          {isConfigured ? "Manage" : "Configure"}
         </Button>
-      </TableCell>
-    </TableRow>
+      </div>
+    </Card>
   );
 }

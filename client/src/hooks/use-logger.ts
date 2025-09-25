@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState, useEffect } from "react";
+import Denque from "denque";
 
 export type LogLevel = "error" | "warn" | "info" | "debug" | "trace";
 
@@ -41,7 +42,10 @@ class LoggerState {
     maxBufferSize: 1000,
   };
 
-  private buffer: LogEntry[] = [];
+  private buffer = new Denque<LogEntry>([], {
+    capacity: this.config.maxBufferSize,
+  });
+
   private listeners: Set<() => void> = new Set();
 
   setConfig(config: Partial<LoggerConfig>) {
@@ -54,39 +58,16 @@ class LoggerState {
   }
 
   addEntry(entry: LogEntry) {
-    this.buffer.push(entry);
-
-    // Maintain buffer size limit
-    if (this.buffer.length > this.config.maxBufferSize) {
-      this.buffer = this.buffer.slice(-this.config.maxBufferSize);
-    }
-
+    this.buffer.unshift(entry);
     this.notifyListeners();
   }
 
   getEntries(): LogEntry[] {
-    return [...this.buffer];
-  }
-
-  getFilteredEntries(level?: LogLevel, context?: string): LogEntry[] {
-    let entries = this.buffer;
-
-    if (level) {
-      entries = entries.filter((entry) => entry.level === level);
-    }
-
-    if (context) {
-      const contextLower = context.toLowerCase();
-      entries = entries.filter((entry) =>
-        entry.context.toLowerCase().includes(contextLower),
-      );
-    }
-
-    return entries;
+    return this.buffer.toArray();
   }
 
   clearBuffer() {
-    this.buffer = [];
+    this.buffer.clear();
     this.notifyListeners();
   }
 
@@ -225,10 +206,6 @@ export const LoggerUtils = {
     return loggerState.getEntries();
   },
 
-  getFilteredEntries: (level?: LogLevel, context?: string): LogEntry[] => {
-    return loggerState.getFilteredEntries(level, context);
-  },
-
   clearLogs: () => {
     loggerState.clearBuffer();
   },
@@ -264,6 +241,5 @@ export function useLoggerState() {
     config: loggerState.getConfig(),
     setConfig: loggerState.setConfig.bind(loggerState),
     clearBuffer: loggerState.clearBuffer.bind(loggerState),
-    getFilteredEntries: loggerState.getFilteredEntries.bind(loggerState),
   };
 }

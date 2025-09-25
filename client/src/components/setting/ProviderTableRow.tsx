@@ -1,7 +1,13 @@
-import { Edit3, Trash2, Plus, Check, X } from "lucide-react";
+import { Ellipsis } from "lucide-react";
 import { Button } from "../ui/button";
-import { Badge } from "../ui/badge";
-import { TableCell, TableRow } from "../ui/table";
+import { Card } from "../ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../ui/dropdown-menu";
+import { cn } from "@/lib/utils";
 
 interface ProviderConfig {
   id: string;
@@ -16,89 +22,78 @@ interface ProviderConfig {
 interface ProviderTableRowProps {
   config: ProviderConfig;
   isConfigured: boolean;
-  apiKeyValue: string;
-  createdDate: string;
   onEdit: (providerId: string) => void;
   onDelete: (providerId: string) => void;
-  maskApiKey: (key: string) => string;
 }
 
 export function ProviderTableRow({
   config,
   isConfigured,
-  apiKeyValue,
-  createdDate,
   onEdit,
   onDelete,
-  maskApiKey,
 }: ProviderTableRowProps) {
+  const description = config.description?.trim();
+
   return (
-    <TableRow>
-      <TableCell>
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-white p-1 border">
-            <img
-              src={config.logo}
-              alt={config.logoAlt}
-              className="w-full h-full object-contain"
-            />
+    <Card
+      className={cn(
+        "group h-full gap-4 border bg-card px-6 py-6 transition-all hover:border-primary/40 hover:shadow-md dark:hover:shadow-xl",
+        isConfigured
+          ? "border-green-200/80 dark:border-green-400/30"
+          : "border-border/60",
+      )}
+    >
+      <div className="flex items-start justify-between gap-6">
+        <div className="flex items-center gap-4">
+          <img
+            src={config.logo}
+            alt={config.logoAlt}
+            className="size-6 object-contain"
+          />
+          <div className="">
+            <h3 className="text-md font-semibold text-foreground pb-1">
+              {config.name}{" "}
+              {isConfigured && <span className="text-md">✔️</span>}
+            </h3>
+            {description ? (
+              <p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+                {description}
+              </p>
+            ) : null}
           </div>
-          <span className="font-medium">{config.name}</span>
         </div>
-      </TableCell>
-      <TableCell>
         {isConfigured ? (
-          <Badge
-            variant="secondary"
-            className="bg-green-100 text-green-800 border-green-200"
-          >
-            <Check className="w-3 h-3 mr-1" />
-            Configured
-          </Badge>
-        ) : (
-          <Badge
-            variant="secondary"
-            className="bg-red-100 text-red-800 border-red-200"
-          >
-            <X className="w-3 h-3 mr-1" />
-            Not Configured
-          </Badge>
-        )}
-      </TableCell>
-      <TableCell>
-        <span className="font-mono text-sm">
-          {isConfigured ? maskApiKey(apiKeyValue) : "N/A"}
-        </span>
-      </TableCell>
-      <TableCell>
-        <span className="text-sm text-muted-foreground">{createdDate}</span>
-      </TableCell>
-      <TableCell>
-        <div className="flex items-center gap-1">
-          {isConfigured ? (
-            <>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
               <Button
-                size="sm"
+                size="icon"
                 variant="ghost"
-                onClick={() => onEdit(config.id)}
+                className="size-8 rounded-md border border-transparent hover:bg-muted/50"
               >
-                <Edit3 className="w-4 h-4" />
+                <Ellipsis className="size-4" />
               </Button>
-              <Button
-                size="sm"
-                variant="ghost"
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-44">
+              <DropdownMenuItem
+                variant="destructive"
                 onClick={() => onDelete(config.id)}
               >
-                <Trash2 className="w-4 h-4" />
-              </Button>
-            </>
-          ) : (
-            <Button size="sm" variant="ghost" onClick={() => onEdit(config.id)}>
-              <Plus className="w-4 h-4" />
-            </Button>
-          )}
-        </div>
-      </TableCell>
-    </TableRow>
+                Remove provider
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
+      </div>
+      <div className="space-y-4">
+        <Button
+          size="sm"
+          variant={isConfigured ? "outline" : "secondary"}
+          className="w-full"
+          onClick={() => onEdit(config.id)}
+        >
+          {isConfigured ? "Manage" : "Configure"}
+        </Button>
+      </div>
+    </Card>
   );
 }
