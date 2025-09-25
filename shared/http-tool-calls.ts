@@ -20,7 +20,10 @@ function buildIndexWithAliases(tools: ToolsMap): ToolsMap {
   for (const [toolName, tool] of Object.entries<any>(tools || {})) {
     if (!tool || typeof tool !== "object" || !("execute" in tool)) continue;
     const idx = toolName.indexOf("_");
-    const pure = idx > -1 && idx < toolName.length - 1 ? toolName.slice(idx + 1) : toolName;
+    const pure =
+      idx > -1 && idx < toolName.length - 1
+        ? toolName.slice(idx + 1)
+        : toolName;
     if (!(toolName in index)) index[toolName] = tool;
     if (!(pure in index)) index[pure] = tool;
   }
@@ -49,10 +52,7 @@ export const hasUnresolvedToolCalls = (messages: ModelMessage[]): boolean => {
 
 export async function executeToolCallsFromMessages(
   messages: ModelMessage[],
-  options:
-    | { tools: ToolsMap }
-    | { toolsets: Toolsets }
-    | { client: MCPClient },
+  options: { tools: ToolsMap } | { toolsets: Toolsets } | { client: MCPClient },
 ): Promise<void> {
   // Build tools index
   let tools: ToolsMap = {};
@@ -69,7 +69,8 @@ export async function executeToolCallsFromMessages(
   // Collect existing tool-result IDs
   const existingToolResultIds = new Set<string>();
   for (const msg of messages) {
-    if (!msg || msg.role !== "tool" || !Array.isArray((msg as any).content)) continue;
+    if (!msg || msg.role !== "tool" || !Array.isArray((msg as any).content))
+      continue;
     for (const c of (msg as any).content) {
       if (c?.type === "tool-result") existingToolResultIds.add(c.toolCallId);
     }
@@ -77,9 +78,17 @@ export async function executeToolCallsFromMessages(
 
   const toolResultsToAdd: ModelMessage[] = [];
   for (const msg of messages) {
-    if (!msg || msg.role !== "assistant" || !Array.isArray((msg as any).content)) continue;
+    if (
+      !msg ||
+      msg.role !== "assistant" ||
+      !Array.isArray((msg as any).content)
+    )
+      continue;
     for (const content of (msg as any).content) {
-      if (content?.type === "tool-call" && !existingToolResultIds.has(content.toolCallId)) {
+      if (
+        content?.type === "tool-call" &&
+        !existingToolResultIds.has(content.toolCallId)
+      ) {
         try {
           const toolName: string = content.toolName;
           const tool = index[toolName];
@@ -90,10 +99,23 @@ export async function executeToolCallsFromMessages(
           let output: LanguageModelV2ToolResultOutput;
           if (result && typeof result === "object" && (result as any).content) {
             const rc: any = (result as any).content;
-            if (rc && typeof rc === "object" && "text" in rc && typeof rc.text === "string") {
+            if (
+              rc &&
+              typeof rc === "object" &&
+              "text" in rc &&
+              typeof rc.text === "string"
+            ) {
               output = { type: "text", value: rc.text } as any;
-            } else if (rc && typeof rc === "object" && "type" in rc && "value" in rc) {
-              output = { type: (rc.type as any) || "text", value: rc.value } as any;
+            } else if (
+              rc &&
+              typeof rc === "object" &&
+              "type" in rc &&
+              "value" in rc
+            ) {
+              output = {
+                type: (rc.type as any) || "text",
+                value: rc.value,
+              } as any;
             } else {
               output = { type: "text", value: JSON.stringify(rc) } as any;
             }
@@ -137,5 +159,3 @@ export async function executeToolCallsFromMessages(
 
   messages.push(...toolResultsToAdd);
 }
-
-

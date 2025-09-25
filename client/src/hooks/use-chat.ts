@@ -336,7 +336,10 @@ export function useChat(options: UseChatOptions = {}) {
               authHeader = `Bearer ${token}`;
             }
           } catch (tokenError) {
-            console.warn("[useChat] failed to retrieve access token", tokenError);
+            console.warn(
+              "[useChat] failed to retrieve access token",
+              tokenError,
+            );
           }
         }
 
