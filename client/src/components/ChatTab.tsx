@@ -108,9 +108,13 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
             className="text-center space-y-6 max-w-2xl mb-8"
           >
             <div className="space-y-3">
-              <h1 className="text-4xl font-semibold bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
-                Test your servers in chat
-              </h1>
+              <div className="flex items-center justify-center">
+                <img
+                  src="/mcp_jam.svg"
+                  alt="MCPJam logo"
+                  className="h-24 w-auto mx-auto"
+                />
+              </div>
               {noServersConnected ? (
                 <div className="text-sm text-muted-foreground mt-4">
                   <p className="text-xs">
