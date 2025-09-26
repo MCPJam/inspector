@@ -25,7 +25,7 @@ import {
   buildParametersFromFields,
   type FormField as ToolFormField,
 } from "@/lib/tool-form";
-import SaveRequestDialog from "./SaveRequestDialog";
+import SaveRequestDialog from "./tools/SaveRequestDialog";
 import {
   listSavedRequests,
   saveRequest,
