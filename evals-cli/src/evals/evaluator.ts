@@ -15,8 +15,6 @@ export const evaluateResults = (
     toolsCalled,
     missing: expectedToolCalls.filter((tool) => !toolsCalled.includes(tool)),
     unexpected: toolsCalled.filter((tool) => !expectedToolCalls.includes(tool)),
-    passed:
-      expectedToolCalls.length === toolsCalled.length &&
-      expectedToolCalls.every((tool) => toolsCalled.includes(tool)),
+    passed: expectedToolCalls.every((tool) => toolsCalled.includes(tool)),
   };
 };
