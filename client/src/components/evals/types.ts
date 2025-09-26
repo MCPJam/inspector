@@ -34,3 +34,19 @@ export type EvalIteration = {
     actualToolCalls: string[];
     tokensUsed: number;
   };
+
+export type SuiteAggregate = {
+    filteredIterations: EvalIteration[];
+    totals: { passed: number; failed: number; cancelled: number; tokens: number };
+    byCase: Array<{
+      testCaseId: string;
+      title: string;
+      provider: string;
+      model: string;
+      runs: number;
+      passed: number;
+      failed: number;
+      cancelled: number;
+      tokens: number;
+    }>;
+  };
