@@ -7,9 +7,6 @@ import {
   createTestCaseRecord,
   createIterationRecord,
   updateIterationResult,
-  updateTestCaseResult,
-  markSuiteFailed,
-  finalizeSuiteStatus,
   type ConfigSummary,
   type PersistenceContext,
   type UsageTotals,
@@ -250,10 +247,6 @@ const runIteration = async ({
         : undefined,
   });
 
-  if (!evaluation.passed) {
-    await markSuiteFailed(persistence);
-  }
-
   await updateIterationResult(
     persistence,
     evalTestId,
@@ -307,9 +300,6 @@ const runTestCase = async ({
       failedRuns++;
     }
   }
-
-  await updateTestCaseResult(persistence, testCaseId, passedRuns, failedRuns);
-
   return { passedRuns, failedRuns };
 };
 
@@ -374,6 +364,4 @@ export const runEvals = async (
     passed: passedRuns,
     failed: failedRuns,
   });
-
-  await finalizeSuiteStatus(persistence, failedRuns);
 };

@@ -61,14 +61,17 @@ export const ensureSuiteRecord = async (persistence: PersistenceContext) => {
     return;
   }
 
+  const configPayload = {
+    tests: persistence.configSummary.tests,
+    environment: persistence.configSummary.environment,
+  };
+
   const createdId = await runDbAction<string>(
     persistence,
     "evals:createEvalTestSuiteWithApiKey",
     {
       apiKey: persistence.apiKey,
-      name: undefined,
-      config: persistence.configSummary,
-      totalTests: persistence.totalPlannedTests,
+      config: configPayload,
     },
   );
 
@@ -86,22 +89,26 @@ export const createTestCaseRecord = async (
     return undefined;
   }
 
+  if (!persistence.testRunId) {
+    await ensureSuiteRecord(persistence);
+  }
+
+  if (!persistence.testRunId) {
+    return undefined;
+  }
+
   const testCaseId = await runDbAction<string>(
     persistence,
     "evals:createEvalTestCaseWithApiKey",
     {
       apiKey: persistence.apiKey,
+      evalTestSuiteId: persistence.testRunId,
       title: String(test.title ?? `Group ${testNumber}`),
       query: String(test.query ?? ""),
       provider: String(test.provider ?? ""),
       model: String(test.model ?? ""),
-      runs: Number(test.runs ?? 1),
     },
   );
-
-  if (!persistence.testRunId) {
-    await ensureSuiteRecord(persistence);
-  }
 
   return testCaseId;
 };
@@ -157,53 +164,4 @@ export const updateIterationResult = async (
       blobContent: { messages },
     },
   );
-};
-
-export const updateTestCaseResult = async (
-  persistence: PersistenceContext,
-  testCaseId: string | undefined,
-  passedRuns: number,
-  failedRuns: number,
-) => {
-  if (!persistence.enabled || !persistence.apiKey || !testCaseId) {
-    return;
-  }
-
-  const result = failedRuns > 0 ? "failed" : "passed";
-
-  await runDbAction(persistence, "evals:updateEvalTestCaseResultWithApiKey", {
-    apiKey: persistence.apiKey,
-    testCaseId,
-    result,
-  });
-};
-
-export const markSuiteFailed = async (persistence: PersistenceContext) => {
-  if (!persistence.enabled || !persistence.apiKey || !persistence.testRunId) {
-    return;
-  }
-
-  await runDbAction(persistence, "evals:updateEvalTestSuiteStatusWithApiKey", {
-    apiKey: persistence.apiKey,
-    testRunId: persistence.testRunId,
-    status: "running",
-    result: "failed",
-  });
-};
-
-export const finalizeSuiteStatus = async (
-  persistence: PersistenceContext,
-  failedRuns: number,
-) => {
-  if (!persistence.enabled || !persistence.apiKey || !persistence.testRunId) {
-    return;
-  }
-
-  await runDbAction(persistence, "evals:updateEvalTestSuiteStatusWithApiKey", {
-    apiKey: persistence.apiKey,
-    testRunId: persistence.testRunId,
-    status: "completed",
-    result: failedRuns > 0 ? "failed" : "passed",
-    finishedAt: Date.now(),
-  });
 };
