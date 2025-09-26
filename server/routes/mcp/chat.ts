@@ -346,11 +346,10 @@ const sendMessagesToBackend = async (
     }
   });
 
-  const flatTools = Array.isArray(selectedServers)
-    ? await mcpClientManager.getFlattenedToolsetsForSelectedServers(
-        selectedServers,
-      )
-    : await mcpClientManager.getFlattenedToolsetsForEnabledServers();
+  const flatTools =
+    await mcpClientManager.getFlattenedToolsetsForEnabledServers(
+      selectedServers,
+    );
 
   const toolDefs = Object.entries(flatTools).map(([name, tool]) => ({
     name,
@@ -633,11 +632,10 @@ chat.post("/", async (c) => {
             );
           } else {
             // Use existing streaming path with tools
-            const flatTools = Array.isArray(requestData.selectedServers)
-              ? await mcpClientManager.getFlattenedToolsetsForSelectedServers(
-                  requestData.selectedServers,
-                )
-              : await mcpClientManager.getFlattenedToolsetsForEnabledServers();
+            const flatTools =
+              await mcpClientManager.getFlattenedToolsetsForEnabledServers(
+                requestData.selectedServers,
+              );
 
             const aiSdkTools: Record<string, Tool> =
               convertMastraToolsToVercelTools(flatTools as any);
