@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState } from "react";
-import { MessageCircle } from "lucide-react";
+import { MessageCircle, Plug, PlusCircle, Settings, Sparkles } from "lucide-react";
 import { useChat } from "@/hooks/use-chat";
 import { Message } from "./chat/message";
 import { ChatInput } from "./chat/chat-input";
@@ -11,6 +11,7 @@ import { getDefaultTemperatureForModel } from "@/lib/chat-utils";
 import { MastraMCPServerDefinition } from "@mastra/mcp";
 import { useConvexAuth } from "convex/react";
 import type { ServerWithName } from "@/hooks/use-app-state";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
 interface ChatTabProps {
   serverConfigs?: Record<string, MastraMCPServerDefinition>;
@@ -26,6 +27,7 @@ export function ChatTab({
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const { isAuthenticated } = useConvexAuth();
+  const themeMode = usePreferencesStore((s) => s.themeMode);
 
   const [systemPromptState, setSystemPromptState] = useState(
     systemPrompt || "You are a helpful assistant with access to MCP tools.",
@@ -107,7 +109,9 @@ export function ChatTab({
   if (!hasMessages) {
     return (
       <div className="flex flex-col h-screen">
-        <div className="flex-1 flex flex-col items-center justify-center px-4">
+        <div className="flex-1 flex flex-col items-center justify-center px-4 relative">
+          {/* Decorative Background */}
+          <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(ellipse_at_center,rgba(2,6,23,0.06),transparent_60%)]" />
           {/* Welcome Message */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -118,10 +122,32 @@ export function ChatTab({
             <div className="space-y-3">
               <div className="flex items-center justify-center">
                 <img
-                  src="/mcp_jam.svg"
+                  src={themeMode === "dark" ? "/mcp_jam_dark.png" : "/mcp_jam_light.png"}
                   alt="MCPJam logo"
-                  className="h-24 w-auto mx-auto"
+                  className="h-12 w-auto mx-auto"
                 />
+              </div>
+              {/* Quick actions */}
+              <div className="flex items-center justify-center gap-2 pt-2">
+                <a
+                  href="#servers"
+                  className="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs hover:bg-accent"
+                >
+                  <PlusCircle className="h-3 w-3" /> Add server
+                </a>
+                <a
+                  href="#settings"
+                  className="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs hover:bg-accent"
+                >
+                  <Settings className="h-3 w-3" /> Settings
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setInput("What tools are available?")}
+                  className="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs hover:bg-accent"
+                >
+                  <Sparkles className="h-3 w-3" /> Try a prompt
+                </button>
               </div>
               {noServersConnected ? (
                 <div className="text-sm text-muted-foreground mt-4">
@@ -131,8 +157,18 @@ export function ChatTab({
                   </p>
                 </div>
               ) : (
-                <div className="text-sm text-muted-foreground mt-4">
-                  <p>Connected to: {connectedServerNames.join(", ")}</p>
+                <div className="text-sm text-muted-foreground mt-4 flex flex-col items-center gap-2">
+                  <p className="text-xs">Connected to:</p>
+                  <div className="flex flex-wrap items-center justify-center gap-2">
+                    {connectedServerNames.map((name) => (
+                      <span
+                        key={name}
+                        className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs bg-background/60"
+                      >
+                        <Plug className="h-3 w-3" /> {name}
+                      </span>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
