@@ -34,10 +34,11 @@ export function ChatTab({
   );
 
   const [temperatureState, setTemperatureState] = useState(1.0);
-  const connectedServerNames = Object.entries(connectedServerConfigs || {})
-    .filter(([, entry]) => entry.connectionStatus === "connected")
-    .map(([name]) => name);
-  const noServersConnected = connectedServerNames.length === 0;
+  const selectedServerNames = Object.keys(serverConfigs || {});
+  const selectedConnectedNames = selectedServerNames.filter(
+    (name) => connectedServerConfigs?.[name]?.connectionStatus === "connected",
+  );
+  const noServersConnected = selectedConnectedNames.length === 0;
 
   const {
     messages,
@@ -158,17 +159,24 @@ export function ChatTab({
                 </div>
               ) : (
                 <div className="text-sm text-muted-foreground mt-4 flex flex-col items-center gap-2">
-                  <p className="text-xs">Connected to:</p>
-                  <div className="flex flex-wrap items-center justify-center gap-2">
-                    {connectedServerNames.map((name) => (
-                      <span
-                        key={name}
-                        className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs bg-background/60"
-                      >
-                        <Plug className="h-3 w-3" /> {name}
-                      </span>
-                    ))}
-                  </div>
+                  <p className="text-xs">Selected servers:</p>
+                  {selectedServerNames.length === 0 ? (
+                    <p className="text-xs">None</p>
+                  ) : (
+                    <div className="flex flex-wrap items-center justify-center gap-2">
+                      {(selectedConnectedNames.length > 0
+                        ? selectedConnectedNames
+                        : selectedServerNames
+                      ).map((name) => (
+                        <span
+                          key={name}
+                          className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs bg-background/60"
+                        >
+                          <Plug className="h-3 w-3" /> {name}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
