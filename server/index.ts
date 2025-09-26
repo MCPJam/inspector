@@ -125,7 +125,7 @@ const app = new Hono();
 // Load environment variables early so route handlers can read CONVEX_HTTP_URL
 try {
   const envFile =
-    process.env.NODE_ENV === "production" ? ".env.production" : ".env.local";
+    process.env.NODE_ENV === "production" ? ".env.production" : ".env.development";
   dotenv.config({ path: envFile });
   if (!process.env.CONVEX_HTTP_URL) {
     dotenv.config();
