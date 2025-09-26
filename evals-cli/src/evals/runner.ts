@@ -2,13 +2,9 @@ import { MCPClient, MCPClientOptions } from "@mastra/mcp";
 import { streamText, Tool, ToolChoice, ModelMessage, LanguageModel } from "ai";
 import { getUserIdFromApiKeyOrNull } from "../db/user";
 import {
-  createPersistenceContext,
-  ensureSuiteRecord,
-  createTestCaseRecord,
-  createIterationRecord,
-  updateIterationResult,
-  type ConfigSummary,
-  type PersistenceContext,
+  createRunRecorder,
+  type SuiteConfig,
+  type RunRecorder,
   type UsageTotals,
 } from "../db/tests";
 import {
@@ -87,7 +83,7 @@ type RunIterationParams = {
   totalRuns: number;
   llms: LlmsConfig;
   tools: ToolMap;
-  persistence: PersistenceContext;
+  recorder: RunRecorder;
   testCaseId?: string;
 };
 
@@ -97,7 +93,7 @@ const runIteration = async ({
   totalRuns,
   llms,
   tools,
-  persistence,
+  recorder,
   testCaseId,
 }: RunIterationParams): Promise<EvaluationResult> => {
   const { provider, model, advancedConfig, query } = test;
@@ -130,12 +126,11 @@ const runIteration = async ({
   let stepCount = 0;
 
   const runStartedAt = Date.now();
-  const evalTestId = await createIterationRecord(
-    persistence,
+  const iterationId = await recorder.startIteration({
     testCaseId,
-    runIndex + 1,
-    runStartedAt,
-  );
+    iterationNumber: runIndex + 1,
+    startedAt: runStartedAt,
+  });
 
   while (stepCount < MAX_STEPS) {
     let assistantStreaming = false;
@@ -222,11 +217,20 @@ const runIteration = async ({
   Logger.finishStreamingMessage();
 
   const evaluation = evaluateResults(test.expectedToolCalls, toolsCalled);
+
   const usage: UsageTotals = {
     inputTokens: inputTokensUsed,
     outputTokens: outputTokensUsed,
     totalTokens: totalTokensUsed,
   };
+
+  await recorder.finishIteration({
+    iterationId,
+    passed: evaluation.passed,
+    toolsCalled,
+    usage,
+    messages: messageHistory,
+  });
 
   Logger.toolSummary({
     expected: evaluation.expectedToolCalls,
@@ -247,15 +251,6 @@ const runIteration = async ({
         : undefined,
   });
 
-  await updateIterationResult(
-    persistence,
-    evalTestId,
-    evaluation.passed,
-    toolsCalled,
-    usage,
-    messageHistory,
-  );
-
   return evaluation;
 };
 
@@ -264,7 +259,7 @@ type RunTestCaseParams = {
   testIndex: number;
   llms: LlmsConfig;
   tools: ToolMap;
-  persistence: PersistenceContext;
+  recorder: RunRecorder;
 };
 
 const runTestCase = async ({
@@ -272,7 +267,7 @@ const runTestCase = async ({
   testIndex,
   llms,
   tools,
-  persistence,
+  recorder,
 }: RunTestCaseParams) => {
   const { runs, model, provider } = test;
 
@@ -281,7 +276,7 @@ const runTestCase = async ({
   let passedRuns = 0;
   let failedRuns = 0;
 
-  const testCaseId = await createTestCaseRecord(persistence, test, testIndex);
+  const testCaseId = await recorder.recordTestCase(test, testIndex);
 
   for (let runIndex = 0; runIndex < runs; runIndex++) {
     const evaluation = await runIteration({
@@ -290,7 +285,7 @@ const runTestCase = async ({
       totalRuns: runs,
       llms,
       tools,
-      persistence,
+      recorder,
       testCaseId,
     });
 
@@ -315,23 +310,13 @@ export const runEvals = async (
     await prepareSuite(tests, environment, llms);
 
   const suiteStartedAt = Date.now();
-  const totalPlannedTests = validatedTests.reduce(
-    (sum, current) => sum + (current?.runs ?? 0),
-    0,
-  );
-
-  const configSummary: ConfigSummary = {
+  const suiteConfig: SuiteConfig = {
     tests: validatedTests,
     environment: { servers: serverNames },
-    llms: Object.keys(validatedLlms ?? {}),
   };
 
-  const persistence = createPersistenceContext(
-    apiKey,
-    configSummary,
-    totalPlannedTests,
-  );
-  await ensureSuiteRecord(persistence);
+  const recorder = createRunRecorder(apiKey, suiteConfig);
+  await recorder.ensureSuite();
 
   let passedRuns = 0;
   let failedRuns = 0;
@@ -347,7 +332,7 @@ export const runEvals = async (
         testIndex: index + 1,
         llms: validatedLlms,
         tools: vercelTools,
-        persistence,
+        recorder,
       });
     passedRuns += casePassed;
     failedRuns += caseFailed;

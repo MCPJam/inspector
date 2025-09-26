@@ -26,7 +26,7 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "build-and-test": "npm run build && npm run test",
-    "test": "node bin/mcpjam.js evals run -t local-examples/tests.json -e local-examples/environment.json -l local-examples/llms.json -a mcpjam_F4C04A_0d87d8701383bff1ed3e6229f8c116478c2ecf1e1dcff301",
+    "test": "node bin/mcpjam.js evals run -t local-examples/tests.json -e local-examples/environment.json -l local-examples/llms.json",
     "start": "node bin/mcpjam.js"
   },
   "dependencies": {
