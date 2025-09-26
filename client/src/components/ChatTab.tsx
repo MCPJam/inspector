@@ -10,13 +10,19 @@ import { toast } from "sonner";
 import { getDefaultTemperatureForModel } from "@/lib/chat-utils";
 import { MastraMCPServerDefinition } from "@mastra/mcp";
 import { useConvexAuth } from "convex/react";
+import type { ServerWithName } from "@/hooks/use-app-state";
 
 interface ChatTabProps {
   serverConfigs?: Record<string, MastraMCPServerDefinition>;
+  connectedServerConfigs?: Record<string, ServerWithName>;
   systemPrompt?: string;
 }
 
-export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
+export function ChatTab({
+  serverConfigs,
+  connectedServerConfigs,
+  systemPrompt = "",
+}: ChatTabProps) {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const { isAuthenticated } = useConvexAuth();
@@ -26,8 +32,10 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
   );
 
   const [temperatureState, setTemperatureState] = useState(1.0);
-  const noServersConnected =
-    Object.keys(serverConfigs || {}).length === 0 || !serverConfigs;
+  const connectedServerNames = Object.entries(connectedServerConfigs || {})
+    .filter(([, entry]) => entry.connectionStatus === "connected")
+    .map(([name]) => name);
+  const noServersConnected = connectedServerNames.length === 0;
 
   const {
     messages,
@@ -124,10 +132,7 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
                 </div>
               ) : (
                 <div className="text-sm text-muted-foreground mt-4">
-                  <p>
-                    Connected servers:{" "}
-                    {Object.keys(serverConfigs || {}).join(", ")}
-                  </p>
+                  <p>Connected to: {connectedServerNames.join(", ")}</p>
                 </div>
               )}
             </div>
