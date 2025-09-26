@@ -3,207 +3,184 @@ import { ModelMessage } from "ai";
 import { dbClient } from "../db";
 import type { TestCase } from "../utils/validators";
 
-export type ConfigSummary = {
-  tests: TestCase[];
-  environment: { servers: string[] };
-  llms: string[];
-};
-
 export type UsageTotals = {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
 };
 
-type DbClientInstance = ReturnType<typeof dbClient> | null;
-
-export type PersistenceContext = {
-  enabled: boolean;
-  apiKey?: string;
-  db: DbClientInstance;
-  testRunId?: string;
-  configSummary: ConfigSummary;
-  totalPlannedTests: number;
+export type SuiteConfig = {
+  tests: TestCase[];
+  environment: { servers: string[] };
 };
 
 type DbPayload = Record<string, unknown>;
 
-const runDbAction = async <T>(
-  persistence: PersistenceContext,
-  action: string,
-  payload: DbPayload,
-): Promise<T | undefined> => {
-  if (!persistence.enabled || !persistence.db) {
-    return undefined;
-  }
+type DbClientInstance = ReturnType<typeof dbClient>;
 
-  try {
-    return await (persistence.db as any).action(action, payload);
-  } catch {
-    return undefined;
-  }
+type PrecreatedSuite = {
+  suiteId: string;
+  testCases: Array<{
+    testCaseId: string;
+    iterations: Array<{
+      iterationId: string;
+      iterationNumber: number;
+    }>;
+  }>;
 };
 
-export const createPersistenceContext = (
-  apiKey: string | undefined,
-  configSummary: ConfigSummary,
-  totalPlannedTests: number,
-): PersistenceContext => ({
-  enabled: Boolean(apiKey),
-  apiKey,
-  db: apiKey ? dbClient() : null,
-  configSummary,
-  totalPlannedTests,
+export type RunRecorder = {
+  enabled: boolean;
+  ensureSuite(): Promise<void>;
+  recordTestCase(test: TestCase, index: number): Promise<string | undefined>;
+  startIteration(args: {
+    testCaseId?: string;
+    iterationNumber: number;
+    startedAt: number;
+  }): Promise<string | undefined>;
+  finishIteration(args: {
+    iterationId?: string;
+    passed: boolean;
+    toolsCalled: string[];
+    usage: UsageTotals;
+    messages: ModelMessage[];
+  }): Promise<void>;
+};
+
+const createDisabledRecorder = (): RunRecorder => ({
+  enabled: false,
+  async ensureSuite() {
+    return;
+  },
+  async recordTestCase() {
+    return undefined;
+  },
+  async startIteration() {
+    return undefined;
+  },
+  async finishIteration() {
+    return;
+  },
 });
 
-export const ensureSuiteRecord = async (persistence: PersistenceContext) => {
-  if (!persistence.enabled || !persistence.apiKey || persistence.testRunId) {
-    return;
+export const createRunRecorder = (
+  apiKey: string | undefined,
+  config: SuiteConfig,
+): RunRecorder => {
+  if (!apiKey) {
+    return createDisabledRecorder();
   }
 
-  const createdId = await runDbAction<string>(
-    persistence,
-    "evals:createEvalTestSuiteWithApiKey",
-    {
-      apiKey: persistence.apiKey,
-      name: undefined,
-      config: persistence.configSummary,
-      totalTests: persistence.totalPlannedTests,
+  const client: DbClientInstance = dbClient();
+  let precreated: PrecreatedSuite | undefined;
+
+  const runDbAction = async <T>(
+    action: string,
+    payload: DbPayload,
+  ): Promise<T | undefined> => {
+    try {
+      return await (client as any).action(action, payload);
+    } catch {
+      return undefined;
+    }
+  };
+
+  const ensurePrecreated = async () => {
+    if (precreated) {
+      return precreated;
+    }
+
+    const result = await runDbAction<PrecreatedSuite>(
+      "evals:precreateEvalSuiteWithApiKey",
+      {
+        apiKey,
+        config,
+        tests: config.tests,
+      },
+    );
+
+    precreated = result;
+    return precreated;
+  };
+
+  return {
+    enabled: true,
+    async ensureSuite() {
+      await ensurePrecreated();
     },
-  );
+    async recordTestCase(test, index) {
+      const current = await ensurePrecreated();
+      if (!current) {
+        return undefined;
+      }
 
-  if (createdId) {
-    persistence.testRunId = createdId;
-  }
-};
-
-export const createTestCaseRecord = async (
-  persistence: PersistenceContext,
-  test: TestCase,
-  testNumber: number,
-) => {
-  if (!persistence.enabled || !persistence.apiKey) {
-    return undefined;
-  }
-
-  const testCaseId = await runDbAction<string>(
-    persistence,
-    "evals:createEvalTestCaseWithApiKey",
-    {
-      apiKey: persistence.apiKey,
-      title: String(test.title ?? `Group ${testNumber}`),
-      query: String(test.query ?? ""),
-      provider: String(test.provider ?? ""),
-      model: String(test.model ?? ""),
-      runs: Number(test.runs ?? 1),
+      const zeroBasedIndex = index > 0 ? index - 1 : index;
+      return (
+        current.testCases[zeroBasedIndex]?.testCaseId ??
+        current.testCases[index]?.testCaseId
+      );
     },
-  );
+    async startIteration({ testCaseId, iterationNumber, startedAt }) {
+      if (!testCaseId) {
+        return undefined;
+      }
 
-  if (!persistence.testRunId) {
-    await ensureSuiteRecord(persistence);
-  }
+      const current = await ensurePrecreated();
+      if (!current) {
+        return undefined;
+      }
 
-  return testCaseId;
-};
+      const testEntry = current.testCases.find(
+        (entry) => entry.testCaseId === testCaseId,
+      );
+      const iteration = testEntry?.iterations.find(
+        (item) => item.iterationNumber === iterationNumber,
+      );
 
-export const createIterationRecord = async (
-  persistence: PersistenceContext,
-  testCaseId: string | undefined,
-  iterationNumber: number,
-  startedAt: number,
-) => {
-  if (!persistence.enabled || !persistence.apiKey || !testCaseId) {
-    return undefined;
-  }
+      if (!iteration) {
+        return undefined;
+      }
 
-  return await runDbAction<string>(
-    persistence,
-    "evals:createEvalTestIterationWithApiKey",
-    {
-      apiKey: persistence.apiKey,
-      testCaseId,
-      startedAt,
-      iterationNumber,
-      blob: undefined,
-      actualToolCalls: [],
-      tokensUsed: 0,
+      if (startedAt !== undefined) {
+        await runDbAction("evals:updateEvalTestIterationResultWithApiKey", {
+          apiKey,
+          testId: iteration.iterationId,
+          status: "running",
+          result: "pending",
+          startedAt,
+        });
+      }
+
+      return iteration.iterationId;
     },
-  );
-};
-
-export const updateIterationResult = async (
-  persistence: PersistenceContext,
-  evalTestId: string | undefined,
-  passed: boolean,
-  toolsCalled: string[],
-  tokensUsed: UsageTotals,
-  messages: ModelMessage[],
-) => {
-  if (!persistence.enabled || !persistence.apiKey || !evalTestId) {
-    return;
-  }
-
-  await runDbAction(
-    persistence,
-    "evals:updateEvalTestIterationResultWithApiKey",
-    {
-      apiKey: persistence.apiKey,
-      testId: evalTestId,
-      status: "completed",
-      result: passed ? "passed" : "failed",
-      actualToolCalls: toolsCalled,
-      tokensUsed: tokensUsed.totalTokens ?? 0,
-      blob: undefined,
-      blobContent: { messages },
+    async finishIteration({
+      iterationId,
+      passed,
+      toolsCalled,
+      usage,
+      messages,
+    }) {
+      if (!iterationId) {
+        return;
+      }
+      console.log(
+        "finishIteration",
+        iterationId,
+        passed,
+        toolsCalled,
+        usage,
+        messages,
+      );
+      await runDbAction("evals:updateEvalTestIterationResultWithApiKey", {
+        apiKey,
+        testId: iterationId,
+        status: "completed",
+        result: passed ? "passed" : "failed",
+        actualToolCalls: toolsCalled,
+        tokensUsed: usage.totalTokens ?? 0,
+        blob: undefined,
+        blobContent: { messages },
+      });
     },
-  );
-};
-
-export const updateTestCaseResult = async (
-  persistence: PersistenceContext,
-  testCaseId: string | undefined,
-  passedRuns: number,
-  failedRuns: number,
-) => {
-  if (!persistence.enabled || !persistence.apiKey || !testCaseId) {
-    return;
-  }
-
-  const result = failedRuns > 0 ? "failed" : "passed";
-
-  await runDbAction(persistence, "evals:updateEvalTestCaseResultWithApiKey", {
-    apiKey: persistence.apiKey,
-    testCaseId,
-    result,
-  });
-};
-
-export const markSuiteFailed = async (persistence: PersistenceContext) => {
-  if (!persistence.enabled || !persistence.apiKey || !persistence.testRunId) {
-    return;
-  }
-
-  await runDbAction(persistence, "evals:updateEvalTestSuiteStatusWithApiKey", {
-    apiKey: persistence.apiKey,
-    testRunId: persistence.testRunId,
-    status: "running",
-    result: "failed",
-  });
-};
-
-export const finalizeSuiteStatus = async (
-  persistence: PersistenceContext,
-  failedRuns: number,
-) => {
-  if (!persistence.enabled || !persistence.apiKey || !persistence.testRunId) {
-    return;
-  }
-
-  await runDbAction(persistence, "evals:updateEvalTestSuiteStatusWithApiKey", {
-    apiKey: persistence.apiKey,
-    testRunId: persistence.testRunId,
-    status: "completed",
-    result: failedRuns > 0 ? "failed" : "passed",
-    finishedAt: Date.now(),
-  });
+  };
 };
