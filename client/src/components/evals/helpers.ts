@@ -4,7 +4,10 @@ export function formatTime(ts?: number) {
   return ts ? new Date(ts).toLocaleString() : "—";
 }
 
-export function withinSuiteWindow(it: EvalIteration, suite: EvalSuite): boolean {
+export function withinSuiteWindow(
+  it: EvalIteration,
+  suite: EvalSuite,
+): boolean {
   const started = suite.startedAt ?? 0;
   const finished = suite.finishedAt ?? Number.MAX_SAFE_INTEGER;
   return it.startedAt >= started && it.startedAt <= finished;

@@ -5,69 +5,68 @@ import { formatTime } from "./helpers";
 import { EvalIteration } from "./types";
 
 export function IterationDetails({ iteration }: { iteration: EvalIteration }) {
-    const getBlob = useAction(
-      "evals:getEvalTestBlob" as any,
-    ) as unknown as (args: { blobId: string }) => Promise<any>;
-  
-    const [blob, setBlob] = useState<any>(null);
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-  
-    useEffect(() => {
-      let cancelled = false;
-      async function run() {
-        if (!iteration.blob) {
-          setBlob(null);
-          return;
-        }
-        setLoading(true);
-        setError(null);
-        try {
-          const data = await getBlob({ blobId: iteration.blob });
-          if (!cancelled) setBlob(data);
-        } catch (e: any) {
-          if (!cancelled) setError("Failed to load blob");
-        } finally {
-          if (!cancelled) setLoading(false);
-        }
+  const getBlob = useAction(
+    "evals:getEvalTestBlob" as any,
+  ) as unknown as (args: { blobId: string }) => Promise<any>;
+
+  const [blob, setBlob] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function run() {
+      if (!iteration.blob) {
+        setBlob(null);
+        return;
       }
-      run();
-      return () => {
-        cancelled = true;
-      };
-    }, [iteration.blob, getBlob]);
-  
-    return (
-      <div className="space-y-3 rounded-lg border border-border bg-background p-4 shadow-sm">
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          <span className="font-semibold">Status</span>
-          <Badge className="capitalize">{iteration.status}</Badge>
-          <span className="mx-1 text-muted-foreground">·</span>
-          <span className="font-semibold">Result</span>
-          <Badge className="capitalize">{iteration.result}</Badge>
-        </div>
-        <div className="grid gap-2 text-sm text-muted-foreground sm:grid-cols-2">
-          <div>Started {formatTime(iteration.startedAt)}</div>
-          <div>Updated {formatTime(iteration.updatedAt)}</div>
-          <div>Tokens {Number(iteration.tokensUsed || 0).toLocaleString()}</div>
-          <div>Tool calls {iteration.actualToolCalls.length}</div>
-        </div>
-        <div className="rounded-md border bg-muted/40 p-3">
-          {loading ? (
-            <div className="text-sm text-muted-foreground">Loading blob…</div>
-          ) : error ? (
-            <div className="text-sm text-red-600">{error}</div>
-          ) : iteration.blob ? (
-            <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap break-words text-xs">
-              {JSON.stringify(blob, null, 2)}
-            </pre>
-          ) : (
-            <div className="text-sm text-muted-foreground">
-              No blob attached to this iteration.
-            </div>
-          )}
-        </div>
+      setLoading(true);
+      setError(null);
+      try {
+        const data = await getBlob({ blobId: iteration.blob });
+        if (!cancelled) setBlob(data);
+      } catch (e: any) {
+        if (!cancelled) setError("Failed to load blob");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [iteration.blob, getBlob]);
+
+  return (
+    <div className="space-y-3 rounded-lg border border-border bg-background p-4 shadow-sm">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="font-semibold">Status</span>
+        <Badge className="capitalize">{iteration.status}</Badge>
+        <span className="mx-1 text-muted-foreground">·</span>
+        <span className="font-semibold">Result</span>
+        <Badge className="capitalize">{iteration.result}</Badge>
       </div>
-    );
-  }
-  
+      <div className="grid gap-2 text-sm text-muted-foreground sm:grid-cols-2">
+        <div>Started {formatTime(iteration.startedAt)}</div>
+        <div>Updated {formatTime(iteration.updatedAt)}</div>
+        <div>Tokens {Number(iteration.tokensUsed || 0).toLocaleString()}</div>
+        <div>Tool calls {iteration.actualToolCalls.length}</div>
+      </div>
+      <div className="rounded-md border bg-muted/40 p-3">
+        {loading ? (
+          <div className="text-sm text-muted-foreground">Loading blob…</div>
+        ) : error ? (
+          <div className="text-sm text-red-600">{error}</div>
+        ) : iteration.blob ? (
+          <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap break-words text-xs">
+            {JSON.stringify(blob, null, 2)}
+          </pre>
+        ) : (
+          <div className="text-sm text-muted-foreground">
+            No blob attached to this iteration.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

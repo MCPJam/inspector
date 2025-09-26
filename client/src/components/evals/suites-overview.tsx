@@ -48,9 +48,12 @@ export function SuitesOverview({
                 className="grid w-full grid-cols-[minmax(0,1.2fr)_140px_140px_220px_160px] items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
               >
                 <div>
-                  <div className="font-medium">{formatTime(suite.startedAt)}</div>
+                  <div className="font-medium">
+                    {formatTime(suite.startedAt)}
+                  </div>
                   <div className="text-xs text-muted-foreground">
-                    Tests: {suite.totalTests} · Finished {formatTime(suite.finishedAt)}
+                    Tests: {suite.totalTests} · Finished{" "}
+                    {formatTime(suite.finishedAt)}
                   </div>
                 </div>
                 <div>
@@ -63,17 +66,23 @@ export function SuitesOverview({
                       suite.result === "failed"
                         ? "destructive"
                         : suite.result === "passed"
-                        ? "default"
-                        : "outline"
+                          ? "default"
+                          : "outline"
                     }
                   >
                     {suite.result}
                   </Badge>
                 </div>
                 <div className="text-sm text-muted-foreground">
-                  <span className="text-foreground font-medium">{totals.passed}</span> passed ·
-                  <span className="ml-1 text-foreground font-medium">{totals.failed}</span> failed ·
-                  <span className="ml-1">{totals.cancelled}</span> cancelled
+                  <span className="text-foreground font-medium">
+                    {totals.passed}
+                  </span>{" "}
+                  passed ·
+                  <span className="ml-1 text-foreground font-medium">
+                    {totals.failed}
+                  </span>{" "}
+                  failed ·<span className="ml-1">{totals.cancelled}</span>{" "}
+                  cancelled
                 </div>
                 <div className="text-sm text-muted-foreground">
                   {totals.tokens.toLocaleString()}
@@ -86,5 +95,3 @@ export function SuitesOverview({
     </div>
   );
 }
-
-

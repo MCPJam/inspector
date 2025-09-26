@@ -32,10 +32,15 @@ export function SuiteIterationsView({
             ← Back to suites
           </Button>
           <div>
-            <h2 className="text-xl font-semibold">Suite started {formatTime(suite.startedAt)}</h2>
+            <h2 className="text-xl font-semibold">
+              Suite started {formatTime(suite.startedAt)}
+            </h2>
             <p className="text-sm text-muted-foreground">
-              {aggregate?.totals.passed ?? 0} passed · {aggregate?.totals.failed ?? 0} failed · {aggregate?.totals.cancelled ?? 0} cancelled ·
-              {(aggregate?.totals.tokens ?? 0).toLocaleString()} tokens · Result {suite.result}
+              {aggregate?.totals.passed ?? 0} passed ·{" "}
+              {aggregate?.totals.failed ?? 0} failed ·{" "}
+              {aggregate?.totals.cancelled ?? 0} cancelled ·
+              {(aggregate?.totals.tokens ?? 0).toLocaleString()} tokens · Result{" "}
+              {suite.result}
             </p>
           </div>
         </div>
@@ -47,8 +52,8 @@ export function SuiteIterationsView({
               suite.result === "failed"
                 ? "destructive"
                 : suite.result === "passed"
-                ? "default"
-                : "outline"
+                  ? "default"
+                  : "outline"
             }
           >
             {suite.result}
@@ -70,7 +75,11 @@ export function SuiteIterationsView({
               <IterationCard
                 key={iteration._id}
                 iteration={iteration}
-                testCase={iteration.testCaseId ? caseById.get(iteration.testCaseId) ?? null : null}
+                testCase={
+                  iteration.testCaseId
+                    ? (caseById.get(iteration.testCaseId) ?? null)
+                    : null
+                }
                 isOpen={openIterationId === iteration._id}
                 onToggle={() =>
                   setOpenIterationId((current) =>
@@ -85,5 +94,3 @@ export function SuiteIterationsView({
     </div>
   );
 }
-
-
