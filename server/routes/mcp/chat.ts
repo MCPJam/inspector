@@ -184,9 +184,7 @@ const createStreamingResponse = async (
       system:
         systemPrompt || "You are a helpful assistant with access to MCP tools.",
       temperature:
-        temperature == null || undefined
-          ? getDefaultTemperatureByProvider(provider)
-          : temperature,
+        temperature ?? getDefaultTemperatureByProvider(provider),
       tools: aiSdkTools,
       messages: messageHistory,
       onChunk: async (chunk) => {
@@ -349,28 +347,15 @@ const sendMessagesToBackend = async (
     }
   });
 
-  const debug = process.env.DEBUG_MCP_SELECTION === "1";
-  if (debug) {
-    console.log("[mcpjam][backend] selectedServers:", selectedServers);
-  }
   const flatTools = Array.isArray(selectedServers)
-    ? await mcpClientManager.getFlattenedToolsetsForSelectedServers(
-        selectedServers,
-      )
+    ? await mcpClientManager.getFlattenedToolsetsForSelectedServers(selectedServers)
     : await mcpClientManager.getFlattenedToolsetsForEnabledServers();
-  const toolDefs = Object.keys(flatTools).map((name) => ({
+
+  const toolDefs = Object.entries(flatTools).map(([name, tool]) => ({
     name,
-    description: (flatTools as any)[name]?.description,
-    inputSchema: zodToJsonSchema((flatTools as any)[name]?.inputSchema),
+    description: tool?.description,
+    inputSchema: zodToJsonSchema(tool?.inputSchema),
   }));
-  if (debug) {
-    console.log(
-      "[mcpjam][backend] toolDefs count:",
-      toolDefs.length,
-      "sample:",
-      toolDefs.slice(0, 5).map((t) => t.name),
-    );
-  }
 
   if (!baseUrl) {
     throw new Error("CONVEX_HTTP_URL is not set");
@@ -389,12 +374,12 @@ const sendMessagesToBackend = async (
       }),
     });
 
-    let data: any = {};
+    let data: any;
     try {
       data = await res.json();
     } catch {
-      const text = await res.text();
       try {
+        const text = await res.text();
         data = JSON.parse(text);
       } catch {
         data = { ok: false };
@@ -555,10 +540,9 @@ chat.post("/", async (c) => {
         400,
       );
     }
-    const sendToBackend =
-      provider === "meta" && requestData.sendMessagesToBackend;
+    const sendToBackend = provider === "meta" && Boolean(requestData.sendMessagesToBackend);
 
-    if (!sendToBackend && (!model?.id || !requestData.apiKey)) {
+    if (!sendToBackend && (!model?.id || !apiKey)) {
       return c.json(
         {
           success: false,
@@ -647,24 +631,11 @@ chat.post("/", async (c) => {
             );
           } else {
             // Use existing streaming path with tools
-            const debug = true;
-            if (debug) {
-              console.log("[mcpjam][chat] selectedServers:", requestData.selectedServers);
-            }
             const flatTools = Array.isArray(requestData.selectedServers)
-              ? await mcpClientManager.getFlattenedToolsetsForSelectedServers(
-                  requestData.selectedServers,
-                )
+              ? await mcpClientManager.getFlattenedToolsetsForSelectedServers(requestData.selectedServers)
               : await mcpClientManager.getFlattenedToolsetsForEnabledServers();
-            const aiSdkTools: Record<string, Tool> =
-              convertMastraToolsToVercelTools(flatTools as any);
-            if (debug) {
-              console.log(
-                "[mcpjam][chat] tools passed to model:",
-                Object.keys(aiSdkTools).slice(0, 10),
-                `(+${Math.max(0, Object.keys(aiSdkTools).length - 10)} more)`,
-              );
-            }
+
+            const aiSdkTools: Record<string, Tool> = convertMastraToolsToVercelTools(flatTools as any);
 
             const llmModel = createLlmModel(
               model as ModelDefinition,
@@ -703,7 +674,12 @@ chat.post("/", async (c) => {
     });
   } catch (error) {
     console.error("[mcp/chat] Error in chat API:", error);
-    mcpClientManager.clearElicitationCallback();
+
+    try {
+      mcpClientManager.clearElicitationCallback();
+    } catch (cleanupError) {
+      console.error("[mcp/chat] Error during cleanup:", cleanupError);
+    }
 
     return c.json(
       {
