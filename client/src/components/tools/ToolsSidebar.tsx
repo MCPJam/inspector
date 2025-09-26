@@ -4,8 +4,8 @@ import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { SearchInput } from "../ui/search-input";
 import { ResizablePanel } from "../ui/resizable";
-import { ToolItem } from "../ToolItem";
-import { SavedRequestItem } from "../SavedRequestItem";
+import { ToolItem } from "./ToolItem";
+import { SavedRequestItem } from "./SavedRequestItem";
 import type { SavedRequest } from "@/lib/request-types";
 
 interface ToolInfo {

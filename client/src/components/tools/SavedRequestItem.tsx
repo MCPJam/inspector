@@ -1,4 +1,4 @@
-import { Button } from "./ui/button";
+import { Button } from "../ui/button";
 import { Edit2, Copy, Trash2 } from "lucide-react";
 import type { SavedRequest } from "@/lib/request-types";
 
