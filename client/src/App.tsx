@@ -58,11 +58,24 @@ export default function App() {
     setSelectedMultipleServersToAllServers,
   } = useAppState();
 
+  // Sync tab with hash on mount and when hash changes
+  useEffect(() => {
+    const applyHash = () => {
+      const hash = (window.location.hash || "#servers").replace("#", "");
+      setActiveTab(hash);
+      if (hash === "chat") setSelectedMultipleServersToAllServers();
+    };
+    applyHash();
+    window.addEventListener("hashchange", applyHash);
+    return () => window.removeEventListener("hashchange", applyHash);
+  }, [setSelectedMultipleServersToAllServers]);
+
   const handleNavigate = (section: string) => {
-    setActiveTab(section);
     if (section === "chat") {
       setSelectedMultipleServersToAllServers();
     }
+    window.location.hash = section;
+    setActiveTab(section);
   };
 
   if (isDebugCallback) {
@@ -182,7 +195,10 @@ export default function App() {
             )}
 
             {activeTab === "chat" && (
-              <ChatTab serverConfigs={selectedMCPConfigsMap} />
+              <ChatTab
+                serverConfigs={selectedMCPConfigsMap}
+                connectedServerConfigs={connectedServerConfigs}
+              />
             )}
 
             {activeTab === "interceptor" && (
