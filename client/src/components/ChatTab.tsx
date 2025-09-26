@@ -1,5 +1,11 @@
 import { useRef, useEffect, useState } from "react";
-import { MessageCircle } from "lucide-react";
+import {
+  MessageCircle,
+  Plug,
+  PlusCircle,
+  Settings,
+  Sparkles,
+} from "lucide-react";
 import { useChat } from "@/hooks/use-chat";
 import { Message } from "./chat/message";
 import { ChatInput } from "./chat/chat-input";
@@ -10,24 +16,35 @@ import { toast } from "sonner";
 import { getDefaultTemperatureForModel } from "@/lib/chat-utils";
 import { MastraMCPServerDefinition } from "@mastra/mcp";
 import { useConvexAuth } from "convex/react";
+import type { ServerWithName } from "@/hooks/use-app-state";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
 interface ChatTabProps {
   serverConfigs?: Record<string, MastraMCPServerDefinition>;
+  connectedServerConfigs?: Record<string, ServerWithName>;
   systemPrompt?: string;
 }
 
-export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
+export function ChatTab({
+  serverConfigs,
+  connectedServerConfigs,
+  systemPrompt = "",
+}: ChatTabProps) {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const { isAuthenticated } = useConvexAuth();
+  const themeMode = usePreferencesStore((s) => s.themeMode);
 
   const [systemPromptState, setSystemPromptState] = useState(
     systemPrompt || "You are a helpful assistant with access to MCP tools.",
   );
 
   const [temperatureState, setTemperatureState] = useState(1.0);
-  const noServersConnected =
-    Object.keys(serverConfigs || {}).length === 0 || !serverConfigs;
+  const selectedServerNames = Object.keys(serverConfigs || {});
+  const selectedConnectedNames = selectedServerNames.filter(
+    (name) => connectedServerConfigs?.[name]?.connectionStatus === "connected",
+  );
+  const noServersConnected = selectedConnectedNames.length === 0;
 
   const {
     messages,
@@ -48,6 +65,7 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
   } = useChat({
     systemPrompt: systemPromptState,
     temperature: temperatureState,
+    selectedServers: selectedConnectedNames,
     onError: (error) => {
       toast.error(error);
     },
@@ -99,7 +117,9 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
   if (!hasMessages) {
     return (
       <div className="flex flex-col h-screen">
-        <div className="flex-1 flex flex-col items-center justify-center px-4">
+        <div className="flex-1 flex flex-col items-center justify-center px-4 relative">
+          {/* Decorative Background */}
+          <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(ellipse_at_center,rgba(2,6,23,0.06),transparent_60%)]" />
           {/* Welcome Message */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -108,9 +128,39 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
             className="text-center space-y-6 max-w-2xl mb-8"
           >
             <div className="space-y-3">
-              <h1 className="text-4xl font-semibold bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
-                Test your servers in chat
-              </h1>
+              <div className="flex items-center justify-center">
+                <img
+                  src={
+                    themeMode === "dark"
+                      ? "/mcp_jam_dark.png"
+                      : "/mcp_jam_light.png"
+                  }
+                  alt="MCPJam logo"
+                  className="h-12 w-auto mx-auto"
+                />
+              </div>
+              {/* Quick actions */}
+              <div className="flex items-center justify-center gap-2 pt-2">
+                <a
+                  href="#servers"
+                  className="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs hover:bg-accent"
+                >
+                  <PlusCircle className="h-3 w-3" /> Add server
+                </a>
+                <a
+                  href="#settings"
+                  className="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs hover:bg-accent"
+                >
+                  <Settings className="h-3 w-3" /> Settings
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setInput("What tools are available?")}
+                  className="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs hover:bg-accent"
+                >
+                  <Sparkles className="h-3 w-3" /> Try a prompt
+                </button>
+              </div>
               {noServersConnected ? (
                 <div className="text-sm text-muted-foreground mt-4">
                   <p className="text-xs">
@@ -119,11 +169,25 @@ export function ChatTab({ serverConfigs, systemPrompt = "" }: ChatTabProps) {
                   </p>
                 </div>
               ) : (
-                <div className="text-sm text-muted-foreground mt-4">
-                  <p>
-                    Connected servers:{" "}
-                    {Object.keys(serverConfigs || {}).join(", ")}
-                  </p>
+                <div className="text-sm text-muted-foreground mt-4 flex flex-col items-center gap-2">
+                  <p className="text-xs">Selected servers:</p>
+                  {selectedServerNames.length === 0 ? (
+                    <p className="text-xs">None</p>
+                  ) : (
+                    <div className="flex flex-wrap items-center justify-center gap-2">
+                      {(selectedConnectedNames.length > 0
+                        ? selectedConnectedNames
+                        : selectedServerNames
+                      ).map((name) => (
+                        <span
+                          key={name}
+                          className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs bg-background/60"
+                        >
+                          <Plug className="h-3 w-3" /> {name}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

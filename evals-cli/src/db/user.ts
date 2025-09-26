@@ -1,4 +1,5 @@
 import { dbClient } from ".";
+import { Logger } from "../utils/logger";
 
 export const getUserIdFromApiKeyOrNull = async (apiKey: string) => {
   const db = dbClient();
@@ -7,7 +8,9 @@ export const getUserIdFromApiKeyOrNull = async (apiKey: string) => {
     { apiKey },
   );
   if (!user) {
-    throw new Error("Invalid API key");
+    Logger.errorWithExit(
+      "Invalid MCPJam API key. Please check your API key and try again.",
+    );
   }
   return user;
 };
