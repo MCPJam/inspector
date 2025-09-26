@@ -4,8 +4,6 @@ import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
 import { PromptsTab } from "./components/PromptsTab";
 import { ChatTab } from "./components/ChatTab";
-import { TestsTab } from "./components/TestsTab";
-import { PrevEvalsTab } from "./components/PrevEvalsTab";
 import { EvalsTab } from "./components/EvalsTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { TracingTab } from "./components/TracingTab";
@@ -60,11 +58,24 @@ export default function App() {
     setSelectedMultipleServersToAllServers,
   } = useAppState();
 
+  // Sync tab with hash on mount and when hash changes
+  useEffect(() => {
+    const applyHash = () => {
+      const hash = (window.location.hash || "#servers").replace("#", "");
+      setActiveTab(hash);
+      if (hash === "chat") setSelectedMultipleServersToAllServers();
+    };
+    applyHash();
+    window.addEventListener("hashchange", applyHash);
+    return () => window.removeEventListener("hashchange", applyHash);
+  }, [setSelectedMultipleServersToAllServers]);
+
   const handleNavigate = (section: string) => {
-    setActiveTab(section);
     if (section === "chat") {
       setSelectedMultipleServersToAllServers();
     }
+    window.location.hash = section;
+    setActiveTab(section);
   };
 
   if (isDebugCallback) {
@@ -160,19 +171,6 @@ export default function App() {
                 serverName={appState.selectedServer}
               />
             )}
-            {activeTab === "tests" && (
-              <TestsTab
-                serverConfig={selectedMCPConfig}
-                serverConfigsMap={selectedMCPConfigsMap}
-                allServerConfigsMap={Object.fromEntries(
-                  Object.entries(connectedServerConfigs)
-                    .filter(
-                      ([, entry]) => entry.connectionStatus === "connected",
-                    )
-                    .map(([name, entry]) => [name, entry.config]),
-                )}
-              />
-            )}
             {activeTab === "evals" && <EvalsTab />}
             {activeTab === "resources" && (
               <ResourcesTab
@@ -197,7 +195,10 @@ export default function App() {
             )}
 
             {activeTab === "chat" && (
-              <ChatTab serverConfigs={selectedMCPConfigsMap} />
+              <ChatTab
+                serverConfigs={selectedMCPConfigsMap}
+                connectedServerConfigs={connectedServerConfigs}
+              />
             )}
 
             {activeTab === "interceptor" && (

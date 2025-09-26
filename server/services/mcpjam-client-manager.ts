@@ -149,6 +149,63 @@ class MCPJamClientManager {
     return allFlattenedTools as DynamicArgument<ToolsInput>;
   }
 
+  /**
+   * Returns a flattened toolset only for the provided original server names
+   * (as shown in the UI). Skips servers that are not connected.
+   */
+  async getFlattenedToolsetsForSelectedServers(
+    serverNames: string[],
+  ): Promise<DynamicArgument<ToolsInput>> {
+    const debug = process.env.DEBUG_MCP_SELECTION === "1";
+    if (debug) {
+      console.log("[mcpjam][selectedTools] requested servers:", serverNames);
+    }
+    const selected = new Set((serverNames || []).map((s) => s.toLowerCase()));
+    const allFlattenedTools: Record<string, any> = {};
+
+    for (const [originalName, uniqueId] of this.serverIdMapping.entries()) {
+      if (selected.size > 0 && !selected.has(originalName.toLowerCase()))
+        continue;
+      // Check status via unique id to avoid mismatch
+      const status = this.statuses.get(uniqueId) || "disconnected";
+      if (status !== "connected") continue;
+      if (debug) {
+        console.log(
+          `[mcpjam][selectedTools] considering ${originalName} (id=${uniqueId}) status=${status}`,
+        );
+      }
+
+      const client = this.mcpClients.get(uniqueId);
+      if (!client) continue;
+      try {
+        const toolsets = await client.getToolsets();
+        // Prefix tool names with the originalName so downstream filtering and display remain scoped
+        const flattened = this.flattenToolsets(toolsets);
+        if (debug) {
+          console.log(
+            `[mcpjam][selectedTools] ${originalName} flattened tool count = ${Object.keys(flattened).length}`,
+          );
+        }
+        for (const [toolName, tool] of Object.entries<any>(flattened)) {
+          allFlattenedTools[`${originalName}:${toolName}`] = tool;
+        }
+      } catch (error) {
+        console.warn(
+          `Failed to get tools from selected server ${originalName}:`,
+          error,
+        );
+      }
+    }
+
+    if (debug) {
+      console.log(
+        "[mcpjam][selectedTools] total flattened tool count =",
+        Object.keys(allFlattenedTools).length,
+      );
+    }
+    return allFlattenedTools as DynamicArgument<ToolsInput>;
+  }
+
   async getToolsetsForServer(
     serverId: string,
   ): Promise<DynamicArgument<ToolsInput>> {

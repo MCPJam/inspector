@@ -45,6 +45,7 @@ interface ChatRequest {
   requestId?: string;
   response?: any;
   sendMessagesToBackend?: boolean;
+  selectedServers?: string[]; // original names from UI
 }
 
 // Constants
@@ -152,7 +153,7 @@ const handleAgentStepFinish = (
 
 const createStreamingResponse = async (
   model: any,
-  vercelTools: Record<string, Tool>,
+  aiSdkTools: Record<string, Tool>,
   messages: ChatMessage[],
   streamingContext: StreamingContext,
   provider: ModelProvider,
@@ -182,11 +183,8 @@ const createStreamingResponse = async (
       model,
       system:
         systemPrompt || "You are a helpful assistant with access to MCP tools.",
-      temperature:
-        temperature == null || undefined
-          ? getDefaultTemperatureByProvider(provider)
-          : temperature,
-      tools: vercelTools,
+      temperature: temperature ?? getDefaultTemperatureByProvider(provider),
+      tools: aiSdkTools,
       messages: messageHistory,
       onChunk: async (chunk) => {
         switch (chunk.chunk.type) {
@@ -332,6 +330,7 @@ const sendMessagesToBackend = async (
   mcpClientManager: any,
   baseUrl: string,
   authHeader?: string,
+  selectedServers?: string[],
 ): Promise<void> => {
   // Build message history
   const messageHistory: ModelMessage[] = (messages || []).map((m) => {
@@ -347,12 +346,16 @@ const sendMessagesToBackend = async (
     }
   });
 
-  const flatTools =
-    await mcpClientManager.getFlattenedToolsetsForEnabledServers();
-  const toolDefs = Object.keys(flatTools).map((name) => ({
+  const flatTools = Array.isArray(selectedServers)
+    ? await mcpClientManager.getFlattenedToolsetsForSelectedServers(
+        selectedServers,
+      )
+    : await mcpClientManager.getFlattenedToolsetsForEnabledServers();
+
+  const toolDefs = Object.entries(flatTools).map(([name, tool]) => ({
     name,
-    description: (flatTools as any)[name]?.description,
-    inputSchema: zodToJsonSchema((flatTools as any)[name]?.inputSchema),
+    description: tool?.description,
+    inputSchema: zodToJsonSchema(tool?.inputSchema),
   }));
 
   if (!baseUrl) {
@@ -372,12 +375,12 @@ const sendMessagesToBackend = async (
       }),
     });
 
-    let data: any = {};
+    let data: any;
     try {
       data = await res.json();
     } catch {
-      const text = await res.text();
       try {
+        const text = await res.text();
         data = JSON.parse(text);
       } catch {
         data = { ok: false };
@@ -539,9 +542,9 @@ chat.post("/", async (c) => {
       );
     }
     const sendToBackend =
-      provider === "meta" && requestData.sendMessagesToBackend;
+      provider === "meta" && Boolean(requestData.sendMessagesToBackend);
 
-    if (!sendToBackend && (!model?.id || !requestData.apiKey)) {
+    if (!sendToBackend && (!model?.id || !apiKey)) {
       return c.json(
         {
           success: false,
@@ -626,12 +629,17 @@ chat.post("/", async (c) => {
               mcpClientManager,
               process.env.CONVEX_HTTP_URL!,
               authHeader,
+              requestData.selectedServers,
             );
           } else {
             // Use existing streaming path with tools
-            const flatTools =
-              await mcpClientManager.getFlattenedToolsetsForEnabledServers();
-            const vercelTools: Record<string, Tool> =
+            const flatTools = Array.isArray(requestData.selectedServers)
+              ? await mcpClientManager.getFlattenedToolsetsForSelectedServers(
+                  requestData.selectedServers,
+                )
+              : await mcpClientManager.getFlattenedToolsetsForEnabledServers();
+
+            const aiSdkTools: Record<string, Tool> =
               convertMastraToolsToVercelTools(flatTools as any);
 
             const llmModel = createLlmModel(
@@ -641,7 +649,7 @@ chat.post("/", async (c) => {
             );
             await createStreamingResponse(
               llmModel,
-              vercelTools,
+              aiSdkTools,
               messages,
               streamingContext,
               provider,
@@ -671,7 +679,12 @@ chat.post("/", async (c) => {
     });
   } catch (error) {
     console.error("[mcp/chat] Error in chat API:", error);
-    mcpClientManager.clearElicitationCallback();
+
+    try {
+      mcpClientManager.clearElicitationCallback();
+    } catch (cleanupError) {
+      console.error("[mcp/chat] Error during cleanup:", cleanupError);
+    }
 
     return c.json(
       {
