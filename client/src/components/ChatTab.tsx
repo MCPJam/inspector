@@ -1,5 +1,11 @@
 import { useRef, useEffect, useState } from "react";
-import { MessageCircle, Plug, PlusCircle, Settings, Sparkles } from "lucide-react";
+import {
+  MessageCircle,
+  Plug,
+  PlusCircle,
+  Settings,
+  Sparkles,
+} from "lucide-react";
 import { useChat } from "@/hooks/use-chat";
 import { Message } from "./chat/message";
 import { ChatInput } from "./chat/chat-input";
@@ -124,7 +130,11 @@ export function ChatTab({
             <div className="space-y-3">
               <div className="flex items-center justify-center">
                 <img
-                  src={themeMode === "dark" ? "/mcp_jam_dark.png" : "/mcp_jam_light.png"}
+                  src={
+                    themeMode === "dark"
+                      ? "/mcp_jam_dark.png"
+                      : "/mcp_jam_light.png"
+                  }
                   alt="MCPJam logo"
                   className="h-12 w-auto mx-auto"
                 />
