@@ -1,51 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
-import { useAction, useConvexAuth, useQuery } from "convex/react";
-import { FlaskConical, CheckCircle, XCircle, Clock } from "lucide-react";
+import { useConvexAuth, useQuery } from "convex/react";
+import { FlaskConical } from "lucide-react";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-
-type EvalSuite = {
-  _id: string;
-  createdBy: string;
-  status: "running" | "completed" | "failed" | "cancelled";
-  result: "pending" | "passed" | "failed" | "cancelled";
-  startedAt: number;
-  finishedAt?: number;
-  totalTests: number;
-  config: { tests: unknown; environment: unknown; llms: unknown };
-};
-
-type EvalCase = {
-  _id: string;
-  createdBy: string;
-  title: string;
-  query: string;
-  provider: string;
-  model: string;
-  runs: number;
-  result: "pending" | "passed" | "failed" | "cancelled";
-};
-
-type EvalIteration = {
-  _id: string;
-  testCaseId?: string;
-  createdBy: string;
-  createdAt: number;
-  startedAt: number;
-  iterationNumber: number;
-  updatedAt: number;
-  blob?: string;
-  status: "running" | "completed" | "failed" | "cancelled";
-  result: "pending" | "passed" | "failed" | "cancelled";
-  actualToolCalls: string[];
-  tokensUsed: number;
-};
-
-function formatTime(ts?: number) {
-  return ts ? new Date(ts).toLocaleString() : "—";
-}
+import { EvalCase, EvalIteration, EvalSuite } from "./evals/types";
+import { IterationCard } from "./evals/iteration-card";
+import { formatTime } from "./evals/helpers";
 
 export function EvalsTab() {
   const { isAuthenticated, isLoading } = useConvexAuth();
@@ -96,43 +58,6 @@ function EvalsContent() {
 
   const isDataLoading =
     suites === undefined || cases === undefined || iterations === undefined;
-
-  const metrics = useMemo(() => {
-    const totalSuites = suites?.length ?? 0;
-    const runningSuites =
-      suites?.filter((s) => s.status === "running").length ?? 0;
-    const completedSuites =
-      suites?.filter((s) => s.status === "completed" && s.result === "passed")
-        .length ?? 0;
-    const failedSuites =
-      suites?.filter((s) => s.status === "failed" || s.result === "failed")
-        .length ?? 0;
-
-    const nonRunningIterations =
-      iterations?.filter((i) => i.status !== "running") ?? [];
-    const totalIterations = nonRunningIterations.length;
-    const passedIterations = nonRunningIterations.filter(
-      (i) => i.result === "passed",
-    ).length;
-    const failedIterations = nonRunningIterations.filter(
-      (i) => i.result === "failed",
-    ).length;
-    const totalTokens = (iterations ?? []).reduce(
-      (sum, i) => sum + (i.tokensUsed || 0),
-      0,
-    );
-
-    return {
-      totalSuites,
-      runningSuites,
-      completedSuites,
-      failedSuites,
-      totalIterations,
-      passedIterations,
-      failedIterations,
-      totalTokens,
-    };
-  }, [suites, iterations]);
 
   if (isDataLoading) {
     return (
@@ -324,7 +249,7 @@ function SuitesOverview({
     <div className="space-y-4">
       <div className="overflow-hidden rounded-xl border">
         <div className="grid grid-cols-[minmax(0,1.2fr)_140px_140px_220px_160px] items-center gap-3 border-b bg-muted/50 px-4 py-2 text-xs font-semibold uppercase text-muted-foreground">
-          <div>Suite started</div>
+          <div>Test</div>
           <div>Status</div>
           <div>Result</div>
           <div>Summary</div>
@@ -455,133 +380,6 @@ function SuiteIterationsView({
             ))
           )}
         </div>
-      </div>
-    </div>
-  );
-}
-
-function IterationCard({
-  iteration,
-  testCase,
-  isOpen,
-  onToggle,
-}: {
-  iteration: EvalIteration;
-  testCase: EvalCase | null;
-  isOpen: boolean;
-  onToggle: () => void;
-}) {
-  const isPending = iteration.status === "running" || iteration.result === "pending";
-
-  return (
-    <div className={`transition-colors ${isOpen ? "bg-muted/50" : "bg-background"}`}>
-      <button
-        onClick={onToggle}
-        className="flex w-full items-center justify-between gap-4 px-4 py-3 text-left hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
-      >
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <div className="font-semibold">
-              Iteration #{iteration.iterationNumber}
-            </div>
-            {testCase ? (
-              <span className="text-xs text-muted-foreground">{testCase.title}</span>
-            ) : null}
-          </div>
-          <div className="text-xs text-muted-foreground">
-            Started {formatTime(iteration.startedAt)} · Tokens {Number(iteration.tokensUsed || 0).toLocaleString()} · Tools {iteration.actualToolCalls.length}
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {isPending ? (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Clock className="h-4 w-4 text-yellow-500" />
-              <span className="capitalize">{iteration.status}</span>
-            </div>
-          ) : iteration.result === "failed" ? (
-            <div className="flex items-center gap-2 text-xs text-red-600">
-              <XCircle className="h-4 w-4" />
-              <span className="capitalize">{iteration.result}</span>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 text-xs text-green-600">
-              <CheckCircle className="h-4 w-4" />
-              <span className="capitalize">{iteration.result}</span>
-            </div>
-          )}
-        </div>
-      </button>
-      {isOpen ? (
-        <div className="px-4 pb-4">
-          <IterationDetails iteration={iteration} />
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function IterationDetails({ iteration }: { iteration: EvalIteration }) {
-  const getBlob = useAction(
-    "evals:getEvalTestBlob" as any,
-  ) as unknown as (args: { blobId: string }) => Promise<any>;
-
-  const [blob, setBlob] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function run() {
-      if (!iteration.blob) {
-        setBlob(null);
-        return;
-      }
-      setLoading(true);
-      setError(null);
-      try {
-        const data = await getBlob({ blobId: iteration.blob });
-        if (!cancelled) setBlob(data);
-      } catch (e: any) {
-        if (!cancelled) setError("Failed to load blob");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-    run();
-    return () => {
-      cancelled = true;
-    };
-  }, [iteration.blob, getBlob]);
-
-  return (
-    <div className="space-y-3 rounded-lg border border-border bg-background p-4 shadow-sm">
-      <div className="flex flex-wrap items-center gap-2 text-sm">
-        <span className="font-semibold">Status</span>
-        <Badge className="capitalize">{iteration.status}</Badge>
-        <span className="mx-1 text-muted-foreground">·</span>
-        <span className="font-semibold">Result</span>
-        <Badge className="capitalize">{iteration.result}</Badge>
-      </div>
-      <div className="grid gap-2 text-sm text-muted-foreground sm:grid-cols-2">
-        <div>Started {formatTime(iteration.startedAt)}</div>
-        <div>Updated {formatTime(iteration.updatedAt)}</div>
-        <div>Tokens {Number(iteration.tokensUsed || 0).toLocaleString()}</div>
-        <div>Tool calls {iteration.actualToolCalls.length}</div>
-      </div>
-      <div className="rounded-md border bg-muted/40 p-3">
-        {loading ? (
-          <div className="text-sm text-muted-foreground">Loading blob…</div>
-        ) : error ? (
-          <div className="text-sm text-red-600">{error}</div>
-        ) : iteration.blob ? (
-          <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap break-words text-xs">
-            {JSON.stringify(blob, null, 2)}
-          </pre>
-        ) : (
-          <div className="text-sm text-muted-foreground">
-            No blob attached to this iteration.
-          </div>
-        )}
       </div>
     </div>
   );
