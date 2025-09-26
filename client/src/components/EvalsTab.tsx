@@ -16,15 +16,15 @@ export function EvalsTab() {
   const enableQueries = isAuthenticated && !!user;
   const suites = useQuery(
     "evals:getCurrentUserEvalTestSuites" as any,
-    (enableQueries ? ({} as any) : (undefined as any)),
+    enableQueries ? ({} as any) : (undefined as any),
   ) as unknown as EvalSuite[] | undefined;
   const cases = useQuery(
     "evals:getCurrentUserEvalTestGroups" as any,
-    (enableQueries ? ({} as any) : (undefined as any)),
+    enableQueries ? ({} as any) : (undefined as any),
   ) as unknown as EvalCase[] | undefined;
   const iterations = useQuery(
     "evals:getCurrentUserEvalTestIterations" as any,
-    (enableQueries ? ({} as any) : (undefined as any)),
+    enableQueries ? ({} as any) : (undefined as any),
   ) as unknown as EvalIteration[] | undefined;
 
   const isDataLoading =
@@ -34,7 +34,9 @@ export function EvalsTab() {
 
   const selectedSuite = useMemo(() => {
     if (!selectedSuiteId) return null;
-    return (suites || []).find((suite) => suite._id === selectedSuiteId) ?? null;
+    return (
+      (suites || []).find((suite) => suite._id === selectedSuiteId) ?? null
+    );
   }, [selectedSuiteId, suites]);
 
   const iterationsForSelectedSuite = useMemo(() => {
