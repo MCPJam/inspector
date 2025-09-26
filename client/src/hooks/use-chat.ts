@@ -27,6 +27,7 @@ interface UseChatOptions {
   onError?: (error: string) => void;
   onModelChange?: (model: ModelDefinition) => void;
   sendMessagesToBackend?: boolean;
+  selectedServers?: string[]; // original server names selected in UI
 }
 
 export function useChat(options: UseChatOptions = {}) {
@@ -41,6 +42,7 @@ export function useChat(options: UseChatOptions = {}) {
     onError,
     onModelChange,
     sendMessagesToBackend = false,
+    selectedServers = [],
   } = options;
 
   const [state, setState] = useState<ChatState>({
@@ -359,6 +361,7 @@ export function useChat(options: UseChatOptions = {}) {
             messages: messagesRef.current.concat(userMessage),
             ollamaBaseUrl: getOllamaBaseUrl(),
             sendMessagesToBackend: routeThroughBackend,
+            selectedServers,
           }),
           signal: abortControllerRef.current?.signal,
         });
@@ -435,6 +438,7 @@ export function useChat(options: UseChatOptions = {}) {
       getOllamaBaseUrl,
       sendMessagesToBackend,
       getAccessToken,
+      selectedServers,
     ],
   );
 

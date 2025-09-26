@@ -19,6 +19,9 @@ export function createHonoApp() {
 
   // Create the MCPJam client manager instance
   const mcpJamClientManager = new MCPJamClientManager();
+  if (process.env.DEBUG_MCP_SELECTION === "1") {
+    console.log("[mcpjam][boot] DEBUG_MCP_SELECTION enabled");
+  }
 
   // Middleware to inject the client manager into context
   app.use("*", async (c, next) => {

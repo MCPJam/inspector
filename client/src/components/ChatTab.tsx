@@ -59,6 +59,7 @@ export function ChatTab({
   } = useChat({
     systemPrompt: systemPromptState,
     temperature: temperatureState,
+    selectedServers: selectedConnectedNames,
     onError: (error) => {
       toast.error(error);
     },
