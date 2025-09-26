@@ -183,8 +183,7 @@ const createStreamingResponse = async (
       model,
       system:
         systemPrompt || "You are a helpful assistant with access to MCP tools.",
-      temperature:
-        temperature ?? getDefaultTemperatureByProvider(provider),
+      temperature: temperature ?? getDefaultTemperatureByProvider(provider),
       tools: aiSdkTools,
       messages: messageHistory,
       onChunk: async (chunk) => {
@@ -348,7 +347,9 @@ const sendMessagesToBackend = async (
   });
 
   const flatTools = Array.isArray(selectedServers)
-    ? await mcpClientManager.getFlattenedToolsetsForSelectedServers(selectedServers)
+    ? await mcpClientManager.getFlattenedToolsetsForSelectedServers(
+        selectedServers,
+      )
     : await mcpClientManager.getFlattenedToolsetsForEnabledServers();
 
   const toolDefs = Object.entries(flatTools).map(([name, tool]) => ({
@@ -540,7 +541,8 @@ chat.post("/", async (c) => {
         400,
       );
     }
-    const sendToBackend = provider === "meta" && Boolean(requestData.sendMessagesToBackend);
+    const sendToBackend =
+      provider === "meta" && Boolean(requestData.sendMessagesToBackend);
 
     if (!sendToBackend && (!model?.id || !apiKey)) {
       return c.json(
@@ -632,10 +634,13 @@ chat.post("/", async (c) => {
           } else {
             // Use existing streaming path with tools
             const flatTools = Array.isArray(requestData.selectedServers)
-              ? await mcpClientManager.getFlattenedToolsetsForSelectedServers(requestData.selectedServers)
+              ? await mcpClientManager.getFlattenedToolsetsForSelectedServers(
+                  requestData.selectedServers,
+                )
               : await mcpClientManager.getFlattenedToolsetsForEnabledServers();
 
-            const aiSdkTools: Record<string, Tool> = convertMastraToolsToVercelTools(flatTools as any);
+            const aiSdkTools: Record<string, Tool> =
+              convertMastraToolsToVercelTools(flatTools as any);
 
             const llmModel = createLlmModel(
               model as ModelDefinition,
