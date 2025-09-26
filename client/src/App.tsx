@@ -197,7 +197,10 @@ export default function App() {
             )}
 
             {activeTab === "chat" && (
-              <ChatTab serverConfigs={selectedMCPConfigsMap} />
+              <ChatTab
+                serverConfigs={selectedMCPConfigsMap}
+                connectedServerConfigs={connectedServerConfigs}
+              />
             )}
 
             {activeTab === "interceptor" && (
