@@ -4,8 +4,6 @@ import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
 import { PromptsTab } from "./components/PromptsTab";
 import { ChatTab } from "./components/ChatTab";
-import { TestsTab } from "./components/TestsTab";
-import { PrevEvalsTab } from "./components/PrevEvalsTab";
 import { EvalsTab } from "./components/EvalsTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { TracingTab } from "./components/TracingTab";
@@ -158,19 +156,6 @@ export default function App() {
               <ToolsTab
                 serverConfig={selectedMCPConfig}
                 serverName={appState.selectedServer}
-              />
-            )}
-            {activeTab === "tests" && (
-              <TestsTab
-                serverConfig={selectedMCPConfig}
-                serverConfigsMap={selectedMCPConfigsMap}
-                allServerConfigsMap={Object.fromEntries(
-                  Object.entries(connectedServerConfigs)
-                    .filter(
-                      ([, entry]) => entry.connectionStatus === "connected",
-                    )
-                    .map(([name, entry]) => [name, entry.config]),
-                )}
               />
             )}
             {activeTab === "evals" && <EvalsTab />}
