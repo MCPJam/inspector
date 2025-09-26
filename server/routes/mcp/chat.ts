@@ -45,6 +45,7 @@ interface ChatRequest {
   requestId?: string;
   response?: any;
   sendMessagesToBackend?: boolean;
+  selectedServers?: string[]; // original names from UI
 }
 
 // Constants
@@ -152,7 +153,7 @@ const handleAgentStepFinish = (
 
 const createStreamingResponse = async (
   model: any,
-  vercelTools: Record<string, Tool>,
+  aiSdkTools: Record<string, Tool>,
   messages: ChatMessage[],
   streamingContext: StreamingContext,
   provider: ModelProvider,
@@ -186,7 +187,7 @@ const createStreamingResponse = async (
         temperature == null || undefined
           ? getDefaultTemperatureByProvider(provider)
           : temperature,
-      tools: vercelTools,
+      tools: aiSdkTools,
       messages: messageHistory,
       onChunk: async (chunk) => {
         switch (chunk.chunk.type) {
@@ -332,6 +333,7 @@ const sendMessagesToBackend = async (
   mcpClientManager: any,
   baseUrl: string,
   authHeader?: string,
+  selectedServers?: string[],
 ): Promise<void> => {
   // Build message history
   const messageHistory: ModelMessage[] = (messages || []).map((m) => {
@@ -347,13 +349,28 @@ const sendMessagesToBackend = async (
     }
   });
 
-  const flatTools =
-    await mcpClientManager.getFlattenedToolsetsForEnabledServers();
+  const debug = process.env.DEBUG_MCP_SELECTION === "1";
+  if (debug) {
+    console.log("[mcpjam][backend] selectedServers:", selectedServers);
+  }
+  const flatTools = Array.isArray(selectedServers)
+    ? await mcpClientManager.getFlattenedToolsetsForSelectedServers(
+        selectedServers,
+      )
+    : await mcpClientManager.getFlattenedToolsetsForEnabledServers();
   const toolDefs = Object.keys(flatTools).map((name) => ({
     name,
     description: (flatTools as any)[name]?.description,
     inputSchema: zodToJsonSchema((flatTools as any)[name]?.inputSchema),
   }));
+  if (debug) {
+    console.log(
+      "[mcpjam][backend] toolDefs count:",
+      toolDefs.length,
+      "sample:",
+      toolDefs.slice(0, 5).map((t) => t.name),
+    );
+  }
 
   if (!baseUrl) {
     throw new Error("CONVEX_HTTP_URL is not set");
@@ -626,13 +643,28 @@ chat.post("/", async (c) => {
               mcpClientManager,
               process.env.CONVEX_HTTP_URL!,
               authHeader,
+              requestData.selectedServers,
             );
           } else {
             // Use existing streaming path with tools
-            const flatTools =
-              await mcpClientManager.getFlattenedToolsetsForEnabledServers();
-            const vercelTools: Record<string, Tool> =
+            const debug = true;
+            if (debug) {
+              console.log("[mcpjam][chat] selectedServers:", requestData.selectedServers);
+            }
+            const flatTools = Array.isArray(requestData.selectedServers)
+              ? await mcpClientManager.getFlattenedToolsetsForSelectedServers(
+                  requestData.selectedServers,
+                )
+              : await mcpClientManager.getFlattenedToolsetsForEnabledServers();
+            const aiSdkTools: Record<string, Tool> =
               convertMastraToolsToVercelTools(flatTools as any);
+            if (debug) {
+              console.log(
+                "[mcpjam][chat] tools passed to model:",
+                Object.keys(aiSdkTools).slice(0, 10),
+                `(+${Math.max(0, Object.keys(aiSdkTools).length - 10)} more)`,
+              );
+            }
 
             const llmModel = createLlmModel(
               model as ModelDefinition,
@@ -641,7 +673,7 @@ chat.post("/", async (c) => {
             );
             await createStreamingResponse(
               llmModel,
-              vercelTools,
+              aiSdkTools,
               messages,
               streamingContext,
               provider,
