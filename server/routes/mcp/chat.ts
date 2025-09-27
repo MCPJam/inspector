@@ -51,6 +51,8 @@ interface ChatRequest {
 // Constants
 const ELICITATION_TIMEOUT = 300000; // 5 minutes
 const MAX_AGENT_STEPS = 10;
+const BACKEND_FETCH_ERROR_MESSAGE =
+  "We are having difficulties processing your message right now. Please try again later.";
 
 try {
   (process as any).setMaxListeners?.(50);
@@ -66,6 +68,47 @@ const sendSseEvent = (
 ) => {
   const payload = event === "[DONE]" ? "[DONE]" : JSON.stringify(event);
   controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
+};
+
+const sendBackendErrorText = (streamingContext: StreamingContext) => {
+  sendSseEvent(streamingContext.controller, streamingContext.encoder, {
+    type: "text",
+    content: BACKEND_FETCH_ERROR_MESSAGE,
+  });
+};
+
+const sendBackendRequest = async (
+  baseUrl: string,
+  authHeader: string | undefined,
+  body: any,
+  streamingContext: StreamingContext,
+): Promise<any | null> => {
+  try {
+    const res = await fetch(`${baseUrl}/streaming`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(authHeader ? { Authorization: authHeader } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      sendBackendErrorText(streamingContext);
+      return null;
+    }
+
+    try {
+      const data = await res.json();
+      return data;
+    } catch {
+      sendBackendErrorText(streamingContext);
+      return null;
+    }
+  } catch {
+    sendBackendErrorText(streamingContext);
+    return null;
+  }
 };
 
 const handleAgentStepFinish = (
@@ -362,30 +405,16 @@ const sendMessagesToBackend = async (
   }
   let steps = 0;
   while (steps < MAX_AGENT_STEPS) {
-    const res = await fetch(`${baseUrl}/streaming`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        ...(authHeader ? { Authorization: authHeader } : {}),
-      },
-      body: JSON.stringify({
+    const data = await sendBackendRequest(
+      baseUrl,
+      authHeader,
+      {
         tools: toolDefs,
         messages: JSON.stringify(messageHistory),
-      }),
-    });
-
-    let data: any;
-    try {
-      data = await res.json();
-    } catch {
-      try {
-        const text = await res.text();
-        data = JSON.parse(text);
-      } catch {
-        data = { ok: false };
-      }
-    }
-
+      },
+      streamingContext,
+    );
+    if (!data) break;
     if (data?.ok && Array.isArray(data.messages)) {
       // Append assistant messages and emit their text/tool_call events
       for (const msg of data.messages as ModelMessage[]) {
@@ -426,6 +455,7 @@ const sendMessagesToBackend = async (
         }
       }
     } else {
+      sendBackendErrorText(streamingContext);
       break;
     }
 
