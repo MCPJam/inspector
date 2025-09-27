@@ -394,7 +394,7 @@ const sendMessagesToBackend = async (
       selectedServers,
     );
 
-    const toolDefs = Object.entries(flatTools).map(([name, tool]) => ({
+  const toolDefs = Object.entries(flatTools).map(([name, tool]) => ({
     name,
     description: tool?.description,
     inputSchema: zodToJsonSchema(tool?.inputSchema),
@@ -414,7 +414,7 @@ const sendMessagesToBackend = async (
       },
       streamingContext,
     );
-    
+
     if (data?.ok && Array.isArray(data.messages)) {
       // Append assistant messages and emit their text/tool_call events
       for (const msg of data.messages as ModelMessage[]) {
