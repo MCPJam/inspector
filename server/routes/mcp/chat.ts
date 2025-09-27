@@ -414,7 +414,7 @@ const sendMessagesToBackend = async (
       },
       streamingContext,
     );
-
+    if (!data) break;
     if (data?.ok && Array.isArray(data.messages)) {
       // Append assistant messages and emit their text/tool_call events
       for (const msg of data.messages as ModelMessage[]) {
