@@ -1,8 +1,9 @@
+
 import { memo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { formatTimestamp, sanitizeText, isImageFile } from "@/lib/chat-utils";
 import { ChatMessage } from "@/lib/chat-types";
-import { Copy, CopyIcon, RotateCcw } from "lucide-react";
+import { Check, Copy, CopyIcon, RotateCcw } from "lucide-react";
 import { Markdown } from "./markdown";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
@@ -26,7 +27,9 @@ const ImageAttachment = ({
   if (imageError) {
     return (
       <div
-        className={`px-3 py-2 bg-muted rounded-lg text-sm text-muted-foreground ${align === "right" ? "text-right" : ""}`}
+        className={`px-3 py-2 bg-muted rounded-lg text-sm text-muted-foreground ${
+          align === "right" ? "text-right" : ""
+        }`}
       >
         Failed to load image: {attachment.name}
       </div>
@@ -36,7 +39,9 @@ const ImageAttachment = ({
   return (
     <div className="flex flex-col gap-2">
       <div
-        className={`text-xs text-muted-foreground font-medium ${align === "right" ? "text-right" : ""}`}
+        className={`text-xs text-muted-foreground font-medium ${
+          align === "right" ? "text-right" : ""
+        }`}
       >
         {attachment.name}
       </div>
@@ -94,6 +99,7 @@ const PureMessage = ({
 }: MessageProps) => {
   const [mode, setMode] = useState<"view" | "edit">("view");
   const [isHovered, setIsHovered] = useState(false);
+  const [copied, setCopied] = useState(false);
   const themeMode = usePreferencesStore((s) => s.themeMode);
 
   const handleCopy = () => {
@@ -102,6 +108,8 @@ const PureMessage = ({
     } else {
       navigator.clipboard.writeText(message.content);
     }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000); // Reset after 2 seconds
   };
 
   const handleEdit = () => {
@@ -234,7 +242,7 @@ const PureMessage = ({
                     <div className="space-y-2">
                       {message.toolCalls.map((toolCall, index) => {
                         const toolResult = message.toolResults?.find(
-                          (tr) => tr.toolCallId === toolCall.id,
+                          (tr) => tr.toolCallId === toolCall.id
                         );
                         return (
                           <motion.div
@@ -300,7 +308,7 @@ const PureMessage = ({
                             className="px-2 h-7 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all"
                             onClick={handleCopy}
                           >
-                            <Copy size={14} />
+                            {copied ? <Check size={14} /> : <Copy size={14} />}
                           </Button>
                         </TooltipTrigger>
                         <TooltipContent>Copy</TooltipContent>
