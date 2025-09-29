@@ -85,6 +85,17 @@ const config: ForgeConfig = {
     new MakerDMG({
       format: "ULFO",
       name: "MCPJam Inspector",
+      overwrite: true,
+      additionalDMGOptions: {
+        window: {
+          size: {
+            width: 540,
+            height: 380,
+          },
+        },
+        background: undefined,
+        icon: undefined,
+      },
     }),
     new MakerDeb({
       options: {
