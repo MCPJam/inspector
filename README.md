@@ -230,8 +230,8 @@ This project is licensed under the **Apache License 2.0** - see the [LICENSE](LI
 
 </div>
 
-
 # ⭐ Star History
+
 <a href="https://star-history.com/#MCPJam/inspector&Date">
  <picture>
    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=MCPJam/inspector&type=Date&theme=dark" />
