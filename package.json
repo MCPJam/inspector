@@ -31,7 +31,8 @@
     "dev:convex": "convex dev",
     "dev:server": "cd server && npm run dev",
     "dev:client": "cd client && npm run dev",
-    "build": "npm run build:client && npm run build:server",
+    "build": "npm run build:clean && npm run build:client && npm run build:server",
+    "build:clean": "rm -rf dist && npm ci --legacy-peer-deps",
     "build:client": "cd client && npm run build",
     "build:server": "cd server && npm run build",
     "start": "NODE_ENV=production node bin/start.js",
@@ -112,8 +113,8 @@
     "tailwind-merge": "^3.3.1",
     "update-electron-app": "^3.1.1",
     "vaul": "^1.1.2",
-    "zod": "^4.0.16",
-    "@alcyone-labs/zod-to-json-schema": "^4.0.10",
+    "zod": "^3.25.76",
+    "zod-to-json-schema": "^3.24.6",
     "zustand": "^5.0.6"
   },
   "devDependencies": {
@@ -150,6 +151,7 @@
   },
   "overrides": {
     "tmp": "0.2.5",
-    "jsondiffpatch": "0.7.2"
+    "jsondiffpatch": "0.7.2",
+    "zod": "^3.25.76"
   }
 }

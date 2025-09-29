@@ -24,15 +24,15 @@ jobs:
           # Clean npm cache
           npm cache clean --force
 
-          # Remove lock files and node_modules to fix rollup binary issues
+          # Remove lock files and node_modules to ensure fresh install
           rm -rf package-lock.json node_modules
           rm -rf client/package-lock.json client/node_modules
           rm -rf server/package-lock.json server/node_modules
 
-          # Install dependencies
-          npm install
-          cd client && npm install
-          cd ../server && npm install
+          # Install all dependencies (root + client + server)
+          npm install --legacy-peer-deps
+          cd client && npm install --legacy-peer-deps
+          cd ../server && npm install --legacy-peer-deps
 
       - name: Check Prettier formatting
         run: |
@@ -51,5 +51,9 @@ jobs:
       - name: Build project
         run: |
           echo "🏗️ Building project..."
-          npm run build
+          # Clean build (uses npm ci for production-like fresh install)
+          npm run build:clean
+          # Now build client and server
+          npm run build:client
+          npm run build:server
           echo "✅ Build completed successfully!"
