@@ -27,9 +27,14 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: "https://registry.npmjs.org"
 
-      - name: Install dependencies
+      - name: Clear npm cache
+        run: npm cache clean --force
+
+      - name: Clean and install dependencies
         run: |
-          npm install
+          rm -rf node_modules package-lock.json
+          rm -rf client/node_modules client/package-lock.json
+          npm install --no-package-lock
           npm run install:deps
 
       - name: Build for npm
