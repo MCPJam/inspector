@@ -31,7 +31,8 @@
     "dev:convex": "convex dev",
     "dev:server": "cd server && npm run dev",
     "dev:client": "cd client && npm run dev",
-    "build": "rm -rf dist node_modules/.vite && npm ci && npm run build:client && npm run build:server",
+    "build": "npm run build:clean && npm run build:client && npm run build:server",
+    "build:clean": "rm -rf dist && npm ci",
     "build:client": "cd client && npm run build",
     "build:server": "cd server && npm run build",
     "start": "NODE_ENV=production node bin/start.js",
@@ -113,7 +114,7 @@
     "update-electron-app": "^3.1.1",
     "vaul": "^1.1.2",
     "zod": "^3.25.76",
-    "zod-to-json-schema": "^3.23.3",
+    "zod-to-json-schema": "^3.24.6",
     "zustand": "^5.0.6"
   },
   "devDependencies": {
@@ -151,7 +152,6 @@
   "overrides": {
     "tmp": "0.2.5",
     "jsondiffpatch": "0.7.2",
-    "zod": "^3.25.76",
-    "ollama-ai-provider-v2>zod": "^4.0.16"
+    "zod": "^3.25.76"
   }
 }
