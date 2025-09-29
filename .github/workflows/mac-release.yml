@@ -37,7 +37,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          npm install
+          npm install --legacy-peer-deps
           npm run install:deps
 
       - name: Setup Apple certificates and API key
