@@ -33,15 +33,19 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install dependencies
+      - name: Clean and install dependencies
         run: |
-          npm install
+          npm cache clean --force
+          rm -rf node_modules package-lock.json
+          rm -rf client\node_modules client\package-lock.json
+          npm install --no-package-lock
           npm run install:deps
 
-      - name: Workaround npm optional deps bug (rollup prebuilt)
+      - name: Workaround npm optional deps bug (native binaries)
         if: runner.os == 'Windows'
         run: |
           npm i -D @rollup/rollup-win32-x64-msvc@^4
+          cd client && npm i lightningcss@^1 --save-dev --no-package-lock
 
       - name: Restore code signing cert
         if: env.WINDOWS_PFX_BASE64 != ''
