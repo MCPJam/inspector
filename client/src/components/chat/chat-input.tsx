@@ -329,7 +329,7 @@ export function ChatInput({
             currentModel={currentModelData}
             availableModels={availableModels}
             onModelChange={onModelChange}
-            disabled={disabled}
+            disabled={false}
             isLoading={isLoading}
           />
         )}
