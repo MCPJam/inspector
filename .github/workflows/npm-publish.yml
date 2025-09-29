@@ -27,10 +27,23 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: "https://registry.npmjs.org"
 
-      - name: Install dependencies
+      - name: Clear npm cache and rebuild native modules
         run: |
-          npm install
+          npm cache clean --force
+          rm -rf ~/.npm
+          rm -rf node_modules package-lock.json
+          rm -rf client/node_modules client/package-lock.json
+          rm -rf server/node_modules server/package-lock.json
+
+      - name: Install dependencies with fresh state
+        run: |
+          npm install --legacy-peer-deps --no-optional
           npm run install:deps
+
+      - name: Rebuild native dependencies
+        run: |
+          cd server && npm rebuild esbuild
+          cd ../client && npm rebuild
 
       - name: Build for npm
         run: npm run build
