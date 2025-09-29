@@ -1,5 +1,5 @@
 import { z, ZodTypeAny } from "zod";
-import { zodToJsonSchema } from "@alcyone-labs/zod-to-json-schema";
+import { zodToJsonSchema } from "zod-to-json-schema";
 import { tool, type Tool as VercelTool, type ToolCallOptions } from "ai";
 
 type MastraToolExecuteArgs = {
