@@ -58,7 +58,8 @@ jobs:
           cd ..
           # Install Windows-specific binaries
           npm i -D @rollup/rollup-win32-x64-msvc@^4
-          cd client && npm i lightningcss@^1 --save-dev
+          cd client
+          npm i lightningcss@^1 --save-dev
         shell: powershell
 
       - name: Restore code signing cert
@@ -70,12 +71,14 @@ jobs:
 
       - name: Build
         run: npm run build
+        shell: powershell
 
       - name: Make (Windows)
         env:
           WINDOWS_PFX_FILE: ${{ runner.temp }}\\codesign.pfx
           WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
         run: npm run electron:make
+        shell: powershell
 
       - name: Rename installer to consistent name
         run: |
