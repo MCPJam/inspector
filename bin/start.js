@@ -338,6 +338,7 @@ async function main() {
   let mcpServerArgs = [];
   let mcpConfigFile = null;
   let mcpServerName = null;
+  let rebuildRequested = false;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -369,6 +370,11 @@ async function main() {
       continue;
     }
 
+    if (parsingFlags && (arg === "--rebuild" || arg === "--force-rebuild")) {
+      rebuildRequested = true;
+      continue;
+    }
+
     if (parsingFlags && arg === "-e" && i + 1 < args.length) {
       const envVar = args[++i];
       const equalsIndex = envVar.indexOf("=");
@@ -390,6 +396,14 @@ async function main() {
       mcpServerArgs = args.slice(i + 1);
       break;
     }
+  }
+
+  // Allow environment variables to request rebuild as well
+  const truthyEnv = new Set(["1", "true", "yes", "on"]);
+  const forceRebuildEnv = (process.env.FORCE_REBUILD || "").toLowerCase();
+  const rebuildEnv = (process.env.REBUILD || "").toLowerCase();
+  if (truthyEnv.has(forceRebuildEnv) || truthyEnv.has(rebuildEnv)) {
+    rebuildRequested = true;
   }
 
   // Handle MCP config file if provided
@@ -552,19 +566,32 @@ async function main() {
   try {
     const distServerPath = resolve(projectRoot, "dist", "server", "index.js");
 
-    // Check if production build exists
-    if (!existsSync(distServerPath)) {
-      logProgress("Building client and server for production...");
+    // Production start behavior:
+    // - Do NOT auto-build by default.
+    // - If --rebuild (or env) is passed, run a rebuild before starting.
+    // - If dist is missing and no rebuild requested, fail fast with guidance.
+    const distExists = existsSync(distServerPath);
+
+    if (rebuildRequested) {
+      logStep("Build", "Rebuild requested; running production build");
       await spawnPromise("npm", ["run", "build"], {
         env: process.env,
         cwd: projectRoot,
         signal: abort.signal,
         echoOutput: false,
       });
-
       logSuccess("Build completed successfully");
       await delay(500);
+    } else if (!distExists) {
+      logError(
+        `Production build not found at ${distServerPath}. Build artifacts are required to start.`,
+      );
+      logInfo(
+        "Run this command with --rebuild or build in CI/CD before starting.",
+      );
+      process.exit(1);
     } else {
+      // Small delay to let logs flush before starting
       await delay(500);
     }
 
