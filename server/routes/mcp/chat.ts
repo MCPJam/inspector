@@ -517,6 +517,10 @@ const sendMessagesToBackend = async (
 chat.post("/", async (c) => {
   const mcpClientManager = c.mcpJamClientManager;
   try {
+    console.log("[mcp/chat] Incoming request", {
+      convex: process.env.CONVEX_HTTP_URL,
+      sendToBackend: c.req.header("x-send-to-backend") ?? undefined,
+    });
     const requestData: ChatRequest = await c.req.json();
     const {
       model,
@@ -572,6 +576,29 @@ chat.post("/", async (c) => {
     }
     const sendToBackend =
       provider === "meta" && Boolean(requestData.sendMessagesToBackend);
+    console.log("[mcp/chat] Parsed request", {
+      provider,
+      sendMessagesToBackend: requestData.sendMessagesToBackend,
+      sendToBackend,
+      convex: process.env.CONVEX_HTTP_URL,
+      envKeys: Object.keys(process.env)
+        .filter((key) => key.startsWith("CONVEX") || key.startsWith("MCP"))
+        .sort(),
+    });
+    if (sendToBackend) {
+      const convexUrlState = process.env.CONVEX_HTTP_URL
+        ? "present"
+        : "missing";
+      console.log(
+        `[mcp/chat] sendMessagesToBackend requested; CONVEX_HTTP_URL is ${convexUrlState}`,
+      );
+      if (process.env.CONVEX_HTTP_URL) {
+        console.log(
+          "[mcp/chat] CONVEX_HTTP_URL value:",
+          process.env.CONVEX_HTTP_URL,
+        );
+      }
+    }
 
     if (!sendToBackend && (!model?.id || !apiKey)) {
       return c.json(
@@ -584,6 +611,9 @@ chat.post("/", async (c) => {
     }
 
     if (sendToBackend && !process.env.CONVEX_HTTP_URL) {
+      console.error(
+        "[mcp/chat] Aborting backend send; CONVEX_HTTP_URL is undefined",
+      );
       return c.json(
         {
           success: false,
