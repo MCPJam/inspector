@@ -43,7 +43,7 @@ jobs:
       - name: Rebuild native dependencies
         run: |
           cd server && npm rebuild esbuild
-          cd ../client && npm rebuild || true
+          cd ../client && npm rebuild
 
       - name: Build for npm
         run: npm run build
