@@ -29,10 +29,8 @@ jobs:
           rm -rf client/package-lock.json client/node_modules
           rm -rf server/package-lock.json server/node_modules
 
-          # Install dependencies
-          npm install
-          cd client && npm install
-          cd ../server && npm install
+          # Install dependencies from root (this applies overrides to all packages)
+          npm install --legacy-peer-deps
 
       - name: Check Prettier formatting
         run: |
