@@ -1,11 +1,5 @@
-import { useRef, useEffect, useState } from "react";
-import {
-  MessageCircle,
-  Plug,
-  PlusCircle,
-  Settings,
-  Sparkles,
-} from "lucide-react";
+import { useRef, useEffect, useState, type ReactNode } from "react";
+import { MessageCircle, PlusCircle, Settings, Sparkles } from "lucide-react";
 import { useChat } from "@/hooks/use-chat";
 import { Message } from "./chat/message";
 import { ChatInput } from "./chat/chat-input";
@@ -16,8 +10,9 @@ import { toast } from "sonner";
 import { getDefaultTemperatureForModel } from "@/lib/chat-utils";
 import { MastraMCPServerDefinition } from "@mastra/mcp";
 import { useConvexAuth } from "convex/react";
+import { useAuth } from "@workos-inc/authkit-react";
 import type { ServerWithName } from "@/hooks/use-app-state";
-import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { Button } from "@/components/ui/button";
 
 interface ChatTabProps {
   serverConfigs?: Record<string, MastraMCPServerDefinition>;
@@ -33,7 +28,7 @@ export function ChatTab({
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const { isAuthenticated } = useConvexAuth();
-  const themeMode = usePreferencesStore((s) => s.themeMode);
+  const { signIn } = useAuth();
 
   const [systemPromptState, setSystemPromptState] = useState(
     systemPrompt || "You are a helpful assistant with access to MCP tools.",
@@ -70,7 +65,6 @@ export function ChatTab({
       toast.error(error);
     },
   });
-
   const isUsingMcpjamProvidedModel = model?.provider === "meta";
   const showSignInPrompt = isUsingMcpjamProvidedModel && !isAuthenticated;
   const signInPromptMessage = "Sign in to use MCPJam provided models";
@@ -89,6 +83,17 @@ export function ChatTab({
   }, [model]);
 
   const hasMessages = messages.length > 0;
+  const isChatDisabled = showSignInPrompt || noServersConnected;
+  const disabledMessage = showSignInPrompt
+    ? "Sign in to use free chat"
+    : "Connect an MCP server to send your first message";
+  const quickStartPrompts = [
+    {
+      label: "Available tools",
+      value: "What tools are available?",
+      icon: Sparkles,
+    },
+  ];
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     if (isAtBottom && messagesContainerRef.current) {
@@ -113,139 +118,149 @@ export function ChatTab({
     navigator.clipboard.writeText(content);
   };
 
-  // Empty state - centered input
-  if (!hasMessages) {
-    return (
-      <div className="flex flex-col h-screen">
-        <div className="flex-1 flex flex-col items-center justify-center px-4 relative">
-          {/* Decorative Background */}
-          <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(ellipse_at_center,rgba(2,6,23,0.06),transparent_60%)]" />
-          {/* Welcome Message */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-            className="text-center space-y-6 max-w-2xl mb-8"
-          >
-            <div className="space-y-3">
-              <div className="flex items-center justify-center">
-                <img
-                  src={
-                    themeMode === "dark"
-                      ? "/mcp_jam_dark.png"
-                      : "/mcp_jam_light.png"
-                  }
-                  alt="MCPJam logo"
-                  className="h-12 w-auto mx-auto"
-                />
-              </div>
-              {/* Quick actions */}
-              <div className="flex items-center justify-center gap-2 pt-2">
-                <a
-                  href="#servers"
-                  className="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs hover:bg-accent"
-                >
-                  <PlusCircle className="h-3 w-3" /> Add server
-                </a>
-                <a
-                  href="#settings"
-                  className="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs hover:bg-accent"
-                >
-                  <Settings className="h-3 w-3" /> Settings
-                </a>
-                <button
-                  type="button"
-                  onClick={() => setInput("What tools are available?")}
-                  className="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs hover:bg-accent"
-                >
-                  <Sparkles className="h-3 w-3" /> Try a prompt
-                </button>
-              </div>
-              {noServersConnected ? (
-                <div className="text-sm text-muted-foreground mt-4">
-                  <p className="text-xs">
-                    You must be connected to at least 1 MCP server to get
-                    started.
-                  </p>
-                </div>
-              ) : (
-                <div className="text-sm text-muted-foreground mt-4 flex flex-col items-center gap-2">
-                  <p className="text-xs">Selected servers:</p>
-                  {selectedServerNames.length === 0 ? (
-                    <p className="text-xs">None</p>
-                  ) : (
-                    <div className="flex flex-wrap items-center justify-center gap-2">
-                      {(selectedConnectedNames.length > 0
-                        ? selectedConnectedNames
-                        : selectedServerNames
-                      ).map((name) => (
-                        <span
-                          key={name}
-                          className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs bg-background/60"
-                        >
-                          <Plug className="h-3 w-3" /> {name}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </motion.div>
+  const renderEmptyLayout = (
+    content: ReactNode,
+    options: { placeholder: string; disabled: boolean },
+  ) => (
+    <div className="flex flex-col h-screen">
+      <div className="flex-1 flex flex-col items-center justify-center px-4">
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35 }}
+          className="w-full max-w-xl space-y-6 text-center"
+        >
+          {content}
+        </motion.div>
 
-          {/* Centered Input */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.1 }}
-            className="w-full max-w-3xl"
-          >
-            <div>
-              <ChatInput
-                value={input}
-                onChange={setInput}
-                onSubmit={sendMessage}
-                onStop={stopGeneration}
-                disabled={availableModels.length === 0 || noServersConnected}
-                isLoading={isLoading}
-                placeholder={
-                  showSignInPrompt ? signInPromptMessage : "Send a message..."
-                }
-                className="border-2 shadow-lg bg-background/80 backdrop-blur-sm"
-                currentModel={model || null}
-                availableModels={availableModels}
-                onModelChange={setModel}
-                onClearChat={clearChat}
-                hasMessages={false}
-                systemPrompt={systemPromptState}
-                onSystemPromptChange={setSystemPromptState}
-                temperature={temperatureState}
-                onTemperatureChange={setTemperatureState}
-                isSendBlocked={showSignInPrompt}
-              />
-            </div>
-            {/* System prompt editor shown inline above input */}
-            {availableModels.length === 0 && (
-              <motion.p
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ delay: 0.3 }}
-                className="text-sm text-muted-foreground mt-3 text-center"
-              >
-                Configure API keys in Settings or start Ollama to enable chat
-              </motion.p>
-            )}
-          </motion.div>
+        <motion.div
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35, delay: 0.05 }}
+          className="w-full max-w-2xl pt-10"
+        >
+          <ChatInput
+            value={input}
+            onChange={setInput}
+            onSubmit={sendMessage}
+            onStop={stopGeneration}
+            disabled={availableModels.length === 0 || options.disabled}
+            isLoading={isLoading}
+            placeholder={options.placeholder}
+            className="border shadow-sm"
+            currentModel={model || null}
+            availableModels={availableModels}
+            onModelChange={setModel}
+            onClearChat={clearChat}
+            hasMessages={false}
+            systemPrompt={systemPromptState}
+            onSystemPromptChange={setSystemPromptState}
+            temperature={temperatureState}
+            onTemperatureChange={setTemperatureState}
+            isSendBlocked={showSignInPrompt}
+          />
+          {availableModels.length === 0 && (
+            <motion.p
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.25 }}
+              className="mt-3 text-center text-xs text-muted-foreground"
+            >
+              Configure API keys in Settings or start Ollama to enable chat
+            </motion.p>
+          )}
+        </motion.div>
+      </div>
+
+      {/* Elicitation Dialog */}
+      <ElicitationDialog
+        elicitationRequest={elicitationRequest}
+        onResponse={handleElicitationResponse}
+        loading={elicitationLoading}
+      />
+    </div>
+  );
+
+  if (!hasMessages && isChatDisabled) {
+    const disabledContent = showSignInPrompt ? (
+      <div className="space-y-4">
+        <div className="space-y-1">
+          <h2 className="text-base font-medium">
+            Create an account to use free models
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            or bring your own API key in the settings tab
+          </p>
         </div>
-
-        {/* Elicitation Dialog */}
-        <ElicitationDialog
-          elicitationRequest={elicitationRequest}
-          onResponse={handleElicitationResponse}
-          loading={elicitationLoading}
-        />
+        <div className="flex justify-center gap-2">
+          <Button
+            onClick={() => signIn()}
+            style={{ backgroundColor: "#E55A3A" }}
+            className="hover:opacity-90 cursor-pointer"
+          >
+            Create account
+          </Button>
+        </div>
+      </div>
+    ) : (
+      <div className="space-y-4">
+        <div className="space-y-1">
+          <h2 className="text-base font-medium">
+            You must connect to an MCP server
+          </h2>
+        </div>
+        <div className="flex justify-center gap-2 text-xs text-muted-foreground">
+          <a
+            href="#servers"
+            className="inline-flex items-center gap-1 rounded-full border px-3 py-1 transition hover:bg-muted/30"
+          >
+            <PlusCircle className="h-3 w-3" /> Add server
+          </a>
+          <a
+            href="#settings"
+            className="inline-flex items-center gap-1 rounded-full border px-3 py-1 transition hover:bg-muted/30"
+          >
+            <Settings className="h-3 w-3" /> Settings
+          </a>
+        </div>
       </div>
     );
+
+    return renderEmptyLayout(disabledContent, {
+      placeholder: disabledMessage,
+      disabled: true,
+    });
+  }
+
+  if (!hasMessages) {
+    const suggestionsContent = (
+      <div className="space-y-4">
+        <div className="space-y-1">
+          <h2 className="text-base font-medium">Test your servers</h2>
+          <p className="text-sm text-muted-foreground">
+            Start typing or choose a quick suggestion to begin.
+          </p>
+        </div>
+        <div className="flex flex-wrap justify-center gap-2">
+          {quickStartPrompts.map(({ label, value, icon: Icon }) => (
+            <button
+              key={label}
+              type="button"
+              onClick={() => setInput(value)}
+              className="inline-flex items-center gap-2 rounded-full border border-border/60 px-3 py-1.5 text-xs transition hover:border-border hover:bg-muted/40 cursor-pointer"
+            >
+              <Icon className="h-3.5 w-3.5 text-muted-foreground" />
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+
+    return renderEmptyLayout(suggestionsContent, {
+      placeholder: "Send a message...",
+      disabled: false,
+    });
   }
 
   // Active state - messages with bottom input
@@ -335,7 +350,11 @@ export function ChatTab({
                 onChange={setInput}
                 onSubmit={sendMessage}
                 onStop={stopGeneration}
-                disabled={availableModels.length === 0 || noServersConnected}
+                disabled={
+                  availableModels.length === 0 ||
+                  noServersConnected ||
+                  showSignInPrompt
+                }
                 isLoading={isLoading}
                 placeholder={
                   showSignInPrompt ? signInPromptMessage : "Send a message..."
