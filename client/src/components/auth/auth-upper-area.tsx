@@ -55,12 +55,14 @@ export function AuthUpperArea() {
     signOut({ returnTo });
   };
 
+  const avatarUrl = user.profilePictureUrl || undefined;
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button className="flex size-10 items-center justify-center rounded-full border border-border/60 bg-background/80 shadow-sm outline-none transition hover:ring-2 hover:ring-ring/20 focus-visible:ring-2 focus-visible:ring-ring">
           <Avatar className="size-9">
-            <AvatarImage src={user.profilePictureUrl} alt={displayName} />
+            <AvatarImage src={avatarUrl} alt={displayName} />
             <AvatarFallback className="bg-muted text-muted-foreground text-sm font-medium">
               {initials !== "?" ? initials : <CircleUser className="size-4" />}
             </AvatarFallback>
@@ -71,7 +73,7 @@ export function AuthUpperArea() {
         <DropdownMenuLabel className="pb-3">
           <div className="flex items-center gap-3">
             <Avatar className="size-10">
-              <AvatarImage src={user.profilePictureUrl} alt={displayName} />
+              <AvatarImage src={avatarUrl} alt={displayName} />
               <AvatarFallback className="bg-muted text-muted-foreground text-base font-semibold">
                 {initials !== "?" ? (
                   initials
