@@ -33,48 +33,15 @@ jobs:
         with:
           node-version: 20
 
-      - name: Clean dependencies with retry
+      - name: Clean dependencies
         run: |
           npm cache clean --force
-
-          # Stop any processes that might be locking files
-          try {
-            taskkill /f /im node.exe 2>$null
-            Write-Host "Killed node processes"
-          } catch {
-            Write-Host "No node processes to kill"
-          }
-          Start-Sleep -Seconds 2
-
-          # Force remove with retries for Windows file locking issues
-          for ($i = 1; $i -le 3; $i++) {
-            try {
-              if (Test-Path "node_modules") {
-                Remove-Item "node_modules" -Force -Recurse -ErrorAction SilentlyContinue
-              }
-              if (Test-Path "package-lock.json") {
-                Remove-Item -Force "package-lock.json" -ErrorAction SilentlyContinue
-              }
-              if (Test-Path "client\node_modules") {
-                Remove-Item "client\node_modules" -Force -Recurse -ErrorAction SilentlyContinue
-              }
-              if (Test-Path "client\package-lock.json") {
-                Remove-Item -Force "client\package-lock.json" -ErrorAction SilentlyContinue
-              }
-              if (Test-Path "server\node_modules") {
-                Remove-Item "server\node_modules" -Force -Recurse -ErrorAction SilentlyContinue
-              }
-              if (Test-Path "server\package-lock.json") {
-                Remove-Item -Force "server\package-lock.json" -ErrorAction SilentlyContinue
-              }
-              Write-Host "Cleanup attempt $i completed"
-              break
-            }
-            catch {
-              Write-Host "Cleanup attempt $i failed, retrying..."
-              Start-Sleep -Seconds 3
-            }
-          }
+          if (Test-Path "node_modules") { Remove-Item "node_modules" -Force -Recurse -ErrorAction SilentlyContinue }
+          if (Test-Path "package-lock.json") { Remove-Item "package-lock.json" -Force -ErrorAction SilentlyContinue }
+          if (Test-Path "client/node_modules") { Remove-Item "client/node_modules" -Force -Recurse -ErrorAction SilentlyContinue }
+          if (Test-Path "client/package-lock.json") { Remove-Item "client/package-lock.json" -Force -ErrorAction SilentlyContinue }
+          if (Test-Path "server/node_modules") { Remove-Item "server/node_modules" -Force -Recurse -ErrorAction SilentlyContinue }
+          if (Test-Path "server/package-lock.json") { Remove-Item "server/package-lock.json" -Force -ErrorAction SilentlyContinue }
         shell: powershell
 
       - name: Install dependencies fresh
