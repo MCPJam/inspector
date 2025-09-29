@@ -112,8 +112,8 @@
     "tailwind-merge": "^3.3.1",
     "update-electron-app": "^3.1.1",
     "vaul": "^1.1.2",
-    "zod": "^4.0.16",
-    "@alcyone-labs/zod-to-json-schema": "^4.0.10",
+    "zod": "^3.25.76",
+    "zod-to-json-schema": "^3.23.3",
     "zustand": "^5.0.6"
   },
   "devDependencies": {
@@ -150,6 +150,8 @@
   },
   "overrides": {
     "tmp": "0.2.5",
-    "jsondiffpatch": "0.7.2"
+    "jsondiffpatch": "0.7.2",
+    "zod": "^3.25.76",
+    "ollama-ai-provider-v2>zod": "^4.0.16"
   }
 }

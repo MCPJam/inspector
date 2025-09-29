@@ -14,7 +14,7 @@ import {
   hasUnresolvedToolCalls,
   executeToolCallsFromMessages,
 } from "../../../shared/http-tool-calls";
-import { zodToJsonSchema } from "@alcyone-labs/zod-to-json-schema";
+import { zodToJsonSchema } from "zod-to-json-schema";
 import type { ModelMessage, Tool } from "ai";
 
 // Types
