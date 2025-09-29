@@ -229,3 +229,13 @@ This project is licensed under the **Apache License 2.0** - see the [LICENSE](LI
 [🌐 Website](https://mcpjam.com) • [📖 Docs](https://modelcontextprotocol.io/) • [🐛 Issues](https://github.com/MCPJam/inspector/issues)
 
 </div>
+
+
+# ⭐ Star History
+<a href="https://star-history.com/#MCPJam/inspector&Date">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=MCPJam/inspector&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=MCPJam/inspector&type=Date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=MCPJam/inspector&type=Date" />
+ </picture>
+</a>
