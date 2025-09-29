@@ -14,9 +14,9 @@ COPY server/package.json ./server/
 
 # Install dependencies with clean slate approach (no lock files)
 
-RUN npm install --no-package-lock --include=dev
-RUN cd client && npm install --no-package-lock --include=dev
-RUN cd server && npm install --no-package-lock --include=dev
+RUN npm install --no-package-lock --include=dev --legacy-peer-deps
+RUN cd client && npm install --no-package-lock --include=dev --legacy-peer-deps
+RUN cd server && npm install --no-package-lock --include=dev --legacy-peer-deps
 
 # Stage 2: Build client
 FROM deps-base AS client-builder
@@ -53,7 +53,7 @@ COPY --from=deps-base /app/package.json ./package.json
 COPY --from=deps-base /app/server/package.json ./server/package.json
 
 # Install production dependencies from root package.json (includes external packages like fix-path)
-RUN npm install --production
+RUN npm install --production --legacy-peer-deps
 
 # Copy shared types
 COPY shared/ ./shared/
