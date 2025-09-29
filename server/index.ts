@@ -7,6 +7,7 @@ import { logger } from "hono/logger";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { readFileSync } from "fs";
 import { join } from "path";
+import { loadEnvFromKnownLocations } from "./utils/load-env";
 
 // ANSI color codes for console output
 const colors = {
@@ -124,13 +125,28 @@ const app = new Hono();
 
 // Load environment variables early so route handlers can read CONVEX_HTTP_URL
 try {
-  const envFile =
-    process.env.NODE_ENV === "production"
-      ? ".env.production"
-      : ".env.development";
-  dotenv.config({ path: envFile });
+  const loadedEnvPaths = loadEnvFromKnownLocations(import.meta.url);
+  if (loadedEnvPaths.length > 0) {
+    console.log("[startup] Loaded env files:", loadedEnvPaths.join(", "));
+  } else {
+    console.log("[startup] No env files found via loadEnvFromKnownLocations");
+  }
   if (!process.env.CONVEX_HTTP_URL) {
     dotenv.config();
+  }
+  if (!process.env.CONVEX_HTTP_URL) {
+    const locationHint =
+      loadedEnvPaths.length > 0
+        ? ` (loaded ${loadedEnvPaths.join(", ")})`
+        : "";
+    console.warn(
+      `[startup] CONVEX_HTTP_URL not found in environment${locationHint}`,
+    );
+  } else {
+    console.log(
+      "[startup] CONVEX_HTTP_URL value:",
+      process.env.CONVEX_HTTP_URL,
+    );
   }
 } catch (error) {
   console.warn("[startup] Failed loading env files", error);

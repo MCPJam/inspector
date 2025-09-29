@@ -9,17 +9,38 @@ import dotenv from "dotenv";
 import mcpRoutes from "./routes/mcp/index.js";
 import { MCPJamClientManager } from "./services/mcpjam-client-manager.js";
 import path from "path";
+import { loadEnvFromKnownLocations } from "./utils/load-env.js";
 
 export function createHonoApp() {
   // Load environment variables early so route handlers can read CONVEX_HTTP_URL
   try {
-    const envFile =
-      process.env.NODE_ENV === "production"
-        ? ".env.production"
-        : ".env.development";
-    dotenv.config({ path: envFile });
+    const loadedEnvPaths = loadEnvFromKnownLocations(import.meta.url);
+    if (loadedEnvPaths.length > 0) {
+      console.log(
+        "[startup] (electron) Loaded env files:",
+        loadedEnvPaths.join(", "),
+      );
+    } else {
+      console.log(
+        "[startup] (electron) No env files found via loadEnvFromKnownLocations",
+      );
+    }
     if (!process.env.CONVEX_HTTP_URL) {
       dotenv.config();
+    }
+    if (!process.env.CONVEX_HTTP_URL) {
+      const locationHint =
+        loadedEnvPaths.length > 0
+          ? ` (loaded ${loadedEnvPaths.join(", ")})`
+          : "";
+      console.warn(
+        `[startup] CONVEX_HTTP_URL not found in environment${locationHint}`,
+      );
+    } else {
+      console.log(
+        "[startup] (electron) CONVEX_HTTP_URL value:",
+        process.env.CONVEX_HTTP_URL,
+      );
     }
   } catch (error) {
     console.warn("[startup] Failed loading env files", error);
