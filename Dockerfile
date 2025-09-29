@@ -8,14 +8,11 @@ WORKDIR /app
 # Clear npm cache and remove any existing lock files to avoid conflicts
 RUN npm cache clean --force
 
-COPY package.json package-lock.json ./
-COPY client/package*.json ./client/
-COPY server/package*.json ./server/
+COPY package.json ./
+COPY client/package.json ./client/
+COPY server/package.json ./server/
 
-# Install dependencies with clean slate approach
-RUN rm -rf node_modules package-lock.json
-RUN rm -rf client/node_modules client/package-lock.json
-RUN rm -rf server/node_modules server/package-lock.json
+# Install dependencies with clean slate approach (no lock files)
 
 RUN npm install --no-package-lock --include=dev
 RUN cd client && npm install --no-package-lock --include=dev
