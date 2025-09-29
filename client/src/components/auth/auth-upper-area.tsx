@@ -45,8 +45,13 @@ export function AuthUpperArea() {
   const handleSignOut = () => {
     const isElectron = (window as any).isElectron;
     const origin = window.location.origin;
-    const normalizedOrigin = origin.includes("://localhost") ? origin.replace("://localhost", "://127.0.0.1") : origin;
-    const returnTo = isElectron && import.meta.env.DEV ? "http://localhost:8080/callback" : normalizedOrigin;
+    const normalizedOrigin = origin.includes("://localhost")
+      ? origin.replace("://localhost", "://127.0.0.1")
+      : origin;
+    const returnTo =
+      isElectron && import.meta.env.DEV
+        ? "http://localhost:8080/callback"
+        : normalizedOrigin;
     signOut({ returnTo });
   };
 
@@ -68,17 +73,23 @@ export function AuthUpperArea() {
             <Avatar className="size-10">
               <AvatarImage src={user.profilePictureUrl} alt={displayName} />
               <AvatarFallback className="bg-muted text-muted-foreground text-base font-semibold">
-                {initials !== "?" ? initials : <CircleUser className="size-5" />}
+                {initials !== "?" ? (
+                  initials
+                ) : (
+                  <CircleUser className="size-5" />
+                )}
               </AvatarFallback>
             </Avatar>
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium leading-none truncate">{displayName}</p>
+              <p className="text-sm font-medium leading-none truncate">
+                {displayName}
+              </p>
               <p className="text-xs text-muted-foreground truncate">{email}</p>
             </div>
           </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => window.location.hash = "settings"}>
+        <DropdownMenuItem onClick={() => (window.location.hash = "settings")}>
           <Settings className="size-4" />
           Settings
         </DropdownMenuItem>
