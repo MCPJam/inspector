@@ -53,5 +53,9 @@
     "@types/update-notifier": "^6.0.8",
     "tsup": "^8.3.5",
     "typescript": "^5"
+  },
+  "overrides": {
+    "jsondiffpatch": "0.7.2",
+    "tmp": "0.2.5"
   }
 }
