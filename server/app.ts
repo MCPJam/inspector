@@ -3,6 +3,7 @@ import fixPath from "fix-path";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { serveStatic } from "@hono/node-server/serve-static";
+import dotenv from "dotenv";
 
 // Import routes
 import mcpRoutes from "./routes/mcp/index.js";
@@ -10,6 +11,20 @@ import { MCPJamClientManager } from "./services/mcpjam-client-manager.js";
 import path from "path";
 
 export function createHonoApp() {
+  // Load environment variables early so route handlers can read CONVEX_HTTP_URL
+  try {
+    const envFile =
+      process.env.NODE_ENV === "production"
+        ? ".env.production"
+        : ".env.development";
+    dotenv.config({ path: envFile });
+    if (!process.env.CONVEX_HTTP_URL) {
+      dotenv.config();
+    }
+  } catch (error) {
+    console.warn("[startup] Failed loading env files", error);
+  }
+
   // Ensure PATH includes user shell paths so child processes (e.g., npx) can be found
   // This is crucial when launched from GUI apps (Electron) where PATH is minimal
   try {
