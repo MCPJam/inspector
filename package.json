@@ -1,7 +1,7 @@
 {
   "name": "@mcpjam/inspector",
   "productName": "MCPJam Inspector",
-  "version": "0.9.50-beta.0",
+  "version": "0.9.50",
   "type": "module",
   "description": "MCPJam Inspector",
   "license": "Apache-2.0",
