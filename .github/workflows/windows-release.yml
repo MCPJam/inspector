@@ -36,10 +36,13 @@ jobs:
       - name: Clean and install dependencies
         run: |
           npm cache clean --force
-          rm -rf node_modules package-lock.json
-          rm -rf client\node_modules client\package-lock.json
-          npm install --no-package-lock
+          if (Test-Path "node_modules") { Remove-Item -Recurse -Force "node_modules" }
+          if (Test-Path "package-lock.json") { Remove-Item -Force "package-lock.json" }
+          if (Test-Path "client\node_modules") { Remove-Item -Recurse -Force "client\node_modules" }
+          if (Test-Path "client\package-lock.json") { Remove-Item -Force "client\package-lock.json" }
+          npm install --legacy-peer-deps
           npm run install:deps
+        shell: powershell
 
       - name: Workaround npm optional deps bug (native binaries)
         if: runner.os == 'Windows'
