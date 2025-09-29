@@ -20,12 +20,12 @@ import {
 import { useAppState } from "./hooks/use-app-state";
 import { PreferencesStoreProvider } from "./stores/preferences/preferences-provider";
 import { Toaster } from "./components/ui/sonner";
-import { AuthButton } from "./components/AuthButton";
 import { useElectronOAuth } from "./hooks/useElectronOAuth";
 import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
 
 // Import global styles
 import "./index.css";
+import { AuthUpperArea } from "./components/auth/auth-upper-area";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
@@ -129,7 +129,7 @@ export default function App() {
                 <SidebarTrigger className="-ml-1" />
               </div>
               <div className="flex items-center gap-2">
-                <AuthButton />
+                <AuthUpperArea />
               </div>
             </div>
           </header>
