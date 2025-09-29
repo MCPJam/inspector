@@ -28,98 +28,62 @@ export function AuthUpperArea() {
   if (!user) {
     return (
       <div className="flex items-center gap-2">
-        <Button
-          variant="outline"
-          onClick={() => signIn()}
-          className="cursor-pointer"
-        >
+        <Button variant="outline" onClick={() => signIn()}>
           Sign in
         </Button>
-        <Button
-          onClick={() => signIn()}
-          style={{ backgroundColor: "#E55A3A" }}
-          className="hover:opacity-90 cursor-pointer"
-        >
+        <Button onClick={() => signIn()} style={{ backgroundColor: "#E55A3A" }}>
           Create account
         </Button>
       </div>
     );
   }
 
-  const displayName =
-    [user.firstName, user.lastName].filter(Boolean).join(" ") ||
-    user.email ||
-    user.id;
-  const email = user.email || user.id;
-  const avatarUrl = user.profilePictureUrl || undefined;
+  const displayName = [user.firstName, user.lastName].filter(Boolean).join(" ");
+  const email = user.email;
   const initials = getInitials(displayName);
 
   const handleSignOut = () => {
     const isElectron = (window as any).isElectron;
-    // Normalize returnTo for WorkOS: prefer 127.0.0.1 when running on localhost
     const origin = window.location.origin;
-    const normalizedOrigin = origin.includes("://localhost")
-      ? origin.replace("://localhost", "://127.0.0.1")
-      : origin;
-    const devElectronReturn = "http://localhost:8080/callback";
-    const returnTo =
-      isElectron && import.meta.env.DEV ? devElectronReturn : normalizedOrigin;
+    const normalizedOrigin = origin.includes("://localhost") ? origin.replace("://localhost", "://127.0.0.1") : origin;
+    const returnTo = isElectron && import.meta.env.DEV ? "http://localhost:8080/callback" : normalizedOrigin;
     signOut({ returnTo });
   };
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          aria-label="Open account menu"
-          className="border-border/60 focus-visible:ring-ring bg-background/80 hover:ring-ring/20 flex size-10 items-center justify-center rounded-full border shadow-sm outline-none transition hover:ring-2 focus-visible:ring-2 cursor-pointer"
-        >
+        <button className="flex size-10 items-center justify-center rounded-full border border-border/60 bg-background/80 shadow-sm outline-none transition hover:ring-2 hover:ring-ring/20 focus-visible:ring-2 focus-visible:ring-ring">
           <Avatar className="size-9">
-            <AvatarImage src={avatarUrl} alt={displayName} />
+            <AvatarImage src={user.profilePictureUrl} alt={displayName} />
             <AvatarFallback className="bg-muted text-muted-foreground text-sm font-medium">
               {initials !== "?" ? initials : <CircleUser className="size-4" />}
             </AvatarFallback>
           </Avatar>
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent className="w-64" align="end" sideOffset={8}>
+      <DropdownMenuContent className="w-56" align="end">
         <DropdownMenuLabel className="pb-3">
           <div className="flex items-center gap-3">
             <Avatar className="size-10">
-              <AvatarImage src={avatarUrl} alt={displayName} />
+              <AvatarImage src={user.profilePictureUrl} alt={displayName} />
               <AvatarFallback className="bg-muted text-muted-foreground text-base font-semibold">
-                {initials !== "?" ? (
-                  initials
-                ) : (
-                  <CircleUser className="size-5" />
-                )}
+                {initials !== "?" ? initials : <CircleUser className="size-5" />}
               </AvatarFallback>
             </Avatar>
-            <div className="space-y-0.5">
-              <p className="text-sm font-medium leading-none">{displayName}</p>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium leading-none truncate">{displayName}</p>
               <p className="text-xs text-muted-foreground truncate">{email}</p>
             </div>
           </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <DropdownMenuItem
-          onSelect={() => {
-            window.location.hash = "settings";
-          }}
-          className="cursor-pointer"
-        >
+        <DropdownMenuItem onClick={() => window.location.hash = "settings"}>
           <Settings className="size-4" />
           Settings
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem
-          variant="destructive"
-          onSelect={() => {
-            handleSignOut();
-          }}
-          className="cursor-pointer"
-        >
+        <DropdownMenuItem variant="destructive" onClick={handleSignOut}>
           <LogOut className="size-4" />
           Log out
         </DropdownMenuItem>
