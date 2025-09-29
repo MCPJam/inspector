@@ -1,4 +1,3 @@
-
 import { memo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { formatTimestamp, sanitizeText, isImageFile } from "@/lib/chat-utils";
@@ -242,7 +241,7 @@ const PureMessage = ({
                     <div className="space-y-2">
                       {message.toolCalls.map((toolCall, index) => {
                         const toolResult = message.toolResults?.find(
-                          (tr) => tr.toolCallId === toolCall.id
+                          (tr) => tr.toolCallId === toolCall.id,
                         );
                         return (
                           <motion.div
