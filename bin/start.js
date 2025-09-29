@@ -399,11 +399,10 @@ async function main() {
   }
 
   // Allow environment variables to request rebuild as well
-  if (
-    process.env.FORCE_REBUILD === "1" ||
-    process.env.REBUILD === "1" ||
-    process.env.FORCE_REBUILD === "true"
-  ) {
+  const truthyEnv = new Set(["1", "true", "yes", "on"]);
+  const forceRebuildEnv = (process.env.FORCE_REBUILD || "").toLowerCase();
+  const rebuildEnv = (process.env.REBUILD || "").toLowerCase();
+  if (truthyEnv.has(forceRebuildEnv) || truthyEnv.has(rebuildEnv)) {
     rebuildRequested = true;
   }
 
