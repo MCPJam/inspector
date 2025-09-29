@@ -36,28 +36,38 @@ jobs:
       - name: Clean dependencies with retry
         run: |
           npm cache clean --force
+
           # Stop any processes that might be locking files
-          taskkill /f /im node.exe 2>$null || echo "No node processes to kill"
+          try {
+            taskkill /f /im node.exe 2>$null
+            Write-Host "Killed node processes"
+          } catch {
+            Write-Host "No node processes to kill"
+          }
           Start-Sleep -Seconds 2
 
           # Force remove with retries for Windows file locking issues
           for ($i = 1; $i -le 3; $i++) {
             try {
               if (Test-Path "node_modules") {
-                Get-ChildItem "node_modules" -Recurse | Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
                 Remove-Item "node_modules" -Force -Recurse -ErrorAction SilentlyContinue
               }
-              if (Test-Path "package-lock.json") { Remove-Item -Force "package-lock.json" -ErrorAction SilentlyContinue }
+              if (Test-Path "package-lock.json") {
+                Remove-Item -Force "package-lock.json" -ErrorAction SilentlyContinue
+              }
               if (Test-Path "client\node_modules") {
-                Get-ChildItem "client\node_modules" -Recurse | Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
                 Remove-Item "client\node_modules" -Force -Recurse -ErrorAction SilentlyContinue
               }
-              if (Test-Path "client\package-lock.json") { Remove-Item -Force "client\package-lock.json" -ErrorAction SilentlyContinue }
+              if (Test-Path "client\package-lock.json") {
+                Remove-Item -Force "client\package-lock.json" -ErrorAction SilentlyContinue
+              }
               if (Test-Path "server\node_modules") {
-                Get-ChildItem "server\node_modules" -Recurse | Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
                 Remove-Item "server\node_modules" -Force -Recurse -ErrorAction SilentlyContinue
               }
-              if (Test-Path "server\package-lock.json") { Remove-Item -Force "server\package-lock.json" -ErrorAction SilentlyContinue }
+              if (Test-Path "server\package-lock.json") {
+                Remove-Item -Force "server\package-lock.json" -ErrorAction SilentlyContinue
+              }
+              Write-Host "Cleanup attempt $i completed"
               break
             }
             catch {
