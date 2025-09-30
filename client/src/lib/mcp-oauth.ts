@@ -538,13 +538,11 @@ function createServerConfig(
   serverUrl: string,
   tokens: any,
 ): HttpServerDefinition {
-  // Normalize the URL to avoid leaking query/hash (e.g., ?login) into MCP base URL
-  const normalizedUrl = new URL(serverUrl);
-  normalizedUrl.search = "";
-  normalizedUrl.hash = "";
+  // Preserve full URL including query and hash to support servers configured with query params
+  const fullUrl = new URL(serverUrl);
 
   return {
-    url: normalizedUrl,
+    url: fullUrl,
     requestInit: {
       headers: tokens.access_token
         ? {
