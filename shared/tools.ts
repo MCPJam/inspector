@@ -121,6 +121,48 @@ function extractPureToolName(toolKey: string): string {
   return toolKey.slice(separatorIndex + 1);
 }
 
+/**
+ * Detect if a result is in MCP content format
+ * MCP tools return results wrapped in a content array like:
+ * { content: [{ type: "text", text: "..." }] }
+ */
+function isMCPContentFormat(result: unknown): boolean {
+  return (
+    result !== null &&
+    typeof result === "object" &&
+    "content" in result &&
+    Array.isArray((result as any).content)
+  );
+}
+
+/**
+ * Extract the actual data from MCP content format
+ * Handles JSON-encoded text content and returns the parsed data
+ */
+function extractMCPContent(result: any): unknown {
+  if (!isMCPContentFormat(result)) {
+    return result;
+  }
+
+  const content = result.content;
+  if (content.length === 0) {
+    return null;
+  }
+
+  // Handle text content with JSON
+  if (content[0].type === "text" && typeof content[0].text === "string") {
+    try {
+      return JSON.parse(content[0].text);
+    } catch {
+      // If not valid JSON, return the text as-is
+      return content[0].text;
+    }
+  }
+
+  // Return raw content if not parseable
+  return content;
+}
+
 export function convertMastraToolToVercelTool(
   toolName: string,
   mastraTool: MastraToolInstance,
@@ -156,8 +198,11 @@ export function convertMastraToolToVercelTool(
 
       const result = await mastraTool.execute?.(executionArgs, options);
 
+      // Extract MCP content format before validation
+      const extractedResult = extractMCPContent(result);
+
       if (outputSchema) {
-        const parsed = outputSchema.safeParse(result);
+        const parsed = outputSchema.safeParse(extractedResult);
 
         if (!parsed.success) {
           throw new Error(
@@ -168,7 +213,7 @@ export function convertMastraToolToVercelTool(
         return parsed.data;
       }
 
-      return result;
+      return extractedResult;
     };
   }
 
