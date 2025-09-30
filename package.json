@@ -138,6 +138,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^4.3.4",
+    "@tailwindcss/vite": "^4.1.13",
     "autoprefixer": "^10.4.21",
     "concurrently": "^9.1.0",
     "convex": "^1.26.2",
