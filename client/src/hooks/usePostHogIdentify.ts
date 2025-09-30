@@ -29,11 +29,8 @@ export function usePostHogIdentify() {
         // Add any other user properties you want to track
       });
 
-      // Set super properties that will be sent with EVERY event
       posthog.register({
         user_id: user.id,
-        user_email: user.email,
-        is_authenticated: true,
       });
     } else {
       // User logged out - reset PostHog

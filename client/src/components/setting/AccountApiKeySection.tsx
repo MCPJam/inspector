@@ -28,6 +28,7 @@ import {
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { format, formatDistanceToNow } from "date-fns";
+import { usePostHog } from "posthog-js/react";
 
 type CopyFieldProps = {
   value: string;
@@ -85,6 +86,7 @@ export function AccountApiKeySection() {
 
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const { signIn } = useAuth();
+  const posthog = usePostHog();
 
   const maybeApiKey = useQuery("apiKeys:list" as any) as
     | {
@@ -160,13 +162,12 @@ export function AccountApiKeySection() {
         </p>
         <Button
           type="button"
-          onClick={
-            (() =>
-              posthog.capture("sign_in", {
-                location: "account_api_key_section",
-              }),
-            signIn())
-          }
+          onClick={() => {
+            posthog.capture("sign_in", {
+              location: "account_api_key_section",
+            });
+            signIn();
+          }}
           size="sm"
         >
           Sign in
