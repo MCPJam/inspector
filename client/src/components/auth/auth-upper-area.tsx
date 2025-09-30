@@ -13,6 +13,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { getInitials } from "@/lib/utils";
 import { CircleUser, LogOut, RefreshCw, Settings } from "lucide-react";
 import { usePostHog } from "posthog-js/react";
+import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 export function AuthUpperArea() {
   const { isLoading } = useConvexAuth();
   const { user, signIn, signOut, signUp } = useAuth();
@@ -31,7 +32,11 @@ export function AuthUpperArea() {
         <Button
           variant="outline"
           onClick={() => {
-            posthog.capture("sign_in", { location: "auth_upper_area" });
+            posthog.capture("sign_in", {
+              location: "auth_upper_area",
+              platform: detectPlatform(),
+              environment: detectEnvironment(),
+            });
             signIn();
           }}
         >
@@ -39,7 +44,11 @@ export function AuthUpperArea() {
         </Button>
         <Button
           onClick={() => {
-            posthog.capture("create_account", { location: "auth_upper_area" });
+            posthog.capture("create_account", {
+              location: "auth_upper_area",
+              platform: detectPlatform(),
+              environment: detectEnvironment(),
+            });
             signUp();
           }}
           style={{ backgroundColor: "#E55A3A" }}
