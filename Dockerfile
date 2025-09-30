@@ -23,6 +23,8 @@ FROM deps-base AS client-builder
 COPY shared/ ./shared/
 COPY client/ ./client/
 COPY .env.production ./
+# Set environment variable for Docker platform detection
+ENV VITE_DOCKER=true
 RUN cd client && npm run build
 
 # Stage 3: Build server
