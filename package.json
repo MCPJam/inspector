@@ -32,7 +32,7 @@
     "dev:server": "cd server && npm run dev",
     "dev:client": "cd client && npm run dev",
     "build": "npm run build:clean && npm run build:install && npm run build:client && npm run build:server",
-    "build:clean": "rm -rf dist && npm ci --legacy-peer-deps",
+    "build:clean": "rm -rf dist out .vite node_modules client/node_modules server/node_modules && npm ci --legacy-peer-deps",
     "build:install": "cd client && npm ci --legacy-peer-deps && cd ../server && npm ci --legacy-peer-deps",
     "build:client": "cd client && npm run build",
     "build:server": "cd server && npm run build",
