@@ -13,7 +13,7 @@ import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import { Button } from "@/components/ui/button";
-
+import { usePostHog } from "posthog-js/react";
 interface ChatTabProps {
   serverConfigs?: Record<string, MastraMCPServerDefinition>;
   connectedServerConfigs?: Record<string, ServerWithName>;
@@ -28,8 +28,8 @@ export function ChatTab({
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const { isAuthenticated } = useConvexAuth();
-  const { signIn } = useAuth();
-
+  const { signUp } = useAuth();
+  const posthog = usePostHog();
   const [systemPromptState, setSystemPromptState] = useState(
     systemPrompt || "You are a helpful assistant with access to MCP tools.",
   );
@@ -142,7 +142,10 @@ export function ChatTab({
           <ChatInput
             value={input}
             onChange={setInput}
-            onSubmit={sendMessage}
+            onSubmit={() => {
+              posthog.capture("send_message", { location: "chat_tab" });
+              sendMessage(input);
+            }}
             onStop={stopGeneration}
             disabled={availableModels.length === 0 || options.disabled}
             isLoading={isLoading}
@@ -194,7 +197,10 @@ export function ChatTab({
         </div>
         <div className="flex justify-center gap-2">
           <Button
-            onClick={() => signIn()}
+            onClick={() => {
+              (posthog.capture("create_account", { location: "chat_tab" }),
+                signUp());
+            }}
             style={{ backgroundColor: "#E55A3A" }}
             className="hover:opacity-90 cursor-pointer"
           >

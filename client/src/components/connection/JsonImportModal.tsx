@@ -9,6 +9,7 @@ import { Alert, AlertDescription } from "../ui/alert";
 import { Upload, AlertCircle, CheckCircle } from "lucide-react";
 import { parseJsonConfig, validateJsonConfig } from "@/lib/json-config-parser";
 import { ServerFormData } from "@/shared/types.js";
+import { usePostHog } from "posthog-js/react";
 
 interface JsonImportModalProps {
   isOpen: boolean;
@@ -28,7 +29,7 @@ export function JsonImportModal({
   } | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
+  const posthog = usePostHog();
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -214,7 +215,14 @@ export function JsonImportModal({
           </Button>
           <Button
             type="button"
-            onClick={handleImport}
+            onClick={() => {
+              if (!isImporting) {
+                posthog.capture("connecting_server", {
+                  location: "json_import_modal",
+                });
+              }
+              handleImport();
+            }}
             disabled={!validationResult?.success || isImporting}
             className="px-4"
           >

@@ -5,6 +5,14 @@ export const VITE_PUBLIC_POSTHOG_HOST = "https://us.i.posthog.com";
 export const options = {
   api_host: VITE_PUBLIC_POSTHOG_HOST,
   capture_pageview: false,
+  person_profiles: "identified_only", // Only create profiles for identified users
+
+  // Optional: Set static super properties that never change
+  loaded: (posthog: any) => {
+    posthog.register({
+      environment: import.meta.env.MODE, // "development" or "production"
+    });
+  },
 };
 
 // Check if PostHog should be disabled
