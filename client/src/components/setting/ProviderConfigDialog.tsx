@@ -9,7 +9,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../ui/dialog";
-
+import { usePostHog } from "posthog-js/react";
 interface ProviderConfig {
   id: string;
   name: string;
@@ -39,6 +39,7 @@ export function ProviderConfigDialog({
   onSave,
   onCancel,
 }: ProviderConfigDialogProps) {
+  const posthog = usePostHog();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
@@ -99,7 +100,15 @@ export function ProviderConfigDialog({
           <Button variant="outline" onClick={onCancel}>
             Cancel
           </Button>
-          <Button onClick={onSave} disabled={!value.trim()}>
+          <Button
+            onClick={() => {
+              posthog.capture("save_api_key", {
+                location: "provider_config_dialog",
+              });
+              onSave();
+            }}
+            disabled={!value.trim()}
+          >
             Save API Key
           </Button>
         </DialogFooter>

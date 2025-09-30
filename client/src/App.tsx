@@ -22,13 +22,58 @@ import { PreferencesStoreProvider } from "./stores/preferences/preferences-provi
 import { Toaster } from "./components/ui/sonner";
 import { useElectronOAuth } from "./hooks/useElectronOAuth";
 import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
+import { usePostHog } from "posthog-js/react";
+import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
 
 // Import global styles
 import "./index.css";
 import { AuthUpperArea } from "./components/auth/auth-upper-area";
 
+function detectPlatform() {
+  // Check if running in Docker
+  const isDocker =
+    import.meta.env.VITE_DOCKER === "true" ||
+    import.meta.env.VITE_RUNTIME === "docker";
+
+  if (isDocker) {
+    return "docker";
+  }
+
+  // Check if Electron
+  const isElectron = (window as any)?.isElectron;
+
+  if (isElectron) {
+    // Detect OS within Electron using userAgent
+    const userAgent = navigator.userAgent.toLowerCase();
+
+    if (userAgent.includes("mac") || userAgent.includes("darwin")) {
+      return "mac";
+    } else if (userAgent.includes("win")) {
+      return "win";
+    }
+    return "electron"; // fallback
+  }
+
+  // npm package running in browser
+  return "npm";
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
+  const posthog = usePostHog();
+
+  // Automatically identify users in PostHog when they log in/out
+  usePostHogIdentify();
+
+  // Capture app launch event once on mount
+  useEffect(() => {
+    const platform = detectPlatform();
+    posthog.capture("app_launched", {
+      platform,
+      user_agent: navigator.userAgent,
+    });
+  }, [posthog]);
+
   // Set up Electron OAuth callback handling
   useElectronOAuth();
   // Ensure a `users` row exists after Convex auth

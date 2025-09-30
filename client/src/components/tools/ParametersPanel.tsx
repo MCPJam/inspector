@@ -5,7 +5,7 @@ import { TruncatedText } from "../ui/truncated-text";
 import { ResizablePanel } from "../ui/resizable";
 import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
-
+import { usePostHog } from "posthog-js/react";
 import type { FormField } from "@/lib/tool-form";
 
 interface ParametersPanelProps {
@@ -29,6 +29,7 @@ export function ParametersPanel({
   onSave,
   onFieldChange,
 }: ParametersPanelProps) {
+  const posthog = usePostHog();
   return (
     <ResizablePanel defaultSize={70} minSize={50}>
       <div className="h-full flex flex-col bg-background">
@@ -42,7 +43,12 @@ export function ParametersPanel({
           </div>
           <div className="flex items-center gap-2">
             <Button
-              onClick={onExecute}
+              onClick={() => {
+                posthog.capture("execute_tool", {
+                  location: "parameters_panel",
+                });
+                onExecute();
+              }}
               disabled={loading || !selectedTool}
               className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm transition-all duration-200 cursor-pointer"
               size="sm"

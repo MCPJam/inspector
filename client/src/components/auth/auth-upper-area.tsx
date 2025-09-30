@@ -12,11 +12,11 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { getInitials } from "@/lib/utils";
 import { CircleUser, LogOut, RefreshCw, Settings } from "lucide-react";
-
+import { usePostHog } from "posthog-js/react";
 export function AuthUpperArea() {
   const { isLoading } = useConvexAuth();
-  const { user, signIn, signOut } = useAuth();
-
+  const { user, signIn, signOut, signUp } = useAuth();
+  const posthog = usePostHog();
   if (isLoading) {
     return (
       <Button variant="outline" size="sm" disabled>
@@ -28,10 +28,22 @@ export function AuthUpperArea() {
   if (!user) {
     return (
       <div className="flex items-center gap-2">
-        <Button variant="outline" onClick={() => signIn()}>
+        <Button
+          variant="outline"
+          onClick={() => {
+            posthog.capture("sign_in", { location: "auth_upper_area" });
+            signIn();
+          }}
+        >
           Sign in
         </Button>
-        <Button onClick={() => signIn()} style={{ backgroundColor: "#E55A3A" }}>
+        <Button
+          onClick={() => {
+            posthog.capture("create_account", { location: "auth_upper_area" });
+            signUp();
+          }}
+          style={{ backgroundColor: "#E55A3A" }}
+        >
           Create account
         </Button>
       </div>
