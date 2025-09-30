@@ -31,8 +31,8 @@ jobs:
 
           # Install all dependencies (root + client + server)
           npm install --legacy-peer-deps
-          cd client && npm install --legacy-peer-deps
-          cd ../server && npm install --legacy-peer-deps
+          cd client && npm install --legacy-peer-deps && cd ..
+          cd server && npm install --legacy-peer-deps && cd ..
 
       - name: Check Prettier formatting
         run: |
@@ -51,9 +51,5 @@ jobs:
       - name: Build project
         run: |
           echo "🏗️ Building project..."
-          # Clean build (uses npm ci for production-like fresh install)
-          npm run build:clean
-          # Now build client and server
-          npm run build:client
-          npm run build:server
+          npm run build
           echo "✅ Build completed successfully!"
