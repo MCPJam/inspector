@@ -100,13 +100,15 @@ export function ProviderConfigDialog({
           <Button variant="outline" onClick={onCancel}>
             Cancel
           </Button>
-          <Button onClick={
-            () => {
-              posthog.capture("save_api_key", { location: "provider_config_dialog" });
+          <Button
+            onClick={() => {
+              posthog.capture("save_api_key", {
+                location: "provider_config_dialog",
+              });
               onSave();
-            }
-          }
-            disabled={!value.trim()}>
+            }}
+            disabled={!value.trim()}
+          >
             Save API Key
           </Button>
         </DialogFooter>
