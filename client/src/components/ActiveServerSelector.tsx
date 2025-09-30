@@ -5,6 +5,7 @@ import { ServerModal } from "./connection/ServerModal";
 import { ServerFormData } from "@/shared/types.js";
 import { Check } from "lucide-react";
 import { usePostHog } from "posthog-js/react";
+import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 interface ActiveServerSelectorProps {
   connectedServerConfigs: Record<string, ServerWithName>;
   selectedServer: string;
@@ -142,6 +143,8 @@ export function ActiveServerSelector({
         onSubmit={(formData) => {
           posthog.capture("connecting_server", {
             location: "active_server_selector",
+            platform: detectPlatform(),
+            environment: detectEnvironment(),
           });
           onConnect(formData);
         }}

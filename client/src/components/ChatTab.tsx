@@ -14,6 +14,7 @@ import { useAuth } from "@workos-inc/authkit-react";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import { Button } from "@/components/ui/button";
 import { usePostHog } from "posthog-js/react";
+import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 interface ChatTabProps {
   serverConfigs?: Record<string, MastraMCPServerDefinition>;
   connectedServerConfigs?: Record<string, ServerWithName>;
@@ -143,7 +144,14 @@ export function ChatTab({
             value={input}
             onChange={setInput}
             onSubmit={() => {
-              posthog.capture("send_message", { location: "chat_tab" });
+              posthog.capture("send_message", {
+                location: "chat_tab",
+                platform: detectPlatform(),
+                environment: detectEnvironment(),
+                model_id: model?.id ?? null,
+                model_name: model?.name ?? null,
+                model_provider: model?.provider ?? null,
+              });
               sendMessage(input);
             }}
             onStop={stopGeneration}
@@ -198,7 +206,11 @@ export function ChatTab({
         <div className="flex justify-center gap-2">
           <Button
             onClick={() => {
-              (posthog.capture("create_account", { location: "chat_tab" }),
+              (posthog.capture("create_account", {
+                location: "chat_tab",
+                platform: detectPlatform(),
+                environment: detectEnvironment(),
+              }),
                 signUp());
             }}
             style={{ backgroundColor: "#E55A3A" }}
@@ -354,7 +366,17 @@ export function ChatTab({
               <ChatInput
                 value={input}
                 onChange={setInput}
-                onSubmit={sendMessage}
+                onSubmit={(message, attachments) => {
+                  posthog.capture("send_message", {
+                    location: "chat_tab",
+                    platform: detectPlatform(),
+                    environment: detectEnvironment(),
+                    model_id: model?.id ?? null,
+                    model_name: model?.name ?? null,
+                    model_provider: model?.provider ?? null,
+                  });
+                  sendMessage(message, attachments);
+                }}
                 onStop={stopGeneration}
                 disabled={
                   availableModels.length === 0 ||

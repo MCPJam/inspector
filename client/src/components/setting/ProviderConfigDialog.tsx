@@ -10,6 +10,7 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { usePostHog } from "posthog-js/react";
+import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 interface ProviderConfig {
   id: string;
   name: string;
@@ -104,6 +105,8 @@ export function ProviderConfigDialog({
             onClick={() => {
               posthog.capture("save_api_key", {
                 location: "provider_config_dialog",
+                platform: detectPlatform(),
+                environment: detectEnvironment(),
               });
               onSave();
             }}
