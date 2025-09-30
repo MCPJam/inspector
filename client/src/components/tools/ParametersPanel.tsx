@@ -43,12 +43,12 @@ export function ParametersPanel({
           </div>
           <div className="flex items-center gap-2">
             <Button
-              onClick={
-                () => {
-                  posthog.capture("execute_tool", { location: "parameters_panel" });
-                  onExecute();
-                }
-              }
+              onClick={() => {
+                posthog.capture("execute_tool", {
+                  location: "parameters_panel",
+                });
+                onExecute();
+              }}
               disabled={loading || !selectedTool}
               className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm transition-all duration-200 cursor-pointer"
               size="sm"

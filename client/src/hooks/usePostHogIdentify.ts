@@ -20,9 +20,10 @@ export function usePostHogIdentify() {
       // Identify the user with their WorkOS ID
       posthog.identify(user.id, {
         email: user.email,
-        name: user.firstName && user.lastName 
-          ? `${user.firstName} ${user.lastName}` 
-          : user.email,
+        name:
+          user.firstName && user.lastName
+            ? `${user.firstName} ${user.lastName}`
+            : user.email,
         first_name: user.firstName,
         last_name: user.lastName,
         // Add any other user properties you want to track

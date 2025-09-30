@@ -142,12 +142,10 @@ export function ChatTab({
           <ChatInput
             value={input}
             onChange={setInput}
-            onSubmit={
-              () => {
-                posthog.capture("send_message", { location: "chat_tab" });
-                sendMessage(input);
-              }
-            }
+            onSubmit={() => {
+              posthog.capture("send_message", { location: "chat_tab" });
+              sendMessage(input);
+            }}
             onStop={stopGeneration}
             disabled={availableModels.length === 0 || options.disabled}
             isLoading={isLoading}
@@ -200,8 +198,8 @@ export function ChatTab({
         <div className="flex justify-center gap-2">
           <Button
             onClick={() => {
-              posthog.capture("create_account", { location: "chat_tab" }),
-              signUp();
+              (posthog.capture("create_account", { location: "chat_tab" }),
+                signUp());
             }}
             style={{ backgroundColor: "#E55A3A" }}
             className="hover:opacity-90 cursor-pointer"

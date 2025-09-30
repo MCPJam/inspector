@@ -28,16 +28,22 @@ export function AuthUpperArea() {
   if (!user) {
     return (
       <div className="flex items-center gap-2">
-        <Button variant="outline" onClick={() => {
-          posthog.capture("sign_in", { location: "auth_upper_area" });
-          signIn();
-        }}>
+        <Button
+          variant="outline"
+          onClick={() => {
+            posthog.capture("sign_in", { location: "auth_upper_area" });
+            signIn();
+          }}
+        >
           Sign in
         </Button>
-        <Button onClick={() => {
-          posthog.capture("create_account", { location: "auth_upper_area" });
-          signUp();
-        }} style={{ backgroundColor: "#E55A3A" }}>
+        <Button
+          onClick={() => {
+            posthog.capture("create_account", { location: "auth_upper_area" });
+            signUp();
+          }}
+          style={{ backgroundColor: "#E55A3A" }}
+        >
           Create account
         </Button>
       </div>

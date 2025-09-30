@@ -118,7 +118,9 @@ export function ActiveServerSelector({
 
         {/* Add Server Button */}
         <button
-          onClick={() => { setIsAddModalOpen(true); }}
+          onClick={() => {
+            setIsAddModalOpen(true);
+          }}
           className={cn(
             "group relative flex items-center gap-3 px-4 py-3 border-r border-b border-border transition-all duration-200 cursor-pointer",
             "hover:bg-accent hover:text-accent-foreground",
@@ -137,7 +139,12 @@ export function ActiveServerSelector({
         mode="add"
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
-        onSubmit={(formData) => { posthog.capture("connecting_server", { location: "active_server_selector" }); onConnect(formData); }}
+        onSubmit={(formData) => {
+          posthog.capture("connecting_server", {
+            location: "active_server_selector",
+          });
+          onConnect(formData);
+        }}
       />
     </div>
   );
