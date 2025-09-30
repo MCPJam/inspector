@@ -1,4 +1,4 @@
-import { ColumnFiltersState, flexRender, Row } from "@tanstack/react-table";
+import { ColumnFiltersState, flexRender } from "@tanstack/react-table";
 import {
   getCoreRowModel,
   getFilteredRowModel,
@@ -9,7 +9,7 @@ import { useRef, useState, useEffect } from "react";
 import { columns } from "../components/logging/log-columns";
 import LogFilters from "./logging/log-filters";
 import { Button } from "./ui/button";
-import { LogEntry, useLoggerState } from "@/hooks/use-logger";
+import { useLoggerState } from "@/hooks/use-logger";
 import {
   Select,
   SelectContent,
@@ -49,12 +49,9 @@ export const TracingTab = () => {
         .concat({
           id,
           value,
-        }),
+        })
     );
   };
-
-  const [open, setOpen] = useState(false);
-  const [selectedRow, setSelectedRow] = useState<Row<LogEntry> | null>(null);
 
   const table = useReactTable({
     columns,
@@ -153,7 +150,7 @@ export const TracingTab = () => {
                   <div className="flex items-center justify-center">
                     {flexRender(
                       header.column.columnDef.header,
-                      header.getContext(),
+                      header.getContext()
                     )}
                   </div>
                 </th>
@@ -175,27 +172,33 @@ export const TracingTab = () => {
 
         <tbody>
           {table.getRowModel().rows.map((row) => (
-            <tr
-              key={row.id}
-              className="p-2 hover:bg-muted hover:cursor-pointer"
-              onClick={() => {
-                setOpen(true);
-                setSelectedRow(row);
-              }}
-            >
-              {row.getVisibleCells().map((cell) => (
-                <td key={cell.id} className="p-2">
-                  {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                </td>
-              ))}
-            </tr>
+            <>
+              <tr
+                key={row.id}
+                className={`p-2 hover:bg-muted hover:cursor-pointer ${row.getIsExpanded() && "bg-muted"}`}
+                onClick={() => row.toggleExpanded()}
+              >
+                {row.getVisibleCells().map((cell) => (
+                  <td key={cell.id} className="p-2">
+                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                  </td>
+                ))}
+              </tr>
+
+              {row.getIsExpanded() && (
+                <tr>
+                  <td
+                    colSpan={table.getAllLeafColumns().length}
+                    className="p-4 bg-muted/30"
+                  >
+                    <LogDetails row={row} />
+                  </td>
+                </tr>
+              )}
+            </>
           ))}
         </tbody>
       </table>
-
-      {selectedRow && (
-        <LogDetails open={open} setOpen={setOpen} row={selectedRow} />
-      )}
     </div>
   );
 };

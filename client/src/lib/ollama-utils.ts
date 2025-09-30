@@ -1,3 +1,5 @@
+import { usePostHog } from "posthog-js/react";
+
 interface OllamaModel {
   name: string;
   modified_at: string;
@@ -36,11 +38,15 @@ export class OllamaClient {
   }
 
   async isOllamaRunning(): Promise<boolean> {
+    const posthog = usePostHog();
     try {
       const response = await fetch(`${this.baseUrl}/version`, {
         method: "GET",
         signal: AbortSignal.timeout(3000), // 3 second timeout
       });
+
+      posthog.capture("ollama_running");
+
       return response.ok;
     } catch (error) {
       return false;

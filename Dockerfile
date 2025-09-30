@@ -2,20 +2,29 @@
 # Multi-stage build for client and server
 
 # Stage 1: Dependencies base (shared)
-FROM node:20-alpine AS deps-base
+FROM node:20-slim AS deps-base
 WORKDIR /app
-COPY package.json package-lock.json ./
-COPY client/package*.json ./client/
-COPY server/package*.json ./server/
-RUN npm install --include=dev
-RUN cd client && npm install --include=dev
-RUN cd server && npm install --include=dev
+
+# Clear npm cache and remove any existing lock files to avoid conflicts
+RUN npm cache clean --force
+
+COPY package.json ./
+COPY client/package.json ./client/
+COPY server/package.json ./server/
+
+# Install dependencies with clean slate approach (no lock files)
+
+RUN npm install --no-package-lock --include=dev --legacy-peer-deps
+RUN cd client && npm install --no-package-lock --include=dev --legacy-peer-deps
+RUN cd server && npm install --no-package-lock --include=dev --legacy-peer-deps
 
 # Stage 2: Build client
 FROM deps-base AS client-builder
 COPY shared/ ./shared/
 COPY client/ ./client/
 COPY .env.production ./
+# Set environment variable for Docker platform detection
+ENV VITE_DOCKER=true
 RUN cd client && npm run build
 
 # Stage 3: Build server
@@ -26,10 +35,10 @@ COPY client/ ./client/
 RUN cd server && npm run build
 
 # Stage 4: Production image - extend existing or create new
-FROM node:20-alpine AS production
+FROM node:20-slim AS production
 
 # Install dumb-init for proper signal handling
-RUN apk add --no-cache dumb-init
+RUN apt-get update && apt-get install -y --no-install-recommends dumb-init && rm -rf /var/lib/apt/lists/*
 
 # Create app directory
 WORKDIR /app
@@ -46,7 +55,7 @@ COPY --from=deps-base /app/package.json ./package.json
 COPY --from=deps-base /app/server/package.json ./server/package.json
 
 # Install production dependencies from root package.json (includes external packages like fix-path)
-RUN npm install --production
+RUN npm install --production --legacy-peer-deps
 
 # Copy shared types
 COPY shared/ ./shared/
@@ -55,8 +64,8 @@ COPY shared/ ./shared/
 COPY bin/ ./bin/
 
 # Create non-root user
-RUN addgroup -g 1001 -S nodejs && \
-    adduser -S mcpjam -u 1001
+RUN groupadd --gid 1001 nodejs && \
+    useradd --uid 1001 --gid nodejs --shell /bin/bash --create-home mcpjam
 
 # Change ownership of the app directory
 RUN chown -R mcpjam:nodejs /app

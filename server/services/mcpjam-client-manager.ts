@@ -130,12 +130,17 @@ class MCPJamClientManager {
     return flattenedTools;
   }
 
-  async getFlattenedToolsetsForEnabledServers(): Promise<
-    DynamicArgument<ToolsInput>
-  > {
+  async getFlattenedToolsetsForEnabledServers(
+    serverNameFilter?: string[],
+  ): Promise<DynamicArgument<ToolsInput>> {
     const allFlattenedTools: Record<string, any> = {};
+    const allServerIdsFromFilter = serverNameFilter?.map((serverName) =>
+      this.getServerIdForName(serverName),
+    ); // Optional filter by servers selected
 
     for (const [serverId, client] of this.mcpClients.entries()) {
+      if (serverNameFilter && !allServerIdsFromFilter?.includes(serverId))
+        continue;
       if (this.getConnectionStatus(serverId) !== "connected") continue;
       try {
         const toolsets = await client.getToolsets();

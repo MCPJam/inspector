@@ -10,6 +10,11 @@ import { getDefaultTemperatureByProvider } from "../../../client/src/lib/chat-ut
 import { createLlmModel } from "../../utils/chat-helpers";
 import { SSEvent } from "../../../shared/sse";
 import { convertMastraToolsToVercelTools } from "../../../shared/tools";
+import {
+  hasUnresolvedToolCalls,
+  executeToolCallsFromMessages,
+} from "../../../shared/http-tool-calls";
+import { zodToJsonSchema } from "zod-to-json-schema";
 import type { ModelMessage, Tool } from "ai";
 
 // Types
@@ -39,11 +44,15 @@ interface ChatRequest {
   action?: string;
   requestId?: string;
   response?: any;
+  sendMessagesToBackend?: boolean;
+  selectedServers?: string[]; // original names from UI
 }
 
 // Constants
 const ELICITATION_TIMEOUT = 300000; // 5 minutes
 const MAX_AGENT_STEPS = 10;
+const BACKEND_FETCH_ERROR_MESSAGE =
+  "We are having difficulties processing your message right now. Please try again later.";
 
 try {
   (process as any).setMaxListeners?.(50);
@@ -59,6 +68,47 @@ const sendSseEvent = (
 ) => {
   const payload = event === "[DONE]" ? "[DONE]" : JSON.stringify(event);
   controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
+};
+
+const sendBackendErrorText = (streamingContext: StreamingContext) => {
+  sendSseEvent(streamingContext.controller, streamingContext.encoder, {
+    type: "text",
+    content: BACKEND_FETCH_ERROR_MESSAGE,
+  });
+};
+
+const sendBackendRequest = async (
+  baseUrl: string,
+  authHeader: string | undefined,
+  body: any,
+  streamingContext: StreamingContext,
+): Promise<any | null> => {
+  try {
+    const res = await fetch(`${baseUrl}/streaming`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(authHeader ? { Authorization: authHeader } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      sendBackendErrorText(streamingContext);
+      return null;
+    }
+
+    try {
+      const data = await res.json();
+      return data;
+    } catch {
+      sendBackendErrorText(streamingContext);
+      return null;
+    }
+  } catch {
+    sendBackendErrorText(streamingContext);
+    return null;
+  }
 };
 
 const handleAgentStepFinish = (
@@ -146,7 +196,7 @@ const handleAgentStepFinish = (
 
 const createStreamingResponse = async (
   model: any,
-  vercelTools: Record<string, Tool>,
+  aiSdkTools: Record<string, Tool>,
   messages: ChatMessage[],
   streamingContext: StreamingContext,
   provider: ModelProvider,
@@ -176,11 +226,8 @@ const createStreamingResponse = async (
       model,
       system:
         systemPrompt || "You are a helpful assistant with access to MCP tools.",
-      temperature:
-        temperature == null || undefined
-          ? getDefaultTemperatureByProvider(provider)
-          : temperature,
-      tools: vercelTools,
+      temperature: temperature ?? getDefaultTemperatureByProvider(provider),
+      tools: aiSdkTools,
       messages: messageHistory,
       onChunk: async (chunk) => {
         switch (chunk.chunk.type) {
@@ -320,6 +367,152 @@ const createStreamingResponse = async (
   );
 };
 
+const sendMessagesToBackend = async (
+  messages: ChatMessage[],
+  streamingContext: StreamingContext,
+  mcpClientManager: any,
+  baseUrl: string,
+  authHeader?: string,
+  selectedServers?: string[],
+): Promise<void> => {
+  // Build message history
+  const messageHistory: ModelMessage[] = (messages || []).map((m) => {
+    switch (m.role) {
+      case "system":
+        return { role: "system", content: m.content } as ModelMessage;
+      case "user":
+        return { role: "user", content: m.content } as ModelMessage;
+      case "assistant":
+        return { role: "assistant", content: m.content } as ModelMessage;
+      default:
+        return { role: "user", content: m.content } as ModelMessage;
+    }
+  });
+
+  const flatTools =
+    await mcpClientManager.getFlattenedToolsetsForEnabledServers(
+      selectedServers,
+    );
+
+  const toolDefs = Object.entries(flatTools).map(([name, tool]) => ({
+    name,
+    description: tool?.description,
+    inputSchema: zodToJsonSchema(tool?.inputSchema),
+  }));
+
+  if (!baseUrl) {
+    throw new Error("CONVEX_HTTP_URL is not set");
+  }
+  let steps = 0;
+  while (steps < MAX_AGENT_STEPS) {
+    const data = await sendBackendRequest(
+      baseUrl,
+      authHeader,
+      {
+        tools: toolDefs,
+        messages: JSON.stringify(messageHistory),
+      },
+      streamingContext,
+    );
+    if (!data) break;
+    if (data?.ok && Array.isArray(data.messages)) {
+      // Append assistant messages and emit their text/tool_call events
+      for (const msg of data.messages as ModelMessage[]) {
+        messageHistory.push(msg);
+        if (
+          (msg as any).role === "assistant" &&
+          Array.isArray((msg as any).content)
+        ) {
+          for (const c of (msg as any).content) {
+            if (c?.type === "text" && typeof c.text === "string") {
+              sendSseEvent(
+                streamingContext.controller,
+                streamingContext.encoder!,
+                {
+                  type: "text",
+                  content: c.text,
+                },
+              );
+            } else if (c?.type === "tool-call") {
+              const currentToolCallId = ++streamingContext.toolCallId;
+              streamingContext.lastEmittedToolCallId = currentToolCallId;
+              sendSseEvent(
+                streamingContext.controller,
+                streamingContext.encoder!,
+                {
+                  type: "tool_call",
+                  toolCall: {
+                    id: currentToolCallId,
+                    name: c.toolName || c.name,
+                    parameters: c.input || c.parameters || c.args || {},
+                    timestamp: new Date().toISOString(),
+                    status: "executing",
+                  },
+                },
+              );
+            }
+          }
+        }
+      }
+    } else {
+      sendBackendErrorText(streamingContext);
+      break;
+    }
+
+    // Execute unresolved tool calls locally and emit tool_result events
+    const beforeLen = messageHistory.length;
+    if (hasUnresolvedToolCalls(messageHistory as any)) {
+      await executeToolCallsFromMessages(messageHistory as ModelMessage[], {
+        tools: flatTools as any,
+      });
+      const newMsgs = messageHistory.slice(beforeLen);
+      for (const m of newMsgs) {
+        if ((m as any).role === "tool" && Array.isArray((m as any).content)) {
+          for (const tc of (m as any).content) {
+            if (tc.type === "tool-result") {
+              const currentToolCallId =
+                streamingContext.lastEmittedToolCallId != null
+                  ? streamingContext.lastEmittedToolCallId
+                  : ++streamingContext.toolCallId;
+              const out = tc.output;
+              const value =
+                out && typeof out === "object" && "value" in out
+                  ? out.value
+                  : out;
+              sendSseEvent(
+                streamingContext.controller,
+                streamingContext.encoder!,
+                {
+                  type: "tool_result",
+                  toolResult: {
+                    id: currentToolCallId,
+                    toolCallId: currentToolCallId,
+                    result: value,
+                    timestamp: new Date().toISOString(),
+                  },
+                },
+              );
+            }
+          }
+        }
+      }
+    } else {
+      break;
+    }
+
+    steps++;
+  }
+
+  sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
+    type: "elicitation_complete",
+  });
+  sendSseEvent(
+    streamingContext.controller,
+    streamingContext.encoder!,
+    "[DONE]",
+  );
+};
+
 // Main chat endpoint
 chat.post("/", async (c) => {
   const mcpClientManager = c.mcpJamClientManager;
@@ -332,7 +525,7 @@ chat.post("/", async (c) => {
       systemPrompt,
       temperature,
       messages,
-      ollamaBaseUrl,
+      ollamaBaseUrl: _ollama_unused,
       action,
       requestId,
       response,
@@ -368,25 +561,41 @@ chat.post("/", async (c) => {
     }
 
     // Validate required parameters
-    if (!model?.id || !apiKey || !messages) {
+    if (!messages) {
       return c.json(
         {
           success: false,
-          error: "model (with id), apiKey, and messages are required",
+          error: "messages are required",
+        },
+        400,
+      );
+    }
+    const sendToBackend =
+      provider === "meta" && Boolean(requestData.sendMessagesToBackend);
+
+    if (!sendToBackend && (!model?.id || !apiKey)) {
+      return c.json(
+        {
+          success: false,
+          error: "model (with id) and apiKey are required",
         },
         400,
       );
     }
 
-    // Create LLM model
-    const llmModel = createLlmModel(model, apiKey, ollamaBaseUrl);
-
-    const toolsets =
-      await mcpClientManager.getFlattenedToolsetsForEnabledServers();
-    const vercelTools = convertMastraToolsToVercelTools(toolsets as any);
+    if (sendToBackend && !process.env.CONVEX_HTTP_URL) {
+      return c.json(
+        {
+          success: false,
+          error: "Server missing CONVEX_HTTP_URL configuration",
+        },
+        500,
+      );
+    }
 
     // Create streaming response
     const encoder = new TextEncoder();
+    const authHeader = c.req.header("authorization") || undefined;
     const readableStream = new ReadableStream({
       async start(controller) {
         const streamingContext: StreamingContext = {
@@ -442,15 +651,40 @@ chat.post("/", async (c) => {
         });
 
         try {
-          await createStreamingResponse(
-            llmModel,
-            vercelTools,
-            messages,
-            streamingContext,
-            provider,
-            temperature,
-            systemPrompt,
-          );
+          if (sendToBackend) {
+            await sendMessagesToBackend(
+              messages,
+              streamingContext,
+              mcpClientManager,
+              process.env.CONVEX_HTTP_URL!,
+              authHeader,
+              requestData.selectedServers,
+            );
+          } else {
+            // Use existing streaming path with tools
+            const flatTools =
+              await mcpClientManager.getFlattenedToolsetsForEnabledServers(
+                requestData.selectedServers,
+              );
+
+            const aiSdkTools: Record<string, Tool> =
+              convertMastraToolsToVercelTools(flatTools as any);
+
+            const llmModel = createLlmModel(
+              model as ModelDefinition,
+              apiKey || "",
+              _ollama_unused,
+            );
+            await createStreamingResponse(
+              llmModel,
+              aiSdkTools,
+              messages,
+              streamingContext,
+              provider,
+              temperature,
+              systemPrompt,
+            );
+          }
         } catch (error) {
           sendSseEvent(controller, encoder, {
             type: "error",
@@ -473,7 +707,12 @@ chat.post("/", async (c) => {
     });
   } catch (error) {
     console.error("[mcp/chat] Error in chat API:", error);
-    mcpClientManager.clearElicitationCallback();
+
+    try {
+      mcpClientManager.clearElicitationCallback();
+    } catch (cleanupError) {
+      console.error("[mcp/chat] Error during cleanup:", cleanupError);
+    }
 
     return c.json(
       {

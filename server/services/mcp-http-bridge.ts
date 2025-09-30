@@ -1,6 +1,6 @@
 import { MCPJamClientManager } from "./mcpjam-client-manager";
 import { z } from "zod";
-import { zodToJsonSchema } from "@alcyone-labs/zod-to-json-schema";
+import { zodToJsonSchema } from "zod-to-json-schema";
 
 // Unify JSON-RPC handling used by adapter-http and manager-http routes
 // while preserving their minor response-shape differences.

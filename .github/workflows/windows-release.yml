@@ -33,15 +33,34 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install dependencies
+      - name: Clean dependencies
         run: |
-          npm install
-          npm run install:deps
+          npm cache clean --force
+          if (Test-Path "node_modules") { Remove-Item "node_modules" -Force -Recurse -ErrorAction SilentlyContinue }
+          if (Test-Path "package-lock.json") { Remove-Item "package-lock.json" -Force -ErrorAction SilentlyContinue }
+          if (Test-Path "client/node_modules") { Remove-Item "client/node_modules" -Force -Recurse -ErrorAction SilentlyContinue }
+          if (Test-Path "client/package-lock.json") { Remove-Item "client/package-lock.json" -Force -ErrorAction SilentlyContinue }
+          if (Test-Path "server/node_modules") { Remove-Item "server/node_modules" -Force -Recurse -ErrorAction SilentlyContinue }
+          if (Test-Path "server/package-lock.json") { Remove-Item "server/package-lock.json" -Force -ErrorAction SilentlyContinue }
+        shell: powershell
 
-      - name: Workaround npm optional deps bug (rollup prebuilt)
-        if: runner.os == 'Windows'
+      - name: Install dependencies fresh
         run: |
+          npm install --legacy-peer-deps --no-optional
+          npm run install:deps
+        shell: powershell
+
+      - name: Rebuild native modules for Windows
+        run: |
+          # Rebuild esbuild specifically to fix version mismatch
+          cd server
+          npm rebuild esbuild --verbose
+          cd ..
+          # Install Windows-specific binaries
           npm i -D @rollup/rollup-win32-x64-msvc@^4
+          cd client
+          npm i lightningcss@^1 --save-dev
+        shell: powershell
 
       - name: Restore code signing cert
         if: env.WINDOWS_PFX_BASE64 != ''
@@ -52,12 +71,14 @@ jobs:
 
       - name: Build
         run: npm run build
+        shell: powershell
 
       - name: Make (Windows)
         env:
           WINDOWS_PFX_FILE: ${{ runner.temp }}\\codesign.pfx
           WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
         run: npm run electron:make
+        shell: powershell
 
       - name: Rename installer to consistent name
         run: |

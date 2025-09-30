@@ -4,8 +4,6 @@ import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
 import { PromptsTab } from "./components/PromptsTab";
 import { ChatTab } from "./components/ChatTab";
-import { TestsTab } from "./components/TestsTab";
-import { PrevEvalsTab } from "./components/PrevEvalsTab";
 import { EvalsTab } from "./components/EvalsTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { TracingTab } from "./components/TracingTab";
@@ -19,19 +17,35 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "./components/ui/sidebar";
-import { ThemeSwitcher } from "./components/sidebar/theme-switcher";
 import { useAppState } from "./hooks/use-app-state";
 import { PreferencesStoreProvider } from "./stores/preferences/preferences-provider";
 import { Toaster } from "./components/ui/sonner";
-import { AuthButton } from "./components/AuthButton";
 import { useElectronOAuth } from "./hooks/useElectronOAuth";
 import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
+import { usePostHog } from "posthog-js/react";
+import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
 
 // Import global styles
 import "./index.css";
+import { AuthUpperArea } from "./components/auth/auth-upper-area";
+import { detectEnvironment, detectPlatform } from "./logs/PosthogUtils";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
+  const posthog = usePostHog();
+
+  // Automatically identify users in PostHog when they log in/out
+  usePostHogIdentify();
+
+  // Capture app launch event once on mount
+  useEffect(() => {
+    posthog.capture("app_launched", {
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+      user_agent: navigator.userAgent,
+    });
+  }, []);
+
   // Set up Electron OAuth callback handling
   useElectronOAuth();
   // Ensure a `users` row exists after Convex auth
@@ -61,11 +75,24 @@ export default function App() {
     setSelectedMultipleServersToAllServers,
   } = useAppState();
 
+  // Sync tab with hash on mount and when hash changes
+  useEffect(() => {
+    const applyHash = () => {
+      const hash = (window.location.hash || "#servers").replace("#", "");
+      setActiveTab(hash);
+      if (hash === "chat") setSelectedMultipleServersToAllServers();
+    };
+    applyHash();
+    window.addEventListener("hashchange", applyHash);
+    return () => window.removeEventListener("hashchange", applyHash);
+  }, [setSelectedMultipleServersToAllServers]);
+
   const handleNavigate = (section: string) => {
-    setActiveTab(section);
     if (section === "chat") {
       setSelectedMultipleServersToAllServers();
     }
+    window.location.hash = section;
+    setActiveTab(section);
   };
 
   if (isDebugCallback) {
@@ -119,8 +146,7 @@ export default function App() {
                 <SidebarTrigger className="-ml-1" />
               </div>
               <div className="flex items-center gap-2">
-                <ThemeSwitcher />
-                <AuthButton />
+                <AuthUpperArea />
               </div>
             </div>
           </header>
@@ -162,19 +188,6 @@ export default function App() {
                 serverName={appState.selectedServer}
               />
             )}
-            {activeTab === "tests" && (
-              <TestsTab
-                serverConfig={selectedMCPConfig}
-                serverConfigsMap={selectedMCPConfigsMap}
-                allServerConfigsMap={Object.fromEntries(
-                  Object.entries(connectedServerConfigs)
-                    .filter(
-                      ([, entry]) => entry.connectionStatus === "connected",
-                    )
-                    .map(([name, entry]) => [name, entry.config]),
-                )}
-              />
-            )}
             {activeTab === "evals" && <EvalsTab />}
             {activeTab === "resources" && (
               <ResourcesTab
@@ -199,7 +212,10 @@ export default function App() {
             )}
 
             {activeTab === "chat" && (
-              <ChatTab serverConfigs={selectedMCPConfigsMap} />
+              <ChatTab
+                serverConfigs={selectedMCPConfigsMap}
+                connectedServerConfigs={connectedServerConfigs}
+              />
             )}
 
             {activeTab === "interceptor" && (

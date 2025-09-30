@@ -1,4 +1,4 @@
-import { z, ZodTypeAny } from "zod";
+import { z } from "zod";
 import type {
   LogHandler,
   MastraMCPServerDefinition,
@@ -7,8 +7,8 @@ import type {
 import { SSEClientTransportOptions } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransportOptions } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { ClientCapabilities } from "@modelcontextprotocol/sdk/types.js";
-import { type Tool as VercelTool } from "ai";
 import { convertMastraToolsToVercelTools } from "../../../shared/tools";
+import { Logger } from "./logger";
 
 export const AdvancedConfigSchema = z
   .object({
@@ -31,15 +31,19 @@ export const TestCaseSchema = z.object({
 
 export type TestCase = z.infer<typeof TestCaseSchema>;
 
-export function validateTestCase(value: unknown): TestCase[] {
+export function validateTestCase(value: unknown): TestCase[] | undefined {
   try {
     const result = z.array(TestCaseSchema).parse(value);
     return result;
   } catch (error) {
     if (error instanceof z.ZodError) {
-      throw new Error(error.message);
+      Logger.errorWithExit(
+        `Your tests.json file is incorrectly configured: ${error.message}`,
+      );
     }
-    throw new Error(error instanceof Error ? error.message : String(error));
+    Logger.errorWithExit(
+      `Your tests.json file is incorrectly configured: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
@@ -84,7 +88,7 @@ export const MastraMCPServerDefinitionSchema = z.union([
 
 export function validateAndNormalizeMCPClientConfiguration(
   value: unknown,
-): MCPClientOptions {
+): MCPClientOptions | undefined {
   try {
     const envParsed = MCPClientOptionsSchema.parse(value);
 
@@ -113,11 +117,13 @@ export function validateAndNormalizeMCPClientConfiguration(
         }
       } catch (error) {
         if (error instanceof z.ZodError) {
-          throw new Error(
+          Logger.errorWithExit(
             `Invalid server configuration for '${name}': ${error.message}`,
           );
         }
-        throw new Error(`Invalid server configuration for '${name}': ${error}`);
+        Logger.errorWithExit(
+          `Invalid server configuration for '${name}': ${error}`,
+        );
       }
     }
 
@@ -126,7 +132,9 @@ export function validateAndNormalizeMCPClientConfiguration(
       servers: normalizedServers,
     };
   } catch (error) {
-    throw new Error(error instanceof Error ? error.message : String(error));
+    Logger.errorWithExit(
+      `Your environment.json file is incorrectly configured: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
@@ -142,14 +150,32 @@ export const LlmsConfigSchema = z
 
 export type LlmsConfig = z.infer<typeof LlmsConfigSchema>;
 
-export function validateLlms(value: unknown): LlmsConfig {
+export function validateLlms(value: unknown): LlmsConfig | undefined {
   try {
     const result = LlmsConfigSchema.parse(value);
+    if (
+      !isValidLlmApiKey(result.anthropic) &&
+      !isValidLlmApiKey(result.openai) &&
+      !isValidLlmApiKey(result.openrouter)
+    ) {
+      Logger.errorWithExit(
+        "You must provide at least one valid LLM API key in your llms.json file.",
+      );
+    }
     return result;
   } catch (error) {
     if (error instanceof z.ZodError) {
-      throw new Error(`Invalid LLMs configuration: ${error.message}`);
+      Logger.errorWithExit(`Invalid LLMs configuration: ${error.message}`);
     }
-    throw new Error(error instanceof Error ? error.message : String(error));
+    Logger.errorWithExit(
+      error instanceof Error ? error.message : String(error),
+    );
   }
 }
+
+const isValidLlmApiKey = (key: string | undefined) => {
+  if (key && key.startsWith("sk-")) {
+    return true;
+  }
+  return false;
+};

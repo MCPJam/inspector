@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/inspector-server",
-  "version": "0.8.2",
+  "version": "0.9.46",
   "type": "module",
   "private": true,
   "scripts": {
@@ -13,20 +13,25 @@
     "@ai-sdk/deepseek": "^1.0.5",
     "@ai-sdk/google": "^2.0.11",
     "@ai-sdk/openai": "^2.0.32",
-    "@alcyone-labs/zod-to-json-schema": "^4.0.10",
+    "zod-to-json-schema": "^3.23.3",
     "@hono/node-server": "^1.13.7",
-    "@mastra/core": "0.16.0",
-    "@mastra/mcp": "0.11.4",
+    "@mastra/core": "0.18.0",
+    "@mastra/mcp": "0.13.1",
     "@modelcontextprotocol/sdk": "^1.17.3",
     "ai": "^5.0.11",
+    "dotenv": "^16.4.5",
     "hono": "^4.6.11",
-    "ollama-ai-provider-v2": "^1.3.1",
-    "zod": "^4.0.16"
+    "ollama-ai-provider-v2": "1.3.1",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^20",
     "tsup": "^8.3.5",
     "tsx": "^4.19.2",
     "typescript": "^5"
+  },
+  "overrides": {
+    "jsondiffpatch": "0.7.2",
+    "tmp": "0.2.5"
   }
 }

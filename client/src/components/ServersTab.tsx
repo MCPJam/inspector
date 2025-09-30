@@ -8,7 +8,8 @@ import { ServerModal } from "./connection/ServerModal";
 import { JsonImportModal } from "./connection/JsonImportModal";
 import { ServerFormData } from "@/shared/types.js";
 import { MCPIcon } from "./ui/mcp-icon";
-
+import { usePostHog } from "posthog-js/react";
+import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 interface ServersTabProps {
   connectedServerConfigs: Record<string, ServerWithName>;
   onConnect: (formData: ServerFormData) => void;
@@ -26,6 +27,7 @@ export function ServersTab({
   onUpdate,
   onRemove,
 }: ServersTabProps) {
+  const posthog = usePostHog();
   const [isAddingServer, setIsAddingServer] = useState(false);
   const [isImportingJson, setIsImportingJson] = useState(false);
   const [isEditingServer, setIsEditingServer] = useState(false);
@@ -151,8 +153,17 @@ export function ServersTab({
       <ServerModal
         mode="add"
         isOpen={isAddingServer}
-        onClose={() => setIsAddingServer(false)}
-        onSubmit={(formData) => onConnect(formData)}
+        onClose={() => {
+          setIsAddingServer(false);
+        }}
+        onSubmit={(formData) => {
+          posthog.capture("connecting_server", {
+            location: "servers_tab",
+            platform: detectPlatform(),
+            environment: detectEnvironment(),
+          });
+          onConnect(formData);
+        }}
       />
 
       {/* Edit Server Modal */}

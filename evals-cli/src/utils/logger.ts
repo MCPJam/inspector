@@ -3,12 +3,6 @@ import type { ModelMessage } from "ai";
 
 type MessageContent = string | Record<string, unknown> | MessageContent[];
 
-type ToolSummaryResult = {
-  missing: string[];
-  unexpected: string[];
-  passed: boolean;
-};
-
 type ToolSummaryOptions = {
   expected: string[];
   actual: string[];
@@ -231,6 +225,12 @@ export class Logger {
   static error(message: string): void {
     this.logLine("");
     this.logLine(chalk.red(`✕ Error: ${message}`));
+  }
+
+  static errorWithExit(message: string): void {
+    this.logLine("");
+    this.logLine(chalk.red(`✕ Error: ${message}`));
+    process.exit(1);
   }
 
   static progress(current: number, total: number, testName: string): void {
