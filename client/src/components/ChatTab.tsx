@@ -142,7 +142,12 @@ export function ChatTab({
           <ChatInput
             value={input}
             onChange={setInput}
-            onSubmit={sendMessage}
+            onSubmit={
+              () => {
+                posthog.capture("send_message", { location: "chat_tab" });
+                sendMessage(input);
+              }
+            }
             onStop={stopGeneration}
             disabled={availableModels.length === 0 || options.disabled}
             isLoading={isLoading}
