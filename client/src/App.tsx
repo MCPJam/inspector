@@ -23,6 +23,7 @@ import { Toaster } from "./components/ui/sonner";
 import { useElectronOAuth } from "./hooks/useElectronOAuth";
 import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
 import { usePostHog } from "posthog-js/react";
+import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
 
 // Import global styles
 import "./index.css";
@@ -60,13 +61,15 @@ export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
   const posthog = usePostHog();
   
+  // Automatically identify users in PostHog when they log in/out
+  usePostHogIdentify();
+  
   // Capture app launch event once on mount
   useEffect(() => {
     const platform = detectPlatform();
     posthog.capture("app_launched", {
       platform,
       user_agent: navigator.userAgent,
-      screen_resolution: `${window.screen.width}x${window.screen.height}`,
     });
   }, [posthog]);
 
