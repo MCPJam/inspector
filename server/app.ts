@@ -19,7 +19,9 @@ const __dirname = dirname(__filename);
 export function createHonoApp() {
   // Load environment variables early so route handlers can read CONVEX_HTTP_URL
   const envFile =
-    process.env.NODE_ENV === "production" ? ".env.production" : ".env.development";
+    process.env.NODE_ENV === "production"
+      ? ".env.production"
+      : ".env.development";
 
   // Determine where to look for .env file:
   // 1. Electron packaged: use process.resourcesPath directly
@@ -48,8 +50,8 @@ export function createHonoApp() {
   if (!process.env.CONVEX_HTTP_URL) {
     throw new Error(
       `CONVEX_HTTP_URL is required but not set. Tried loading from: ${envPath}\n` +
-      `IS_PACKAGED=${process.env.IS_PACKAGED}, resourcesPath=${process.resourcesPath}\n` +
-      `File exists: ${existsSync(envPath)}`
+        `IS_PACKAGED=${process.env.IS_PACKAGED}, resourcesPath=${process.resourcesPath}\n` +
+        `File exists: ${existsSync(envPath)}`,
     );
   }
 
