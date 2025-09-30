@@ -39,6 +39,7 @@
     "start": "NODE_ENV=production node bin/start.js",
     "prettier-fix": "prettier --write .",
     "install:deps": "cd server && npm install --legacy-peer-deps && cd ../client && npm install --legacy-peer-deps",
+    "sync:lockfiles": "npm install --legacy-peer-deps && cd client && npm install --legacy-peer-deps && cd ../server && npm install --legacy-peer-deps",
     "docker:build": "docker build -t mcpjam/mcp-inspector:latest .",
     "docker:build:dev": "docker build -f Dockerfile.dev -t mcpjam/mcp-inspector:dev .",
     "docker:run": "docker run -p 3001:3001 mcpjam/mcp-inspector:latest",
