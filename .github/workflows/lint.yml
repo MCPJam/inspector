@@ -31,8 +31,8 @@ jobs:
 
           # Install all dependencies (root + client + server)
           npm install --legacy-peer-deps
-          cd client && npm install --legacy-peer-deps
-          cd ../server && npm install --legacy-peer-deps
+          cd client && npm install --legacy-peer-deps && cd ..
+          cd server && npm install --legacy-peer-deps && cd ..
 
       - name: Check Prettier formatting
         run: |
