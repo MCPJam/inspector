@@ -54,6 +54,7 @@
     "icons:win": "node scripts/generate-windows-icon.mjs",
     "icons:mac": "node scripts/generate-mac-icon.mjs",
     "electron:make": "npm run icons:win && npm run icons:mac && electron-forge make",
+    "electron:install": "rm -rf '/Applications/MCPJam Inspector.app' && cp -r 'out/MCPJam Inspector-darwin-arm64/MCPJam Inspector.app' /Applications/ && open -a 'MCPJam Inspector'",
     "electron:publish": "electron-forge publish",
     "electron:dev": "electron-forge start",
     "test": "vitest run",
