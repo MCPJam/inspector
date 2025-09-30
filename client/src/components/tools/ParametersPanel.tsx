@@ -7,6 +7,7 @@ import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
 import { usePostHog } from "posthog-js/react";
 import type { FormField } from "@/lib/tool-form";
+import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 
 interface ParametersPanelProps {
   selectedTool: string;
@@ -46,6 +47,8 @@ export function ParametersPanel({
               onClick={() => {
                 posthog.capture("execute_tool", {
                   location: "parameters_panel",
+                  platform: detectPlatform(),
+                  environment: detectEnvironment(),
                 });
                 onExecute();
               }}

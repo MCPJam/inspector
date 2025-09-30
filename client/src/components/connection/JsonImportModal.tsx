@@ -10,6 +10,7 @@ import { Upload, AlertCircle, CheckCircle } from "lucide-react";
 import { parseJsonConfig, validateJsonConfig } from "@/lib/json-config-parser";
 import { ServerFormData } from "@/shared/types.js";
 import { usePostHog } from "posthog-js/react";
+import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 
 interface JsonImportModalProps {
   isOpen: boolean;
@@ -219,6 +220,8 @@ export function JsonImportModal({
               if (!isImporting) {
                 posthog.capture("connecting_server", {
                   location: "json_import_modal",
+                  platform: detectPlatform(),
+                  environment: detectEnvironment(),
                 });
               }
               handleImport();
