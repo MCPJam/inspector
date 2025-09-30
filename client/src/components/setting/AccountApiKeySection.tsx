@@ -158,7 +158,9 @@ export function AccountApiKeySection() {
         <p className="text-sm text-muted-foreground">
           Sign in to view and manage your API key.
         </p>
-        <Button type="button" onClick={() => signIn()} size="sm">
+        <Button type="button" onClick={() => 
+          posthog.capture("sign_in", { location: "account_api_key_section" }),
+          signIn()} size="sm">
           Sign in
         </Button>
       </div>
