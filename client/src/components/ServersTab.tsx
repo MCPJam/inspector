@@ -9,6 +9,7 @@ import { JsonImportModal } from "./connection/JsonImportModal";
 import { ServerFormData } from "@/shared/types.js";
 import { MCPIcon } from "./ui/mcp-icon";
 import { usePostHog } from "posthog-js/react";
+import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 interface ServersTabProps {
   connectedServerConfigs: Record<string, ServerWithName>;
   onConnect: (formData: ServerFormData) => void;
@@ -156,7 +157,11 @@ export function ServersTab({
           setIsAddingServer(false);
         }}
         onSubmit={(formData) => {
-          posthog.capture("connecting_server", { location: "servers_tab" });
+          posthog.capture("connecting_server", {
+            location: "servers_tab",
+            platform: detectPlatform(),
+            environment: detectEnvironment(),
+          });
           onConnect(formData);
         }}
       />
