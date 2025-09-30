@@ -55,10 +55,11 @@ async function startHonoServer(): Promise<number> {
   try {
     const port = app.isPackaged ? 3000 : await findAvailablePort(3000);
 
-    // Set environment variable to tell the server it's running in Electron
+    // Set environment variables to tell the server it's running in Electron
     process.env.ELECTRON_APP = "true";
     process.env.IS_PACKAGED = app.isPackaged ? "true" : "false";
     process.env.ELECTRON_RESOURCES_PATH = process.resourcesPath;
+    process.env.NODE_ENV = app.isPackaged ? "production" : "development";
 
     const honoApp = createHonoApp();
 

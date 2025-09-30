@@ -5,8 +5,12 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { serveStatic } from "@hono/node-server/serve-static";
-import { readFileSync } from "fs";
-import { join } from "path";
+import { readFileSync, existsSync } from "fs";
+import { join, dirname, resolve } from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 // ANSI color codes for console output
 const colors = {
@@ -123,17 +127,36 @@ try {
 const app = new Hono();
 
 // Load environment variables early so route handlers can read CONVEX_HTTP_URL
-try {
-  const envFile =
-    process.env.NODE_ENV === "production"
-      ? ".env.production"
-      : ".env.development";
-  dotenv.config({ path: envFile });
-  if (!process.env.CONVEX_HTTP_URL) {
-    dotenv.config();
+const envFile =
+  process.env.NODE_ENV === "production"
+    ? ".env.production"
+    : ".env.development";
+
+// Determine where to look for .env file:
+// 1. Electron: Resources folder
+// 2. npm package: package root (two levels up from dist/server)
+// 3. Local dev: current working directory
+let envPath = envFile;
+if (
+  process.env.ELECTRON_APP === "true" &&
+  process.env.ELECTRON_RESOURCES_PATH
+) {
+  envPath = join(process.env.ELECTRON_RESOURCES_PATH, envFile);
+} else {
+  const packageRoot = resolve(__dirname, "..", "..");
+  const packageEnvPath = join(packageRoot, envFile);
+  if (existsSync(packageEnvPath)) {
+    envPath = packageEnvPath;
   }
-} catch (error) {
-  console.warn("[startup] Failed loading env files", error);
+}
+
+dotenv.config({ path: envPath });
+
+// Validate required env vars
+if (!process.env.CONVEX_HTTP_URL) {
+  throw new Error(
+    "CONVEX_HTTP_URL is required but not set. Please set it via environment variable or .env file.",
+  );
 }
 
 // Initialize centralized MCPJam Client Manager
