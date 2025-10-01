@@ -18,7 +18,6 @@
     "@mastra/mcp": "0.13.1",
     "@modelcontextprotocol/sdk": "^1.17.3",
     "@sentry/node": "^8.47.0",
-    "@sentry/profiling-node": "^8.47.0",
     "ai": "^5.0.11",
     "dotenv": "^16.4.5",
     "hono": "^4.6.11",
