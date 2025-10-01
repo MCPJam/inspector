@@ -15,7 +15,7 @@ const MCP_BANNER = `
 ██╔████╔██║██║     ██████╔╝    ██║███████║██╔████╔██║
 ██║╚██╔╝██║██║     ██╔═══╝██   ██║██╔══██║██║╚██╔╝██║
 ██║ ╚═╝ ██║╚██████╗██║    ╚█████╔╝██║  ██║██║ ╚═╝ ██║
-╚═╝     ╚═╝ ╚═════╝╚═╝     ╚════╝ ╚═╝  ╚═╝╚═╝     ╚═╝                                                    
+╚═╝     ╚═╝ ╚═════╝╚═╝     ╚════╝ ╚═╝  ╚═╝╚═╝     ╚═╝
 `;
 
 // ANSI color codes
@@ -527,16 +527,17 @@ async function main() {
         throw new Error(`Port ${requestedPort} is already in use`);
       }
     } else {
-      // Fixed port policy: use default port 3000 and fail fast if unavailable
-      logInfo("No specific port requested, using fixed default port 3000");
+      // Auto port selection: try default port 3000, then find next available port
+      logInfo("No specific port requested, trying default port 3000");
       if (await isPortAvailable(requestedPort)) {
         PORT = requestedPort.toString();
         logSuccess(`Default port ${requestedPort} is available`);
       } else {
-        logError(
-          `Default port ${requestedPort} is already in use. Please free the port`,
-        );
-        throw new Error(`Port ${requestedPort} is already in use`);
+        logWarning(`Default port ${requestedPort} is already in use`);
+        logInfo("Searching for next available port...");
+        const availablePort = await findAvailablePort(requestedPort);
+        PORT = availablePort.toString();
+        logSuccess(`Found available port: ${availablePort}`);
       }
     }
 
