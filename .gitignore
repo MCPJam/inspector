@@ -62,3 +62,6 @@ next-env.d.ts
 
 # convex (generated client code)
 convex/
+
+# Sentry Config File
+.env.sentry-build-plugin
