@@ -37,12 +37,18 @@ export function IterationCard({
           </div>
           <div className="space-y-1 flex-1">
             <div className="flex items-center gap-2">
-              <div className="font-semibold">
-                Iteration #{iteration.iterationNumber}
-              </div>
+              {testCase ? (
+                <div className="font-semibold">
+                  {testCase.title}
+                </div>
+              ) : (
+                <div className="font-semibold">
+                  Iteration #{iteration.iterationNumber}
+                </div>
+              )}
               {testCase ? (
                 <span className="text-xs text-muted-foreground">
-                  {testCase.title}
+                  Iteration #{iteration.iterationNumber}
                 </span>
               ) : null}
             </div>
