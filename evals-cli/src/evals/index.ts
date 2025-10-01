@@ -17,7 +17,9 @@ function substituteEnvVars(text: string): string {
   return text.replace(/\{\{([^}]+)\}\}/g, (match, envVarName) => {
     const value = process.env[envVarName.trim()];
     if (value === undefined) {
-      Logger.warn(`Environment variable ${envVarName} not found, keeping placeholder`);
+      Logger.warn(
+        `Environment variable ${envVarName} not found, keeping placeholder`,
+      );
       return match;
     }
     return value;
@@ -68,7 +70,10 @@ evalsCommand
   .description("Run tests against MCP servers")
   .requiredOption("-t, --tests <file>", "Path to tests JSON file")
   .requiredOption("-e, --environment <file>", "Path to environment JSON file")
-  .option("-l, --llms <file>", "Path to LLMs JSON file (optional, auto-detects from env vars)")
+  .option(
+    "-l, --llms <file>",
+    "Path to LLMs JSON file (optional, auto-detects from env vars)",
+  )
   .option("-a, --api-key <key>", "Personal access key")
   .action(async (options) => {
     try {
@@ -94,9 +99,13 @@ evalsCommand
       } else {
         llmsData = autoDetectLLMKeys();
         if (Object.keys(llmsData).length === 0) {
-          Logger.warn("No LLM API keys found in environment. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or OPENROUTER_API_KEY");
+          Logger.warn(
+            "No LLM API keys found in environment. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or OPENROUTER_API_KEY",
+          );
         } else {
-          Logger.info(`Auto-detected LLM keys: ${Object.keys(llmsData).join(", ")}`);
+          Logger.info(
+            `Auto-detected LLM keys: ${Object.keys(llmsData).join(", ")}`,
+          );
         }
       }
 
