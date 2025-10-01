@@ -11,6 +11,10 @@ import { PostHogProvider } from "posthog-js/react";
 import { AuthKitProvider, useAuth } from "@workos-inc/authkit-react";
 import { ConvexReactClient } from "convex/react";
 import { ConvexProviderWithAuthKit } from "@convex-dev/workos";
+import { initSentry } from "./lib/sentry.ts";
+
+// Initialize Sentry before React mounts
+initSentry();
 
 const convexUrl = import.meta.env.VITE_CONVEX_URL as string;
 const workosClientId = import.meta.env.VITE_WORKOS_CLIENT_ID as string;
