@@ -33,31 +33,15 @@ export function SuiteIterationsView({
           </Button>
           <div>
             <h2 className="text-xl font-semibold">
-              Suite started {formatTime(suite.startedAt)}
+              Suite started {formatTime(suite._creationTime)}
             </h2>
             <p className="text-sm text-muted-foreground">
               {aggregate?.totals.passed ?? 0} passed ·{" "}
               {aggregate?.totals.failed ?? 0} failed ·{" "}
               {aggregate?.totals.cancelled ?? 0} cancelled ·
-              {(aggregate?.totals.tokens ?? 0).toLocaleString()} tokens · Result{" "}
-              {suite.result}
+              {(aggregate?.totals.tokens ?? 0).toLocaleString()} tokens
             </p>
           </div>
-        </div>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Badge className="capitalize">{suite.status}</Badge>
-          <Badge
-            className="capitalize"
-            variant={
-              suite.result === "failed"
-                ? "destructive"
-                : suite.result === "passed"
-                  ? "default"
-                  : "outline"
-            }
-          >
-            {suite.result}
-          </Badge>
         </div>
       </div>
 

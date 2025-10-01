@@ -159,7 +159,7 @@ export function validateLlms(value: unknown): LlmsConfig | undefined {
       !isValidLlmApiKey(result.openrouter)
     ) {
       Logger.errorWithExit(
-        "You must provide at least one valid LLM API key in your llms.json file.",
+        "You must provide at least one valid LLM API key in your env",
       );
     }
     return result;
