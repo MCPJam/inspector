@@ -104,7 +104,7 @@ export function useAppState() {
           try {
             const connectionResult = await testConnection(
               result.serverConfig,
-              serverName,
+              serverName
             );
             if (connectionResult.success) {
               dispatch({
@@ -113,9 +113,11 @@ export function useAppState() {
                 config: result.serverConfig,
                 tokens: getStoredTokens(serverName),
               });
-              logger.info("OAuth connection successful", { serverName });
+              logger.info("OAuth connection successful", {
+                serverId: serverName,
+              });
               toast.success(
-                `OAuth connection successful! Connected to ${serverName}.`,
+                `OAuth connection successful! Connected to ${serverName}.`
               );
             } else {
               dispatch({
@@ -126,11 +128,11 @@ export function useAppState() {
                   "Connection test failed after OAuth",
               });
               logger.error("OAuth connection test failed", {
-                serverName,
+                serverId: serverName,
                 error: connectionResult.error,
               });
               toast.error(
-                `OAuth succeeded but connection test failed: ${connectionResult.error}`,
+                `OAuth succeeded but connection test failed: ${connectionResult.error}`
               );
             }
           } catch (connectionError) {
@@ -144,11 +146,11 @@ export function useAppState() {
               error: errorMessage,
             });
             logger.error("OAuth connection test error", {
-              serverName,
+              serverId: serverName,
               error: errorMessage,
             });
             toast.error(
-              `OAuth succeeded but connection test failed: ${errorMessage}`,
+              `OAuth succeeded but connection test failed: ${errorMessage}`
             );
           }
         } else {
@@ -158,10 +160,12 @@ export function useAppState() {
         const errorMessage =
           error instanceof Error ? error.message : "Unknown error";
         toast.error(`Error completing OAuth flow: ${errorMessage}`);
-        logger.error("OAuth callback failed", { error: errorMessage });
+        logger.error("OAuth callback failed", {
+          error: errorMessage,
+        });
       }
     },
-    [logger],
+    [logger]
   );
 
   // Check for OAuth callback completion on mount
@@ -178,7 +182,7 @@ export function useAppState() {
         window.history.replaceState(
           {},
           document.title,
-          window.location.pathname,
+          window.location.pathname
         );
       }
     }
@@ -232,7 +236,7 @@ export function useAppState() {
             if (oauthResult.serverConfig) {
               const connectionResult = await testConnection(
                 oauthResult.serverConfig,
-                formData.name,
+                formData.name
               );
               if (isStaleOp(formData.name, token)) return;
               if (connectionResult.success) {
@@ -251,12 +255,12 @@ export function useAppState() {
                     connectionResult.error || "OAuth connection test failed",
                 });
                 toast.error(
-                  `OAuth succeeded but connection failed: ${connectionResult.error}`,
+                  `OAuth succeeded but connection failed: ${connectionResult.error}`
                 );
               }
             } else {
               toast.success(
-                "OAuth flow initiated. You will be redirected to authorize access.",
+                "OAuth flow initiated. You will be redirected to authorize access."
               );
             }
             return;
@@ -281,7 +285,7 @@ export function useAppState() {
             name: formData.name,
             config: mcpConfig,
           });
-          logger.info("Connection successful", { serverName: formData.name });
+          logger.info("Connection successful", { serverId: formData.name });
           toast.success(`Connected successfully!`);
         } else {
           dispatch({
@@ -290,7 +294,7 @@ export function useAppState() {
             error: result.error || "Connection test failed",
           });
           logger.error("Connection failed", {
-            serverName: formData.name,
+            serverId: formData.name,
             error: result.error,
           });
           toast.error(`Failed to connect to ${formData.name}`);
@@ -305,13 +309,13 @@ export function useAppState() {
           error: errorMessage,
         });
         logger.error("Connection failed", {
-          serverName: formData.name,
+          serverId: formData.name,
           error: errorMessage,
         });
         toast.error(`Network error: ${errorMessage}`);
       }
     },
-    [appState.servers, logger],
+    [appState.servers, logger]
   );
 
   // CLI config processing guard
@@ -337,7 +341,7 @@ export function useAppState() {
                   serverCount: cliConfig.servers.length,
                   autoConnectServer: autoConnectServer || "all",
                   cliConfig: cliConfig,
-                },
+                }
               );
 
               // Add all servers to the UI, but only auto-connect to filtered ones
@@ -371,12 +375,12 @@ export function useAppState() {
                 // Only auto-connect if matches filter (or no filter)
                 if (!autoConnectServer || server.name === autoConnectServer) {
                   logger.info("Auto-connecting to server", {
-                    serverName: server.name,
+                    serverId: server.name,
                   });
                   handleConnect(formData);
                 } else {
                   logger.info("Skipping auto-connect for server", {
-                    serverName: server.name,
+                    serverId: server.name,
                     reason: "filtered out",
                   });
                 }
@@ -411,11 +415,11 @@ export function useAppState() {
       if (!server?.oauthTokens) return null;
       return server.oauthTokens.access_token || null;
     },
-    [appState.servers],
+    [appState.servers]
   );
 
   const handleDisconnect = useCallback(async (serverName: string) => {
-    logger.info("Disconnecting from server", { serverName });
+    logger.info("Disconnecting from server", { serverId: serverName });
     dispatch({ type: "DISCONNECT", name: serverName });
     try {
       const result = await deleteServer(serverName);
@@ -432,14 +436,14 @@ export function useAppState() {
   }, []);
 
   const handleRemoveServer = useCallback(async (serverName: string) => {
-    logger.info("Removing server", { serverName });
+    logger.info("Removing server", { sserverId: serverName });
     clearOAuthData(serverName);
     dispatch({ type: "REMOVE_SERVER", name: serverName });
   }, []);
 
   const handleReconnect = useCallback(
     async (serverName: string) => {
-      logger.info("Reconnecting to server", { serverName });
+      logger.info("Reconnecting to server", { serverId: serverName });
       const server = appState.servers[serverName];
       if (!server) throw new Error(`Server ${serverName} not found`);
 
@@ -461,7 +465,7 @@ export function useAppState() {
         }
         const result = await testConnection(
           authResult.serverConfig,
-          serverName,
+          serverName
         );
         if (isStaleOp(serverName, token)) return;
         if (result.success) {
@@ -471,7 +475,10 @@ export function useAppState() {
             config: authResult.serverConfig,
             tokens: authResult.tokens,
           });
-          logger.info("Reconnection successful", { serverName, result });
+          logger.info("Reconnection successful", {
+            serverId: serverName,
+            result,
+          });
           return { success: true } as const;
         } else {
           dispatch({
@@ -479,7 +486,7 @@ export function useAppState() {
             name: serverName,
             error: result.error || "Connection test failed",
           });
-          logger.error("Reconnection failed", { serverName, result });
+          logger.error("Reconnection failed", { serverId: serverName, result });
           toast.error(`Failed to connect: ${serverName}`);
         }
       } catch (error) {
@@ -492,13 +499,13 @@ export function useAppState() {
           error: errorMessage,
         });
         logger.error("Reconnection failed", {
-          serverName,
+          serverId: serverName,
           error: errorMessage,
         });
         throw error;
       }
     },
-    [appState.servers],
+    [appState.servers]
   );
 
   // Sync with centralized agent status on app startup only
@@ -539,7 +546,7 @@ export function useAppState() {
         : [...current, serverName];
       dispatch({ type: "SET_MULTI_SELECTED", names: next });
     },
-    [appState.selectedMultipleServers],
+    [appState.selectedMultipleServers]
   );
 
   const handleUpdate = useCallback(
@@ -563,7 +570,7 @@ export function useAppState() {
         try {
           const result = await testConnection(
             originalServer.config,
-            originalServerName,
+            originalServerName
           );
           if (result.success) {
             dispatch({
@@ -575,13 +582,13 @@ export function useAppState() {
             return;
           } else {
             console.warn(
-              "OAuth connection test failed, falling back to full reconnect",
+              "OAuth connection test failed, falling back to full reconnect"
             );
           }
         } catch (error) {
           console.warn(
             "OAuth connection test error, falling back to full reconnect",
-            error,
+            error
           );
         }
       }
@@ -595,12 +602,7 @@ export function useAppState() {
         setSelectedServer(formData.name);
       }
     },
-    [
-      appState.servers,
-      appState.selectedServer,
-      handleDisconnect,
-      handleConnect,
-    ],
+    [appState.servers, appState.selectedServer, handleDisconnect, handleConnect]
   );
 
   return {
@@ -622,7 +624,7 @@ export function useAppState() {
         }
         return acc;
       },
-      {} as Record<string, MastraMCPServerDefinition>,
+      {} as Record<string, MastraMCPServerDefinition>
     ),
     isMultiSelectMode: appState.isMultiSelectMode,
 

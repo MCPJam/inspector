@@ -5,6 +5,7 @@ export type LogLevel = "error" | "warn" | "info" | "debug" | "trace";
 
 export type LogContext = "Connections" | "ToolsTab";
 export interface LogEntry {
+  server: string;
   timestamp: string;
   level: LogLevel;
   context: string;
@@ -99,24 +100,32 @@ if (typeof window !== "undefined") {
   });
 }
 
+interface LogData {
+  serverId?: string;
+  [key: string]: unknown;
+}
 export interface Logger {
-  error: (message: string, data?: unknown, error?: Error) => void;
-  warn: (message: string, data?: unknown) => void;
-  info: (message: string, data?: unknown) => void;
-  debug: (message: string, data?: unknown) => void;
-  trace: (message: string, data?: unknown) => void;
+  error: (message: string, data?: LogData, error?: Error) => void;
+  warn: (message: string, data?: LogData) => void;
+  info: (message: string, data?: LogData) => void;
+  debug: (message: string, data?: LogData) => void;
+  trace: (message: string, data?: LogData) => void;
   context: LogContext;
 }
 
 export function useLogger(context: LogContext): Logger {
   const createLogFunction = useCallback(
-    (level: LogLevel) => (message: string, data?: unknown, error?: Error) => {
+    (level: LogLevel) => (message: string, data?: LogData, error?: Error) => {
       if (!loggerState.shouldLog(level)) {
         return;
       }
 
       const timestamp = new Date().toISOString();
+
+      const server = data?.serverId ?? "Unknown";
+
       const entry: LogEntry = {
+        server,
         timestamp,
         level,
         context,

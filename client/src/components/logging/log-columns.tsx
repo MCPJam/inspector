@@ -15,6 +15,17 @@ export const timestampFilterFn: FilterFn<LogEntry> = (
 
 export const columns: ColumnDef<LogEntry>[] = [
   {
+    accessorKey: "server",
+    header: "Server",
+    cell: ({ row }) => {
+      return (
+        <span className="text-muted-foreground font-mono text-xs flex justify-center">
+          {row.getValue("server") ?? "Unknown"}
+        </span>
+      );
+    },
+  },
+  {
     accessorKey: "timestamp",
     header: "Timestamp",
     filterFn: timestampFilterFn,

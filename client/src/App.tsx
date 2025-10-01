@@ -52,11 +52,11 @@ export default function App() {
   useEnsureDbUser();
   const isDebugCallback = useMemo(
     () => window.location.pathname.startsWith("/oauth/callback/debug"),
-    [],
+    []
   );
   const isOAuthCallback = useMemo(
     () => window.location.pathname === "/callback",
-    [],
+    []
   );
 
   const {

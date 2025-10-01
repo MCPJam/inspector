@@ -13,6 +13,7 @@ import { ColumnFiltersState } from "@tanstack/react-table";
 import { LOG_LEVELS, LOG_CONTEXTS } from "@/hooks/use-logger";
 import { Badge } from "@/components/ui/badge";
 import LogDatePicker from "./log-date-picker";
+import { useAppState } from "@/hooks/use-app-state";
 
 interface LogFiltersProps {
   filters: ColumnFiltersState;
@@ -20,6 +21,10 @@ interface LogFiltersProps {
 }
 
 const LogFilters = ({ filters, onFilterUpdate }: LogFiltersProps) => {
+  const {
+    appState: { servers },
+  } = useAppState();
+
   const searchQuery = useMemo(
     () => (filters.find((f) => f.id === "message")?.value as string) || "",
     [filters]
@@ -40,9 +45,12 @@ const LogFilters = ({ filters, onFilterUpdate }: LogFiltersProps) => {
     [filters]
   );
 
-  const timestamps = JSON.parse(timestamp);
+  const server = useMemo(
+    () => (filters.find((f) => f.id === "server")?.value as string) || "all",
+    [filters]
+  );
 
-  console.log(timestamps);
+  const timestamps = JSON.parse(timestamp);
 
   const [openFrom, setOpenFrom] = useState(false);
   const [openTo, setOpenTo] = useState(false);
@@ -89,6 +97,26 @@ const LogFilters = ({ filters, onFilterUpdate }: LogFiltersProps) => {
 
   return (
     <div className="flex items-center gap-2 flex-1">
+      <Select
+        value={server}
+        onValueChange={(value) =>
+          onFilterUpdate("server", value === "all" ? "" : value)
+        }
+      >
+        <SelectTrigger className="w-32">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">All Servers</SelectItem>
+          <SelectItem value="Unknown">Unknown</SelectItem>
+          {Object.keys(servers).map((server) => (
+            <SelectItem key={server} value={server}>
+              {server}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
       <Select
         value={logLevel}
         onValueChange={(value) =>

@@ -18,6 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import LogDetails from "./logging/log-details";
+import { useAppState } from "@/hooks/use-app-state";
 
 export const TracingTab = () => {
   const { entries: data } = useLoggerState();
