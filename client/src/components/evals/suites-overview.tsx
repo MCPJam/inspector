@@ -6,10 +6,7 @@ interface SuitesOverviewProps {
   onSelectSuite: (id: string) => void;
 }
 
-export function SuitesOverview({
-  suites,
-  onSelectSuite,
-}: SuitesOverviewProps) {
+export function SuitesOverview({ suites, onSelectSuite }: SuitesOverviewProps) {
   if (suites.length === 0) {
     return (
       <div className="h-[calc(100vh-220px)] flex items-center justify-center rounded-xl border border-dashed">
@@ -23,8 +20,8 @@ export function SuitesOverview({
     );
   }
 
-  const sortedSuites = [...suites].sort((a, b) =>
-    (b._creationTime || 0) - (a._creationTime || 0)
+  const sortedSuites = [...suites].sort(
+    (a, b) => (b._creationTime || 0) - (a._creationTime || 0),
   );
 
   return (
@@ -48,17 +45,20 @@ export function SuitesOverview({
               >
                 <div>
                   <div className="font-medium">
-                    {new Date(suite._creationTime || 0).toLocaleDateString('en-US', {
-                      month: 'short',
-                      day: 'numeric',
-                      year: 'numeric',
-                      hour: 'numeric',
-                      minute: '2-digit',
-                      hour12: true,
-                    })}
+                    {new Date(suite._creationTime || 0).toLocaleDateString(
+                      "en-US",
+                      {
+                        month: "short",
+                        day: "numeric",
+                        year: "numeric",
+                        hour: "numeric",
+                        minute: "2-digit",
+                        hour12: true,
+                      },
+                    )}
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    {testCount} test{testCount !== 1 ? 's' : ''}
+                    {testCount} test{testCount !== 1 ? "s" : ""}
                   </div>
                 </div>
                 <div className="text-sm text-muted-foreground">

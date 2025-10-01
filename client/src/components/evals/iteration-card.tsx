@@ -38,9 +38,7 @@ export function IterationCard({
           <div className="space-y-1 flex-1">
             <div className="flex items-center gap-2">
               {testCase ? (
-                <div className="font-semibold">
-                  {testCase.title}
-                </div>
+                <div className="font-semibold">{testCase.title}</div>
               ) : (
                 <div className="font-semibold">
                   Iteration #{iteration.iterationNumber}
@@ -53,9 +51,11 @@ export function IterationCard({
               ) : null}
             </div>
             <div className="text-xs text-muted-foreground">
-              {iteration.startedAt ? `Started ${formatTime(iteration.startedAt)}` : 'Not started yet'} · Tokens{" "}
-              {Number(iteration.tokensUsed || 0).toLocaleString()} · Tools{" "}
-              {iteration.actualToolCalls.length}
+              {iteration.startedAt
+                ? `Started ${formatTime(iteration.startedAt)}`
+                : "Not started yet"}{" "}
+              · Tokens {Number(iteration.tokensUsed || 0).toLocaleString()} ·
+              Tools {iteration.actualToolCalls.length}
             </div>
           </div>
         </div>

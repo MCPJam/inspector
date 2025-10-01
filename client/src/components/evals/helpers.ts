@@ -30,7 +30,9 @@ export function aggregateSuite(
     if (!byCaseMap.has(id)) {
       const c = cases.find((x) => x._id === id);
       // Count total iterations for this test case
-      const totalRuns = iterations.filter(iter => iter.testCaseId === id).length;
+      const totalRuns = iterations.filter(
+        (iter) => iter.testCaseId === id,
+      ).length;
       byCaseMap.set(id, {
         testCaseId: id,
         title: c?.title || "Untitled",
