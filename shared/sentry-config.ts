@@ -15,7 +15,6 @@ export const electronSentryConfig = {
 export const serverSentryConfig = {
   ...baseSentryConfig,
   dsn: "https://ec309069e18ebe1d0be9088fa7bf56d9@o4510109778378752.ingest.us.sentry.io/4510112186433536",
-  profilesSampleRate: 0.1, // Server profiling sample rate
 };
 export const clientSentryConfig = {
   ...baseSentryConfig,
