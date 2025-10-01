@@ -218,6 +218,10 @@ export class Logger {
     this.logLine(chalk.blue(`ℹ ${message}`));
   }
 
+  static warn(message: string): void {
+    this.logLine(chalk.yellow(`⚠ ${message}`));
+  }
+
   static success(message: string): void {
     this.logLine(chalk.green(`✓ ${message}`));
   }
