@@ -1,9 +1,9 @@
 /// <reference types="@electron-forge/plugin-vite/forge-vite-env" />
 import * as Sentry from "@sentry/electron/main";
-import { sentryConfig } from "../shared/sentry-config.js";
+import { electronSentryConfig } from "../shared/sentry-config.js";
 
 Sentry.init({
-  ...sentryConfig,
+  ...electronSentryConfig,
   ipcMode: Sentry.IPCMode.Both, // Enables communication with renderer process
 });
 

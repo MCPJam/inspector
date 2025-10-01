@@ -1,5 +1,5 @@
 import * as Sentry from "@sentry/react";
-import { sentryConfig } from "../../../shared/sentry-config";
+import { clientSentryConfig } from "../../../shared/sentry-config";
 
 /**
  * Initialize Sentry for error tracking and session replay.
@@ -7,13 +7,11 @@ import { sentryConfig } from "../../../shared/sentry-config";
  */
 export function initSentry() {
   Sentry.init({
-    ...sentryConfig,
+    ...clientSentryConfig,
     integrations: [
       Sentry.replayIntegration(),
       Sentry.browserTracingIntegration()
     ],
-    replaysSessionSampleRate: 0.1,
-    replaysOnErrorSampleRate: 1.0,
   });
 }
 
