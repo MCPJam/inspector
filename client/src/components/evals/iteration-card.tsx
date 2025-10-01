@@ -37,7 +37,7 @@ export function IterationCard({
             ) : null}
           </div>
           <div className="text-xs text-muted-foreground">
-            Started {formatTime(iteration.startedAt)} · Tokens{" "}
+            {iteration.startedAt ? `Started ${formatTime(iteration.startedAt)}` : 'Not started yet'} · Tokens{" "}
             {Number(iteration.tokensUsed || 0).toLocaleString()} · Tools{" "}
             {iteration.actualToolCalls.length}
           </div>

@@ -1,5 +1,5 @@
 import { useAction } from "convex/react";
-import { Badge } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { useEffect, useState } from "react";
 import { formatTime } from "./helpers";
 import { EvalIteration } from "./types";
