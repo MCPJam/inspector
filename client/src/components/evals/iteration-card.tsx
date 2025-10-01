@@ -15,7 +15,9 @@ export function IterationCard({
   onToggle: () => void;
 }) {
   const isPending =
-    iteration.status === "running" || iteration.result === "pending";
+    iteration.status === "pending" ||
+    iteration.status === "running" ||
+    iteration.result === "pending";
 
   return (
     <div
@@ -25,40 +27,39 @@ export function IterationCard({
         onClick={onToggle}
         className="flex w-full items-center justify-between gap-4 px-4 py-3 text-left hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
       >
-        <div className="space-y-1">
+        <div className="flex items-center gap-4 flex-1">
           <div className="flex items-center gap-2">
-            <div className="font-semibold">
-              Iteration #{iteration.iterationNumber}
-            </div>
-            {testCase ? (
-              <span className="text-xs text-muted-foreground">
-                {testCase.title}
-              </span>
-            ) : null}
-          </div>
-          <div className="text-xs text-muted-foreground">
-            Started {formatTime(iteration.startedAt)} · Tokens{" "}
-            {Number(iteration.tokensUsed || 0).toLocaleString()} · Tools{" "}
-            {iteration.actualToolCalls.length}
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {isPending ? (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            {isPending ? (
               <Clock className="h-4 w-4 text-yellow-500" />
-              <span className="capitalize">{iteration.status}</span>
+            ) : iteration.result === "failed" ? (
+              <XCircle className="h-4 w-4 text-red-600" />
+            ) : (
+              <CheckCircle className="h-4 w-4 text-green-600" />
+            )}
+          </div>
+          <div className="space-y-1 flex-1">
+            <div className="flex items-center gap-2">
+              {testCase ? (
+                <div className="font-semibold">{testCase.title}</div>
+              ) : (
+                <div className="font-semibold">
+                  Iteration #{iteration.iterationNumber}
+                </div>
+              )}
+              {testCase ? (
+                <span className="text-xs text-muted-foreground">
+                  Iteration #{iteration.iterationNumber}
+                </span>
+              ) : null}
             </div>
-          ) : iteration.result === "failed" ? (
-            <div className="flex items-center gap-2 text-xs text-red-600">
-              <XCircle className="h-4 w-4" />
-              <span className="capitalize">{iteration.result}</span>
+            <div className="text-xs text-muted-foreground">
+              {iteration.startedAt
+                ? `Started ${formatTime(iteration.startedAt)}`
+                : "Not started yet"}{" "}
+              · Tokens {Number(iteration.tokensUsed || 0).toLocaleString()} ·
+              Tools {iteration.actualToolCalls.length}
             </div>
-          ) : (
-            <div className="flex items-center gap-2 text-xs text-green-600">
-              <CheckCircle className="h-4 w-4" />
-              <span className="capitalize">{iteration.result}</span>
-            </div>
-          )}
+          </div>
         </div>
       </button>
       {isOpen ? (
