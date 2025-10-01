@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useMutation, useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
+import * as Sentry from "@sentry/react";
 
 /**
  * Ensure the authenticated WorkOS user has a row in Convex `users`.
@@ -17,6 +18,7 @@ export function useEnsureDbUser() {
   useEffect(() => {
     if (!isAuthenticated) {
       lastEnsuredUserIdRef.current = null;
+      Sentry.setUser(null); // Clear Sentry user on logout
     }
   }, [isAuthenticated]);
 
@@ -36,6 +38,8 @@ export function useEnsureDbUser() {
       .then((id: string | null) => {
         // eslint-disable-next-line no-console
         lastEnsuredUserIdRef.current = user.id;
+        // Set Sentry user context for error tracking
+        Sentry.setUser({ id: user.id });
       })
       .catch((err: unknown) => {
         // eslint-disable-next-line no-console
