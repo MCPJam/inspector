@@ -6,6 +6,10 @@ import { Logger } from "../utils/logger.js";
 import { runEvals } from "./runner.js";
 import { hogClient } from "../utils/hog.js";
 import { getUserId } from "../utils/user-id.js";
+import {
+  parseAndTransformConfig,
+  detectConfigFormat,
+} from "../utils/config-transformer.js";
 
 // node dist/index.js evals run -t examples/test-servers.json -e examples/mcp-environment.json
 
@@ -123,7 +127,8 @@ evalsCommand
 
       // Read and parse environment file with env var substitution
       const envContent = await readFile(resolve(options.environment), "utf8");
-      const envData = substituteEnvVarsInObject(JSON.parse(envContent));
+      const transformedConfig = parseAndTransformConfig(envContent);
+      const envData = substituteEnvVarsInObject(transformedConfig);
 
       // Read and parse LLMs file OR auto-detect from environment
       let llmsData: Record<string, string>;
