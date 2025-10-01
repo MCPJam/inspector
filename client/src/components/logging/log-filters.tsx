@@ -27,27 +27,27 @@ const LogFilters = ({ filters, onFilterUpdate }: LogFiltersProps) => {
 
   const searchQuery = useMemo(
     () => (filters.find((f) => f.id === "message")?.value as string) || "",
-    [filters],
+    [filters]
   );
 
   const logLevel = useMemo(
     () => (filters.find((f) => f.id === "level")?.value as string) || "all",
-    [filters],
+    [filters]
   );
 
   const logContext = useMemo(
     () => (filters.find((f) => f.id === "context")?.value as string) || "all",
-    [filters],
+    [filters]
   );
 
   const timestamp = useMemo(
     () => filters.find((f) => f.id === "timestamp")?.value as string,
-    [filters],
+    [filters]
   );
 
   const server = useMemo(
     () => (filters.find((f) => f.id === "server")?.value as string) || "all",
-    [filters],
+    [filters]
   );
 
   const timestamps = JSON.parse(timestamp);
@@ -56,25 +56,25 @@ const LogFilters = ({ filters, onFilterUpdate }: LogFiltersProps) => {
   const [openTo, setOpenTo] = useState(false);
 
   const onDateChange = (key: string, date: Date) => {
-    const updated = new Date(timestamps[key]);
+    const previous = new Date(timestamps[key]);
 
-    updated.setHours(Number(date.getHours()));
-    updated.setMinutes(Number(date.getMinutes()));
-    updated.setSeconds(Number(date.getSeconds()));
+    date.setHours(Number(previous.getHours()));
+    date.setMinutes(Number(previous.getMinutes()));
+    date.setSeconds(Number(previous.getSeconds()));
 
     onFilterUpdate(
       "timestamp",
       JSON.stringify({
         to: timestamps["to"],
         from: timestamps["from"],
-        [key]: updated.getTime(),
-      }),
+        [key]: date.getTime(),
+      })
     );
   };
 
   const onTimeChange = (
     e: React.ChangeEvent<HTMLInputElement>,
-    key: string,
+    key: string
   ) => {
     const updated = new Date(timestamps[key]);
 
@@ -91,7 +91,7 @@ const LogFilters = ({ filters, onFilterUpdate }: LogFiltersProps) => {
         to: timestamps["to"],
         from: timestamps["from"],
         [key]: updated.getTime(),
-      }),
+      })
     );
   };
 
