@@ -1,23 +1,19 @@
 export type EvalSuite = {
   _id: string;
   createdBy: string;
-  status: "running" | "completed" | "failed" | "cancelled";
-  result: "pending" | "passed" | "failed" | "cancelled";
-  startedAt: number;
-  finishedAt?: number;
-  totalTests: number;
-  config: { tests: unknown; environment: unknown; llms: unknown };
+  config: { tests: unknown; environment: unknown };
+  _creationTime?: number; // Convex auto field
 };
 
 export type EvalCase = {
   _id: string;
+  evalTestSuiteId: string;
   createdBy: string;
   title: string;
   query: string;
   provider: string;
   model: string;
-  runs: number;
-  result: "pending" | "passed" | "failed" | "cancelled";
+  _creationTime?: number; // Convex auto field
 };
 
 export type EvalIteration = {
@@ -25,14 +21,15 @@ export type EvalIteration = {
   testCaseId?: string;
   createdBy: string;
   createdAt: number;
-  startedAt: number;
+  startedAt?: number;
   iterationNumber: number;
   updatedAt: number;
   blob?: string;
-  status: "running" | "completed" | "failed" | "cancelled";
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
   result: "pending" | "passed" | "failed" | "cancelled";
   actualToolCalls: string[];
   tokensUsed: number;
+  _creationTime?: number; // Convex auto field
 };
 
 export type SuiteAggregate = {

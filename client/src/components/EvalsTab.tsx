@@ -4,7 +4,7 @@ import { useConvexAuth, useQuery } from "convex/react";
 import { FlaskConical } from "lucide-react";
 import { EmptyState } from "@/components/ui/empty-state";
 import type { EvalCase, EvalIteration, EvalSuite } from "./evals/types";
-import { withinSuiteWindow, aggregateSuite } from "./evals/helpers";
+import { aggregateSuite } from "./evals/helpers";
 import { SuitesOverview } from "./evals/suites-overview";
 import { SuiteIterationsView } from "./evals/suite-iterations-view";
 
@@ -12,44 +12,55 @@ export function EvalsTab() {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const { user } = useAuth();
 
-  // Fetch eval data for authenticated user
-  const enableQueries = isAuthenticated && !!user;
-  const suites = useQuery(
-    "evals:getCurrentUserEvalTestSuites" as any,
-    enableQueries ? ({} as any) : "skip",
-  ) as unknown as EvalSuite[] | undefined;
-  const cases = useQuery(
-    "evals:getCurrentUserEvalTestGroups" as any,
-    enableQueries ? ({} as any) : "skip",
-  ) as unknown as EvalCase[] | undefined;
-  const iterations = useQuery(
-    "evals:getCurrentUserEvalTestIterations" as any,
-    enableQueries ? ({} as any) : "skip",
-  ) as unknown as EvalIteration[] | undefined;
-
-  const isDataLoading =
-    suites === undefined || cases === undefined || iterations === undefined;
-
   const [selectedSuiteId, setSelectedSuiteId] = useState<string | null>(null);
 
+  // Fetch overview data for authenticated user - only suites with metadata
+  const enableOverviewQuery = isAuthenticated && !!user;
+  const overviewData = useQuery(
+    "evals:getCurrentUserEvalTestSuitesWithMetadata" as any,
+    enableOverviewQuery ? ({} as any) : "skip",
+  ) as unknown as
+    | {
+        testSuites: EvalSuite[];
+        metadata: { iterationsPassed: number; iterationsFailed: number };
+      }
+    | undefined;
+
+  // Only fetch suite details when a suite is selected
+  const enableSuiteDetailsQuery =
+    isAuthenticated && !!user && !!selectedSuiteId;
+  const suiteDetails = useQuery(
+    "evals:getAllTestCasesAndIterationsBySuite" as any,
+    enableSuiteDetailsQuery ? ({ suiteId: selectedSuiteId } as any) : "skip",
+  ) as unknown as
+    | { testCases: EvalCase[]; iterations: EvalIteration[] }
+    | undefined;
+
+  const suites = overviewData?.testSuites;
+  const isOverviewLoading = overviewData === undefined;
+  const isSuiteDetailsLoading =
+    enableSuiteDetailsQuery && suiteDetails === undefined;
+
   const selectedSuite = useMemo(() => {
-    if (!selectedSuiteId) return null;
-    return (
-      (suites || []).find((suite) => suite._id === selectedSuiteId) ?? null
-    );
+    if (!selectedSuiteId || !suites) return null;
+    return suites.find((suite) => suite._id === selectedSuiteId) ?? null;
   }, [selectedSuiteId, suites]);
 
   const iterationsForSelectedSuite = useMemo(() => {
-    if (!selectedSuite) return [];
-    return (iterations || [])
-      .filter((iteration) => withinSuiteWindow(iteration, selectedSuite))
-      .sort((a, b) => b.startedAt - a.startedAt);
-  }, [iterations, selectedSuite]);
+    if (!suiteDetails) return [];
+    return [...suiteDetails.iterations].sort(
+      (a, b) => (b.startedAt || b.createdAt) - (a.startedAt || a.createdAt),
+    );
+  }, [suiteDetails]);
 
   const suiteAggregate = useMemo(() => {
-    if (!selectedSuite) return null;
-    return aggregateSuite(selectedSuite, cases || [], iterations || []);
-  }, [selectedSuite, cases, iterations]);
+    if (!selectedSuite || !suiteDetails) return null;
+    return aggregateSuite(
+      selectedSuite,
+      suiteDetails.testCases,
+      suiteDetails.iterations,
+    );
+  }, [selectedSuite, suiteDetails]);
 
   if (isLoading) {
     return (
@@ -77,7 +88,7 @@ export function EvalsTab() {
     );
   }
 
-  if (isDataLoading) {
+  if (isOverviewLoading && enableOverviewQuery) {
     return (
       <div className="p-6">
         <div className="flex items-center justify-center h-64">
@@ -97,20 +108,33 @@ export function EvalsTab() {
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-2">
           <h1 className="text-2xl font-bold">Evals</h1>
+          {overviewData?.metadata && (
+            <div className="text-sm text-muted-foreground">
+              {overviewData.metadata.iterationsPassed} passed ·{" "}
+              {overviewData.metadata.iterationsFailed} failed
+            </div>
+          )}
         </div>
       </div>
 
       {!selectedSuite ? (
         <SuitesOverview
           suites={suites || []}
-          cases={cases || []}
-          iterations={iterations || []}
           onSelectSuite={setSelectedSuiteId}
         />
+      ) : isSuiteDetailsLoading ? (
+        <div className="flex items-center justify-center h-64">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto" />
+            <p className="mt-4 text-muted-foreground">
+              Loading suite details...
+            </p>
+          </div>
+        </div>
       ) : (
         <SuiteIterationsView
           suite={selectedSuite}
-          cases={cases || []}
+          cases={suiteDetails?.testCases || []}
           iterations={iterationsForSelectedSuite}
           aggregate={suiteAggregate}
           onBack={() => setSelectedSuiteId(null)}
