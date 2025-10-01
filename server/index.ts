@@ -1,7 +1,11 @@
+import "./sentry";
+import * as Sentry from "@sentry/node";
+
 import { serve } from "@hono/node-server";
 import dotenv from "dotenv";
 import fixPath from "fix-path";
 import { Hono } from "hono";
+import { HTTPException } from "hono/http-exception";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { serveStatic } from "@hono/node-server/serve-static";
@@ -124,7 +128,19 @@ try {
   fixPath();
 } catch {}
 
-const app = new Hono();
+const app = new Hono().onError((err, c) => {
+  console.error("Unhandled error:", err);
+
+  // Report all unhandled errors to Sentry (including HTTPExceptions)
+  Sentry.captureException(err);
+
+  // Return appropriate response
+  if (err instanceof HTTPException) {
+    return err.getResponse();
+  }
+
+  return c.json({ error: "Internal server error" }, 500);
+});
 
 // Load environment variables early so route handlers can read CONVEX_HTTP_URL
 const envFile =

@@ -29,6 +29,8 @@ export default defineConfig({
     "fix-path",
     "shell-path",
     "execa",
+    // Sentry packages with native modules must remain external
+    "@sentry/node",
   ],
   noExternal: [
     // Force bundling of problematic packages
