@@ -6,7 +6,7 @@ import {
   useReactTable,
 } from "@tanstack/react-table";
 import { useRef, useState, useEffect } from "react";
-import { columns } from "../components/logging/log-columns";
+import { columns, timestampFilterFn } from "../components/logging/log-columns";
 import LogFilters from "./logging/log-filters";
 import { Button } from "./ui/button";
 import { useLoggerState } from "@/hooks/use-logger";
@@ -40,7 +40,17 @@ export const TracingTab = () => {
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  const [filters, setFilters] = useState<ColumnFiltersState>([]);
+  const defaultTimestamp = {
+    from: new Date(new Date().getTime() - 30 * 60 * 1000).getTime(),
+    to: new Date(new Date().getTime()).getTime(),
+  };
+
+  const [filters, setFilters] = useState<ColumnFiltersState>([
+    {
+      id: "timestamp",
+      value: JSON.stringify(defaultTimestamp),
+    },
+  ]);
 
   const onFilterUpdate = (id: string, value: string) => {
     setFilters((prev) =>
@@ -49,7 +59,7 @@ export const TracingTab = () => {
         .concat({
           id,
           value,
-        }),
+        })
     );
   };
 
@@ -61,6 +71,9 @@ export const TracingTab = () => {
     getPaginationRowModel: getPaginationRowModel(),
     state: {
       columnFilters: filters,
+    },
+    filterFns: {
+      timestampFilterFn,
     },
   });
 
@@ -150,7 +163,7 @@ export const TracingTab = () => {
                   <div className="flex items-center justify-center">
                     {flexRender(
                       header.column.columnDef.header,
-                      header.getContext(),
+                      header.getContext()
                     )}
                   </div>
                 </th>

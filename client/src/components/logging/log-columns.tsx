@@ -1,12 +1,23 @@
 import { LogLevelBadge } from "./log-level-badge";
 import { Badge } from "@/components/ui/badge";
-import { ColumnDef } from "@tanstack/react-table";
+import { ColumnDef, FilterFn, Row } from "@tanstack/react-table";
 import { LogEntry } from "@/hooks/use-logger";
+
+export const timestampFilterFn: FilterFn<LogEntry> = (
+  row: Row<LogEntry>,
+  columnId: string,
+  filterValue: any
+) => {
+  const date = new Date(row.getValue(columnId)).getTime();
+  const { from, to } = JSON.parse(filterValue);
+  return date >= from && date <= to;
+};
 
 export const columns: ColumnDef<LogEntry>[] = [
   {
     accessorKey: "timestamp",
     header: "Timestamp",
+    filterFn: timestampFilterFn,
     cell: ({ row }) => {
       return (
         <span className="text-muted-foreground font-mono text-xs flex justify-center">

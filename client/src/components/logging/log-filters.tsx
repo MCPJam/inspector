@@ -35,33 +35,40 @@ const LogFilters = ({ filters, onFilterUpdate }: LogFiltersProps) => {
     [filters]
   );
 
+  const timestamp = useMemo(
+    () => filters.find((f) => f.id === "timestamp")?.value as string,
+    [filters]
+  );
+
+  const timestamps = JSON.parse(timestamp);
+
+  console.log(timestamps);
+
   const [openFrom, setOpenFrom] = useState(false);
   const [openTo, setOpenTo] = useState(false);
-  const [dateFrom, setDateFrom] = useState(
-    new Date(new Date().getTime() - 30 * 60 * 1000)
-  );
-  const [dateTo, setDateTo] = useState(new Date());
 
-  const onDateChange = (
-    value: Date,
-    date: Date,
-    setDate: (value: Date) => void
-  ) => {
-    const updated = new Date(value);
+  const onDateChange = (key: string, date: Date) => {
+    const updated = new Date(timestamps[key]);
 
     updated.setHours(Number(date.getHours()));
     updated.setMinutes(Number(date.getMinutes()));
     updated.setSeconds(Number(date.getSeconds()));
 
-    setDate(updated);
+    onFilterUpdate(
+      "timestamp",
+      JSON.stringify({
+        to: timestamps["to"],
+        from: timestamps["from"],
+        [key]: updated.getTime(),
+      })
+    );
   };
 
   const onTimeChange = (
     e: React.ChangeEvent<HTMLInputElement>,
-    date: Date,
-    setDate: (value: Date) => void
+    key: string
   ) => {
-    const updated = new Date(date);
+    const updated = new Date(timestamps[key]);
 
     const value = e.target.value;
     const [hours, minutes, seconds] = value.split(":");
@@ -70,7 +77,14 @@ const LogFilters = ({ filters, onFilterUpdate }: LogFiltersProps) => {
     updated.setMinutes(Number(minutes));
     updated.setSeconds(Number(seconds));
 
-    setDate(updated);
+    onFilterUpdate(
+      "timestamp",
+      JSON.stringify({
+        to: timestamps["to"],
+        from: timestamps["from"],
+        [key]: updated.getTime(),
+      })
+    );
   };
 
   return (
@@ -124,21 +138,17 @@ const LogFilters = ({ filters, onFilterUpdate }: LogFiltersProps) => {
         <LogDatePicker
           open={openFrom}
           setOpen={setOpenFrom}
-          date={dateFrom}
-          setDate={setDateFrom}
-          onDateChange={(value: Date) =>
-            onDateChange(value, dateFrom, setDateFrom)
-          }
-          onTimeChange={(e) => onTimeChange(e, dateFrom, setDateFrom)}
+          date={new Date(timestamps["from"])}
+          onDateChange={(value: Date) => onDateChange("from", value)}
+          onTimeChange={(e) => onTimeChange(e, "from")}
         />
         to
         <LogDatePicker
           open={openTo}
           setOpen={setOpenTo}
-          date={dateTo}
-          setDate={setDateTo}
-          onDateChange={(value: Date) => onDateChange(value, dateTo, setDateTo)}
-          onTimeChange={(e) => onTimeChange(e, dateTo, setDateTo)}
+          date={new Date(timestamps["to"])}
+          onDateChange={(value: Date) => onDateChange("to", value)}
+          onTimeChange={(e) => onTimeChange(e, "to")}
         />
       </div>
     </div>

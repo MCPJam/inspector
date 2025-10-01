@@ -13,7 +13,6 @@ interface LogDatePickerProps {
   open: boolean;
   setOpen: (value: boolean) => void;
   date: Date;
-  setDate: (value: Date) => void;
   onTimeChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onDateChange: (value: Date) => void;
 }
