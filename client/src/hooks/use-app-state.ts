@@ -104,7 +104,7 @@ export function useAppState() {
           try {
             const connectionResult = await testConnection(
               result.serverConfig,
-              serverName
+              serverName,
             );
             if (connectionResult.success) {
               dispatch({
@@ -117,7 +117,7 @@ export function useAppState() {
                 serverId: serverName,
               });
               toast.success(
-                `OAuth connection successful! Connected to ${serverName}.`
+                `OAuth connection successful! Connected to ${serverName}.`,
               );
             } else {
               dispatch({
@@ -132,7 +132,7 @@ export function useAppState() {
                 error: connectionResult.error,
               });
               toast.error(
-                `OAuth succeeded but connection test failed: ${connectionResult.error}`
+                `OAuth succeeded but connection test failed: ${connectionResult.error}`,
               );
             }
           } catch (connectionError) {
@@ -150,7 +150,7 @@ export function useAppState() {
               error: errorMessage,
             });
             toast.error(
-              `OAuth succeeded but connection test failed: ${errorMessage}`
+              `OAuth succeeded but connection test failed: ${errorMessage}`,
             );
           }
         } else {
@@ -165,7 +165,7 @@ export function useAppState() {
         });
       }
     },
-    [logger]
+    [logger],
   );
 
   // Check for OAuth callback completion on mount
@@ -182,7 +182,7 @@ export function useAppState() {
         window.history.replaceState(
           {},
           document.title,
-          window.location.pathname
+          window.location.pathname,
         );
       }
     }
@@ -236,7 +236,7 @@ export function useAppState() {
             if (oauthResult.serverConfig) {
               const connectionResult = await testConnection(
                 oauthResult.serverConfig,
-                formData.name
+                formData.name,
               );
               if (isStaleOp(formData.name, token)) return;
               if (connectionResult.success) {
@@ -255,12 +255,12 @@ export function useAppState() {
                     connectionResult.error || "OAuth connection test failed",
                 });
                 toast.error(
-                  `OAuth succeeded but connection failed: ${connectionResult.error}`
+                  `OAuth succeeded but connection failed: ${connectionResult.error}`,
                 );
               }
             } else {
               toast.success(
-                "OAuth flow initiated. You will be redirected to authorize access."
+                "OAuth flow initiated. You will be redirected to authorize access.",
               );
             }
             return;
@@ -315,7 +315,7 @@ export function useAppState() {
         toast.error(`Network error: ${errorMessage}`);
       }
     },
-    [appState.servers, logger]
+    [appState.servers, logger],
   );
 
   // CLI config processing guard
@@ -341,7 +341,7 @@ export function useAppState() {
                   serverCount: cliConfig.servers.length,
                   autoConnectServer: autoConnectServer || "all",
                   cliConfig: cliConfig,
-                }
+                },
               );
 
               // Add all servers to the UI, but only auto-connect to filtered ones
@@ -415,7 +415,7 @@ export function useAppState() {
       if (!server?.oauthTokens) return null;
       return server.oauthTokens.access_token || null;
     },
-    [appState.servers]
+    [appState.servers],
   );
 
   const handleDisconnect = useCallback(async (serverName: string) => {
@@ -465,7 +465,7 @@ export function useAppState() {
         }
         const result = await testConnection(
           authResult.serverConfig,
-          serverName
+          serverName,
         );
         if (isStaleOp(serverName, token)) return;
         if (result.success) {
@@ -505,7 +505,7 @@ export function useAppState() {
         throw error;
       }
     },
-    [appState.servers]
+    [appState.servers],
   );
 
   // Sync with centralized agent status on app startup only
@@ -546,7 +546,7 @@ export function useAppState() {
         : [...current, serverName];
       dispatch({ type: "SET_MULTI_SELECTED", names: next });
     },
-    [appState.selectedMultipleServers]
+    [appState.selectedMultipleServers],
   );
 
   const handleUpdate = useCallback(
@@ -570,7 +570,7 @@ export function useAppState() {
         try {
           const result = await testConnection(
             originalServer.config,
-            originalServerName
+            originalServerName,
           );
           if (result.success) {
             dispatch({
@@ -582,13 +582,13 @@ export function useAppState() {
             return;
           } else {
             console.warn(
-              "OAuth connection test failed, falling back to full reconnect"
+              "OAuth connection test failed, falling back to full reconnect",
             );
           }
         } catch (error) {
           console.warn(
             "OAuth connection test error, falling back to full reconnect",
-            error
+            error,
           );
         }
       }
@@ -602,7 +602,12 @@ export function useAppState() {
         setSelectedServer(formData.name);
       }
     },
-    [appState.servers, appState.selectedServer, handleDisconnect, handleConnect]
+    [
+      appState.servers,
+      appState.selectedServer,
+      handleDisconnect,
+      handleConnect,
+    ],
   );
 
   return {
@@ -624,7 +629,7 @@ export function useAppState() {
         }
         return acc;
       },
-      {} as Record<string, MastraMCPServerDefinition>
+      {} as Record<string, MastraMCPServerDefinition>,
     ),
     isMultiSelectMode: appState.isMultiSelectMode,
 

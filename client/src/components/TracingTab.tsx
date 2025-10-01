@@ -60,7 +60,7 @@ export const TracingTab = () => {
         .concat({
           id,
           value,
-        })
+        }),
     );
   };
 
@@ -164,7 +164,7 @@ export const TracingTab = () => {
                   <div className="flex items-center justify-center">
                     {flexRender(
                       header.column.columnDef.header,
-                      header.getContext()
+                      header.getContext(),
                     )}
                   </div>
                 </th>

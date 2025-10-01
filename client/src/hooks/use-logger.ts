@@ -142,7 +142,7 @@ export function useLogger(context: LogContext): Logger {
         outputToConsole(entry);
       }
     },
-    [context]
+    [context],
   );
 
   const logger = useMemo(
@@ -154,7 +154,7 @@ export function useLogger(context: LogContext): Logger {
       trace: createLogFunction("trace"),
       context,
     }),
-    [createLogFunction, context]
+    [createLogFunction, context],
   );
 
   return logger;

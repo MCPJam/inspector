@@ -6,7 +6,7 @@ import { LogEntry } from "@/hooks/use-logger";
 export const timestampFilterFn: FilterFn<LogEntry> = (
   row: Row<LogEntry>,
   columnId: string,
-  filterValue: any
+  filterValue: any,
 ) => {
   const date = new Date(row.getValue(columnId)).getTime();
   const { from, to } = JSON.parse(filterValue);
