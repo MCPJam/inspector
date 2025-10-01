@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { readFile } from "fs/promises";
 import { resolve } from "path";
+import { config as loadDotenv } from "dotenv";
 import { Logger } from "../utils/logger.js";
 import { runEvals } from "./runner.js";
 import { hogClient } from "../utils/hog.js";
@@ -12,18 +13,29 @@ export const evalsCommand = new Command("evals");
 
 /**
  * Substitutes {{ENV_VAR}} placeholders in a string with actual environment variable values
+ * Throws an error if any required environment variable is not found
  */
 function substituteEnvVars(text: string): string {
-  return text.replace(/\{\{([^}]+)\}\}/g, (match, envVarName) => {
-    const value = process.env[envVarName.trim()];
+  const missingVars: string[] = [];
+
+  const result = text.replace(/\{\{([^}]+)\}\}/g, (match, envVarName) => {
+    const trimmedName = envVarName.trim();
+    const value = process.env[trimmedName];
     if (value === undefined) {
-      Logger.warn(
-        `Environment variable ${envVarName} not found, keeping placeholder`,
-      );
+      missingVars.push(trimmedName);
       return match;
     }
     return value;
   });
+
+  if (missingVars.length > 0) {
+    const varList = missingVars.map((v) => `  - ${v}`).join("\n");
+    throw new Error(
+      `Missing required environment variables:\n${varList}\n\nPlease set these variables in your .env file or environment.`,
+    );
+  }
+
+  return result;
 }
 
 /**
@@ -74,9 +86,31 @@ evalsCommand
     "-l, --llms <file>",
     "Path to LLMs JSON file (optional, auto-detects from env vars)",
   )
+  .option(
+    "--env-file <file>",
+    "Path to .env file (default: .env in current directory)",
+  )
   .option("-a, --api-key <key>", "Personal access key")
   .action(async (options) => {
     try {
+      // Load .env file if specified, otherwise try to load from current directory
+      const envFilePath = options.envFile
+        ? resolve(options.envFile)
+        : undefined;
+      const dotenvResult = loadDotenv({ path: envFilePath });
+
+      if (dotenvResult.error && options.envFile) {
+        // Only warn if user explicitly specified an env file that doesn't exist
+        Logger.warn(`Could not load env file: ${options.envFile}`);
+      } else if (!dotenvResult.error && dotenvResult.parsed) {
+        const loadedKeys = Object.keys(dotenvResult.parsed);
+        if (loadedKeys.length > 0) {
+          Logger.info(
+            `Loaded ${loadedKeys.length} variables from ${envFilePath || ".env"}`,
+          );
+        }
+      }
+
       hogClient.capture({
         distinctId: getUserId(),
         event: "evals cli ran",
