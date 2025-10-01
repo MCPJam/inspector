@@ -5,9 +5,9 @@ import { formatTime } from "./helpers";
 import { EvalIteration } from "./types";
 
 export function IterationDetails({ iteration }: { iteration: EvalIteration }) {
-  const getBlob = useAction("evals:getEvalTestBlob" as any) as unknown as (args: {
-    blobId: string;
-  }) => Promise<any>;
+  const getBlob = useAction(
+    "evals:getEvalTestBlob" as any,
+  ) as unknown as (args: { blobId: string }) => Promise<any>;
 
   const [blob, setBlob] = useState<any>(null);
   const [loading, setLoading] = useState(false);

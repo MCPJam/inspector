@@ -22,12 +22,13 @@ export function EvalsTab() {
   ) as unknown as
     | {
         testSuites: EvalSuite[];
-        metadata: { iterationsPassed: number; iterationsFailed: number }
+        metadata: { iterationsPassed: number; iterationsFailed: number };
       }
     | undefined;
 
   // Only fetch suite details when a suite is selected
-  const enableSuiteDetailsQuery = isAuthenticated && !!user && !!selectedSuiteId;
+  const enableSuiteDetailsQuery =
+    isAuthenticated && !!user && !!selectedSuiteId;
   const suiteDetails = useQuery(
     "evals:getAllTestCasesAndIterationsBySuite" as any,
     enableSuiteDetailsQuery ? ({ suiteId: selectedSuiteId } as any) : "skip",
@@ -37,7 +38,8 @@ export function EvalsTab() {
 
   const suites = overviewData?.testSuites;
   const isOverviewLoading = overviewData === undefined;
-  const isSuiteDetailsLoading = enableSuiteDetailsQuery && suiteDetails === undefined;
+  const isSuiteDetailsLoading =
+    enableSuiteDetailsQuery && suiteDetails === undefined;
 
   const selectedSuite = useMemo(() => {
     if (!selectedSuiteId || !suites) return null;
@@ -46,8 +48,8 @@ export function EvalsTab() {
 
   const iterationsForSelectedSuite = useMemo(() => {
     if (!suiteDetails) return [];
-    return [...suiteDetails.iterations].sort((a, b) =>
-      (b.startedAt || b.createdAt) - (a.startedAt || a.createdAt)
+    return [...suiteDetails.iterations].sort(
+      (a, b) => (b.startedAt || b.createdAt) - (a.startedAt || a.createdAt),
     );
   }, [suiteDetails]);
 
@@ -56,7 +58,7 @@ export function EvalsTab() {
     return aggregateSuite(
       selectedSuite,
       suiteDetails.testCases,
-      suiteDetails.iterations
+      suiteDetails.iterations,
     );
   }, [selectedSuite, suiteDetails]);
 
@@ -108,7 +110,8 @@ export function EvalsTab() {
           <h1 className="text-2xl font-bold">Evals</h1>
           {overviewData?.metadata && (
             <div className="text-sm text-muted-foreground">
-              {overviewData.metadata.iterationsPassed} passed · {overviewData.metadata.iterationsFailed} failed
+              {overviewData.metadata.iterationsPassed} passed ·{" "}
+              {overviewData.metadata.iterationsFailed} failed
             </div>
           )}
         </div>
