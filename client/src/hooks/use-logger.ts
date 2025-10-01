@@ -3,6 +3,7 @@ import Denque from "denque";
 
 export type LogLevel = "error" | "warn" | "info" | "debug" | "trace";
 
+export type LogContext = "Connections" | "ToolsTab";
 export interface LogEntry {
   timestamp: string;
   level: LogLevel;
@@ -17,6 +18,8 @@ export interface LoggerConfig {
   enableConsole: boolean;
   maxBufferSize: number;
 }
+
+export const LOG_CONTEXTS: LogContext[] = ["Connections", "ToolsTab"];
 
 export const LOG_LEVELS: Record<LogLevel, number> = {
   error: 0,
@@ -102,10 +105,10 @@ export interface Logger {
   info: (message: string, data?: unknown) => void;
   debug: (message: string, data?: unknown) => void;
   trace: (message: string, data?: unknown) => void;
-  context: string;
+  context: LogContext;
 }
 
-export function useLogger(context: string = "Unknown"): Logger {
+export function useLogger(context: LogContext): Logger {
   const createLogFunction = useCallback(
     (level: LogLevel) => (message: string, data?: unknown, error?: Error) => {
       if (!loggerState.shouldLog(level)) {
@@ -130,7 +133,7 @@ export function useLogger(context: string = "Unknown"): Logger {
         outputToConsole(entry);
       }
     },
-    [context],
+    [context]
   );
 
   const logger = useMemo(
@@ -142,7 +145,7 @@ export function useLogger(context: string = "Unknown"): Logger {
       trace: createLogFunction("trace"),
       context,
     }),
-    [createLogFunction, context],
+    [createLogFunction, context]
   );
 
   return logger;

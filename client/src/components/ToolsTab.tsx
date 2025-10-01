@@ -74,7 +74,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   >(undefined);
   const [unstructuredValidationResult, setUnstructuredValidationResult] =
     useState<"not_applicable" | "valid" | "invalid_json" | "schema_mismatch">(
-      "not_applicable",
+      "not_applicable"
     );
   const [loading, setLoading] = useState(false);
   const [fetchingTools, setFetchingTools] = useState(false);
@@ -175,7 +175,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       logger.error(
         "Tools fetch network error",
         { error: errorMsg },
-        err instanceof Error ? err : undefined,
+        err instanceof Error ? err : undefined
       );
       setError("Network error fetching tools");
     } finally {
@@ -190,8 +190,8 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   const updateFieldValue = (fieldName: string, value: any) => {
     setFormFields((prev) =>
       prev.map((field) =>
-        field.name === fieldName ? { ...field, value } : field,
-      ),
+        field.name === fieldName ? { ...field, value } : field
+      )
     );
   };
 
@@ -241,7 +241,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         setResult(result);
         if (result?.structuredContent) {
           setStructuredResult(
-            result.structuredContent as Record<string, unknown>,
+            result.structuredContent as Record<string, unknown>
           );
           setShowStructured(true);
         }
@@ -262,7 +262,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
             validationReport.unstructuredStatus === "schema_mismatch"
           ) {
             logger.warn(
-              `Validation failed for raw content: ${validationReport.unstructuredStatus}`,
+              `Validation failed for raw content: ${validationReport.unstructuredStatus}`
             );
           }
         }
@@ -284,7 +284,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
           toolName: selectedTool,
           error: errorMsg,
         },
-        err instanceof Error ? err : undefined,
+        err instanceof Error ? err : undefined
       );
       setError("Error executing tool");
     } finally {
@@ -329,7 +329,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
 
   const handleElicitationResponse = async (
     action: "accept" | "decline" | "cancel",
-    parameters?: Record<string, any>,
+    parameters?: Record<string, any>
   ) => {
     if (!elicitationRequest) {
       logger.warn("Cannot handle elicitation response: no active request");
@@ -353,7 +353,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
 
       const data = await respondToElicitationApi(
         elicitationRequest.requestId,
-        responseData,
+        responseData
       );
       if (data.status === "completed") {
         // Show final result
@@ -362,7 +362,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         setResult(result);
         if (result?.structuredContent) {
           setStructuredResult(
-            result.structuredContent as Record<string, unknown>,
+            result.structuredContent as Record<string, unknown>
           );
           setShowStructured(true);
         }
@@ -394,7 +394,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
           action,
           error: errorMsg,
         },
-        err instanceof Error ? err : undefined,
+        err instanceof Error ? err : undefined
       );
       setError("Error responding to elicitation request");
     } finally {
