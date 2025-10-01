@@ -128,20 +128,19 @@ try {
   fixPath();
 } catch {}
 
-const app = new Hono()
-  .onError((err, c) => {
-    console.error("Unhandled error:", err);
+const app = new Hono().onError((err, c) => {
+  console.error("Unhandled error:", err);
 
-    // Report all unhandled errors to Sentry (including HTTPExceptions)
-    Sentry.captureException(err);
+  // Report all unhandled errors to Sentry (including HTTPExceptions)
+  Sentry.captureException(err);
 
-    // Return appropriate response
-    if (err instanceof HTTPException) {
-      return err.getResponse();
-    }
+  // Return appropriate response
+  if (err instanceof HTTPException) {
+    return err.getResponse();
+  }
 
-    return c.json({ error: "Internal server error" }, 500);
-  });
+  return c.json({ error: "Internal server error" }, 500);
+});
 
 // Load environment variables early so route handlers can read CONVEX_HTTP_URL
 const envFile =

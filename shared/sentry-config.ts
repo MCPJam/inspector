@@ -4,8 +4,8 @@ const baseSentryConfig = {
   tracesSampleRate: 0.1,
   tracePropagationTargets: [
     "localhost",
-    /^\//,  // All relative URLs (includes /api/*, /sse/message, /health, etc.)
-    /^https?:\/\/[^/]*\.convex\.(cloud|site)/,  // Convex backend
+    /^\//, // All relative URLs (includes /api/*, /sse/message, /health, etc.)
+    /^https?:\/\/[^/]*\.convex\.(cloud|site)/, // Convex backend
   ],
 };
 

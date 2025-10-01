@@ -10,8 +10,7 @@ export function initSentry() {
     ...clientSentryConfig,
     integrations: [
       Sentry.replayIntegration(),
-      Sentry.browserTracingIntegration()
+      Sentry.browserTracingIntegration(),
     ],
   });
 }
-
