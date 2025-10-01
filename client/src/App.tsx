@@ -37,6 +37,18 @@ export default function App() {
   // Automatically identify users in PostHog when they log in/out
   usePostHogIdentify();
 
+function ErrorButton() {
+  return (
+    <button
+      onClick={() => {
+        throw new Error('This is your first error!');
+      }}
+    >
+      Break the world
+    </button>
+  );
+}
+
   // Capture app launch event once on mount
   useEffect(() => {
     posthog.capture("app_launched", {
@@ -147,6 +159,7 @@ export default function App() {
               </div>
               <div className="flex items-center gap-2">
                 <AuthUpperArea />
+                <ErrorButton />
               </div>
             </div>
           </header>
