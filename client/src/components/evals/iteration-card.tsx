@@ -15,7 +15,9 @@ export function IterationCard({
   onToggle: () => void;
 }) {
   const isPending =
-    iteration.status === "running" || iteration.result === "pending";
+    iteration.status === "pending" ||
+    iteration.status === "running" ||
+    iteration.result === "pending";
 
   return (
     <div
