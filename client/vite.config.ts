@@ -1,3 +1,4 @@
+import { sentryVitePlugin } from "@sentry/vite-plugin";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
@@ -6,7 +7,16 @@ import tailwindcss from "@tailwindcss/vite";
 // https://vitejs.dev/config/
 export default defineConfig({
   envDir: "..",
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), sentryVitePlugin({
+    org: "mcpjam-gh",
+    project: "inspector-client",
+    authToken: process.env.SENTRY_AUTH_TOKEN,
+    telemetry: false,
+    sourcemaps: {
+      assets: ["../dist/client/assets/**"],
+      filesToDeleteAfterUpload: ["../dist/client/assets/**/*.map"]
+    }
+  })],
   resolve: {
     alias: {
       "@/shared": path.resolve(__dirname, "../shared"),
