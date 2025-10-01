@@ -5,9 +5,9 @@ import { formatTime } from "./helpers";
 import { EvalIteration } from "./types";
 
 export function IterationDetails({ iteration }: { iteration: EvalIteration }) {
-  const getBlob = useAction(
-    "evals:getEvalTestBlob" as any,
-  ) as unknown as (args: { blobId: string }) => Promise<any>;
+  const getBlob = useAction("evals:getEvalTestBlob" as any) as unknown as (args: {
+    blobId: string;
+  }) => Promise<any>;
 
   const [blob, setBlob] = useState<any>(null);
   const [loading, setLoading] = useState(false);
@@ -18,6 +18,8 @@ export function IterationDetails({ iteration }: { iteration: EvalIteration }) {
     async function run() {
       if (!iteration.blob) {
         setBlob(null);
+        setLoading(false);
+        setError(null);
         return;
       }
       setLoading(true);
@@ -26,7 +28,10 @@ export function IterationDetails({ iteration }: { iteration: EvalIteration }) {
         const data = await getBlob({ blobId: iteration.blob });
         if (!cancelled) setBlob(data);
       } catch (e: any) {
-        if (!cancelled) setError("Failed to load blob");
+        if (!cancelled) {
+          setError(e?.message || "Failed to load blob");
+          console.error("Blob load error:", e);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
