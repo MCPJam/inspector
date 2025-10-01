@@ -14,17 +14,17 @@ export function EvalsTab() {
 
   // Fetch eval data for authenticated user
   const enableQueries = isAuthenticated && !!user;
-  const suites = isAuthenticated && useQuery(
+  const suites = useQuery(
     "evals:getCurrentUserEvalTestSuites" as any,
-    enableQueries ? ({} as any) : (undefined as any),
+    enableQueries ? ({} as any) : "skip",
   ) as unknown as EvalSuite[] | undefined;
-  const cases = isAuthenticated && useQuery(
+  const cases = useQuery(
     "evals:getCurrentUserEvalTestGroups" as any,
-    enableQueries ? ({} as any) : (undefined as any),
+    enableQueries ? ({} as any) : "skip",
   ) as unknown as EvalCase[] | undefined;
-  const iterations = isAuthenticated && useQuery(
+  const iterations = useQuery(
     "evals:getCurrentUserEvalTestIterations" as any,
-    enableQueries ? ({} as any) : (undefined as any),
+    enableQueries ? ({} as any) : "skip",
   ) as unknown as EvalIteration[] | undefined;
 
   const isDataLoading =
