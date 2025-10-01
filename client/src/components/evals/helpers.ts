@@ -4,22 +4,13 @@ export function formatTime(ts?: number) {
   return ts ? new Date(ts).toLocaleString() : "—";
 }
 
-export function withinSuiteWindow(
-  it: EvalIteration,
-  suite: EvalSuite,
-): boolean {
-  const started = suite.startedAt ?? 0;
-  const finished = suite.finishedAt ?? Number.MAX_SAFE_INTEGER;
-  return it.startedAt >= started && it.startedAt <= finished;
-}
-
 export function aggregateSuite(
   suite: EvalSuite,
   cases: EvalCase[],
   iterations: EvalIteration[],
 ): SuiteAggregate {
-  const filtered = iterations.filter((it) => withinSuiteWindow(it, suite));
-  const totals = filtered.reduce(
+  // Backend already filters iterations by suite, so we use them directly
+  const totals = iterations.reduce(
     (acc, it) => {
       if (it.status === "running" || it.result === "pending") {
         // skip counting while in-flight
@@ -33,17 +24,19 @@ export function aggregateSuite(
   );
 
   const byCaseMap = new Map<string, SuiteAggregate["byCase"][number]>();
-  for (const it of filtered) {
+  for (const it of iterations) {
     const id = it.testCaseId;
     if (!id) continue;
     if (!byCaseMap.has(id)) {
       const c = cases.find((x) => x._id === id);
+      // Count total iterations for this test case
+      const totalRuns = iterations.filter(iter => iter.testCaseId === id).length;
       byCaseMap.set(id, {
         testCaseId: id,
         title: c?.title || "Untitled",
         provider: c?.provider || "",
         model: c?.model || "",
-        runs: c?.runs || 0,
+        runs: totalRuns,
         passed: 0,
         failed: 0,
         cancelled: 0,
@@ -60,7 +53,7 @@ export function aggregateSuite(
   }
 
   return {
-    filteredIterations: filtered,
+    filteredIterations: iterations,
     totals,
     byCase: Array.from(byCaseMap.values()),
   };
