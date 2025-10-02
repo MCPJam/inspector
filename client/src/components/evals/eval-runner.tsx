@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Plus, X } from "lucide-react";
 import { toast } from "sonner";
 import { useConvexAuth } from "convex/react";
@@ -63,6 +63,13 @@ export function EvalRunner({
   const connectedServers = Object.entries(appState.servers).filter(
     ([, server]) => server.connectionStatus === "connected",
   );
+
+  // Sync selectedModel when availableModels loads
+  useEffect(() => {
+    if (!selectedModel && availableModels.length > 0) {
+      setSelectedModel(availableModels[0]);
+    }
+  }, [availableModels, selectedModel]);
 
   const handleAddTestCase = () => {
     setTestCases([
