@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
+import { usePostHog } from "posthog-js/react";
 import { ChatMessage, ChatState, Attachment } from "@/lib/chat-types";
 import { createMessage } from "@/lib/chat-utils";
 import { Model, ModelDefinition, SUPPORTED_MODELS } from "@/shared/types.js";
@@ -32,6 +33,7 @@ interface UseChatOptions {
 
 export function useChat(options: UseChatOptions = {}) {
   const { getToken, hasToken, tokens, getOllamaBaseUrl } = useAiProviderKeys();
+  const posthog = usePostHog();
 
   const {
     initialMessages = [],
@@ -71,6 +73,10 @@ export function useChat(options: UseChatOptions = {}) {
       const { isRunning, availableModels } =
         await detectOllamaModels(getOllamaBaseUrl());
       setIsOllamaRunning(isRunning);
+
+      if (isRunning) {
+        posthog.capture("ollama_running");
+      }
 
       const toolCapableModels = isRunning
         ? await detectOllamaToolCapableModels(getOllamaBaseUrl())
