@@ -113,7 +113,9 @@ export function useAppState() {
                 config: result.serverConfig,
                 tokens: getStoredTokens(serverName),
               });
-              logger.info("OAuth connection successful", { serverName });
+              logger.info("OAuth connection successful", {
+                serverId: serverName,
+              });
               toast.success(
                 `OAuth connection successful! Connected to ${serverName}.`,
               );
@@ -126,7 +128,7 @@ export function useAppState() {
                   "Connection test failed after OAuth",
               });
               logger.error("OAuth connection test failed", {
-                serverName,
+                serverId: serverName,
                 error: connectionResult.error,
               });
               toast.error(
@@ -144,7 +146,7 @@ export function useAppState() {
               error: errorMessage,
             });
             logger.error("OAuth connection test error", {
-              serverName,
+              serverId: serverName,
               error: errorMessage,
             });
             toast.error(
@@ -158,7 +160,9 @@ export function useAppState() {
         const errorMessage =
           error instanceof Error ? error.message : "Unknown error";
         toast.error(`Error completing OAuth flow: ${errorMessage}`);
-        logger.error("OAuth callback failed", { error: errorMessage });
+        logger.error("OAuth callback failed", {
+          error: errorMessage,
+        });
       }
     },
     [logger],
@@ -281,7 +285,7 @@ export function useAppState() {
             name: formData.name,
             config: mcpConfig,
           });
-          logger.info("Connection successful", { serverName: formData.name });
+          logger.info("Connection successful", { serverId: formData.name });
           toast.success(`Connected successfully!`);
         } else {
           dispatch({
@@ -290,7 +294,7 @@ export function useAppState() {
             error: result.error || "Connection test failed",
           });
           logger.error("Connection failed", {
-            serverName: formData.name,
+            serverId: formData.name,
             error: result.error,
           });
           toast.error(`Failed to connect to ${formData.name}`);
@@ -305,7 +309,7 @@ export function useAppState() {
           error: errorMessage,
         });
         logger.error("Connection failed", {
-          serverName: formData.name,
+          serverId: formData.name,
           error: errorMessage,
         });
         toast.error(`Network error: ${errorMessage}`);
@@ -371,12 +375,12 @@ export function useAppState() {
                 // Only auto-connect if matches filter (or no filter)
                 if (!autoConnectServer || server.name === autoConnectServer) {
                   logger.info("Auto-connecting to server", {
-                    serverName: server.name,
+                    serverId: server.name,
                   });
                   handleConnect(formData);
                 } else {
                   logger.info("Skipping auto-connect for server", {
-                    serverName: server.name,
+                    serverId: server.name,
                     reason: "filtered out",
                   });
                 }
@@ -415,7 +419,7 @@ export function useAppState() {
   );
 
   const handleDisconnect = useCallback(async (serverName: string) => {
-    logger.info("Disconnecting from server", { serverName });
+    logger.info("Disconnecting from server", { serverId: serverName });
     dispatch({ type: "DISCONNECT", name: serverName });
     try {
       const result = await deleteServer(serverName);
@@ -432,14 +436,14 @@ export function useAppState() {
   }, []);
 
   const handleRemoveServer = useCallback(async (serverName: string) => {
-    logger.info("Removing server", { serverName });
+    logger.info("Removing server", { sserverId: serverName });
     clearOAuthData(serverName);
     dispatch({ type: "REMOVE_SERVER", name: serverName });
   }, []);
 
   const handleReconnect = useCallback(
     async (serverName: string) => {
-      logger.info("Reconnecting to server", { serverName });
+      logger.info("Reconnecting to server", { serverId: serverName });
       const server = appState.servers[serverName];
       if (!server) throw new Error(`Server ${serverName} not found`);
 
@@ -471,7 +475,10 @@ export function useAppState() {
             config: authResult.serverConfig,
             tokens: authResult.tokens,
           });
-          logger.info("Reconnection successful", { serverName, result });
+          logger.info("Reconnection successful", {
+            serverId: serverName,
+            result,
+          });
           return { success: true } as const;
         } else {
           dispatch({
@@ -479,7 +486,7 @@ export function useAppState() {
             name: serverName,
             error: result.error || "Connection test failed",
           });
-          logger.error("Reconnection failed", { serverName, result });
+          logger.error("Reconnection failed", { serverId: serverName, result });
           toast.error(`Failed to connect: ${serverName}`);
         }
       } catch (error) {
@@ -492,7 +499,7 @@ export function useAppState() {
           error: errorMessage,
         });
         logger.error("Reconnection failed", {
-          serverName,
+          serverId: serverName,
           error: errorMessage,
         });
         throw error;
