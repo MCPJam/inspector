@@ -57,6 +57,18 @@ export function IterationDetails({ iteration }: { iteration: EvalIteration }) {
         <div>Tokens {Number(iteration.tokensUsed || 0).toLocaleString()}</div>
         <div>Tool calls {iteration.actualToolCalls.length}</div>
       </div>
+      {iteration.actualToolCalls.length > 0 && (
+        <div className="space-y-1">
+          <div className="text-sm font-semibold">Tools called:</div>
+          <div className="flex flex-wrap gap-1.5">
+            {iteration.actualToolCalls.map((tool, idx) => (
+              <Badge key={idx} variant="secondary" className="font-mono text-xs">
+                {tool}
+              </Badge>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="rounded-md border bg-muted/40 p-3">
         {loading ? (
           <div className="text-sm text-muted-foreground">Loading blob…</div>
