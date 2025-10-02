@@ -1,8 +1,10 @@
 import { MCPClient, MCPClientOptions } from "@mastra/mcp";
 import { streamText, Tool, ToolChoice, ModelMessage, LanguageModel } from "ai";
+import { ConvexHttpClient } from "convex/browser";
 import { getUserIdFromApiKeyOrNull } from "../db/user";
 import {
   createRunRecorder,
+  createRunRecorderWithAuth,
   type SuiteConfig,
   type RunRecorder,
   type UsageTotals,
@@ -304,10 +306,15 @@ export const runEvals = async (
   llms: unknown,
   apiKey?: string,
 ) => {
+  Logger.info("[runEvals] Starting eval suite with API key authentication");
   await ensureApiKeyIsValid(apiKey);
 
   const { validatedTests, validatedLlms, vercelTools, serverNames } =
     await prepareSuite(tests, environment, llms);
+
+  Logger.info(
+    `[runEvals] Suite prepared: ${validatedTests.length} tests, ${serverNames.length} servers`,
+  );
 
   const suiteStartedAt = Date.now();
   const suiteConfig: SuiteConfig = {
@@ -326,6 +333,67 @@ export const runEvals = async (
     if (!test) {
       continue;
     }
+    Logger.info(`[runEvals] Running test ${index + 1}/${validatedTests.length}: ${test.title}`);
+    const { passedRuns: casePassed, failedRuns: caseFailed } =
+      await runTestCase({
+        test,
+        testIndex: index + 1,
+        llms: validatedLlms,
+        tools: vercelTools,
+        recorder,
+      });
+    passedRuns += casePassed;
+    failedRuns += caseFailed;
+  }
+  hogClient.capture({
+    distinctId: getUserId(),
+    event: "evals suite complete",
+    properties: {
+      environment: process.env.ENVIRONMENT,
+    },
+  });
+  Logger.suiteComplete({
+    durationMs: Date.now() - suiteStartedAt,
+    passed: passedRuns,
+    failed: failedRuns,
+  });
+};
+
+export const runEvalsWithAuth = async (
+  tests: unknown,
+  environment: unknown,
+  llms: unknown,
+  convexClient: ConvexHttpClient,
+) => {
+  Logger.info("[runEvalsWithAuth] Starting eval suite with session authentication");
+
+  const { validatedTests, validatedLlms, vercelTools, serverNames } =
+    await prepareSuite(tests, environment, llms);
+
+  Logger.info(
+    `[runEvalsWithAuth] Suite prepared: ${validatedTests.length} tests, ${serverNames.length} servers`,
+  );
+
+  const suiteStartedAt = Date.now();
+  const suiteConfig: SuiteConfig = {
+    tests: validatedTests,
+    environment: { servers: serverNames },
+  };
+
+  const recorder = createRunRecorderWithAuth(convexClient, suiteConfig);
+  await recorder.ensureSuite();
+
+  let passedRuns = 0;
+  let failedRuns = 0;
+
+  for (let index = 0; index < validatedTests.length; index++) {
+    const test = validatedTests[index];
+    if (!test) {
+      continue;
+    }
+    Logger.info(
+      `[runEvalsWithAuth] Running test ${index + 1}/${validatedTests.length}: ${test.title}`,
+    );
     const { passedRuns: casePassed, failedRuns: caseFailed } =
       await runTestCase({
         test,
