@@ -9,7 +9,7 @@ import {
   DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
-import { ModelDefinition, ModelProvider } from "@/shared/types.js";
+import { ModelDefinition, ModelProvider, isMCPJamProvidedModel } from "@/shared/types.js";
 import { ProviderLogo } from "./provider-logo";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { useConvexAuth } from "convex/react";
@@ -35,12 +35,6 @@ const groupModelsByProvider = (
   });
 
   return groupedModels;
-};
-
-// Helper to check if a provider is MCPJam-provided
-export const isMCPJamProvidedModel = (provider: ModelProvider): boolean => {
-  const MCPJAM_PROVIDERS: ModelProvider[] = ["meta"];
-  return MCPJAM_PROVIDERS.includes(provider);
 };
 
 // Provider display names
