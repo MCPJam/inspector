@@ -7,12 +7,20 @@ import type { EvalCase, EvalIteration, EvalSuite } from "./evals/types";
 import { aggregateSuite } from "./evals/helpers";
 import { SuitesOverview } from "./evals/suites-overview";
 import { SuiteIterationsView } from "./evals/suite-iterations-view";
+import { EvalRunner } from "./evals/eval-runner";
+import { useChat } from "@/hooks/use-chat";
 
 export function EvalsTab() {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const { user } = useAuth();
 
   const [selectedSuiteId, setSelectedSuiteId] = useState<string | null>(null);
+
+  const { availableModels } = useChat({
+    systemPrompt: "",
+    temperature: 1,
+    selectedServers: [],
+  });
 
   // Fetch overview data for authenticated user - only suites with metadata
   const enableOverviewQuery = isAuthenticated && !!user;
@@ -115,6 +123,12 @@ export function EvalsTab() {
             </div>
           )}
         </div>
+        {isAuthenticated && (
+          <EvalRunner
+            availableModels={availableModels}
+            mcpjamApiKey={user?.user?.id}
+          />
+        )}
       </div>
 
       {!selectedSuite ? (
