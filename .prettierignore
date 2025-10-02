@@ -1,0 +1,24 @@
+# Build output
+dist
+build
+out
+
+# Dependencies
+node_modules
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment files
+.env
+.env.local
+
+# Lock files
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Coverage
+coverage
+.nyc_output
