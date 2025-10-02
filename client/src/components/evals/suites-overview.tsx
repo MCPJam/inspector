@@ -1,5 +1,5 @@
-import { formatTime } from "./helpers";
-import { EvalSuite } from "./types";
+import type { EvalSuite } from "./types";
+import { SuiteRow } from "./SuiteRow";
 
 interface SuitesOverviewProps {
   suites: EvalSuite[];
@@ -27,46 +27,19 @@ export function SuitesOverview({ suites, onSelectSuite }: SuitesOverviewProps) {
   return (
     <div className="space-y-4">
       <div className="overflow-hidden rounded-xl border">
-        <div className="grid grid-cols-[minmax(0,1.2fr)_1fr] items-center gap-3 border-b bg-muted/50 px-4 py-2 text-xs font-semibold uppercase text-muted-foreground">
+        <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_minmax(0,0.8fr)] items-center gap-3 border-b bg-muted/50 px-4 py-2 text-xs font-semibold uppercase text-muted-foreground">
           <div>Test Suite</div>
+          <div>Status</div>
           <div>Created</div>
         </div>
         <div className="divide-y">
-          {sortedSuites.map((suite) => {
-            const testCount = Array.isArray(suite.config?.tests)
-              ? suite.config.tests.length
-              : 0;
-
-            return (
-              <button
-                key={suite._id}
-                onClick={() => onSelectSuite(suite._id)}
-                className="grid w-full grid-cols-[minmax(0,1.2fr)_1fr] items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
-              >
-                <div>
-                  <div className="font-medium">
-                    {new Date(suite._creationTime || 0).toLocaleDateString(
-                      "en-US",
-                      {
-                        month: "short",
-                        day: "numeric",
-                        year: "numeric",
-                        hour: "numeric",
-                        minute: "2-digit",
-                        hour12: true,
-                      },
-                    )}
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    {testCount} test{testCount !== 1 ? "s" : ""}
-                  </div>
-                </div>
-                <div className="text-sm text-muted-foreground">
-                  {formatTime(suite._creationTime)}
-                </div>
-              </button>
-            );
-          })}
+          {sortedSuites.map((suite) => (
+            <SuiteRow
+              key={suite._id}
+              suite={suite}
+              onSelectSuite={onSelectSuite}
+            />
+          ))}
         </div>
       </div>
     </div>
