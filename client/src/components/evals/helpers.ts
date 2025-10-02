@@ -17,14 +17,14 @@ export function aggregateSuite(
         it.status === "running" ||
         it.result === "pending"
       ) {
-        // skip counting while in-flight
+        acc.pending += 1;
       } else if (it.result === "passed") acc.passed += 1;
       else if (it.result === "failed") acc.failed += 1;
       else if (it.result === "cancelled") acc.cancelled += 1;
       acc.tokens += it.tokensUsed || 0;
       return acc;
     },
-    { passed: 0, failed: 0, cancelled: 0, tokens: 0 },
+    { passed: 0, failed: 0, cancelled: 0, pending: 0, tokens: 0 },
   );
 
   const byCaseMap = new Map<string, SuiteAggregate["byCase"][number]>();

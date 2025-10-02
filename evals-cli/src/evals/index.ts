@@ -3,7 +3,7 @@ import { readFile } from "fs/promises";
 import { resolve } from "path";
 import { config as loadDotenv } from "dotenv";
 import { Logger } from "../utils/logger.js";
-import { runEvals } from "./runner.js";
+import { runEvalsWithApiKey } from "./runner.js";
 import { hogClient } from "../utils/hog.js";
 import { getUserId } from "../utils/user-id.js";
 import {
@@ -150,7 +150,7 @@ evalsCommand
 
       // Read API token (optional)
       const apiKey = options.apiKey;
-      runEvals(testsData, envData, llmsData, apiKey);
+      runEvalsWithApiKey(testsData, envData, llmsData, apiKey);
     } catch (error) {
       Logger.error(error instanceof Error ? error.message : String(error));
       process.exit(1);

@@ -9,6 +9,7 @@ import tests from "./tests.ts";
 import oauth from "./oauth";
 import exporter from "./export";
 import interceptor from "./interceptor";
+import evals from "./evals";
 import { adapterHttp, managerHttp } from "./http-adapters";
 
 const mcp = new Hono();
@@ -36,6 +37,9 @@ mcp.route("/tools", tools);
 
 // Tests endpoint - generate per-test agents
 mcp.route("/tests", tests);
+
+// Evals endpoint - run evaluations
+mcp.route("/evals", evals);
 
 // Resources endpoints - REAL IMPLEMENTATION
 mcp.route("/resources", resources);

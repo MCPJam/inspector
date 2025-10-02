@@ -13,6 +13,7 @@ export type EvalCase = {
   query: string;
   provider: string;
   model: string;
+  expectedToolCalls: string[];
   _creationTime?: number; // Convex auto field
 };
 
@@ -34,7 +35,13 @@ export type EvalIteration = {
 
 export type SuiteAggregate = {
   filteredIterations: EvalIteration[];
-  totals: { passed: number; failed: number; cancelled: number; tokens: number };
+  totals: {
+    passed: number;
+    failed: number;
+    cancelled: number;
+    pending: number;
+    tokens: number;
+  };
   byCase: Array<{
     testCaseId: string;
     title: string;

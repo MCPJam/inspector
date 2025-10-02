@@ -64,7 +64,7 @@ export function IterationCard({
       </button>
       {isOpen ? (
         <div className="px-4 pb-4">
-          <IterationDetails iteration={iteration} />
+          <IterationDetails iteration={iteration} testCase={testCase} />
         </div>
       ) : null}
     </div>

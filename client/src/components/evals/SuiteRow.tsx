@@ -99,7 +99,7 @@ export function SuiteRow({ suite, onSelectSuite }: SuiteRowProps) {
             passed={aggregate.totals.passed}
             failed={aggregate.totals.failed}
             cancelled={aggregate.totals.cancelled}
-            pending={0}
+            pending={aggregate.totals.pending}
           />
         ) : (
           <span className="text-xs text-muted-foreground">Loading...</span>
