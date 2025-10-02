@@ -1,4 +1,3 @@
-  if (typeof require !== "undefined") return require.apply(this, arguments);
 // src/index.ts
 import { config } from "dotenv";
 import { Command as Command2 } from "commander";
