@@ -37,6 +37,12 @@ const groupModelsByProvider = (
   return groupedModels;
 };
 
+// Helper to check if a provider is MCPJam-provided
+export const isMCPJamProvidedModel = (provider: ModelProvider): boolean => {
+  const MCPJAM_PROVIDERS: ModelProvider[] = ["meta"];
+  return MCPJAM_PROVIDERS.includes(provider);
+};
+
 // Provider display names
 const getProviderDisplayName = (provider: ModelProvider): string => {
   switch (provider) {
@@ -74,12 +80,11 @@ export function ModelSelector({
 
   // Get sorted provider keys for consistent ordering
   const sortedProviders = Array.from(groupedModels.keys()).sort();
-  const MCPJAM_PROVIDERS: ModelProvider[] = ["meta"];
   const mcpjamProviders = hideProvidedModels
     ? []
-    : sortedProviders.filter((p) => MCPJAM_PROVIDERS.includes(p));
+    : sortedProviders.filter((p) => isMCPJamProvidedModel(p));
   const otherProviders = sortedProviders.filter(
-    (p) => !MCPJAM_PROVIDERS.includes(p),
+    (p) => !isMCPJamProvidedModel(p),
   );
 
   return (
@@ -133,11 +138,11 @@ export function ModelSelector({
                 collisionPadding={8}
               >
                 {models.map((model) => {
-                  const isMeta = model.provider === "meta";
+                  const isMCPJamProvided = isMCPJamProvidedModel(model.provider);
                   const isDisabled =
-                    !!model.disabled || (isMeta && !isAuthenticated);
+                    !!model.disabled || (isMCPJamProvided && !isAuthenticated);
                   const computedReason =
-                    isMeta && !isAuthenticated
+                    isMCPJamProvided && !isAuthenticated
                       ? "Sign in to use MCPJam provided models"
                       : model.disabledReason;
 
