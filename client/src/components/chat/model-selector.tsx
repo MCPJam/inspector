@@ -20,6 +20,7 @@ interface ModelSelectorProps {
   onModelChange: (model: ModelDefinition) => void;
   disabled?: boolean;
   isLoading?: boolean;
+  hideProvidedModels?: boolean;
 }
 
 // Helper function to group models by provider
@@ -62,6 +63,7 @@ export function ModelSelector({
   onModelChange,
   disabled,
   isLoading,
+  hideProvidedModels = false,
 }: ModelSelectorProps) {
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false);
   const currentModelData = currentModel;
@@ -73,9 +75,9 @@ export function ModelSelector({
   // Get sorted provider keys for consistent ordering
   const sortedProviders = Array.from(groupedModels.keys()).sort();
   const MCPJAM_PROVIDERS: ModelProvider[] = ["meta"];
-  const mcpjamProviders = sortedProviders.filter((p) =>
-    MCPJAM_PROVIDERS.includes(p),
-  );
+  const mcpjamProviders = hideProvidedModels
+    ? []
+    : sortedProviders.filter((p) => MCPJAM_PROVIDERS.includes(p));
   const otherProviders = sortedProviders.filter(
     (p) => !MCPJAM_PROVIDERS.includes(p),
   );

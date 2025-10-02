@@ -4,7 +4,6 @@ import { runEvals } from "../../../evals-cli/src/evals/runner";
 import {
   transformServerConfigsToEnvironment,
   transformLLMConfigToLlmsConfig,
-  validateTestCases,
 } from "../../utils/eval-transformer";
 import "../../types/hono";
 
@@ -60,14 +59,13 @@ evals.post("/run", async (c) => {
 
     const clientManager = c.mcpJamClientManager;
 
-    const validatedTests = validateTestCases(tests);
     const environment = transformServerConfigsToEnvironment(
       serverIds,
       clientManager,
     );
     const llms = transformLLMConfigToLlmsConfig(llmConfig);
 
-    runEvals(validatedTests, environment, llms, mcpjamApiKey).catch((error) => {
+    runEvals(tests, environment, llms, mcpjamApiKey).catch((error) => {
       console.error("Error running evals:", error);
     });
 

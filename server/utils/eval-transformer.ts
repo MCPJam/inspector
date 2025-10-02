@@ -1,12 +1,6 @@
 import { MastraMCPServerDefinition, MCPClientOptions } from "@mastra/mcp";
 import { MCPJamClientManager } from "../services/mcpjam-client-manager";
-import {
-  TestCase,
-  LlmsConfig,
-  TestCaseSchema,
-  LlmsConfigSchema,
-} from "../../evals-cli/src/utils/validators";
-import { z } from "zod";
+import { LlmsConfig, LlmsConfigSchema } from "../../evals-cli/src/utils/validators";
 
 /**
  * Transforms server IDs from MCPJamClientManager to MCPClientOptions format
@@ -65,19 +59,6 @@ export function transformLLMConfigToLlmsConfig(llmConfig: {
   const validated = LlmsConfigSchema.safeParse(llms);
   if (!validated.success) {
     throw new Error(`Invalid LLM configuration: ${validated.error.message}`);
-  }
-
-  return validated.data;
-}
-
-/**
- * Validates test cases from the UI
- */
-export function validateTestCases(tests: unknown): TestCase[] {
-  const validated = z.array(TestCaseSchema).safeParse(tests);
-
-  if (!validated.success) {
-    throw new Error(`Invalid test cases: ${validated.error.message}`);
   }
 
   return validated.data;
