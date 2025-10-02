@@ -4,6 +4,7 @@ import {
   LlmsConfig,
   LlmsConfigSchema,
 } from "../../evals-cli/src/utils/validators";
+import { isMCPJamProvidedModel } from "../../shared/types";
 
 /**
  * Transforms server IDs from MCPJamClientManager to MCPClientOptions format
@@ -54,9 +55,15 @@ export function transformLLMConfigToLlmsConfig(llmConfig: {
 }): LlmsConfig {
   const llms: Record<string, string> = {};
 
-  // Map provider names to expected format
-  const providerKey = llmConfig.provider.toLowerCase();
-  llms[providerKey] = llmConfig.apiKey;
+  // MCPJam-provided models use backend execution, so we use a special marker
+  // that will pass validation but won't be used (backend has the actual key)
+  if (isMCPJamProvidedModel(llmConfig.provider as any)) {
+    llms.openrouter = "BACKEND_EXECUTION";
+  } else {
+    // Map provider names to expected format
+    const providerKey = llmConfig.provider.toLowerCase();
+    llms[providerKey] = llmConfig.apiKey;
+  }
 
   // Validate the result
   const validated = LlmsConfigSchema.safeParse(llms);
