@@ -1,8 +1,10 @@
 import { MCPClient, MCPClientOptions } from "@mastra/mcp";
 import { streamText, Tool, ToolChoice, ModelMessage, LanguageModel } from "ai";
+import { ConvexHttpClient } from "convex/browser";
 import { getUserIdFromApiKeyOrNull } from "../db/user";
 import {
   createRunRecorder,
+  createRunRecorderWithAuth,
   type SuiteConfig,
   type RunRecorder,
   type UsageTotals,
@@ -46,16 +48,10 @@ const ensureApiKeyIsValid = async (apiKey?: string) => {
 };
 
 const prepareSuite = async (
-  tests: unknown,
-  environment: unknown,
-  llms: unknown,
+  validatedTests: TestCase[],
+  mcpClientOptions: MCPClientOptions,
+  validatedLlms: LlmsConfig,
 ) => {
-  const mcpClientOptions = validateAndNormalizeMCPClientConfiguration(
-    environment,
-  ) as MCPClientOptions;
-  const validatedTests = validateTestCase(tests) as TestCase[];
-  const validatedLlms = validateLlms(llms) as LlmsConfig;
-
   const mcpClient = new MCPClient(mcpClientOptions);
   const availableTools = await mcpClient.getTools();
   const vercelTools = convertMastraToolsToVercelTools(availableTools);
@@ -74,6 +70,7 @@ const prepareSuite = async (
     validatedLlms,
     vercelTools,
     serverNames,
+    mcpClient,
   };
 };
 
@@ -298,55 +295,133 @@ const runTestCase = async ({
   return { passedRuns, failedRuns };
 };
 
-export const runEvals = async (
+// Shared core logic for running evals
+async function runEvalSuiteCore(
+  validatedTests: TestCase[],
+  mcpClientOptions: MCPClientOptions,
+  validatedLlms: LlmsConfig,
+  recorder: RunRecorder,
+  suiteStartedAt: number,
+) {
+  const { vercelTools, serverNames, mcpClient } = await prepareSuite(
+    validatedTests,
+    mcpClientOptions,
+    validatedLlms,
+  );
+
+  Logger.info(
+    `[Suite prepared: ${validatedTests.length} tests, ${serverNames.length} servers`,
+  );
+
+  await recorder.ensureSuite();
+
+  let passedRuns = 0;
+  let failedRuns = 0;
+
+  try {
+    for (let index = 0; index < validatedTests.length; index++) {
+      const test = validatedTests[index];
+      if (!test) {
+        continue;
+      }
+      Logger.info(
+        `[Running test ${index + 1}/${validatedTests.length}: ${test.title}`,
+      );
+      const { passedRuns: casePassed, failedRuns: caseFailed } =
+        await runTestCase({
+          test,
+          testIndex: index + 1,
+          llms: validatedLlms,
+          tools: vercelTools,
+          recorder,
+        });
+      passedRuns += casePassed;
+      failedRuns += caseFailed;
+    }
+
+    hogClient.capture({
+      distinctId: getUserId(),
+      event: "evals suite complete",
+      properties: {
+        environment: process.env.ENVIRONMENT,
+      },
+    });
+    Logger.suiteComplete({
+      durationMs: Date.now() - suiteStartedAt,
+      passed: passedRuns,
+      failed: failedRuns,
+    });
+  } finally {
+    // Clean up the MCP client after all evals complete
+    await mcpClient.disconnect();
+  }
+}
+
+export const runEvalsWithApiKey = async (
   tests: unknown,
   environment: unknown,
   llms: unknown,
   apiKey?: string,
 ) => {
+  const suiteStartedAt = Date.now();
+  Logger.info("Starting eval suite with API key authentication");
   await ensureApiKeyIsValid(apiKey);
 
-  const { validatedTests, validatedLlms, vercelTools, serverNames } =
-    await prepareSuite(tests, environment, llms);
+  // prepareSuite is called inside runEvalSuiteCore, so we need to prepare config here
+  const mcpClientOptions = validateAndNormalizeMCPClientConfiguration(
+    environment,
+  ) as MCPClientOptions;
+  const validatedTests = validateTestCase(tests) as TestCase[];
+  const validatedLlms = validateLlms(llms) as LlmsConfig;
 
-  const suiteStartedAt = Date.now();
+  const serverNames = Object.keys(mcpClientOptions.servers);
+
   const suiteConfig: SuiteConfig = {
     tests: validatedTests,
     environment: { servers: serverNames },
   };
 
   const recorder = createRunRecorder(apiKey, suiteConfig);
-  await recorder.ensureSuite();
 
-  let passedRuns = 0;
-  let failedRuns = 0;
+  await runEvalSuiteCore(
+    validatedTests,
+    mcpClientOptions,
+    validatedLlms,
+    recorder,
+    suiteStartedAt,
+  );
+};
 
-  for (let index = 0; index < validatedTests.length; index++) {
-    const test = validatedTests[index];
-    if (!test) {
-      continue;
-    }
-    const { passedRuns: casePassed, failedRuns: caseFailed } =
-      await runTestCase({
-        test,
-        testIndex: index + 1,
-        llms: validatedLlms,
-        tools: vercelTools,
-        recorder,
-      });
-    passedRuns += casePassed;
-    failedRuns += caseFailed;
-  }
-  hogClient.capture({
-    distinctId: getUserId(),
-    event: "evals suite complete",
-    properties: {
-      environment: process.env.ENVIRONMENT,
-    },
-  });
-  Logger.suiteComplete({
-    durationMs: Date.now() - suiteStartedAt,
-    passed: passedRuns,
-    failed: failedRuns,
-  });
+export const runEvalsWithAuth = async (
+  tests: unknown,
+  environment: unknown,
+  llms: unknown,
+  convexClient: ConvexHttpClient,
+) => {
+  const suiteStartedAt = Date.now();
+  Logger.info("Starting eval suite with session authentication");
+
+  // prepareSuite is called inside runEvalSuiteCore, so we need to prepare config here
+  const mcpClientOptions = validateAndNormalizeMCPClientConfiguration(
+    environment,
+  ) as MCPClientOptions;
+  const validatedTests = validateTestCase(tests) as TestCase[];
+  const validatedLlms = validateLlms(llms) as LlmsConfig;
+
+  const serverNames = Object.keys(mcpClientOptions.servers);
+
+  const suiteConfig: SuiteConfig = {
+    tests: validatedTests,
+    environment: { servers: serverNames },
+  };
+
+  const recorder = createRunRecorderWithAuth(convexClient, suiteConfig);
+
+  await runEvalSuiteCore(
+    validatedTests,
+    mcpClientOptions,
+    validatedLlms,
+    recorder,
+    suiteStartedAt,
+  );
 };
