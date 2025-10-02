@@ -13,6 +13,7 @@ export type EvalCase = {
   query: string;
   provider: string;
   model: string;
+  expectedToolCalls: string[];
   _creationTime?: number; // Convex auto field
 };
 
