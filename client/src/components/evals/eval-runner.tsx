@@ -192,29 +192,28 @@ export function EvalRunner({
     <div className="space-y-6 py-4">
           <div className="space-y-2">
             <Label>Select Servers</Label>
-            <div className="grid grid-cols-2 gap-2">
-              {connectedServers.map(([name, server]) => (
-                <label
-                  key={name}
-                  className="flex items-center space-x-2 p-2 border rounded cursor-pointer hover:bg-muted/50"
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedServers.includes(name)}
-                    onChange={(e) => {
-                      if (e.target.checked) {
-                        setSelectedServers([...selectedServers, name]);
+            <div className="flex flex-wrap gap-2">
+              {connectedServers.map(([name, server]) => {
+                const isSelected = selectedServers.includes(name);
+                return (
+                  <Button
+                    key={name}
+                    type="button"
+                    variant={isSelected ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => {
+                      if (isSelected) {
+                        setSelectedServers(selectedServers.filter((s) => s !== name));
                       } else {
-                        setSelectedServers(
-                          selectedServers.filter((s) => s !== name),
-                        );
+                        setSelectedServers([...selectedServers, name]);
                       }
                     }}
-                    className="rounded"
-                  />
-                  <span className="text-sm">{name}</span>
-                </label>
-              ))}
+                    className="h-9"
+                  >
+                    {name}
+                  </Button>
+                );
+              })}
             </div>
             {connectedServers.length === 0 && (
               <p className="text-sm text-muted-foreground">
