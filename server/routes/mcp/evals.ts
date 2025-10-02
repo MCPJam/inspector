@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { runEvalsWithApiKey, runEvalsWithAuth } from "../../../evals-cli/src/evals/runner";
+import { runEvalsWithAuth } from "../../../evals-cli/src/evals/runner";
 import {
   transformServerConfigsToEnvironment,
   transformLLMConfigToLlmsConfig,
@@ -35,8 +35,7 @@ const RunEvalsRequestSchema = z.object({
     provider: z.string(),
     apiKey: z.string(),
   }),
-  convexAuthToken: z.string().optional(),
-  mcpjamApiKey: z.string().optional(),
+  convexAuthToken: z.string(),
 });
 
 type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;

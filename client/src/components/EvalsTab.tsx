@@ -160,7 +160,6 @@ export function EvalsTab() {
           <div className="max-w-4xl">
             <EvalRunner
               availableModels={availableModels}
-              mcpjamApiKey={user?.user?.id}
               inline={true}
             />
           </div>

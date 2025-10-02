@@ -31,13 +31,11 @@ interface TestCase {
 
 interface EvalRunnerProps {
   availableModels: ModelDefinition[];
-  mcpjamApiKey?: string;
   inline?: boolean;
 }
 
 export function EvalRunner({
   availableModels,
-  mcpjamApiKey,
   inline = false,
 }: EvalRunnerProps) {
   const [open, setOpen] = useState(false);
@@ -127,22 +125,13 @@ export function EvalRunner({
     setIsSubmitting(true);
 
     try {
-      // Get Convex auth token from WorkOS
-      console.log("[EvalRunner] Getting WorkOS auth token...");
       const accessToken = await getAccessToken();
-      console.log("[EvalRunner] Got access token:", accessToken ? "✓" : "✗");
 
       const testsWithModelInfo = validTestCases.map((tc) => ({
         ...tc,
         model: selectedModel.id,
         provider: selectedModel.provider,
       }));
-
-      console.log("[EvalRunner] Sending request to /api/mcp/evals/run");
-      console.log("[EvalRunner] - Tests:", testsWithModelInfo.length);
-      console.log("[EvalRunner] - Servers:", selectedServers);
-      console.log("[EvalRunner] - Has convexAuthToken:", !!accessToken);
-      console.log("[EvalRunner] - Has mcpjamApiKey:", !!mcpjamApiKey);
 
       const response = await fetch("/api/mcp/evals/run", {
         method: "POST",
@@ -154,8 +143,7 @@ export function EvalRunner({
             provider: selectedModel.provider,
             apiKey: apiKey || "router",
           },
-          convexAuthToken: accessToken || undefined,
-          mcpjamApiKey: mcpjamApiKey,
+          convexAuthToken: accessToken,
         }),
       });
 
