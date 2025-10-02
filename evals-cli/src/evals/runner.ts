@@ -52,7 +52,6 @@ const prepareSuite = async (
   mcpClientOptions: MCPClientOptions,
   validatedLlms: LlmsConfig,
 ) => {
-
   const mcpClient = new MCPClient(mcpClientOptions);
   const availableTools = await mcpClient.getTools();
   const vercelTools = convertMastraToolsToVercelTools(availableTools);
@@ -304,8 +303,11 @@ async function runEvalSuiteCore(
   recorder: RunRecorder,
   suiteStartedAt: number,
 ) {
-  const { vercelTools, serverNames, mcpClient } =
-    await prepareSuite(validatedTests, mcpClientOptions, validatedLlms);
+  const { vercelTools, serverNames, mcpClient } = await prepareSuite(
+    validatedTests,
+    mcpClientOptions,
+    validatedLlms,
+  );
 
   Logger.info(
     `[Suite prepared: ${validatedTests.length} tests, ${serverNames.length} servers`,
@@ -381,7 +383,13 @@ export const runEvalsWithApiKey = async (
 
   const recorder = createRunRecorder(apiKey, suiteConfig);
 
-  await runEvalSuiteCore(validatedTests, mcpClientOptions, validatedLlms, recorder, suiteStartedAt);
+  await runEvalSuiteCore(
+    validatedTests,
+    mcpClientOptions,
+    validatedLlms,
+    recorder,
+    suiteStartedAt,
+  );
 };
 
 export const runEvalsWithAuth = async (
@@ -409,5 +417,11 @@ export const runEvalsWithAuth = async (
 
   const recorder = createRunRecorderWithAuth(convexClient, suiteConfig);
 
-  await runEvalSuiteCore(validatedTests, mcpClientOptions, validatedLlms, recorder, suiteStartedAt);
+  await runEvalSuiteCore(
+    validatedTests,
+    mcpClientOptions,
+    validatedLlms,
+    recorder,
+    suiteStartedAt,
+  );
 };
