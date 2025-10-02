@@ -31,9 +31,14 @@ interface TestCase {
 interface EvalRunnerProps {
   availableModels: ModelDefinition[];
   mcpjamApiKey?: string;
+  inline?: boolean;
 }
 
-export function EvalRunner({ availableModels, mcpjamApiKey }: EvalRunnerProps) {
+export function EvalRunner({
+  availableModels,
+  mcpjamApiKey,
+  inline = false,
+}: EvalRunnerProps) {
   const [open, setOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { isAuthenticated } = useConvexAuth();
@@ -169,23 +174,8 @@ export function EvalRunner({ availableModels, mcpjamApiKey }: EvalRunnerProps) {
     }
   };
 
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button>
-          <Plus className="h-4 w-4 mr-2" />
-          New Eval Run
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Create Eval Run</DialogTitle>
-          <DialogDescription>
-            Configure and run evaluations against your connected MCP servers
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-6 py-4">
+  const formContent = (
+    <div className="space-y-6 py-4">
           <div className="space-y-2">
             <Label>Select Servers</Label>
             <div className="grid grid-cols-2 gap-2">
@@ -319,15 +309,49 @@ export function EvalRunner({ availableModels, mcpjamApiKey }: EvalRunnerProps) {
             ))}
           </div>
 
-          <div className="flex justify-end space-x-2">
-            <Button variant="outline" onClick={() => setOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleSubmit} disabled={isSubmitting}>
-              {isSubmitting ? "Starting..." : "Run Evals"}
-            </Button>
-          </div>
+      <div className="flex justify-end space-x-2">
+        {!inline && (
+          <Button variant="outline" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+        )}
+        <Button onClick={handleSubmit} disabled={isSubmitting}>
+          {isSubmitting ? "Starting..." : "Run Evals"}
+        </Button>
+      </div>
+    </div>
+  );
+
+  if (inline) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-lg font-semibold">Create Eval Run</h2>
+          <p className="text-sm text-muted-foreground">
+            Configure and run evaluations against your connected MCP servers
+          </p>
         </div>
+        {formContent}
+      </div>
+    );
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button>
+          <Plus className="h-4 w-4 mr-2" />
+          New Eval Run
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Create Eval Run</DialogTitle>
+          <DialogDescription>
+            Configure and run evaluations against your connected MCP servers
+          </DialogDescription>
+        </DialogHeader>
+        {formContent}
       </DialogContent>
     </Dialog>
   );
