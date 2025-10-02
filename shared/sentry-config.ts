@@ -1,5 +1,5 @@
 const baseSentryConfig = {
-  environment: process.env.NODE_ENV || "development",
+  environment: process.env.NODE_ENV === "production" ? "prod" : "dev",
   sendDefaultPii: false,
   tracesSampleRate: 0.1,
   tracePropagationTargets: [
