@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { runEvals, runEvalsWithAuth } from "../../../evals-cli/src/evals/runner";
+import { runEvalsWithApiKey, runEvalsWithAuth } from "../../../evals-cli/src/evals/runner";
 import {
   transformServerConfigsToEnvironment,
   transformLLMConfigToLlmsConfig,
@@ -87,7 +87,7 @@ evals.post("/run", async (c) => {
     } else if (mcpjamApiKey) {
       // Use API key flow (CLI behavior)
       console.log("[Hono:Evals] Using API key flow");
-      runEvals(tests, environment, llms, mcpjamApiKey).catch((error) => {
+      runEvalsWithApiKey(tests, environment, llms, mcpjamApiKey).catch((error) => {
         console.error("[Hono:Evals] Error running evals:", error);
       });
     } else {
