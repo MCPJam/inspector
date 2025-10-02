@@ -4,6 +4,7 @@ import {
   ChatMessage,
   ModelDefinition,
   ModelProvider,
+  isMCPJamProvidedModel,
 } from "../../../shared/types";
 import { TextEncoder } from "util";
 import { getDefaultTemperatureByProvider } from "../../../client/src/lib/chat-utils";
@@ -571,7 +572,7 @@ chat.post("/", async (c) => {
       );
     }
     const sendToBackend =
-      provider === "meta" && Boolean(requestData.sendMessagesToBackend);
+      isMCPJamProvidedModel(provider) && Boolean(requestData.sendMessagesToBackend);
 
     if (!sendToBackend && (!model?.id || !apiKey)) {
       return c.json(
