@@ -158,10 +158,7 @@ export function EvalsTab() {
 
         <TabsContent value="create" className="mt-6">
           <div className="max-w-4xl">
-            <EvalRunner
-              availableModels={availableModels}
-              inline={true}
-            />
+            <EvalRunner availableModels={availableModels} inline={true} />
           </div>
         </TabsContent>
       </Tabs>

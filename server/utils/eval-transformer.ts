@@ -1,6 +1,9 @@
 import { MastraMCPServerDefinition, MCPClientOptions } from "@mastra/mcp";
 import { MCPJamClientManager } from "../services/mcpjam-client-manager";
-import { LlmsConfig, LlmsConfigSchema } from "../../evals-cli/src/utils/validators";
+import {
+  LlmsConfig,
+  LlmsConfigSchema,
+} from "../../evals-cli/src/utils/validators";
 
 /**
  * Transforms server IDs from MCPJamClientManager to MCPClientOptions format
