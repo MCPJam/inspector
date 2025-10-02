@@ -52,7 +52,6 @@ export type RunRecorder = {
 const createDisabledRecorder = (): RunRecorder => ({
   enabled: false,
   async ensureSuite() {
-    Logger.info("RunRecorder disabled - skipping suite creation");
     return;
   },
   async recordTestCase() {
@@ -75,7 +74,6 @@ export const createRunRecorder = (
     return createDisabledRecorder();
   }
 
-  Logger.info("Creating RunRecorder with API key authentication");
   const client: DbClientInstance = dbClient();
   let precreated: PrecreatedSuite | undefined;
 
@@ -84,9 +82,7 @@ export const createRunRecorder = (
     payload: DbPayload,
   ): Promise<T | undefined> => {
     try {
-      Logger.info(`[RunRecorder] Calling ${action}`);
       const result = await (client as any).action(action, payload);
-      Logger.info(`[RunRecorder] ${action} completed successfully`);
       return result;
     } catch (error) {
       Logger.error(`[RunRecorder] ${action} failed: ${error}`);
@@ -96,11 +92,9 @@ export const createRunRecorder = (
 
   const ensurePrecreated = async () => {
     if (precreated) {
-      Logger.info("[RunRecorder] Using cached precreated suite");
       return precreated;
     }
 
-    Logger.info("[RunRecorder] Creating new eval suite with API key");
     const result = await runDbAction<PrecreatedSuite>(
       "evals:precreateEvalSuiteWithApiKey",
       {
@@ -110,11 +104,7 @@ export const createRunRecorder = (
       },
     );
 
-    if (result) {
-      Logger.success(
-        `[RunRecorder] Suite created with ${result.testCases.length} test cases`,
-      );
-    } else {
+    if (!result) {
       Logger.error("[RunRecorder] Failed to create suite");
     }
 
@@ -208,7 +198,6 @@ export const createRunRecorderWithAuth = (
   convexClient: ConvexHttpClient,
   config: SuiteConfig,
 ): RunRecorder => {
-  Logger.info("Creating RunRecorder with session authentication");
   let precreated: PrecreatedSuite | undefined;
 
   const runAction = async <T>(
@@ -216,9 +205,7 @@ export const createRunRecorderWithAuth = (
     payload: DbPayload,
   ): Promise<T | undefined> => {
     try {
-      Logger.info(`[RunRecorder:Auth] Calling ${action}`);
       const result = await convexClient.action(action as any, payload);
-      Logger.info(`[RunRecorder:Auth] ${action} completed successfully`);
       return result as T;
     } catch (error) {
       Logger.error(`[RunRecorder:Auth] ${action} failed: ${error}`);
@@ -231,9 +218,7 @@ export const createRunRecorderWithAuth = (
     payload: DbPayload,
   ): Promise<T | undefined> => {
     try {
-      Logger.info(`[RunRecorder:Auth] Calling mutation ${mutation}`);
       const result = await convexClient.mutation(mutation as any, payload);
-      Logger.info(`[RunRecorder:Auth] ${mutation} completed successfully`);
       return result as T;
     } catch (error) {
       Logger.error(`[RunRecorder:Auth] ${mutation} failed: ${error}`);
@@ -243,11 +228,9 @@ export const createRunRecorderWithAuth = (
 
   const ensurePrecreated = async () => {
     if (precreated) {
-      Logger.info("[RunRecorder:Auth] Using cached precreated suite");
       return precreated;
     }
 
-    Logger.info("[RunRecorder:Auth] Creating new eval suite with session auth");
     const result = await runMutation<PrecreatedSuite>(
       "evals:precreateEvalSuiteWithAuth",
       {
@@ -256,11 +239,7 @@ export const createRunRecorderWithAuth = (
       },
     );
 
-    if (result) {
-      Logger.success(
-        `[RunRecorder:Auth] Suite created with ${result.testCases.length} test cases`,
-      );
-    } else {
+    if (!result) {
       Logger.error("[RunRecorder:Auth] Failed to create suite");
     }
 
@@ -271,13 +250,11 @@ export const createRunRecorderWithAuth = (
   return {
     enabled: true,
     async ensureSuite() {
-      Logger.info("[RunRecorder:Auth] Ensuring suite exists");
       await ensurePrecreated();
     },
     async recordTestCase(test, index) {
       const current = await ensurePrecreated();
       if (!current) {
-        Logger.warn("[RunRecorder:Auth] No suite available for test case recording");
         return undefined;
       }
 
@@ -286,20 +263,15 @@ export const createRunRecorderWithAuth = (
         current.testCases[zeroBasedIndex]?.testCaseId ??
         current.testCases[index]?.testCaseId;
 
-      Logger.info(
-        `[RunRecorder:Auth] Recording test case ${index}: ${testCaseId}`,
-      );
       return testCaseId;
     },
     async startIteration({ testCaseId, iterationNumber, startedAt }) {
       if (!testCaseId) {
-        Logger.warn("[RunRecorder:Auth] Cannot start iteration without testCaseId");
         return undefined;
       }
 
       const current = await ensurePrecreated();
       if (!current) {
-        Logger.warn("[RunRecorder:Auth] No suite available for iteration start");
         return undefined;
       }
 
@@ -311,15 +283,8 @@ export const createRunRecorderWithAuth = (
       );
 
       if (!iteration) {
-        Logger.error(
-          `[RunRecorder:Auth] Iteration ${iterationNumber} not found for test case ${testCaseId}`,
-        );
         return undefined;
       }
-
-      Logger.info(
-        `[RunRecorder:Auth] Starting iteration ${iterationNumber} (${iteration.iterationId})`,
-      );
 
       if (startedAt !== undefined) {
         await runAction("evals:updateEvalTestIterationResultWithAuth", {
@@ -340,16 +305,8 @@ export const createRunRecorderWithAuth = (
       messages,
     }) {
       if (!iterationId) {
-        Logger.warn("[RunRecorder:Auth] Cannot finish iteration without iterationId");
         return;
       }
-
-      Logger.info(
-        `[RunRecorder:Auth] Finishing iteration ${iterationId}: ${passed ? "PASSED" : "FAILED"}`,
-      );
-      Logger.info(
-        `[RunRecorder:Auth] Tools called: ${toolsCalled.join(", ")} | Tokens: ${usage.totalTokens ?? 0}`,
-      );
 
       await runAction("evals:updateEvalTestIterationResultWithAuth", {
         testId: iterationId,
