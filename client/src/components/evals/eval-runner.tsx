@@ -226,7 +226,7 @@ export function EvalRunner({
             currentModel={selectedModel}
             availableModels={availableModels}
             onModelChange={setSelectedModel}
-            hideProvidedModels={true}
+            hideProvidedModels={false}
           />
         )}
       </div>
