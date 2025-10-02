@@ -76,6 +76,7 @@ const prepareSuite = async (
     validatedLlms,
     vercelTools,
     serverNames,
+    mcpClient,
   };
 };
 
@@ -309,7 +310,7 @@ export const runEvals = async (
   Logger.info("[runEvals] Starting eval suite with API key authentication");
   await ensureApiKeyIsValid(apiKey);
 
-  const { validatedTests, validatedLlms, vercelTools, serverNames } =
+  const { validatedTests, validatedLlms, vercelTools, serverNames, mcpClient } =
     await prepareSuite(tests, environment, llms);
 
   Logger.info(
@@ -328,35 +329,40 @@ export const runEvals = async (
   let passedRuns = 0;
   let failedRuns = 0;
 
-  for (let index = 0; index < validatedTests.length; index++) {
-    const test = validatedTests[index];
-    if (!test) {
-      continue;
+  try {
+    for (let index = 0; index < validatedTests.length; index++) {
+      const test = validatedTests[index];
+      if (!test) {
+        continue;
+      }
+      Logger.info(`[runEvals] Running test ${index + 1}/${validatedTests.length}: ${test.title}`);
+      const { passedRuns: casePassed, failedRuns: caseFailed } =
+        await runTestCase({
+          test,
+          testIndex: index + 1,
+          llms: validatedLlms,
+          tools: vercelTools,
+          recorder,
+        });
+      passedRuns += casePassed;
+      failedRuns += caseFailed;
     }
-    Logger.info(`[runEvals] Running test ${index + 1}/${validatedTests.length}: ${test.title}`);
-    const { passedRuns: casePassed, failedRuns: caseFailed } =
-      await runTestCase({
-        test,
-        testIndex: index + 1,
-        llms: validatedLlms,
-        tools: vercelTools,
-        recorder,
-      });
-    passedRuns += casePassed;
-    failedRuns += caseFailed;
+    hogClient.capture({
+      distinctId: getUserId(),
+      event: "evals suite complete",
+      properties: {
+        environment: process.env.ENVIRONMENT,
+      },
+    });
+    Logger.suiteComplete({
+      durationMs: Date.now() - suiteStartedAt,
+      passed: passedRuns,
+      failed: failedRuns,
+    });
+  } finally {
+    // Clean up the MCP client after all evals complete
+    await mcpClient.disconnect();
   }
-  hogClient.capture({
-    distinctId: getUserId(),
-    event: "evals suite complete",
-    properties: {
-      environment: process.env.ENVIRONMENT,
-    },
-  });
-  Logger.suiteComplete({
-    durationMs: Date.now() - suiteStartedAt,
-    passed: passedRuns,
-    failed: failedRuns,
-  });
 };
 
 export const runEvalsWithAuth = async (
@@ -367,7 +373,7 @@ export const runEvalsWithAuth = async (
 ) => {
   Logger.info("[runEvalsWithAuth] Starting eval suite with session authentication");
 
-  const { validatedTests, validatedLlms, vercelTools, serverNames } =
+  const { validatedTests, validatedLlms, vercelTools, serverNames, mcpClient } =
     await prepareSuite(tests, environment, llms);
 
   Logger.info(
@@ -386,35 +392,40 @@ export const runEvalsWithAuth = async (
   let passedRuns = 0;
   let failedRuns = 0;
 
-  for (let index = 0; index < validatedTests.length; index++) {
-    const test = validatedTests[index];
-    if (!test) {
-      continue;
+  try {
+    for (let index = 0; index < validatedTests.length; index++) {
+      const test = validatedTests[index];
+      if (!test) {
+        continue;
+      }
+      Logger.info(
+        `[runEvalsWithAuth] Running test ${index + 1}/${validatedTests.length}: ${test.title}`,
+      );
+      const { passedRuns: casePassed, failedRuns: caseFailed } =
+        await runTestCase({
+          test,
+          testIndex: index + 1,
+          llms: validatedLlms,
+          tools: vercelTools,
+          recorder,
+        });
+      passedRuns += casePassed;
+      failedRuns += caseFailed;
     }
-    Logger.info(
-      `[runEvalsWithAuth] Running test ${index + 1}/${validatedTests.length}: ${test.title}`,
-    );
-    const { passedRuns: casePassed, failedRuns: caseFailed } =
-      await runTestCase({
-        test,
-        testIndex: index + 1,
-        llms: validatedLlms,
-        tools: vercelTools,
-        recorder,
-      });
-    passedRuns += casePassed;
-    failedRuns += caseFailed;
+    hogClient.capture({
+      distinctId: getUserId(),
+      event: "evals suite complete",
+      properties: {
+        environment: process.env.ENVIRONMENT,
+      },
+    });
+    Logger.suiteComplete({
+      durationMs: Date.now() - suiteStartedAt,
+      passed: passedRuns,
+      failed: failedRuns,
+    });
+  } finally {
+    // Clean up the MCP client after all evals complete
+    await mcpClient.disconnect();
   }
-  hogClient.capture({
-    distinctId: getUserId(),
-    event: "evals suite complete",
-    properties: {
-      environment: process.env.ENVIRONMENT,
-    },
-  });
-  Logger.suiteComplete({
-    durationMs: Date.now() - suiteStartedAt,
-    passed: passedRuns,
-    failed: failedRuns,
-  });
 };
