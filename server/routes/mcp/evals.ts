@@ -55,7 +55,7 @@ evals.post("/run", async (c) => {
       );
     }
 
-    const { tests, serverIds, llmConfig, convexAuthToken, mcpjamApiKey } =
+    const { tests, serverIds, llmConfig, convexAuthToken } =
       validationResult.data as RunEvalsRequest;
 
     const clientManager = c.mcpJamClientManager;
@@ -66,38 +66,17 @@ evals.post("/run", async (c) => {
     );
     const llms = transformLLMConfigToLlmsConfig(llmConfig);
 
-    // If convexAuthToken is provided, use session auth flow
-    if (convexAuthToken) {
-      console.log("[Hono:Evals] Using session auth flow");
-      const convexUrl = process.env.CONVEX_URL;
-      if (!convexUrl) {
-        console.error("[Hono:Evals] CONVEX_URL is not set");
-        throw new Error("CONVEX_URL is not set");
-      }
-
-      console.log(`[Hono:Evals] Creating ConvexHttpClient for ${convexUrl}`);
-      const convexClient = new ConvexHttpClient(convexUrl);
-      convexClient.setAuth(convexAuthToken);
-
-      console.log(`[Hono:Evals] Starting eval suite with ${tests.length} tests`);
-      runEvalsWithAuth(tests, environment, llms, convexClient).catch((error) => {
-        console.error("[Hono:Evals] Error running evals with auth:", error);
-      });
-    } else if (mcpjamApiKey) {
-      // Use API key flow (CLI behavior)
-      console.log("[Hono:Evals] Using API key flow");
-      runEvalsWithApiKey(tests, environment, llms, mcpjamApiKey).catch((error) => {
-        console.error("[Hono:Evals] Error running evals:", error);
-      });
-    } else {
-      console.error("[Hono:Evals] No auth method provided");
-      return c.json(
-        {
-          error: "Either convexAuthToken or mcpjamApiKey must be provided",
-        },
-        400,
-      );
+    const convexUrl = process.env.CONVEX_URL;
+    if (!convexUrl) {
+      throw new Error("CONVEX_URL is not set");
     }
+
+    const convexClient = new ConvexHttpClient(convexUrl);
+    convexClient.setAuth(convexAuthToken);
+
+    runEvalsWithAuth(tests, environment, llms, convexClient).catch((error) => {
+      console.error("[Hono:Evals] Error running evals:", error);
+    });
 
     return c.json({
       success: true,
