@@ -48,15 +48,10 @@ const ensureApiKeyIsValid = async (apiKey?: string) => {
 };
 
 const prepareSuite = async (
-  tests: unknown,
-  environment: unknown,
-  llms: unknown,
+  validatedTests: TestCase[],
+  mcpClientOptions: MCPClientOptions,
+  validatedLlms: LlmsConfig,
 ) => {
-  const mcpClientOptions = validateAndNormalizeMCPClientConfiguration(
-    environment,
-  ) as MCPClientOptions;
-  const validatedTests = validateTestCase(tests) as TestCase[];
-  const validatedLlms = validateLlms(llms) as LlmsConfig;
 
   const mcpClient = new MCPClient(mcpClientOptions);
   const availableTools = await mcpClient.getTools();
@@ -303,15 +298,14 @@ const runTestCase = async ({
 
 // Shared core logic for running evals
 async function runEvalSuiteCore(
-  tests: unknown,
-  environment: unknown,
-  llms: unknown,
+  validatedTests: TestCase[],
+  mcpClientOptions: MCPClientOptions,
+  validatedLlms: LlmsConfig,
   recorder: RunRecorder,
-  authType: "apiKey" | "session",
   suiteStartedAt: number,
 ) {
-  const { validatedTests, validatedLlms, vercelTools, serverNames, mcpClient } =
-    await prepareSuite(tests, environment, llms);
+  const { vercelTools, serverNames, mcpClient } =
+    await prepareSuite(validatedTests, mcpClientOptions, validatedLlms);
 
   Logger.info(
     `[Suite prepared: ${validatedTests.length} tests, ${serverNames.length} servers`,
@@ -376,6 +370,7 @@ export const runEvalsWithApiKey = async (
     environment,
   ) as MCPClientOptions;
   const validatedTests = validateTestCase(tests) as TestCase[];
+  const validatedLlms = validateLlms(llms) as LlmsConfig;
 
   const serverNames = Object.keys(mcpClientOptions.servers);
 
@@ -386,7 +381,7 @@ export const runEvalsWithApiKey = async (
 
   const recorder = createRunRecorder(apiKey, suiteConfig);
 
-  await runEvalSuiteCore(tests, environment, llms, recorder, "apiKey", suiteStartedAt);
+  await runEvalSuiteCore(validatedTests, mcpClientOptions, validatedLlms, recorder, suiteStartedAt);
 };
 
 export const runEvalsWithAuth = async (
@@ -403,6 +398,7 @@ export const runEvalsWithAuth = async (
     environment,
   ) as MCPClientOptions;
   const validatedTests = validateTestCase(tests) as TestCase[];
+  const validatedLlms = validateLlms(llms) as LlmsConfig;
 
   const serverNames = Object.keys(mcpClientOptions.servers);
 
@@ -413,5 +409,5 @@ export const runEvalsWithAuth = async (
 
   const recorder = createRunRecorderWithAuth(convexClient, suiteConfig);
 
-  await runEvalSuiteCore(tests, environment, llms, recorder, "session", suiteStartedAt);
+  await runEvalSuiteCore(validatedTests, mcpClientOptions, validatedLlms, recorder, suiteStartedAt);
 };
