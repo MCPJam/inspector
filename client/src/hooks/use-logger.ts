@@ -225,10 +225,15 @@ export const LoggerUtils = {
 
 // Hook for components that need to observe log changes
 export function useLoggerState() {
+  const [entries, setEntries] = useState(loggerState.getEntries());
+  const [config, setConfigState] = useState(loggerState.getConfig());
+
   const [, forceUpdate] = useState({});
 
   useEffect(() => {
     const unsubscribe = loggerState.subscribe(() => {
+      setEntries(loggerState.getEntries());
+      setConfigState(loggerState.getConfig());
       forceUpdate({});
     });
     return () => {
@@ -237,8 +242,8 @@ export function useLoggerState() {
   }, []);
 
   return {
-    entries: loggerState.getEntries(),
-    config: loggerState.getConfig(),
+    entries: useMemo(() => entries, [entries]),
+    config: useMemo(() => config, [config]),
     setConfig: loggerState.setConfig.bind(loggerState),
     clearBuffer: loggerState.clearBuffer.bind(loggerState),
   };
