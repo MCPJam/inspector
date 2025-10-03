@@ -23,6 +23,7 @@ import { evaluateResults } from "./evaluator";
 import { getUserId } from "../utils/user-id";
 import { hogClient } from "../utils/hog";
 import { isMCPJamProvidedModel } from "../../../shared/types";
+import { hasUnresolvedToolCalls, executeToolCallsFromMessages } from "../../../shared/http-tool-calls";
 
 const MAX_STEPS = 20;
 
@@ -181,19 +182,32 @@ const runIterationViaBackend = async ({
         }
       }
 
-      // Check if we need to continue (more tool calls to execute)
-      const hasUnresolvedTools = messageHistory.some(
-        (m: any) =>
-          m.role === "assistant" &&
-          Array.isArray(m.content) &&
-          m.content.some((c: any) => c.type === "tool-call")
-      );
-
-      stepCount++;
-
-      if (!hasUnresolvedTools) {
+      // Execute unresolved tool calls locally
+      const beforeLen = messageHistory.length;
+      if (hasUnresolvedToolCalls(messageHistory as any)) {
+        await executeToolCallsFromMessages(messageHistory as ModelMessage[], {
+          tools: tools as any,
+        });
+        const newMsgs = messageHistory.slice(beforeLen);
+        for (const m of newMsgs) {
+          if ((m as any).role === "tool" && Array.isArray((m as any).content)) {
+            for (const tc of (m as any).content) {
+              if (tc.type === "tool-result") {
+                const out = tc.output;
+                const value =
+                  out && typeof out === "object" && "value" in out
+                    ? out.value
+                    : out;
+                Logger.streamToolResult(tc.toolName, value);
+              }
+            }
+          }
+        }
+      } else {
         break;
       }
+
+      stepCount++;
     } catch (error) {
       Logger.errorWithExit(
         `Backend execution error: ${error instanceof Error ? error.message : String(error)}`
