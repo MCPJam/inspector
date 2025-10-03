@@ -116,12 +116,6 @@ export function EvalsTab() {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Evals</h1>
-        {overviewData?.metadata && (
-          <div className="text-sm text-muted-foreground">
-            {overviewData.metadata.iterationsPassed} passed ·{" "}
-            {overviewData.metadata.iterationsFailed} failed
-          </div>
-        )}
       </div>
 
       <Tabs defaultValue="results" className="w-full">
