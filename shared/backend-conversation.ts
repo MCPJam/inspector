@@ -1,14 +1,8 @@
-import type { ModelMessage } from "ai";
+import type { ModelMessage, Tool } from "ai";
 import { hasUnresolvedToolCalls } from "./http-tool-calls";
 
-export type BackendToolDefinition = {
-  name: string;
-  description?: string;
-  inputSchema?: unknown;
-};
-
 export type BackendFetchPayload = {
-  tools: BackendToolDefinition[];
+  tools: Tool[];
   messages: string;
 };
 
@@ -44,7 +38,7 @@ export type BackendConversationHandlers = {
 export type BackendConversationOptions = {
   maxSteps: number;
   messageHistory: ModelMessage[];
-  toolDefinitions: BackendToolDefinition[];
+  toolDefinitions: Tool[];
   executeToolCalls: (messages: ModelMessage[]) => Promise<void>;
   fetchBackend: (
     payload: BackendFetchPayload,
