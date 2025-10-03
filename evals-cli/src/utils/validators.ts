@@ -174,6 +174,10 @@ export function validateLlms(value: unknown): LlmsConfig | undefined {
 }
 
 const isValidLlmApiKey = (key: string | undefined) => {
+  // Accept backend execution marker for MCPJam-provided models
+  if (key === "BACKEND_EXECUTION") {
+    return true;
+  }
   if (key && key.startsWith("sk-")) {
     return true;
   }

@@ -3,7 +3,12 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { usePostHog } from "posthog-js/react";
 import { ChatMessage, ChatState, Attachment } from "@/lib/chat-types";
 import { createMessage } from "@/lib/chat-utils";
-import { Model, ModelDefinition, SUPPORTED_MODELS } from "@/shared/types.js";
+import {
+  Model,
+  ModelDefinition,
+  SUPPORTED_MODELS,
+  isMCPJamProvidedModel,
+} from "@/shared/types.js";
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
 import {
   detectOllamaModels,
@@ -121,7 +126,7 @@ export function useChat(options: UseChatOptions = {}) {
     (m: ModelDefinition | null) => {
       if (!m) return "";
       // Router-backed model requires no user token; backend provides it
-      if (m.provider === "meta") {
+      if (isMCPJamProvidedModel(m.provider)) {
         return "router"; // sentinel token to pass client validation
       }
       if (m.provider === "ollama") {
@@ -320,7 +325,8 @@ export function useChat(options: UseChatOptions = {}) {
   const sendChatRequest = useCallback(
     async (userMessage: ChatMessage) => {
       const routeThroughBackend =
-        sendMessagesToBackend || model?.provider === "meta";
+        sendMessagesToBackend ||
+        (model && isMCPJamProvidedModel(model.provider));
 
       if (!routeThroughBackend && (!model || !currentApiKey)) {
         throw new Error(

@@ -71,10 +71,22 @@ evals.post("/run", async (c) => {
       throw new Error("CONVEX_URL is not set");
     }
 
+    const convexHttpUrl = process.env.CONVEX_HTTP_URL;
+    if (!convexHttpUrl) {
+      throw new Error("CONVEX_HTTP_URL is not set");
+    }
+
     const convexClient = new ConvexHttpClient(convexUrl);
     convexClient.setAuth(convexAuthToken);
 
-    runEvalsWithAuth(tests, environment, llms, convexClient).catch((error) => {
+    runEvalsWithAuth(
+      tests,
+      environment,
+      llms,
+      convexClient,
+      convexHttpUrl,
+      convexAuthToken,
+    ).catch((error) => {
       console.error("[Hono:Evals] Error running evals:", error);
     });
 
