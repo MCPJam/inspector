@@ -1,7 +1,7 @@
 export type EvalSuite = {
   _id: string;
   createdBy: string;
-  config: { tests: unknown; environment: unknown };
+  config: { tests: EvalCase[]; environment: { servers: string[] } };
   _creationTime?: number; // Convex auto field
 };
 
