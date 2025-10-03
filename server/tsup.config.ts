@@ -31,6 +31,9 @@ export default defineConfig({
     "execa",
     // Sentry packages with native modules must remain external
     "@sentry/node",
+    // evals-cli dependencies
+    "posthog-node",
+    "@openrouter/ai-sdk-provider",
   ],
   noExternal: [
     // Force bundling of problematic packages
