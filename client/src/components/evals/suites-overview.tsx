@@ -28,7 +28,7 @@ export function SuitesOverview({ suites, onSelectSuite }: SuitesOverviewProps) {
   return (
     <div className="space-y-4">
       <div className="overflow-hidden rounded-xl border">
-        <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] items-center gap-4 border-b bg-muted/50 px-4 py-2 text-xs font-semibold uppercase text-muted-foreground">
+        <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] items-center gap-4 border-b bg-muted/50 px-4 py-2 text-xs font-semibold text-muted-foreground">
           <div>Created</div>
           <div>Tests</div>
           <div>Results</div>

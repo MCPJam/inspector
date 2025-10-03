@@ -69,11 +69,32 @@ export function SuiteRow({ suite, onSelectSuite }: SuiteRowProps) {
 
   const totalIterations = aggregate?.filteredIterations.length ?? 0;
 
+  const getBorderColor = () => {
+    if (!aggregate) return "bg-zinc-300/50";
+
+    const { passed, failed, cancelled, pending } = aggregate.totals;
+    const total = passed + failed + cancelled + pending;
+
+    if (total === 0) return "bg-zinc-300/50";
+
+    const completedTotal = passed + failed;
+    if (completedTotal === 0) return "bg-zinc-300/50";
+
+    const failureRate = (failed / completedTotal) * 100;
+
+    if (failureRate === 0) return "bg-emerald-500/50";
+    if (failureRate <= 30) return "bg-amber-500/50";
+    return "bg-red-500/50";
+  };
+
   return (
     <button
       onClick={() => onSelectSuite(suite._id)}
-      className="group relative flex w-full items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+      className="group relative flex w-full items-center gap-4 py-3 pl-4 pr-4 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 cursor-pointer"
     >
+      <div
+        className={`absolute left-0 top-0 h-full w-1 ${getBorderColor()}`}
+      />
       <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] items-center gap-4">
         <div className="min-w-0">
           <div className="text-sm font-medium text-foreground">
