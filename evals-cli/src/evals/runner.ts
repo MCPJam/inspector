@@ -23,7 +23,12 @@ import { evaluateResults } from "./evaluator";
 import { getUserId } from "../utils/user-id";
 import { hogClient } from "../utils/hog";
 import { isMCPJamProvidedModel } from "../../../shared/types";
-import { hasUnresolvedToolCalls, executeToolCallsFromMessages } from "../../../shared/http-tool-calls";
+import { executeToolCallsFromMessages } from "../../../shared/http-tool-calls";
+import {
+  runBackendConversation,
+  type BackendToolCallEvent,
+  type BackendToolResultEvent,
+} from "../../../shared/backend-conversation";
 
 const MAX_STEPS = 20;
 
@@ -125,7 +130,6 @@ const runIterationViaBackend = async ({
 
   const messageHistory: ModelMessage[] = [userMessage];
   const toolsCalled: string[] = [];
-  let stepCount = 0;
 
   const runStartedAt = Date.now();
   const iterationId = await recorder.startIteration({
@@ -141,78 +145,68 @@ const runIterationViaBackend = async ({
     inputSchema: tool?.inputSchema,
   }));
 
-  while (stepCount < MAX_STEPS) {
-    try {
-      const res = await fetch(`${convexUrl}/streaming`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-        },
-        body: JSON.stringify({
-          tools: toolDefs,
-          messages: JSON.stringify(messageHistory),
-        }),
-      });
+  try {
+    await runBackendConversation({
+      maxSteps: MAX_STEPS,
+      messageHistory,
+      toolDefinitions: toolDefs,
+      fetchBackend: async (payload) => {
+        try {
+          const res = await fetch(`${convexUrl}/streaming`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+            },
+            body: JSON.stringify(payload),
+          });
 
-      if (!res.ok) {
-        throw new Error(`Backend request failed: ${res.statusText}`);
-      }
-
-      const data = await res.json();
-
-      if (!data?.ok || !Array.isArray(data.messages)) {
-        throw new Error("Invalid response from backend");
-      }
-
-      // Process response messages
-      for (const msg of data.messages as ModelMessage[]) {
-        messageHistory.push(msg);
-
-        if ((msg as any).role === "assistant" && Array.isArray((msg as any).content)) {
-          for (const c of (msg as any).content) {
-            if (c?.type === "text" && typeof c.text === "string") {
-              Logger.conversation({ messages: [{ role: "assistant", content: c.text }] });
-            } else if (c?.type === "tool-call") {
-              const toolName = c.toolName || c.name;
-              toolsCalled.push(toolName);
-              Logger.streamToolCall(toolName, c.input || c.parameters || c.args || {});
-            }
+          if (!res.ok) {
+            console.error(`Backend request failed: ${res.statusText}`);
+            return null;
           }
-        }
-      }
 
-      // Execute unresolved tool calls locally
-      const beforeLen = messageHistory.length;
-      if (hasUnresolvedToolCalls(messageHistory as any)) {
-        await executeToolCallsFromMessages(messageHistory as ModelMessage[], {
+          const data = await res.json();
+
+          if (!data?.ok || !Array.isArray(data.messages)) {
+            console.error("Invalid response from backend");
+            return null;
+          }
+
+          return data;
+        } catch (error) {
+          console.error(`Backend fetch error: ${error instanceof Error ? error.message : String(error)}`);
+          return null;
+        }
+      },
+      executeToolCalls: async (messages) => {
+        await executeToolCallsFromMessages(messages, {
           tools: tools as any,
         });
-        const newMsgs = messageHistory.slice(beforeLen);
-        for (const m of newMsgs) {
-          if ((m as any).role === "tool" && Array.isArray((m as any).content)) {
-            for (const tc of (m as any).content) {
-              if (tc.type === "tool-result") {
-                const out = tc.output;
-                const value =
-                  out && typeof out === "object" && "value" in out
-                    ? out.value
-                    : out;
-                Logger.streamToolResult(tc.toolName, value);
-              }
-            }
-          }
-        }
-      } else {
-        break;
-      }
-
-      stepCount++;
-    } catch (error) {
-      Logger.errorWithExit(
-        `Backend execution error: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
+      },
+      handlers: {
+        onAssistantText: (text) => {
+          Logger.conversation({ messages: [{ role: "assistant", content: text }] });
+        },
+        onToolCall: (call: BackendToolCallEvent) => {
+          toolsCalled.push(call.name);
+          const parameters =
+            call.params && typeof call.params === "object"
+              ? (call.params as Record<string, unknown>)
+              : {};
+          Logger.streamToolCall(call.name, parameters);
+        },
+        onToolResult: (result: BackendToolResultEvent) => {
+          Logger.streamToolResult(result.toolName ?? "", result.result);
+        },
+      },
+    });
+  } catch (error) {
+    Logger.errorWithExit(
+      `Backend execution error: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
   }
 
   const evaluation = evaluateResults(test.expectedToolCalls, toolsCalled);
