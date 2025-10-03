@@ -7,7 +7,6 @@ interface SuitesOverviewProps {
 }
 
 export function SuitesOverview({ suites, onSelectSuite }: SuitesOverviewProps) {
-  console.log("suites", suites);
   if (suites.length === 0) {
     return (
       <div className="h-[calc(100vh-220px)] flex items-center justify-center rounded-xl border border-dashed">
