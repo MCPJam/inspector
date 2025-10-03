@@ -105,6 +105,12 @@ export type ModelProvider =
   | "google"
   | "meta";
 
+// Helper to check if a provider is MCPJam-provided (requires backend execution)
+export const isMCPJamProvidedModel = (provider: ModelProvider): boolean => {
+  const MCPJAM_PROVIDERS: ModelProvider[] = ["meta"];
+  return MCPJAM_PROVIDERS.includes(provider);
+};
+
 export interface ModelDefinition {
   id: Model | string;
   name: string;
