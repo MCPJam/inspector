@@ -9,7 +9,11 @@ import {
   DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
-import { ModelDefinition, ModelProvider, isMCPJamProvidedModel } from "@/shared/types.js";
+import {
+  ModelDefinition,
+  ModelProvider,
+  isMCPJamProvidedModel,
+} from "@/shared/types.js";
 import { ProviderLogo } from "./provider-logo";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { useConvexAuth } from "convex/react";
@@ -132,7 +136,9 @@ export function ModelSelector({
                 collisionPadding={8}
               >
                 {models.map((model) => {
-                  const isMCPJamProvided = isMCPJamProvidedModel(model.provider);
+                  const isMCPJamProvided = isMCPJamProvidedModel(
+                    model.provider,
+                  );
                   const isDisabled =
                     !!model.disabled || (isMCPJamProvided && !isAuthenticated);
                   const computedReason =

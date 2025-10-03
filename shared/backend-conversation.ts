@@ -52,7 +52,11 @@ export type BackendConversationResult = {
 };
 
 const extractToolResultValue = (raw: unknown) => {
-  if (raw && typeof raw === "object" && "value" in (raw as Record<string, unknown>)) {
+  if (
+    raw &&
+    typeof raw === "object" &&
+    "value" in (raw as Record<string, unknown>)
+  ) {
     return (raw as Record<string, unknown>).value;
   }
 
@@ -116,7 +120,11 @@ export const runBackendConversation = async (
           for (const item of content) {
             if (item?.type === "tool-result") {
               const rawOutput =
-                item.output ?? item.result ?? item.value ?? item.data ?? item.content;
+                item.output ??
+                item.result ??
+                item.value ??
+                item.data ??
+                item.content;
               const resultEvent: BackendToolResultEvent = {
                 toolName: item.toolName ?? item.name,
                 result: extractToolResultValue(rawOutput),
