@@ -5464,7 +5464,6 @@ var getUserIdFromApiKeyOrNull = async (apiKey) => {
 var createDisabledRecorder = () => ({
   enabled: false,
   async ensureSuite() {
-    Logger.info("RunRecorder disabled - skipping suite creation");
     return;
   },
   async recordTestCase() {
@@ -5482,14 +5481,11 @@ var createRunRecorder = (apiKey, config2) => {
     Logger.warn("No API key provided - RunRecorder will be disabled");
     return createDisabledRecorder();
   }
-  Logger.info("Creating RunRecorder with API key authentication");
   const client = dbClient();
   let precreated;
   const runDbAction = async (action, payload) => {
     try {
-      Logger.info(`[RunRecorder] Calling ${action}`);
       const result = await client.action(action, payload);
-      Logger.info(`[RunRecorder] ${action} completed successfully`);
       return result;
     } catch (error) {
       Logger.error(`[RunRecorder] ${action} failed: ${error}`);
@@ -5498,10 +5494,8 @@ var createRunRecorder = (apiKey, config2) => {
   };
   const ensurePrecreated = async () => {
     if (precreated) {
-      Logger.info("[RunRecorder] Using cached precreated suite");
       return precreated;
     }
-    Logger.info("[RunRecorder] Creating new eval suite with API key");
     const result = await runDbAction(
       "evals:precreateEvalSuiteWithApiKey",
       {
@@ -5510,11 +5504,7 @@ var createRunRecorder = (apiKey, config2) => {
         tests: config2.tests
       }
     );
-    if (result) {
-      Logger.success(
-        `[RunRecorder] Suite created with ${result.testCases.length} test cases`
-      );
-    } else {
+    if (!result) {
       Logger.error("[RunRecorder] Failed to create suite");
     }
     precreated = result;
@@ -7163,6 +7153,9 @@ function validateLlms(value) {
   }
 }
 var isValidLlmApiKey = (key) => {
+  if (key === "BACKEND_EXECUTION") {
+    return true;
+  }
   if (key && key.startsWith("sk-")) {
     return true;
   }
@@ -7242,6 +7235,217 @@ var hogClient = new PostHog(
   { host: "https://us.i.posthog.com" }
 );
 
+// ../shared/types.ts
+var isMCPJamProvidedModel = (provider) => {
+  const MCPJAM_PROVIDERS = ["meta"];
+  return MCPJAM_PROVIDERS.includes(provider);
+};
+
+// ../shared/http-tool-calls.ts
+function flattenToolsets(toolsets) {
+  const flattened = {};
+  for (const serverTools of Object.values(toolsets || {})) {
+    if (serverTools && typeof serverTools === "object") {
+      Object.assign(flattened, serverTools);
+    }
+  }
+  return flattened;
+}
+function buildIndexWithAliases(tools) {
+  const index = {};
+  for (const [toolName, tool2] of Object.entries(tools || {})) {
+    if (!tool2 || typeof tool2 !== "object" || !("execute" in tool2)) continue;
+    const idx = toolName.indexOf("_");
+    const pure = idx > -1 && idx < toolName.length - 1 ? toolName.slice(idx + 1) : toolName;
+    if (!(toolName in index)) index[toolName] = tool2;
+    if (!(pure in index)) index[pure] = tool2;
+  }
+  return index;
+}
+var hasUnresolvedToolCalls = (messages) => {
+  const toolCallIds = /* @__PURE__ */ new Set();
+  const toolResultIds = /* @__PURE__ */ new Set();
+  for (const msg of messages) {
+    if (!msg) continue;
+    if (msg.role === "assistant" && Array.isArray(msg.content)) {
+      for (const c of msg.content) {
+        if (c?.type === "tool-call") toolCallIds.add(c.toolCallId);
+      }
+    } else if (msg.role === "tool" && Array.isArray(msg.content)) {
+      for (const c of msg.content) {
+        if (c?.type === "tool-result") toolResultIds.add(c.toolCallId);
+      }
+    }
+  }
+  for (const id of toolCallIds) if (!toolResultIds.has(id)) return true;
+  return false;
+};
+async function executeToolCallsFromMessages(messages, options) {
+  let tools = {};
+  if (options.client) {
+    const toolsets = await options.client.getToolsets();
+    tools = flattenToolsets(toolsets);
+  } else if (options.toolsets) {
+    tools = flattenToolsets(options.toolsets);
+  } else {
+    tools = options.tools;
+  }
+  const index = buildIndexWithAliases(tools);
+  const existingToolResultIds = /* @__PURE__ */ new Set();
+  for (const msg of messages) {
+    if (!msg || msg.role !== "tool" || !Array.isArray(msg.content))
+      continue;
+    for (const c of msg.content) {
+      if (c?.type === "tool-result") existingToolResultIds.add(c.toolCallId);
+    }
+  }
+  const toolResultsToAdd = [];
+  for (const msg of messages) {
+    if (!msg || msg.role !== "assistant" || !Array.isArray(msg.content))
+      continue;
+    for (const content of msg.content) {
+      if (content?.type === "tool-call" && !existingToolResultIds.has(content.toolCallId)) {
+        try {
+          const toolName = content.toolName;
+          const tool2 = index[toolName];
+          if (!tool2) throw new Error(`Tool '${toolName}' not found`);
+          const input = content.input || {};
+          const result = await tool2.execute({ context: input });
+          let output;
+          if (result && typeof result === "object" && result.content) {
+            const rc = result.content;
+            if (rc && typeof rc === "object" && "text" in rc && typeof rc.text === "string") {
+              output = { type: "text", value: rc.text };
+            } else if (rc && typeof rc === "object" && "type" in rc && "value" in rc) {
+              output = {
+                type: rc.type || "text",
+                value: rc.value
+              };
+            } else {
+              output = { type: "text", value: JSON.stringify(rc) };
+            }
+          } else {
+            output = { type: "text", value: String(result) };
+          }
+          const toolResultMessage = {
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: content.toolCallId,
+                toolName,
+                output
+              }
+            ]
+          };
+          toolResultsToAdd.push(toolResultMessage);
+        } catch (error) {
+          const errorOutput = {
+            type: "error-text",
+            value: error instanceof Error ? error.message : String(error)
+          };
+          const errorToolResultMessage = {
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: content.toolCallId,
+                toolName: content.toolName,
+                output: errorOutput
+              }
+            ]
+          };
+          toolResultsToAdd.push(errorToolResultMessage);
+        }
+      }
+    }
+  }
+  messages.push(...toolResultsToAdd);
+}
+
+// ../shared/backend-conversation.ts
+var extractToolResultValue = (raw) => {
+  if (raw && typeof raw === "object" && "value" in raw) {
+    return raw.value;
+  }
+  return raw;
+};
+var runBackendConversation = async (options) => {
+  const { handlers } = options;
+  let step = 0;
+  while (step < options.maxSteps) {
+    const payload = {
+      tools: options.toolDefinitions,
+      messages: JSON.stringify(options.messageHistory)
+    };
+    const data = await options.fetchBackend(payload);
+    if (!data || !data.ok || !Array.isArray(data.messages)) {
+      break;
+    }
+    const iterationToolCalls = [];
+    const iterationToolResults = [];
+    let iterationText = "";
+    for (const msg of data.messages) {
+      options.messageHistory.push(msg);
+      const content = msg.content;
+      if (msg.role === "assistant" && Array.isArray(content)) {
+        for (const item of content) {
+          if (item?.type === "text" && typeof item.text === "string") {
+            iterationText += item.text;
+            handlers?.onAssistantText?.(item.text);
+          } else if (item?.type === "tool-call") {
+            const name2 = item.toolName ?? item.name;
+            if (!name2) {
+              continue;
+            }
+            const params = item.input ?? item.parameters ?? item.args ?? {};
+            const callEvent = { name: name2, params };
+            iterationToolCalls.push(callEvent);
+            handlers?.onToolCall?.(callEvent);
+          }
+        }
+      }
+    }
+    const unresolved = hasUnresolvedToolCalls(options.messageHistory);
+    if (unresolved) {
+      const beforeLen = options.messageHistory.length;
+      await options.executeToolCalls(options.messageHistory);
+      const newMessages = options.messageHistory.slice(beforeLen);
+      for (const msg of newMessages) {
+        const content = msg.content;
+        if (msg.role === "tool" && Array.isArray(content)) {
+          for (const item of content) {
+            if (item?.type === "tool-result") {
+              const rawOutput = item.output ?? item.result ?? item.value ?? item.data ?? item.content;
+              const resultEvent = {
+                toolName: item.toolName ?? item.name,
+                result: extractToolResultValue(rawOutput),
+                error: item.error
+              };
+              iterationToolResults.push(resultEvent);
+              handlers?.onToolResult?.(resultEvent);
+            }
+          }
+        }
+      }
+    }
+    step += 1;
+    handlers?.onStepComplete?.({
+      step,
+      text: iterationText,
+      toolCalls: iterationToolCalls,
+      toolResults: iterationToolResults
+    });
+    if (!unresolved) {
+      break;
+    }
+  }
+  return {
+    steps: step,
+    messageHistory: options.messageHistory
+  };
+};
+
 // src/evals/runner.ts
 var MAX_STEPS = 20;
 var accumulateTokenCount = (current, increment) => {
@@ -7256,12 +7460,7 @@ var ensureApiKeyIsValid = async (apiKey) => {
   }
   await getUserIdFromApiKeyOrNull(apiKey);
 };
-var prepareSuite = async (tests, environment, llms) => {
-  const mcpClientOptions = validateAndNormalizeMCPClientConfiguration(
-    environment
-  );
-  const validatedTests = validateTestCase(tests);
-  const validatedLlms = validateLlms(llms);
+var prepareSuite = async (validatedTests, mcpClientOptions, validatedLlms) => {
   const mcpClient = new MCPClient(mcpClientOptions);
   const availableTools = await mcpClient.getTools();
   const vercelTools = convertMastraToolsToVercelTools(availableTools);
@@ -7279,6 +7478,131 @@ var prepareSuite = async (tests, environment, llms) => {
     serverNames,
     mcpClient
   };
+};
+var runIterationViaBackend = async ({
+  test,
+  runIndex,
+  totalRuns,
+  tools,
+  recorder,
+  testCaseId,
+  convexUrl,
+  authToken
+}) => {
+  const { advancedConfig, query } = test;
+  const { system } = advancedConfig ?? {};
+  Logger.testRunStart({
+    runNumber: runIndex + 1,
+    totalRuns,
+    provider: test.provider,
+    model: test.model,
+    temperature: advancedConfig?.temperature
+  });
+  if (system) {
+    Logger.conversation({ messages: [{ role: "system", content: system }] });
+  }
+  const userMessage = {
+    role: "user",
+    content: query
+  };
+  Logger.conversation({ messages: [userMessage] });
+  const messageHistory = [userMessage];
+  const toolsCalled = [];
+  const runStartedAt = Date.now();
+  const iterationId = await recorder.startIteration({
+    testCaseId,
+    iterationNumber: runIndex + 1,
+    startedAt: runStartedAt
+  });
+  const toolDefs = Object.entries(tools).map(([name2, tool2]) => ({
+    name: name2,
+    description: tool2?.description,
+    inputSchema: tool2?.inputSchema
+  }));
+  try {
+    await runBackendConversation({
+      maxSteps: MAX_STEPS,
+      messageHistory,
+      toolDefinitions: toolDefs,
+      fetchBackend: async (payload) => {
+        try {
+          const res = await fetch(`${convexUrl}/streaming`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              ...authToken ? { Authorization: `Bearer ${authToken}` } : {}
+            },
+            body: JSON.stringify(payload)
+          });
+          if (!res.ok) {
+            console.error(`Backend request failed: ${res.statusText}`);
+            return null;
+          }
+          const data = await res.json();
+          if (!data?.ok || !Array.isArray(data.messages)) {
+            console.error("Invalid response from backend");
+            return null;
+          }
+          return data;
+        } catch (error) {
+          console.error(
+            `Backend fetch error: ${error instanceof Error ? error.message : String(error)}`
+          );
+          return null;
+        }
+      },
+      executeToolCalls: async (messages) => {
+        await executeToolCallsFromMessages(messages, {
+          tools
+        });
+      },
+      handlers: {
+        onAssistantText: (text) => {
+          Logger.conversation({
+            messages: [{ role: "assistant", content: text }]
+          });
+        },
+        onToolCall: (call) => {
+          toolsCalled.push(call.name);
+          const parameters = call.params && typeof call.params === "object" ? call.params : {};
+          Logger.streamToolCall(call.name, parameters);
+        },
+        onToolResult: (result) => {
+          Logger.streamToolResult(result.toolName ?? "", result.result);
+        }
+      }
+    });
+  } catch (error) {
+    Logger.errorWithExit(
+      `Backend execution error: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+  const evaluation = evaluateResults(test.expectedToolCalls, toolsCalled);
+  const usage = {
+    inputTokens: void 0,
+    outputTokens: void 0,
+    totalTokens: void 0
+  };
+  await recorder.finishIteration({
+    iterationId,
+    passed: evaluation.passed,
+    toolsCalled,
+    usage,
+    messages: messageHistory
+  });
+  Logger.toolSummary({
+    expected: evaluation.expectedToolCalls,
+    actual: evaluation.toolsCalled,
+    missing: evaluation.missing,
+    unexpected: evaluation.unexpected,
+    passed: evaluation.passed
+  });
+  Logger.testRunResult({
+    passed: evaluation.passed,
+    durationMs: Date.now() - runStartedAt,
+    usage: void 0
+  });
+  return evaluation;
 };
 var runIteration = async ({
   test,
@@ -7421,7 +7745,9 @@ var runTestCase = async ({
   testIndex,
   llms,
   tools,
-  recorder
+  recorder,
+  convexUrl,
+  authToken
 }) => {
   const { runs, model, provider } = test;
   Logger.logTestGroupTitle(testIndex, test.title, provider, model);
@@ -7429,7 +7755,18 @@ var runTestCase = async ({
   let failedRuns = 0;
   const testCaseId = await recorder.recordTestCase(test, testIndex);
   for (let runIndex = 0; runIndex < runs; runIndex++) {
-    const evaluation = await runIteration({
+    const usesBackend = isMCPJamProvidedModel(provider);
+    const evaluation = usesBackend && convexUrl && authToken ? await runIterationViaBackend({
+      test,
+      runIndex,
+      totalRuns: runs,
+      llms,
+      tools,
+      recorder,
+      testCaseId,
+      convexUrl,
+      authToken
+    }) : await runIteration({
       test,
       runIndex,
       totalRuns: runs,
@@ -7446,8 +7783,12 @@ var runTestCase = async ({
   }
   return { passedRuns, failedRuns };
 };
-async function runEvalSuiteCore(tests, environment, llms, recorder, authType, suiteStartedAt) {
-  const { validatedTests, validatedLlms, vercelTools, serverNames, mcpClient } = await prepareSuite(tests, environment, llms);
+async function runEvalSuiteCore(validatedTests, mcpClientOptions, validatedLlms, recorder, suiteStartedAt, convexUrl, authToken) {
+  const { vercelTools, serverNames, mcpClient } = await prepareSuite(
+    validatedTests,
+    mcpClientOptions,
+    validatedLlms
+  );
   Logger.info(
     `[Suite prepared: ${validatedTests.length} tests, ${serverNames.length} servers`
   );
@@ -7468,7 +7809,9 @@ async function runEvalSuiteCore(tests, environment, llms, recorder, authType, su
         testIndex: index + 1,
         llms: validatedLlms,
         tools: vercelTools,
-        recorder
+        recorder,
+        convexUrl,
+        authToken
       });
       passedRuns += casePassed;
       failedRuns += caseFailed;
@@ -7497,13 +7840,20 @@ var runEvalsWithApiKey = async (tests, environment, llms, apiKey) => {
     environment
   );
   const validatedTests = validateTestCase(tests);
+  const validatedLlms = validateLlms(llms);
   const serverNames = Object.keys(mcpClientOptions.servers);
   const suiteConfig = {
     tests: validatedTests,
     environment: { servers: serverNames }
   };
   const recorder = createRunRecorder(apiKey, suiteConfig);
-  await runEvalSuiteCore(tests, environment, llms, recorder, "apiKey", suiteStartedAt);
+  await runEvalSuiteCore(
+    validatedTests,
+    mcpClientOptions,
+    validatedLlms,
+    recorder,
+    suiteStartedAt
+  );
 };
 
 // src/utils/config-transformer.ts
@@ -7707,7 +8057,7 @@ var package_default = {
     build: "tsup",
     dev: "tsup --watch",
     "build-and-test": "npm run build && npm run test",
-    test: "node bin/mcpjam.js evals run -t local-examples/tests.json -e local-examples/environment.json -l local-examples/llms.json",
+    test: "node bin/mcpjam.js evals run -t local-examples/tests.json -e local-examples/environment.json -l local-examples/llms.json -a mcpjam_F8C144_5e078dcc7413bab92eb489982e324b8b4bab278cd6dc120a",
     start: "node bin/mcpjam.js"
   },
   dependencies: {

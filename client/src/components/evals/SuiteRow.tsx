@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery } from "convex/react";
-import { formatTime, aggregateSuite } from "./helpers";
+import { aggregateSuite } from "./helpers";
 import type { EvalSuite, EvalCase, EvalIteration } from "./types";
 
 interface SuiteRowProps {
@@ -9,48 +9,26 @@ interface SuiteRowProps {
   onSelectSuite: (id: string) => void;
 }
 
-interface SuiteStatusBadgesProps {
-  passed: number;
-  failed: number;
-  cancelled: number;
-  pending: number;
-}
+function formatCompactStatus(
+  passed: number,
+  failed: number,
+  cancelled: number,
+  pending: number,
+): string {
+  const parts: string[] = [];
 
-function SuiteStatusBadges({
-  passed,
-  failed,
-  cancelled,
-  pending,
-}: SuiteStatusBadgesProps) {
-  return (
-    <div className="flex items-center gap-2 text-xs">
-      {passed > 0 && (
-        <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-green-700">
-          {passed} passed
-        </span>
-      )}
-      {failed > 0 && (
-        <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-red-700">
-          {failed} failed
-        </span>
-      )}
-      {cancelled > 0 && (
-        <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-gray-700">
-          {cancelled} cancelled
-        </span>
-      )}
-      {pending > 0 && (
-        <span className="inline-flex items-center rounded-full bg-yellow-100 px-2 py-0.5 text-yellow-700">
-          {pending} pending
-        </span>
-      )}
-    </div>
-  );
+  if (passed > 0) parts.push(`${passed} passed`);
+  if (failed > 0) parts.push(`${failed} failed`);
+  if (cancelled > 0) parts.push(`${cancelled} cancelled`);
+  if (pending > 0) parts.push(`${pending} pending`);
+
+  return parts.join(" · ") || "No results";
 }
 
 export function SuiteRow({ suite, onSelectSuite }: SuiteRowProps) {
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
+  const servers = suite.config?.environment.servers;
 
   const enableQuery = isAuthenticated && !!user;
   const suiteDetails = useQuery(
@@ -73,40 +51,78 @@ export function SuiteRow({ suite, onSelectSuite }: SuiteRowProps) {
     ? suite.config.tests.length
     : 0;
 
+  const serverTags = useMemo(() => {
+    if (!Array.isArray(servers)) return [] as string[];
+
+    const sanitized = servers
+      .filter((server): server is string => typeof server === "string")
+      .map((server) => server.trim())
+      .filter(Boolean);
+
+    if (sanitized.length <= 2) {
+      return sanitized;
+    }
+
+    const remaining = sanitized.length - 2;
+    return [...sanitized.slice(0, 2), `+${remaining} more`];
+  }, [servers]);
+
+  const totalIterations = aggregate?.filteredIterations.length ?? 0;
+
+  const getBorderColor = () => {
+    if (!aggregate) return "bg-zinc-300/50";
+
+    const { passed, failed, cancelled, pending } = aggregate.totals;
+    const total = passed + failed + cancelled + pending;
+
+    if (total === 0) return "bg-zinc-300/50";
+
+    const completedTotal = passed + failed;
+    if (completedTotal === 0) return "bg-zinc-300/50";
+
+    const failureRate = (failed / completedTotal) * 100;
+
+    if (failureRate === 0) return "bg-emerald-500/50";
+    if (failureRate <= 30) return "bg-amber-500/50";
+    return "bg-red-500/50";
+  };
+
   return (
     <button
       onClick={() => onSelectSuite(suite._id)}
-      className="grid w-full grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_minmax(0,0.8fr)] items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+      className="group relative flex w-full items-center gap-4 py-3 pl-4 pr-4 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 cursor-pointer"
     >
-      <div>
-        <div className="font-medium">
-          {new Date(suite._creationTime || 0).toLocaleDateString("en-US", {
-            month: "short",
-            day: "numeric",
-            year: "numeric",
-            hour: "numeric",
-            minute: "2-digit",
-            hour12: true,
-          })}
+      <div className={`absolute left-0 top-0 h-full w-1 ${getBorderColor()}`} />
+      <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] items-center gap-4">
+        <div className="min-w-0">
+          <div className="text-sm font-medium text-foreground">
+            {new Date(suite._creationTime || 0).toLocaleDateString("en-US", {
+              month: "short",
+              day: "numeric",
+              year: "numeric",
+              hour: "numeric",
+              minute: "2-digit",
+              hour12: true,
+            })}
+          </div>
+          <div className="text-xs text-muted-foreground">
+            {serverTags.length > 0 ? serverTags.join(", ") : "No servers"}
+          </div>
         </div>
-        <div className="text-xs text-muted-foreground">
-          {testCount} test{testCount !== 1 ? "s" : ""}
+        <div className="text-sm text-muted-foreground">
+          {testCount} test{testCount !== 1 ? "s" : ""} · {totalIterations}{" "}
+          iteration{totalIterations !== 1 ? "s" : ""}
         </div>
-      </div>
-      <div>
-        {aggregate ? (
-          <SuiteStatusBadges
-            passed={aggregate.totals.passed}
-            failed={aggregate.totals.failed}
-            cancelled={aggregate.totals.cancelled}
-            pending={aggregate.totals.pending}
-          />
-        ) : (
-          <span className="text-xs text-muted-foreground">Loading...</span>
-        )}
-      </div>
-      <div className="text-sm text-muted-foreground">
-        {formatTime(suite._creationTime)}
+        <div className="text-sm text-muted-foreground">
+          {aggregate
+            ? formatCompactStatus(
+                aggregate.totals.passed,
+                aggregate.totals.failed,
+                aggregate.totals.cancelled,
+                aggregate.totals.pending,
+              )
+            : "Loading..."}
+        </div>
       </div>
     </button>
   );
