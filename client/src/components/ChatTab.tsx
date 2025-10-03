@@ -15,6 +15,7 @@ import type { ServerWithName } from "@/hooks/use-app-state";
 import { Button } from "@/components/ui/button";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
+import { isMCPJamProvidedModel } from "@/shared/types";
 interface ChatTabProps {
   serverConfigs?: Record<string, MastraMCPServerDefinition>;
   connectedServerConfigs?: Record<string, ServerWithName>;
@@ -66,7 +67,9 @@ export function ChatTab({
       toast.error(error);
     },
   });
-  const isUsingMcpjamProvidedModel = model?.provider === "meta";
+  const isUsingMcpjamProvidedModel = model
+    ? isMCPJamProvidedModel(model.provider)
+    : false;
   const showSignInPrompt = isUsingMcpjamProvidedModel && !isAuthenticated;
   const signInPromptMessage = "Sign in to use MCPJam provided models";
 

@@ -22,6 +22,13 @@ import { Logger } from "../utils/logger";
 import { evaluateResults } from "./evaluator";
 import { getUserId } from "../utils/user-id";
 import { hogClient } from "../utils/hog";
+import { isMCPJamProvidedModel } from "../../../shared/types";
+import { executeToolCallsFromMessages } from "../../../shared/http-tool-calls";
+import {
+  runBackendConversation,
+  type BackendToolCallEvent,
+  type BackendToolResultEvent,
+} from "../../../shared/backend-conversation";
 
 const MAX_STEPS = 20;
 
@@ -82,6 +89,161 @@ type RunIterationParams = {
   tools: ToolMap;
   recorder: RunRecorder;
   testCaseId?: string;
+};
+
+type RunIterationViaBackendParams = RunIterationParams & {
+  convexUrl: string;
+  authToken: string;
+};
+
+const runIterationViaBackend = async ({
+  test,
+  runIndex,
+  totalRuns,
+  tools,
+  recorder,
+  testCaseId,
+  convexUrl,
+  authToken,
+}: RunIterationViaBackendParams): Promise<EvaluationResult> => {
+  const { advancedConfig, query } = test;
+  const { system } = advancedConfig ?? {};
+
+  Logger.testRunStart({
+    runNumber: runIndex + 1,
+    totalRuns,
+    provider: test.provider,
+    model: test.model,
+    temperature: advancedConfig?.temperature,
+  });
+
+  if (system) {
+    Logger.conversation({ messages: [{ role: "system", content: system }] });
+  }
+
+  const userMessage: ModelMessage = {
+    role: "user",
+    content: query,
+  };
+
+  Logger.conversation({ messages: [userMessage] });
+
+  const messageHistory: ModelMessage[] = [userMessage];
+  const toolsCalled: string[] = [];
+
+  const runStartedAt = Date.now();
+  const iterationId = await recorder.startIteration({
+    testCaseId,
+    iterationNumber: runIndex + 1,
+    startedAt: runStartedAt,
+  });
+
+  // Convert tools to serializable format for backend
+  const toolDefs = Object.entries(tools).map(([name, tool]) => ({
+    name,
+    description: tool?.description,
+    inputSchema: tool?.inputSchema,
+  }));
+
+  try {
+    await runBackendConversation({
+      maxSteps: MAX_STEPS,
+      messageHistory,
+      toolDefinitions: toolDefs,
+      fetchBackend: async (payload) => {
+        try {
+          const res = await fetch(`${convexUrl}/streaming`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+            },
+            body: JSON.stringify(payload),
+          });
+
+          if (!res.ok) {
+            console.error(`Backend request failed: ${res.statusText}`);
+            return null;
+          }
+
+          const data = await res.json();
+
+          if (!data?.ok || !Array.isArray(data.messages)) {
+            console.error("Invalid response from backend");
+            return null;
+          }
+
+          return data;
+        } catch (error) {
+          console.error(
+            `Backend fetch error: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          return null;
+        }
+      },
+      executeToolCalls: async (messages) => {
+        await executeToolCallsFromMessages(messages, {
+          tools: tools as any,
+        });
+      },
+      handlers: {
+        onAssistantText: (text) => {
+          Logger.conversation({
+            messages: [{ role: "assistant", content: text }],
+          });
+        },
+        onToolCall: (call: BackendToolCallEvent) => {
+          toolsCalled.push(call.name);
+          const parameters =
+            call.params && typeof call.params === "object"
+              ? (call.params as Record<string, unknown>)
+              : {};
+          Logger.streamToolCall(call.name, parameters);
+        },
+        onToolResult: (result: BackendToolResultEvent) => {
+          Logger.streamToolResult(result.toolName ?? "", result.result);
+        },
+      },
+    });
+  } catch (error) {
+    Logger.errorWithExit(
+      `Backend execution error: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+
+  const evaluation = evaluateResults(test.expectedToolCalls, toolsCalled);
+
+  const usage: UsageTotals = {
+    inputTokens: undefined,
+    outputTokens: undefined,
+    totalTokens: undefined,
+  };
+
+  await recorder.finishIteration({
+    iterationId,
+    passed: evaluation.passed,
+    toolsCalled,
+    usage,
+    messages: messageHistory,
+  });
+
+  Logger.toolSummary({
+    expected: evaluation.expectedToolCalls,
+    actual: evaluation.toolsCalled,
+    missing: evaluation.missing,
+    unexpected: evaluation.unexpected,
+    passed: evaluation.passed,
+  });
+
+  Logger.testRunResult({
+    passed: evaluation.passed,
+    durationMs: Date.now() - runStartedAt,
+    usage: undefined,
+  });
+
+  return evaluation;
 };
 
 const runIteration = async ({
@@ -257,6 +419,8 @@ type RunTestCaseParams = {
   llms: LlmsConfig;
   tools: ToolMap;
   recorder: RunRecorder;
+  convexUrl?: string;
+  authToken?: string;
 };
 
 const runTestCase = async ({
@@ -265,6 +429,8 @@ const runTestCase = async ({
   llms,
   tools,
   recorder,
+  convexUrl,
+  authToken,
 }: RunTestCaseParams) => {
   const { runs, model, provider } = test;
 
@@ -276,15 +442,31 @@ const runTestCase = async ({
   const testCaseId = await recorder.recordTestCase(test, testIndex);
 
   for (let runIndex = 0; runIndex < runs; runIndex++) {
-    const evaluation = await runIteration({
-      test,
-      runIndex,
-      totalRuns: runs,
-      llms,
-      tools,
-      recorder,
-      testCaseId,
-    });
+    // Branch based on whether this is an MCPJam-provided model
+    const usesBackend = isMCPJamProvidedModel(provider as any);
+
+    const evaluation =
+      usesBackend && convexUrl && authToken
+        ? await runIterationViaBackend({
+            test,
+            runIndex,
+            totalRuns: runs,
+            llms,
+            tools,
+            recorder,
+            testCaseId,
+            convexUrl,
+            authToken,
+          })
+        : await runIteration({
+            test,
+            runIndex,
+            totalRuns: runs,
+            llms,
+            tools,
+            recorder,
+            testCaseId,
+          });
 
     if (evaluation.passed) {
       passedRuns++;
@@ -302,6 +484,8 @@ async function runEvalSuiteCore(
   validatedLlms: LlmsConfig,
   recorder: RunRecorder,
   suiteStartedAt: number,
+  convexUrl?: string,
+  authToken?: string,
 ) {
   const { vercelTools, serverNames, mcpClient } = await prepareSuite(
     validatedTests,
@@ -334,6 +518,8 @@ async function runEvalSuiteCore(
           llms: validatedLlms,
           tools: vercelTools,
           recorder,
+          convexUrl,
+          authToken,
         });
       passedRuns += casePassed;
       failedRuns += caseFailed;
@@ -397,6 +583,8 @@ export const runEvalsWithAuth = async (
   environment: unknown,
   llms: unknown,
   convexClient: ConvexHttpClient,
+  convexUrl?: string,
+  authToken?: string,
 ) => {
   const suiteStartedAt = Date.now();
   Logger.info("Starting eval suite with session authentication");
@@ -423,5 +611,7 @@ export const runEvalsWithAuth = async (
     validatedLlms,
     recorder,
     suiteStartedAt,
+    convexUrl,
+    authToken,
   );
 };

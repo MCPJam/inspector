@@ -4,16 +4,19 @@ import {
   ChatMessage,
   ModelDefinition,
   ModelProvider,
+  isMCPJamProvidedModel,
 } from "../../../shared/types";
 import { TextEncoder } from "util";
 import { getDefaultTemperatureByProvider } from "../../../client/src/lib/chat-utils";
 import { createLlmModel } from "../../utils/chat-helpers";
 import { SSEvent } from "../../../shared/sse";
 import { convertMastraToolsToVercelTools } from "../../../shared/tools";
+import { executeToolCallsFromMessages } from "../../../shared/http-tool-calls";
 import {
-  hasUnresolvedToolCalls,
-  executeToolCallsFromMessages,
-} from "../../../shared/http-tool-calls";
+  runBackendConversation,
+  type BackendToolCallEvent,
+  type BackendToolResultEvent,
+} from "../../../shared/backend-conversation";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import type { ModelMessage, Tool } from "ai";
 
@@ -403,105 +406,88 @@ const sendMessagesToBackend = async (
   if (!baseUrl) {
     throw new Error("CONVEX_HTTP_URL is not set");
   }
-  let steps = 0;
-  while (steps < MAX_AGENT_STEPS) {
-    const data = await sendBackendRequest(
-      baseUrl,
-      authHeader,
-      {
-        tools: toolDefs,
-        messages: JSON.stringify(messageHistory),
-      },
-      streamingContext,
-    );
-    if (!data) break;
-    if (data?.ok && Array.isArray(data.messages)) {
-      // Append assistant messages and emit their text/tool_call events
-      for (const msg of data.messages as ModelMessage[]) {
-        messageHistory.push(msg);
-        if (
-          (msg as any).role === "assistant" &&
-          Array.isArray((msg as any).content)
-        ) {
-          for (const c of (msg as any).content) {
-            if (c?.type === "text" && typeof c.text === "string") {
-              sendSseEvent(
-                streamingContext.controller,
-                streamingContext.encoder!,
-                {
-                  type: "text",
-                  content: c.text,
-                },
-              );
-            } else if (c?.type === "tool-call") {
-              const currentToolCallId = ++streamingContext.toolCallId;
-              streamingContext.lastEmittedToolCallId = currentToolCallId;
-              sendSseEvent(
-                streamingContext.controller,
-                streamingContext.encoder!,
-                {
-                  type: "tool_call",
-                  toolCall: {
-                    id: currentToolCallId,
-                    name: c.toolName || c.name,
-                    parameters: c.input || c.parameters || c.args || {},
-                    timestamp: new Date().toISOString(),
-                    status: "executing",
-                  },
-                },
-              );
-            }
-          }
-        }
-      }
-    } else {
-      sendBackendErrorText(streamingContext);
-      break;
-    }
 
-    // Execute unresolved tool calls locally and emit tool_result events
-    const beforeLen = messageHistory.length;
-    if (hasUnresolvedToolCalls(messageHistory as any)) {
-      await executeToolCallsFromMessages(messageHistory as ModelMessage[], {
+  const emitToolCall = (call: BackendToolCallEvent) => {
+    const currentToolCallId = ++streamingContext.toolCallId;
+    streamingContext.lastEmittedToolCallId = currentToolCallId;
+    sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
+      type: "tool_call",
+      toolCall: {
+        id: currentToolCallId,
+        name: call.name,
+        parameters: call.params || {},
+        timestamp: new Date().toISOString(),
+        status: "executing",
+      },
+    });
+  };
+
+  const emitToolResult = (result: BackendToolResultEvent) => {
+    const currentToolCallId =
+      streamingContext.lastEmittedToolCallId != null
+        ? streamingContext.lastEmittedToolCallId
+        : ++streamingContext.toolCallId;
+    sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
+      type: "tool_result",
+      toolResult: {
+        id: currentToolCallId,
+        toolCallId: currentToolCallId,
+        result: result.result,
+        error: result.error,
+        timestamp: new Date().toISOString(),
+      },
+    });
+  };
+
+  await runBackendConversation({
+    maxSteps: MAX_AGENT_STEPS,
+    messageHistory,
+    toolDefinitions: toolDefs,
+    fetchBackend: async (payload) => {
+      const data = await sendBackendRequest(
+        baseUrl,
+        authHeader,
+        payload,
+        streamingContext,
+      );
+      if (data && (!data.ok || !Array.isArray(data.messages))) {
+        sendBackendErrorText(streamingContext);
+        return null;
+      }
+      return data;
+    },
+    executeToolCalls: async (messages) => {
+      await executeToolCallsFromMessages(messages, {
         tools: flatTools as any,
       });
-      const newMsgs = messageHistory.slice(beforeLen);
-      for (const m of newMsgs) {
-        if ((m as any).role === "tool" && Array.isArray((m as any).content)) {
-          for (const tc of (m as any).content) {
-            if (tc.type === "tool-result") {
-              const currentToolCallId =
-                streamingContext.lastEmittedToolCallId != null
-                  ? streamingContext.lastEmittedToolCallId
-                  : ++streamingContext.toolCallId;
-              const out = tc.output;
-              const value =
-                out && typeof out === "object" && "value" in out
-                  ? out.value
-                  : out;
-              sendSseEvent(
-                streamingContext.controller,
-                streamingContext.encoder!,
-                {
-                  type: "tool_result",
-                  toolResult: {
-                    id: currentToolCallId,
-                    toolCallId: currentToolCallId,
-                    result: value,
-                    timestamp: new Date().toISOString(),
-                  },
-                },
-              );
-            }
-          }
-        }
-      }
-    } else {
-      break;
-    }
-
-    steps++;
-  }
+    },
+    handlers: {
+      onAssistantText: (text) => {
+        sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
+          type: "text",
+          content: text,
+        });
+      },
+      onToolCall: (call) => {
+        emitToolCall(call);
+      },
+      onToolResult: (result) => {
+        emitToolResult(result);
+      },
+      onStepComplete: ({ text, toolCalls, toolResults }) => {
+        handleAgentStepFinish(
+          streamingContext,
+          text,
+          toolCalls,
+          toolResults.map((result) => ({
+            result: result.result,
+            error: result.error,
+          })),
+          false,
+        );
+      },
+    },
+  });
 
   sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
     type: "elicitation_complete",
@@ -571,7 +557,8 @@ chat.post("/", async (c) => {
       );
     }
     const sendToBackend =
-      provider === "meta" && Boolean(requestData.sendMessagesToBackend);
+      isMCPJamProvidedModel(provider) &&
+      Boolean(requestData.sendMessagesToBackend);
 
     if (!sendToBackend && (!model?.id || !apiKey)) {
       return c.json(

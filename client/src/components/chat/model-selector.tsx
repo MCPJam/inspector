@@ -9,7 +9,11 @@ import {
   DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
-import { ModelDefinition, ModelProvider } from "@/shared/types.js";
+import {
+  ModelDefinition,
+  ModelProvider,
+  isMCPJamProvidedModel,
+} from "@/shared/types.js";
 import { ProviderLogo } from "./provider-logo";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { useConvexAuth } from "convex/react";
@@ -74,12 +78,11 @@ export function ModelSelector({
 
   // Get sorted provider keys for consistent ordering
   const sortedProviders = Array.from(groupedModels.keys()).sort();
-  const MCPJAM_PROVIDERS: ModelProvider[] = ["meta"];
   const mcpjamProviders = hideProvidedModels
     ? []
-    : sortedProviders.filter((p) => MCPJAM_PROVIDERS.includes(p));
+    : sortedProviders.filter((p) => isMCPJamProvidedModel(p));
   const otherProviders = sortedProviders.filter(
-    (p) => !MCPJAM_PROVIDERS.includes(p),
+    (p) => !isMCPJamProvidedModel(p),
   );
 
   return (
@@ -133,11 +136,13 @@ export function ModelSelector({
                 collisionPadding={8}
               >
                 {models.map((model) => {
-                  const isMeta = model.provider === "meta";
+                  const isMCPJamProvided = isMCPJamProvidedModel(
+                    model.provider,
+                  );
                   const isDisabled =
-                    !!model.disabled || (isMeta && !isAuthenticated);
+                    !!model.disabled || (isMCPJamProvided && !isAuthenticated);
                   const computedReason =
-                    isMeta && !isAuthenticated
+                    isMCPJamProvided && !isAuthenticated
                       ? "Sign in to use MCPJam provided models"
                       : model.disabledReason;
 
