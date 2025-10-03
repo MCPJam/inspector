@@ -175,7 +175,9 @@ const runIterationViaBackend = async ({
 
           return data;
         } catch (error) {
-          console.error(`Backend fetch error: ${error instanceof Error ? error.message : String(error)}`);
+          console.error(
+            `Backend fetch error: ${error instanceof Error ? error.message : String(error)}`,
+          );
           return null;
         }
       },
@@ -186,7 +188,9 @@ const runIterationViaBackend = async ({
       },
       handlers: {
         onAssistantText: (text) => {
-          Logger.conversation({ messages: [{ role: "assistant", content: text }] });
+          Logger.conversation({
+            messages: [{ role: "assistant", content: text }],
+          });
         },
         onToolCall: (call: BackendToolCallEvent) => {
           toolsCalled.push(call.name);
@@ -441,27 +445,28 @@ const runTestCase = async ({
     // Branch based on whether this is an MCPJam-provided model
     const usesBackend = isMCPJamProvidedModel(provider as any);
 
-    const evaluation = usesBackend && convexUrl && authToken
-      ? await runIterationViaBackend({
-          test,
-          runIndex,
-          totalRuns: runs,
-          llms,
-          tools,
-          recorder,
-          testCaseId,
-          convexUrl,
-          authToken,
-        })
-      : await runIteration({
-          test,
-          runIndex,
-          totalRuns: runs,
-          llms,
-          tools,
-          recorder,
-          testCaseId,
-        });
+    const evaluation =
+      usesBackend && convexUrl && authToken
+        ? await runIterationViaBackend({
+            test,
+            runIndex,
+            totalRuns: runs,
+            llms,
+            tools,
+            recorder,
+            testCaseId,
+            convexUrl,
+            authToken,
+          })
+        : await runIteration({
+            test,
+            runIndex,
+            totalRuns: runs,
+            llms,
+            tools,
+            recorder,
+            testCaseId,
+          });
 
     if (evaluation.passed) {
       passedRuns++;

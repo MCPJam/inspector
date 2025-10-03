@@ -3,7 +3,12 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { usePostHog } from "posthog-js/react";
 import { ChatMessage, ChatState, Attachment } from "@/lib/chat-types";
 import { createMessage } from "@/lib/chat-utils";
-import { Model, ModelDefinition, SUPPORTED_MODELS, isMCPJamProvidedModel } from "@/shared/types.js";
+import {
+  Model,
+  ModelDefinition,
+  SUPPORTED_MODELS,
+  isMCPJamProvidedModel,
+} from "@/shared/types.js";
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
 import {
   detectOllamaModels,
@@ -320,7 +325,8 @@ export function useChat(options: UseChatOptions = {}) {
   const sendChatRequest = useCallback(
     async (userMessage: ChatMessage) => {
       const routeThroughBackend =
-        sendMessagesToBackend || (model && isMCPJamProvidedModel(model.provider));
+        sendMessagesToBackend ||
+        (model && isMCPJamProvidedModel(model.provider));
 
       if (!routeThroughBackend && (!model || !currentApiKey)) {
         throw new Error(

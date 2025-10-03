@@ -67,7 +67,9 @@ export function ChatTab({
       toast.error(error);
     },
   });
-  const isUsingMcpjamProvidedModel = model ? isMCPJamProvidedModel(model.provider) : false;
+  const isUsingMcpjamProvidedModel = model
+    ? isMCPJamProvidedModel(model.provider)
+    : false;
   const showSignInPrompt = isUsingMcpjamProvidedModel && !isAuthenticated;
   const signInPromptMessage = "Sign in to use MCPJam provided models";
 
