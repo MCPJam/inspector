@@ -5,7 +5,6 @@ import tools from "./tools";
 import resources from "./resources";
 import prompts from "./prompts";
 import chat from "./chat";
-import tests from "./tests.ts";
 import oauth from "./oauth";
 import exporter from "./export";
 import interceptor from "./interceptor";
@@ -34,9 +33,6 @@ mcp.route("/servers", servers);
 
 // Tools endpoint - REAL IMPLEMENTATION
 mcp.route("/tools", tools);
-
-// Tests endpoint - generate per-test agents
-mcp.route("/tests", tests);
 
 // Evals endpoint - run evaluations
 mcp.route("/evals", evals);
