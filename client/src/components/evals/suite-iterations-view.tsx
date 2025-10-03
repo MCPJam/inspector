@@ -19,7 +19,9 @@ export function SuiteIterationsView({
   onBack: () => void;
 }) {
   const [openIterationId, setOpenIterationId] = useState<string | null>(null);
-  const [expandedQueries, setExpandedQueries] = useState<Set<string>>(new Set());
+  const [expandedQueries, setExpandedQueries] = useState<Set<string>>(
+    new Set(),
+  );
   const caseGroups = useMemo(() => {
     const groups = new Map<
       string,
@@ -183,10 +185,12 @@ export function SuiteIterationsView({
           const caseId = testCase?._id ?? `unassigned-${index}`;
           const isQueryExpanded = expandedQueries.has(caseId);
           const queryMaxLength = 100;
-          const shouldTruncate = testCase?.query && testCase.query.length > queryMaxLength;
-          const displayQuery = shouldTruncate && !isQueryExpanded
-            ? testCase.query.slice(0, queryMaxLength) + "..."
-            : testCase?.query;
+          const shouldTruncate =
+            testCase?.query && testCase.query.length > queryMaxLength;
+          const displayQuery =
+            shouldTruncate && !isQueryExpanded
+              ? testCase.query.slice(0, queryMaxLength) + "..."
+              : testCase?.query;
 
           const toggleQuery = () => {
             setExpandedQueries((prev) => {
@@ -201,10 +205,7 @@ export function SuiteIterationsView({
           };
 
           return (
-            <div
-              key={caseId}
-              className="overflow-hidden rounded-xl border"
-            >
+            <div key={caseId} className="overflow-hidden rounded-xl border">
               <div className="border-b bg-muted/50 px-4 py-2.5">
                 <div className="space-y-2">
                   <div className="flex items-center gap-2">
@@ -249,14 +250,21 @@ export function SuiteIterationsView({
                 <div className="divide-y">
                   {groupIterations.map((iteration) => {
                     const isOpen = openIterationId === iteration._id;
-                    const startedAt = iteration.startedAt ?? iteration.createdAt;
-                    const completedAt = iteration.updatedAt ?? iteration.createdAt;
+                    const startedAt =
+                      iteration.startedAt ?? iteration.createdAt;
+                    const completedAt =
+                      iteration.updatedAt ?? iteration.createdAt;
                     const durationMs =
-                      startedAt && completedAt ? Math.max(completedAt - startedAt, 0) : null;
+                      startedAt && completedAt
+                        ? Math.max(completedAt - startedAt, 0)
+                        : null;
                     const isPending = iteration.result === "pending";
 
                     return (
-                      <div key={iteration._id} className={`relative ${isPending ? "opacity-60" : ""}`}>
+                      <div
+                        key={iteration._id}
+                        className={`relative ${isPending ? "opacity-60" : ""}`}
+                      >
                         <div
                           className={`absolute left-0 top-0 h-full w-1 ${getIterationBorderColor(iteration.result)}`}
                         />
@@ -264,13 +272,17 @@ export function SuiteIterationsView({
                           onClick={() => {
                             if (!isPending) {
                               setOpenIterationId((current) =>
-                                current === iteration._id ? null : iteration._id,
+                                current === iteration._id
+                                  ? null
+                                  : iteration._id,
                               );
                             }
                           }}
                           disabled={isPending}
                           className={`flex w-full items-center gap-4 px-4 py-3 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
-                            isPending ? "cursor-not-allowed" : "cursor-pointer hover:bg-muted/50"
+                            isPending
+                              ? "cursor-not-allowed"
+                              : "cursor-pointer hover:bg-muted/50"
                           }`}
                         >
                           <div className="grid min-w-0 flex-1 grid-cols-[auto_1fr_auto_auto] items-center gap-4 pl-3">
@@ -292,16 +304,25 @@ export function SuiteIterationsView({
                               ) : null}
                             </div>
                             <div className="text-sm text-muted-foreground">
-                              {isPending ? "—" : `${Number(iteration.tokensUsed || 0).toLocaleString()} tokens`}
+                              {isPending
+                                ? "—"
+                                : `${Number(iteration.tokensUsed || 0).toLocaleString()} tokens`}
                             </div>
                             <div className="text-sm text-muted-foreground">
-                              {isPending ? "—" : durationMs !== null ? formatDuration(durationMs) : "—"}
+                              {isPending
+                                ? "—"
+                                : durationMs !== null
+                                  ? formatDuration(durationMs)
+                                  : "—"}
                             </div>
                           </div>
                         </button>
                         {isOpen && !isPending ? (
                           <div className="border-t bg-muted/20 px-4 pb-4 pt-3 pl-8">
-                            <IterationDetails iteration={iteration} testCase={testCase} />
+                            <IterationDetails
+                              iteration={iteration}
+                              testCase={testCase}
+                            />
                           </div>
                         ) : null}
                       </div>
@@ -339,7 +360,5 @@ function formatDuration(durationMs: number) {
 
   const hours = Math.floor(minutes / 60);
   const remainingMinutes = minutes % 60;
-  return remainingMinutes
-    ? `${hours}h ${remainingMinutes}m`
-    : `${hours}h`;
+  return remainingMinutes ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
 }

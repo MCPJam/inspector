@@ -92,9 +92,7 @@ export function SuiteRow({ suite, onSelectSuite }: SuiteRowProps) {
       onClick={() => onSelectSuite(suite._id)}
       className="group relative flex w-full items-center gap-4 py-3 pl-4 pr-4 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 cursor-pointer"
     >
-      <div
-        className={`absolute left-0 top-0 h-full w-1 ${getBorderColor()}`}
-      />
+      <div className={`absolute left-0 top-0 h-full w-1 ${getBorderColor()}`} />
       <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] items-center gap-4">
         <div className="min-w-0">
           <div className="text-sm font-medium text-foreground">
@@ -112,7 +110,8 @@ export function SuiteRow({ suite, onSelectSuite }: SuiteRowProps) {
           </div>
         </div>
         <div className="text-sm text-muted-foreground">
-          {testCount} test{testCount !== 1 ? "s" : ""} · {totalIterations} iteration{totalIterations !== 1 ? "s" : ""}
+          {testCount} test{testCount !== 1 ? "s" : ""} · {totalIterations}{" "}
+          iteration{totalIterations !== 1 ? "s" : ""}
         </div>
         <div className="text-sm text-muted-foreground">
           {aggregate
