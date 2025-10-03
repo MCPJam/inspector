@@ -171,23 +171,10 @@ export function SuiteIterationsView({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={onBack}>
-            ← Back to suites
-          </Button>
-          <div>
-            <h2 className="text-xl font-semibold">
-              Suite started {formatTime(suite._creationTime)}
-            </h2>
-            <p className="text-sm text-muted-foreground">
-              {aggregate?.totals.passed ?? 0} passed ·{" "}
-              {aggregate?.totals.failed ?? 0} failed ·{" "}
-              {aggregate?.totals.cancelled ?? 0} cancelled ·
-              {(aggregate?.totals.tokens ?? 0).toLocaleString()} tokens
-            </p>
-          </div>
-        </div>
+      <div>
+        <Button variant="ghost" size="sm" onClick={onBack}>
+          ← Back to suites
+        </Button>
       </div>
       <div className="space-y-4">
         {caseGroups.map((group, index) => {
