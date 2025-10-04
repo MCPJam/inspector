@@ -177,7 +177,9 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         { error: errorMsg },
         err instanceof Error ? err : undefined,
       );
-      setError("Network error fetching tools");
+      setError(
+        "Network error fetching tools. Make sure you selected the correct server and the server is running.",
+      );
     } finally {
       setFetchingTools(false);
     }
