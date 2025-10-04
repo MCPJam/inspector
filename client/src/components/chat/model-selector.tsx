@@ -56,6 +56,8 @@ const getProviderDisplayName = (provider: ModelProvider): string => {
       return "Ollama";
     case "meta":
       return "Meta";
+    case "x-ai":
+      return "xAI";
     default:
       return provider;
   }
@@ -114,7 +116,10 @@ export function ModelSelector({
         )}
         {mcpjamProviders.map((provider) => {
           const models = groupedModels.get(provider) || [];
-          const modelCount = models.length;
+          const mcpjamModels = models.filter((model) =>
+            isMCPJamProvidedModel(model.id),
+          );
+          const modelCount = mcpjamModels.length;
 
           return (
             <DropdownMenuSub key={provider}>
@@ -135,9 +140,7 @@ export function ModelSelector({
                 avoidCollisions={true}
                 collisionPadding={8}
               >
-                {models
-                  .filter((model) => isMCPJamProvidedModel(model.id))
-                  .map((model) => {
+                {mcpjamModels.map((model) => {
                     const isMCPJamProvided = isMCPJamProvidedModel(model.id);
                     const isDisabled =
                       !!model.disabled ||
@@ -193,7 +196,10 @@ export function ModelSelector({
         )}
         {otherProviders.map((provider) => {
           const models = groupedModels.get(provider) || [];
-          const modelCount = models.length;
+          const userModels = models.filter(
+            (model) => !isMCPJamProvidedModel(model.id),
+          );
+          const modelCount = userModels.length;
 
           return (
             <DropdownMenuSub key={provider}>
@@ -214,9 +220,7 @@ export function ModelSelector({
                 avoidCollisions={true}
                 collisionPadding={8}
               >
-                {models
-                  .filter((model) => !isMCPJamProvidedModel(model.id))
-                  .map((model) => {
+                {userModels.map((model) => {
                     const isDisabled = !!model.disabled;
 
                     const item = (

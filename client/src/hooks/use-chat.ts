@@ -136,10 +136,7 @@ export function useChat(options: UseChatOptions = {}) {
           );
         return available ? "local" : "";
       }
-      if (m.provider === "meta") {
-        return "";
-      }
-      return getToken(m.provider);
+      return getToken(m.provider as keyof typeof tokens);
     },
     [getToken, isOllamaRunning, ollamaModels],
   );
@@ -167,6 +164,7 @@ export function useChat(options: UseChatOptions = {}) {
       google: hasToken("google"),
       ollama: isOllamaRunning,
       meta: false,
+      "x-ai": false,
     } as const;
 
     const cloud = SUPPORTED_MODELS.filter((m) => {

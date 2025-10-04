@@ -6,6 +6,8 @@ import googleLogo from "/google_logo.png";
 import metaLogo from "/meta_logo.svg";
 import ollamaLogo from "/ollama_logo.svg";
 import ollamaDarkLogo from "/ollama_dark.png";
+import grokLightLogo from "/grok_light.svg";
+import grokDarkLogo from "/grok_dark.png";
 
 export const getProviderLogoFromProvider = (
   provider: string,
@@ -34,6 +36,15 @@ export const getProviderLogoFromProvider = (
       return ollamaLogo;
     case "meta":
       return metaLogo;
+    case "x-ai":
+      if (themeMode === "dark") {
+        return grokDarkLogo;
+      }
+      if (themeMode === "system" && typeof document !== "undefined") {
+        const isDark = document.documentElement.classList.contains("dark");
+        return isDark ? grokDarkLogo : grokLightLogo;
+      }
+      return grokLightLogo;
     default:
       return null;
   }
@@ -58,6 +69,8 @@ export const getProviderColor = (provider: string) => {
       return "text-red-600 dark:text-red-400";
     case "ollama":
       return "text-gray-600 dark:text-gray-400";
+    case "x-ai":
+      return "text-purple-600 dark:text-purple-400";
     default:
       return "text-blue-600 dark:text-blue-400";
   }
