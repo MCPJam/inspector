@@ -88,7 +88,8 @@ evals.post("/run", async (c) => {
       convexHttpUrl,
       convexAuthToken,
     ).catch((error) => {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
       console.error("[Error running evals:", errorMessage);
     });
 
