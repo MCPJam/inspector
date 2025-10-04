@@ -294,41 +294,64 @@ const runIteration = async ({
   while (stepCount < MAX_STEPS) {
     let assistantStreaming = false;
 
-    const streamResult = await streamText({
-      model: createLlmModel(provider, model, llms) as LanguageModel,
-      system,
-      temperature,
-      tools,
-      toolChoice: toolChoice as ToolChoice<Record<string, Tool>> | undefined,
-      messages: messageHistory,
-      onChunk: async (chunk) => {
-        switch (chunk.chunk.type) {
-          case "text-delta":
-          case "reasoning-delta": {
-            if (!assistantStreaming) {
-              Logger.beginStreamingMessage("assistant");
-              assistantStreaming = true;
+    let streamResult;
+    try {
+      streamResult = await streamText({
+        model: createLlmModel(provider, model, llms) as LanguageModel,
+        system,
+        temperature,
+        tools,
+        toolChoice: toolChoice as ToolChoice<Record<string, Tool>> | undefined,
+        messages: messageHistory,
+        onChunk: async (chunk) => {
+          switch (chunk.chunk.type) {
+            case "text-delta":
+            case "reasoning-delta": {
+              if (!assistantStreaming) {
+                Logger.beginStreamingMessage("assistant");
+                assistantStreaming = true;
+              }
+              Logger.appendStreamingText(chunk.chunk.text);
+              break;
             }
-            Logger.appendStreamingText(chunk.chunk.text);
-            break;
-          }
-          case "tool-call": {
-            if (assistantStreaming) {
-              Logger.finishStreamingMessage();
-              assistantStreaming = false;
+            case "tool-call": {
+              if (assistantStreaming) {
+                Logger.finishStreamingMessage();
+                assistantStreaming = false;
+              }
+              Logger.streamToolCall(chunk.chunk.toolName, chunk.chunk.input);
+              break;
             }
-            Logger.streamToolCall(chunk.chunk.toolName, chunk.chunk.input);
-            break;
+            case "tool-result": {
+              Logger.streamToolResult(chunk.chunk.toolName, chunk.chunk.output);
+              break;
+            }
+            default:
+              break;
           }
-          case "tool-result": {
-            Logger.streamToolResult(chunk.chunk.toolName, chunk.chunk.output);
-            break;
-          }
-          default:
-            break;
-        }
-      },
-    });
+        },
+      });
+    } catch (error: any) {
+      // Handle API errors gracefully - log and exit this iteration
+      const errorMessage = error?.message || String(error);
+      Logger.error(errorMessage);
+
+      // Exit this iteration early with failure
+      const evaluation = evaluateResults(test.expectedToolCalls, []);
+      await recorder.finishIteration({
+        iterationId,
+        passed: false,
+        toolsCalled: [],
+        usage: {
+          inputTokens: undefined,
+          outputTokens: undefined,
+          totalTokens: undefined,
+        },
+        messages: messageHistory,
+      });
+
+      return evaluation;
+    }
 
     await streamResult.consumeStream();
 
