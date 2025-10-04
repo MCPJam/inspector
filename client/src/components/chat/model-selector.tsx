@@ -80,10 +80,16 @@ export function ModelSelector({
   const sortedProviders = Array.from(groupedModels.keys()).sort();
   const mcpjamProviders = hideProvidedModels
     ? []
-    : sortedProviders.filter((p) => isMCPJamProvidedModel(p));
-  const otherProviders = sortedProviders.filter(
-    (p) => !isMCPJamProvidedModel(p),
-  );
+    : sortedProviders.filter((p) => {
+        // Check if this provider has any MCPJam-provided models
+        const models = groupedModels.get(p) || [];
+        return models.some((m) => isMCPJamProvidedModel(m.id));
+      });
+  const otherProviders = sortedProviders.filter((p) => {
+    // Check if this provider has any non-MCPJam models
+    const models = groupedModels.get(p) || [];
+    return models.some((m) => !isMCPJamProvidedModel(m.id));
+  });
 
   return (
     <DropdownMenu
@@ -135,18 +141,18 @@ export function ModelSelector({
                 avoidCollisions={true}
                 collisionPadding={8}
               >
-                {models.map((model) => {
-                  const isMCPJamProvided = isMCPJamProvidedModel(
-                    model.provider,
-                  );
-                  const isDisabled =
-                    !!model.disabled || (isMCPJamProvided && !isAuthenticated);
-                  const computedReason =
-                    isMCPJamProvided && !isAuthenticated
-                      ? "Sign in to use MCPJam provided models"
-                      : model.disabledReason;
+                {models
+                  .filter((model) => isMCPJamProvidedModel(model.id))
+                  .map((model) => {
+                    const isMCPJamProvided = isMCPJamProvidedModel(model.id);
+                    const isDisabled =
+                      !!model.disabled || (isMCPJamProvided && !isAuthenticated);
+                    const computedReason =
+                      isMCPJamProvided && !isAuthenticated
+                        ? "Sign in to use MCPJam provided models"
+                        : model.disabledReason;
 
-                  const item = (
+                    const item = (
                     <DropdownMenuItem
                       key={model.id}
                       onSelect={() => {
@@ -214,10 +220,12 @@ export function ModelSelector({
                 avoidCollisions={true}
                 collisionPadding={8}
               >
-                {models.map((model) => {
-                  const isDisabled = !!model.disabled;
+                {models
+                  .filter((model) => !isMCPJamProvidedModel(model.id))
+                  .map((model) => {
+                    const isDisabled = !!model.disabled;
 
-                  const item = (
+                    const item = (
                     <DropdownMenuItem
                       key={model.id}
                       onSelect={() => {

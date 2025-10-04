@@ -18,7 +18,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useAppState } from "@/hooks/use-app-state";
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
 import { ModelSelector } from "@/components/chat/model-selector";
-import { ModelDefinition } from "@/shared/types";
+import { ModelDefinition, isMCPJamProvidedModel } from "@/shared/types";
 
 interface TestCase {
   title: string;
@@ -172,11 +172,11 @@ export function EvalRunner({
       return;
     }
 
-    const apiKey =
-      selectedModel.provider !== "meta"
-        ? getToken(selectedModel.provider as keyof typeof tokens)
-        : "";
-    if (!apiKey && selectedModel.provider !== "meta") {
+    const isMCPJamModel = isMCPJamProvidedModel(selectedModel.id);
+    const apiKey = !isMCPJamModel
+      ? getToken(selectedModel.provider as keyof typeof tokens)
+      : "";
+    if (!apiKey && !isMCPJamModel) {
       toast.error(
         `Please configure your ${selectedModel.provider} API key in Settings`,
       );

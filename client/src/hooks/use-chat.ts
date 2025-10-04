@@ -126,7 +126,7 @@ export function useChat(options: UseChatOptions = {}) {
     (m: ModelDefinition | null) => {
       if (!m) return "";
       // Router-backed model requires no user token; backend provides it
-      if (isMCPJamProvidedModel(m.provider)) {
+      if (isMCPJamProvidedModel(m.id)) {
         return "router"; // sentinel token to pass client validation
       }
       if (m.provider === "ollama") {
@@ -136,6 +136,10 @@ export function useChat(options: UseChatOptions = {}) {
             (om) => om.id === m.id || om.id.startsWith(`${m.id}:`),
           );
         return available ? "local" : "";
+      }
+      // Meta provider models should be MCPJam-provided (caught above)
+      if (m.provider === "meta") {
+        return "";
       }
       return getToken(m.provider);
     },
@@ -165,10 +169,17 @@ export function useChat(options: UseChatOptions = {}) {
       deepseek: hasToken("deepseek"),
       google: hasToken("google"),
       ollama: isOllamaRunning,
-      meta: true, // always available; uses backend-provided key
+      meta: false, // Meta models are MCPJam-provided, checked separately below
     } as const;
 
-    const cloud = SUPPORTED_MODELS.filter((m) => providerHasKey[m.provider]);
+    const cloud = SUPPORTED_MODELS.filter((m) => {
+      // MCPJam-provided models are always available (backend has the key)
+      if (isMCPJamProvidedModel(m.id)) {
+        return true;
+      }
+      // Otherwise check if user has API key for the provider
+      return providerHasKey[m.provider];
+    });
     return isOllamaRunning && ollamaModels.length > 0
       ? cloud.concat(ollamaModels)
       : cloud;
@@ -326,7 +337,7 @@ export function useChat(options: UseChatOptions = {}) {
     async (userMessage: ChatMessage) => {
       const routeThroughBackend =
         sendMessagesToBackend ||
-        (model && isMCPJamProvidedModel(model.provider));
+        (model && isMCPJamProvidedModel(model.id));
 
       if (!routeThroughBackend && (!model || !currentApiKey)) {
         throw new Error(

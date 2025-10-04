@@ -105,10 +105,15 @@ export type ModelProvider =
   | "google"
   | "meta";
 
-// Helper to check if a provider is MCPJam-provided (requires backend execution)
-export const isMCPJamProvidedModel = (provider: ModelProvider): boolean => {
-  const MCPJAM_PROVIDERS: ModelProvider[] = ["meta"];
-  return MCPJAM_PROVIDERS.includes(provider);
+// List of specific model IDs that are MCPJam-provided (requires backend execution)
+const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
+  "meta-llama/llama-3.3-70b-instruct",
+  "openai/gpt-oss-120b",
+];
+
+// Helper to check if a model is MCPJam-provided (requires backend execution)
+export const isMCPJamProvidedModel = (modelId: string): boolean => {
+  return MCPJAM_PROVIDED_MODEL_IDS.includes(modelId);
 };
 
 export interface ModelDefinition {
@@ -235,6 +240,11 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     id: "meta-llama/llama-3.3-70b-instruct",
     name: "Llama 3.3 70B (Free)",
     provider: "meta",
+  },
+  {
+    id: "openai/gpt-oss-120b",
+    name: "GPT-OSS 120B (Free)",
+    provider: "openai",
   },
 ];
 
