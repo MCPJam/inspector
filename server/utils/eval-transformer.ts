@@ -55,7 +55,7 @@ export function transformLLMConfigToLlmsConfig(
 ): LlmsConfig {
   const llms: Record<string, string> = {};
   const isMCPJamModel = modelId && isMCPJamProvidedModel(modelId);
-  
+
   if (isMCPJamModel) {
     llms.openrouter = "BACKEND_EXECUTION";
   } else {

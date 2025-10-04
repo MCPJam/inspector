@@ -559,7 +559,8 @@ chat.post("/", async (c) => {
       );
     }
     const sendToBackend =
-      model?.id && isMCPJamProvidedModel(model.id) &&
+      model?.id &&
+      isMCPJamProvidedModel(model.id) &&
       Boolean(requestData.sendMessagesToBackend);
 
     if (!sendToBackend && (!model?.id || !apiKey)) {
