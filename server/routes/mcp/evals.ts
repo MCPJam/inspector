@@ -6,6 +6,7 @@ import {
   transformLLMConfigToLlmsConfig,
 } from "../../utils/eval-transformer";
 import { ConvexHttpClient } from "convex/browser";
+import { generateTestCases } from "../../services/eval-agent";
 import "../../types/hono";
 
 const evals = new Hono();
@@ -97,6 +98,83 @@ evals.post("/run", async (c) => {
     });
   } catch (error) {
     console.error("Error in /evals/run:", error);
+    return c.json(
+      {
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
+      500,
+    );
+  }
+});
+
+const GenerateTestsRequestSchema = z.object({
+  serverIds: z.array(z.string()).min(1, "At least one server must be selected"),
+  convexAuthToken: z.string(),
+});
+
+type GenerateTestsRequest = z.infer<typeof GenerateTestsRequestSchema>;
+
+evals.post("/generate-tests", async (c) => {
+  try {
+    const body = await c.req.json();
+
+    const validationResult = GenerateTestsRequestSchema.safeParse(body);
+    if (!validationResult.success) {
+      return c.json(
+        {
+          error: "Invalid request body",
+          details: validationResult.error.errors,
+        },
+        400,
+      );
+    }
+
+    const { serverIds, convexAuthToken } =
+      validationResult.data as GenerateTestsRequest;
+
+    const clientManager = c.mcpJamClientManager;
+
+    // Get all available tools
+    const allTools = clientManager.getAvailableTools();
+
+    // Filter tools by selected servers
+    const serverIdSet = new Set(
+      serverIds
+        .map((name) => clientManager.getServerIdForName(name))
+        .filter(Boolean),
+    );
+
+    const filteredTools = allTools.filter((tool) =>
+      serverIdSet.has(tool.serverId),
+    );
+
+    if (filteredTools.length === 0) {
+      return c.json(
+        {
+          error: "No tools found for selected servers",
+        },
+        400,
+      );
+    }
+
+    const convexHttpUrl = process.env.CONVEX_HTTP_URL;
+    if (!convexHttpUrl) {
+      throw new Error("CONVEX_HTTP_URL is not set");
+    }
+
+    // Generate test cases using the agent
+    const testCases = await generateTestCases(
+      filteredTools,
+      convexHttpUrl,
+      convexAuthToken,
+    );
+
+    return c.json({
+      success: true,
+      tests: testCases,
+    });
+  } catch (error) {
+    console.error("Error in /evals/generate-tests:", error);
     return c.json(
       {
         error: error instanceof Error ? error.message : "Unknown error",

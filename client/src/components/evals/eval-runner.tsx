@@ -40,10 +40,11 @@ export function EvalRunner({
 }: EvalRunnerProps) {
   const [open, setOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
   const { isAuthenticated } = useConvexAuth();
   const { getAccessToken } = useAuth();
   const { appState } = useAppState();
-  const { getToken } = useAiProviderKeys();
+  const { getToken, tokens } = useAiProviderKeys();
 
   const [selectedServers, setSelectedServers] = useState<string[]>([]);
   const [selectedModel, setSelectedModel] = useState<ModelDefinition | null>(
@@ -99,6 +100,62 @@ export function EvalRunner({
     setTestCases(updated);
   };
 
+  const handleGenerateTests = async () => {
+    if (!isAuthenticated) {
+      toast.error("Please sign in to generate tests");
+      return;
+    }
+
+    if (selectedServers.length === 0) {
+      toast.error("Please select at least one server");
+      return;
+    }
+
+    setIsGenerating(true);
+
+    try {
+      const accessToken = await getAccessToken();
+
+      const response = await fetch("/api/mcp/evals/generate-tests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          serverIds: selectedServers,
+          convexAuthToken: accessToken,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to generate tests");
+      }
+
+      if (result.tests && result.tests.length > 0) {
+        const generatedTests = result.tests.map((t: any) => ({
+          title: t.title,
+          query: t.query,
+          runs: t.runs || 1,
+          model: selectedModel?.id || "",
+          provider: selectedModel?.provider || "",
+          expectedToolCalls: t.expectedToolCalls || [],
+        }));
+
+        setTestCases(generatedTests);
+        toast.success(`Generated ${generatedTests.length} test cases`);
+      }
+    } catch (error) {
+      console.error("Failed to generate tests:", error);
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to generate test cases",
+      );
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
   const handleSubmit = async () => {
     if (!isAuthenticated) {
       toast.error("Please sign in to run evals");
@@ -115,7 +172,10 @@ export function EvalRunner({
       return;
     }
 
-    const apiKey = getToken(selectedModel.provider);
+    const apiKey =
+      selectedModel.provider !== "meta"
+        ? getToken(selectedModel.provider as keyof typeof tokens)
+        : "";
     if (!apiKey && selectedModel.provider !== "meta") {
       toast.error(
         `Please configure your ${selectedModel.provider} API key in Settings`,
@@ -234,91 +294,114 @@ export function EvalRunner({
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <Label>Test Cases</Label>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={handleAddTestCase}
-          >
-            <Plus className="h-3 w-3 mr-1" />
-            Add Test
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleGenerateTests}
+              disabled={isGenerating || selectedServers.length === 0}
+            >
+              {isGenerating ? "Generating..." : "Generate Tests"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleAddTestCase}
+            >
+              <Plus className="h-3 w-3 mr-1" />
+              Add Test
+            </Button>
+          </div>
         </div>
 
-        {testCases.map((testCase, index) => (
-          <div key={index} className="p-4 border rounded-lg space-y-3">
-            <div className="flex items-center justify-between">
-              <Input
-                value={testCase.title}
-                onChange={(e) =>
-                  handleUpdateTestCase(index, "title", e.target.value)
-                }
-                placeholder="Test title"
-                className="max-w-xs"
-              />
-              {testCases.length > 1 && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => handleRemoveTestCase(index)}
-                >
-                  <X className="h-4 w-4" />
-                </Button>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <Label className="text-xs">Query</Label>
-              <Textarea
-                value={testCase.query}
-                onChange={(e) =>
-                  handleUpdateTestCase(index, "query", e.target.value)
-                }
-                placeholder="Enter the test query..."
-                rows={3}
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label className="text-xs">Runs</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  value={testCase.runs}
-                  onChange={(e) =>
-                    handleUpdateTestCase(
-                      index,
-                      "runs",
-                      parseInt(e.target.value) || 1,
-                    )
-                  }
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label className="text-xs">
-                  Expected Tools (comma-separated)
-                </Label>
-                <Input
-                  value={testCase.expectedToolCalls.join(", ")}
-                  onChange={(e) =>
-                    handleUpdateTestCase(
-                      index,
-                      "expectedToolCalls",
-                      e.target.value
-                        .split(",")
-                        .map((t) => t.trim())
-                        .filter(Boolean),
-                    )
-                  }
-                  placeholder="tool1, tool2"
-                />
-              </div>
+        {isGenerating && (
+          <div className="flex items-center justify-center p-8 border rounded-lg">
+            <div className="text-center">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto" />
+              <p className="mt-4 text-sm text-muted-foreground">
+                Generating test cases...
+              </p>
             </div>
           </div>
-        ))}
+        )}
+
+        {!isGenerating &&
+          testCases.map((testCase, index) => (
+            <div key={index} className="p-4 border rounded-lg space-y-3">
+              <div className="flex items-center justify-between">
+                <Input
+                  value={testCase.title}
+                  onChange={(e) =>
+                    handleUpdateTestCase(index, "title", e.target.value)
+                  }
+                  placeholder="Test title"
+                  className="max-w-xs"
+                />
+                {testCases.length > 1 && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleRemoveTestCase(index)}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-xs">Query</Label>
+                <Textarea
+                  value={testCase.query}
+                  onChange={(e) =>
+                    handleUpdateTestCase(index, "query", e.target.value)
+                  }
+                  placeholder="Enter the test query..."
+                  rows={3}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label className="text-xs">Runs</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={testCase.runs}
+                    onChange={(e) =>
+                      handleUpdateTestCase(
+                        index,
+                        "runs",
+                        parseInt(e.target.value) || 1,
+                      )
+                    }
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-xs">
+                    Expected Tools (comma-separated)
+                  </Label>
+                  <Input
+                    value={testCase.expectedToolCalls.join(", ")}
+                    onChange={(e) =>
+                      handleUpdateTestCase(
+                        index,
+                        "expectedToolCalls",
+                        e.target.value
+                          .split(",")
+                          .map((t) => t.trim())
+                          .filter(Boolean),
+                      )
+                    }
+                    placeholder="tool1, tool2"
+                  />
+                </div>
+              </div>
+            </div>
+          ))}
       </div>
 
       <div className="flex justify-end space-x-2">
