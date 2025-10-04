@@ -153,6 +153,7 @@ const runIterationViaBackend = async ({
     await runBackendConversation({
       maxSteps: MAX_STEPS,
       messageHistory,
+      modelId: test.model,
       toolDefinitions: toolDefs,
       fetchBackend: async (payload) => {
         try {
@@ -470,7 +471,7 @@ const runTestCase = async ({
 
   for (let runIndex = 0; runIndex < runs; runIndex++) {
     // Branch based on whether this is an MCPJam-provided model
-    const usesBackend = isMCPJamProvidedModel(provider as any);
+    const usesBackend = isMCPJamProvidedModel(model);
 
     const evaluation =
       usesBackend && convexUrl && authToken
