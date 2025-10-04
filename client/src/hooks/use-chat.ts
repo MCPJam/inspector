@@ -331,8 +331,7 @@ export function useChat(options: UseChatOptions = {}) {
   const sendChatRequest = useCallback(
     async (userMessage: ChatMessage) => {
       const routeThroughBackend =
-        sendMessagesToBackend ||
-        (model && isMCPJamProvidedModel(model.id));
+        sendMessagesToBackend || (model && isMCPJamProvidedModel(model.id));
 
       if (!routeThroughBackend && (!model || !currentApiKey)) {
         throw new Error(
