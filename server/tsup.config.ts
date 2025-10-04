@@ -34,6 +34,9 @@ export default defineConfig({
     // evals-cli dependencies
     "posthog-node",
     "@openrouter/ai-sdk-provider",
+    // Packages with dynamic requires
+    "chalk",
+    "supports-color",
   ],
   noExternal: [
     // Force bundling of problematic packages
