@@ -51,8 +51,11 @@ export function validateServerConfig(serverConfig: any): ValidationResult {
 
       // Handle OAuth authentication for HTTP servers
       if (config.oauth?.access_token) {
+        // Capture the access token before deleting the oauth field
+        const accessToken = config.oauth.access_token;
+
         const authHeaders = {
-          Authorization: `Bearer ${config.oauth.access_token}`,
+          Authorization: `Bearer ${accessToken}`,
           ...(config.requestInit?.headers || {}),
         };
 
@@ -62,19 +65,18 @@ export function validateServerConfig(serverConfig: any): ValidationResult {
         };
 
         // For SSE connections, add eventSourceInit with OAuth headers
+        // Capture requestInit headers reference before deleting oauth
+        const requestInitHeaders = config.requestInit?.headers;
         config.eventSourceInit = {
           fetch(input: Request | URL | string, init?: RequestInit) {
             const headers = new Headers(init?.headers || {});
 
-            // Add OAuth authorization header
-            headers.set(
-              "Authorization",
-              `Bearer ${config.oauth!.access_token}`,
-            );
+            // Add OAuth authorization header using captured token
+            headers.set("Authorization", `Bearer ${accessToken}`);
 
             // Copy other headers from requestInit
-            if (config.requestInit?.headers) {
-              const requestHeaders = new Headers(config.requestInit.headers);
+            if (requestInitHeaders) {
+              const requestHeaders = new Headers(requestInitHeaders);
               requestHeaders.forEach((value, key) => {
                 if (key.toLowerCase() !== "authorization") {
                   headers.set(key, value);
@@ -88,6 +90,9 @@ export function validateServerConfig(serverConfig: any): ValidationResult {
             });
           },
         };
+
+        // Remove oauth field from config after processing - it's not part of the MCP server definition schema
+        delete config.oauth;
       } else if (config.requestInit?.headers) {
         // For SSE connections without OAuth, add eventSourceInit if requestInit has custom headers
         config.eventSourceInit = {
