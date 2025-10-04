@@ -14,38 +14,52 @@ export interface GeneratedTestCase {
   judgeRequirement?: string;
 }
 
-const AGENT_SYSTEM_PROMPT = `You are an AI agent specialized in creating comprehensive test cases for MCP (Model Context Protocol) servers.
+const AGENT_SYSTEM_PROMPT = `You are an AI agent specialized in creating realistic test cases for MCP (Model Context Protocol) servers.
 
-Your task is to analyze the provided tools and generate thorough test cases that validate MCP server functionality.
+**About MCP:**
+The Model Context Protocol enables AI assistants to securely access external data and tools. MCP servers expose tools, resources, and prompts that AI models can use to accomplish user tasks. Your test cases should reflect real-world usage patterns where users ask an AI assistant to perform tasks, and the assistant uses MCP tools to fulfill those requests.
 
-**Instructions:**
-1. For each tool provided, create 1-3 test cases that cover different usage scenarios
-2. Each test case should have:
-   - A descriptive title
-   - A realistic user query that would trigger the tool
-   - The expected tool(s) to be called
-   - A judge requirement explaining what constitutes success
-3. Aim for diverse scenarios: simple cases, edge cases, multi-tool workflows
-4. Make queries natural and realistic as if a real user would ask them
+**Your Task:**
+Generate 6 test cases with varying complexity levels that mimic how real users would interact with an AI assistant using these MCP tools.
+
+**Test Case Distribution:**
+- **2 EASY tests** (single tool): Simple, straightforward tasks using one tool
+- **2 MEDIUM tests** (2+ tools): Multi-step workflows requiring 2-3 tools in sequence or parallel
+- **2 HARD tests** (3+ tools): Complex scenarios requiring 3+ tools, conditional logic, or cross-server operations
+
+**Guidelines:**
+1. **Realistic User Queries**: Write queries as if a real user is talking to an AI assistant (e.g., "Help me find all tasks due this week" not "Call the list_tasks tool")
+2. **Natural Workflows**: Chain tools together in logical sequences that solve real problems
+3. **Cross-Server Tests**: If multiple servers are available, create tests that use tools from different servers together
+4. **Specific Details**: Include concrete examples (dates, names, values) to make tests actionable
+5. **Judge Requirements**: Clearly define what success looks like for each test
+6. **Test Titles**: Write clear, descriptive titles WITHOUT difficulty prefixes (e.g., "Read project configuration" not "EASY: Read project configuration")
 
 **Output Format (CRITICAL):**
-You MUST respond with ONLY a valid JSON array. No explanations, no markdown, just the JSON array.
+Respond with ONLY a valid JSON array. No explanations, no markdown code blocks, just the raw JSON array.
 
 Example:
 [
   {
-    "title": "Basic file read",
-    "query": "Read the contents of config.json",
+    "title": "Read project configuration",
+    "query": "Show me the contents of config.json in the current project",
     "runs": 1,
     "expectedToolCalls": ["read_file"],
-    "judgeRequirement": "The tool should successfully read and return file contents"
+    "judgeRequirement": "Successfully reads and returns the file contents"
   },
   {
-    "title": "Multi-step file operation",
-    "query": "List all files in the current directory and read the first one",
+    "title": "Find and analyze recent tasks",
+    "query": "Find all tasks created this week and summarize their status",
     "runs": 1,
-    "expectedToolCalls": ["list_files", "read_file"],
-    "judgeRequirement": "Should first list files, then read one of them"
+    "expectedToolCalls": ["list_tasks", "get_task_details"],
+    "judgeRequirement": "First lists tasks filtered by date, then retrieves details for each task found"
+  },
+  {
+    "title": "Cross-server project setup",
+    "query": "Create a new project folder, initialize a git repository, and create a task to track the project setup",
+    "runs": 1,
+    "expectedToolCalls": ["create_directory", "git_init", "create_task"],
+    "judgeRequirement": "Successfully creates directory, initializes git, and creates a tracking task with appropriate details"
   }
 ]`;
 
@@ -57,21 +71,55 @@ export async function generateTestCases(
   convexHttpUrl: string,
   convexAuthToken: string,
 ): Promise<GeneratedTestCase[]> {
-  // Build context about available tools
-  const toolsContext = tools
-    .map((tool) => {
-      return `Tool: ${tool.name}
-Server: ${tool.serverId}
-Description: ${tool.description || "No description"}
-Input Schema: ${JSON.stringify(tool.inputSchema, null, 2)}`;
-    })
-    .join("\n\n---\n\n");
+  // Group tools by server
+  const serverGroups = tools.reduce(
+    (acc, tool) => {
+      if (!acc[tool.serverId]) {
+        acc[tool.serverId] = [];
+      }
+      acc[tool.serverId].push(tool);
+      return acc;
+    },
+    {} as Record<string, DiscoveredTool[]>,
+  );
 
-  const userPrompt = `Generate test cases for the following MCP server tools:
+  const serverCount = Object.keys(serverGroups).length;
+  const totalTools = tools.length;
+
+  // Build context about available tools grouped by server
+  const toolsContext = Object.entries(serverGroups)
+    .map(([serverId, serverTools]) => {
+      const toolsList = serverTools
+        .map((tool) => {
+          return `  - ${tool.name}: ${tool.description || "No description"}
+    Input: ${JSON.stringify(tool.inputSchema)}`;
+        })
+        .join("\n");
+
+      return `**Server: ${serverId}** (${serverTools.length} tools)
+${toolsList}`;
+    })
+    .join("\n\n");
+
+  const crossServerGuidance =
+    serverCount > 1
+      ? `\n**IMPORTANT**: You have ${serverCount} servers available. Create at least 2 test cases that use tools from MULTIPLE servers to test cross-server workflows.`
+      : "";
+
+  const userPrompt = `Generate 6 test cases for the following MCP server tools:
 
 ${toolsContext}
 
-Remember: Respond with ONLY a JSON array of test cases. No other text.`;
+**Available Resources:**
+- ${serverCount} MCP server(s)
+- ${totalTools} total tools${crossServerGuidance}
+
+**Remember:**
+1. Create exactly 6 tests: 2 EASY (1 tool), 2 MEDIUM (2-3 tools), 2 HARD (3+ tools)
+2. Write realistic user queries that sound natural
+3. Use specific examples (dates, filenames, values)
+4. Chain tools in logical sequences
+5. Respond with ONLY a JSON array - no other text or markdown`;
 
   const messageHistory: ModelMessage[] = [
     { role: "system", content: AGENT_SYSTEM_PROMPT },
