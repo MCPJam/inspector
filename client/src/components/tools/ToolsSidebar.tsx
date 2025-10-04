@@ -139,7 +139,7 @@ export function ToolsSidebar({
                     <div className="text-center py-8">
                       <p className="text-sm text-muted-foreground">
                         {tools && toolNames.length === 0
-                          ? "No tools were found. Try refreshing."
+                          ? "No tools were found. Try refreshing. Make sure you selected the correct server and the server is running."
                           : "No tools match your search."}
                       </p>
                     </div>
