@@ -141,47 +141,46 @@ export function ModelSelector({
                 collisionPadding={8}
               >
                 {mcpjamModels.map((model) => {
-                    const isMCPJamProvided = isMCPJamProvidedModel(model.id);
-                    const isDisabled =
-                      !!model.disabled ||
-                      (isMCPJamProvided && !isAuthenticated);
-                    const computedReason =
-                      isMCPJamProvided && !isAuthenticated
-                        ? "Sign in to use MCPJam provided models"
-                        : model.disabledReason;
+                  const isMCPJamProvided = isMCPJamProvidedModel(model.id);
+                  const isDisabled =
+                    !!model.disabled || (isMCPJamProvided && !isAuthenticated);
+                  const computedReason =
+                    isMCPJamProvided && !isAuthenticated
+                      ? "Sign in to use MCPJam provided models"
+                      : model.disabledReason;
 
-                    const item = (
-                      <DropdownMenuItem
-                        key={model.id}
-                        onSelect={() => {
-                          onModelChange(model);
-                          setIsModelSelectorOpen(false);
-                        }}
-                        className="flex items-center gap-3 text-sm cursor-pointer"
-                        disabled={isDisabled}
-                      >
-                        <div className="flex flex-col flex-1">
-                          <span className="font-medium">{model.name}</span>
-                        </div>
-                        {model.id === currentModel.id && (
-                          <div className="ml-auto w-2 h-2 bg-primary rounded-full" />
-                        )}
-                      </DropdownMenuItem>
-                    );
+                  const item = (
+                    <DropdownMenuItem
+                      key={model.id}
+                      onSelect={() => {
+                        onModelChange(model);
+                        setIsModelSelectorOpen(false);
+                      }}
+                      className="flex items-center gap-3 text-sm cursor-pointer"
+                      disabled={isDisabled}
+                    >
+                      <div className="flex flex-col flex-1">
+                        <span className="font-medium">{model.name}</span>
+                      </div>
+                      {model.id === currentModel.id && (
+                        <div className="ml-auto w-2 h-2 bg-primary rounded-full" />
+                      )}
+                    </DropdownMenuItem>
+                  );
 
-                    return isDisabled ? (
-                      <Tooltip key={model.id}>
-                        <TooltipTrigger asChild>
-                          <div className="pointer-events-auto">{item}</div>
-                        </TooltipTrigger>
-                        <TooltipContent side="right">
-                          {computedReason}
-                        </TooltipContent>
-                      </Tooltip>
-                    ) : (
-                      item
-                    );
-                  })}
+                  return isDisabled ? (
+                    <Tooltip key={model.id}>
+                      <TooltipTrigger asChild>
+                        <div className="pointer-events-auto">{item}</div>
+                      </TooltipTrigger>
+                      <TooltipContent side="right">
+                        {computedReason}
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    item
+                  );
+                })}
               </DropdownMenuSubContent>
             </DropdownMenuSub>
           );
@@ -221,40 +220,40 @@ export function ModelSelector({
                 collisionPadding={8}
               >
                 {userModels.map((model) => {
-                    const isDisabled = !!model.disabled;
+                  const isDisabled = !!model.disabled;
 
-                    const item = (
-                      <DropdownMenuItem
-                        key={model.id}
-                        onSelect={() => {
-                          onModelChange(model);
-                          setIsModelSelectorOpen(false);
-                        }}
-                        className="flex items-center gap-3 text-sm cursor-pointer"
-                        disabled={isDisabled}
-                      >
-                        <div className="flex flex-col flex-1">
-                          <span className="font-medium">{model.name}</span>
-                        </div>
-                        {model.id === currentModel.id && (
-                          <div className="ml-auto w-2 h-2 bg-primary rounded-full" />
-                        )}
-                      </DropdownMenuItem>
-                    );
+                  const item = (
+                    <DropdownMenuItem
+                      key={model.id}
+                      onSelect={() => {
+                        onModelChange(model);
+                        setIsModelSelectorOpen(false);
+                      }}
+                      className="flex items-center gap-3 text-sm cursor-pointer"
+                      disabled={isDisabled}
+                    >
+                      <div className="flex flex-col flex-1">
+                        <span className="font-medium">{model.name}</span>
+                      </div>
+                      {model.id === currentModel.id && (
+                        <div className="ml-auto w-2 h-2 bg-primary rounded-full" />
+                      )}
+                    </DropdownMenuItem>
+                  );
 
-                    return isDisabled ? (
-                      <Tooltip key={model.id}>
-                        <TooltipTrigger asChild>
-                          <div className="pointer-events-auto">{item}</div>
-                        </TooltipTrigger>
-                        <TooltipContent side="right">
-                          {model.disabledReason}
-                        </TooltipContent>
-                      </Tooltip>
-                    ) : (
-                      item
-                    );
-                  })}
+                  return isDisabled ? (
+                    <Tooltip key={model.id}>
+                      <TooltipTrigger asChild>
+                        <div className="pointer-events-auto">{item}</div>
+                      </TooltipTrigger>
+                      <TooltipContent side="right">
+                        {model.disabledReason}
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    item
+                  );
+                })}
               </DropdownMenuSubContent>
             </DropdownMenuSub>
           );
