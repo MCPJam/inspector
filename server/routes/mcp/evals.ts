@@ -138,7 +138,9 @@ evals.post("/generate-tests", async (c) => {
 
     // Filter tools by selected servers
     const serverIdSet = new Set(
-      serverIds.map((name) => clientManager.getServerIdForName(name)).filter(Boolean),
+      serverIds
+        .map((name) => clientManager.getServerIdForName(name))
+        .filter(Boolean),
     );
 
     const filteredTools = allTools.filter((tool) =>

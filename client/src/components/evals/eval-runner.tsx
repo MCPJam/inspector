@@ -147,7 +147,9 @@ export function EvalRunner({
     } catch (error) {
       console.error("Failed to generate tests:", error);
       toast.error(
-        error instanceof Error ? error.message : "Failed to generate test cases",
+        error instanceof Error
+          ? error.message
+          : "Failed to generate test cases",
       );
     } finally {
       setIsGenerating(false);
@@ -325,80 +327,81 @@ export function EvalRunner({
           </div>
         )}
 
-        {!isGenerating && testCases.map((testCase, index) => (
-          <div key={index} className="p-4 border rounded-lg space-y-3">
-            <div className="flex items-center justify-between">
-              <Input
-                value={testCase.title}
-                onChange={(e) =>
-                  handleUpdateTestCase(index, "title", e.target.value)
-                }
-                placeholder="Test title"
-                className="max-w-xs"
-              />
-              {testCases.length > 1 && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => handleRemoveTestCase(index)}
-                >
-                  <X className="h-4 w-4" />
-                </Button>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <Label className="text-xs">Query</Label>
-              <Textarea
-                value={testCase.query}
-                onChange={(e) =>
-                  handleUpdateTestCase(index, "query", e.target.value)
-                }
-                placeholder="Enter the test query..."
-                rows={3}
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label className="text-xs">Runs</Label>
+        {!isGenerating &&
+          testCases.map((testCase, index) => (
+            <div key={index} className="p-4 border rounded-lg space-y-3">
+              <div className="flex items-center justify-between">
                 <Input
-                  type="number"
-                  min={1}
-                  value={testCase.runs}
+                  value={testCase.title}
                   onChange={(e) =>
-                    handleUpdateTestCase(
-                      index,
-                      "runs",
-                      parseInt(e.target.value) || 1,
-                    )
+                    handleUpdateTestCase(index, "title", e.target.value)
                   }
+                  placeholder="Test title"
+                  className="max-w-xs"
                 />
+                {testCases.length > 1 && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleRemoveTestCase(index)}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                )}
               </div>
 
               <div className="space-y-2">
-                <Label className="text-xs">
-                  Expected Tools (comma-separated)
-                </Label>
-                <Input
-                  value={testCase.expectedToolCalls.join(", ")}
+                <Label className="text-xs">Query</Label>
+                <Textarea
+                  value={testCase.query}
                   onChange={(e) =>
-                    handleUpdateTestCase(
-                      index,
-                      "expectedToolCalls",
-                      e.target.value
-                        .split(",")
-                        .map((t) => t.trim())
-                        .filter(Boolean),
-                    )
+                    handleUpdateTestCase(index, "query", e.target.value)
                   }
-                  placeholder="tool1, tool2"
+                  placeholder="Enter the test query..."
+                  rows={3}
                 />
               </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label className="text-xs">Runs</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={testCase.runs}
+                    onChange={(e) =>
+                      handleUpdateTestCase(
+                        index,
+                        "runs",
+                        parseInt(e.target.value) || 1,
+                      )
+                    }
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-xs">
+                    Expected Tools (comma-separated)
+                  </Label>
+                  <Input
+                    value={testCase.expectedToolCalls.join(", ")}
+                    onChange={(e) =>
+                      handleUpdateTestCase(
+                        index,
+                        "expectedToolCalls",
+                        e.target.value
+                          .split(",")
+                          .map((t) => t.trim())
+                          .filter(Boolean),
+                      )
+                    }
+                    placeholder="tool1, tool2"
+                  />
+                </div>
+              </div>
             </div>
-          </div>
-        ))}
+          ))}
       </div>
 
       <div className="flex justify-end space-x-2">
