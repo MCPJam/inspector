@@ -111,16 +111,6 @@ function ensureOutputSchema(schema: unknown): ZodTypeAny | undefined {
   return schema;
 }
 
-function extractPureToolName(toolKey: string): string {
-  const separatorIndex = toolKey.indexOf("_");
-
-  if (separatorIndex === -1 || separatorIndex === toolKey.length - 1) {
-    return toolKey;
-  }
-
-  return toolKey.slice(separatorIndex + 1);
-}
-
 export function convertMastraToolToVercelTool(
   toolName: string,
   mastraTool: MastraToolInstance,
@@ -215,11 +205,9 @@ export function convertMastraToolsToVercelTools(
 ): Record<string, VercelTool> {
   return Object.fromEntries(
     Object.entries(mastraTools).map(([name, mastraTool]) => {
-      const pureToolName = extractPureToolName(name);
-
       return [
-        pureToolName,
-        convertMastraToolToVercelTool(pureToolName, mastraTool, {
+        name,
+        convertMastraToolToVercelTool(name, mastraTool, {
           originalName: name,
         }),
       ];

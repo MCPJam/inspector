@@ -60,7 +60,11 @@ const prepareSuite = async (
   validatedLlms: LlmsConfig,
 ) => {
   const mcpClient = new MCPClient(mcpClientOptions);
-  const availableTools = await mcpClient.getTools();
+  const toolsets = await mcpClient.getToolsets();
+  const availableTools: Record<string, any> = {};
+  Object.values(toolsets).forEach((serverTools: any) => {
+    Object.assign(availableTools, serverTools);
+  });
   const vercelTools = convertMastraToolsToVercelTools(availableTools);
 
   const serverNames = Object.keys(mcpClientOptions.servers);
