@@ -375,6 +375,7 @@ const sendMessagesToBackend = async (
   streamingContext: StreamingContext,
   mcpClientManager: any,
   baseUrl: string,
+  modelId: string,
   authHeader?: string,
   selectedServers?: string[],
 ): Promise<void> => {
@@ -442,6 +443,7 @@ const sendMessagesToBackend = async (
   await runBackendConversation({
     maxSteps: MAX_AGENT_STEPS,
     messageHistory,
+    modelId,
     toolDefinitions: toolDefs,
     fetchBackend: async (payload) => {
       const data = await sendBackendRequest(
@@ -557,7 +559,8 @@ chat.post("/", async (c) => {
       );
     }
     const sendToBackend =
-      isMCPJamProvidedModel(provider) &&
+      model?.id &&
+      isMCPJamProvidedModel(model.id) &&
       Boolean(requestData.sendMessagesToBackend);
 
     if (!sendToBackend && (!model?.id || !apiKey)) {
@@ -644,6 +647,7 @@ chat.post("/", async (c) => {
               streamingContext,
               mcpClientManager,
               process.env.CONVEX_HTTP_URL!,
+              model!.id,
               authHeader,
               requestData.selectedServers,
             );
