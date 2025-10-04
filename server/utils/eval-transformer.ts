@@ -49,15 +49,20 @@ export function transformServerConfigsToEnvironment(
 /**
  * Transforms LLM configuration from UI format to LlmsConfig format
  */
-export function transformLLMConfigToLlmsConfig(llmConfig: {
-  provider: string;
-  apiKey: string;
-}): LlmsConfig {
+export function transformLLMConfigToLlmsConfig(
+  llmConfig: {
+    provider: string;
+    apiKey: string;
+  },
+  modelId?: string,
+): LlmsConfig {
   const llms: Record<string, string> = {};
 
   // MCPJam-provided models use backend execution, so we use a special marker
   // that will pass validation but won't be used (backend has the actual key)
-  if (isMCPJamProvidedModel(llmConfig.provider as any)) {
+  const isMCPJamModel = modelId && isMCPJamProvidedModel(modelId);
+  
+  if (isMCPJamModel) {
     llms.openrouter = "BACKEND_EXECUTION";
   } else {
     // Map provider names to expected format

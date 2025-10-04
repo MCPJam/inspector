@@ -65,7 +65,9 @@ evals.post("/run", async (c) => {
       serverIds,
       clientManager,
     );
-    const llms = transformLLMConfigToLlmsConfig(llmConfig);
+    // Use the model ID from the first test to determine if MCPJam-provided
+    const modelId = tests.length > 0 ? tests[0].model : undefined;
+    const llms = transformLLMConfigToLlmsConfig(llmConfig, modelId);
 
     const convexUrl = process.env.CONVEX_URL;
     if (!convexUrl) {
