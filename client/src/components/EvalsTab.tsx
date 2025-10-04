@@ -66,12 +66,11 @@ export function EvalsTab() {
 
   if (!isAuthenticated || !user) {
     return (
-      <div className="p-6">
+      <div className="flex-1 flex items-center justify-center p-6">
         <EmptyState
           icon={FlaskConical}
           title="Sign in to view your evals"
           description="Create an account or sign in to see previous runs and metrics."
-          className="h-[calc(100vh-200px)]"
         />
       </div>
     );
