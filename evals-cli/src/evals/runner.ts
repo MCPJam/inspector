@@ -28,6 +28,9 @@ import {
   runBackendConversation,
   type BackendToolCallEvent,
   type BackendToolResultEvent,
+  type BackendConversationOptions,
+  type BackendFetchPayload,
+  type BackendFetchResponse,
 } from "../../../shared/backend-conversation";
 
 const MAX_STEPS = 20;
@@ -65,7 +68,9 @@ const prepareSuite = async (
   Object.values(toolsets).forEach((serverTools: any) => {
     Object.assign(availableTools, serverTools);
   });
-  const vercelTools = convertMastraToolsToVercelTools(availableTools);
+  const vercelTools = convertMastraToolsToVercelTools(
+    availableTools,
+  ) as any as ToolMap;
 
   const serverNames = Object.keys(mcpClientOptions.servers);
 
@@ -145,9 +150,9 @@ const runIterationViaBackend = async ({
   // Convert tools to serializable format for backend
   const toolDefs = Object.entries(tools).map(([name, tool]) => ({
     name,
-    description: tool?.description,
-    inputSchema: tool?.inputSchema,
-  }));
+    description: (tool as any)?.description,
+    inputSchema: (tool as any)?.inputSchema,
+  })) as unknown as BackendConversationOptions["toolDefinitions"];
 
   try {
     await runBackendConversation({
@@ -155,7 +160,9 @@ const runIterationViaBackend = async ({
       messageHistory,
       modelId: test.model,
       toolDefinitions: toolDefs,
-      fetchBackend: async (payload) => {
+      fetchBackend: async (
+        payload: BackendFetchPayload,
+      ): Promise<BackendFetchResponse | null> => {
         try {
           const res = await fetch(`${convexUrl}/streaming`, {
             method: "POST",
@@ -171,7 +178,7 @@ const runIterationViaBackend = async ({
             return null;
           }
 
-          const data = await res.json();
+          const data = (await res.json()) as BackendFetchResponse;
 
           if (!data?.ok || !Array.isArray(data.messages)) {
             console.error("Invalid response from backend");
