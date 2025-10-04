@@ -46,26 +46,23 @@ export function transformServerConfigsToEnvironment(
   };
 }
 
-/**
- * Transforms LLM configuration from UI format to LlmsConfig format
- */
-export function transformLLMConfigToLlmsConfig(llmConfig: {
-  provider: string;
-  apiKey: string;
-}): LlmsConfig {
+export function transformLLMConfigToLlmsConfig(
+  llmConfig: {
+    provider: string;
+    apiKey: string;
+  },
+  modelId?: string,
+): LlmsConfig {
   const llms: Record<string, string> = {};
+  const isMCPJamModel = modelId && isMCPJamProvidedModel(modelId);
 
-  // MCPJam-provided models use backend execution, so we use a special marker
-  // that will pass validation but won't be used (backend has the actual key)
-  if (isMCPJamProvidedModel(llmConfig.provider as any)) {
+  if (isMCPJamModel) {
     llms.openrouter = "BACKEND_EXECUTION";
   } else {
-    // Map provider names to expected format
     const providerKey = llmConfig.provider.toLowerCase();
     llms[providerKey] = llmConfig.apiKey;
   }
 
-  // Validate the result
   const validated = LlmsConfigSchema.safeParse(llms);
   if (!validated.success) {
     throw new Error(`Invalid LLM configuration: ${validated.error.message}`);

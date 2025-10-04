@@ -73,17 +73,18 @@ export function ModelSelector({
   const currentModelData = currentModel;
   const { isAuthenticated } = useConvexAuth();
 
-  // Group models by provider
   const groupedModels = groupModelsByProvider(availableModels);
-
-  // Get sorted provider keys for consistent ordering
   const sortedProviders = Array.from(groupedModels.keys()).sort();
   const mcpjamProviders = hideProvidedModels
     ? []
-    : sortedProviders.filter((p) => isMCPJamProvidedModel(p));
-  const otherProviders = sortedProviders.filter(
-    (p) => !isMCPJamProvidedModel(p),
-  );
+    : sortedProviders.filter((p) => {
+        const models = groupedModels.get(p) || [];
+        return models.some((m) => isMCPJamProvidedModel(m.id));
+      });
+  const otherProviders = sortedProviders.filter((p) => {
+    const models = groupedModels.get(p) || [];
+    return models.some((m) => !isMCPJamProvidedModel(m.id));
+  });
 
   return (
     <DropdownMenu
@@ -106,7 +107,6 @@ export function ModelSelector({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="min-w-[200px]">
-        {/* MCPJam-provided models */}
         {mcpjamProviders.length > 0 && (
           <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
             MCPJam Provided Models
@@ -135,49 +135,50 @@ export function ModelSelector({
                 avoidCollisions={true}
                 collisionPadding={8}
               >
-                {models.map((model) => {
-                  const isMCPJamProvided = isMCPJamProvidedModel(
-                    model.provider,
-                  );
-                  const isDisabled =
-                    !!model.disabled || (isMCPJamProvided && !isAuthenticated);
-                  const computedReason =
-                    isMCPJamProvided && !isAuthenticated
-                      ? "Sign in to use MCPJam provided models"
-                      : model.disabledReason;
+                {models
+                  .filter((model) => isMCPJamProvidedModel(model.id))
+                  .map((model) => {
+                    const isMCPJamProvided = isMCPJamProvidedModel(model.id);
+                    const isDisabled =
+                      !!model.disabled ||
+                      (isMCPJamProvided && !isAuthenticated);
+                    const computedReason =
+                      isMCPJamProvided && !isAuthenticated
+                        ? "Sign in to use MCPJam provided models"
+                        : model.disabledReason;
 
-                  const item = (
-                    <DropdownMenuItem
-                      key={model.id}
-                      onSelect={() => {
-                        onModelChange(model);
-                        setIsModelSelectorOpen(false);
-                      }}
-                      className="flex items-center gap-3 text-sm cursor-pointer"
-                      disabled={isDisabled}
-                    >
-                      <div className="flex flex-col flex-1">
-                        <span className="font-medium">{model.name}</span>
-                      </div>
-                      {model.id === currentModel.id && (
-                        <div className="ml-auto w-2 h-2 bg-primary rounded-full" />
-                      )}
-                    </DropdownMenuItem>
-                  );
+                    const item = (
+                      <DropdownMenuItem
+                        key={model.id}
+                        onSelect={() => {
+                          onModelChange(model);
+                          setIsModelSelectorOpen(false);
+                        }}
+                        className="flex items-center gap-3 text-sm cursor-pointer"
+                        disabled={isDisabled}
+                      >
+                        <div className="flex flex-col flex-1">
+                          <span className="font-medium">{model.name}</span>
+                        </div>
+                        {model.id === currentModel.id && (
+                          <div className="ml-auto w-2 h-2 bg-primary rounded-full" />
+                        )}
+                      </DropdownMenuItem>
+                    );
 
-                  return isDisabled ? (
-                    <Tooltip key={model.id}>
-                      <TooltipTrigger asChild>
-                        <div className="pointer-events-auto">{item}</div>
-                      </TooltipTrigger>
-                      <TooltipContent side="right">
-                        {computedReason}
-                      </TooltipContent>
-                    </Tooltip>
-                  ) : (
-                    item
-                  );
-                })}
+                    return isDisabled ? (
+                      <Tooltip key={model.id}>
+                        <TooltipTrigger asChild>
+                          <div className="pointer-events-auto">{item}</div>
+                        </TooltipTrigger>
+                        <TooltipContent side="right">
+                          {computedReason}
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : (
+                      item
+                    );
+                  })}
               </DropdownMenuSubContent>
             </DropdownMenuSub>
           );
@@ -185,7 +186,6 @@ export function ModelSelector({
         {mcpjamProviders.length > 0 && otherProviders.length > 0 && (
           <div className="my-1 h-px bg-muted/50" />
         )}
-        {/* User-configured providers */}
         {otherProviders.length > 0 && (
           <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
             Your providers
@@ -214,41 +214,43 @@ export function ModelSelector({
                 avoidCollisions={true}
                 collisionPadding={8}
               >
-                {models.map((model) => {
-                  const isDisabled = !!model.disabled;
+                {models
+                  .filter((model) => !isMCPJamProvidedModel(model.id))
+                  .map((model) => {
+                    const isDisabled = !!model.disabled;
 
-                  const item = (
-                    <DropdownMenuItem
-                      key={model.id}
-                      onSelect={() => {
-                        onModelChange(model);
-                        setIsModelSelectorOpen(false);
-                      }}
-                      className="flex items-center gap-3 text-sm cursor-pointer"
-                      disabled={isDisabled}
-                    >
-                      <div className="flex flex-col flex-1">
-                        <span className="font-medium">{model.name}</span>
-                      </div>
-                      {model.id === currentModel.id && (
-                        <div className="ml-auto w-2 h-2 bg-primary rounded-full" />
-                      )}
-                    </DropdownMenuItem>
-                  );
+                    const item = (
+                      <DropdownMenuItem
+                        key={model.id}
+                        onSelect={() => {
+                          onModelChange(model);
+                          setIsModelSelectorOpen(false);
+                        }}
+                        className="flex items-center gap-3 text-sm cursor-pointer"
+                        disabled={isDisabled}
+                      >
+                        <div className="flex flex-col flex-1">
+                          <span className="font-medium">{model.name}</span>
+                        </div>
+                        {model.id === currentModel.id && (
+                          <div className="ml-auto w-2 h-2 bg-primary rounded-full" />
+                        )}
+                      </DropdownMenuItem>
+                    );
 
-                  return isDisabled ? (
-                    <Tooltip key={model.id}>
-                      <TooltipTrigger asChild>
-                        <div className="pointer-events-auto">{item}</div>
-                      </TooltipTrigger>
-                      <TooltipContent side="right">
-                        {model.disabledReason}
-                      </TooltipContent>
-                    </Tooltip>
-                  ) : (
-                    item
-                  );
-                })}
+                    return isDisabled ? (
+                      <Tooltip key={model.id}>
+                        <TooltipTrigger asChild>
+                          <div className="pointer-events-auto">{item}</div>
+                        </TooltipTrigger>
+                        <TooltipContent side="right">
+                          {model.disabledReason}
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : (
+                      item
+                    );
+                  })}
               </DropdownMenuSubContent>
             </DropdownMenuSub>
           );

@@ -125,9 +125,8 @@ export function useChat(options: UseChatOptions = {}) {
   const getApiKeyForModel = useCallback(
     (m: ModelDefinition | null) => {
       if (!m) return "";
-      // Router-backed model requires no user token; backend provides it
-      if (isMCPJamProvidedModel(m.provider)) {
-        return "router"; // sentinel token to pass client validation
+      if (isMCPJamProvidedModel(m.id)) {
+        return "router";
       }
       if (m.provider === "ollama") {
         const available =
@@ -136,6 +135,9 @@ export function useChat(options: UseChatOptions = {}) {
             (om) => om.id === m.id || om.id.startsWith(`${m.id}:`),
           );
         return available ? "local" : "";
+      }
+      if (m.provider === "meta") {
+        return "";
       }
       return getToken(m.provider);
     },
@@ -157,7 +159,6 @@ export function useChat(options: UseChatOptions = {}) {
     [onModelChange],
   );
 
-  // Available models with API keys or local Ollama models
   const availableModels = useMemo(() => {
     const providerHasKey: Record<string, boolean> = {
       anthropic: hasToken("anthropic"),
@@ -165,10 +166,15 @@ export function useChat(options: UseChatOptions = {}) {
       deepseek: hasToken("deepseek"),
       google: hasToken("google"),
       ollama: isOllamaRunning,
-      meta: true, // always available; uses backend-provided key
+      meta: false,
     } as const;
 
-    const cloud = SUPPORTED_MODELS.filter((m) => providerHasKey[m.provider]);
+    const cloud = SUPPORTED_MODELS.filter((m) => {
+      if (isMCPJamProvidedModel(m.id)) {
+        return true;
+      }
+      return providerHasKey[m.provider];
+    });
     return isOllamaRunning && ollamaModels.length > 0
       ? cloud.concat(ollamaModels)
       : cloud;
@@ -325,8 +331,7 @@ export function useChat(options: UseChatOptions = {}) {
   const sendChatRequest = useCallback(
     async (userMessage: ChatMessage) => {
       const routeThroughBackend =
-        sendMessagesToBackend ||
-        (model && isMCPJamProvidedModel(model.provider));
+        sendMessagesToBackend || (model && isMCPJamProvidedModel(model.id));
 
       if (!routeThroughBackend && (!model || !currentApiKey)) {
         throw new Error(
