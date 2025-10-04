@@ -12,8 +12,25 @@ export function generateId(): string {
 }
 
 export function sanitizeText(text: string): string {
-  // Basic sanitization - in production you might want more robust sanitization
-  return text.trim();
+  // Basic trimming
+  let value = text.trim();
+
+  // Auto-close unbalanced fenced code blocks to avoid broken Markdown rendering
+  // Count occurrences of triple backticks. If odd, append closing fence.
+  // This is safe because it only affects display, not the raw content storage.
+  try {
+    const fenceRegex = /```/g;
+    const matches = value.match(fenceRegex);
+    const count = matches ? matches.length : 0;
+    if (count % 2 === 1) {
+      // Add a newline before closing to ensure proper block termination
+      value = value.endsWith("\n") ? value + "```" : value + "\n```";
+    }
+  } catch {
+    // If anything goes wrong, fall back to original trimmed text
+  }
+
+  return value;
 }
 
 export function formatTimestamp(date: Date): string {
