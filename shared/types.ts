@@ -103,11 +103,14 @@ export type ModelProvider =
   | "ollama"
   | "deepseek"
   | "google"
-  | "meta";
+  | "meta"
+  | "x-ai";
 
 const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
   "meta-llama/llama-3.3-70b-instruct",
   "openai/gpt-oss-120b",
+  "x-ai/grok-4-fast",
+  "openai/gpt-5-nano",
 ];
 
 export const isMCPJamProvidedModel = (modelId: string): boolean => {
@@ -242,6 +245,16 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
   {
     id: "openai/gpt-oss-120b",
     name: "GPT-OSS 120B (Free)",
+    provider: "openai",
+  },
+  {
+    id: "x-ai/grok-4-fast",
+    name: "Grok 4 Fast (Free)",
+    provider: "x-ai",
+  },
+  {
+    id: "openai/gpt-5-nano",
+    name: "GPT-5 Nano (Free)",
     provider: "openai",
   },
 ];
