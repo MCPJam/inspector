@@ -4,6 +4,7 @@ import { hasUnresolvedToolCalls } from "./http-tool-calls";
 export type BackendFetchPayload = {
   tools: Tool[];
   messages: string;
+  model?: string;
 };
 
 export type BackendFetchResponse = {
@@ -39,6 +40,7 @@ export type BackendConversationOptions = {
   maxSteps: number;
   messageHistory: ModelMessage[];
   toolDefinitions: Tool[];
+  modelId?: string;
   executeToolCalls: (messages: ModelMessage[]) => Promise<void>;
   fetchBackend: (
     payload: BackendFetchPayload,
@@ -73,6 +75,7 @@ export const runBackendConversation = async (
     const payload: BackendFetchPayload = {
       tools: options.toolDefinitions,
       messages: JSON.stringify(options.messageHistory),
+      model: options.modelId,
     };
     const data = await options.fetchBackend(payload);
 

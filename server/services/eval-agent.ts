@@ -134,7 +134,8 @@ ${toolsContext}
       Authorization: `Bearer ${convexAuthToken}`,
     },
     body: JSON.stringify({
-      tools: [], // No tools needed for generation
+      model: "meta-llama/llama-3.3-70b-instruct",
+      tools: [],
       messages: JSON.stringify(messageHistory),
     }),
   });
