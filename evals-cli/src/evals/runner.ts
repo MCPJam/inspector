@@ -153,7 +153,7 @@ const runIterationViaBackend = async ({
     await runBackendConversation({
       maxSteps: MAX_STEPS,
       messageHistory,
-      modelId: test.model, // Pass the model ID from the test
+      modelId: test.model,
       toolDefinitions: toolDefs,
       fetchBackend: async (payload) => {
         try {

@@ -125,9 +125,8 @@ export function useChat(options: UseChatOptions = {}) {
   const getApiKeyForModel = useCallback(
     (m: ModelDefinition | null) => {
       if (!m) return "";
-      // Router-backed model requires no user token; backend provides it
       if (isMCPJamProvidedModel(m.id)) {
-        return "router"; // sentinel token to pass client validation
+        return "router";
       }
       if (m.provider === "ollama") {
         const available =
@@ -137,7 +136,6 @@ export function useChat(options: UseChatOptions = {}) {
           );
         return available ? "local" : "";
       }
-      // Meta provider models should be MCPJam-provided (caught above)
       if (m.provider === "meta") {
         return "";
       }
@@ -161,7 +159,6 @@ export function useChat(options: UseChatOptions = {}) {
     [onModelChange],
   );
 
-  // Available models with API keys or local Ollama models
   const availableModels = useMemo(() => {
     const providerHasKey: Record<string, boolean> = {
       anthropic: hasToken("anthropic"),
@@ -169,15 +166,13 @@ export function useChat(options: UseChatOptions = {}) {
       deepseek: hasToken("deepseek"),
       google: hasToken("google"),
       ollama: isOllamaRunning,
-      meta: false, // Meta models are MCPJam-provided, checked separately below
+      meta: false,
     } as const;
 
     const cloud = SUPPORTED_MODELS.filter((m) => {
-      // MCPJam-provided models are always available (backend has the key)
       if (isMCPJamProvidedModel(m.id)) {
         return true;
       }
-      // Otherwise check if user has API key for the provider
       return providerHasKey[m.provider];
     });
     return isOllamaRunning && ollamaModels.length > 0

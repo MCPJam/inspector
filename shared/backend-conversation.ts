@@ -4,7 +4,7 @@ import { hasUnresolvedToolCalls } from "./http-tool-calls";
 export type BackendFetchPayload = {
   tools: Tool[];
   messages: string;
-  model?: string; // Model ID for MCPJam-provided models
+  model?: string;
 };
 
 export type BackendFetchResponse = {
