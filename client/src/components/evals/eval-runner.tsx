@@ -78,9 +78,9 @@ const steps = [
 type StepKey = (typeof steps)[number]["key"];
 
 const buildBlankTestCase = (index: number, model: ModelDefinition | null): TestCase => ({
-  title: `Test ${index}`,
+  title: ``,
   query:
-    "Describe the scenario you want to validate. Include any tools the agent should call and the success criteria.",
+    "",
   runs: 1,
   model: model?.id ?? "",
   provider: model?.provider ?? "",
@@ -481,7 +481,7 @@ export function EvalRunner({
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-lg font-semibold">Choose servers</h3>
+                <h3 className="text-lg pb-2">Select servers to test</h3>
                 <p className="text-sm text-muted-foreground">
                   Choose at least one connected MCP server. You can evaluate multiple servers in the same run.
                 </p>
@@ -523,9 +523,9 @@ export function EvalRunner({
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-lg font-semibold">Choose your evaluation model</h3>
+                <h3 className="text-lg pb-2">Choose your evaluation model</h3>
                 <p className="text-sm text-muted-foreground">
-                  Pick the model that should execute each test. You can change this later before running.
+                  For example, if you want to simulate using your server with Claude Desktop, select an Anthropic model.
                 </p>
               </div>
             </div>
@@ -545,7 +545,6 @@ export function EvalRunner({
                     availableModels={availableModels}
                     onModelChange={setSelectedModel}
                   />
-                  <Badge variant="outline">{selectedModel.provider}</Badge>
                 </div>
 
                 {!isMCPJamModel && !providerHasToken && selectedModelProvider && (
@@ -561,10 +560,6 @@ export function EvalRunner({
                     </div>
                   </div>
                 )}
-
-                <p className="text-sm text-muted-foreground">
-                  We remember your last choice so you can rerun suites quickly. Switching models will update the test cases automatically.
-                </p>
               </div>
             ) : null}
           </div>
@@ -574,9 +569,9 @@ export function EvalRunner({
           <div className="space-y-6">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-lg font-semibold">Define your test cases</h3>
+                <h3 className="text-lg pb-2">Define your test cases</h3>
                 <p className="text-sm text-muted-foreground">
-                  Author scenarios manually or generate them with AI. Each query becomes a run for every selected server.
+                  Create testing scenarios that simulate how real users would use your server.
                 </p>
               </div>
             </div>
@@ -629,11 +624,12 @@ export function EvalRunner({
                         className="space-y-3 rounded-lg border bg-background p-4"
                       >
                         <div className="flex items-start justify-between gap-3">
-                          <div className="flex flex-col">
+                          <div className="flex flex-col flex-1 space-y-2">
                             <Label className="text-xs uppercase text-muted-foreground">
                               Title
                             </Label>
                             <Input
+                              className="w-full"
                               value={testCase.title}
                               onChange={(event) =>
                                 handleUpdateTestCase(
@@ -642,7 +638,7 @@ export function EvalRunner({
                                   event.target.value,
                                 )
                               }
-                              placeholder="Give this scenario a short label"
+                              placeholder="(Paypal) List transactions"
                             />
                           </div>
                           {testCases.length > 1 && (
@@ -670,7 +666,7 @@ export function EvalRunner({
                                 event.target.value,
                               )
                             }
-                            placeholder="Describe the exact prompt or sequence the agent should execute"
+                            placeholder="Can you find the most recent Paypal transactions, then create an invoice?"
                             rows={3}
                           />
                         </div>
@@ -711,7 +707,7 @@ export function EvalRunner({
                                     .filter(Boolean),
                                 )
                               }
-                              placeholder="search, summarize"
+                              placeholder="paypal_list_transactions, paypal_create_invoice"
                             />
                           </div>
                         </div>
@@ -789,7 +785,7 @@ export function EvalRunner({
                     {validTestCases.map((testCase, index) => (
                       <div key={index} className="rounded-md border bg-muted/30 p-3">
                         <p className="text-sm font-semibold text-foreground">
-                          {testCase.title || `Test ${index + 1}`}
+                          {testCase.title}
                         </p>
                         <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
                           {testCase.query}
@@ -875,31 +871,38 @@ export function EvalRunner({
     </ol>
   );
 
+  const nextDisabled =
+    currentStep < steps.length - 1
+      ? !canAdvance
+      : isSubmitting || !canAdvance;
+
+  const nextVariant = nextDisabled ? "secondary" : "default";
+
   const wizardLayout = (
     <div
       className={cn(
         "mx-auto flex w-full flex-col gap-8 pb-10 pt-4",
-        inline ? "max-w-none px-4 sm:px-6 lg:px-32" : "max-w-3xl px-4",
+        inline ? "max-w-none px-4 sm:px-6 md:px-12 lg:px-32" : "max-w-3xl px-4",
       )}
     >
-      <div className="flex items-center justify-center gap-4">
+      <div className="flex flex-wrap items-center gap-4">
         <Button
           type="button"
-          variant="ghost"
-          size="icon"
+          variant="outline"
           onClick={handleBack}
           disabled={currentStep === 0}
-          aria-label="Previous step"
+          aria-label="Back"
+          className="justify-center gap-2"
         >
-          <ChevronLeft className="h-5 w-5" />
+          <ChevronLeft className="h-4 w-4" />
+          Back
         </Button>
         <div className="flex flex-1 justify-center">
           <div className="max-w-xl">{stepper}</div>
         </div>
         <Button
           type="button"
-          variant="ghost"
-          size="icon"
+          variant={nextVariant}
           onClick={() => {
             if (currentStep < steps.length - 1) {
               handleNext();
@@ -907,16 +910,15 @@ export function EvalRunner({
               void handleSubmit();
             }
           }}
-          disabled={
-            currentStep < steps.length - 1
-              ? !canAdvance
-              : isSubmitting || !canAdvance
-          }
-          aria-label={
-            currentStep < steps.length - 1 ? "Next step" : "Run evaluations"
-          }
+          disabled={nextDisabled}
+          aria-label="Next"
+          className={cn(
+            "justify-center gap-2",
+            !nextDisabled && "shadow-sm",
+          )}
         >
-          <ChevronRight className="h-5 w-5" />
+          Next
+          <ChevronRight className="h-4 w-4" />
         </Button>
       </div>
       <div className="space-y-6">{renderStepContent()}</div>
