@@ -5,6 +5,7 @@ import {
   ChevronRight,
   Info,
   Plus,
+  Sparkles,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -465,6 +466,7 @@ export function EvalRunner({
       if (!inline) {
         setOpen(false);
       }
+      window.location.hash = "eval-results";
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to start evals",
@@ -590,22 +592,16 @@ export function EvalRunner({
                     <Button
                       type="button"
                       variant="outline"
-                      size="sm"
+                      size="lg"
                       onClick={handleGenerateTests}
                       disabled={isGenerating}
                     >
-                      {isGenerating ? "Generating..." : "Generate with AI"}
+                      <span className="bg-gradient-to-r from-purple-600 via-violet-600 to-indigo-600 bg-clip-text text-transparent">
+                        {isGenerating ? "Generating..." : "Generate tests"}
+                      </span>
+                      <Sparkles className="h-4 w-4 ml-2 fill-purple-600" />
                     </Button>
                   </div>
-                  <Button
-                    type="button"
-                    size="icon"
-                    variant="outline"
-                    onClick={handleAddTestCase}
-                    aria-label="Add test"
-                  >
-                    <Plus className="h-4 w-4" />
-                  </Button>
                 </div>
 
                 {isGenerating && (
@@ -617,7 +613,7 @@ export function EvalRunner({
                 )}
 
                 {!isGenerating && (
-                  <div className="space-y-4">
+                  <div className="space-y-12">
                     {testCases.map((testCase, index) => (
                       <div
                         key={index}
@@ -713,6 +709,16 @@ export function EvalRunner({
                         </div>
                       </div>
                     ))}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={handleAddTestCase}
+                      aria-label="Add test"
+                      className="w-full"
+                    >
+                      <Plus className="h-4 w-4 mr-2" />
+                      Add test case
+                    </Button>
                   </div>
                 )}
               </>
@@ -723,9 +729,9 @@ export function EvalRunner({
         return (
           <div className="space-y-6">
             <div className="space-y-2">
-              <h3 className="text-lg font-semibold">Review your configuration</h3>
+              <h3 className="text-lg">Review your tests</h3>
               <p className="text-sm text-muted-foreground">
-                Double-check the details below. You can jump back to make changes before running.
+                After confirming the run, you will see your run begin in the eval results tab.
               </p>
             </div>
 
@@ -756,8 +762,7 @@ export function EvalRunner({
                   <p className="text-sm font-medium text-muted-foreground">Model</p>
                   {selectedModel ? (
                     <div className="mt-2 flex items-center gap-2">
-                      <Badge variant="secondary">{selectedModel.name}</Badge>
-                      <Badge variant="outline">{selectedModel.provider}</Badge>
+                      <Badge variant="outline">{selectedModel.name}</Badge>
                     </div>
                   ) : (
                     <p className="mt-2 text-sm text-muted-foreground">
@@ -778,9 +783,6 @@ export function EvalRunner({
               <div className="flex items-start justify-between gap-6">
                 <div className="flex-1">
                   <p className="text-sm font-medium text-muted-foreground">Tests</p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {validTestCases.length} test{validTestCases.length === 1 ? "" : "s"} ready to run.
-                  </p>
                   <div className="mt-3 space-y-3">
                     {validTestCases.map((testCase, index) => (
                       <div key={index} className="rounded-md border bg-muted/30 p-3">
@@ -810,16 +812,6 @@ export function EvalRunner({
                 >
                   Edit
                 </Button>
-              </div>
-            </div>
-
-            <div className="flex items-start gap-2 rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-              <Info className="h-4 w-4" />
-              <div>
-                <p className="font-medium text-foreground">Results next step</p>
-                <p>
-                  After the run finishes you can inspect the detailed metrics and history in the Results view. Share links with teammates to collaborate.
-                </p>
               </div>
             </div>
           </div>
@@ -911,13 +903,13 @@ export function EvalRunner({
             }
           }}
           disabled={nextDisabled}
-          aria-label="Next"
+          aria-label={currentStep === steps.length - 1 ? "Start" : "Next"}
           className={cn(
             "justify-center gap-2",
             !nextDisabled && "shadow-sm",
           )}
         >
-          Next
+          {currentStep === steps.length - 1 ? "Start" : "Next"}
           <ChevronRight className="h-4 w-4" />
         </Button>
       </div>

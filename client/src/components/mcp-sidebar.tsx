@@ -3,13 +3,13 @@ import {
   Hammer,
   MessageCircle,
   Settings,
-  Glasses,
-  Key,
+  Signature,
   MessageSquareCode,
   BookOpen,
-  FlaskConical,
   Activity,
-  BarChart3,
+  CirclePlayIcon,
+  ListChecks, 
+  HandMetal,
 } from "lucide-react";
 
 import { NavMain } from "@/components/sidebar/nav-main";
@@ -55,7 +55,6 @@ const navigationSections = [
         url: "#tools",
         icon: Hammer,
       },
-      // moved Evals to bottom; placeholder here removed
       {
         title: "Resources",
         url: "#resources",
@@ -69,27 +68,22 @@ const navigationSections = [
       {
         title: "Auth",
         url: "#auth",
-        icon: Key,
-      },
-      {
-        title: "Run evals",
-        url: "#evals",
-        icon: FlaskConical,
-      },
-      {
-        title: "Eval results",
-        url: "#eval-results",
-        icon: BarChart3,
+        icon: Signature,
       },
     ],
   },
   {
-    id: "beta",
+    id: "evals",
     items: [
       {
-        title: "Interceptor (beta)",
-        url: "#interceptor",
-        icon: Glasses,
+        title: "Run evals",
+        url: "#evals",
+        icon: CirclePlayIcon,
+      },
+      {
+        title: "Eval results",
+        url: "#eval-results",
+        icon: ListChecks,
       },
     ],
   },
@@ -99,7 +93,7 @@ const navigationSections = [
       {
         title: "Feedback",
         url: "https://github.com/MCPJam/inspector/issues/new",
-        icon: MessageCircle,
+        icon: HandMetal,
       },
       {
         title: "Settings",
