@@ -4,7 +4,8 @@ import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
 import { PromptsTab } from "./components/PromptsTab";
 import { ChatTab } from "./components/ChatTab";
-import { EvalsTab } from "./components/EvalsTab";
+import { EvalsResultsTab } from "./components/EvalsResultsTab";
+import { EvalsRunTab } from "./components/EvalsRunTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { TracingTab } from "./components/TracingTab";
 import { InterceptorTab } from "./components/InterceptorTab";
@@ -188,7 +189,8 @@ export default function App() {
                 serverName={appState.selectedServer}
               />
             )}
-            {activeTab === "evals" && <EvalsTab />}
+            {activeTab === "evals" && <EvalsRunTab />}
+            {activeTab === "eval-results" && <EvalsResultsTab />}
             {activeTab === "resources" && (
               <ResourcesTab
                 serverConfig={selectedMCPConfig}

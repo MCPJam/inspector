@@ -377,6 +377,22 @@ export const AuthTab = ({
       getStoredTokens(serverName) ||
       serverEntry?.connectionStatus === "oauth-flow");
 
+  const contributionBanner = (
+    <div className="rounded-md border border-dashed border-primary/30 bg-primary/10 px-3 py-2 text-xs text-primary space-y-1">
+      <div>
+        <span className="font-medium">Help us improve this feature!</span> We&apos;re looking for contributors to polish up this feature.
+      </div>
+      <a
+        href="https://discord.com/invite/JEnDtz8X6z"
+        target="_blank"
+        rel="noreferrer"
+        className="inline-flex items-center gap-1 text-xs font-medium text-primary underline hover:text-primary/80"
+      >
+        Join our Discord
+      </a>
+    </div>
+  );
+
   if (!serverConfig) {
     return (
       <EmptyState
@@ -409,6 +425,7 @@ export const AuthTab = ({
           {/* Content */}
           <div className="flex-1 overflow-auto px-6 py-6">
             <div className="space-y-6 max-w-2xl">
+              {contributionBanner}
               {/* Server Info */}
               <div className="rounded-md border p-4 space-y-2">
                 <h3 className="text-sm font-medium">Selected Server</h3>
@@ -482,6 +499,7 @@ export const AuthTab = ({
         {/* Content */}
         <div className="flex-1 overflow-auto px-6 py-6">
           <div className="space-y-6 max-w-2xl">
+            {contributionBanner}
             {/* Server Info */}
             <div className="rounded-md border p-4 space-y-2">
               <h3 className="text-sm font-medium">Selected Server</h3>

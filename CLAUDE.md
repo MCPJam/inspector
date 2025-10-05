@@ -262,3 +262,5 @@ docker run -d -p 3001:3001 --name mcp-inspector mcpjam/mcp-inspector:latest
      - Feature additions
      - Bug fixes
      - Performance improvements
+
+- @client/src/components/mcp-sidebar.tsx Can we temporarily disable the interceptor feature, and have teh Run evals and eval results be tabs in its own section?
