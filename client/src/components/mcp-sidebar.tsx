@@ -9,6 +9,7 @@ import {
   BookOpen,
   FlaskConical,
   Activity,
+  BarChart3,
 } from "lucide-react";
 
 import { NavMain } from "@/components/sidebar/nav-main";
@@ -71,9 +72,14 @@ const navigationSections = [
         icon: Key,
       },
       {
-        title: "Evals",
+        title: "Run evals",
         url: "#evals",
         icon: FlaskConical,
+      },
+      {
+        title: "Eval results",
+        url: "#eval-results",
+        icon: BarChart3,
       },
     ],
   },
