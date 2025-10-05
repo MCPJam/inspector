@@ -42,9 +42,16 @@ A developer tool for testing, debugging Model Context Protocol (MCP) servers. It
 </details>
 
 <details>
-<summary><strong>Connect to any server</strong></summary>
+<summary><strong>Evals and pen testing</strong></summary>
 
 <img alt="MCPJam Connection Demo" src="./client/public/demo_3.png">
+
+</details>
+
+<details>
+<summary><strong>Connect with OAuth</strong></summary>
+
+<img alt="MCPJam Connection Demo" src="./client/public/demo_4.png">
 
 </details>
 
