@@ -32,10 +32,8 @@ import {
 } from "@/hooks/use-ai-provider-keys";
 import { ModelSelector } from "@/components/chat/model-selector";
 import { cn } from "@/lib/utils";
-import {
-  ModelDefinition,
-  isMCPJamProvidedModel,
-} from "@/shared/types";
+import { ModelDefinition, isMCPJamProvidedModel } from "@/shared/types";
+import { ServerSelectionCard } from "./ServerSelectionCard";
 
 interface TestCase {
   title: string;
@@ -67,7 +65,8 @@ const steps = [
   {
     key: "tests",
     title: "Define Tests",
-    description: "Author the scenarios you want to run or generate them with AI.",
+    description:
+      "Author the scenarios you want to run or generate them with AI.",
   },
   {
     key: "review",
@@ -78,10 +77,12 @@ const steps = [
 
 type StepKey = (typeof steps)[number]["key"];
 
-const buildBlankTestCase = (index: number, model: ModelDefinition | null): TestCase => ({
+const buildBlankTestCase = (
+  index: number,
+  model: ModelDefinition | null,
+): TestCase => ({
   title: ``,
-  query:
-    "",
+  query: "",
   runs: 1,
   model: model?.id ?? "",
   provider: model?.provider ?? "",
@@ -96,9 +97,10 @@ export function EvalRunner({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
-  const [savedPreferences, setSavedPreferences] = useState<
-    { servers: string[]; modelId: string | null } | null
-  >(null);
+  const [savedPreferences, setSavedPreferences] = useState<{
+    servers: string[];
+    modelId: string | null;
+  } | null>(null);
   const { isAuthenticated } = useConvexAuth();
   const { getAccessToken } = useAuth();
   const { appState } = useAppState();
@@ -228,8 +230,9 @@ export function EvalRunner({
     ? isMCPJamProvidedModel(selectedModel.id)
     : false;
 
-  const selectedModelProvider =
-    selectedModel?.provider as keyof ProviderTokens | undefined;
+  const selectedModelProvider = selectedModel?.provider as
+    | keyof ProviderTokens
+    | undefined;
 
   const providerHasToken = selectedModelProvider
     ? hasToken(selectedModelProvider)
@@ -244,7 +247,8 @@ export function EvalRunner({
     () => ({
       servers: selectedServers.length > 0,
       model:
-        !!selectedModel && (isMCPJamModel || (selectedModelProvider && providerHasToken)),
+        !!selectedModel &&
+        (isMCPJamModel || (selectedModelProvider && providerHasToken)),
       tests: validTestCases.length > 0,
     }),
     [
@@ -273,7 +277,9 @@ export function EvalRunner({
       case 2:
         return stepCompletion.tests;
       case 3:
-        return stepCompletion.tests && stepCompletion.servers && stepCompletion.model;
+        return (
+          stepCompletion.tests && stepCompletion.servers && stepCompletion.model
+        );
       default:
         return false;
     }
@@ -411,9 +417,10 @@ export function EvalRunner({
     }
 
     const currentModelIsJam = isMCPJamProvidedModel(selectedModel.id);
-    const apiKey = !currentModelIsJam && selectedModelProvider
-      ? getToken(selectedModelProvider)
-      : "";
+    const apiKey =
+      !currentModelIsJam && selectedModelProvider
+        ? getToken(selectedModelProvider)
+        : "";
 
     if (!currentModelIsJam && (!selectedModelProvider || !apiKey)) {
       toast.error(
@@ -484,27 +491,24 @@ export function EvalRunner({
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-lg pb-2">Select servers to test</h3>
-                <p className="text-sm text-muted-foreground">
-                  Choose at least one connected MCP server. You can evaluate multiple servers in the same run.
+                <p className="text-sm text-muted-foreground pb-2">
+                  Choose at least one connected MCP server. You can evaluate
+                  multiple servers in the same run.
                 </p>
               </div>
             </div>
 
             {connectedServers.length > 0 ? (
-              <div className="flex flex-wrap gap-2">
-                {connectedServers.map(([name]) => {
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3">
+                {connectedServers.map(([name, server]) => {
                   const isSelected = selectedServers.includes(name);
                   return (
-                    <Button
+                    <ServerSelectionCard
                       key={name}
-                      type="button"
-                      variant={isSelected ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => toggleServer(name)}
-                      className="h-9"
-                    >
-                      {name}
-                    </Button>
+                      server={server}
+                      selected={isSelected}
+                      onToggle={toggleServer}
+                    />
                   );
                 })}
               </div>
@@ -514,7 +518,8 @@ export function EvalRunner({
                   No connected servers yet
                 </p>
                 <p className="mt-2">
-                  Launch a server from the Servers tab to make it available here. Once connected, it will appear instantly.
+                  Launch a server from the Servers tab to make it available
+                  here. Once connected, it will appear instantly.
                 </p>
               </div>
             )}
@@ -527,16 +532,20 @@ export function EvalRunner({
               <div>
                 <h3 className="text-lg pb-2">Choose your evaluation model</h3>
                 <p className="text-sm text-muted-foreground">
-                  For example, if you want to simulate using your server with Claude Desktop, select an Anthropic model.
+                  For example, if you want to simulate using your server with
+                  Claude Desktop, select an Anthropic model.
                 </p>
               </div>
             </div>
 
             {availableModels.length === 0 ? (
               <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
-                <p className="font-medium text-foreground">No models available</p>
+                <p className="font-medium text-foreground">
+                  No models available
+                </p>
                 <p className="mt-2">
-                  Connect a provider or enable MCPJam provided models in Settings to unlock model selection.
+                  Connect a provider or enable MCPJam provided models in
+                  Settings to unlock model selection.
                 </p>
               </div>
             ) : selectedModel ? (
@@ -549,19 +558,22 @@ export function EvalRunner({
                   />
                 </div>
 
-                {!isMCPJamModel && !providerHasToken && selectedModelProvider && (
-                  <div className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/5 p-3 text-sm">
-                    <AlertCircle className="mt-0.5 h-4 w-4 text-destructive" />
-                    <div>
-                      <p className="font-medium text-destructive">
-                        Add your {selectedModel.provider} API key
-                      </p>
-                      <p className="text-muted-foreground">
-                        Configure credentials in Settings to run this model. Keys are stored locally and never sent to our servers.
-                      </p>
+                {!isMCPJamModel &&
+                  !providerHasToken &&
+                  selectedModelProvider && (
+                    <div className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/5 p-3 text-sm">
+                      <AlertCircle className="mt-0.5 h-4 w-4 text-destructive" />
+                      <div>
+                        <p className="font-medium text-destructive">
+                          Add your {selectedModel.provider} API key
+                        </p>
+                        <p className="text-muted-foreground">
+                          Configure credentials in Settings to run this model.
+                          Keys are stored locally and never sent to our servers.
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
               </div>
             ) : null}
           </div>
@@ -573,16 +585,21 @@ export function EvalRunner({
               <div>
                 <h3 className="text-lg pb-2">Define your test cases</h3>
                 <p className="text-sm text-muted-foreground">
-                  Create testing scenarios that simulate how real users would use your server.
+                  Create testing scenarios that simulate how real users would
+                  use your server.
                 </p>
               </div>
             </div>
 
             {!stepCompletion.servers || !stepCompletion.model ? (
               <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
-                <p className="font-medium text-foreground">Finish previous steps first</p>
+                <p className="font-medium text-foreground">
+                  Finish previous steps first
+                </p>
                 <p className="mt-2">
-                  Select at least one server and choose a model to unlock test authoring. That ensures generated tests know which stack to target.
+                  Select at least one server and choose a model to unlock test
+                  authoring. That ensures generated tests know which stack to
+                  target.
                 </p>
               </div>
             ) : (
@@ -731,14 +748,17 @@ export function EvalRunner({
             <div className="space-y-2">
               <h3 className="text-lg">Review your tests</h3>
               <p className="text-sm text-muted-foreground">
-                After confirming the run, you will see your run begin in the eval results tab.
+                After confirming the run, you will see your run begin in the
+                eval results tab.
               </p>
             </div>
 
             <div className="space-y-4 rounded-lg border bg-background p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">Servers</p>
+                  <p className="text-sm font-medium text-muted-foreground">
+                    Servers
+                  </p>
                   <div className="mt-2 flex flex-wrap gap-2">
                     {selectedServers.map((server) => (
                       <Badge key={server} variant="outline">
@@ -759,7 +779,9 @@ export function EvalRunner({
               <Separator />
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">Model</p>
+                  <p className="text-sm font-medium text-muted-foreground">
+                    Model
+                  </p>
                   {selectedModel ? (
                     <div className="mt-2 flex items-center gap-2">
                       <Badge variant="outline">{selectedModel.name}</Badge>
@@ -782,10 +804,15 @@ export function EvalRunner({
               <Separator />
               <div className="flex items-start justify-between gap-6">
                 <div className="flex-1">
-                  <p className="text-sm font-medium text-muted-foreground">Tests</p>
+                  <p className="text-sm font-medium text-muted-foreground">
+                    Tests
+                  </p>
                   <div className="mt-3 space-y-3">
                     {validTestCases.map((testCase, index) => (
-                      <div key={index} className="rounded-md border bg-muted/30 p-3">
+                      <div
+                        key={index}
+                        className="rounded-md border bg-muted/30 p-3"
+                      >
                         <p className="text-sm font-semibold text-foreground">
                           {testCase.title}
                         </p>
@@ -793,7 +820,9 @@ export function EvalRunner({
                           {testCase.query}
                         </p>
                         <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                          <span>{testCase.runs} run{testCase.runs === 1 ? "" : "s"}</span>
+                          <span>
+                            {testCase.runs} run{testCase.runs === 1 ? "" : "s"}
+                          </span>
                           {testCase.expectedToolCalls.length > 0 && (
                             <span>
                               Tools: {testCase.expectedToolCalls.join(", ")}
@@ -825,8 +854,10 @@ export function EvalRunner({
     <ol className="flex flex-col items-center gap-4 text-center md:flex-row md:gap-6">
       {steps.map((step, index) => {
         const isActive = currentStep === index;
-        const isCompleted = index < currentStep && index <= highestAvailableStep;
-        const isSelectable = index <= Math.max(highestAvailableStep, currentStep);
+        const isCompleted =
+          index < currentStep && index <= highestAvailableStep;
+        const isSelectable =
+          index <= Math.max(highestAvailableStep, currentStep);
         return (
           <li key={step.key} className="flex flex-col items-center gap-2">
             <button
@@ -841,9 +872,14 @@ export function EvalRunner({
               <span
                 className={cn(
                   "flex h-8 w-8 items-center justify-center rounded-full border text-sm font-medium",
-                  isCompleted && "border-primary bg-primary text-primary-foreground",
-                  isActive && !isCompleted && "border-primary bg-primary/10 text-primary",
-                  !isActive && !isCompleted && "border-border text-muted-foreground",
+                  isCompleted &&
+                    "border-primary bg-primary text-primary-foreground",
+                  isActive &&
+                    !isCompleted &&
+                    "border-primary bg-primary/10 text-primary",
+                  !isActive &&
+                    !isCompleted &&
+                    "border-border text-muted-foreground",
                 )}
               >
                 {index + 1}
@@ -864,9 +900,7 @@ export function EvalRunner({
   );
 
   const nextDisabled =
-    currentStep < steps.length - 1
-      ? !canAdvance
-      : isSubmitting || !canAdvance;
+    currentStep < steps.length - 1 ? !canAdvance : isSubmitting || !canAdvance;
 
   const nextVariant = nextDisabled ? "secondary" : "default";
 
@@ -904,10 +938,7 @@ export function EvalRunner({
           }}
           disabled={nextDisabled}
           aria-label={currentStep === steps.length - 1 ? "Start" : "Next"}
-          className={cn(
-            "justify-center gap-2",
-            !nextDisabled && "shadow-sm",
-          )}
+          className={cn("justify-center gap-2", !nextDisabled && "shadow-sm")}
         >
           {currentStep === steps.length - 1 ? "Start" : "Next"}
           <ChevronRight className="h-4 w-4" />
@@ -933,7 +964,8 @@ export function EvalRunner({
         <DialogHeader className="mx-auto w-full max-w-3xl gap-1 text-left">
           <DialogTitle>Create eval run</DialogTitle>
           <DialogDescription>
-            Follow the guided steps to configure your evaluation and run it with confidence.
+            Follow the guided steps to configure your evaluation and run it with
+            confidence.
           </DialogDescription>
         </DialogHeader>
         {wizardLayout}

@@ -116,7 +116,9 @@ export function EvalsResultsTab() {
         <div className="flex h-64 items-center justify-center">
           <div className="text-center">
             <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
-            <p className="mt-4 text-muted-foreground">Loading suite details...</p>
+            <p className="mt-4 text-muted-foreground">
+              Loading suite details...
+            </p>
           </div>
         </div>
       ) : (

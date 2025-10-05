@@ -21,12 +21,15 @@ import {
   Copy,
   Download,
   Check,
-  X,
-  Wifi,
   Edit,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { exportServerApi } from "@/lib/mcp-export-api";
+import {
+  getConnectionStatusMeta,
+  getServerCommandDisplay,
+  getServerTransportLabel,
+} from "./server-card-utils";
 
 interface ServerConnectionCardProps {
   server: ServerWithName;
@@ -48,8 +51,15 @@ export function ServerConnectionCard({
   const [isExporting, setIsExporting] = useState(false);
   const [isErrorExpanded, setIsErrorExpanded] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
-  const isHttpServer = server.config.url !== undefined;
   const serverConfig = server.config;
+  const {
+    label: connectionStatusLabel,
+    Icon: ConnectionStatusIcon,
+    iconClassName,
+    indicatorColor,
+  } = getConnectionStatusMeta(server.connectionStatus);
+  const transportLabel = getServerTransportLabel(server.config);
+  const commandDisplay = getServerCommandDisplay(server.config);
 
   const copyToClipboard = async (text: string, fieldName: string) => {
     try {
@@ -108,45 +118,6 @@ export function ServerConnectionCard({
     }
   };
 
-  const getConnectionStatusText = () => {
-    switch (server.connectionStatus) {
-      case "connected":
-        return "Connected";
-      case "connecting":
-        return "Connecting...";
-      case "oauth-flow":
-        return "Authorizing...";
-      case "failed":
-        return `Failed (${server.retryCount} retries)`;
-      case "disconnected":
-        return "Disconnected";
-    }
-  };
-
-  const getConnectionStatusIcon = () => {
-    switch (server.connectionStatus) {
-      case "connected":
-        return <Check className="h-3 w-3 text-green-500" />;
-      case "connecting":
-        return <Loader2 className="h-3 w-3 text-blue-500 animate-spin" />;
-      case "oauth-flow":
-        return <Loader2 className="h-3 w-3 text-purple-500 animate-spin" />;
-      case "failed":
-        return <X className="h-3 w-3 text-red-500" />;
-      case "disconnected":
-        return <Wifi className="h-3 w-3 text-gray-500" />;
-    }
-  };
-
-  const getCommandDisplay = () => {
-    if (isHttpServer) {
-      return server.config.url?.toString() || "";
-    }
-    const command = server.config.command;
-    const args = server.config.args || [];
-    return [command, ...args].join(" ");
-  };
-
   return (
     <TooltipProvider>
       <Card className="border border-border/50 bg-card/50 backdrop-blur-sm hover:border-border transition-colors">
@@ -157,16 +128,7 @@ export function ServerConnectionCard({
               <div
                 className="h-2 w-2 rounded-full flex-shrink-0 mt-1"
                 style={{
-                  backgroundColor:
-                    server.connectionStatus === "connected"
-                      ? "#10b981"
-                      : server.connectionStatus === "connecting"
-                        ? "#3b82f6"
-                        : server.connectionStatus === "oauth-flow"
-                          ? "#a855f7"
-                          : server.connectionStatus === "failed"
-                            ? "#ef4444"
-                            : "#9ca3af",
+                  backgroundColor: indicatorColor,
                 }}
               />
               <div className="min-w-0 flex-1">
@@ -175,14 +137,16 @@ export function ServerConnectionCard({
                     {server.name}
                   </h3>
                   <div className="flex items-center gap-1 leading-none">
-                    {getConnectionStatusIcon()}
+                    <ConnectionStatusIcon className={iconClassName} />
                     <p className="text-xs text-muted-foreground leading-none">
-                      {getConnectionStatusText()}
+                      {server.connectionStatus === "failed"
+                        ? `${connectionStatusLabel} (${server.retryCount} retries)`
+                        : connectionStatusLabel}
                     </p>
                   </div>
                 </div>
                 <p className="text-xs text-muted-foreground mt-1">
-                  {isHttpServer ? "HTTP/SSE" : "STDIO"}
+                  {transportLabel}
                 </p>
               </div>
             </div>
@@ -268,9 +232,9 @@ export function ServerConnectionCard({
 
           {/* Command/URL Display */}
           <div className="font-mono text-xs text-muted-foreground bg-muted/30 p-2 rounded border border-border/30 break-all relative group">
-            <div className="pr-8">{getCommandDisplay()}</div>
+            <div className="pr-8">{commandDisplay}</div>
             <button
-              onClick={() => copyToClipboard(getCommandDisplay(), "command")}
+              onClick={() => copyToClipboard(commandDisplay, "command")}
               className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
             >
               {copiedField === "command" ? (
