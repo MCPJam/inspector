@@ -8,7 +8,7 @@ import {
   BookOpen,
   Activity,
   CirclePlayIcon,
-  ListChecks, 
+  ListChecks,
   HandMetal,
 } from "lucide-react";
 
