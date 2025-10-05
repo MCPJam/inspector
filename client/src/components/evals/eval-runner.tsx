@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
   CheckCircle,
+  ChevronLeft,
+  ChevronRight,
   Info,
   Plus,
   X,
@@ -286,11 +288,19 @@ export function EvalRunner({
     });
   };
 
+  const handleAddTestCases = (count: number) => {
+    if (count <= 0) return;
+    setTestCases((prev) => {
+      const baseLength = prev.length;
+      const additions = Array.from({ length: count }, (_, offset) =>
+        buildBlankTestCase(baseLength + offset + 1, selectedModel),
+      );
+      return [...prev, ...additions];
+    });
+  };
+
   const handleAddTestCase = () => {
-    setTestCases((prev) => [
-      ...prev,
-      buildBlankTestCase(prev.length + 1, selectedModel),
-    ]);
+    handleAddTestCases(1);
   };
 
   const handleRemoveTestCase = (index: number) => {
@@ -598,15 +608,26 @@ export function EvalRunner({
               </div>
             ) : (
               <>
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={handleGenerateTests}
+                      disabled={isGenerating}
+                    >
+                      {isGenerating ? "Generating..." : "Generate with AI"}
+                    </Button>
+                  </div>
                   <Button
                     type="button"
+                    size="icon"
                     variant="outline"
-                    size="sm"
-                    onClick={handleGenerateTests}
-                    disabled={isGenerating}
+                    onClick={handleAddTestCase}
+                    aria-label="Add test"
                   >
-                    {isGenerating ? "Generating..." : "Generate with AI"}
+                    <Plus className="h-4 w-4" />
                   </Button>
                 </div>
 
@@ -831,20 +852,19 @@ export function EvalRunner({
   };
 
   const stepper = (
-    <ol className="flex items-center justify-between gap-2 md:gap-4">
+    <ol className="flex flex-col items-center gap-4 text-center md:flex-row md:gap-6">
       {steps.map((step, index) => {
         const isActive = currentStep === index;
         const isCompleted = index < currentStep && index <= highestAvailableStep;
         const isSelectable = index <= Math.max(highestAvailableStep, currentStep);
-        const showConnector = index < steps.length - 1;
         return (
-          <li key={step.key} className="flex flex-1 items-center gap-2">
+          <li key={step.key} className="flex flex-col items-center gap-2">
             <button
               type="button"
               onClick={() => (isSelectable ? setCurrentStep(index) : undefined)}
               disabled={!isSelectable}
               className={cn(
-                "flex flex-col items-center gap-1 text-center transition",
+                "flex flex-col items-center gap-2 transition",
                 !isSelectable && "cursor-not-allowed opacity-60",
               )}
             >
@@ -860,22 +880,13 @@ export function EvalRunner({
               </span>
               <span
                 className={cn(
-                  "text-[11px] leading-tight",
+                  "text-xs leading-tight",
                   isActive ? "text-foreground" : "text-muted-foreground",
                 )}
               >
                 {step.title}
               </span>
             </button>
-            {showConnector && (
-              <span
-                aria-hidden="true"
-                className={cn(
-                  "h-px min-w-[24px] flex-1 bg-border transition-colors",
-                  isCompleted ? "bg-primary" : "bg-border",
-                )}
-              />
-            )}
           </li>
         );
       })}
@@ -883,43 +894,50 @@ export function EvalRunner({
   );
 
   const wizardLayout = (
-    <div className="space-y-8">
-      <div>{stepper}</div>
-      <div className="space-y-6">
-        {renderStepContent()}
-        <div className="flex items-center justify-between">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={handleBack}
-            disabled={currentStep === 0}
-          >
-            Back
-          </Button>
-          {currentStep < steps.length - 1 ? (
-            <Button type="button" onClick={handleNext} disabled={!canAdvance}>
-              Continue
-            </Button>
-          ) : (
-            <Button
-              type="button"
-              onClick={handleSubmit}
-              disabled={isSubmitting || !canAdvance}
-            >
-              {isSubmitting ? "Starting..." : "Run evals"}
-            </Button>
-          )}
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 pb-10 pt-4">
+      <div className="flex items-center justify-center gap-4">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          onClick={handleBack}
+          disabled={currentStep === 0}
+          aria-label="Previous step"
+        >
+          <ChevronLeft className="h-5 w-5" />
+        </Button>
+        <div className="flex flex-1 justify-center">
+          <div className="max-w-xl">{stepper}</div>
         </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          onClick={() => {
+            if (currentStep < steps.length - 1) {
+              handleNext();
+            } else {
+              void handleSubmit();
+            }
+          }}
+          disabled={
+            currentStep < steps.length - 1
+              ? !canAdvance
+              : isSubmitting || !canAdvance
+          }
+          aria-label={
+            currentStep < steps.length - 1 ? "Next step" : "Run evaluations"
+          }
+        >
+          <ChevronRight className="h-5 w-5" />
+        </Button>
       </div>
+      <div className="space-y-6">{renderStepContent()}</div>
     </div>
   );
 
   if (inline) {
-    return (
-      <div className="space-y-6">
-        {wizardLayout}
-      </div>
-    );
+    return wizardLayout;
   }
 
   return (
@@ -930,8 +948,8 @@ export function EvalRunner({
           New eval run
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-h-[80vh] w-full max-w-4xl overflow-y-auto">
-        <DialogHeader>
+      <DialogContent className="max-h-[80vh] w-full max-w-4xl overflow-y-auto sm:max-w-4xl">
+        <DialogHeader className="mx-auto w-full max-w-3xl gap-1 text-left">
           <DialogTitle>Create eval run</DialogTitle>
           <DialogDescription>
             Follow the guided steps to configure your evaluation and run it with confidence.
