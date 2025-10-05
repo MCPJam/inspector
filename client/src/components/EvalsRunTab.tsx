@@ -46,7 +46,7 @@ export function EvalsRunTab() {
       <div className="space-y-2">
         <h1 className="text-2xl font-semibold">Evaluation runner</h1>
       </div>
-      <div className="max-w-4xl">
+      <div className="w-full">
         <EvalRunner availableModels={availableModels} inline={true} />
       </div>
     </div>

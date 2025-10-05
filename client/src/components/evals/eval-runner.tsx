@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
-  CheckCircle,
   ChevronLeft,
   ChevronRight,
   Info,
@@ -487,12 +486,6 @@ export function EvalRunner({
                   Choose at least one connected MCP server. You can evaluate multiple servers in the same run.
                 </p>
               </div>
-              {stepCompletion.servers && (
-                <Badge variant="secondary" className="flex items-center gap-1">
-                  <CheckCircle className="h-3 w-3" />
-                  {selectedServers.length} selected
-                </Badge>
-              )}
             </div>
 
             {connectedServers.length > 0 ? (
@@ -535,11 +528,6 @@ export function EvalRunner({
                   Pick the model that should execute each test. You can change this later before running.
                 </p>
               </div>
-              {stepCompletion.model && (
-                <Badge variant="secondary" className="flex items-center gap-1">
-                  <CheckCircle className="h-3 w-3" /> Ready
-                </Badge>
-              )}
             </div>
 
             {availableModels.length === 0 ? (
@@ -591,12 +579,6 @@ export function EvalRunner({
                   Author scenarios manually or generate them with AI. Each query becomes a run for every selected server.
                 </p>
               </div>
-              {stepCompletion.tests && (
-                <Badge variant="secondary" className="flex items-center gap-1">
-                  <CheckCircle className="h-3 w-3" />
-                  {validTestCases.length} ready
-                </Badge>
-              )}
             </div>
 
             {!stepCompletion.servers || !stepCompletion.model ? (
@@ -894,7 +876,12 @@ export function EvalRunner({
   );
 
   const wizardLayout = (
-    <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 pb-10 pt-4">
+    <div
+      className={cn(
+        "mx-auto flex w-full flex-col gap-8 pb-10 pt-4",
+        inline ? "max-w-none px-4 sm:px-6 lg:px-32" : "max-w-3xl px-4",
+      )}
+    >
       <div className="flex items-center justify-center gap-4">
         <Button
           type="button"
