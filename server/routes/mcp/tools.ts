@@ -76,6 +76,8 @@ tools.post("/list", async (c) => {
 
 // POST /execute — execute a tool; may return completed or an elicitation requirement
 tools.post("/execute", async (c) => {
+  const mcp = c.mcpJamClientManager;
+  
   try {
     const { serverId, toolName, parameters } = await c.req.json();
     if (!serverId) return c.json({ error: "serverId is required" }, 400);
@@ -84,8 +86,6 @@ tools.post("/execute", async (c) => {
     if (activeExecution) {
       return c.json({ error: "Another execution is already in progress" }, 409);
     }
-
-    const mcp = c.mcpJamClientManager;
     const status = mcp.getConnectionStatus(serverId);
     if (status !== "connected") {
       return c.json({ error: `Server '${serverId}' is not connected` }, 400);
@@ -180,6 +180,10 @@ tools.post("/execute", async (c) => {
       202,
     );
   } catch (err) {
+    // Clean up the global state to prevent 409 errors on subsequent requests
+    activeExecution = null;
+    mcp.clearElicitationCallback();
+    
     const msg = err instanceof Error ? err.message : String(err);
     return c.json({ error: msg }, 500);
   }
