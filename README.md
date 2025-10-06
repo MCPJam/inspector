@@ -22,13 +22,13 @@ A developer tool for testing, debugging Model Context Protocol (MCP) servers. It
 
 ## Key Features
 
-| Feature                      | Description                                                                                                                              |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| **Protocol handshake testing** | Test your MCP server's tools, resources, prompts, elicitation, and OAuth 2. MCPJam is compliant with the latest MCP specs.               |
-| **All transports supported** | Connect to any MCP server. MCPJam inspector supports STDIO, SSE, and Streamable HTTP transports.                                         |
-| **LLM Playground**           | Integrated chat playground with OpenAI, Anthropic Claude, and Ollama model support. Test how your MCP server would behave against an LLM |
-| **Evals testing**                | Simulate users flows to catch security vulnerabilities and performance regressions before your server hits production.                                                           |
-| **Multiple server conenctions**     | Connect to multiple MCP servers. Save configurations. Upgraded UI/UX for modern dev experience.                                          |
+| Feature                         | Description                                                                                                                              |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| **Protocol handshake testing**  | Test your MCP server's tools, resources, prompts, elicitation, and OAuth 2. MCPJam is compliant with the latest MCP specs.               |
+| **All transports supported**    | Connect to any MCP server. MCPJam inspector supports STDIO, SSE, and Streamable HTTP transports.                                         |
+| **LLM Playground**              | Integrated chat playground with OpenAI, Anthropic Claude, and Ollama model support. Test how your MCP server would behave against an LLM |
+| **Evals testing**               | Simulate users flows to catch security vulnerabilities and performance regressions before your server hits production.                   |
+| **Multiple server conenctions** | Connect to multiple MCP servers. Save configurations. Upgraded UI/UX for modern dev experience.                                          |
 
 ## 📸 Screenshots
 
@@ -122,7 +122,6 @@ In the UI "MCP Servers" tab, click add server, select HTTP, then paste in your s
 
 [![Node.js](https://img.shields.io/badge/Node.js-20+-green.svg?style=for-the-badge&logo=node.js)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5+-blue.svg?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
-
 
 ## 🛠️ Development
 
