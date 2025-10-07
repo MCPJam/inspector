@@ -76,6 +76,9 @@ tools.post("/list", async (c) => {
 
 // POST /execute — execute a tool; may return completed or an elicitation requirement
 tools.post("/execute", async (c) => {
+  const mcp = c.mcpJamClientManager;
+  let state: ExecutionState | null = null;
+
   try {
     const { serverId, toolName, parameters } = await c.req.json();
     if (!serverId) return c.json({ error: "serverId is required" }, 400);
@@ -85,7 +88,6 @@ tools.post("/execute", async (c) => {
       return c.json({ error: "Another execution is already in progress" }, 409);
     }
 
-    const mcp = c.mcpJamClientManager;
     const status = mcp.getConnectionStatus(serverId);
     if (status !== "connected") {
       return c.json({ error: `Server '${serverId}' is not connected` }, 400);
@@ -93,13 +95,18 @@ tools.post("/execute", async (c) => {
 
     const executionId = `exec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
-    const state: ExecutionState = {
+    const execPromise = Promise.resolve()
+      .then(() => mcp.executeToolDirect(toolName, parameters || {}))
+      .catch((error) => {
+        if (state) state.error = error;
+        throw error;
+      });
+
+    state = {
       id: executionId,
       serverId,
       toolName,
-      execPromise: Promise.resolve().then(() =>
-        mcp.executeToolDirect(toolName, parameters || {}),
-      ),
+      execPromise,
       completed: false,
       queue: [],
       waiters: [],
@@ -180,6 +187,13 @@ tools.post("/execute", async (c) => {
       202,
     );
   } catch (err) {
+    if (state && activeExecution === state) {
+      state.error = state.error ?? err;
+      state.waiters.length = 0;
+      state.queue.length = 0;
+      activeExecution = null;
+      mcp.clearElicitationCallback();
+    }
     const msg = err instanceof Error ? err.message : String(err);
     return c.json({ error: msg }, 500);
   }
@@ -187,18 +201,19 @@ tools.post("/execute", async (c) => {
 
 // POST /respond — respond to the current elicitation; may return next elicitation or completion
 tools.post("/respond", async (c) => {
+  const mcp = c.mcpJamClientManager;
+  const state = activeExecution;
+
   try {
     const { requestId, response } = await c.req.json();
     if (!requestId) return c.json({ error: "requestId is required" }, 400);
-    if (!activeExecution) return c.json({ error: "No active execution" }, 404);
+    if (!state) return c.json({ error: "No active execution" }, 404);
 
-    const mcp = c.mcpJamClientManager;
     const ok = mcp.respondToElicitation(requestId, response);
     if (!ok)
       return c.json({ error: "No pending elicitation for requestId" }, 404);
 
     // After responding, wait for either next elicitation or completion
-    const state = activeExecution;
     try {
       const race = await Promise.race([
         state.execPromise.then((res) => ({ kind: "done", res }) as const),
@@ -235,10 +250,24 @@ tools.post("/respond", async (c) => {
         202,
       );
     } catch (e) {
+      state.error = state.error ?? e;
+      state.waiters.length = 0;
+      state.queue.length = 0;
+      if (activeExecution === state) {
+        activeExecution = null;
+        mcp.clearElicitationCallback();
+      }
       const msg = e instanceof Error ? e.message : String(e);
       return c.json({ error: msg }, 500);
     }
   } catch (err) {
+    if (state && activeExecution === state) {
+      state.error = state.error ?? err;
+      state.waiters.length = 0;
+      state.queue.length = 0;
+      activeExecution = null;
+      mcp.clearElicitationCallback();
+    }
     const msg = err instanceof Error ? err.message : String(err);
     return c.json({ error: msg }, 500);
   }
