@@ -380,7 +380,8 @@ export const AuthTab = ({
   const contributionBanner = (
     <div className="rounded-md border border-dashed border-primary/30 bg-primary/10 px-3 py-2 text-xs text-primary space-y-1">
       <div>
-        <span className="font-medium">Help us improve this feature!</span> We&apos;re looking for contributors to polish up this feature.
+        <span className="font-medium">Help us improve this feature!</span>{" "}
+        We&apos;re looking for contributors to polish up this feature.
       </div>
       <a
         href="https://discord.com/invite/JEnDtz8X6z"
