@@ -5,6 +5,53 @@ import { CheckCircle, XCircle } from "lucide-react";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import { UIResourceRenderer } from "@mcp-ui/client";
+import { OpenAIComponentRenderer } from "../chat/openai-component-renderer";
+
+function getOpenAIComponentFromResult(
+  rawResult: any,
+): { url: string; htmlBlob?: string } | null {
+  if (!rawResult) return null;
+  const meta = rawResult?._meta;
+  if (meta && typeof meta === "object") {
+    const outputTemplate = meta["openai/outputTemplate"];
+    if (outputTemplate && typeof outputTemplate === "string") {
+      // For ui:// URIs, try to find the blob
+      if (outputTemplate.startsWith("ui://")) {
+        // Check for embedded resource
+        const findResource = (obj: any): any => {
+          if (!obj) return null;
+          if (obj.resource?.uri === outputTemplate) {
+            return obj.resource;
+          }
+          if (Array.isArray(obj.content)) {
+            for (const item of obj.content) {
+              if (
+                item?.type === "resource" &&
+                item?.resource?.uri === outputTemplate
+              ) {
+                return item.resource;
+              }
+            }
+          }
+          return null;
+        };
+
+        const resource = findResource(rawResult);
+        if (resource?.blob || resource?.text) {
+          return {
+            url: outputTemplate,
+            htmlBlob: resource.blob || resource.text,
+          };
+        }
+        // If no blob found, return URL anyway - the HTTP endpoint will fetch it
+        return { url: outputTemplate };
+      }
+      // Return HTTP(S) URLs as-is
+      return { url: outputTemplate };
+    }
+  }
+  return null;
+}
 
 function getUIResourceFromResult(rawResult: any): any | null {
   if (!rawResult) return null;
@@ -54,6 +101,7 @@ interface ResultsPanelProps {
     intent: string,
     params?: Record<string, any>,
   ) => Promise<void>;
+  serverId?: string;
 }
 
 export function ResultsPanel({
@@ -66,6 +114,7 @@ export function ResultsPanel({
   unstructuredValidationResult,
   onExecuteFromUI,
   onHandleIntent,
+  serverId,
 }: ResultsPanelProps) {
   return (
     <div className="h-full flex flex-col border-t border-border bg-background">
@@ -195,6 +244,36 @@ export function ResultsPanel({
                 </Badge>
               )}
               {(() => {
+                // Check for OpenAI component first
+                const openaiComponent = getOpenAIComponentFromResult(result as any);
+                if (openaiComponent) {
+                  return (
+                    <OpenAIComponentRenderer
+                      componentUrl={openaiComponent.url}
+                      toolCall={{
+                        id: "tool-result",
+                        name: "tool",
+                        parameters: {},
+                        timestamp: new Date(),
+                        status: "completed",
+                      }}
+                      toolResult={{
+                        id: "result",
+                        toolCallId: "tool-result",
+                        result: result,
+                        timestamp: new Date(),
+                      }}
+                      onCallTool={async (toolName, params) => {
+                        await onExecuteFromUI(toolName, params);
+                        return {};
+                      }}
+                      uiResourceBlob={openaiComponent.htmlBlob}
+                      serverId={serverId}
+                    />
+                  );
+                }
+
+                // Check for MCP-UI resource
                 const uiRes = getUIResourceFromResult(result as any);
                 if (uiRes) {
                   return (
@@ -235,6 +314,8 @@ export function ResultsPanel({
                     />
                   );
                 }
+
+                // Fallback to JSON view
                 return (
                   <JsonView
                     src={result}

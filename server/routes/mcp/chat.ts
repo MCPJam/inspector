@@ -165,7 +165,8 @@ const handleAgentStepFinish = (
                 toolResult: {
                   id: currentToolCallId,
                   toolCallId: currentToolCallId,
-                  result: result.result,
+                  // Preserve full result which may include _meta for OpenAI Apps SDK
+                  result: result.result || result,
                   error: (result as any).error,
                   timestamp: new Date().toISOString(),
                 },
@@ -477,14 +478,18 @@ const sendMessagesToBackend = async (
         emitToolResult(result);
       },
       onStepComplete: ({ text, toolCalls, toolResults }) => {
+        console.log("[chat.ts] onStepComplete toolResults:", JSON.stringify(toolResults, null, 2));
         handleAgentStepFinish(
           streamingContext,
           text,
           toolCalls,
-          toolResults.map((result) => ({
-            result: result.result,
-            error: result.error,
-          })),
+          toolResults.map((result) => {
+            console.log("[chat.ts] Processing toolResult:", JSON.stringify(result, null, 2));
+            return {
+              result: result.result || result,
+              error: result.error,
+            };
+          }),
           false,
         );
       },

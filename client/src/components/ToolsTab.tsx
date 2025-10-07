@@ -482,6 +482,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         result={result}
         validationErrors={validationErrors}
         unstructuredValidationResult={unstructuredValidationResult}
+        serverId={serverName}
         onExecuteFromUI={async (name, params) => {
           await fetch("/api/mcp/tools/execute", {
             method: "POST",
