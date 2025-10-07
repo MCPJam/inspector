@@ -174,7 +174,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       const errorMsg = err instanceof Error ? err.message : "Unknown error";
       logger.error(
         "Tools fetch network error",
-        { error: errorMsg },
+        { serverId: serverName, error: errorMsg },
         err instanceof Error ? err : undefined,
       );
       setError(
@@ -228,6 +228,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     try {
       const params = buildParameters();
       logger.info("Starting tool execution", {
+        serverId: serverName,
         toolName: selectedTool,
         parameters: params,
       });
@@ -236,6 +237,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         const result = data.result;
         const executionDuration = Date.now() - executionStartTime;
         logger.info("Tool execution completed successfully", {
+          serverId: serverName,
           toolName: selectedTool,
           duration: executionDuration,
           result,
@@ -256,6 +258,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
           setUnstructuredValidationResult(validationReport.unstructuredStatus);
           if (validationReport.structuredErrors) {
             logger.warn("Schema validation failed for structuredContent", {
+              serverId: serverName,
               errors: validationReport.structuredErrors,
             });
           }
@@ -265,6 +268,9 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
           ) {
             logger.warn(
               `Validation failed for raw content: ${validationReport.unstructuredStatus}`,
+              {
+                serverId: serverName,
+              },
             );
           }
         }
@@ -283,6 +289,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       logger.error(
         "Tool execution network error",
         {
+          serverId: serverName,
           toolName: selectedTool,
           error: errorMsg,
         },
