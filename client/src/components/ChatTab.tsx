@@ -122,6 +122,36 @@ export function ChatTab({
     navigator.clipboard.writeText(content);
   };
 
+  const handleCallTool = async (
+    toolName: string,
+    params: Record<string, any>,
+  ) => {
+    try {
+      const response = await fetch("/api/mcp/tools/execute", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          toolName,
+          parameters: params,
+          selectedServers: selectedConnectedNames,
+        }),
+      });
+      const data = await response.json();
+      return data.result;
+    } catch (error) {
+      console.error("Tool execution failed:", error);
+      throw error;
+    }
+  };
+
+  const handleSendFollowup = (message: string) => {
+    setInput(message);
+    // Automatically send the message
+    sendMessage(message);
+  };
+
   const renderEmptyLayout = (
     content: ReactNode,
     options: { placeholder: string; disabled: boolean },
@@ -313,6 +343,8 @@ export function ChatTab({
                     onCopy={handleCopyMessage}
                     showActions={true}
                     serverConfigs={serverConfigs}
+                    onCallTool={handleCallTool}
+                    onSendFollowup={handleSendFollowup}
                   />
                 </motion.div>
               ))}

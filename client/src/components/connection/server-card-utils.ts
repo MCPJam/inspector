@@ -44,7 +44,7 @@ const connectionStatusMeta: Record<ConnectionStatus, ConnectionStatusMeta> = {
 };
 
 export const getConnectionStatusMeta = (status: ConnectionStatus) =>
-  connectionStatusMeta[status];
+  connectionStatusMeta[status] || connectionStatusMeta.disconnected;
 
 export const getServerCommandDisplay = (
   config: MastraMCPServerDefinition,
