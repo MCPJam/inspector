@@ -107,7 +107,10 @@ resources.get("/widget-content", async (c) => {
     const widgetData = c.req.query("data");
 
     if (!widgetData) {
-      return c.html("<html><body>Error: Missing widget data</body></html>", 400);
+      return c.html(
+        "<html><body>Error: Missing widget data</body></html>",
+        400,
+      );
     }
 
     // Decode widget data (base64 encoded JSON)

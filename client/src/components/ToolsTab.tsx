@@ -89,9 +89,10 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   >(null);
   const [lastToolCallId, setLastToolCallId] = useState<string | null>(null);
   const [lastToolName, setLastToolName] = useState<string | null>(null);
-  const [lastToolParameters, setLastToolParameters] = useState<
-    Record<string, any> | null
-  >(null);
+  const [lastToolParameters, setLastToolParameters] = useState<Record<
+    string,
+    any
+  > | null>(null);
   const [lastToolCallTimestamp, setLastToolCallTimestamp] =
     useState<Date | null>(null);
   const serverKey = useMemo(() => {

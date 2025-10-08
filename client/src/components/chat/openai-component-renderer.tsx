@@ -45,15 +45,18 @@ export function OpenAIComponentRenderer({
   // Build widget URL (serve at root path for React Router compatibility)
   useEffect(() => {
     if (componentUrl.startsWith("ui://") && serverId) {
-      const structuredContent = toolResult?.result?.structuredContent || toolResult?.result || null;
+      const structuredContent =
+        toolResult?.result?.structuredContent || toolResult?.result || null;
 
-      const widgetData = btoa(JSON.stringify({
-        serverId,
-        uri: componentUrl,
-        toolInput: toolCall.parameters,
-        toolOutput: structuredContent,
-        toolId: toolCall.id,
-      }));
+      const widgetData = btoa(
+        JSON.stringify({
+          serverId,
+          uri: componentUrl,
+          toolInput: toolCall.parameters,
+          toolOutput: structuredContent,
+          toolId: toolCall.id,
+        }),
+      );
 
       const sessionId = `widget-${toolCall.id}`;
       // Use src (not srcdoc) so React Router sees a real pathname
