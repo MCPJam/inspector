@@ -469,50 +469,19 @@ class MCPJamClientManager {
     if (!tool)
       throw new Error(`Tool '${name}' not found in server '${serverId}'`);
 
-    // Inspect input schema to choose the most likely argument shape, but be robust and
-    // fall back to the alternate shape on invalid-arguments errors.
-    const schema: any = (tool as any).inputSchema;
-    const hasContextProperty =
-      schema &&
-      typeof schema === "object" &&
-      (schema as any).properties &&
-      Object.prototype.hasOwnProperty.call(
-        (schema as any).properties,
-        "context",
-      );
-    const requiresContext =
-      hasContextProperty ||
-      (schema &&
-        Array.isArray((schema as any).required) &&
-        (schema as any).required.includes("context"));
+    // Always wrap parameters in context object (matching Chat behavior)
+    const result = await tool.execute({ context: parameters || {} });
 
-    const contextWrapped = { context: parameters || {} };
-    const direct = parameters || {};
-    const attempts = requiresContext
-      ? [contextWrapped, direct]
-      : [direct, contextWrapped];
-
-    let lastError: any = undefined;
-    for (const args of attempts) {
-      try {
-        console.log("args", args);
-        const result = await tool.execute(args);
-
-        // Check if the result indicates an error
-        if (result && result.isError) {
-          const errorText =
-            result.content && result.content[0] && result.content[0].text
-              ? result.content[0].text
-              : "Unknown error";
-          throw new Error(errorText);
-        }
-
-        return { result };
-      } catch (err: any) {
-        lastError = err;
-      }
+    // Check if the result indicates an error
+    if (result && result.isError) {
+      const errorText =
+        result.content && result.content[0] && result.content[0].text
+          ? result.content[0].text
+          : "Unknown error";
+      throw new Error(errorText);
     }
-    throw lastError;
+
+    return { result };
   }
 
   async getResource(
