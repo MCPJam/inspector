@@ -56,11 +56,9 @@ export function extractOpenAIComponent(
   // If payload is an array, try the first element
   const actualPayload = Array.isArray(payload) ? payload[0] : payload;
   if (!actualPayload) return null;
-  console.log('[DEBUG EXTRACT] actualPayload:', actualPayload);
 
   // Use depth-first search to find _meta anywhere in the result structure
   const meta = findMetaRecursive(actualPayload);
-  console.log('[DEBUG EXTRACT] Found meta:', meta);
   if (meta && typeof meta === "object") {
     const outputTemplate = meta["openai/outputTemplate"];
     if (outputTemplate && typeof outputTemplate === "string") {
