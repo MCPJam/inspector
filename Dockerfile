@@ -11,12 +11,14 @@ RUN npm cache clean --force
 COPY package.json ./
 COPY client/package.json ./client/
 COPY server/package.json ./server/
+COPY evals-cli/package.json ./evals-cli/
 
 # Install dependencies with clean slate approach (no lock files)
 
 RUN npm install --no-package-lock --include=dev --legacy-peer-deps
 RUN cd client && npm install --no-package-lock --include=dev --legacy-peer-deps
 RUN cd server && npm install --no-package-lock --include=dev --legacy-peer-deps
+RUN cd evals-cli && npm install --no-package-lock --include=dev --legacy-peer-deps
 
 # Stage 2: Build client
 FROM deps-base AS client-builder
@@ -30,6 +32,7 @@ RUN cd client && npm run build
 # Stage 3: Build server
 FROM deps-base AS server-builder
 COPY shared/ ./shared/
+COPY evals-cli/ ./evals-cli/
 COPY server/ ./server/
 COPY client/ ./client/
 RUN cd server && npm run build
