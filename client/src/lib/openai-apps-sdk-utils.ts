@@ -30,32 +30,7 @@ export function extractOpenAIComponent(
   // If payload is an array, try the first element
   const actualPayload = Array.isArray(payload) ? payload[0] : payload;
   if (!actualPayload) return null;
-
-  // TODO: Fix this hack. This is a hack to get the meta container from the payload.
-  const findMetaContainer = (node: any): any => {
-    if (!node || typeof node !== "object") return null;
-
-    if (Object.prototype.hasOwnProperty.call(node, "_meta")) {
-      return node;
-    }
-
-    if (Array.isArray(node)) {
-      for (const item of node) {
-        const found = findMetaContainer(item);
-        if (found) return found;
-      }
-      return null;
-    }
-
-    for (const value of Object.values(node)) {
-      const found = findMetaContainer(value);
-      if (found) return found;
-    }
-
-    return null;
-  };
-  const metaContainer = findMetaContainer(actualPayload);
-  const meta = metaContainer?._meta;
+  const meta = actualPayload?._meta;
   if (meta && typeof meta === "object") {
     const outputTemplate = meta["openai/outputTemplate"];
     if (outputTemplate && typeof outputTemplate === "string") {

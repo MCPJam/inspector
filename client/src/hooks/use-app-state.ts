@@ -77,10 +77,10 @@ export function useAppState() {
   };
 
   const setSelectedMultipleServersToAllServers = useCallback(() => {
-    const enabledNames = Object.entries(appState.servers)
-      .filter(([, s]) => s.enabled !== false)
+    const connectedNames = Object.entries(appState.servers)
+      .filter(([, s]) => s.connectionStatus === "connected")
       .map(([name]) => name);
-    dispatch({ type: "SET_MULTI_SELECTED", names: enabledNames });
+    dispatch({ type: "SET_MULTI_SELECTED", names: connectedNames });
   }, [appState.servers]);
 
   // OAuth callback finish handler
