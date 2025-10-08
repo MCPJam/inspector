@@ -233,13 +233,23 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       });
       const data = await executeToolApi(serverName, selectedTool, params);
       if (data.status === "completed") {
-        const result = data.result;
+        let result = data.result;
+        
+        // Unwrap if result is double-wrapped (has a "result" property inside)
+        if (result && typeof result === 'object' && 'result' in result && !('_meta' in result)) {
+          console.log('[ToolsTab] Unwrapping double-wrapped result');
+          result = result.result;
+        }
+        
         const executionDuration = Date.now() - executionStartTime;
         logger.info("Tool execution completed successfully", {
           toolName: selectedTool,
           duration: executionDuration,
           result,
         });
+        console.log('[ToolsTab] Setting result:', result);
+        console.log('[ToolsTab] Result has _meta?', !!result?._meta);
+        console.log('[ToolsTab] Result._meta:', result?._meta);
         setResult(result);
         if (result?.structuredContent) {
           setStructuredResult(
@@ -360,7 +370,13 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       if (data.status === "completed") {
         // Show final result
         setElicitationRequest(null);
-        const result = data.result;
+        let result = data.result;
+        
+        // Unwrap if result is double-wrapped
+        if (result && typeof result === 'object' && 'result' in result && !('_meta' in result)) {
+          result = result.result;
+        }
+        
         setResult(result);
         if (result?.structuredContent) {
           setStructuredResult(
@@ -504,6 +520,12 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
               ...(serverName ? { serverId: serverName } : {}),
             }),
           });
+        }}
+        onSendFollowup={(message) => {
+          logger.info("OpenAI component requested follow-up", { message });
+          // In ToolsTab, we could show a toast or notification
+          // since there's no chat input to populate
+          console.log("[ToolsTab] Follow-up requested:", message);
         }}
       />
     </ResizablePanel>
