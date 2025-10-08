@@ -58,6 +58,10 @@ interface ResultsPanelProps {
   ) => Promise<void>;
   onSendFollowup?: (message: string) => void;
   serverId?: string;
+  toolCallId?: string;
+  toolName?: string;
+  toolParameters?: Record<string, any>;
+  toolCallTimestamp?: Date;
 }
 
 export function ResultsPanel({
@@ -72,6 +76,10 @@ export function ResultsPanel({
   onHandleIntent,
   onSendFollowup,
   serverId,
+  toolCallId,
+  toolName,
+  toolParameters,
+  toolCallTimestamp,
 }: ResultsPanelProps) {
   return (
     <div className="h-full flex flex-col border-t border-border bg-background">
@@ -216,15 +224,15 @@ export function ResultsPanel({
                 <OpenAIComponentRenderer
                   componentUrl={openaiComponent.url}
                   toolCall={{
-                    id: "tool-result",
-                    name: "tool",
-                    parameters: {},
-                    timestamp: new Date(),
+                    id: toolCallId || "tool-result",
+                    name: toolName || "tool",
+                    parameters: toolParameters || {},
+                    timestamp: toolCallTimestamp || new Date(),
                     status: "completed",
                   }}
                   toolResult={{
-                    id: "result",
-                    toolCallId: "tool-result",
+                    id: `${toolCallId || "tool-result"}-result`,
+                    toolCallId: toolCallId || "tool-result",
                     result: result,
                     timestamp: new Date(),
                   }}
