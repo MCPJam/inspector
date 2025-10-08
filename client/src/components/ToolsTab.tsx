@@ -143,7 +143,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     if (selectedTool && tools[selectedTool]) {
       generateFormFields(tools[selectedTool].inputSchema);
     }
-  }, [selectedTool, tools, logger]);
+  }, [selectedTool]);
 
   const fetchTools = async () => {
     if (!serverName) {
