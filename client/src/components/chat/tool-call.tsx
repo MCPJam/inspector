@@ -371,7 +371,7 @@ export function ToolCallDisplay({
                               onCallTool={onCallTool}
                               onSendFollowup={onSendFollowup}
                               uiResourceBlob={openaiComponent.htmlBlob}
-                              serverId={Object.keys(serverConfigs)[0]}    // TODO: Fix this hack. We should find the correct server id for the tool call, not the first one.
+                              serverId={Object.keys(serverConfigs)[0]} // TODO: Fix this hack. We should find the correct server id for the tool call, not the first one.
                             />
                           );
                         }
