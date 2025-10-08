@@ -10,10 +10,16 @@ import { OpenAIComponentRenderer } from "../chat/openai-component-renderer";
 function getOpenAIComponentFromResult(
   rawResult: any,
 ): { url: string; htmlBlob?: string } | null {
-  if (!rawResult) return null;
+  console.log('[getOpenAIComponentFromResult] rawResult:', rawResult);
+  if (!rawResult) {
+    console.log('[getOpenAIComponentFromResult] No rawResult, returning null');
+    return null;
+  }
   const meta = rawResult?._meta;
+  console.log('[getOpenAIComponentFromResult] _meta:', meta);
   if (meta && typeof meta === "object") {
     const outputTemplate = meta["openai/outputTemplate"];
+    console.log('[getOpenAIComponentFromResult] outputTemplate:', outputTemplate);
     if (outputTemplate && typeof outputTemplate === "string") {
       // For ui:// URIs, try to find the blob
       if (outputTemplate.startsWith("ui://")) {
@@ -101,6 +107,7 @@ interface ResultsPanelProps {
     intent: string,
     params?: Record<string, any>,
   ) => Promise<void>;
+  onSendFollowup?: (message: string) => void;
   serverId?: string;
 }
 
@@ -114,6 +121,7 @@ export function ResultsPanel({
   unstructuredValidationResult,
   onExecuteFromUI,
   onHandleIntent,
+  onSendFollowup,
   serverId,
 }: ResultsPanelProps) {
   return (
@@ -165,7 +173,48 @@ export function ResultsPanel({
               {error}
             </div>
           </div>
-        ) : showStructured && validationErrors ? (
+        ) : (() => {
+          // Check for OpenAI component FIRST (highest priority)
+          console.log('[ResultsPanel] Checking for OpenAI component, result:', result);
+          const openaiComponent = getOpenAIComponentFromResult(result as any);
+          console.log('[ResultsPanel] OpenAI component detected:', openaiComponent);
+          
+          if (openaiComponent) {
+            console.log('[ResultsPanel] Rendering OpenAI component with:', {
+              url: openaiComponent.url,
+              hasBlob: !!openaiComponent.htmlBlob,
+              serverId
+            });
+            return (
+              <OpenAIComponentRenderer
+                componentUrl={openaiComponent.url}
+                toolCall={{
+                  id: "tool-result",
+                  name: "tool",
+                  parameters: {},
+                  timestamp: new Date(),
+                  status: "completed",
+                }}
+                toolResult={{
+                  id: "result",
+                  toolCallId: "tool-result",
+                  result: result,
+                  timestamp: new Date(),
+                }}
+                onCallTool={async (toolName, params) => {
+                  await onExecuteFromUI(toolName, params);
+                  return {};
+                }}
+                onSendFollowup={onSendFollowup}
+                uiResourceBlob={openaiComponent.htmlBlob}
+                serverId={serverId}
+              />
+            );
+          }
+
+          // No OpenAI component, fall back to structured/unstructured display
+          if (showStructured && validationErrors) {
+            return (
           <div className="p-4">
             <h3 className="text-sm font-semibold text-destructive mb-2">
               Validation Errors
@@ -194,7 +243,11 @@ export function ResultsPanel({
                 )}
             </div>
           </div>
-        ) : showStructured && structuredResult && validationErrors === null ? (
+            );
+          }
+
+          if (showStructured && structuredResult && validationErrors === null) {
+            return (
           <ScrollArea className="h-full">
             <div className="p-4">
               <JsonView
@@ -216,7 +269,11 @@ export function ResultsPanel({
               />
             </div>
           </ScrollArea>
-        ) : result && !showStructured ? (
+            );
+          }
+
+          if (result && !showStructured) {
+            return (
           <div className="flex-1 overflow-scroll h-full">
             <div className="p-4">
               {unstructuredValidationResult === "valid" && (
@@ -244,36 +301,7 @@ export function ResultsPanel({
                 </Badge>
               )}
               {(() => {
-                // Check for OpenAI component first
-                const openaiComponent = getOpenAIComponentFromResult(result as any);
-                if (openaiComponent) {
-                  return (
-                    <OpenAIComponentRenderer
-                      componentUrl={openaiComponent.url}
-                      toolCall={{
-                        id: "tool-result",
-                        name: "tool",
-                        parameters: {},
-                        timestamp: new Date(),
-                        status: "completed",
-                      }}
-                      toolResult={{
-                        id: "result",
-                        toolCallId: "tool-result",
-                        result: result,
-                        timestamp: new Date(),
-                      }}
-                      onCallTool={async (toolName, params) => {
-                        await onExecuteFromUI(toolName, params);
-                        return {};
-                      }}
-                      uiResourceBlob={openaiComponent.htmlBlob}
-                      serverId={serverId}
-                    />
-                  );
-                }
-
-                // Check for MCP-UI resource
+                // Check for MCP-UI resource (OpenAI component already checked at top level)
                 const uiRes = getUIResourceFromResult(result as any);
                 if (uiRes) {
                   return (
@@ -339,13 +367,18 @@ export function ResultsPanel({
               })()}
             </div>
           </div>
-        ) : (
-          <div className="flex items-center justify-center h-full">
-            <p className="text-xs text-muted-foreground font-medium">
-              Execute a tool to see results here
-            </p>
-          </div>
-        )}
+            );
+          }
+
+          // No result yet
+          return (
+            <div className="flex items-center justify-center h-full">
+              <p className="text-xs text-muted-foreground font-medium">
+                Execute a tool to see results here
+              </p>
+            </div>
+          );
+        })()}
       </div>
     </div>
   );
