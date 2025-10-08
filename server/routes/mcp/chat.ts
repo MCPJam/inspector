@@ -394,21 +394,21 @@ const sendMessagesToBackend = async (
     }
   });
 
-  // Get toolsets with server mapping - single call replaces both getToolsets and getFlattenedTools
+  // Get toolsets with server mapping
   const toolsets =
     await mcpClientManager.getToolsetsWithServerIds(selectedServers);
 
-  // Flatten for tool definitions
-  const flatTools: Record<string, any> = {};
-  Object.values(toolsets).forEach((serverTools) => {
-    Object.assign(flatTools, serverTools);
-  });
-
-  const toolDefs = Object.entries(flatTools).map(([name, tool]) => ({
-    name,
-    description: tool?.description,
-    inputSchema: zodToJsonSchema(tool?.inputSchema),
-  }));
+  // Build tool definitions from all servers
+  const toolDefs: any[] = [];
+  for (const serverTools of Object.values(toolsets)) {
+    for (const [name, tool] of Object.entries(serverTools)) {
+      toolDefs.push({
+        name,
+        description: tool?.description,
+        inputSchema: zodToJsonSchema(tool?.inputSchema),
+      });
+    }
+  }
 
   if (!baseUrl) {
     throw new Error("CONVEX_HTTP_URL is not set");
