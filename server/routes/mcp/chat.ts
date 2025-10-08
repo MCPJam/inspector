@@ -304,7 +304,9 @@ const createStreamingResponse = async (
               (chunk.chunk as any).output ??
               (chunk.chunk as any).result ??
               (chunk.chunk as any).value;
-            const currentToolCallId = streamingContext.lastEmittedToolCallId!;
+            const currentToolCallId =
+              streamingContext.lastEmittedToolCallId ??
+              ++streamingContext.toolCallId;
 
             // Look up serverId from tool metadata
             const toolName =
