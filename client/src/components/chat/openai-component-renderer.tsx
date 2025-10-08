@@ -44,9 +44,7 @@ export function OpenAIComponentRenderer({
 
   // Build widget URL (serve at root path for React Router compatibility)
   useEffect(() => {
-    console.log('[DEBUG OPENAI-RENDERER] componentUrl:', componentUrl, 'serverId:', serverId);
     if (componentUrl.startsWith("ui://") && serverId) {
-      console.log('[DEBUG OPENAI-RENDERER] Building widget URL with serverId:', serverId);
       const structuredContent =
         toolResult?.result?.structuredContent || toolResult?.result || null;
 

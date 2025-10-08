@@ -277,7 +277,6 @@ const createStreamingResponse = async (
 
             // Store tool name for serverId lookup later
             streamingContext.toolCallIdToName.set(currentToolCallId, name);
-            console.log('[DEBUG] Stored tool call:', currentToolCallId, '→', name);
 
             iterationToolCalls.push({ name, params: parameters });
             sendSseEvent(
@@ -309,7 +308,6 @@ const createStreamingResponse = async (
             // Look up serverId from tool metadata
             const toolName = streamingContext.toolCallIdToName.get(currentToolCallId);
             const serverId = toolName ? extractServerId(toolName) : undefined;
-            console.log('[DEBUG] Tool result - callId:', currentToolCallId, 'toolName:', toolName, 'serverId:', serverId);
 
             iterationToolResults.push({ result });
             sendSseEvent(
@@ -362,7 +360,6 @@ const createStreamingResponse = async (
           // Look up serverId from tool metadata
           const toolName = streamingContext.toolCallIdToName.get(currentToolCallId);
           const serverId = toolName ? extractServerId(toolName) : undefined;
-          console.log('[DEBUG] Tool result (Ollama) - callId:', currentToolCallId, 'toolName:', toolName, 'serverId:', serverId);
 
           iterationToolResults.push({ result: value });
           sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
@@ -708,9 +705,6 @@ chat.post("/", async (c) => {
                 }
               }
             }
-
-            console.log('[DEBUG] flatToolsWithServerId keys:', Object.keys(flatToolsWithServerId));
-            console.log('[DEBUG] Sample tool with serverId:', flatToolsWithServerId[Object.keys(flatToolsWithServerId)[0]]?._serverId);
 
             const aiSdkTools: Record<string, Tool> =
               convertMastraToolsToVercelTools(flatToolsWithServerId as any);
