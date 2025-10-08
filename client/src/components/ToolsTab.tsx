@@ -237,7 +237,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         
         // Unwrap if result is double-wrapped (has a "result" property inside)
         if (result && typeof result === 'object' && 'result' in result && !('_meta' in result)) {
-          console.log('[ToolsTab] Unwrapping double-wrapped result');
           result = result.result;
         }
         
@@ -247,15 +246,14 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
           duration: executionDuration,
           result,
         });
-        console.log('[ToolsTab] Setting result:', result);
-        console.log('[ToolsTab] Result has _meta?', !!result?._meta);
-        console.log('[ToolsTab] Result._meta:', result?._meta);
         setResult(result);
         if (result?.structuredContent) {
           setStructuredResult(
             result.structuredContent as Record<string, unknown>,
           );
-          setShowStructured(true);
+          // Default to component view if there's an OpenAI component, otherwise show structured JSON
+          const hasOpenAIComponent = result?._meta?.["openai/outputTemplate"];
+          setShowStructured(!hasOpenAIComponent);
         }
 
         const currentTool = tools[selectedTool];
@@ -382,7 +380,9 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
           setStructuredResult(
             result.structuredContent as Record<string, unknown>,
           );
-          setShowStructured(true);
+          // Default to component view if there's an OpenAI component
+          const hasOpenAIComponent = result?._meta?.["openai/outputTemplate"];
+          setShowStructured(!hasOpenAIComponent);
         }
 
         const currentTool = tools[selectedTool];
