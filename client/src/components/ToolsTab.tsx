@@ -87,6 +87,13 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   const [highlightedRequestId, setHighlightedRequestId] = useState<
     string | null
   >(null);
+  const [lastToolCallId, setLastToolCallId] = useState<string | null>(null);
+  const [lastToolName, setLastToolName] = useState<string | null>(null);
+  const [lastToolParameters, setLastToolParameters] = useState<
+    Record<string, any> | null
+  >(null);
+  const [lastToolCallTimestamp, setLastToolCallTimestamp] =
+    useState<Date | null>(null);
   const serverKey = useMemo(() => {
     if (!serverConfig) return "none";
     try {
@@ -224,9 +231,18 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     setUnstructuredValidationResult("not_applicable");
 
     const executionStartTime = Date.now();
+    const toolCallId = `tool-${Date.now()}`;
+    const toolCallTimestamp = new Date();
 
     try {
       const params = buildParameters();
+
+      // Store tool call metadata
+      setLastToolCallId(toolCallId);
+      setLastToolName(selectedTool);
+      setLastToolParameters(params);
+      setLastToolCallTimestamp(toolCallTimestamp);
+
       logger.info("Starting tool execution", {
         toolName: selectedTool,
         parameters: params,
@@ -509,6 +525,10 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         validationErrors={validationErrors}
         unstructuredValidationResult={unstructuredValidationResult}
         serverId={serverName}
+        toolCallId={lastToolCallId ?? undefined}
+        toolName={lastToolName ?? undefined}
+        toolParameters={lastToolParameters ?? undefined}
+        toolCallTimestamp={lastToolCallTimestamp ?? undefined}
         onExecuteFromUI={async (name, params) => {
           await fetch("/api/mcp/tools/execute", {
             method: "POST",
