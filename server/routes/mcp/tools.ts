@@ -96,7 +96,9 @@ tools.post("/execute", async (c) => {
     const executionId = `exec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
     const execPromise = Promise.resolve()
-      .then(() => mcp.executeToolDirect(toolName, parameters || {}))
+      .then(() =>
+        mcp.executeToolDirect(`${serverId}:${toolName}`, parameters || {}),
+      )
       .catch((error) => {
         if (state) state.error = error;
         throw error;
