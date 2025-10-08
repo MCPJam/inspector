@@ -258,23 +258,26 @@ resources.get("/openai-widget/:serverId/:uri", async (c) => {
           });
 
           // Fire initial globals event for components using useSyncExternalStore
-          try {
-            const globalsEvent = new CustomEvent('webplus:set_globals', {
-              detail: {
-                globals: {
-                  displayMode: openaiAPI.displayMode,
-                  maxHeight: openaiAPI.maxHeight,
-                  theme: openaiAPI.theme,
-                  locale: openaiAPI.locale,
-                  safeArea: openaiAPI.safeArea,
-                  userAgent: openaiAPI.userAgent
+          // Use setTimeout to ensure window is fully loaded before dispatching
+          setTimeout(() => {
+            try {
+              const globalsEvent = new CustomEvent('webplus:set_globals', {
+                detail: {
+                  globals: {
+                    displayMode: openaiAPI.displayMode,
+                    maxHeight: openaiAPI.maxHeight,
+                    theme: openaiAPI.theme,
+                    locale: openaiAPI.locale,
+                    safeArea: openaiAPI.safeArea,
+                    userAgent: openaiAPI.userAgent
+                  }
                 }
-              }
-            });
-            window.dispatchEvent(globalsEvent);
-          } catch (err) {
-            // Silently fail
-          }
+              });
+              window.dispatchEvent(globalsEvent);
+            } catch (err) {
+              // Silently fail
+            }
+          }, 0);
 
           // Restore widget state from localStorage
           setTimeout(() => {
