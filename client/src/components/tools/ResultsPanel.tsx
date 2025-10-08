@@ -10,16 +10,12 @@ import { OpenAIComponentRenderer } from "../chat/openai-component-renderer";
 function getOpenAIComponentFromResult(
   rawResult: any,
 ): { url: string; htmlBlob?: string } | null {
-  console.log('[getOpenAIComponentFromResult] rawResult:', rawResult);
   if (!rawResult) {
-    console.log('[getOpenAIComponentFromResult] No rawResult, returning null');
     return null;
   }
   const meta = rawResult?._meta;
-  console.log('[getOpenAIComponentFromResult] _meta:', meta);
   if (meta && typeof meta === "object") {
     const outputTemplate = meta["openai/outputTemplate"];
-    console.log('[getOpenAIComponentFromResult] outputTemplate:', outputTemplate);
     if (outputTemplate && typeof outputTemplate === "string") {
       // For ui:// URIs, try to find the blob
       if (outputTemplate.startsWith("ui://")) {
@@ -146,21 +142,21 @@ export function ResultsPanel({
               </Badge>
             ))}
         </div>
-        {structuredResult && (
+        {result && (structuredResult || getOpenAIComponentFromResult(result as any)) && (
           <div className="flex gap-2">
             <Button
               size="sm"
               variant={!showStructured ? "default" : "outline"}
               onClick={() => onToggleStructured(false)}
             >
-              Raw Output
+              {getOpenAIComponentFromResult(result as any) ? "Component" : "Raw Output"}
             </Button>
             <Button
               size="sm"
               variant={showStructured ? "default" : "outline"}
               onClick={() => onToggleStructured(true)}
             >
-              Structured Output
+              {getOpenAIComponentFromResult(result as any) ? "Raw JSON" : "Structured Output"}
             </Button>
           </div>
         )}
@@ -173,48 +169,8 @@ export function ResultsPanel({
               {error}
             </div>
           </div>
-        ) : (() => {
-          // Check for OpenAI component FIRST (highest priority)
-          console.log('[ResultsPanel] Checking for OpenAI component, result:', result);
-          const openaiComponent = getOpenAIComponentFromResult(result as any);
-          console.log('[ResultsPanel] OpenAI component detected:', openaiComponent);
-          
-          if (openaiComponent) {
-            console.log('[ResultsPanel] Rendering OpenAI component with:', {
-              url: openaiComponent.url,
-              hasBlob: !!openaiComponent.htmlBlob,
-              serverId
-            });
-            return (
-              <OpenAIComponentRenderer
-                componentUrl={openaiComponent.url}
-                toolCall={{
-                  id: "tool-result",
-                  name: "tool",
-                  parameters: {},
-                  timestamp: new Date(),
-                  status: "completed",
-                }}
-                toolResult={{
-                  id: "result",
-                  toolCallId: "tool-result",
-                  result: result,
-                  timestamp: new Date(),
-                }}
-                onCallTool={async (toolName, params) => {
-                  await onExecuteFromUI(toolName, params);
-                  return {};
-                }}
-                onSendFollowup={onSendFollowup}
-                uiResourceBlob={openaiComponent.htmlBlob}
-                serverId={serverId}
-              />
-            );
-          }
-
-          // No OpenAI component, fall back to structured/unstructured display
-          if (showStructured && validationErrors) {
-            return (
+        ) : showStructured && validationErrors ? (
+          // Validation errors view
           <div className="p-4">
             <h3 className="text-sm font-semibold text-destructive mb-2">
               Validation Errors
@@ -243,11 +199,31 @@ export function ResultsPanel({
                 )}
             </div>
           </div>
-            );
-          }
-
-          if (showStructured && structuredResult && validationErrors === null) {
-            return (
+        ) : showStructured && result && getOpenAIComponentFromResult(result as any) ? (
+          // Raw JSON view for OpenAI components - show complete result
+          <ScrollArea className="h-full">
+            <div className="p-4">
+              <JsonView
+                src={result}
+                dark={true}
+                theme="atom"
+                enableClipboard={true}
+                displaySize={false}
+                collapseStringsAfterLength={100}
+                style={{
+                  fontSize: "12px",
+                  fontFamily:
+                    "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                  backgroundColor: "hsl(var(--background))",
+                  padding: "16px",
+                  borderRadius: "8px",
+                  border: "1px solid hsl(var(--border))",
+                }}
+              />
+            </div>
+          </ScrollArea>
+        ) : showStructured && structuredResult && validationErrors === null ? (
+          // Structured Output view for regular tools
           <ScrollArea className="h-full">
             <div className="p-4">
               <JsonView
@@ -269,14 +245,86 @@ export function ResultsPanel({
               />
             </div>
           </ScrollArea>
-            );
-          }
+        ) : result && !showStructured ? (
+          // Raw Output view - show OpenAI component or full JSON
+          (() => {
+            const openaiComponent = getOpenAIComponentFromResult(result as any);
+            
+            // If there's an OpenAI component, render it
+            if (openaiComponent) {
+              return (
+                <OpenAIComponentRenderer
+                  componentUrl={openaiComponent.url}
+                  toolCall={{
+                    id: "tool-result",
+                    name: "tool",
+                    parameters: {},
+                    timestamp: new Date(),
+                    status: "completed",
+                  }}
+                  toolResult={{
+                    id: "result",
+                    toolCallId: "tool-result",
+                    result: result,
+                    timestamp: new Date(),
+                  }}
+                  onCallTool={async (toolName, params) => {
+                    await onExecuteFromUI(toolName, params);
+                    return {};
+                  }}
+                  onSendFollowup={onSendFollowup}
+                  uiResourceBlob={openaiComponent.htmlBlob}
+                  serverId={serverId}
+                />
+              );
+            }
 
-          if (result && !showStructured) {
+            // Check for MCP-UI resource
+            const uiRes = getUIResourceFromResult(result as any);
+            if (uiRes) {
+              return (
+                <UIResourceRenderer
+                  resource={uiRes}
+                  htmlProps={{
+                    autoResizeIframe: true,
+                    style: {
+                      width: "100%",
+                      minHeight: "500px",
+                      height: "auto",
+                      overflow: "visible",
+                    },
+                  }}
+                  onUIAction={async (evt) => {
+                    if (evt.type === "tool" && evt.payload?.toolName) {
+                      await onExecuteFromUI(
+                        evt.payload.toolName,
+                        evt.payload.params || {},
+                      );
+                    } else if (
+                      evt.type === "intent" &&
+                      evt.payload?.intent
+                    ) {
+                      await onHandleIntent(
+                        evt.payload.intent,
+                        evt.payload.params || {},
+                      );
+                    } else if (evt.type === "link" && evt.payload?.url) {
+                      window.open(
+                        evt.payload.url,
+                        "_blank",
+                        "noopener,noreferrer",
+                      );
+                    }
+                    return { status: "handled" } as any;
+                  }}
+                />
+              );
+            }
+
+            // No UI component - show full raw JSON
             return (
-          <div className="flex-1 overflow-scroll h-full">
-            <div className="p-4">
-              {unstructuredValidationResult === "valid" && (
+              <div className="p-4">
+                {unstructuredValidationResult === "valid" && (
                 <Badge
                   variant="default"
                   className="bg-green-600 hover:bg-green-700 mb-4"
@@ -300,85 +348,35 @@ export function ResultsPanel({
                   Warning: Output schema provided by the tool is invalid.
                 </Badge>
               )}
-              {(() => {
-                // Check for MCP-UI resource (OpenAI component already checked at top level)
-                const uiRes = getUIResourceFromResult(result as any);
-                if (uiRes) {
-                  return (
-                    <UIResourceRenderer
-                      resource={uiRes}
-                      htmlProps={{
-                        autoResizeIframe: true,
-                        style: {
-                          width: "100%",
-                          minHeight: "500px",
-                          height: "auto",
-                          overflow: "visible",
-                        },
-                      }}
-                      onUIAction={async (evt) => {
-                        if (evt.type === "tool" && evt.payload?.toolName) {
-                          await onExecuteFromUI(
-                            evt.payload.toolName,
-                            evt.payload.params || {},
-                          );
-                        } else if (
-                          evt.type === "intent" &&
-                          evt.payload?.intent
-                        ) {
-                          await onHandleIntent(
-                            evt.payload.intent,
-                            evt.payload.params || {},
-                          );
-                        } else if (evt.type === "link" && evt.payload?.url) {
-                          window.open(
-                            evt.payload.url,
-                            "_blank",
-                            "noopener,noreferrer",
-                          );
-                        }
-                        return { status: "handled" } as any;
-                      }}
-                    />
-                  );
-                }
-
-                // Fallback to JSON view
-                return (
-                  <JsonView
-                    src={result}
-                    dark={true}
-                    theme="atom"
-                    enableClipboard={true}
-                    displaySize={false}
-                    collapseStringsAfterLength={100}
-                    style={{
-                      fontSize: "12px",
-                      fontFamily:
-                        "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                      backgroundColor: "hsl(var(--background))",
-                      padding: "16px",
-                      borderRadius: "8px",
-                      border: "1px solid hsl(var(--border))",
-                      width: "calc(100vw - var(--sidebar-width) - 16px - 16px)",
-                    }}
-                  />
-                );
-              })()}
-            </div>
-          </div>
+              <JsonView
+                src={result}
+                dark={true}
+                theme="atom"
+                enableClipboard={true}
+                displaySize={false}
+                collapseStringsAfterLength={100}
+                style={{
+                  fontSize: "12px",
+                  fontFamily:
+                    "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                  backgroundColor: "hsl(var(--background))",
+                  padding: "16px",
+                  borderRadius: "8px",
+                  border: "1px solid hsl(var(--border))",
+                  width: "calc(100vw - var(--sidebar-width) - 16px - 16px)",
+                }}
+              />
+              </div>
             );
-          }
-
+          })()
+        ) : (
           // No result yet
-          return (
-            <div className="flex items-center justify-center h-full">
-              <p className="text-xs text-muted-foreground font-medium">
-                Execute a tool to see results here
-              </p>
-            </div>
-          );
-        })()}
+          <div className="flex items-center justify-center h-full">
+            <p className="text-xs text-muted-foreground font-medium">
+              Execute a tool to see results here
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );
