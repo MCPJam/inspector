@@ -5,11 +5,21 @@ import type { MCPClient } from "@mastra/mcp";
 type ToolsMap = Record<string, any>;
 type Toolsets = Record<string, ToolsMap>;
 
-function flattenToolsets(toolsets: Toolsets): ToolsMap {
+/**
+ * Flatten toolsets and attach serverId metadata to each tool
+ * This preserves the server origin for each tool to enable correct routing
+ */
+function flattenToolsetsWithServerId(toolsets: Toolsets): ToolsMap {
   const flattened: ToolsMap = {};
-  for (const serverTools of Object.values(toolsets || {})) {
+  for (const [serverId, serverTools] of Object.entries(toolsets || {})) {
     if (serverTools && typeof serverTools === "object") {
-      Object.assign(flattened, serverTools as any);
+      for (const [toolName, tool] of Object.entries(serverTools)) {
+        // Attach serverId metadata to each tool
+        flattened[toolName] = {
+          ...tool,
+          _serverId: serverId,
+        };
+      }
     }
   }
   return flattened;
@@ -54,44 +64,24 @@ export async function executeToolCallsFromMessages(
   messages: ModelMessage[],
   options: { tools: ToolsMap } | { toolsets: Toolsets } | { client: MCPClient },
 ): Promise<void> {
-  // Build tools index and track server IDs
+  // Build tools with serverId metadata
   let tools: ToolsMap = {};
-  let toolsets: Toolsets = {};
 
   if ((options as any).client) {
-    toolsets = await (options as any).client.getToolsets();
-    tools = flattenToolsets(toolsets as any);
+    const toolsets = await (options as any).client.getToolsets();
+    tools = flattenToolsetsWithServerId(toolsets as any);
   } else if ((options as any).toolsets) {
-    toolsets = (options as any).toolsets as Toolsets;
-    tools = flattenToolsets(toolsets);
+    const toolsets = (options as any).toolsets as Toolsets;
+    tools = flattenToolsetsWithServerId(toolsets);
   } else {
     tools = (options as any).tools as ToolsMap;
   }
+
   const index = buildIndexWithAliases(tools);
 
-  /**
-   * Build a fast lookup map: toolName -> serverId
-   * This is O(n) upfront instead of O(n*m) per tool call
-   */
-  const toolToServerMap = new Map<string, string>();
-  for (const [serverId, serverTools] of Object.entries(toolsets)) {
-    if (serverTools && typeof serverTools === "object") {
-      for (const toolName of Object.keys(serverTools)) {
-        toolToServerMap.set(toolName, serverId);
-        // Also map the pure name without prefix
-        const idx = toolName.indexOf("_");
-        if (idx > -1 && idx < toolName.length - 1) {
-          const pureToolName = toolName.slice(idx + 1);
-          if (!toolToServerMap.has(pureToolName)) {
-            toolToServerMap.set(pureToolName, serverId);
-          }
-        }
-      }
-    }
-  }
-
   const extractServerId = (toolName: string): string | undefined => {
-    return toolToServerMap.get(toolName);
+    const tool = index[toolName];
+    return tool?._serverId;
   };
 
   // Collect existing tool-result IDs
