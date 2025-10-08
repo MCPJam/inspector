@@ -361,8 +361,7 @@ export function ToolCallDisplay({
                         const openaiComponent =
                           extractOpenAIComponent(fullResult);
 
-                        if (openaiComponent) {
-                          // serverId comes from the backend via toolResult.serverId
+                        if (openaiComponent && serverConfigs) {                    
                           return (
                             <OpenAIComponentRenderer
                               componentUrl={openaiComponent.url}
@@ -371,7 +370,7 @@ export function ToolCallDisplay({
                               onCallTool={onCallTool}
                               onSendFollowup={onSendFollowup}
                               uiResourceBlob={openaiComponent.htmlBlob}
-                              serverId={toolResult?.serverId}
+                              serverId={Object.keys(serverConfigs)[0]}   // TODO: This is so wrong. Returns the first server id for all components. We need to fix this.
                             />
                           );
                         }
