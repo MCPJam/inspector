@@ -165,7 +165,8 @@ const handleAgentStepFinish = (
                 toolResult: {
                   id: currentToolCallId,
                   toolCallId: currentToolCallId,
-                  result: result.result,
+                  // Preserve full result which may include _meta for OpenAI Apps SDK
+                  result: result.result || result,
                   error: (result as any).error,
                   timestamp: new Date().toISOString(),
                 },
@@ -393,16 +394,21 @@ const sendMessagesToBackend = async (
     }
   });
 
-  const flatTools =
-    await mcpClientManager.getFlattenedToolsetsForEnabledServers(
-      selectedServers,
-    );
+  // Get toolsets with server mapping
+  const toolsets =
+    await mcpClientManager.getToolsetsWithServerIds(selectedServers);
 
-  const toolDefs = Object.entries(flatTools).map(([name, tool]) => ({
-    name,
-    description: tool?.description,
-    inputSchema: zodToJsonSchema(tool?.inputSchema),
-  }));
+  // Build tool definitions from all servers
+  const toolDefs: any[] = [];
+  for (const serverTools of Object.values(toolsets)) {
+    for (const [name, tool] of Object.entries(serverTools)) {
+      toolDefs.push({
+        name,
+        description: tool?.description,
+        inputSchema: zodToJsonSchema(tool?.inputSchema),
+      });
+    }
+  }
 
   if (!baseUrl) {
     throw new Error("CONVEX_HTTP_URL is not set");
@@ -436,6 +442,7 @@ const sendMessagesToBackend = async (
         result: result.result,
         error: result.error,
         timestamp: new Date().toISOString(),
+        serverId: result.serverId, // Propagate serverId
       },
     });
   };
@@ -460,7 +467,7 @@ const sendMessagesToBackend = async (
     },
     executeToolCalls: async (messages) => {
       await executeToolCallsFromMessages(messages, {
-        tools: flatTools as any,
+        toolsets: toolsets as any,
       });
     },
     handlers: {
@@ -482,7 +489,7 @@ const sendMessagesToBackend = async (
           text,
           toolCalls,
           toolResults.map((result) => ({
-            result: result.result,
+            result: result.result || result,
             error: result.error,
           })),
           false,

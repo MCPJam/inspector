@@ -96,7 +96,9 @@ tools.post("/execute", async (c) => {
     const executionId = `exec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
     const execPromise = Promise.resolve()
-      .then(() => mcp.executeToolDirect(toolName, parameters || {}))
+      .then(() =>
+        mcp.executeToolDirect(`${serverId}:${toolName}`, parameters || {}),
+      )
       .catch((error) => {
         if (state) state.error = error;
         throw error;
@@ -167,10 +169,7 @@ tools.post("/execute", async (c) => {
       // clear global state
       activeExecution = null;
       mcp.clearElicitationCallback();
-      return c.json(
-        { status: "completed", toolName, result: race.res.result },
-        200,
-      );
+      return c.json({ status: "completed", toolName, result: race.res }, 200);
     }
 
     // Elicitation required
@@ -231,7 +230,7 @@ tools.post("/respond", async (c) => {
           {
             status: "completed",
             toolName: state.toolName,
-            result: race.res.result,
+            result: race.res,
           },
           200,
         );

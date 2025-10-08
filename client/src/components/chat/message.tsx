@@ -71,6 +71,8 @@ interface MessageProps {
   showActions?: boolean;
   model: ModelDefinition | null;
   serverConfigs?: Record<string, MastraMCPServerDefinition>;
+  onCallTool?: (toolName: string, params: Record<string, any>) => Promise<any>;
+  onSendFollowup?: (message: string) => void;
 }
 
 // Thinking indicator component
@@ -95,6 +97,8 @@ const PureMessage = ({
   showActions = true,
   model,
   serverConfigs,
+  onCallTool,
+  onSendFollowup,
 }: MessageProps) => {
   const [mode, setMode] = useState<"view" | "edit">("view");
   const [isHovered, setIsHovered] = useState(false);
@@ -226,6 +230,8 @@ const PureMessage = ({
                             toolCall={block.toolCall}
                             toolResult={block.toolResult}
                             serverConfigs={serverConfigs}
+                            onCallTool={onCallTool}
+                            onSendFollowup={onSendFollowup}
                           />
                         </motion.div>
                       );
@@ -254,6 +260,8 @@ const PureMessage = ({
                               toolCall={toolCall}
                               toolResult={toolResult}
                               serverConfigs={serverConfigs}
+                              onCallTool={onCallTool}
+                              onSendFollowup={onSendFollowup}
                             />
                           </motion.div>
                         );

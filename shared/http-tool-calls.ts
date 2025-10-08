@@ -5,11 +5,21 @@ import type { MCPClient } from "@mastra/mcp";
 type ToolsMap = Record<string, any>;
 type Toolsets = Record<string, ToolsMap>;
 
-function flattenToolsets(toolsets: Toolsets): ToolsMap {
+/**
+ * Flatten toolsets and attach serverId metadata to each tool
+ * This preserves the server origin for each tool to enable correct routing
+ */
+function flattenToolsetsWithServerId(toolsets: Toolsets): ToolsMap {
   const flattened: ToolsMap = {};
-  for (const serverTools of Object.values(toolsets || {})) {
+  for (const [serverId, serverTools] of Object.entries(toolsets || {})) {
     if (serverTools && typeof serverTools === "object") {
-      Object.assign(flattened, serverTools as any);
+      for (const [toolName, tool] of Object.entries(serverTools)) {
+        // Attach serverId metadata to each tool
+        flattened[toolName] = {
+          ...tool,
+          _serverId: serverId,
+        };
+      }
     }
   }
   return flattened;
@@ -54,17 +64,25 @@ export async function executeToolCallsFromMessages(
   messages: ModelMessage[],
   options: { tools: ToolsMap } | { toolsets: Toolsets } | { client: MCPClient },
 ): Promise<void> {
-  // Build tools index
+  // Build tools with serverId metadata
   let tools: ToolsMap = {};
+
   if ((options as any).client) {
     const toolsets = await (options as any).client.getToolsets();
-    tools = flattenToolsets(toolsets as any);
+    tools = flattenToolsetsWithServerId(toolsets as any);
   } else if ((options as any).toolsets) {
-    tools = flattenToolsets((options as any).toolsets as any);
+    const toolsets = (options as any).toolsets as Toolsets;
+    tools = flattenToolsetsWithServerId(toolsets);
   } else {
     tools = (options as any).tools as ToolsMap;
   }
+
   const index = buildIndexWithAliases(tools);
+
+  const extractServerId = (toolName: string): string | undefined => {
+    const tool = index[toolName];
+    return tool?._serverId;
+  };
 
   // Collect existing tool-result IDs
   const existingToolResultIds = new Set<string>();
@@ -123,6 +141,9 @@ export async function executeToolCallsFromMessages(
             output = { type: "text", value: String(result) } as any;
           }
 
+          // Extract serverId from tool name
+          const serverId = extractServerId(toolName);
+
           const toolResultMessage: ModelMessage = {
             role: "tool" as const,
             content: [
@@ -131,6 +152,10 @@ export async function executeToolCallsFromMessages(
                 toolCallId: content.toolCallId,
                 toolName: toolName,
                 output,
+                // Preserve full result including _meta for OpenAI Apps SDK
+                result: result,
+                // Add serverId for OpenAI component resolution
+                serverId,
               },
             ],
           } as any;

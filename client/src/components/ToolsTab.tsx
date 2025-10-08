@@ -87,6 +87,14 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   const [highlightedRequestId, setHighlightedRequestId] = useState<
     string | null
   >(null);
+  const [lastToolCallId, setLastToolCallId] = useState<string | null>(null);
+  const [lastToolName, setLastToolName] = useState<string | null>(null);
+  const [lastToolParameters, setLastToolParameters] = useState<Record<
+    string,
+    any
+  > | null>(null);
+  const [lastToolCallTimestamp, setLastToolCallTimestamp] =
+    useState<Date | null>(null);
   const serverKey = useMemo(() => {
     if (!serverConfig) return "none";
     try {
@@ -136,7 +144,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     if (selectedTool && tools[selectedTool]) {
       generateFormFields(tools[selectedTool].inputSchema);
     }
-  }, [selectedTool, tools, logger]);
+  }, [selectedTool]);
 
   const fetchTools = async () => {
     if (!serverName) {
@@ -224,16 +232,36 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     setUnstructuredValidationResult("not_applicable");
 
     const executionStartTime = Date.now();
+    const toolCallId = `tool-${Date.now()}`;
+    const toolCallTimestamp = new Date();
 
     try {
       const params = buildParameters();
+
+      // Store tool call metadata
+      setLastToolCallId(toolCallId);
+      setLastToolName(selectedTool);
+      setLastToolParameters(params);
+      setLastToolCallTimestamp(toolCallTimestamp);
+
       logger.info("Starting tool execution", {
         toolName: selectedTool,
         parameters: params,
       });
       const data = await executeToolApi(serverName, selectedTool, params);
       if (data.status === "completed") {
-        const result = data.result;
+        let result = data.result;
+
+        // Unwrap if result is double-wrapped (has a "result" property inside)
+        if (
+          result &&
+          typeof result === "object" &&
+          "result" in result &&
+          !("_meta" in result)
+        ) {
+          result = result.result;
+        }
+
         const executionDuration = Date.now() - executionStartTime;
         logger.info("Tool execution completed successfully", {
           toolName: selectedTool,
@@ -245,7 +273,9 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
           setStructuredResult(
             result.structuredContent as Record<string, unknown>,
           );
-          setShowStructured(true);
+          // Default to component view if there's an OpenAI component, otherwise show structured JSON
+          const hasOpenAIComponent = result?._meta?.["openai/outputTemplate"];
+          setShowStructured(!hasOpenAIComponent);
         }
 
         const currentTool = tools[selectedTool];
@@ -360,13 +390,26 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       if (data.status === "completed") {
         // Show final result
         setElicitationRequest(null);
-        const result = data.result;
+        let result = data.result;
+
+        // Unwrap if result is double-wrapped
+        if (
+          result &&
+          typeof result === "object" &&
+          "result" in result &&
+          !("_meta" in result)
+        ) {
+          result = result.result;
+        }
+
         setResult(result);
         if (result?.structuredContent) {
           setStructuredResult(
             result.structuredContent as Record<string, unknown>,
           );
-          setShowStructured(true);
+          // Default to component view if there's an OpenAI component
+          const hasOpenAIComponent = result?._meta?.["openai/outputTemplate"];
+          setShowStructured(!hasOpenAIComponent);
         }
 
         const currentTool = tools[selectedTool];
@@ -482,6 +525,11 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         result={result}
         validationErrors={validationErrors}
         unstructuredValidationResult={unstructuredValidationResult}
+        serverId={serverName}
+        toolCallId={lastToolCallId ?? undefined}
+        toolName={lastToolName ?? undefined}
+        toolParameters={lastToolParameters ?? undefined}
+        toolCallTimestamp={lastToolCallTimestamp ?? undefined}
         onExecuteFromUI={async (name, params) => {
           await fetch("/api/mcp/tools/execute", {
             method: "POST",
@@ -503,6 +551,11 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
               ...(serverName ? { serverId: serverName } : {}),
             }),
           });
+        }}
+        onSendFollowup={(message) => {
+          logger.info("OpenAI component requested follow-up", { message });
+          // In ToolsTab, we could show a toast or notification
+          // since there's no chat input to populate
         }}
       />
     </ResizablePanel>
