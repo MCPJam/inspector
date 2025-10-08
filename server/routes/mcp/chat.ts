@@ -306,7 +306,8 @@ const createStreamingResponse = async (
                 : streamingContext.toolCallId;
 
             // Look up serverId from tool metadata
-            const toolName = streamingContext.toolCallIdToName.get(currentToolCallId);
+            const toolName =
+              streamingContext.toolCallIdToName.get(currentToolCallId);
             const serverId = toolName ? extractServerId(toolName) : undefined;
 
             iterationToolResults.push({ result });
@@ -358,7 +359,8 @@ const createStreamingResponse = async (
           const value = (m as any).content;
 
           // Look up serverId from tool metadata
-          const toolName = streamingContext.toolCallIdToName.get(currentToolCallId);
+          const toolName =
+            streamingContext.toolCallIdToName.get(currentToolCallId);
           const serverId = toolName ? extractServerId(toolName) : undefined;
 
           iterationToolResults.push({ result: value });
@@ -687,14 +689,15 @@ chat.post("/", async (c) => {
           } else {
             // Use existing streaming path with tools
             // Get toolsets with server mapping (reusing pattern from sendMessagesToBackend)
-            const toolsets =
-              await mcpClientManager.getToolsetsWithServerIds(
-                requestData.selectedServers,
-              );
+            const toolsets = await mcpClientManager.getToolsetsWithServerIds(
+              requestData.selectedServers,
+            );
 
             // Flatten toolsets with serverId metadata attached (same pattern as http-tool-calls.ts)
             const flatToolsWithServerId: Record<string, any> = {};
-            for (const [serverId, serverTools] of Object.entries(toolsets || {})) {
+            for (const [serverId, serverTools] of Object.entries(
+              toolsets || {},
+            )) {
               if (serverTools && typeof serverTools === "object") {
                 for (const [toolName, tool] of Object.entries(serverTools)) {
                   // Attach serverId metadata to each tool

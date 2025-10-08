@@ -25,13 +25,17 @@ export interface OpenAIComponentMetadata {
 /**
  * Recursively search for _meta field in an object
  */
-function findMetaRecursive(obj: any, maxDepth: number = 5, currentDepth: number = 0): any {
-  if (!obj || typeof obj !== 'object' || currentDepth >= maxDepth) {
+function findMetaRecursive(
+  obj: any,
+  maxDepth: number = 5,
+  currentDepth: number = 0,
+): any {
+  if (!obj || typeof obj !== "object" || currentDepth >= maxDepth) {
     return null;
   }
 
   // Check if current object has _meta
-  if (obj._meta && typeof obj._meta === 'object') {
+  if (obj._meta && typeof obj._meta === "object") {
     return obj._meta;
   }
 
