@@ -360,10 +360,11 @@ export function ToolCallDisplay({
                         const fullResult = (toolResult as any)?.result;
                         const openaiComponent =
                           extractOpenAIComponent(fullResult);
-
+                        console.log("openaiComponent", openaiComponent);
                         if (openaiComponent && serverConfigs) {
                           // Use serverId from toolResult
                           const serverId = (toolResult as any).serverId;
+                          console.log("serverId", serverId);
                           return (
                             <OpenAIComponentRenderer
                               componentUrl={openaiComponent.url}
