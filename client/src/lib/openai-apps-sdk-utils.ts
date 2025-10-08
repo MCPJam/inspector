@@ -22,6 +22,32 @@ export interface OpenAIComponentMetadata {
  * @param payload - Tool result payload (may be wrapped or direct)
  * @returns Component metadata if found, null otherwise
  */
+/**
+ * Recursively search for _meta field in an object
+ */
+function findMetaRecursive(obj: any, maxDepth: number = 5, currentDepth: number = 0): any {
+  if (!obj || typeof obj !== 'object' || currentDepth >= maxDepth) {
+    return null;
+  }
+
+  // Check if current object has _meta
+  if (obj._meta && typeof obj._meta === 'object') {
+    return obj._meta;
+  }
+
+  // Search in object properties (but skip arrays for now)
+  if (!Array.isArray(obj)) {
+    for (const key in obj) {
+      if (obj.hasOwnProperty(key)) {
+        const found = findMetaRecursive(obj[key], maxDepth, currentDepth + 1);
+        if (found) return found;
+      }
+    }
+  }
+
+  return null;
+}
+
 export function extractOpenAIComponent(
   payload: any,
 ): OpenAIComponentMetadata | null {
@@ -30,7 +56,11 @@ export function extractOpenAIComponent(
   // If payload is an array, try the first element
   const actualPayload = Array.isArray(payload) ? payload[0] : payload;
   if (!actualPayload) return null;
-  const meta = actualPayload?._meta;
+  console.log('[DEBUG EXTRACT] actualPayload:', actualPayload);
+
+  // Use depth-first search to find _meta anywhere in the result structure
+  const meta = findMetaRecursive(actualPayload);
+  console.log('[DEBUG EXTRACT] Found meta:', meta);
   if (meta && typeof meta === "object") {
     const outputTemplate = meta["openai/outputTemplate"];
     if (outputTemplate && typeof outputTemplate === "string") {

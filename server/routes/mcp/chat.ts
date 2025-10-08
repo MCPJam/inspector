@@ -34,6 +34,8 @@ interface StreamingContext {
   toolCallId: number;
   lastEmittedToolCallId: number | null;
   stepIndex: number;
+  // Map tool call ID to tool name for serverId lookup
+  toolCallIdToName: Map<number, string>;
 }
 
 interface ChatRequest {
@@ -204,9 +206,16 @@ const createStreamingResponse = async (
   messages: ChatMessage[],
   streamingContext: StreamingContext,
   provider: ModelProvider,
+  toolsWithServerId: Record<string, any>, // Tools with _serverId metadata attached
   temperature?: number,
   systemPrompt?: string,
 ) => {
+  // Helper to extract serverId from tool metadata (same pattern as http-tool-calls.ts)
+  const extractServerId = (toolName: string): string | undefined => {
+    const tool = toolsWithServerId[toolName];
+    return tool?._serverId;
+  };
+
   const messageHistory: ModelMessage[] = (messages || []).map((m) => {
     switch (m.role) {
       case "system":
@@ -265,6 +274,11 @@ const createStreamingResponse = async (
               (chunk.chunk as any).parameters ??
               (chunk.chunk as any).args ??
               {};
+
+            // Store tool name for serverId lookup later
+            streamingContext.toolCallIdToName.set(currentToolCallId, name);
+            console.log('[DEBUG] Stored tool call:', currentToolCallId, '→', name);
+
             iterationToolCalls.push({ name, params: parameters });
             sendSseEvent(
               streamingContext.controller,
@@ -291,6 +305,12 @@ const createStreamingResponse = async (
               streamingContext.lastEmittedToolCallId != null
                 ? streamingContext.lastEmittedToolCallId
                 : streamingContext.toolCallId;
+
+            // Look up serverId from tool metadata
+            const toolName = streamingContext.toolCallIdToName.get(currentToolCallId);
+            const serverId = toolName ? extractServerId(toolName) : undefined;
+            console.log('[DEBUG] Tool result - callId:', currentToolCallId, 'toolName:', toolName, 'serverId:', serverId);
+
             iterationToolResults.push({ result });
             sendSseEvent(
               streamingContext.controller,
@@ -302,6 +322,7 @@ const createStreamingResponse = async (
                   toolCallId: currentToolCallId,
                   result,
                   timestamp: new Date().toISOString(),
+                  serverId,
                 },
               },
             );
@@ -337,6 +358,12 @@ const createStreamingResponse = async (
               ? streamingContext.lastEmittedToolCallId
               : ++streamingContext.toolCallId;
           const value = (m as any).content;
+
+          // Look up serverId from tool metadata
+          const toolName = streamingContext.toolCallIdToName.get(currentToolCallId);
+          const serverId = toolName ? extractServerId(toolName) : undefined;
+          console.log('[DEBUG] Tool result (Ollama) - callId:', currentToolCallId, 'toolName:', toolName, 'serverId:', serverId);
+
           iterationToolResults.push({ result: value });
           sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
             type: "tool_result",
@@ -345,6 +372,7 @@ const createStreamingResponse = async (
               toolCallId: currentToolCallId,
               result: value,
               timestamp: new Date().toISOString(),
+              serverId,
             },
           });
         }
@@ -601,6 +629,7 @@ chat.post("/", async (c) => {
           toolCallId: 0,
           lastEmittedToolCallId: null,
           stepIndex: 0,
+          toolCallIdToName: new Map(),
         };
 
         // Register elicitation handler with MCPJamClientManager
@@ -660,13 +689,31 @@ chat.post("/", async (c) => {
             );
           } else {
             // Use existing streaming path with tools
-            const flatTools =
-              await mcpClientManager.getFlattenedToolsetsForEnabledServers(
+            // Get toolsets with server mapping (reusing pattern from sendMessagesToBackend)
+            const toolsets =
+              await mcpClientManager.getToolsetsWithServerIds(
                 requestData.selectedServers,
               );
 
+            // Flatten toolsets with serverId metadata attached (same pattern as http-tool-calls.ts)
+            const flatToolsWithServerId: Record<string, any> = {};
+            for (const [serverId, serverTools] of Object.entries(toolsets || {})) {
+              if (serverTools && typeof serverTools === "object") {
+                for (const [toolName, tool] of Object.entries(serverTools)) {
+                  // Attach serverId metadata to each tool
+                  flatToolsWithServerId[toolName] = {
+                    ...tool,
+                    _serverId: serverId,
+                  };
+                }
+              }
+            }
+
+            console.log('[DEBUG] flatToolsWithServerId keys:', Object.keys(flatToolsWithServerId));
+            console.log('[DEBUG] Sample tool with serverId:', flatToolsWithServerId[Object.keys(flatToolsWithServerId)[0]]?._serverId);
+
             const aiSdkTools: Record<string, Tool> =
-              convertMastraToolsToVercelTools(flatTools as any);
+              convertMastraToolsToVercelTools(flatToolsWithServerId as any);
 
             const llmModel = createLlmModel(
               model as ModelDefinition,
@@ -679,6 +726,7 @@ chat.post("/", async (c) => {
               messages,
               streamingContext,
               provider,
+              flatToolsWithServerId,
               temperature,
               systemPrompt,
             );

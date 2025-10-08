@@ -358,12 +358,19 @@ export function ToolCallDisplay({
 
                         // 1. Check for OpenAI component first
                         const fullResult = (toolResult as any)?.result;
+                        console.log('[DEBUG RENDER START] fullResult:', fullResult);
+                        console.log('[DEBUG RENDER START] toolResult:', toolResult);
+                        console.log('[DEBUG RENDER START] serverConfigs:', serverConfigs);
                         const openaiComponent =
                           extractOpenAIComponent(fullResult);
+                        console.log('[DEBUG RENDER START] openaiComponent:', openaiComponent);
 
                         if (openaiComponent && serverConfigs) {
                           // Use serverId from toolResult
                           const serverId = (toolResult as any).serverId;
+                          console.log('[DEBUG TOOL-CALL] toolResult:', toolResult);
+                          console.log('[DEBUG TOOL-CALL] Extracted serverId:', serverId);
+                          console.log('[DEBUG TOOL-CALL] serverConfigs:', serverConfigs);
                           return (
                             <OpenAIComponentRenderer
                               componentUrl={openaiComponent.url}
