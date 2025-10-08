@@ -261,6 +261,8 @@ export function useChat(options: UseChatOptions = {}) {
             ...evt.toolResult,
             timestamp: new Date(evt.toolResult.timestamp),
           };
+          console.log('[DEBUG CLIENT] Received tool_result SSE event:', evt.toolResult);
+          console.log('[DEBUG CLIENT] Constructed toolResult with serverId:', toolResult.serverId);
           toolResultsRef.current = [...toolResultsRef.current, toolResult];
           toolCallsRef.current = toolCallsRef.current.map((tc) =>
             tc.id === toolResult.toolCallId
