@@ -140,11 +140,6 @@ class MCPJamClientManager {
     return flattenedTools;
   }
 
-  /**
-   * Get toolsets with server name mapping preserved
-   * Returns { serverName: { toolName: tool, ... }, ... }
-   * Uses server names (e.g., "pizzaz") instead of internal IDs
-   */
   async getToolsetsWithServerIds(
     serverNameFilter?: string[],
   ): Promise<Record<string, Record<string, any>>> {

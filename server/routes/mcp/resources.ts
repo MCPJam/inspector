@@ -70,9 +70,22 @@ resources.get("/openai-widget/:serverId/:uri", async (c) => {
     const uri = decodeURIComponent(encodedUri);
 
     // Get query params for tool data
-    const toolInput = c.req.query("toolInput") || "{}";
-    const toolOutput = c.req.query("toolOutput") || "null";
+    const toolInputRaw = c.req.query("toolInput") || "{}";
+    const toolOutputRaw = c.req.query("toolOutput") || "null";
     const toolId = c.req.query("toolId") || "unknown";
+
+    // Parse and re-stringify to ensure valid JSON and prevent XSS
+    let toolInput: any;
+    let toolOutput: any;
+    try {
+      toolInput = JSON.parse(toolInputRaw);
+      toolOutput = JSON.parse(toolOutputRaw);
+    } catch (err) {
+      return c.html(
+        "<html><body>Error: Invalid JSON in toolInput or toolOutput</body></html>",
+        400,
+      );
+    }
 
     const mcpClientManager = c.mcpJamClientManager;
     const connectedServers = mcpClientManager.getConnectedServers();
@@ -122,190 +135,163 @@ resources.get("/openai-widget/:serverId/:uri", async (c) => {
       );
     }
 
-    // Restore widget state from localStorage if available
+    // Widget state key for localStorage persistence
     const widgetStateKey = `openai-widget-state:${toolId}`;
 
-    // Inject window.openai API with full Apps SDK compatibility
-    // Define it IMMEDIATELY before any other code can execute
+    // Inject OpenAI Apps SDK widget API
+    // This provides window.openai for component interaction
     const apiScript = `
       <script>
-        // ===== CRITICAL: Define window.openai IMMEDIATELY =====
-        // This must happen BEFORE any other code runs, including React hydration
-        
-        // Ensure window.openai doesn't exist yet
-        if (window.openai) {
-          console.warn('[OpenAI Widget] window.openai already exists, overwriting');
-        }
-        
-        // Define window.openai SYNCHRONOUSLY with direct properties
-        // The OpenAI Apps SDK components access these directly, not through methods
-        var openaiAPI = {
-          // Tool data (immutable)
-          toolInput: ${toolInput},
-          toolOutput: ${toolOutput},
-          
-          // Layout globals (mutable, components access these directly)
-          displayMode: 'inline',
-          maxHeight: 600,
-          theme: 'dark',
-          locale: 'en-US',
-          safeArea: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },
-          userAgent: {},
-          widgetState: null,
+        (function() {
+          'use strict';
 
-          // Persist widget state
-          setWidgetState: async function(state) {
-            this.widgetState = state;
-            try {
-              localStorage.setItem('${widgetStateKey}', JSON.stringify(state));
-              console.log('[OpenAI Widget] Saved widget state:', state);
-            } catch (err) {
-              console.error('[OpenAI Widget] Failed to save widget state:', err);
-            }
-            window.parent.postMessage({
-              type: 'openai:setWidgetState',
-              toolId: '${toolId}',
-              state: state
-            }, '*');
-          },
+          // Create the OpenAI API object
+          const openaiAPI = {
+            // Data properties (immutable)
+            toolInput: ${JSON.stringify(toolInput)},
+            toolOutput: ${JSON.stringify(toolOutput)},
 
-          // Call MCP tool
-          callTool: async function(toolName, params) {
-            return new Promise(function(resolve, reject) {
-              var requestId = 'tool_' + Date.now() + '_' + Math.random();
-              
-              var handler = function(event) {
-                if (event.data.type === 'openai:callTool:response' && 
-                    event.data.requestId === requestId) {
-                  window.removeEventListener('message', handler);
-                  if (event.data.error) {
-                    reject(new Error(event.data.error));
-                  } else {
-                    resolve(event.data.result);
-                  }
-                }
-              };
-              
-              window.addEventListener('message', handler);
-              
-              // Send request
-              window.parent.postMessage({
-                type: 'openai:callTool',
-                requestId: requestId,
-                toolName: toolName,
-                params: params || {}
-              }, '*');
-              
-              // Timeout after 30 seconds
-              setTimeout(function() {
-                window.removeEventListener('message', handler);
-                reject(new Error('Tool call timeout'));
-              }, 30000);
-            });
-          },
+            // Layout globals (mutable)
+            displayMode: 'inline',
+            maxHeight: 600,
+            theme: 'dark',
+            locale: 'en-US',
+            safeArea: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },
+            userAgent: {},
+            widgetState: null,
 
-          // Send follow-up message (OpenAI name)
-          sendFollowupTurn: async function(message) {
-            var payload = typeof message === 'string' 
-              ? { prompt: message }
-              : message;
-            
-            window.parent.postMessage({
-              type: 'openai:sendFollowup',
-              message: payload.prompt || payload
-            }, '*');
-          },
-
-          // Send follow-up message (Webplus name - alias for compatibility)
-          sendFollowUpMessage: async function(args) {
-            var prompt = typeof args === 'string' ? args : (args && args.prompt) || '';
-            window.parent.postMessage({
-              type: 'openai:sendFollowup',
-              message: prompt
-            }, '*');
-          },
-
-          // Request display mode change
-          requestDisplayMode: async function(options) {
-            var mode = (options && options.mode) || 'inline';
-            this.displayMode = mode;
-            
-            window.parent.postMessage({
-              type: 'openai:requestDisplayMode',
-              mode: mode
-            }, '*');
-            
-            return { mode: mode };
-          },
-
-          // Completion APIs (stub implementations for compatibility)
-          callCompletion: async function(request) {
-            console.warn('[OpenAI Widget] callCompletion not implemented');
-            return {
-              content: { type: 'text', text: '' },
-              model: 'mock',
-              role: 'assistant'
-            };
-          },
-
-          streamCompletion: async function* (request) {
-            console.warn('[OpenAI Widget] streamCompletion not implemented');
-            return;
-          }
-        };
-
-        // Assign to BOTH window.webplus (original) and window.openai (alias)
-        // OpenAI components check for window.webplus first!
-        Object.defineProperty(window, 'webplus', {
-          value: openaiAPI,
-          writable: false,
-          configurable: false,
-          enumerable: true
-        });
-
-        Object.defineProperty(window, 'openai', {
-          value: openaiAPI,
-          writable: false,
-          configurable: false,
-          enumerable: true
-        });
-
-        // Fire initial globals event for components that use useSyncExternalStore
-        // OpenAI components listen for 'webplus:set_globals' event (not openai:set_globals!)
-        try {
-          var globalsEvent = new CustomEvent('webplus:set_globals', {
-            detail: {
-              globals: {
-                displayMode: 'inline',
-                maxHeight: 600,
-                theme: 'dark',
-                locale: 'en-US',
-                safeArea: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },
-                userAgent: {}
+            // Persist widget state
+            async setWidgetState(state) {
+              this.widgetState = state;
+              try {
+                localStorage.setItem(${JSON.stringify(widgetStateKey)}, JSON.stringify(state));
+              } catch (err) {
+                console.error('[OpenAI Widget] Failed to save widget state:', err);
               }
-            }
-          });
-          window.dispatchEvent(globalsEvent);
-        } catch (err) {
-          // Silently fail
-        }
+              window.parent.postMessage({
+                type: 'openai:setWidgetState',
+                toolId: ${JSON.stringify(toolId)},
+                state
+              }, '*');
+            },
 
-        // Try to restore widget state asynchronously (won't block component initialization)
-        setTimeout(function() {
-          try {
-            var stored = localStorage.getItem('${widgetStateKey}');
-            if (stored && window.openai) {
-              window.openai.widgetState = JSON.parse(stored);
+            // Call MCP tool from component
+            async callTool(toolName, params = {}) {
+              return new Promise((resolve, reject) => {
+                const requestId = \`tool_\${Date.now()}_\${Math.random()}\`;
+
+                const handler = (event) => {
+                  if (event.data.type === 'openai:callTool:response' &&
+                      event.data.requestId === requestId) {
+                    window.removeEventListener('message', handler);
+                    if (event.data.error) {
+                      reject(new Error(event.data.error));
+                    } else {
+                      resolve(event.data.result);
+                    }
+                  }
+                };
+
+                window.addEventListener('message', handler);
+
+                window.parent.postMessage({
+                  type: 'openai:callTool',
+                  requestId,
+                  toolName,
+                  params
+                }, '*');
+
+                // Timeout after 30 seconds
+                setTimeout(() => {
+                  window.removeEventListener('message', handler);
+                  reject(new Error('Tool call timeout'));
+                }, 30000);
+              });
+            },
+
+            // Send follow-up message
+            async sendFollowupTurn(message) {
+              const payload = typeof message === 'string'
+                ? { prompt: message }
+                : message;
+
+              window.parent.postMessage({
+                type: 'openai:sendFollowup',
+                message: payload.prompt || payload
+              }, '*');
+            },
+
+            // Request display mode change
+            async requestDisplayMode(options = {}) {
+              const mode = options.mode || 'inline';
+              this.displayMode = mode;
+
+              window.parent.postMessage({
+                type: 'openai:requestDisplayMode',
+                mode
+              }, '*');
+
+              return { mode };
+            },
+
+            // Legacy alias for webplus compatibility
+            async sendFollowUpMessage(args) {
+              const prompt = typeof args === 'string' ? args : (args?.prompt || '');
+              return this.sendFollowupTurn(prompt);
             }
+          };
+
+          // Define window.openai (read-only)
+          Object.defineProperty(window, 'openai', {
+            value: openaiAPI,
+            writable: false,
+            configurable: false,
+            enumerable: true
+          });
+
+          // Define window.webplus alias (OpenAI components check for this first!)
+          Object.defineProperty(window, 'webplus', {
+            value: openaiAPI,
+            writable: false,
+            configurable: false,
+            enumerable: true
+          });
+
+          // Fire initial globals event for components using useSyncExternalStore
+          try {
+            const globalsEvent = new CustomEvent('webplus:set_globals', {
+              detail: {
+                globals: {
+                  displayMode: openaiAPI.displayMode,
+                  maxHeight: openaiAPI.maxHeight,
+                  theme: openaiAPI.theme,
+                  locale: openaiAPI.locale,
+                  safeArea: openaiAPI.safeArea,
+                  userAgent: openaiAPI.userAgent
+                }
+              }
+            });
+            window.dispatchEvent(globalsEvent);
           } catch (err) {
             // Silently fail
           }
-        }, 0);
+
+          // Restore widget state from localStorage
+          setTimeout(() => {
+            try {
+              const stored = localStorage.getItem(${JSON.stringify(widgetStateKey)});
+              if (stored && window.openai) {
+                window.openai.widgetState = JSON.parse(stored);
+              }
+            } catch (err) {
+              // Silently fail
+            }
+          }, 0);
+        })();
       </script>
     `;
 
     // Create proper HTML structure with our script executing FIRST
-    // The pizzaz HTML is just fragments (no html/head/body tags), so we wrap it properly
     let modifiedHtml;
 
     if (htmlContent.includes("<html>") && htmlContent.includes("<head>")) {
@@ -316,6 +302,8 @@ resources.get("/openai-widget/:serverId/:uri", async (c) => {
       modifiedHtml = `<!DOCTYPE html>
 <html>
 <head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   ${apiScript}
 </head>
 <body>
@@ -323,6 +311,35 @@ resources.get("/openai-widget/:serverId/:uri", async (c) => {
 </body>
 </html>`;
     }
+
+    // Set security headers
+    // Match ChatGPT's CSP model: Allow trusted CDNs that developers commonly use
+    // This balances security with developer flexibility
+    const trustedCdns = [
+      "https://persistent.oaistatic.com",
+      "https://*.oaistatic.com",
+      "https://unpkg.com",
+      "https://cdn.jsdelivr.net",
+      "https://cdnjs.cloudflare.com",
+      "https://cdn.skypack.dev",
+    ].join(" ");
+
+    c.header(
+      "Content-Security-Policy",
+      [
+        "default-src 'self'",
+        `script-src 'self' 'unsafe-inline' 'unsafe-eval' ${trustedCdns}`,
+        "worker-src 'self' blob:", // Allow web workers (needed for Mapbox)
+        "child-src 'self' blob:", // Allow blob URLs for workers
+        `style-src 'self' 'unsafe-inline' ${trustedCdns}`,
+        "img-src 'self' data: https: blob:", // Allow images from any HTTPS source
+        `font-src 'self' data: ${trustedCdns}`,
+        "connect-src 'self' https: wss: ws:", // Allow WebSocket and HTTPS connections
+        "frame-ancestors 'self'",
+      ].join("; "),
+    );
+    c.header("X-Frame-Options", "SAMEORIGIN");
+    c.header("X-Content-Type-Options", "nosniff");
 
     return c.html(modifiedHtml);
   } catch (error) {
