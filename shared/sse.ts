@@ -24,6 +24,7 @@ export type SSEToolResultEvent = {
     result: unknown;
     error?: string;
     timestamp: string; // ISO string
+    serverId?: string; // Server that executed the tool
   };
 };
 

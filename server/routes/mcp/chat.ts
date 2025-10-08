@@ -394,10 +394,17 @@ const sendMessagesToBackend = async (
     }
   });
 
-  const flatTools =
-    await mcpClientManager.getFlattenedToolsetsForEnabledServers(
-      selectedServers,
-    );
+  // Get toolsets with server mapping - single call replaces both getToolsets and getFlattenedTools
+  const toolsetsStart = Date.now();
+  const toolsets =
+    await mcpClientManager.getToolsetsWithServerIds(selectedServers);
+  console.log(`[chat.ts] getToolsetsWithServerIds took ${Date.now() - toolsetsStart}ms`);
+
+  // Flatten for tool definitions
+  const flatTools: Record<string, any> = {};
+  Object.values(toolsets).forEach((serverTools) => {
+    Object.assign(flatTools, serverTools);
+  });
 
   const toolDefs = Object.entries(flatTools).map(([name, tool]) => ({
     name,
@@ -437,6 +444,7 @@ const sendMessagesToBackend = async (
         result: result.result,
         error: result.error,
         timestamp: new Date().toISOString(),
+        serverId: result.serverId, // Propagate serverId
       },
     });
   };
@@ -461,7 +469,7 @@ const sendMessagesToBackend = async (
     },
     executeToolCalls: async (messages) => {
       await executeToolCallsFromMessages(messages, {
-        tools: flatTools as any,
+        toolsets: toolsets as any,
       });
     },
     handlers: {

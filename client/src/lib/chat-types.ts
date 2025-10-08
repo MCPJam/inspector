@@ -41,6 +41,7 @@ export interface ToolResult {
   result: any;
   error?: string;
   timestamp: Date;
+  serverId?: string; // Server that executed the tool
 }
 
 export interface MessageMetadata {

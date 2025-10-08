@@ -22,6 +22,7 @@ export type BackendToolResultEvent = {
   toolName?: string;
   result: unknown;
   error?: unknown;
+  serverId?: string; // Server that executed the tool
 };
 
 export type BackendConversationHandlers = {
@@ -136,6 +137,8 @@ export const runBackendConversation = async (
                 // Use full result if available, otherwise extract value from output
                 result: fullResult ?? extractToolResultValue(rawOutput),
                 error: item.error,
+                // Preserve serverId if present
+                serverId: item.serverId,
               };
               iterationToolResults.push(resultEvent);
               handlers?.onToolResult?.(resultEvent);

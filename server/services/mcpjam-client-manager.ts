@@ -122,12 +122,54 @@ class MCPJamClientManager {
     return this.serverIdMapping.get(serverName);
   }
 
+  // Reverse lookup: get server name from internal server ID
+  getServerNameForId(serverId: string): string | undefined {
+    for (const [name, id] of this.serverIdMapping.entries()) {
+      if (id === serverId) {
+        return name;
+      }
+    }
+    return undefined;
+  }
+
   private flattenToolsets(toolsets: Record<string, any>): Record<string, any> {
     const flattenedTools: Record<string, any> = {};
     Object.values(toolsets).forEach((serverTools: any) => {
       Object.assign(flattenedTools, serverTools);
     });
     return flattenedTools;
+  }
+
+  /**
+   * Get toolsets with server name mapping preserved
+   * Returns { serverName: { toolName: tool, ... }, ... }
+   * Uses server names (e.g., "pizzaz") instead of internal IDs
+   */
+  async getToolsetsWithServerIds(
+    serverNameFilter?: string[],
+  ): Promise<Record<string, Record<string, any>>> {
+    const toolsetsByServer: Record<string, Record<string, any>> = {};
+    const allServerIdsFromFilter = serverNameFilter?.map((serverName) =>
+      this.getServerIdForName(serverName),
+    );
+
+    for (const [serverId, client] of this.mcpClients.entries()) {
+      if (serverNameFilter && !allServerIdsFromFilter?.includes(serverId))
+        continue;
+      if (this.getConnectionStatus(serverId) !== "connected") continue;
+      try {
+        const toolsets = await client.getToolsets();
+        const flattenedTools = this.flattenToolsets(toolsets);
+
+        // Use server name instead of internal ID
+        const serverName = this.getServerNameForId(serverId) || serverId;
+        toolsetsByServer[serverName] = flattenedTools;
+      } catch (error) {
+        console.warn(`Failed to get tools from server ${serverId}:`, error);
+      }
+    }
+
+    return toolsetsByServer;
   }
 
   async getFlattenedToolsetsForEnabledServers(
