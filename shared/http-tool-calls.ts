@@ -126,7 +126,6 @@ export async function executeToolCallsFromMessages(
           if (!tool) throw new Error(`Tool '${toolName}' not found`);
           const input = content.input || {};
           const result = await tool.execute({ context: input });
-          console.log("[http-tool-calls] Tool execution result:", JSON.stringify(result, null, 2));
 
           let output: LanguageModelV2ToolResultOutput;
           if (result && typeof result === "object" && (result as any).content) {
@@ -173,7 +172,6 @@ export async function executeToolCallsFromMessages(
               },
             ],
           } as any;
-          console.log("[http-tool-calls] Tool result message:", JSON.stringify(toolResultMessage, null, 2));
           toolResultsToAdd.push(toolResultMessage);
         } catch (error: any) {
           const errorOutput: LanguageModelV2ToolResultOutput = {

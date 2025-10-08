@@ -395,10 +395,8 @@ const sendMessagesToBackend = async (
   });
 
   // Get toolsets with server mapping - single call replaces both getToolsets and getFlattenedTools
-  const toolsetsStart = Date.now();
   const toolsets =
     await mcpClientManager.getToolsetsWithServerIds(selectedServers);
-  console.log(`[chat.ts] getToolsetsWithServerIds took ${Date.now() - toolsetsStart}ms`);
 
   // Flatten for tool definitions
   const flatTools: Record<string, any> = {};
@@ -486,18 +484,14 @@ const sendMessagesToBackend = async (
         emitToolResult(result);
       },
       onStepComplete: ({ text, toolCalls, toolResults }) => {
-        console.log("[chat.ts] onStepComplete toolResults:", JSON.stringify(toolResults, null, 2));
         handleAgentStepFinish(
           streamingContext,
           text,
           toolCalls,
-          toolResults.map((result) => {
-            console.log("[chat.ts] Processing toolResult:", JSON.stringify(result, null, 2));
-            return {
-              result: result.result || result,
-              error: result.error,
-            };
-          }),
+          toolResults.map((result) => ({
+            result: result.result || result,
+            error: result.error,
+          })),
           false,
         );
       },
