@@ -75,7 +75,7 @@ export async function executeToolCallsFromMessages(
    */
   const toolToServerMap = new Map<string, string>();
   for (const [serverId, serverTools] of Object.entries(toolsets)) {
-    if (serverTools && typeof serverTools === 'object') {
+    if (serverTools && typeof serverTools === "object") {
       for (const toolName of Object.keys(serverTools)) {
         toolToServerMap.set(toolName, serverId);
         // Also map the pure name without prefix

@@ -167,10 +167,7 @@ tools.post("/execute", async (c) => {
       // clear global state
       activeExecution = null;
       mcp.clearElicitationCallback();
-      return c.json(
-        { status: "completed", toolName, result: race.res },
-        200,
-      );
+      return c.json({ status: "completed", toolName, result: race.res }, 200);
     }
 
     // Elicitation required

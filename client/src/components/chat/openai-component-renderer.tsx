@@ -44,31 +44,30 @@ export function OpenAIComponentRenderer({
 
   // Build HTTP URL for widget serving
   useEffect(() => {
-    console.log("[OpenAI Component] Building widget URL:", {
-      componentUrl,
-      serverId,
-      toolCallId: toolCall.id,
-      hasToolResult: !!toolResult,
-    });
-
     if (componentUrl.startsWith("ui://") && serverId) {
       // Use HTTP endpoint to serve widget with injected API
       const encodedUri = encodeURIComponent(componentUrl);
       const toolInput = encodeURIComponent(JSON.stringify(toolCall.parameters));
-      const toolOutput = encodeURIComponent(JSON.stringify(toolResult?.result || null));
+      const toolOutput = encodeURIComponent(
+        JSON.stringify(toolResult?.result || null),
+      );
       const url = `/api/mcp/resources/openai-widget/${serverId}/${encodedUri}?toolInput=${toolInput}&toolOutput=${toolOutput}&toolId=${toolCall.id}`;
 
-      console.log("[OpenAI Component] Using HTTP endpoint:", url);
-      console.log("[OpenAI Component] Encoded URI:", encodedUri);
       setWidgetUrl(url);
-    } else if (componentUrl.startsWith("http://") || componentUrl.startsWith("https://")) {
+    } else if (
+      componentUrl.startsWith("http://") ||
+      componentUrl.startsWith("https://")
+    ) {
       // Use HTTP(S) URL directly
-      console.log("[OpenAI Component] Using HTTP(S) URL:", componentUrl);
       setWidgetUrl(componentUrl);
-    } else {
-      console.warn("[OpenAI Component] Unknown component URL format:", componentUrl);
     }
-  }, [componentUrl, serverId, toolCall.parameters, toolCall.id, toolResult?.result]);
+  }, [
+    componentUrl,
+    serverId,
+    toolCall.parameters,
+    toolCall.id,
+    toolResult?.result,
+  ]);
 
   // Handle postMessage communication with iframe
   useEffect(() => {
@@ -76,32 +75,39 @@ export function OpenAIComponentRenderer({
 
     const handleMessage = async (event: MessageEvent) => {
       // Only accept messages from our iframe
-      if (!iframeRef.current || event.source !== iframeRef.current.contentWindow) {
+      if (
+        !iframeRef.current ||
+        event.source !== iframeRef.current.contentWindow
+      ) {
         return;
       }
-
-      console.log("[OpenAI Component] Received message:", event.data);
 
       switch (event.data.type) {
         case "openai:setWidgetState":
           try {
-            localStorage.setItem(widgetStateKey, JSON.stringify(event.data.state));
+            localStorage.setItem(
+              widgetStateKey,
+              JSON.stringify(event.data.state),
+            );
           } catch (err) {
-            console.error("Failed to save widget state:", err);
+            throw err;
           }
           break;
 
         case "openai:callTool":
           if (onCallTool) {
             try {
-              const result = await onCallTool(event.data.toolName, event.data.params || {});
+              const result = await onCallTool(
+                event.data.toolName,
+                event.data.params || {},
+              );
               iframeRef.current?.contentWindow?.postMessage(
                 {
                   type: "openai:callTool:response",
                   requestId: event.data.requestId,
                   result: result,
                 },
-                "*"
+                "*",
               );
             } catch (err) {
               iframeRef.current?.contentWindow?.postMessage(
@@ -110,7 +116,7 @@ export function OpenAIComponentRenderer({
                   requestId: event.data.requestId,
                   error: err instanceof Error ? err.message : "Unknown error",
                 },
-                "*"
+                "*",
               );
             }
           }
@@ -127,14 +133,11 @@ export function OpenAIComponentRenderer({
     window.addEventListener("message", handleMessage);
 
     const handleLoad = () => {
-      console.log("[OpenAI Component] Iframe loaded successfully");
-      console.log("[OpenAI Component] Iframe src:", iframeRef.current?.src);
       setIsReady(true);
       setError(null);
     };
 
     const handleError = (e: ErrorEvent) => {
-      console.error("[OpenAI Component] Iframe error:", e);
       setError("Failed to load component");
     };
 
@@ -157,7 +160,7 @@ export function OpenAIComponentRenderer({
           </p>
         </div>
       )}
-      
+
       {!isReady && widgetUrl && (
         <div className="bg-blue-50/30 dark:bg-blue-950/20 border border-blue-200/50 dark:border-blue-800/50 rounded-lg p-4 mb-2">
           <p className="text-sm text-blue-600 dark:text-blue-400">
