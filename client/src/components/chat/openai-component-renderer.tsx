@@ -42,25 +42,29 @@ export function OpenAIComponentRenderer({
   // Storage key for widget state
   const widgetStateKey = `openai-widget-state:${toolCall.name}:${toolCall.id}`;
 
-  // Build HTTP URL for widget serving
+  // Build widget URL (serve at root path for React Router compatibility)
   useEffect(() => {
     if (componentUrl.startsWith("ui://") && serverId) {
-      // Use HTTP endpoint to serve widget with injected API
-      const encodedUri = encodeURIComponent(componentUrl);
-      const toolInput = encodeURIComponent(JSON.stringify(toolCall.parameters));
-
-      // Extract only the structured content for toolOutput (not the entire result with metadata)
       const structuredContent = toolResult?.result?.structuredContent || toolResult?.result || null;
-      const toolOutput = encodeURIComponent(JSON.stringify(structuredContent));
 
-      const url = `/api/mcp/resources/openai-widget/${serverId}/${encodedUri}?toolInput=${toolInput}&toolOutput=${toolOutput}&toolId=${toolCall.id}`;
+      const widgetData = btoa(JSON.stringify({
+        serverId,
+        uri: componentUrl,
+        toolInput: toolCall.parameters,
+        toolOutput: structuredContent,
+        toolId: toolCall.id,
+      }));
+
+      const sessionId = `widget-${toolCall.id}`;
+      // Use src (not srcdoc) so React Router sees a real pathname
+      const url = `/api/mcp/resources/widget/${sessionId}?data=${encodeURIComponent(widgetData)}`;
 
       setWidgetUrl(url);
     } else if (
       componentUrl.startsWith("http://") ||
       componentUrl.startsWith("https://")
     ) {
-      // Use HTTP(S) URL directly
+      // External URLs use src directly
       setWidgetUrl(componentUrl);
     }
   }, [
