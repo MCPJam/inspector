@@ -45,8 +45,37 @@ export function OpenAIComponentRenderer({
   // Build widget URL (serve at root path for React Router compatibility)
   useEffect(() => {
     if (componentUrl.startsWith("ui://") && serverId) {
-      const structuredContent =
-        toolResult?.result?.structuredContent || toolResult?.result || null;
+      // Extract structured content from different result formats
+      // 1. Backend flow: toolResult.result.structuredContent
+      // 2. Local AI SDK flow: toolResult.result[0].output.value.structuredContent
+      let structuredContent = null;
+
+      if (toolResult?.result) {
+        const result = toolResult.result;
+
+        // Check if it's directly available
+        if (result.structuredContent) {
+          structuredContent = result.structuredContent;
+        }
+        // Check if wrapped in array (AI SDK format)
+        else if (Array.isArray(result) && result[0]) {
+          const firstResult = result[0];
+          // AI SDK format: {type, output: {value: {structuredContent}}}
+          if (firstResult.output?.value?.structuredContent) {
+            structuredContent = firstResult.output.value.structuredContent;
+          } else if (firstResult.structuredContent) {
+            structuredContent = firstResult.structuredContent;
+          } else if (firstResult.output?.value) {
+            // Use the entire value if no structuredContent field
+            structuredContent = firstResult.output.value;
+          }
+        }
+
+        // Fallback to entire result if nothing else found
+        if (!structuredContent) {
+          structuredContent = result;
+        }
+      }
 
       // Unicode-safe base64 encoding
       const jsonString = JSON.stringify({
