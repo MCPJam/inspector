@@ -130,6 +130,10 @@ const handleAgentStepFinish = (
         for (const call of toolCalls) {
           const currentToolCallId = ++streamingContext.toolCallId;
           streamingContext.lastEmittedToolCallId = currentToolCallId;
+          const toolName = call.name || call.toolName;
+
+          // Store tool name for serverId lookup later
+          streamingContext.toolCallIdToName.set(currentToolCallId, toolName);
 
           if (streamingContext.controller && streamingContext.encoder) {
             sendSseEvent(
@@ -139,7 +143,7 @@ const handleAgentStepFinish = (
                 type: "tool_call",
                 toolCall: {
                   id: currentToolCallId,
-                  name: call.name || call.toolName,
+                  name: toolName,
                   parameters: call.params || call.args || {},
                   timestamp: new Date().toISOString(),
                   status: "executing",
@@ -300,10 +304,7 @@ const createStreamingResponse = async (
               (chunk.chunk as any).output ??
               (chunk.chunk as any).result ??
               (chunk.chunk as any).value;
-            const currentToolCallId =
-              streamingContext.lastEmittedToolCallId != null
-                ? streamingContext.lastEmittedToolCallId
-                : streamingContext.toolCallId;
+            const currentToolCallId = streamingContext.lastEmittedToolCallId!;
 
             // Look up serverId from tool metadata
             const toolName =
@@ -444,6 +445,10 @@ const sendMessagesToBackend = async (
   const emitToolCall = (call: BackendToolCallEvent) => {
     const currentToolCallId = ++streamingContext.toolCallId;
     streamingContext.lastEmittedToolCallId = currentToolCallId;
+
+    // Store tool name for serverId lookup later
+    streamingContext.toolCallIdToName.set(currentToolCallId, call.name);
+
     sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
       type: "tool_call",
       toolCall: {
