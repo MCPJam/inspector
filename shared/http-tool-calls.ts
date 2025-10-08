@@ -90,9 +90,6 @@ export async function executeToolCallsFromMessages(
     }
   }
 
-  /**
-   * Fast O(1) serverId lookup
-   */
   const extractServerId = (toolName: string): string | undefined => {
     return toolToServerMap.get(toolName);
   };

@@ -135,7 +135,6 @@ export function ChatTab({
         body: JSON.stringify({
           toolName,
           parameters: params,
-          selectedServers: selectedConnectedNames,
         }),
       });
       const data = await response.json();
