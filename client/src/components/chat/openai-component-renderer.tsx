@@ -41,7 +41,14 @@ export function OpenAIComponentRenderer({
 
   // Storage key for widget state
   const widgetStateKey = `openai-widget-state:${toolCall.name}:${toolCall.id}`;
-
+  console.log("componentUrl", componentUrl);
+  console.log("serverId", serverId);
+  console.log("toolCall", toolCall);
+  console.log("toolResult", toolResult);
+  console.log("onCallTool", onCallTool);
+  console.log("onSendFollowup", onSendFollowup);
+  console.log("className", className);
+  console.log("uiResourceBlob", uiResourceBlob);
   // Build HTTP URL for widget serving
   useEffect(() => {
     if (componentUrl.startsWith("ui://") && serverId) {

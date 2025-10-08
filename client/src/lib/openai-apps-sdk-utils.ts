@@ -25,13 +25,39 @@ export interface OpenAIComponentMetadata {
 export function extractOpenAIComponent(
   payload: any,
 ): OpenAIComponentMetadata | null {
+  console.log("extractOpenAIComponent payload", payload);
   if (!payload) return null;
 
   // If payload is an array, try the first element
   const actualPayload = Array.isArray(payload) ? payload[0] : payload;
+  console.log("extractOpenAIComponent actualPayload", actualPayload);
   if (!actualPayload) return null;
 
-  const meta = actualPayload?._meta;
+  const findMetaContainer = (node: any): any => {
+    if (!node || typeof node !== "object") return null;
+
+    if (Object.prototype.hasOwnProperty.call(node, "_meta")) {
+      return node;
+    }
+
+    if (Array.isArray(node)) {
+      for (const item of node) {
+        const found = findMetaContainer(item);
+        if (found) return found;
+      }
+      return null;
+    }
+
+    for (const value of Object.values(node)) {
+      const found = findMetaContainer(value);
+      if (found) return found;
+    }
+
+    return null;
+  };
+
+  const metaContainer = findMetaContainer(actualPayload);
+  const meta = metaContainer?._meta;
   if (meta && typeof meta === "object") {
     const outputTemplate = meta["openai/outputTemplate"];
     if (outputTemplate && typeof outputTemplate === "string") {
@@ -61,7 +87,7 @@ export function extractOpenAIComponent(
           return null;
         };
 
-        const resource = findResource(actualPayload);
+        const resource = findResource(metaContainer ?? actualPayload);
         if (resource?.blob || resource?.text) {
           return {
             url: outputTemplate,
