@@ -320,14 +320,15 @@ export function ToolCallDisplay({
                     </div>
                     <div className="p-4">
                       {(() => {
-
                         const extractUIResource = (
                           payload: any,
                         ): any | null => {
                           if (!payload) return null;
 
                           // If payload is an array, try the first element
-                          const actualPayload = Array.isArray(payload) ? payload[0] : payload;
+                          const actualPayload = Array.isArray(payload)
+                            ? payload[0]
+                            : payload;
                           if (!actualPayload) return null;
 
                           const direct = actualPayload?.resource;
@@ -357,7 +358,8 @@ export function ToolCallDisplay({
 
                         // 1. Check for OpenAI component first
                         const fullResult = (toolResult as any)?.result;
-                        const openaiComponent = extractOpenAIComponent(fullResult);
+                        const openaiComponent =
+                          extractOpenAIComponent(fullResult);
 
                         if (openaiComponent) {
                           // serverId comes from the backend via toolResult.serverId

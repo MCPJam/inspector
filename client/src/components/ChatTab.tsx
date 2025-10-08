@@ -141,7 +141,6 @@ export function ChatTab({
       const data = await response.json();
       return data.result;
     } catch (error) {
-      console.error("Tool execution failed:", error);
       throw error;
     }
   };

@@ -234,12 +234,17 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       const data = await executeToolApi(serverName, selectedTool, params);
       if (data.status === "completed") {
         let result = data.result;
-        
+
         // Unwrap if result is double-wrapped (has a "result" property inside)
-        if (result && typeof result === 'object' && 'result' in result && !('_meta' in result)) {
+        if (
+          result &&
+          typeof result === "object" &&
+          "result" in result &&
+          !("_meta" in result)
+        ) {
           result = result.result;
         }
-        
+
         const executionDuration = Date.now() - executionStartTime;
         logger.info("Tool execution completed successfully", {
           toolName: selectedTool,
@@ -369,12 +374,17 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         // Show final result
         setElicitationRequest(null);
         let result = data.result;
-        
+
         // Unwrap if result is double-wrapped
-        if (result && typeof result === 'object' && 'result' in result && !('_meta' in result)) {
+        if (
+          result &&
+          typeof result === "object" &&
+          "result" in result &&
+          !("_meta" in result)
+        ) {
           result = result.result;
         }
-        
+
         setResult(result);
         if (result?.structuredContent) {
           setStructuredResult(
@@ -525,7 +535,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
           logger.info("OpenAI component requested follow-up", { message });
           // In ToolsTab, we could show a toast or notification
           // since there's no chat input to populate
-          console.log("[ToolsTab] Follow-up requested:", message);
         }}
       />
     </ResizablePanel>
