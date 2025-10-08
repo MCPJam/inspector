@@ -113,10 +113,15 @@ resources.get("/widget-content", async (c) => {
       );
     }
 
-    // Decode widget data (base64 encoded JSON)
-    const { serverId, uri, toolInput, toolOutput, toolId } = JSON.parse(
-      Buffer.from(widgetData, "base64").toString(),
-    );
+    // Decode widget data (base64 encoded JSON with Unicode support)
+    const base64Decoded = Buffer.from(widgetData, "base64").toString("binary");
+    const percentEncoded = base64Decoded
+      .split("")
+      .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
+      .join("");
+    const jsonString = decodeURIComponent(percentEncoded);
+    const { serverId, uri, toolInput, toolOutput, toolId } =
+      JSON.parse(jsonString);
 
     const mcpClientManager = c.mcpJamClientManager;
     const connectedServers = mcpClientManager.getConnectedServers();

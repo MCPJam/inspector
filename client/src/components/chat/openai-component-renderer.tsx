@@ -48,13 +48,19 @@ export function OpenAIComponentRenderer({
       const structuredContent =
         toolResult?.result?.structuredContent || toolResult?.result || null;
 
+      // Unicode-safe base64 encoding
+      const jsonString = JSON.stringify({
+        serverId,
+        uri: componentUrl,
+        toolInput: toolCall.parameters,
+        toolOutput: structuredContent,
+        toolId: toolCall.id,
+      });
+
+      // Convert to UTF-8 bytes then to base64
       const widgetData = btoa(
-        JSON.stringify({
-          serverId,
-          uri: componentUrl,
-          toolInput: toolCall.parameters,
-          toolOutput: structuredContent,
-          toolId: toolCall.id,
+        encodeURIComponent(jsonString).replace(/%([0-9A-F]{2})/g, (_, p1) => {
+          return String.fromCharCode(parseInt(p1, 16));
         }),
       );
 
