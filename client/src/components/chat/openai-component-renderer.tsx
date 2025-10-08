@@ -48,9 +48,11 @@ export function OpenAIComponentRenderer({
       // Use HTTP endpoint to serve widget with injected API
       const encodedUri = encodeURIComponent(componentUrl);
       const toolInput = encodeURIComponent(JSON.stringify(toolCall.parameters));
-      const toolOutput = encodeURIComponent(
-        JSON.stringify(toolResult?.result || null),
-      );
+
+      // Extract only the structured content for toolOutput (not the entire result with metadata)
+      const structuredContent = toolResult?.result?.structuredContent || toolResult?.result || null;
+      const toolOutput = encodeURIComponent(JSON.stringify(structuredContent));
+
       const url = `/api/mcp/resources/openai-widget/${serverId}/${encodedUri}?toolInput=${toolInput}&toolOutput=${toolOutput}&toolId=${toolCall.id}`;
 
       setWidgetUrl(url);
