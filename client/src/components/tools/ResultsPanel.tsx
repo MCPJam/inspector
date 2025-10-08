@@ -6,54 +6,7 @@ import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import { UIResourceRenderer } from "@mcp-ui/client";
 import { OpenAIComponentRenderer } from "../chat/openai-component-renderer";
-
-function getOpenAIComponentFromResult(
-  rawResult: any,
-): { url: string; htmlBlob?: string } | null {
-  if (!rawResult) {
-    return null;
-  }
-  const meta = rawResult?._meta;
-  if (meta && typeof meta === "object") {
-    const outputTemplate = meta["openai/outputTemplate"];
-    if (outputTemplate && typeof outputTemplate === "string") {
-      // For ui:// URIs, try to find the blob
-      if (outputTemplate.startsWith("ui://")) {
-        // Check for embedded resource
-        const findResource = (obj: any): any => {
-          if (!obj) return null;
-          if (obj.resource?.uri === outputTemplate) {
-            return obj.resource;
-          }
-          if (Array.isArray(obj.content)) {
-            for (const item of obj.content) {
-              if (
-                item?.type === "resource" &&
-                item?.resource?.uri === outputTemplate
-              ) {
-                return item.resource;
-              }
-            }
-          }
-          return null;
-        };
-
-        const resource = findResource(rawResult);
-        if (resource?.blob || resource?.text) {
-          return {
-            url: outputTemplate,
-            htmlBlob: resource.blob || resource.text,
-          };
-        }
-        // If no blob found, return URL anyway - the HTTP endpoint will fetch it
-        return { url: outputTemplate };
-      }
-      // Return HTTP(S) URLs as-is
-      return { url: outputTemplate };
-    }
-  }
-  return null;
-}
+import { extractOpenAIComponent } from "@/lib/openai-apps-sdk-utils";
 
 function getUIResourceFromResult(rawResult: any): any | null {
   if (!rawResult) return null;
@@ -142,21 +95,21 @@ export function ResultsPanel({
               </Badge>
             ))}
         </div>
-        {result && (structuredResult || getOpenAIComponentFromResult(result as any)) && (
+        {result && (structuredResult || extractOpenAIComponent(result as any)) && (
           <div className="flex gap-2">
             <Button
               size="sm"
               variant={!showStructured ? "default" : "outline"}
               onClick={() => onToggleStructured(false)}
             >
-              {getOpenAIComponentFromResult(result as any) ? "Component" : "Raw Output"}
+              {extractOpenAIComponent(result as any) ? "Component" : "Raw Output"}
             </Button>
             <Button
               size="sm"
               variant={showStructured ? "default" : "outline"}
               onClick={() => onToggleStructured(true)}
             >
-              {getOpenAIComponentFromResult(result as any) ? "Raw JSON" : "Structured Output"}
+              {extractOpenAIComponent(result as any) ? "Raw JSON" : "Structured Output"}
             </Button>
           </div>
         )}
@@ -199,7 +152,7 @@ export function ResultsPanel({
                 )}
             </div>
           </div>
-        ) : showStructured && result && getOpenAIComponentFromResult(result as any) ? (
+        ) : showStructured && result && extractOpenAIComponent(result as any) ? (
           // Raw JSON view for OpenAI components - show complete result
           <ScrollArea className="h-full">
             <div className="p-4">
@@ -248,7 +201,7 @@ export function ResultsPanel({
         ) : result && !showStructured ? (
           // Raw Output view - show OpenAI component or full JSON
           (() => {
-            const openaiComponent = getOpenAIComponentFromResult(result as any);
+            const openaiComponent = extractOpenAIComponent(result as any);
             
             // If there's an OpenAI component, render it
             if (openaiComponent) {

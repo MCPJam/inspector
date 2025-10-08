@@ -14,6 +14,7 @@ import { MCPIcon } from "../ui/mcp-icon";
 import { UIResourceRenderer } from "@mcp-ui/client";
 import { MastraMCPServerDefinition } from "@mastra/mcp";
 import { OpenAIComponentRenderer } from "./openai-component-renderer";
+import { extractOpenAIComponent } from "@/lib/openai-apps-sdk-utils";
 
 interface ToolCallDisplayProps {
   toolCall: ToolCall;
@@ -319,68 +320,6 @@ export function ToolCallDisplay({
                     </div>
                     <div className="p-4">
                       {(() => {
-                        // Check for OpenAI Apps SDK component URL in _meta
-                        const extractOpenAIComponent = (
-                          payload: any,
-                        ): { url: string; htmlBlob?: string } | null => {
-                          if (!payload) return null;
-
-                          // If payload is an array, try the first element
-                          const actualPayload = Array.isArray(payload) ? payload[0] : payload;
-                          if (!actualPayload) return null;
-
-                          const meta = actualPayload?._meta;
-                          if (meta && typeof meta === "object") {
-                            const outputTemplate = meta["openai/outputTemplate"];
-                            if (
-                              outputTemplate &&
-                              typeof outputTemplate === "string"
-                            ) {
-                              // For ui:// URIs, we need to extract the HTML blob
-                              if (outputTemplate.startsWith("ui://")) {
-                                // Look for the resource content in the payload
-                                // Check if there's a resource with matching URI
-                                const findResource = (obj: any): any => {
-                                  if (!obj) return null;
-
-                                  // Check direct resource
-                                  if (obj.resource?.uri === outputTemplate) {
-                                    return obj.resource;
-                                  }
-
-                                  // Check content array
-                                  if (Array.isArray(obj.content)) {
-                                    for (const item of obj.content) {
-                                      if (item?.type === "resource" && item?.resource?.uri === outputTemplate) {
-                                        return item.resource;
-                                      }
-                                    }
-                                  }
-
-                                  return null;
-                                };
-
-                                const resource = findResource(actualPayload);
-                                if (resource?.blob || resource?.text) {
-                                  return {
-                                    url: outputTemplate,
-                                    htmlBlob: resource.blob || resource.text,
-                                  };
-                                }
-
-                                // If no blob found, return URL anyway - the HTTP endpoint will fetch it
-                                console.log(
-                                  `[Tool Call] OpenAI component ui:// URI will be fetched via HTTP: ${outputTemplate}`
-                                );
-                                return { url: outputTemplate };
-                              }
-
-                              // Return HTTP(S) URLs as-is
-                              return { url: outputTemplate };
-                            }
-                          }
-                          return null;
-                        };
 
                         const extractUIResource = (
                           payload: any,
@@ -417,49 +356,11 @@ export function ToolCallDisplay({
                         };
 
                         // 1. Check for OpenAI component first
-                        // toolResult.result now contains the full MCP response: { result: {...}, _meta: {...} }
-                        console.log("[Tool Call] DEBUG - Raw toolResult:", toolResult);
-                        console.log("[Tool Call] DEBUG - toolResult.result:", (toolResult as any)?.result);
                         const fullResult = (toolResult as any)?.result;
-                        console.log("[Tool Call] DEBUG - fullResult:", fullResult);
-                        console.log("[Tool Call] DEBUG - fullResult._meta:", (fullResult as any)?._meta);
                         const openaiComponent = extractOpenAIComponent(fullResult);
-                        console.log("[Tool Call] OpenAI component detected:", openaiComponent, "from fullResult:", fullResult);
 
                         if (openaiComponent) {
-                          // Extract serverId from tool name if it has a prefix (e.g., "pizzaz:pizza-map")
-                          let serverId: string | undefined;
-                          console.log("[Tool Call] Tool name:", toolCall.name);
-
-                          if (toolCall.name.includes(":")) {
-                            const [prefix] = toolCall.name.split(":", 2);
-                            serverId = prefix;
-                            console.log("[Tool Call] Extracted serverId from tool name:", serverId);
-                          } else {
-                            // Fallback: find server that likely has this tool
-                            // Skip numeric keys (like '3') and prefer named servers
-                            console.log("[Tool Call] serverConfigs:", serverConfigs);
-                            const serverKeys = serverConfigs ? Object.keys(serverConfigs) : [];
-                            console.log("[Tool Call] serverConfigs keys:", serverKeys);
-
-                            // Filter out numeric keys and prefer the first valid server name
-                            const validServerKeys = serverKeys.filter(key => isNaN(Number(key)));
-
-                            // Try to match tool name with server name
-                            // e.g., "pizza-map" might be from "pizzaz" server
-                            const toolNameLower = toolCall.name.toLowerCase();
-                            const matchingServer = validServerKeys.find(key =>
-                              toolNameLower.includes(key.toLowerCase()) ||
-                              key.toLowerCase().includes(toolNameLower.split('-')[0])
-                            );
-
-                            serverId = matchingServer ||
-                              (validServerKeys.length > 0 ? validServerKeys[0] :
-                                (serverKeys.length > 0 ? serverKeys[0] : undefined));
-                          }
-
-                          console.log("[Tool Call] Rendering OpenAI component with serverId:", serverId);
-
+                          // serverId comes from the backend via toolResult.serverId
                           return (
                             <OpenAIComponentRenderer
                               componentUrl={openaiComponent.url}
@@ -468,7 +369,7 @@ export function ToolCallDisplay({
                               onCallTool={onCallTool}
                               onSendFollowup={onSendFollowup}
                               uiResourceBlob={openaiComponent.htmlBlob}
-                              serverId={serverId}
+                              serverId={toolResult?.serverId}
                             />
                           );
                         }

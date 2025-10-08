@@ -54,17 +54,48 @@ export async function executeToolCallsFromMessages(
   messages: ModelMessage[],
   options: { tools: ToolsMap } | { toolsets: Toolsets } | { client: MCPClient },
 ): Promise<void> {
-  // Build tools index
+  // Build tools index and track server IDs
   let tools: ToolsMap = {};
+  let toolsets: Toolsets = {};
+
   if ((options as any).client) {
-    const toolsets = await (options as any).client.getToolsets();
+    toolsets = await (options as any).client.getToolsets();
     tools = flattenToolsets(toolsets as any);
   } else if ((options as any).toolsets) {
-    tools = flattenToolsets((options as any).toolsets as any);
+    toolsets = (options as any).toolsets as Toolsets;
+    tools = flattenToolsets(toolsets);
   } else {
     tools = (options as any).tools as ToolsMap;
   }
   const index = buildIndexWithAliases(tools);
+
+  /**
+   * Build a fast lookup map: toolName -> serverId
+   * This is O(n) upfront instead of O(n*m) per tool call
+   */
+  const toolToServerMap = new Map<string, string>();
+  for (const [serverId, serverTools] of Object.entries(toolsets)) {
+    if (serverTools && typeof serverTools === 'object') {
+      for (const toolName of Object.keys(serverTools)) {
+        toolToServerMap.set(toolName, serverId);
+        // Also map the pure name without prefix
+        const idx = toolName.indexOf("_");
+        if (idx > -1 && idx < toolName.length - 1) {
+          const pureToolName = toolName.slice(idx + 1);
+          if (!toolToServerMap.has(pureToolName)) {
+            toolToServerMap.set(pureToolName, serverId);
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Fast O(1) serverId lookup
+   */
+  const extractServerId = (toolName: string): string | undefined => {
+    return toolToServerMap.get(toolName);
+  };
 
   // Collect existing tool-result IDs
   const existingToolResultIds = new Set<string>();
@@ -124,6 +155,9 @@ export async function executeToolCallsFromMessages(
             output = { type: "text", value: String(result) } as any;
           }
 
+          // Extract serverId from tool name
+          const serverId = extractServerId(toolName);
+
           const toolResultMessage: ModelMessage = {
             role: "tool" as const,
             content: [
@@ -134,6 +168,8 @@ export async function executeToolCallsFromMessages(
                 output,
                 // Preserve full result including _meta for OpenAI Apps SDK
                 result: result,
+                // Add serverId for OpenAI component resolution
+                serverId,
               },
             ],
           } as any;
