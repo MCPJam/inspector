@@ -22,6 +22,7 @@ export type BackendToolResultEvent = {
   toolName?: string;
   result: unknown;
   error?: unknown;
+  serverId?: string; // Server that executed the tool
 };
 
 export type BackendConversationHandlers = {
@@ -122,6 +123,9 @@ export const runBackendConversation = async (
         if ((msg as any).role === "tool" && Array.isArray(content)) {
           for (const item of content) {
             if (item?.type === "tool-result") {
+              // Preserve the full result field if it exists (contains _meta for OpenAI Apps SDK)
+              // Otherwise fall back to extracting output value
+              const fullResult = item.result;
               const rawOutput =
                 item.output ??
                 item.result ??
@@ -130,8 +134,11 @@ export const runBackendConversation = async (
                 item.content;
               const resultEvent: BackendToolResultEvent = {
                 toolName: item.toolName ?? item.name,
-                result: extractToolResultValue(rawOutput),
+                // Use full result if available, otherwise extract value from output
+                result: fullResult ?? extractToolResultValue(rawOutput),
                 error: item.error,
+                // Preserve serverId if present
+                serverId: item.serverId,
               };
               iterationToolResults.push(resultEvent);
               handlers?.onToolResult?.(resultEvent);

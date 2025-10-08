@@ -13,12 +13,16 @@ import { cn } from "@/lib/utils";
 import { MCPIcon } from "../ui/mcp-icon";
 import { UIResourceRenderer } from "@mcp-ui/client";
 import { MastraMCPServerDefinition } from "@mastra/mcp";
+import { OpenAIComponentRenderer } from "./openai-component-renderer";
+import { extractOpenAIComponent } from "@/lib/openai-apps-sdk-utils";
 
 interface ToolCallDisplayProps {
   toolCall: ToolCall;
   toolResult?: ToolResult;
   className?: string;
   serverConfigs?: Record<string, MastraMCPServerDefinition>;
+  onCallTool?: (toolName: string, params: Record<string, any>) => Promise<any>;
+  onSendFollowup?: (message: string) => void;
 }
 
 // JSON syntax highlighting component
@@ -160,6 +164,8 @@ export function ToolCallDisplay({
   toolResult,
   className,
   serverConfigs,
+  onCallTool,
+  onSendFollowup,
 }: ToolCallDisplayProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [showJsonTree, setShowJsonTree] = useState(false);
@@ -318,7 +324,14 @@ export function ToolCallDisplay({
                           payload: any,
                         ): any | null => {
                           if (!payload) return null;
-                          const direct = payload?.resource;
+
+                          // If payload is an array, try the first element
+                          const actualPayload = Array.isArray(payload)
+                            ? payload[0]
+                            : payload;
+                          if (!actualPayload) return null;
+
+                          const direct = actualPayload?.resource;
                           if (
                             direct &&
                             typeof direct === "object" &&
@@ -327,7 +340,7 @@ export function ToolCallDisplay({
                           ) {
                             return direct;
                           }
-                          const content = payload?.content;
+                          const content = actualPayload?.content;
                           if (Array.isArray(content)) {
                             for (const item of content) {
                               if (
@@ -343,9 +356,28 @@ export function ToolCallDisplay({
                           return null;
                         };
 
-                        const uiRes = extractUIResource(
-                          (toolResult as any)?.result,
-                        );
+                        // 1. Check for OpenAI component first
+                        const fullResult = (toolResult as any)?.result;
+                        const openaiComponent =
+                          extractOpenAIComponent(fullResult);
+
+                        if (openaiComponent) {
+                          // serverId comes from the backend via toolResult.serverId
+                          return (
+                            <OpenAIComponentRenderer
+                              componentUrl={openaiComponent.url}
+                              toolCall={toolCall}
+                              toolResult={toolResult}
+                              onCallTool={onCallTool}
+                              onSendFollowup={onSendFollowup}
+                              uiResourceBlob={openaiComponent.htmlBlob}
+                              serverId={toolResult?.serverId}
+                            />
+                          );
+                        }
+
+                        // 2. Check for MCP-UI resource
+                        const uiRes = extractUIResource(fullResult);
                         if (uiRes) {
                           return (
                             <UIResourceRenderer
@@ -402,11 +434,15 @@ export function ToolCallDisplay({
                             />
                           );
                         }
-                        return typeof toolResult.result === "object" ? (
-                          <JsonDisplay data={toolResult.result} />
+
+                        // 3. Fallback to JSON display
+                        // Display the actual result content, not the wrapper
+                        const displayData = fullResult?.result || fullResult;
+                        return typeof displayData === "object" ? (
+                          <JsonDisplay data={displayData} />
                         ) : (
                           <div className="text-sm text-foreground bg-muted/30 p-3 rounded border">
-                            {String(toolResult.result)}
+                            {String(displayData)}
                           </div>
                         );
                       })()}

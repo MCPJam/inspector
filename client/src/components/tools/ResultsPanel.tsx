@@ -5,6 +5,8 @@ import { CheckCircle, XCircle } from "lucide-react";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import { UIResourceRenderer } from "@mcp-ui/client";
+import { OpenAIComponentRenderer } from "../chat/openai-component-renderer";
+import { extractOpenAIComponent } from "@/lib/openai-apps-sdk-utils";
 
 function getUIResourceFromResult(rawResult: any): any | null {
   if (!rawResult) return null;
@@ -54,6 +56,12 @@ interface ResultsPanelProps {
     intent: string,
     params?: Record<string, any>,
   ) => Promise<void>;
+  onSendFollowup?: (message: string) => void;
+  serverId?: string;
+  toolCallId?: string;
+  toolName?: string;
+  toolParameters?: Record<string, any>;
+  toolCallTimestamp?: Date;
 }
 
 export function ResultsPanel({
@@ -66,6 +74,12 @@ export function ResultsPanel({
   unstructuredValidationResult,
   onExecuteFromUI,
   onHandleIntent,
+  onSendFollowup,
+  serverId,
+  toolCallId,
+  toolName,
+  toolParameters,
+  toolCallTimestamp,
 }: ResultsPanelProps) {
   return (
     <div className="h-full flex flex-col border-t border-border bg-background">
@@ -89,24 +103,29 @@ export function ResultsPanel({
               </Badge>
             ))}
         </div>
-        {structuredResult && (
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant={!showStructured ? "default" : "outline"}
-              onClick={() => onToggleStructured(false)}
-            >
-              Raw Output
-            </Button>
-            <Button
-              size="sm"
-              variant={showStructured ? "default" : "outline"}
-              onClick={() => onToggleStructured(true)}
-            >
-              Structured Output
-            </Button>
-          </div>
-        )}
+        {result &&
+          (structuredResult || extractOpenAIComponent(result as any)) && (
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant={!showStructured ? "default" : "outline"}
+                onClick={() => onToggleStructured(false)}
+              >
+                {extractOpenAIComponent(result as any)
+                  ? "Component"
+                  : "Raw Output"}
+              </Button>
+              <Button
+                size="sm"
+                variant={showStructured ? "default" : "outline"}
+                onClick={() => onToggleStructured(true)}
+              >
+                {extractOpenAIComponent(result as any)
+                  ? "Raw JSON"
+                  : "Structured Output"}
+              </Button>
+            </div>
+          )}
       </div>
 
       <div className="flex-1 overflow-hidden">
@@ -117,6 +136,7 @@ export function ResultsPanel({
             </div>
           </div>
         ) : showStructured && validationErrors ? (
+          // Validation errors view
           <div className="p-4">
             <h3 className="text-sm font-semibold text-destructive mb-2">
               Validation Errors
@@ -145,7 +165,33 @@ export function ResultsPanel({
                 )}
             </div>
           </div>
+        ) : showStructured &&
+          result &&
+          extractOpenAIComponent(result as any) ? (
+          // Raw JSON view for OpenAI components - show complete result
+          <ScrollArea className="h-full">
+            <div className="p-4">
+              <JsonView
+                src={result}
+                dark={true}
+                theme="atom"
+                enableClipboard={true}
+                displaySize={false}
+                collapseStringsAfterLength={100}
+                style={{
+                  fontSize: "12px",
+                  fontFamily:
+                    "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                  backgroundColor: "hsl(var(--background))",
+                  padding: "16px",
+                  borderRadius: "8px",
+                  border: "1px solid hsl(var(--border))",
+                }}
+              />
+            </div>
+          </ScrollArea>
         ) : showStructured && structuredResult && validationErrors === null ? (
+          // Structured Output view for regular tools
           <ScrollArea className="h-full">
             <div className="p-4">
               <JsonView
@@ -168,97 +214,128 @@ export function ResultsPanel({
             </div>
           </ScrollArea>
         ) : result && !showStructured ? (
-          <div className="flex-1 overflow-scroll h-full">
-            <div className="p-4">
-              {unstructuredValidationResult === "valid" && (
-                <Badge
-                  variant="default"
-                  className="bg-green-600 hover:bg-green-700 mb-4"
-                >
-                  <CheckCircle className="h-3 w-3 mr-1.5" />
-                  Success: Content matches the output schema.
-                </Badge>
-              )}
-              {unstructuredValidationResult === "schema_mismatch" && (
-                <Badge variant="destructive" className="mb-4">
-                  <XCircle className="h-3 w-3 mr-1.5" />
-                  Error: Content does not match the output schema.
-                </Badge>
-              )}
-              {unstructuredValidationResult === "invalid_json" && (
-                <Badge
-                  variant="destructive"
-                  className="bg-amber-600 hover:bg-amber-700 mb-4"
-                >
-                  <XCircle className="h-3 w-3 mr-1.5" />
-                  Warning: Output schema provided by the tool is invalid.
-                </Badge>
-              )}
-              {(() => {
-                const uiRes = getUIResourceFromResult(result as any);
-                if (uiRes) {
-                  return (
-                    <UIResourceRenderer
-                      resource={uiRes}
-                      htmlProps={{
-                        autoResizeIframe: true,
-                        style: {
-                          width: "100%",
-                          minHeight: "500px",
-                          height: "auto",
-                          overflow: "visible",
-                        },
-                      }}
-                      onUIAction={async (evt) => {
-                        if (evt.type === "tool" && evt.payload?.toolName) {
-                          await onExecuteFromUI(
-                            evt.payload.toolName,
-                            evt.payload.params || {},
-                          );
-                        } else if (
-                          evt.type === "intent" &&
-                          evt.payload?.intent
-                        ) {
-                          await onHandleIntent(
-                            evt.payload.intent,
-                            evt.payload.params || {},
-                          );
-                        } else if (evt.type === "link" && evt.payload?.url) {
-                          window.open(
-                            evt.payload.url,
-                            "_blank",
-                            "noopener,noreferrer",
-                          );
-                        }
-                        return { status: "handled" } as any;
-                      }}
-                    />
-                  );
-                }
-                return (
-                  <JsonView
-                    src={result}
-                    dark={true}
-                    theme="atom"
-                    enableClipboard={true}
-                    displaySize={false}
-                    collapseStringsAfterLength={100}
-                    style={{
-                      fontSize: "12px",
-                      fontFamily:
-                        "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                      backgroundColor: "hsl(var(--background))",
-                      padding: "16px",
-                      borderRadius: "8px",
-                      border: "1px solid hsl(var(--border))",
-                      width: "calc(100vw - var(--sidebar-width) - 16px - 16px)",
-                    }}
-                  />
-                );
-              })()}
-            </div>
-          </div>
+          // Raw Output view - show OpenAI component or full JSON
+          (() => {
+            const openaiComponent = extractOpenAIComponent(result as any);
+
+            // If there's an OpenAI component, render it
+            if (openaiComponent) {
+              return (
+                <OpenAIComponentRenderer
+                  componentUrl={openaiComponent.url}
+                  toolCall={{
+                    id: toolCallId || "tool-result",
+                    name: toolName || "tool",
+                    parameters: toolParameters || {},
+                    timestamp: toolCallTimestamp || new Date(),
+                    status: "completed",
+                  }}
+                  toolResult={{
+                    id: `${toolCallId || "tool-result"}-result`,
+                    toolCallId: toolCallId || "tool-result",
+                    result: result,
+                    timestamp: new Date(),
+                  }}
+                  onCallTool={async (toolName, params) => {
+                    await onExecuteFromUI(toolName, params);
+                    return {};
+                  }}
+                  onSendFollowup={onSendFollowup}
+                  uiResourceBlob={openaiComponent.htmlBlob}
+                  serverId={serverId}
+                />
+              );
+            }
+
+            // Check for MCP-UI resource
+            const uiRes = getUIResourceFromResult(result as any);
+            if (uiRes) {
+              return (
+                <UIResourceRenderer
+                  resource={uiRes}
+                  htmlProps={{
+                    autoResizeIframe: true,
+                    style: {
+                      width: "100%",
+                      minHeight: "500px",
+                      height: "auto",
+                      overflow: "visible",
+                    },
+                  }}
+                  onUIAction={async (evt) => {
+                    if (evt.type === "tool" && evt.payload?.toolName) {
+                      await onExecuteFromUI(
+                        evt.payload.toolName,
+                        evt.payload.params || {},
+                      );
+                    } else if (evt.type === "intent" && evt.payload?.intent) {
+                      await onHandleIntent(
+                        evt.payload.intent,
+                        evt.payload.params || {},
+                      );
+                    } else if (evt.type === "link" && evt.payload?.url) {
+                      window.open(
+                        evt.payload.url,
+                        "_blank",
+                        "noopener,noreferrer",
+                      );
+                    }
+                    return { status: "handled" } as any;
+                  }}
+                />
+              );
+            }
+
+            // No UI component - show full raw JSON
+            return (
+              <div className="p-4">
+                {unstructuredValidationResult === "valid" && (
+                  <Badge
+                    variant="default"
+                    className="bg-green-600 hover:bg-green-700 mb-4"
+                  >
+                    <CheckCircle className="h-3 w-3 mr-1.5" />
+                    Success: Content matches the output schema.
+                  </Badge>
+                )}
+                {unstructuredValidationResult === "schema_mismatch" && (
+                  <Badge variant="destructive" className="mb-4">
+                    <XCircle className="h-3 w-3 mr-1.5" />
+                    Error: Content does not match the output schema.
+                  </Badge>
+                )}
+                {unstructuredValidationResult === "invalid_json" && (
+                  <Badge
+                    variant="destructive"
+                    className="bg-amber-600 hover:bg-amber-700 mb-4"
+                  >
+                    <XCircle className="h-3 w-3 mr-1.5" />
+                    Warning: Output schema provided by the tool is invalid.
+                  </Badge>
+                )}
+                <JsonView
+                  src={result}
+                  dark={true}
+                  theme="atom"
+                  enableClipboard={true}
+                  displaySize={false}
+                  collapseStringsAfterLength={100}
+                  style={{
+                    fontSize: "12px",
+                    fontFamily:
+                      "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                    backgroundColor: "hsl(var(--background))",
+                    padding: "16px",
+                    borderRadius: "8px",
+                    border: "1px solid hsl(var(--border))",
+                    width: "calc(100vw - var(--sidebar-width) - 16px - 16px)",
+                  }}
+                />
+              </div>
+            );
+          })()
         ) : (
+          // No result yet
           <div className="flex items-center justify-center h-full">
             <p className="text-xs text-muted-foreground font-medium">
               Execute a tool to see results here

@@ -122,12 +122,49 @@ class MCPJamClientManager {
     return this.serverIdMapping.get(serverName);
   }
 
+  // Reverse lookup: get server name from internal server ID
+  getServerNameForId(serverId: string): string | undefined {
+    for (const [name, id] of this.serverIdMapping.entries()) {
+      if (id === serverId) {
+        return name;
+      }
+    }
+    return undefined;
+  }
+
   private flattenToolsets(toolsets: Record<string, any>): Record<string, any> {
     const flattenedTools: Record<string, any> = {};
     Object.values(toolsets).forEach((serverTools: any) => {
       Object.assign(flattenedTools, serverTools);
     });
     return flattenedTools;
+  }
+
+  async getToolsetsWithServerIds(
+    serverNameFilter?: string[],
+  ): Promise<Record<string, Record<string, any>>> {
+    const toolsetsByServer: Record<string, Record<string, any>> = {};
+    const allServerIdsFromFilter = serverNameFilter?.map((serverName) =>
+      this.getServerIdForName(serverName),
+    );
+
+    for (const [serverId, client] of this.mcpClients.entries()) {
+      if (serverNameFilter && !allServerIdsFromFilter?.includes(serverId))
+        continue;
+      if (this.getConnectionStatus(serverId) !== "connected") continue;
+      try {
+        const toolsets = await client.getToolsets();
+        const flattenedTools = this.flattenToolsets(toolsets);
+
+        // Use server name instead of internal ID
+        const serverName = this.getServerNameForId(serverId) || serverId;
+        toolsetsByServer[serverName] = flattenedTools;
+      } catch (error) {
+        console.warn(`Failed to get tools from server ${serverId}:`, error);
+      }
+    }
+
+    return toolsetsByServer;
   }
 
   async getFlattenedToolsetsForEnabledServers(
@@ -432,50 +469,19 @@ class MCPJamClientManager {
     if (!tool)
       throw new Error(`Tool '${name}' not found in server '${serverId}'`);
 
-    // Inspect input schema to choose the most likely argument shape, but be robust and
-    // fall back to the alternate shape on invalid-arguments errors.
-    const schema: any = (tool as any).inputSchema;
-    const hasContextProperty =
-      schema &&
-      typeof schema === "object" &&
-      (schema as any).properties &&
-      Object.prototype.hasOwnProperty.call(
-        (schema as any).properties,
-        "context",
-      );
-    const requiresContext =
-      hasContextProperty ||
-      (schema &&
-        Array.isArray((schema as any).required) &&
-        (schema as any).required.includes("context"));
+    // Always wrap parameters in context object (matching Chat behavior)
+    const result = await tool.execute({ context: parameters || {} });
 
-    const contextWrapped = { context: parameters || {} };
-    const direct = parameters || {};
-    const attempts = requiresContext
-      ? [contextWrapped, direct]
-      : [direct, contextWrapped];
-
-    let lastError: any = undefined;
-    for (const args of attempts) {
-      try {
-        console.log("args", args);
-        const result = await tool.execute(args);
-
-        // Check if the result indicates an error
-        if (result && result.isError) {
-          const errorText =
-            result.content && result.content[0] && result.content[0].text
-              ? result.content[0].text
-              : "Unknown error";
-          throw new Error(errorText);
-        }
-
-        return { result };
-      } catch (err: any) {
-        lastError = err;
-      }
+    // Check if the result indicates an error
+    if (result && result.isError) {
+      const errorText =
+        result.content && result.content[0] && result.content[0].text
+          ? result.content[0].text
+          : "Unknown error";
+      throw new Error(errorText);
     }
-    throw lastError;
+
+    return { result };
   }
 
   async getResource(
