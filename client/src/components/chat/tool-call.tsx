@@ -361,7 +361,7 @@ export function ToolCallDisplay({
                         const openaiComponent =
                           extractOpenAIComponent(fullResult);
 
-                        if (openaiComponent) {
+                        if (openaiComponent && serverConfigs) {
                           // serverId comes from the backend via toolResult.serverId
                           return (
                             <OpenAIComponentRenderer
@@ -371,7 +371,7 @@ export function ToolCallDisplay({
                               onCallTool={onCallTool}
                               onSendFollowup={onSendFollowup}
                               uiResourceBlob={openaiComponent.htmlBlob}
-                              serverId={toolResult?.serverId}
+                              serverId={Object.keys(serverConfigs)[0]} // TODO: Fix this hack. We should find the correct server id for the tool call, not the first one.
                             />
                           );
                         }
