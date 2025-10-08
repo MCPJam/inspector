@@ -333,6 +333,7 @@ resources.get("/openai-widget/:serverId/:uri", async (c) => {
         "child-src 'self' blob:", // Allow blob URLs for workers
         `style-src 'self' 'unsafe-inline' ${trustedCdns}`,
         "img-src 'self' data: https: blob:", // Allow images from any HTTPS source
+        "media-src 'self' data: https: blob:", // Allow video/audio from any HTTPS source
         `font-src 'self' data: ${trustedCdns}`,
         "connect-src 'self' https: wss: ws:", // Allow WebSocket and HTTPS connections
         "frame-ancestors 'self'",
