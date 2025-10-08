@@ -18,17 +18,18 @@ www.mcpjam.com
 <br/>
 </div>
 
-A developer tool for testing, debugging Model Context Protocol (MCP) servers. It’s a great place to start evaluating an MCP server by inspecting the protocol handshake and getting a deterministic list of tools, resources, prompts from the server.
+MCPJam inspector is an open source testing platform for MCP servers. It’s a great place to start evaluating an MCP server by inspecting the protocol handshake and getting a deterministic list of tools, resources, prompts from the server.
 
 ## Key Features
 
-| Feature                         | Description                                                                                                                              |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| **Protocol handshake testing**  | Test your MCP server's tools, resources, prompts, elicitation, and OAuth 2. MCPJam is compliant with the latest MCP specs.               |
-| **All transports supported**    | Connect to any MCP server. MCPJam inspector supports STDIO, SSE, and Streamable HTTP transports.                                         |
-| **LLM Playground**              | Integrated chat playground with OpenAI, Anthropic Claude, and Ollama model support. Test how your MCP server would behave against an LLM |
-| **Evals testing**               | Simulate users flows to catch security vulnerabilities and performance regressions before your server hits production.                   |
-| **Multiple server conenctions** | Connect to multiple MCP servers. Save configurations. Upgraded UI/UX for modern dev experience.                                          |
+| Feature                                | Description                                                                                                                              |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| **Protocol handshake testing**         | Test your MCP server's tools, resources, prompts, elicitation, and OAuth 2. MCPJam is compliant with the latest MCP specs.               |
+| **All transports supported**           | Connect to any MCP server. MCPJam inspector supports STDIO, SSE, and Streamable HTTP transports.                                         |
+| **LLM Playground**                     | Integrated chat playground with OpenAI, Anthropic Claude, and Ollama model support. Test how your MCP server would behave against an LLM |
+| **Evals testing**                      | Simulate users flows to catch security vulnerabilities and performance regressions before your server hits production.                   |
+| **Multiple server connections**        | Connect to multiple MCP servers. Save configurations. Upgraded UI/UX for modern dev experience.                                          |
+| **MCP-UI and OpenAI Apps SDK support** | Test your MCP server's implementation of MCP-UI or OpenAI Apps SDK                                                                       |
 
 ## 📸 Screenshots
 
@@ -54,6 +55,25 @@ A developer tool for testing, debugging Model Context Protocol (MCP) servers. It
 <img alt="MCPJam Connection Demo" src="./client/public/demo_4.png">
 
 </details>
+
+## 🎉 Open AI Apps SDK support now in beta!
+
+Start up the MCPJam inspector in beta:
+
+```bash
+npx @mcpjam/inspector@beta
+```
+
+<img alt="OpenAI Apps SDK Demo" src="./client/public/apps_sdk_pizza.png">
+
+Developing with Apps SDK is pretty restricted right now as it requires ChatGPT developer mode access and an OpenAI partner to approve access. We wanted to make that more accessible for developers today by putting it in an open source project, give y’all a head start.
+
+Test your Apps SDK app with:
+
+- Tools tab. Deterministically call tools and view your UI
+- LLM playground to see your Apps SDK UI in a chat environment
+
+The feature is in beta, and still needs polishing. Please report any bugs in the issues tab. We encourage the community to contibute!
 
 ## 🚀 Quick Start
 
