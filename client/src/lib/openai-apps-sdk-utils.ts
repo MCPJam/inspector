@@ -24,26 +24,39 @@ export interface OpenAIComponentMetadata {
  */
 /**
  * Recursively search for _meta field in an object
+ * Uses cycle detection to safely traverse objects without depth limits
  */
 function findMetaRecursive(
   obj: any,
-  maxDepth: number = 5,
-  currentDepth: number = 0,
+  visited: WeakSet<object> = new WeakSet(),
 ): any {
-  if (!obj || typeof obj !== "object" || currentDepth >= maxDepth) {
+  if (!obj || typeof obj !== "object") {
     return null;
   }
+
+  // Detect circular references
+  if (visited.has(obj)) {
+    return null;
+  }
+  visited.add(obj);
 
   // Check if current object has _meta
   if (obj._meta && typeof obj._meta === "object") {
     return obj._meta;
   }
 
-  // Search in object properties (but skip arrays for now)
-  if (!Array.isArray(obj)) {
+  // Search in arrays
+  if (Array.isArray(obj)) {
+    for (const item of obj) {
+      const found = findMetaRecursive(item, visited);
+      if (found) return found;
+    }
+  }
+  // Search in object properties
+  else {
     for (const key in obj) {
       if (obj.hasOwnProperty(key)) {
-        const found = findMetaRecursive(obj[key], maxDepth, currentDepth + 1);
+        const found = findMetaRecursive(obj[key], visited);
         if (found) return found;
       }
     }
