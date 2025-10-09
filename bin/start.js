@@ -6,6 +6,7 @@ import { fileURLToPath } from "url";
 import { createServer } from "net";
 import { execSync } from "child_process";
 import { existsSync, readFileSync } from "fs";
+import open from "open";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -181,6 +182,17 @@ Press Ctrl+C to stop the server`;
   logBox(successText, "🚀 Ready to Go!");
 
   logDivider();
+
+  // Automatically open the browser
+  const url = `http://localhost:${port}`;
+  try {
+    await open(url);
+    logSuccess(`🌐 Opening browser at ${url}`);
+  } catch (error) {
+    logWarning(
+      `Could not open browser automatically. Please visit ${url} manually.`,
+    );
+  }
 }
 
 async function checkOllamaInstalled() {
@@ -595,20 +607,56 @@ async function main() {
       await delay(500);
     }
 
-    await spawnPromise("node", [distServerPath], {
+    // Spawn the server process but don't wait for it to exit
+    const serverProcess = spawn("node", [distServerPath], {
       env: {
         ...process.env,
         NODE_ENV: "production",
         PORT: PORT,
       },
       cwd: projectRoot,
-      signal: abort.signal,
-      echoOutput: true,
+      stdio: "inherit",
     });
 
+    // Handle server process errors
+    serverProcess.on("error", (error) => {
+      if (!cancelled) {
+        logError(`Failed to start server: ${error.message}`);
+        process.exit(1);
+      }
+    });
+
+    // Handle abort signal
+    abort.signal.addEventListener("abort", () => {
+      serverProcess.kill("SIGTERM");
+    });
+
+    // Wait a bit for the server to start up
+    await delay(2000);
+
     if (!cancelled) {
-      await showSuccessMessage(PORT);
+      // Open the browser automatically
+      const url = `http://localhost:${PORT}`;
+      try {
+        await open(url);
+        logSuccess(`🌐 Browser opened at ${url}`);
+      } catch (error) {
+        logWarning(
+          `Could not open browser automatically. Please visit ${url} manually.`,
+        );
+      }
     }
+
+    // Wait for the server process to exit
+    await new Promise((resolve, reject) => {
+      serverProcess.on("close", (code) => {
+        if (code === 0 || cancelled) {
+          resolve(code);
+        } else {
+          reject(new Error(`Server process exited with code ${code}`));
+        }
+      });
+    });
   } catch (e) {
     if (!cancelled || process.env.DEBUG) {
       logDivider();
