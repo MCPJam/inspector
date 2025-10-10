@@ -65,11 +65,11 @@ declare class MCPClientManager {
         defaultTimeout?: number;
     });
     listServers(): string[];
-    hasServer(name: string): boolean;
-    connectToServer(name: string, config: MCPServerConfig): Promise<Client>;
-    disconnectServer(name: string): Promise<void>;
+    hasServer(serverName: string): boolean;
+    connectToServer(serverName: string, config: MCPServerConfig): Promise<Client>;
+    disconnectServer(serverName: string): Promise<void>;
     disconnectAllServers(): Promise<void>;
-    listTools(name: string, params?: Parameters<Client['listTools']>[0], options?: ClientRequestOptions): Promise<zod.objectOutputType<{
+    listTools(serverName: string, params?: Parameters<Client['listTools']>[0], options?: ClientRequestOptions): Promise<zod.objectOutputType<{
         _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
     } & {
         nextCursor: zod.ZodOptional<zod.ZodString>;
@@ -272,7 +272,7 @@ declare class MCPClientManager {
         }>, zod.ZodTypeAny, "passthrough">>, "many">;
     }, zod.ZodTypeAny, "passthrough">>;
     getTools(names?: string[]): Promise<ListToolsResult>;
-    executeTool(name: string, toolName: string, args?: ExecuteToolArguments, options?: CallToolOptions): Promise<zod.objectOutputType<{
+    executeTool(serverName: string, toolName: string, args?: ExecuteToolArguments, options?: CallToolOptions): Promise<zod.objectOutputType<{
         _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
     } & {
         content: zod.ZodDefault<zod.ZodArray<zod.ZodUnion<[zod.ZodObject<{
@@ -517,7 +517,7 @@ declare class MCPClientManager {
     } & {
         toolResult: zod.ZodUnknown;
     }, zod.ZodTypeAny, "passthrough">>;
-    listResources(name: string, params?: ListResourcesParams, options?: ClientRequestOptions): Promise<zod.objectOutputType<{
+    listResources(serverName: string, params?: ListResourcesParams, options?: ClientRequestOptions): Promise<zod.objectOutputType<{
         _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
     } & {
         nextCursor: zod.ZodOptional<zod.ZodString>;
@@ -590,7 +590,7 @@ declare class MCPClientManager {
             }, zod.ZodTypeAny, "passthrough">>, "many">>;
         }>, zod.ZodTypeAny, "passthrough">>, "many">;
     }, zod.ZodTypeAny, "passthrough">>;
-    readResource(name: string, params: ReadResourceParams, options?: ClientRequestOptions): Promise<zod.objectOutputType<{
+    readResource(serverName: string, params: ReadResourceParams, options?: ClientRequestOptions): Promise<zod.objectOutputType<{
         _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
     } & {
         contents: zod.ZodArray<zod.ZodUnion<[zod.ZodObject<zod.objectUtil.extendShape<{
@@ -631,13 +631,13 @@ declare class MCPClientManager {
             blob: zod.ZodEffects<zod.ZodString, string, string>;
         }>, zod.ZodTypeAny, "passthrough">>]>, "many">;
     }, zod.ZodTypeAny, "passthrough">>;
-    subscribeResource(name: string, params: SubscribeResourceParams, options?: ClientRequestOptions): Promise<{
+    subscribeResource(serverName: string, params: SubscribeResourceParams, options?: ClientRequestOptions): Promise<{
         _meta?: zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough"> | undefined;
     }>;
-    unsubscribeResource(name: string, params: UnsubscribeResourceParams, options?: ClientRequestOptions): Promise<{
+    unsubscribeResource(serverName: string, params: UnsubscribeResourceParams, options?: ClientRequestOptions): Promise<{
         _meta?: zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough"> | undefined;
     }>;
-    listResourceTemplates(name: string, params?: ListResourceTemplatesParams, options?: ClientRequestOptions): Promise<zod.objectOutputType<{
+    listResourceTemplates(serverName: string, params?: ListResourceTemplatesParams, options?: ClientRequestOptions): Promise<zod.objectOutputType<{
         _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
     } & {
         nextCursor: zod.ZodOptional<zod.ZodString>;
@@ -710,7 +710,7 @@ declare class MCPClientManager {
             }, zod.ZodTypeAny, "passthrough">>, "many">>;
         }>, zod.ZodTypeAny, "passthrough">>, "many">;
     }, zod.ZodTypeAny, "passthrough">>;
-    listPrompts(name: string, params?: ListPromptsParams, options?: ClientRequestOptions): Promise<zod.objectOutputType<{
+    listPrompts(serverName: string, params?: ListPromptsParams, options?: ClientRequestOptions): Promise<zod.objectOutputType<{
         _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
     } & {
         nextCursor: zod.ZodOptional<zod.ZodString>;
@@ -816,7 +816,7 @@ declare class MCPClientManager {
             }, zod.ZodTypeAny, "passthrough">>, "many">>;
         }>, zod.ZodTypeAny, "passthrough">>, "many">;
     }, zod.ZodTypeAny, "passthrough">>;
-    getPrompt(name: string, params: GetPromptParams, options?: ClientRequestOptions): Promise<zod.objectOutputType<{
+    getPrompt(serverName: string, params: GetPromptParams, options?: ClientRequestOptions): Promise<zod.objectOutputType<{
         _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
     } & {
         description: zod.ZodOptional<zod.ZodString>;
@@ -1533,18 +1533,19 @@ declare class MCPClientManager {
             }, zod.ZodTypeAny, "passthrough">>]>;
         }, zod.ZodTypeAny, "passthrough">>, "many">;
     }, zod.ZodTypeAny, "passthrough">>;
-    getSessionIdByServer(name: string): string | undefined;
-    addNotificationHandler(name: string, schema: NotificationSchema, handler: NotificationHandler): void;
-    onResourceListChanged(name: string, handler: NotificationHandler): void;
-    onResourceUpdated(name: string, handler: NotificationHandler): void;
-    onPromptListChanged(name: string, handler: NotificationHandler): void;
-    getClient(name: string): Client | undefined;
-    setElicitationHandler(name: string, handler: ElicitationHandler): void;
-    clearElicitationHandler(name: string): void;
+    getSessionIdByServer(serverName: string): string | undefined;
+    addNotificationHandler(serverName: string, schema: NotificationSchema, handler: NotificationHandler): void;
+    onResourceListChanged(serverName: string, handler: NotificationHandler): void;
+    onResourceUpdated(serverName: string, handler: NotificationHandler): void;
+    onPromptListChanged(serverName: string, handler: NotificationHandler): void;
+    getClient(serverName: string): Client | undefined;
+    setElicitationHandler(serverName: string, handler: ElicitationHandler): void;
+    clearElicitationHandler(serverName: string): void;
     private connectViaStdio;
     private connectViaHttp;
     private safeCloseTransport;
     private applyNotificationHandlers;
+    private createNotificationDispatcher;
     private applyElicitationHandler;
     private ensureConnected;
     private resetState;
