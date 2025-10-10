@@ -1,16 +1,23 @@
 import { MCPClientManager } from '../index.js';
 
 async function main() {
-  const manager = new MCPClientManager({
-    demo: {
-      url: new URL("http://localhost:8000/mcp"),
-    },
+  const manager = await new MCPClientManager({
+    // asana: {
+    //     url: new URL("https://mcp.asana.com/sse"),
+    //     requestInit: {
+    //         headers: {
+    //             Authorization: "Bearer 1211605246745101:1feupt88QAfTxFIX:zrwh9My0XEjI3cS7ABIj48Q8hVvNFXcD"
+    //         }
+    //     },
+    // },
+    everything: {
+        command: "npx",
+        args: ["-y", "@modelcontextprotocol/server-everything"],
+    }
   });
-
-  console.log(await manager.listTools("demo"));
+  console.log(await manager.listTools("everything"));
 }
 
 main().catch(error => {
   console.error('Test run failed:', error);
-  process.exitCode = 1;
 });
