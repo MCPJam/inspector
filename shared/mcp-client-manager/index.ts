@@ -66,11 +66,6 @@ export type MCPClientManagerConfig = Record<string, MCPServerConfig>;
 type NotificationSchema = Parameters<Client["setNotificationHandler"]>[0];
 type NotificationHandler = Parameters<Client["setNotificationHandler"]>[1];
 
-interface NotificationHandlerEntry {
-  schema: NotificationSchema;
-  handler: NotificationHandler;
-}
-
 interface ManagedClientState {
   config: MCPServerConfig;
   timeout: number;
