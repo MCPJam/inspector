@@ -12,14 +12,6 @@ interface OpenAIComponentRendererProps {
   serverId?: string; // Server ID for fetching ui:// resources
 }
 
-interface WindowOpenAIAPI {
-  toolInput: Record<string, any>;
-  toolOutput: any;
-  setWidgetState: (state: any) => Promise<void>;
-  callTool: (toolName: string, params?: Record<string, any>) => Promise<any>;
-  sendFollowupTurn: (message: string) => Promise<void>;
-}
-
 /**
  * OpenAIComponentRenderer renders OpenAI Apps SDK components
  * Provides window.openai API bridge for component interaction
@@ -31,7 +23,6 @@ export function OpenAIComponentRenderer({
   onCallTool,
   onSendFollowup,
   className,
-  uiResourceBlob,
   serverId,
 }: OpenAIComponentRendererProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
