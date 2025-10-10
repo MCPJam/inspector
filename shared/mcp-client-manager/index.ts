@@ -94,7 +94,7 @@ export type ElicitationHandler = (
 
 export class MCPClientManager {
   private readonly clientStates = new Map<string, ManagedClientState>();
-  private readonly notificationHandlers = new Map<string, NotificationHandlerEntry[]>();
+  private readonly notificationHandlers = new Map<string, Map<NotificationSchema, Set<NotificationHandler>>>();
   private readonly elicitationHandlers = new Map<string, ElicitationHandler>();
   private readonly defaultClientVersion: string;
   private readonly defaultCapabilities: ClientCapabilityOptions;
@@ -128,9 +128,6 @@ export class MCPClientManager {
 
   async connectToServer(name: string, config: MCPServerConfig): Promise<Client> {
     const serverName = this.normalizeName(name);
-    if(this.clientStates.has(serverName)) {
-      throw new Error(`MCP server "${serverName}" is already connected.`);
-    }
     const timeout = this.getTimeout(config);
     const state = this.clientStates.get(serverName) ?? { config, timeout };
     // Update config/timeout on every call
@@ -323,13 +320,15 @@ export class MCPClientManager {
 
   addNotificationHandler(name: string, schema: NotificationSchema, handler: NotificationHandler): void {
     const serverName = this.normalizeName(name);
-    const handlers = this.notificationHandlers.get(serverName) ?? [];
-    handlers.push({ schema, handler });
-    this.notificationHandlers.set(serverName, handlers);
+    const serverHandlers = this.notificationHandlers.get(serverName) ?? new Map();
+    const handlersForSchema = serverHandlers.get(schema) ?? new Set<NotificationHandler>();
+    handlersForSchema.add(handler);
+    serverHandlers.set(schema, handlersForSchema);
+    this.notificationHandlers.set(serverName, serverHandlers);
 
     const client = this.clientStates.get(serverName)?.client;
     if (client) {
-      client.setNotificationHandler(schema, handler);
+      client.setNotificationHandler(schema, this.createNotificationDispatcher(serverName, schema));
     }
   }
 
@@ -432,14 +431,31 @@ export class MCPClientManager {
   }
 
   private applyNotificationHandlers(serverName: string, client: Client): void {
-    const handlers = this.notificationHandlers.get(serverName);
-    if (!handlers) {
+    const serverHandlers = this.notificationHandlers.get(serverName);
+    if (!serverHandlers) {
       return;
     }
 
-    for (const { schema, handler } of handlers) {
-      client.setNotificationHandler(schema, handler);
+    for (const [schema] of serverHandlers) {
+      client.setNotificationHandler(schema, this.createNotificationDispatcher(serverName, schema));
     }
+  }
+
+  private createNotificationDispatcher(serverName: string, schema: NotificationSchema): NotificationHandler {
+    return notification => {
+      const serverHandlers = this.notificationHandlers.get(serverName);
+      const handlersForSchema = serverHandlers?.get(schema);
+      if (!handlersForSchema || handlersForSchema.size === 0) {
+        return;
+      }
+      for (const handler of handlersForSchema) {
+        try {
+          handler(notification);
+        } catch {
+          // Swallow individual handler errors to avoid breaking other listeners.
+        }
+      }
+    };
   }
 
   private applyElicitationHandler(serverName: string, client: Client): void {
