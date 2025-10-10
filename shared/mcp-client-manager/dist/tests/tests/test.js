@@ -1,6 +1,6 @@
 import { MCPClientManager } from '../index.js';
 async function main() {
-    const manager = await new MCPClientManager({
+    const manager = new MCPClientManager({
         // asana: {
         //     url: new URL("https://mcp.asana.com/sse"),
         //     requestInit: {
@@ -15,6 +15,8 @@ async function main() {
         }
     });
     console.log(await manager.listTools("everything"));
+    console.log(await manager.disconnectServer("everything"));
+    console.log(await manager.listServers());
 }
 main().catch(error => {
     console.error('Test run failed:', error);

@@ -54,8 +54,6 @@ type ExecuteToolArguments = Record<string, unknown>;
 type ElicitationHandler = (params: ElicitRequest['params']) => Promise<ElicitResult> | ElicitResult;
 declare class MCPClientManager {
     private readonly clientStates;
-    private readonly pendingConnections;
-    private readonly serverConfigs;
     private readonly notificationHandlers;
     private readonly elicitationHandlers;
     private readonly defaultClientVersion;

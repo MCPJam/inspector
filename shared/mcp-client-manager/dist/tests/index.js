@@ -8,8 +8,6 @@ export class MCPClientManager {
     constructor(servers = {}, options = {}) {
         var _a, _b, _c;
         this.clientStates = new Map();
-        this.pendingConnections = new Map();
-        this.serverConfigs = new Map();
         this.notificationHandlers = new Map();
         this.elicitationHandlers = new Map();
         this.defaultClientVersion = (_a = options.defaultClientVersion) !== null && _a !== void 0 ? _a : '1.0.0';
@@ -20,28 +18,29 @@ export class MCPClientManager {
         }
     }
     listServers() {
-        return Array.from(this.serverConfigs.keys());
+        return Array.from(this.clientStates.keys());
     }
     hasServer(name) {
         const serverName = this.normalizeName(name);
-        return this.serverConfigs.has(serverName);
+        return this.clientStates.has(serverName);
     }
     async connectToServer(name, config) {
+        var _a;
         const serverName = this.normalizeName(name);
-        this.serverConfigs.set(serverName, config);
         const timeout = this.getTimeout(config);
-        const existingState = this.clientStates.get(serverName);
-        if (existingState) {
-            existingState.config = config;
-            existingState.timeout = timeout;
-            this.clientStates.set(serverName, existingState);
-            return existingState.client;
+        const state = (_a = this.clientStates.get(serverName)) !== null && _a !== void 0 ? _a : { config, timeout };
+        // Update config/timeout on every call
+        state.config = config;
+        state.timeout = timeout;
+        // If already connected, return the client
+        if (state.client) {
+            this.clientStates.set(serverName, state);
+            return state.client;
         }
-        const pendingState = this.pendingConnections.get(serverName);
-        if (pendingState) {
-            pendingState.config = config;
-            pendingState.timeout = timeout;
-            return pendingState.promise;
+        // If connection is in-flight, reuse the promise
+        if (state.promise) {
+            this.clientStates.set(serverName, state);
+            return state.promise;
         }
         const connectionPromise = (async () => {
             var _a;
@@ -60,7 +59,7 @@ export class MCPClientManager {
                 };
             }
             client.onclose = () => {
-                this.resetState(serverName, { preserveConfig: true });
+                this.resetState(serverName);
             };
             let transport;
             if (this.isStdioConfig(config)) {
@@ -69,45 +68,35 @@ export class MCPClientManager {
             else {
                 transport = await this.connectViaHttp(serverName, client, config, timeout);
             }
-            const managedState = {
-                config,
-                client,
-                transport,
-                timeout,
-            };
-            this.clientStates.set(serverName, managedState);
-            this.pendingConnections.delete(serverName);
+            state.client = client;
+            state.transport = transport;
+            // clear pending
+            state.promise = undefined;
+            this.clientStates.set(serverName, state);
             return client;
         })().catch(error => {
-            this.pendingConnections.delete(serverName);
-            this.clientStates.delete(serverName);
+            // Clear pending but keep config so the server remains registered
+            state.promise = undefined;
+            state.client = undefined;
+            state.transport = undefined;
+            this.clientStates.set(serverName, state);
             throw error;
         });
-        this.pendingConnections.set(serverName, { config, timeout, promise: connectionPromise });
+        state.promise = connectionPromise;
+        this.clientStates.set(serverName, state);
         return connectionPromise;
     }
     async disconnectServer(name) {
         const serverName = this.normalizeName(name);
-        const pending = this.pendingConnections.get(serverName);
-        if (pending) {
-            try {
-                await pending.promise;
-            }
-            catch {
-                // Ignore connection errors during shutdown; state cleanup happens below.
-            }
-        }
-        const state = this.clientStates.get(serverName);
-        if (!state) {
-            this.resetState(serverName, { preserveConfig: true });
-            return;
-        }
+        const client = this.getClientByName(serverName);
         try {
-            await state.client.close();
+            await client.close();
         }
         finally {
-            await this.safeCloseTransport(state.transport);
-            this.resetState(serverName, { preserveConfig: true });
+            if (client.transport) {
+                await this.safeCloseTransport(client.transport);
+            }
+            this.resetState(serverName);
         }
     }
     async disconnectAllServers() {
@@ -115,7 +104,7 @@ export class MCPClientManager {
         await Promise.all(serverNames.map(name => this.disconnectServer(name)));
         for (const name of serverNames) {
             const serverName = this.normalizeName(name);
-            this.resetState(serverName, { preserveConfig: false });
+            this.resetState(serverName);
             this.notificationHandlers.delete(serverName);
             this.elicitationHandlers.delete(serverName);
         }
@@ -225,7 +214,7 @@ export class MCPClientManager {
     setElicitationHandler(name, handler) {
         var _a;
         const serverName = this.normalizeName(name);
-        if (!this.serverConfigs.has(serverName)) {
+        if (!this.clientStates.has(serverName)) {
             throw new Error(`Unknown MCP server "${serverName}".`);
         }
         this.elicitationHandlers.set(serverName, handler);
@@ -316,34 +305,28 @@ export class MCPClientManager {
     }
     async ensureConnected(name) {
         const serverName = this.normalizeName(name);
-        if (this.clientStates.has(serverName)) {
+        const state = this.clientStates.get(serverName);
+        if (state === null || state === void 0 ? void 0 : state.client) {
             return;
         }
-        const pending = this.pendingConnections.get(serverName);
-        if (pending) {
-            await pending.promise;
-            return;
-        }
-        const config = this.serverConfigs.get(serverName);
-        if (!config) {
+        if (!state) {
             throw new Error(`Unknown MCP server "${serverName}".`);
         }
-        await this.connectToServer(serverName, config);
-    }
-    resetState(name, options) {
-        const serverName = this.normalizeName(name);
-        this.pendingConnections.delete(serverName);
-        this.clientStates.delete(serverName);
-        if (!options.preserveConfig) {
-            this.serverConfigs.delete(serverName);
+        if (state.promise) {
+            await state.promise;
+            return;
         }
+        await this.connectToServer(serverName, state.config);
+    }
+    resetState(name) {
+        const serverName = this.normalizeName(name);
+        this.clientStates.delete(serverName);
     }
     withTimeout(name, options) {
         var _a;
         const serverName = this.normalizeName(name);
-        const connectedState = this.clientStates.get(serverName);
-        const serverConfig = this.serverConfigs.get(serverName);
-        const timeout = (_a = connectedState === null || connectedState === void 0 ? void 0 : connectedState.timeout) !== null && _a !== void 0 ? _a : (serverConfig ? this.getTimeout(serverConfig) : this.defaultTimeout);
+        const state = this.clientStates.get(serverName);
+        const timeout = (_a = state === null || state === void 0 ? void 0 : state.timeout) !== null && _a !== void 0 ? _a : (state ? this.getTimeout(state.config) : this.defaultTimeout);
         if (!options) {
             return { timeout };
         }
@@ -391,7 +374,7 @@ export class MCPClientManager {
     getClientByName(name) {
         const serverName = this.normalizeName(name);
         const state = this.clientStates.get(serverName);
-        if (!state) {
+        if (!(state === null || state === void 0 ? void 0 : state.client)) {
             throw new Error(`MCP server "${serverName}" is not connected.`);
         }
         return state.client;
