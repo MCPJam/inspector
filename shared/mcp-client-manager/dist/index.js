@@ -34,6 +34,9 @@ var MCPClientManager = class {
   async connectToServer(name, config) {
     var _a;
     const serverName = this.normalizeName(name);
+    if (this.clientStates.has(serverName)) {
+      throw new Error(`MCP server "${serverName}" is already connected.`);
+    }
     const timeout = this.getTimeout(config);
     const state = (_a = this.clientStates.get(serverName)) != null ? _a : { config, timeout };
     state.config = config;

@@ -128,6 +128,9 @@ export class MCPClientManager {
 
   async connectToServer(name: string, config: MCPServerConfig): Promise<Client> {
     const serverName = this.normalizeName(name);
+    if(this.clientStates.has(serverName)) {
+      throw new Error(`MCP server "${serverName}" is already connected.`);
+    }
     const timeout = this.getTimeout(config);
     const state = this.clientStates.get(serverName) ?? { config, timeout };
     // Update config/timeout on every call
