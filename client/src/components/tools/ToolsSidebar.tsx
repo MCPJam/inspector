@@ -1,3 +1,4 @@
+import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { Wrench, RefreshCw } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -8,17 +9,10 @@ import { ToolItem } from "./ToolItem";
 import { SavedRequestItem } from "./SavedRequestItem";
 import type { SavedRequest } from "@/lib/request-types";
 
-interface ToolInfo {
-  name: string;
-  description?: string;
-  inputSchema: any;
-  outputSchema?: Record<string, unknown>;
-}
-
 interface ToolsSidebarProps {
   activeTab: "tools" | "saved";
   onChangeTab: (tab: "tools" | "saved") => void;
-  tools: Record<string, ToolInfo>;
+  tools: Record<string, Tool>;
   toolNames: string[];
   filteredToolNames: string[];
   selectedToolName?: string;
