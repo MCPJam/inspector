@@ -1,4 +1,27 @@
-export async function listTools(serverId: string) {
+import type {
+  CallToolResult,
+  ElicitRequest,
+  ElicitResult,
+  ListToolsResult,
+} from "@modelcontextprotocol/sdk/types.js";
+
+export type ToolExecutionResponse =
+  | {
+      status: "completed";
+      result: CallToolResult;
+    }
+  | {
+      status: "elicitation_required";
+      executionId: string;
+      requestId: string;
+      request: ElicitRequest["params"];
+      timestamp: string;
+    }
+  | {
+      error: string;
+    };
+
+export async function listTools(serverId: string): Promise<ListToolsResult> {
   const res = await fetch("/api/mcp/tools/list", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -11,8 +34,8 @@ export async function listTools(serverId: string) {
 export async function executeToolApi(
   serverId: string,
   toolName: string,
-  parameters: Record<string, any>,
-) {
+  parameters: Record<string, unknown>,
+): Promise<ToolExecutionResponse> {
   const res = await fetch("/api/mcp/tools/execute", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -24,8 +47,8 @@ export async function executeToolApi(
 
 export async function respondToElicitationApi(
   requestId: string,
-  response: any,
-) {
+  response: ElicitResult,
+): Promise<ToolExecutionResponse> {
   const res = await fetch("/api/mcp/tools/respond", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

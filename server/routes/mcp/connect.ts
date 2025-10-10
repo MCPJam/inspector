@@ -28,9 +28,10 @@ connect.post("/", async (c) => {
     }
 
     const mcpClientManager = c.mcpJamClientManager;
-
+    const mcpClientManagerV2 = c.mcpClientManager;
     try {
       await mcpClientManager.connectToServer(serverId, serverConfig);
+      await mcpClientManagerV2.connectToServer(serverId, serverConfig);
       const status = mcpClientManager.getConnectionStatus(serverId);
       if (status === "connected") {
         return c.json({
