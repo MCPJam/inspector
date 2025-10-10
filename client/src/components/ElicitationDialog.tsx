@@ -20,6 +20,7 @@ import {
   DialogTitle,
 } from "./ui/dialog";
 import { MessageSquare, X, Check, RefreshCw } from "lucide-react";
+import { DialogElicitation } from "./ToolsTab";
 
 interface FormField {
   name: string;
@@ -33,15 +34,8 @@ interface FormField {
   pattern?: string;
 }
 
-interface ElicitationRequest {
-  requestId: string;
-  message: string;
-  schema: any;
-  timestamp: string;
-}
-
 interface ElicitationDialogProps {
-  elicitationRequest: ElicitationRequest | null;
+  elicitationRequest: DialogElicitation | null;
   onResponse: (
     action: "accept" | "decline" | "cancel",
     parameters?: Record<string, any>,
