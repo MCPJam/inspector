@@ -1,25 +1,41 @@
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { UIResourceRenderer } from "@mcp-ui/client";
+import { CheckCircle, XCircle } from "lucide-react";
+import { extractOpenAIComponent } from "@/lib/openai-apps-sdk-utils";
+import { OpenAIComponentRenderer } from "../chat/openai-component-renderer";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
-import { CheckCircle, XCircle } from "lucide-react";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
-import { UIResourceRenderer } from "@mcp-ui/client";
-import { OpenAIComponentRenderer } from "../chat/openai-component-renderer";
-import { extractOpenAIComponent } from "@/lib/openai-apps-sdk-utils";
 
-function getUIResourceFromResult(rawResult: any): any | null {
+type UnstructuredStatus =
+  | "not_applicable"
+  | "valid"
+  | "invalid_json"
+  | "schema_mismatch";
+
+type UIResource = {
+  uri: string;
+  [key: string]: unknown;
+};
+
+function resolveUIResource(
+  rawResult: CallToolResult | null,
+): UIResource | null {
   if (!rawResult) return null;
-  const direct = (rawResult as any)?.resource;
+  const base = rawResult as unknown as Record<string, unknown>;
+  const direct = base?.resource;
   if (
     direct &&
     typeof direct === "object" &&
-    typeof direct.uri === "string" &&
-    direct.uri.startsWith("ui://")
+    typeof (direct as Record<string, unknown>).uri === "string" &&
+    ((direct as Record<string, unknown>).uri as string).startsWith("ui://")
   ) {
-    return direct;
+    return direct as UIResource;
   }
-  const content = (rawResult as any)?.content;
+
+  const content = base?.content;
   if (Array.isArray(content)) {
     for (const item of content) {
       if (
@@ -29,10 +45,11 @@ function getUIResourceFromResult(rawResult: any): any | null {
         typeof item.resource.uri === "string" &&
         item.resource.uri.startsWith("ui://")
       ) {
-        return item.resource;
+        return item.resource as UIResource;
       }
     }
   }
+
   return null;
 }
 
@@ -41,26 +58,22 @@ interface ResultsPanelProps {
   showStructured: boolean;
   onToggleStructured: (show: boolean) => void;
   structuredResult: Record<string, unknown> | null;
-  result: Record<string, unknown> | null;
+  result: CallToolResult | null;
   validationErrors: any[] | null | undefined;
-  unstructuredValidationResult:
-    | "not_applicable"
-    | "valid"
-    | "invalid_json"
-    | "schema_mismatch";
+  unstructuredValidationResult: UnstructuredStatus;
   onExecuteFromUI: (
     toolName: string,
-    params?: Record<string, any>,
+    params?: Record<string, unknown>,
   ) => Promise<void>;
   onHandleIntent: (
     intent: string,
-    params?: Record<string, any>,
+    params?: Record<string, unknown>,
   ) => Promise<void>;
   onSendFollowup?: (message: string) => void;
   serverId?: string;
   toolCallId?: string;
   toolName?: string;
-  toolParameters?: Record<string, any>;
+  toolParameters?: Record<string, unknown>;
   toolCallTimestamp?: Date;
 }
 
@@ -81,6 +94,12 @@ export function ResultsPanel({
   toolParameters,
   toolCallTimestamp,
 }: ResultsPanelProps) {
+  const rawResult = result as unknown as Record<string, unknown> | null;
+  const openaiComponent = rawResult
+    ? extractOpenAIComponent(rawResult as any)
+    : null;
+  const uiResource = resolveUIResource(result);
+
   return (
     <div className="h-full flex flex-col border-t border-border bg-background">
       <div className="flex items-center justify-between p-4 border-b border-border">
@@ -103,29 +122,24 @@ export function ResultsPanel({
               </Badge>
             ))}
         </div>
-        {result &&
-          (structuredResult || extractOpenAIComponent(result as any)) && (
-            <div className="flex gap-2">
-              <Button
-                size="sm"
-                variant={!showStructured ? "default" : "outline"}
-                onClick={() => onToggleStructured(false)}
-              >
-                {extractOpenAIComponent(result as any)
-                  ? "Component"
-                  : "Raw Output"}
-              </Button>
-              <Button
-                size="sm"
-                variant={showStructured ? "default" : "outline"}
-                onClick={() => onToggleStructured(true)}
-              >
-                {extractOpenAIComponent(result as any)
-                  ? "Raw JSON"
-                  : "Structured Output"}
-              </Button>
-            </div>
-          )}
+        {rawResult && (structuredResult || openaiComponent) && (
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant={!showStructured ? "default" : "outline"}
+              onClick={() => onToggleStructured(false)}
+            >
+              {openaiComponent ? "Component" : "Raw Output"}
+            </Button>
+            <Button
+              size="sm"
+              variant={showStructured ? "default" : "outline"}
+              onClick={() => onToggleStructured(true)}
+            >
+              {openaiComponent ? "Raw JSON" : "Structured Output"}
+            </Button>
+          </div>
+        )}
       </div>
 
       <div className="flex-1 overflow-hidden">
@@ -136,7 +150,6 @@ export function ResultsPanel({
             </div>
           </div>
         ) : showStructured && validationErrors ? (
-          // Validation errors view
           <div className="p-4">
             <h3 className="text-sm font-semibold text-destructive mb-2">
               Validation Errors
@@ -165,14 +178,11 @@ export function ResultsPanel({
                 )}
             </div>
           </div>
-        ) : showStructured &&
-          result &&
-          extractOpenAIComponent(result as any) ? (
-          // Raw JSON view for OpenAI components - show complete result
+        ) : showStructured && rawResult && openaiComponent ? (
           <ScrollArea className="h-full">
             <div className="p-4">
               <JsonView
-                src={result}
+                src={rawResult}
                 dark={true}
                 theme="atom"
                 enableClipboard={true}
@@ -191,7 +201,6 @@ export function ResultsPanel({
             </div>
           </ScrollArea>
         ) : showStructured && structuredResult && validationErrors === null ? (
-          // Structured Output view for regular tools
           <ScrollArea className="h-full">
             <div className="p-4">
               <JsonView
@@ -213,13 +222,9 @@ export function ResultsPanel({
               />
             </div>
           </ScrollArea>
-        ) : result && !showStructured ? (
-          // Raw Output view - show OpenAI component or full JSON
+        ) : rawResult ? (
           (() => {
-            const openaiComponent = extractOpenAIComponent(result as any);
-
-            // If there's an OpenAI component, render it
-            if (openaiComponent) {
+            if (!showStructured && openaiComponent) {
               return (
                 <OpenAIComponentRenderer
                   componentUrl={openaiComponent.url}
@@ -233,11 +238,11 @@ export function ResultsPanel({
                   toolResult={{
                     id: `${toolCallId || "tool-result"}-result`,
                     toolCallId: toolCallId || "tool-result",
-                    result: result,
+                    result: rawResult,
                     timestamp: new Date(),
                   }}
-                  onCallTool={async (toolName, params) => {
-                    await onExecuteFromUI(toolName, params);
+                  onCallTool={async (invocationToolName, params) => {
+                    await onExecuteFromUI(invocationToolName, params);
                     return {};
                   }}
                   onSendFollowup={onSendFollowup}
@@ -247,12 +252,10 @@ export function ResultsPanel({
               );
             }
 
-            // Check for MCP-UI resource
-            const uiRes = getUIResourceFromResult(result as any);
-            if (uiRes) {
+            if (!showStructured && uiResource) {
               return (
                 <UIResourceRenderer
-                  resource={uiRes}
+                  resource={uiResource}
                   htmlProps={{
                     autoResizeIframe: true,
                     style: {
@@ -286,7 +289,6 @@ export function ResultsPanel({
               );
             }
 
-            // No UI component - show full raw JSON
             return (
               <div className="p-4">
                 {unstructuredValidationResult === "valid" && (
@@ -314,7 +316,7 @@ export function ResultsPanel({
                   </Badge>
                 )}
                 <JsonView
-                  src={result}
+                  src={rawResult}
                   dark={true}
                   theme="atom"
                   enableClipboard={true}
@@ -335,7 +337,6 @@ export function ResultsPanel({
             );
           })()
         ) : (
-          // No result yet
           <div className="flex items-center justify-center h-full">
             <p className="text-xs text-muted-foreground font-medium">
               Execute a tool to see results here

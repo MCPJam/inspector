@@ -1,11 +1,5 @@
+import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { ChevronRight } from "lucide-react";
-
-interface Tool {
-  name: string;
-  description?: string;
-  inputSchema: any;
-  outputSchema?: Record<string, unknown>;
-}
 
 interface ToolItemProps {
   tool: Tool;
