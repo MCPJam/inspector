@@ -1,7 +1,10 @@
 // index.ts
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import { getDefaultEnvironment, StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import {
+  getDefaultEnvironment,
+  StdioClientTransport,
+} from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { DEFAULT_REQUEST_TIMEOUT_MSEC } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import {
@@ -9,7 +12,7 @@ import {
   ElicitRequestSchema,
   ResourceListChangedNotificationSchema,
   ResourceUpdatedNotificationSchema,
-  PromptListChangedNotificationSchema
+  PromptListChangedNotificationSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 var MCPClientManager = class {
   constructor(servers = {}, options = {}) {
@@ -19,9 +22,13 @@ var MCPClientManager = class {
     this.notificationHandlers = /* @__PURE__ */ new Map();
     this.elicitationHandlers = /* @__PURE__ */ new Map();
     var _a, _b, _c;
-    this.defaultClientVersion = (_a = options.defaultClientVersion) != null ? _a : "1.0.0";
-    this.defaultCapabilities = { ...(_b = options.defaultCapabilities) != null ? _b : {} };
-    this.defaultTimeout = (_c = options.defaultTimeout) != null ? _c : DEFAULT_REQUEST_TIMEOUT_MSEC;
+    this.defaultClientVersion =
+      (_a = options.defaultClientVersion) != null ? _a : "1.0.0";
+    this.defaultCapabilities = {
+      ...((_b = options.defaultCapabilities) != null ? _b : {}),
+    };
+    this.defaultTimeout =
+      (_c = options.defaultTimeout) != null ? _c : DEFAULT_REQUEST_TIMEOUT_MSEC;
     for (const [name, config] of Object.entries(servers)) {
       void this.connectToServer(name, config);
     }
@@ -55,11 +62,12 @@ var MCPClientManager = class {
       const client = new Client(
         {
           name: serverName,
-          version: (_a = config.version) != null ? _a : this.defaultClientVersion
+          version:
+            (_a = config.version) != null ? _a : this.defaultClientVersion,
         },
         {
-          capabilities: this.buildCapabilities(config)
-        }
+          capabilities: this.buildCapabilities(config),
+        },
       );
       this.applyNotificationHandlers(serverName, client);
       this.applyElicitationHandler(serverName, client);
@@ -76,13 +84,18 @@ var MCPClientManager = class {
       if (this.isStdioConfig(config)) {
         transport = await this.connectViaStdio(client, config, timeout);
       } else {
-        transport = await this.connectViaHttp(serverName, client, config, timeout);
+        transport = await this.connectViaHttp(
+          serverName,
+          client,
+          config,
+          timeout,
+        );
       }
       const managedState = {
         config,
         client,
         transport,
-        timeout
+        timeout,
       };
       this.clientStates.set(serverName, managedState);
       this.pendingConnections.delete(serverName);
@@ -92,7 +105,11 @@ var MCPClientManager = class {
       this.clientStates.delete(serverName);
       throw error;
     });
-    this.pendingConnections.set(serverName, { config, timeout, promise: connectionPromise });
+    this.pendingConnections.set(serverName, {
+      config,
+      timeout,
+      promise: connectionPromise,
+    });
     return connectionPromise;
   }
   async disconnectServer(name) {
@@ -101,8 +118,7 @@ var MCPClientManager = class {
     if (pending) {
       try {
         await pending.promise;
-      } catch {
-      }
+      } catch {}
     }
     const state = this.clientStates.get(serverName);
     if (!state) {
@@ -133,15 +149,21 @@ var MCPClientManager = class {
     return client.listTools(params, this.withTimeout(serverName, options));
   }
   async getTools(names) {
-    const targetNames = names && names.length > 0 ? names.map((name) => this.normalizeName(name)) : this.listServers();
+    const targetNames =
+      names && names.length > 0
+        ? names.map((name) => this.normalizeName(name))
+        : this.listServers();
     const uniqueNames = Array.from(new Set(targetNames));
     const toolLists = await Promise.all(
       uniqueNames.map(async (serverName) => {
         await this.ensureConnected(serverName);
         const client = this.getClientByName(serverName);
-        const result = await client.listTools(void 0, this.withTimeout(serverName));
+        const result = await client.listTools(
+          void 0,
+          this.withTimeout(serverName),
+        );
         return result.tools;
-      })
+      }),
     );
     return { tools: toolLists.flat() };
   }
@@ -152,10 +174,10 @@ var MCPClientManager = class {
     return client.callTool(
       {
         name: toolName,
-        arguments: args
+        arguments: args,
       },
       CallToolResultSchema,
-      this.withTimeout(serverName, options)
+      this.withTimeout(serverName, options),
     );
   }
   async listResources(name, params, options) {
@@ -174,19 +196,28 @@ var MCPClientManager = class {
     const serverName = this.normalizeName(name);
     await this.ensureConnected(serverName);
     const client = this.getClientByName(serverName);
-    return client.subscribeResource(params, this.withTimeout(serverName, options));
+    return client.subscribeResource(
+      params,
+      this.withTimeout(serverName, options),
+    );
   }
   async unsubscribeResource(name, params, options) {
     const serverName = this.normalizeName(name);
     await this.ensureConnected(serverName);
     const client = this.getClientByName(serverName);
-    return client.unsubscribeResource(params, this.withTimeout(serverName, options));
+    return client.unsubscribeResource(
+      params,
+      this.withTimeout(serverName, options),
+    );
   }
   async listResourceTemplates(name, params, options) {
     const serverName = this.normalizeName(name);
     await this.ensureConnected(serverName);
     const client = this.getClientByName(serverName);
-    return client.listResourceTemplates(params, this.withTimeout(serverName, options));
+    return client.listResourceTemplates(
+      params,
+      this.withTimeout(serverName, options),
+    );
   }
   async listPrompts(name, params, options) {
     const serverName = this.normalizeName(name);
@@ -208,31 +239,49 @@ var MCPClientManager = class {
     if (state.transport instanceof StreamableHTTPClientTransport) {
       return state.transport.sessionId;
     }
-    throw new Error(`Server "${name}" must be Streamable HTTP to get the session ID.`);
+    throw new Error(
+      `Server "${name}" must be Streamable HTTP to get the session ID.`,
+    );
   }
   addNotificationHandler(name, schema, handler) {
     var _a, _b;
     const serverName = this.normalizeName(name);
-    const handlers = (_a = this.notificationHandlers.get(serverName)) != null ? _a : [];
+    const handlers =
+      (_a = this.notificationHandlers.get(serverName)) != null ? _a : [];
     handlers.push({ schema, handler });
     this.notificationHandlers.set(serverName, handlers);
-    const client = (_b = this.clientStates.get(serverName)) == null ? void 0 : _b.client;
+    const client =
+      (_b = this.clientStates.get(serverName)) == null ? void 0 : _b.client;
     if (client) {
       client.setNotificationHandler(schema, handler);
     }
   }
   onResourceListChanged(name, handler) {
-    this.addNotificationHandler(name, ResourceListChangedNotificationSchema, handler);
+    this.addNotificationHandler(
+      name,
+      ResourceListChangedNotificationSchema,
+      handler,
+    );
   }
   onResourceUpdated(name, handler) {
-    this.addNotificationHandler(name, ResourceUpdatedNotificationSchema, handler);
+    this.addNotificationHandler(
+      name,
+      ResourceUpdatedNotificationSchema,
+      handler,
+    );
   }
   onPromptListChanged(name, handler) {
-    this.addNotificationHandler(name, PromptListChangedNotificationSchema, handler);
+    this.addNotificationHandler(
+      name,
+      PromptListChangedNotificationSchema,
+      handler,
+    );
   }
   getClient(name) {
     var _a;
-    return (_a = this.clientStates.get(this.normalizeName(name))) == null ? void 0 : _a.client;
+    return (_a = this.clientStates.get(this.normalizeName(name))) == null
+      ? void 0
+      : _a.client;
   }
   setElicitationHandler(name, handler) {
     var _a;
@@ -241,7 +290,8 @@ var MCPClientManager = class {
       throw new Error(`Unknown MCP server "${serverName}".`);
     }
     this.elicitationHandlers.set(serverName, handler);
-    const client = (_a = this.clientStates.get(serverName)) == null ? void 0 : _a.client;
+    const client =
+      (_a = this.clientStates.get(serverName)) == null ? void 0 : _a.client;
     if (client) {
       this.applyElicitationHandler(serverName, client);
     }
@@ -250,7 +300,8 @@ var MCPClientManager = class {
     var _a;
     const serverName = this.normalizeName(name);
     this.elicitationHandlers.delete(serverName);
-    const client = (_a = this.clientStates.get(serverName)) == null ? void 0 : _a.client;
+    const client =
+      (_a = this.clientStates.get(serverName)) == null ? void 0 : _a.client;
     if (client) {
       client.removeRequestHandler("elicitation/create");
     }
@@ -260,24 +311,35 @@ var MCPClientManager = class {
     const transport = new StdioClientTransport({
       command: config.command,
       args: config.args,
-      env: { ...getDefaultEnvironment(), ...(_a = config.env) != null ? _a : {} }
+      env: {
+        ...getDefaultEnvironment(),
+        ...((_a = config.env) != null ? _a : {}),
+      },
     });
     await client.connect(transport, { timeout });
     return transport;
   }
   async connectViaHttp(serverName, client, config, timeout) {
     var _a;
-    const preferSSE = (_a = config.preferSSE) != null ? _a : config.url.pathname.endsWith("/sse");
+    const preferSSE =
+      (_a = config.preferSSE) != null
+        ? _a
+        : config.url.pathname.endsWith("/sse");
     let streamableError;
     if (!preferSSE) {
-      const streamableTransport = new StreamableHTTPClientTransport(config.url, {
-        requestInit: config.requestInit,
-        reconnectionOptions: config.reconnectionOptions,
-        authProvider: config.authProvider,
-        sessionId: config.sessionId
-      });
+      const streamableTransport = new StreamableHTTPClientTransport(
+        config.url,
+        {
+          requestInit: config.requestInit,
+          reconnectionOptions: config.reconnectionOptions,
+          authProvider: config.authProvider,
+          sessionId: config.sessionId,
+        },
+      );
       try {
-        await client.connect(streamableTransport, { timeout: Math.min(timeout, 3e3) });
+        await client.connect(streamableTransport, {
+          timeout: Math.min(timeout, 3e3),
+        });
         return streamableTransport;
       } catch (error) {
         streamableError = error;
@@ -287,24 +349,25 @@ var MCPClientManager = class {
     const sseTransport = new SSEClientTransport(config.url, {
       requestInit: config.requestInit,
       eventSourceInit: config.eventSourceInit,
-      authProvider: config.authProvider
+      authProvider: config.authProvider,
     });
     try {
       await client.connect(sseTransport, { timeout });
       return sseTransport;
     } catch (error) {
       await this.safeCloseTransport(sseTransport);
-      const streamableMessage = streamableError ? ` Streamable HTTP error: ${this.formatError(streamableError)}.` : "";
+      const streamableMessage = streamableError
+        ? ` Streamable HTTP error: ${this.formatError(streamableError)}.`
+        : "";
       throw new Error(
-        `Failed to connect to MCP server "${serverName}" using HTTP transports.${streamableMessage} SSE error: ${this.formatError(error)}.`
+        `Failed to connect to MCP server "${serverName}" using HTTP transports.${streamableMessage} SSE error: ${this.formatError(error)}.`,
       );
     }
   }
   async safeCloseTransport(transport) {
     try {
       await transport.close();
-    } catch {
-    }
+    } catch {}
   }
   applyNotificationHandlers(serverName, client) {
     const handlers = this.notificationHandlers.get(serverName);
@@ -320,7 +383,9 @@ var MCPClientManager = class {
     if (!handler) {
       return;
     }
-    client.setRequestHandler(ElicitRequestSchema, async (request) => handler(request.params));
+    client.setRequestHandler(ElicitRequestSchema, async (request) =>
+      handler(request.params),
+    );
   }
   async ensureConnected(name) {
     const serverName = this.normalizeName(name);
@@ -351,7 +416,12 @@ var MCPClientManager = class {
     const serverName = this.normalizeName(name);
     const connectedState = this.clientStates.get(serverName);
     const serverConfig = this.serverConfigs.get(serverName);
-    const timeout = (_a = connectedState == null ? void 0 : connectedState.timeout) != null ? _a : serverConfig ? this.getTimeout(serverConfig) : this.defaultTimeout;
+    const timeout =
+      (_a = connectedState == null ? void 0 : connectedState.timeout) != null
+        ? _a
+        : serverConfig
+          ? this.getTimeout(serverConfig)
+          : this.defaultTimeout;
     if (!options) {
       return { timeout };
     }
@@ -364,7 +434,7 @@ var MCPClientManager = class {
     var _a;
     const capabilities = {
       ...this.defaultCapabilities,
-      ...(_a = config.capabilities) != null ? _a : {}
+      ...((_a = config.capabilities) != null ? _a : {}),
     };
     if (!capabilities.elicitation) {
       capabilities.elicitation = {};
@@ -404,7 +474,5 @@ var MCPClientManager = class {
     return state.client;
   }
 };
-export {
-  MCPClientManager
-};
+export { MCPClientManager };
 //# sourceMappingURL=index.js.map

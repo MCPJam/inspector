@@ -1,22 +1,28 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import type { ClientOptions } from '@modelcontextprotocol/sdk/client/index.js';
-import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
-import type { SSEClientTransportOptions } from '@modelcontextprotocol/sdk/client/sse.js';
-import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import type { StreamableHTTPClientTransportOptions } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { DEFAULT_REQUEST_TIMEOUT_MSEC } from '@modelcontextprotocol/sdk/shared/protocol.js';
-import type { RequestOptions } from '@modelcontextprotocol/sdk/shared/protocol.js';
-import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import type { ClientOptions } from "@modelcontextprotocol/sdk/client/index.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import type { SSEClientTransportOptions } from "@modelcontextprotocol/sdk/client/sse.js";
+import {
+  getDefaultEnvironment,
+  StdioClientTransport,
+} from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { StreamableHTTPClientTransportOptions } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { DEFAULT_REQUEST_TIMEOUT_MSEC } from "@modelcontextprotocol/sdk/shared/protocol.js";
+import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import {
   CallToolResultSchema,
   ElicitRequestSchema,
   ResourceListChangedNotificationSchema,
   ResourceUpdatedNotificationSchema,
   PromptListChangedNotificationSchema,
-} from '@modelcontextprotocol/sdk/types.js';
-import type { ElicitRequest, ElicitResult } from '@modelcontextprotocol/sdk/types.js';
-type ClientCapabilityOptions = NonNullable<ClientOptions['capabilities']>;
+} from "@modelcontextprotocol/sdk/types.js";
+import type {
+  ElicitRequest,
+  ElicitResult,
+} from "@modelcontextprotocol/sdk/types.js";
+type ClientCapabilityOptions = NonNullable<ClientOptions["capabilities"]>;
 
 type BaseServerConfig = {
   capabilities?: ClientCapabilityOptions;
@@ -41,11 +47,11 @@ type StdioServerConfig = BaseServerConfig & {
 
 type HttpServerConfig = BaseServerConfig & {
   url: URL;
-  requestInit?: StreamableHTTPClientTransportOptions['requestInit'];
-  eventSourceInit?: SSEClientTransportOptions['eventSourceInit'];
-  authProvider?: StreamableHTTPClientTransportOptions['authProvider'];
-  reconnectionOptions?: StreamableHTTPClientTransportOptions['reconnectionOptions'];
-  sessionId?: StreamableHTTPClientTransportOptions['sessionId'];
+  requestInit?: StreamableHTTPClientTransportOptions["requestInit"];
+  eventSourceInit?: SSEClientTransportOptions["eventSourceInit"];
+  authProvider?: StreamableHTTPClientTransportOptions["authProvider"];
+  reconnectionOptions?: StreamableHTTPClientTransportOptions["reconnectionOptions"];
+  sessionId?: StreamableHTTPClientTransportOptions["sessionId"];
   preferSSE?: boolean;
 
   command?: never;
@@ -57,8 +63,8 @@ export type MCPServerConfig = StdioServerConfig | HttpServerConfig;
 
 export type MCPClientManagerConfig = Record<string, MCPServerConfig>;
 
-type NotificationSchema = Parameters<Client['setNotificationHandler']>[0];
-type NotificationHandler = Parameters<Client['setNotificationHandler']>[1];
+type NotificationSchema = Parameters<Client["setNotificationHandler"]>[0];
+type NotificationHandler = Parameters<Client["setNotificationHandler"]>[1];
 
 interface NotificationHandlerEntry {
   schema: NotificationSchema;
@@ -78,23 +84,28 @@ interface ManagedClientState {
 type ClientRequestOptions = RequestOptions;
 type CallToolOptions = RequestOptions;
 
-type ListResourcesParams = Parameters<Client['listResources']>[0];
-type ListResourceTemplatesParams = Parameters<Client['listResourceTemplates']>[0];
-type ReadResourceParams = Parameters<Client['readResource']>[0];
-type SubscribeResourceParams = Parameters<Client['subscribeResource']>[0];
-type UnsubscribeResourceParams = Parameters<Client['unsubscribeResource']>[0];
-type ListPromptsParams = Parameters<Client['listPrompts']>[0];
-type GetPromptParams = Parameters<Client['getPrompt']>[0];
-type ListToolsResult = Awaited<ReturnType<Client['listTools']>>;
+type ListResourcesParams = Parameters<Client["listResources"]>[0];
+type ListResourceTemplatesParams = Parameters<
+  Client["listResourceTemplates"]
+>[0];
+type ReadResourceParams = Parameters<Client["readResource"]>[0];
+type SubscribeResourceParams = Parameters<Client["subscribeResource"]>[0];
+type UnsubscribeResourceParams = Parameters<Client["unsubscribeResource"]>[0];
+type ListPromptsParams = Parameters<Client["listPrompts"]>[0];
+type GetPromptParams = Parameters<Client["getPrompt"]>[0];
+type ListToolsResult = Awaited<ReturnType<Client["listTools"]>>;
 
 export type ExecuteToolArguments = Record<string, unknown>;
 export type ElicitationHandler = (
-  params: ElicitRequest['params'],
+  params: ElicitRequest["params"],
 ) => Promise<ElicitResult> | ElicitResult;
 
 export class MCPClientManager {
   private readonly clientStates = new Map<string, ManagedClientState>();
-  private readonly notificationHandlers = new Map<string, Map<NotificationSchema, Set<NotificationHandler>>>();
+  private readonly notificationHandlers = new Map<
+    string,
+    Map<NotificationSchema, Set<NotificationHandler>>
+  >();
   private readonly elicitationHandlers = new Map<string, ElicitationHandler>();
   private readonly defaultClientVersion: string;
   private readonly defaultCapabilities: ClientCapabilityOptions;
@@ -108,9 +119,10 @@ export class MCPClientManager {
       defaultTimeout?: number;
     } = {},
   ) {
-    this.defaultClientVersion = options.defaultClientVersion ?? '1.0.0';
+    this.defaultClientVersion = options.defaultClientVersion ?? "1.0.0";
     this.defaultCapabilities = { ...(options.defaultCapabilities ?? {}) };
-    this.defaultTimeout = options.defaultTimeout ?? DEFAULT_REQUEST_TIMEOUT_MSEC;
+    this.defaultTimeout =
+      options.defaultTimeout ?? DEFAULT_REQUEST_TIMEOUT_MSEC;
 
     for (const [name, config] of Object.entries(servers)) {
       void this.connectToServer(name, config);
@@ -126,10 +138,16 @@ export class MCPClientManager {
     return this.clientStates.has(normalizedServerName);
   }
 
-  async connectToServer(serverName: string, config: MCPServerConfig): Promise<Client> {
+  async connectToServer(
+    serverName: string,
+    config: MCPServerConfig,
+  ): Promise<Client> {
     const normalizedServerName = this.normalizeName(serverName);
     const timeout = this.getTimeout(config);
-    const state = this.clientStates.get(normalizedServerName) ?? { config, timeout };
+    const state = this.clientStates.get(normalizedServerName) ?? {
+      config,
+      timeout,
+    };
     // Update config/timeout on every call
     state.config = config;
     state.timeout = timeout;
@@ -159,7 +177,7 @@ export class MCPClientManager {
       this.applyElicitationHandler(normalizedServerName, client);
 
       if (config.onError) {
-        client.onerror = error => {
+        client.onerror = (error) => {
           config.onError?.(error);
         };
       }
@@ -172,7 +190,12 @@ export class MCPClientManager {
       if (this.isStdioConfig(config)) {
         transport = await this.connectViaStdio(client, config, timeout);
       } else {
-        transport = await this.connectViaHttp(normalizedServerName, client, config, timeout);
+        transport = await this.connectViaHttp(
+          normalizedServerName,
+          client,
+          config,
+          timeout,
+        );
       }
 
       state.client = client;
@@ -182,7 +205,7 @@ export class MCPClientManager {
       this.clientStates.set(normalizedServerName, state);
 
       return client;
-    })().catch(error => {
+    })().catch((error) => {
       // Clear pending but keep config so the server remains registered
       state.promise = undefined;
       state.client = undefined;
@@ -211,7 +234,7 @@ export class MCPClientManager {
 
   async disconnectAllServers(): Promise<void> {
     const serverNames = this.listServers();
-    await Promise.all(serverNames.map(name => this.disconnectServer(name)));
+    await Promise.all(serverNames.map((name) => this.disconnectServer(name)));
 
     for (const serverName of serverNames) {
       const normalizedServerName = this.normalizeName(serverName);
@@ -221,22 +244,35 @@ export class MCPClientManager {
     }
   }
 
-  async listTools(serverName: string, params?: Parameters<Client['listTools']>[0], options?: ClientRequestOptions) {
+  async listTools(
+    serverName: string,
+    params?: Parameters<Client["listTools"]>[0],
+    options?: ClientRequestOptions,
+  ) {
     const normalizedServerName = this.normalizeName(serverName);
     await this.ensureConnected(normalizedServerName);
     const client = this.getClientByName(normalizedServerName);
-    return client.listTools(params, this.withTimeout(normalizedServerName, options));
+    return client.listTools(
+      params,
+      this.withTimeout(normalizedServerName, options),
+    );
   }
 
   async getTools(names?: string[]): Promise<ListToolsResult> {
-    const targetNames = names && names.length > 0 ? names.map(name => this.normalizeName(name)) : this.listServers();
+    const targetNames =
+      names && names.length > 0
+        ? names.map((name) => this.normalizeName(name))
+        : this.listServers();
     const uniqueNames = Array.from(new Set(targetNames));
 
     const toolLists = await Promise.all(
-      uniqueNames.map(async serverName => {
+      uniqueNames.map(async (serverName) => {
         await this.ensureConnected(serverName);
         const client = this.getClientByName(serverName);
-        const result = await client.listTools(undefined, this.withTimeout(serverName));
+        const result = await client.listTools(
+          undefined,
+          this.withTimeout(serverName),
+        );
         return result.tools;
       }),
     );
@@ -244,7 +280,12 @@ export class MCPClientManager {
     return { tools: toolLists.flat() };
   }
 
-  async executeTool(serverName: string, toolName: string, args: ExecuteToolArguments = {}, options?: CallToolOptions) {
+  async executeTool(
+    serverName: string,
+    toolName: string,
+    args: ExecuteToolArguments = {},
+    options?: CallToolOptions,
+  ) {
     const normalizedServerName = this.normalizeName(serverName);
     await this.ensureConnected(normalizedServerName);
     const client = this.getClientByName(normalizedServerName);
@@ -258,53 +299,102 @@ export class MCPClientManager {
     );
   }
 
-  async listResources(serverName: string, params?: ListResourcesParams, options?: ClientRequestOptions) {
+  async listResources(
+    serverName: string,
+    params?: ListResourcesParams,
+    options?: ClientRequestOptions,
+  ) {
     const normalizedServerName = this.normalizeName(serverName);
     await this.ensureConnected(normalizedServerName);
     const client = this.getClientByName(normalizedServerName);
-    return client.listResources(params, this.withTimeout(normalizedServerName, options));
+    return client.listResources(
+      params,
+      this.withTimeout(normalizedServerName, options),
+    );
   }
 
-  async readResource(serverName: string, params: ReadResourceParams, options?: ClientRequestOptions) {
+  async readResource(
+    serverName: string,
+    params: ReadResourceParams,
+    options?: ClientRequestOptions,
+  ) {
     const normalizedServerName = this.normalizeName(serverName);
     await this.ensureConnected(normalizedServerName);
     const client = this.getClientByName(normalizedServerName);
-    return client.readResource(params, this.withTimeout(normalizedServerName, options));
+    return client.readResource(
+      params,
+      this.withTimeout(normalizedServerName, options),
+    );
   }
 
-  async subscribeResource(serverName: string, params: SubscribeResourceParams, options?: ClientRequestOptions) {
+  async subscribeResource(
+    serverName: string,
+    params: SubscribeResourceParams,
+    options?: ClientRequestOptions,
+  ) {
     const normalizedServerName = this.normalizeName(serverName);
     await this.ensureConnected(normalizedServerName);
     const client = this.getClientByName(normalizedServerName);
-    return client.subscribeResource(params, this.withTimeout(normalizedServerName, options));
+    return client.subscribeResource(
+      params,
+      this.withTimeout(normalizedServerName, options),
+    );
   }
 
-  async unsubscribeResource(serverName: string, params: UnsubscribeResourceParams, options?: ClientRequestOptions) {
+  async unsubscribeResource(
+    serverName: string,
+    params: UnsubscribeResourceParams,
+    options?: ClientRequestOptions,
+  ) {
     const normalizedServerName = this.normalizeName(serverName);
     await this.ensureConnected(normalizedServerName);
     const client = this.getClientByName(normalizedServerName);
-    return client.unsubscribeResource(params, this.withTimeout(normalizedServerName, options));
+    return client.unsubscribeResource(
+      params,
+      this.withTimeout(normalizedServerName, options),
+    );
   }
 
-  async listResourceTemplates(serverName: string, params?: ListResourceTemplatesParams, options?: ClientRequestOptions) {
+  async listResourceTemplates(
+    serverName: string,
+    params?: ListResourceTemplatesParams,
+    options?: ClientRequestOptions,
+  ) {
     const normalizedServerName = this.normalizeName(serverName);
     await this.ensureConnected(normalizedServerName);
     const client = this.getClientByName(normalizedServerName);
-    return client.listResourceTemplates(params, this.withTimeout(normalizedServerName, options));
+    return client.listResourceTemplates(
+      params,
+      this.withTimeout(normalizedServerName, options),
+    );
   }
 
-  async listPrompts(serverName: string, params?: ListPromptsParams, options?: ClientRequestOptions) {
+  async listPrompts(
+    serverName: string,
+    params?: ListPromptsParams,
+    options?: ClientRequestOptions,
+  ) {
     const normalizedServerName = this.normalizeName(serverName);
     await this.ensureConnected(normalizedServerName);
     const client = this.getClientByName(normalizedServerName);
-    return client.listPrompts(params, this.withTimeout(normalizedServerName, options));
+    return client.listPrompts(
+      params,
+      this.withTimeout(normalizedServerName, options),
+    );
   }
 
-  async getPrompt(serverName: string, params: GetPromptParams, options?: ClientRequestOptions) {
+  async getPrompt(
+    serverName: string,
+    params: GetPromptParams,
+    options?: ClientRequestOptions,
+  ) {
     const normalizedServerName = this.normalizeName(serverName);
     await this.ensureConnected(normalizedServerName);
     const client = this.getClientByName(normalizedServerName);
-    return client.getPrompt(params, this.withTimeout(normalizedServerName, options));
+    return client.getPrompt(
+      params,
+      this.withTimeout(normalizedServerName, options),
+    );
   }
 
   getSessionIdByServer(serverName: string): string | undefined {
@@ -315,33 +405,59 @@ export class MCPClientManager {
     if (state.transport instanceof StreamableHTTPClientTransport) {
       return state.transport.sessionId;
     }
-    throw new Error(`Server "${serverName}" must be Streamable HTTP to get the session ID.`);
+    throw new Error(
+      `Server "${serverName}" must be Streamable HTTP to get the session ID.`,
+    );
   }
 
-  addNotificationHandler(serverName: string, schema: NotificationSchema, handler: NotificationHandler): void {
+  addNotificationHandler(
+    serverName: string,
+    schema: NotificationSchema,
+    handler: NotificationHandler,
+  ): void {
     const normalizedServerName = this.normalizeName(serverName);
-    const serverHandlers = this.notificationHandlers.get(normalizedServerName) ?? new Map();
-    const handlersForSchema = serverHandlers.get(schema) ?? new Set<NotificationHandler>();
+    const serverHandlers =
+      this.notificationHandlers.get(normalizedServerName) ?? new Map();
+    const handlersForSchema =
+      serverHandlers.get(schema) ?? new Set<NotificationHandler>();
     handlersForSchema.add(handler);
     serverHandlers.set(schema, handlersForSchema);
     this.notificationHandlers.set(normalizedServerName, serverHandlers);
 
     const client = this.clientStates.get(normalizedServerName)?.client;
     if (client) {
-      client.setNotificationHandler(schema, this.createNotificationDispatcher(normalizedServerName, schema));
+      client.setNotificationHandler(
+        schema,
+        this.createNotificationDispatcher(normalizedServerName, schema),
+      );
     }
   }
 
-  onResourceListChanged(serverName: string, handler: NotificationHandler): void {
-    this.addNotificationHandler(serverName, ResourceListChangedNotificationSchema, handler);
+  onResourceListChanged(
+    serverName: string,
+    handler: NotificationHandler,
+  ): void {
+    this.addNotificationHandler(
+      serverName,
+      ResourceListChangedNotificationSchema,
+      handler,
+    );
   }
 
   onResourceUpdated(serverName: string, handler: NotificationHandler): void {
-    this.addNotificationHandler(serverName, ResourceUpdatedNotificationSchema, handler);
+    this.addNotificationHandler(
+      serverName,
+      ResourceUpdatedNotificationSchema,
+      handler,
+    );
   }
 
   onPromptListChanged(serverName: string, handler: NotificationHandler): void {
-    this.addNotificationHandler(serverName, PromptListChangedNotificationSchema, handler);
+    this.addNotificationHandler(
+      serverName,
+      PromptListChangedNotificationSchema,
+      handler,
+    );
   }
 
   getClient(serverName: string): Client | undefined {
@@ -367,11 +483,15 @@ export class MCPClientManager {
     this.elicitationHandlers.delete(normalizedServerName);
     const client = this.clientStates.get(normalizedServerName)?.client;
     if (client) {
-      client.removeRequestHandler('elicitation/create');
+      client.removeRequestHandler("elicitation/create");
     }
   }
 
-  private async connectViaStdio(client: Client, config: StdioServerConfig, timeout: number): Promise<Transport> {
+  private async connectViaStdio(
+    client: Client,
+    config: StdioServerConfig,
+    timeout: number,
+  ): Promise<Transport> {
     const transport = new StdioClientTransport({
       command: config.command,
       args: config.args,
@@ -381,20 +501,30 @@ export class MCPClientManager {
     return transport;
   }
 
-  private async connectViaHttp(serverName: string, client: Client, config: HttpServerConfig, timeout: number): Promise<Transport> {
-    const preferSSE = config.preferSSE ?? config.url.pathname.endsWith('/sse');
+  private async connectViaHttp(
+    serverName: string,
+    client: Client,
+    config: HttpServerConfig,
+    timeout: number,
+  ): Promise<Transport> {
+    const preferSSE = config.preferSSE ?? config.url.pathname.endsWith("/sse");
     let streamableError: unknown;
 
     if (!preferSSE) {
-      const streamableTransport = new StreamableHTTPClientTransport(config.url, {
-        requestInit: config.requestInit,
-        reconnectionOptions: config.reconnectionOptions,
-        authProvider: config.authProvider,
-        sessionId: config.sessionId,
-      });
+      const streamableTransport = new StreamableHTTPClientTransport(
+        config.url,
+        {
+          requestInit: config.requestInit,
+          reconnectionOptions: config.reconnectionOptions,
+          authProvider: config.authProvider,
+          sessionId: config.sessionId,
+        },
+      );
 
       try {
-        await client.connect(streamableTransport, { timeout: Math.min(timeout, 3000) });
+        await client.connect(streamableTransport, {
+          timeout: Math.min(timeout, 3000),
+        });
         return streamableTransport;
       } catch (error) {
         streamableError = error;
@@ -415,7 +545,7 @@ export class MCPClientManager {
       await this.safeCloseTransport(sseTransport);
       const streamableMessage = streamableError
         ? ` Streamable HTTP error: ${this.formatError(streamableError)}.`
-        : '';
+        : "";
       throw new Error(
         `Failed to connect to MCP server "${serverName}" using HTTP transports.${streamableMessage} SSE error: ${this.formatError(error)}.`,
       );
@@ -437,12 +567,18 @@ export class MCPClientManager {
     }
 
     for (const [schema] of serverHandlers) {
-      client.setNotificationHandler(schema, this.createNotificationDispatcher(serverName, schema));
+      client.setNotificationHandler(
+        schema,
+        this.createNotificationDispatcher(serverName, schema),
+      );
     }
   }
 
-  private createNotificationDispatcher(serverName: string, schema: NotificationSchema): NotificationHandler {
-    return notification => {
+  private createNotificationDispatcher(
+    serverName: string,
+    schema: NotificationSchema,
+  ): NotificationHandler {
+    return (notification) => {
       const serverHandlers = this.notificationHandlers.get(serverName);
       const handlersForSchema = serverHandlers?.get(schema);
       if (!handlersForSchema || handlersForSchema.size === 0) {
@@ -464,7 +600,9 @@ export class MCPClientManager {
       return;
     }
 
-    client.setRequestHandler(ElicitRequestSchema, async request => handler(request.params));
+    client.setRequestHandler(ElicitRequestSchema, async (request) =>
+      handler(request.params),
+    );
   }
 
   private async ensureConnected(serverName: string): Promise<void> {
@@ -489,10 +627,15 @@ export class MCPClientManager {
     this.clientStates.delete(normalizedServerName);
   }
 
-  private withTimeout(serverName: string, options?: RequestOptions): RequestOptions {
+  private withTimeout(
+    serverName: string,
+    options?: RequestOptions,
+  ): RequestOptions {
     const normalizedServerName = this.normalizeName(serverName);
     const state = this.clientStates.get(normalizedServerName);
-    const timeout = state?.timeout ?? (state ? this.getTimeout(state.config) : this.defaultTimeout);
+    const timeout =
+      state?.timeout ??
+      (state ? this.getTimeout(state.config) : this.defaultTimeout);
 
     if (!options) {
       return { timeout };
@@ -535,13 +678,13 @@ export class MCPClientManager {
   }
 
   private isStdioConfig(config: MCPServerConfig): config is StdioServerConfig {
-    return 'command' in config;
+    return "command" in config;
   }
 
   private normalizeName(serverName: string): string {
     const normalized = serverName.trim();
     if (!normalized) {
-      throw new Error('Server name must be a non-empty string.');
+      throw new Error("Server name must be a non-empty string.");
     }
     return normalized;
   }
