@@ -138,6 +138,9 @@ export class MCPClientManager {
     config: MCPServerConfig,
   ): Promise<Client> {
     const normalizedServerName = this.normalizeName(serverName);
+    if(this.clientStates.has(normalizedServerName)) {
+      throw new Error(`MCP server "${normalizedServerName}" is already connected.`);
+    }
     const timeout = this.getTimeout(config);
     const state = this.clientStates.get(normalizedServerName) ?? {
       config,

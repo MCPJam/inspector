@@ -52,7 +52,7 @@ connect.post("/", async (c) => {
       return c.json(
         {
           success: false,
-          error: `MCP configuration is invalid. Please double check your server configuration: ${JSON.stringify(serverConfig)}`,
+          error: `Connection failed for server ${serverId}: ${error instanceof Error ? error.message : "Unknown error"}`,
           details: error instanceof Error ? error.message : "Unknown error",
         },
         500,
