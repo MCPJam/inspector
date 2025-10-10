@@ -31,153 +31,206 @@ var import_protocol = require("@modelcontextprotocol/sdk/shared/protocol.js");
 var import_types = require("@modelcontextprotocol/sdk/types.js");
 var MCPClientManager = class {
   constructor(servers = {}, options = {}) {
-    this.serverConfigs = /* @__PURE__ */ new Map();
     this.clientStates = /* @__PURE__ */ new Map();
+    this.pendingConnections = /* @__PURE__ */ new Map();
+    this.serverConfigs = /* @__PURE__ */ new Map();
     this.notificationHandlers = /* @__PURE__ */ new Map();
+    this.elicitationHandlers = /* @__PURE__ */ new Map();
     var _a, _b, _c;
     this.defaultClientVersion = (_a = options.defaultClientVersion) != null ? _a : "1.0.0";
     this.defaultCapabilities = { ...(_b = options.defaultCapabilities) != null ? _b : {} };
     this.defaultTimeout = (_c = options.defaultTimeout) != null ? _c : import_protocol.DEFAULT_REQUEST_TIMEOUT_MSEC;
     for (const [name, config] of Object.entries(servers)) {
-      this.registerServer(name, config);
+      void this.connectToServer(name, config);
     }
-  }
-  registerServer(name, config) {
-    const serverName = name.trim();
-    if (!serverName) {
-      throw new Error("Server name must be a non-empty string.");
-    }
-    const state = this.clientStates.get(serverName);
-    if (state == null ? void 0 : state.connectionPromise) {
-      throw new Error(`Server "${serverName}" is currently connecting. Disconnect before reconfiguring.`);
-    }
-    if (state == null ? void 0 : state.client) {
-      throw new Error(`Server "${serverName}" is already connected. Disconnect before reconfiguring.`);
-    }
-    this.serverConfigs.set(serverName, config);
-    this.clientStates.set(serverName, {
-      config,
-      timeout: this.getTimeout(config)
-    });
-  }
-  unregisterServer(name) {
-    const serverName = name.trim();
-    const state = this.clientStates.get(serverName);
-    if ((state == null ? void 0 : state.client) || (state == null ? void 0 : state.connectionPromise)) {
-      throw new Error(`Cannot unregister server "${serverName}" while it is connected. Disconnect first.`);
-    }
-    this.serverConfigs.delete(serverName);
-    this.clientStates.delete(serverName);
-    this.notificationHandlers.delete(serverName);
   }
   listServers() {
     return Array.from(this.serverConfigs.keys());
   }
   hasServer(name) {
-    return this.serverConfigs.has(name.trim());
+    const serverName = this.normalizeName(name);
+    return this.serverConfigs.has(serverName);
   }
-  async connectToServer(name) {
-    const serverName = name.trim();
-    const config = this.getServerConfig(serverName);
-    const state = this.ensureState(serverName, config);
-    if (state.client) {
-      return state.client;
+  async connectToServer(name, config) {
+    const serverName = this.normalizeName(name);
+    this.serverConfigs.set(serverName, config);
+    const timeout = this.getTimeout(config);
+    const existingState = this.clientStates.get(serverName);
+    if (existingState) {
+      existingState.config = config;
+      existingState.timeout = timeout;
+      this.clientStates.set(serverName, existingState);
+      return existingState.client;
     }
-    if (state.connectionPromise) {
-      return state.connectionPromise;
+    const pendingState = this.pendingConnections.get(serverName);
+    if (pendingState) {
+      pendingState.config = config;
+      pendingState.timeout = timeout;
+      return pendingState.promise;
     }
-    const connectionPromise = this.createClientAndConnect(serverName, config).then((client) => {
-      const updatedState = this.clientStates.get(serverName);
-      if (!updatedState) {
-        return client;
+    const connectionPromise = (async () => {
+      var _a;
+      const client = new import_client.Client(
+        {
+          name: serverName,
+          version: (_a = config.version) != null ? _a : this.defaultClientVersion
+        },
+        {
+          capabilities: this.buildCapabilities(config)
+        }
+      );
+      this.applyNotificationHandlers(serverName, client);
+      this.applyElicitationHandler(serverName, client);
+      if (config.onError) {
+        client.onerror = (error) => {
+          var _a2;
+          (_a2 = config.onError) == null ? void 0 : _a2.call(config, error);
+        };
       }
-      updatedState.client = client;
-      updatedState.connectionPromise = void 0;
-      updatedState.timeout = this.getTimeout(config);
+      client.onclose = () => {
+        this.resetState(serverName, { preserveConfig: true });
+      };
+      let transport;
+      if (this.isStdioConfig(config)) {
+        transport = await this.connectViaStdio(client, config, timeout);
+      } else {
+        transport = await this.connectViaHttp(serverName, client, config, timeout);
+      }
+      const managedState = {
+        config,
+        client,
+        transport,
+        timeout
+      };
+      this.clientStates.set(serverName, managedState);
+      this.pendingConnections.delete(serverName);
       return client;
-    }).catch((error) => {
-      this.resetState(serverName, { preserveConfig: true });
+    })().catch((error) => {
+      this.pendingConnections.delete(serverName);
+      this.clientStates.delete(serverName);
       throw error;
     });
-    state.connectionPromise = connectionPromise;
-    this.clientStates.set(serverName, state);
+    this.pendingConnections.set(serverName, { config, timeout, promise: connectionPromise });
     return connectionPromise;
   }
   async disconnectServer(name) {
-    var _a, _b;
-    const serverName = name.trim();
+    const serverName = this.normalizeName(name);
+    const pending = this.pendingConnections.get(serverName);
+    if (pending) {
+      try {
+        await pending.promise;
+      } catch {
+      }
+    }
     const state = this.clientStates.get(serverName);
-    if (!(state == null ? void 0 : state.client)) {
-      (_a = state == null ? void 0 : state.connectionPromise) == null ? void 0 : _a.catch(() => void 0);
-      state ? state.connectionPromise = void 0 : void 0;
+    if (!state) {
+      this.resetState(serverName, { preserveConfig: true });
       return;
     }
     try {
       await state.client.close();
-      await ((_b = state.transport) == null ? void 0 : _b.close());
     } finally {
+      await this.safeCloseTransport(state.transport);
       this.resetState(serverName, { preserveConfig: true });
     }
   }
-  async disconnectAll() {
-    await Promise.all(this.listServers().map((name) => this.disconnectServer(name)));
+  async disconnectAllServers() {
+    const serverNames = this.listServers();
+    await Promise.all(serverNames.map((name) => this.disconnectServer(name)));
+    for (const name of serverNames) {
+      const serverName = this.normalizeName(name);
+      this.resetState(serverName, { preserveConfig: false });
+      this.notificationHandlers.delete(serverName);
+      this.elicitationHandlers.delete(serverName);
+    }
   }
   async listTools(name, params, options) {
-    const client = await this.connectToServer(name);
-    return client.listTools(params, this.withTimeout(name, options));
+    const serverName = this.normalizeName(name);
+    await this.ensureConnected(serverName);
+    const client = this.getClientByName(serverName);
+    return client.listTools(params, this.withTimeout(serverName, options));
+  }
+  async getTools(names) {
+    const targetNames = names && names.length > 0 ? names.map((name) => this.normalizeName(name)) : this.listServers();
+    const uniqueNames = Array.from(new Set(targetNames));
+    const toolLists = await Promise.all(
+      uniqueNames.map(async (serverName) => {
+        await this.ensureConnected(serverName);
+        const client = this.getClientByName(serverName);
+        const result = await client.listTools(void 0, this.withTimeout(serverName));
+        return result.tools;
+      })
+    );
+    return { tools: toolLists.flat() };
   }
   async executeTool(name, toolName, args = {}, options) {
-    const client = await this.connectToServer(name);
+    const serverName = this.normalizeName(name);
+    await this.ensureConnected(serverName);
+    const client = this.getClientByName(serverName);
     return client.callTool(
       {
         name: toolName,
         arguments: args
       },
       import_types.CallToolResultSchema,
-      this.withTimeout(name, options)
+      this.withTimeout(serverName, options)
     );
   }
   async listResources(name, params, options) {
-    const client = await this.connectToServer(name);
-    return client.listResources(params, this.withTimeout(name, options));
+    const serverName = this.normalizeName(name);
+    await this.ensureConnected(serverName);
+    const client = this.getClientByName(serverName);
+    return client.listResources(params, this.withTimeout(serverName, options));
   }
   async readResource(name, params, options) {
-    const client = await this.connectToServer(name);
-    return client.readResource(params, this.withTimeout(name, options));
+    const serverName = this.normalizeName(name);
+    await this.ensureConnected(serverName);
+    const client = this.getClientByName(serverName);
+    return client.readResource(params, this.withTimeout(serverName, options));
   }
   async subscribeResource(name, params, options) {
-    const client = await this.connectToServer(name);
-    return client.subscribeResource(params, this.withTimeout(name, options));
+    const serverName = this.normalizeName(name);
+    await this.ensureConnected(serverName);
+    const client = this.getClientByName(serverName);
+    return client.subscribeResource(params, this.withTimeout(serverName, options));
   }
   async unsubscribeResource(name, params, options) {
-    const client = await this.connectToServer(name);
-    return client.unsubscribeResource(params, this.withTimeout(name, options));
+    const serverName = this.normalizeName(name);
+    await this.ensureConnected(serverName);
+    const client = this.getClientByName(serverName);
+    return client.unsubscribeResource(params, this.withTimeout(serverName, options));
   }
   async listResourceTemplates(name, params, options) {
-    const client = await this.connectToServer(name);
-    return client.listResourceTemplates(params, this.withTimeout(name, options));
+    const serverName = this.normalizeName(name);
+    await this.ensureConnected(serverName);
+    const client = this.getClientByName(serverName);
+    return client.listResourceTemplates(params, this.withTimeout(serverName, options));
   }
   async listPrompts(name, params, options) {
-    const client = await this.connectToServer(name);
-    return client.listPrompts(params, this.withTimeout(name, options));
+    const serverName = this.normalizeName(name);
+    await this.ensureConnected(serverName);
+    const client = this.getClientByName(serverName);
+    return client.listPrompts(params, this.withTimeout(serverName, options));
   }
   async getPrompt(name, params, options) {
-    const client = await this.connectToServer(name);
-    return client.getPrompt(params, this.withTimeout(name, options));
+    const serverName = this.normalizeName(name);
+    await this.ensureConnected(serverName);
+    const client = this.getClientByName(serverName);
+    return client.getPrompt(params, this.withTimeout(serverName, options));
   }
-  getSessionId(name) {
-    const state = this.clientStates.get(name.trim());
+  getSessionIdByServer(name) {
+    const state = this.clientStates.get(this.normalizeName(name));
     if (!(state == null ? void 0 : state.transport)) {
-      return void 0;
+      throw new Error(`Unknown MCP server "${name}".`);
     }
     if (state.transport instanceof import_streamableHttp.StreamableHTTPClientTransport) {
       return state.transport.sessionId;
     }
-    return void 0;
+    throw new Error(`Server "${name}" must be Streamable HTTP to get the session ID.`);
   }
   addNotificationHandler(name, schema, handler) {
     var _a, _b;
-    const serverName = name.trim();
+    const serverName = this.normalizeName(name);
     const handlers = (_a = this.notificationHandlers.get(serverName)) != null ? _a : [];
     handlers.push({ schema, handler });
     this.notificationHandlers.set(serverName, handlers);
@@ -197,39 +250,28 @@ var MCPClientManager = class {
   }
   getClient(name) {
     var _a;
-    return (_a = this.clientStates.get(name.trim())) == null ? void 0 : _a.client;
+    return (_a = this.clientStates.get(this.normalizeName(name))) == null ? void 0 : _a.client;
   }
-  async createClientAndConnect(serverName, config) {
+  setElicitationHandler(name, handler) {
     var _a;
-    const capabilities = this.buildCapabilities(config);
-    const client = new import_client.Client(
-      {
-        name: serverName,
-        version: (_a = config.version) != null ? _a : this.defaultClientVersion
-      },
-      {
-        capabilities
-      }
-    );
-    this.applyNotificationHandlers(serverName, client);
-    if (config.onError) {
-      client.onerror = (error) => {
-        var _a2;
-        (_a2 = config.onError) == null ? void 0 : _a2.call(config, error);
-      };
+    const serverName = this.normalizeName(name);
+    if (!this.serverConfigs.has(serverName)) {
+      throw new Error(`Unknown MCP server "${serverName}".`);
     }
-    client.onclose = () => {
-      this.resetState(serverName, { preserveConfig: true });
-    };
-    const timeout = this.getTimeout(config);
-    if (this.isStdioConfig(config)) {
-      const transport2 = await this.connectViaStdio(client, config, timeout);
-      this.setTransport(serverName, transport2);
-      return client;
+    this.elicitationHandlers.set(serverName, handler);
+    const client = (_a = this.clientStates.get(serverName)) == null ? void 0 : _a.client;
+    if (client) {
+      this.applyElicitationHandler(serverName, client);
     }
-    const transport = await this.connectViaHttp(serverName, client, config, timeout);
-    this.setTransport(serverName, transport);
-    return client;
+  }
+  clearElicitationHandler(name) {
+    var _a;
+    const serverName = this.normalizeName(name);
+    this.elicitationHandlers.delete(serverName);
+    const client = (_a = this.clientStates.get(serverName)) == null ? void 0 : _a.client;
+    if (client) {
+      client.removeRequestHandler("elicitation/create");
+    }
   }
   async connectViaStdio(client, config, timeout) {
     var _a;
@@ -291,43 +333,43 @@ var MCPClientManager = class {
       client.setNotificationHandler(schema, handler);
     }
   }
-  ensureState(name, config) {
-    const existing = this.clientStates.get(name);
-    if (existing) {
-      existing.config = config;
-      existing.timeout = this.getTimeout(config);
-      return existing;
+  applyElicitationHandler(serverName, client) {
+    const handler = this.elicitationHandlers.get(serverName);
+    if (!handler) {
+      return;
     }
-    const state = {
-      config,
-      timeout: this.getTimeout(config)
-    };
-    this.clientStates.set(name, state);
-    return state;
+    client.setRequestHandler(import_types.ElicitRequestSchema, async (request) => handler(request.params));
+  }
+  async ensureConnected(name) {
+    const serverName = this.normalizeName(name);
+    if (this.clientStates.has(serverName)) {
+      return;
+    }
+    const pending = this.pendingConnections.get(serverName);
+    if (pending) {
+      await pending.promise;
+      return;
+    }
+    const config = this.serverConfigs.get(serverName);
+    if (!config) {
+      throw new Error(`Unknown MCP server "${serverName}".`);
+    }
+    await this.connectToServer(serverName, config);
   }
   resetState(name, options) {
-    const state = this.clientStates.get(name);
-    if (!state) {
-      return;
-    }
+    const serverName = this.normalizeName(name);
+    this.pendingConnections.delete(serverName);
+    this.clientStates.delete(serverName);
     if (!options.preserveConfig) {
-      this.clientStates.delete(name);
-      return;
+      this.serverConfigs.delete(serverName);
     }
-    state.client = void 0;
-    state.transport = void 0;
-    state.connectionPromise = void 0;
-  }
-  setTransport(name, transport) {
-    const state = this.clientStates.get(name);
-    if (!state) {
-      return;
-    }
-    state.transport = transport;
   }
   withTimeout(name, options) {
-    var _a, _b;
-    const timeout = (_b = (_a = this.clientStates.get(name.trim())) == null ? void 0 : _a.timeout) != null ? _b : this.defaultTimeout;
+    var _a;
+    const serverName = this.normalizeName(name);
+    const connectedState = this.clientStates.get(serverName);
+    const serverConfig = this.serverConfigs.get(serverName);
+    const timeout = (_a = connectedState == null ? void 0 : connectedState.timeout) != null ? _a : serverConfig ? this.getTimeout(serverConfig) : this.defaultTimeout;
     if (!options) {
       return { timeout };
     }
@@ -335,13 +377,6 @@ var MCPClientManager = class {
       return { ...options, timeout };
     }
     return options;
-  }
-  getServerConfig(name) {
-    const config = this.serverConfigs.get(name);
-    if (!config) {
-      throw new Error(`Unknown MCP server "${name}".`);
-    }
-    return config;
   }
   buildCapabilities(config) {
     var _a;
@@ -370,6 +405,21 @@ var MCPClientManager = class {
   }
   isStdioConfig(config) {
     return "command" in config;
+  }
+  normalizeName(name) {
+    const normalized = name.trim();
+    if (!normalized) {
+      throw new Error("Server name must be a non-empty string.");
+    }
+    return normalized;
+  }
+  getClientByName(name) {
+    const serverName = this.normalizeName(name);
+    const state = this.clientStates.get(serverName);
+    if (!state) {
+      throw new Error(`MCP server "${serverName}" is not connected.`);
+    }
+    return state.client;
   }
 };
 // Annotate the CommonJS export names for ESM import in node:

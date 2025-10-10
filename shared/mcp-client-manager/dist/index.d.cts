@@ -3,6 +3,7 @@ import { ClientOptions, Client } from '@modelcontextprotocol/sdk/client/index.js
 import { SSEClientTransportOptions } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransportOptions } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { RequestOptions } from '@modelcontextprotocol/sdk/shared/protocol.js';
+import { ElicitRequest, ElicitResult } from '@modelcontextprotocol/sdk/types.js';
 
 type ClientCapabilityOptions = NonNullable<ClientOptions['capabilities']>;
 type BaseServerConfig = {
@@ -48,11 +49,15 @@ type SubscribeResourceParams = Parameters<Client['subscribeResource']>[0];
 type UnsubscribeResourceParams = Parameters<Client['unsubscribeResource']>[0];
 type ListPromptsParams = Parameters<Client['listPrompts']>[0];
 type GetPromptParams = Parameters<Client['getPrompt']>[0];
+type ListToolsResult = Awaited<ReturnType<Client['listTools']>>;
 type ExecuteToolArguments = Record<string, unknown>;
+type ElicitationHandler = (params: ElicitRequest['params']) => Promise<ElicitResult> | ElicitResult;
 declare class MCPClientManager {
-    private readonly serverConfigs;
     private readonly clientStates;
+    private readonly pendingConnections;
+    private readonly serverConfigs;
     private readonly notificationHandlers;
+    private readonly elicitationHandlers;
     private readonly defaultClientVersion;
     private readonly defaultCapabilities;
     private readonly defaultTimeout;
@@ -61,19 +66,17 @@ declare class MCPClientManager {
         defaultCapabilities?: ClientCapabilityOptions;
         defaultTimeout?: number;
     });
-    registerServer(name: string, config: MCPServerConfig): void;
-    unregisterServer(name: string): void;
     listServers(): string[];
     hasServer(name: string): boolean;
-    connectToServer(name: string): Promise<Client>;
+    connectToServer(name: string, config: MCPServerConfig): Promise<Client>;
     disconnectServer(name: string): Promise<void>;
-    disconnectAll(): Promise<void>;
+    disconnectAllServers(): Promise<void>;
     listTools(name: string, params?: Parameters<Client['listTools']>[0], options?: ClientRequestOptions): Promise<zod.objectOutputType<{
         _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
     } & {
         nextCursor: zod.ZodOptional<zod.ZodString>;
     } & {
-        tools: zod.ZodArray<zod.ZodObject<zod.objectUtil.extendShape<{
+        tools: zod.ZodArray<zod.ZodObject<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
             name: zod.ZodString;
             title: zod.ZodOptional<zod.ZodString>;
         }, {
@@ -123,21 +126,22 @@ declare class MCPClientManager {
                 idempotentHint: zod.ZodOptional<zod.ZodBoolean>;
                 openWorldHint: zod.ZodOptional<zod.ZodBoolean>;
             }, zod.ZodTypeAny, "passthrough">>>;
+            _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
+        }>, {
             icons: zod.ZodOptional<zod.ZodArray<zod.ZodObject<{
                 src: zod.ZodString;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
             }, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{
                 src: zod.ZodString;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
             }, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{
                 src: zod.ZodString;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
             }, zod.ZodTypeAny, "passthrough">>, "many">>;
-            _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
-        }>, "passthrough", zod.ZodTypeAny, zod.objectOutputType<zod.objectUtil.extendShape<{
+        }>, "passthrough", zod.ZodTypeAny, zod.objectOutputType<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
             name: zod.ZodString;
             title: zod.ZodOptional<zod.ZodString>;
         }, {
@@ -187,21 +191,22 @@ declare class MCPClientManager {
                 idempotentHint: zod.ZodOptional<zod.ZodBoolean>;
                 openWorldHint: zod.ZodOptional<zod.ZodBoolean>;
             }, zod.ZodTypeAny, "passthrough">>>;
+            _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
+        }>, {
             icons: zod.ZodOptional<zod.ZodArray<zod.ZodObject<{
                 src: zod.ZodString;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
             }, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{
                 src: zod.ZodString;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
             }, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{
                 src: zod.ZodString;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
             }, zod.ZodTypeAny, "passthrough">>, "many">>;
-            _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
-        }>, zod.ZodTypeAny, "passthrough">, zod.objectInputType<zod.objectUtil.extendShape<{
+        }>, zod.ZodTypeAny, "passthrough">, zod.objectInputType<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
             name: zod.ZodString;
             title: zod.ZodOptional<zod.ZodString>;
         }, {
@@ -251,22 +256,24 @@ declare class MCPClientManager {
                 idempotentHint: zod.ZodOptional<zod.ZodBoolean>;
                 openWorldHint: zod.ZodOptional<zod.ZodBoolean>;
             }, zod.ZodTypeAny, "passthrough">>>;
+            _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
+        }>, {
             icons: zod.ZodOptional<zod.ZodArray<zod.ZodObject<{
                 src: zod.ZodString;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
             }, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{
                 src: zod.ZodString;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
             }, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{
                 src: zod.ZodString;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
             }, zod.ZodTypeAny, "passthrough">>, "many">>;
-            _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
         }>, zod.ZodTypeAny, "passthrough">>, "many">;
     }, zod.ZodTypeAny, "passthrough">>;
+    getTools(names?: string[]): Promise<ListToolsResult>;
     executeTool(name: string, toolName: string, args?: ExecuteToolArguments, options?: CallToolOptions): Promise<zod.objectOutputType<{
         _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
     } & {
@@ -312,73 +319,76 @@ declare class MCPClientManager {
             data: zod.ZodEffects<zod.ZodString, string, string>;
             mimeType: zod.ZodString;
             _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
-        }, zod.ZodTypeAny, "passthrough">>, zod.ZodObject<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
+        }, zod.ZodTypeAny, "passthrough">>, zod.ZodObject<zod.objectUtil.extendShape<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
             name: zod.ZodString;
             title: zod.ZodOptional<zod.ZodString>;
         }, {
             uri: zod.ZodString;
             description: zod.ZodOptional<zod.ZodString>;
             mimeType: zod.ZodOptional<zod.ZodString>;
-            icons: zod.ZodOptional<zod.ZodArray<zod.ZodObject<{
-                src: zod.ZodString;
-                mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
-            }, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{
-                src: zod.ZodString;
-                mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
-            }, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{
-                src: zod.ZodString;
-                mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
-            }, zod.ZodTypeAny, "passthrough">>, "many">>;
             _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
         }>, {
-            type: zod.ZodLiteral<"resource_link">;
-        }>, "passthrough", zod.ZodTypeAny, zod.objectOutputType<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
-            name: zod.ZodString;
-            title: zod.ZodOptional<zod.ZodString>;
-        }, {
-            uri: zod.ZodString;
-            description: zod.ZodOptional<zod.ZodString>;
-            mimeType: zod.ZodOptional<zod.ZodString>;
             icons: zod.ZodOptional<zod.ZodArray<zod.ZodObject<{
                 src: zod.ZodString;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
             }, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{
                 src: zod.ZodString;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
             }, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{
                 src: zod.ZodString;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
             }, zod.ZodTypeAny, "passthrough">>, "many">>;
-            _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
         }>, {
             type: zod.ZodLiteral<"resource_link">;
-        }>, zod.ZodTypeAny, "passthrough">, zod.objectInputType<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
+        }>, "passthrough", zod.ZodTypeAny, zod.objectOutputType<zod.objectUtil.extendShape<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
             name: zod.ZodString;
             title: zod.ZodOptional<zod.ZodString>;
         }, {
             uri: zod.ZodString;
             description: zod.ZodOptional<zod.ZodString>;
             mimeType: zod.ZodOptional<zod.ZodString>;
+            _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
+        }>, {
             icons: zod.ZodOptional<zod.ZodArray<zod.ZodObject<{
                 src: zod.ZodString;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
             }, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{
                 src: zod.ZodString;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
             }, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{
                 src: zod.ZodString;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
             }, zod.ZodTypeAny, "passthrough">>, "many">>;
+        }>, {
+            type: zod.ZodLiteral<"resource_link">;
+        }>, zod.ZodTypeAny, "passthrough">, zod.objectInputType<zod.objectUtil.extendShape<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
+            name: zod.ZodString;
+            title: zod.ZodOptional<zod.ZodString>;
+        }, {
+            uri: zod.ZodString;
+            description: zod.ZodOptional<zod.ZodString>;
+            mimeType: zod.ZodOptional<zod.ZodString>;
             _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
+        }>, {
+            icons: zod.ZodOptional<zod.ZodArray<zod.ZodObject<{
+                src: zod.ZodString;
+                mimeType: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
+            }, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{
+                src: zod.ZodString;
+                mimeType: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
+            }, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{
+                src: zod.ZodString;
+                mimeType: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
+            }, zod.ZodTypeAny, "passthrough">>, "many">>;
         }>, {
             type: zod.ZodLiteral<"resource_link">;
         }>, zod.ZodTypeAny, "passthrough">>, zod.ZodObject<{
@@ -514,69 +524,72 @@ declare class MCPClientManager {
     } & {
         nextCursor: zod.ZodOptional<zod.ZodString>;
     } & {
-        resources: zod.ZodArray<zod.ZodObject<zod.objectUtil.extendShape<{
+        resources: zod.ZodArray<zod.ZodObject<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
             name: zod.ZodString;
             title: zod.ZodOptional<zod.ZodString>;
         }, {
             uri: zod.ZodString;
             description: zod.ZodOptional<zod.ZodString>;
             mimeType: zod.ZodOptional<zod.ZodString>;
+            _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
+        }>, {
             icons: zod.ZodOptional<zod.ZodArray<zod.ZodObject<{
                 src: zod.ZodString;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
             }, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{
                 src: zod.ZodString;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
             }, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{
                 src: zod.ZodString;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
             }, zod.ZodTypeAny, "passthrough">>, "many">>;
-            _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
-        }>, "passthrough", zod.ZodTypeAny, zod.objectOutputType<zod.objectUtil.extendShape<{
+        }>, "passthrough", zod.ZodTypeAny, zod.objectOutputType<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
             name: zod.ZodString;
             title: zod.ZodOptional<zod.ZodString>;
         }, {
             uri: zod.ZodString;
             description: zod.ZodOptional<zod.ZodString>;
             mimeType: zod.ZodOptional<zod.ZodString>;
+            _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
+        }>, {
             icons: zod.ZodOptional<zod.ZodArray<zod.ZodObject<{
                 src: zod.ZodString;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
             }, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{
                 src: zod.ZodString;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
             }, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{
                 src: zod.ZodString;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
             }, zod.ZodTypeAny, "passthrough">>, "many">>;
-            _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
-        }>, zod.ZodTypeAny, "passthrough">, zod.objectInputType<zod.objectUtil.extendShape<{
+        }>, zod.ZodTypeAny, "passthrough">, zod.objectInputType<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
             name: zod.ZodString;
             title: zod.ZodOptional<zod.ZodString>;
         }, {
             uri: zod.ZodString;
             description: zod.ZodOptional<zod.ZodString>;
             mimeType: zod.ZodOptional<zod.ZodString>;
+            _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
+        }>, {
             icons: zod.ZodOptional<zod.ZodArray<zod.ZodObject<{
                 src: zod.ZodString;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
             }, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{
                 src: zod.ZodString;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
             }, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{
                 src: zod.ZodString;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
             }, zod.ZodTypeAny, "passthrough">>, "many">>;
-            _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
         }>, zod.ZodTypeAny, "passthrough">>, "many">;
     }, zod.ZodTypeAny, "passthrough">>;
     readResource(name: string, params: ReadResourceParams, options?: ClientRequestOptions): Promise<zod.objectOutputType<{
@@ -631,7 +644,7 @@ declare class MCPClientManager {
     } & {
         nextCursor: zod.ZodOptional<zod.ZodString>;
     } & {
-        resourceTemplates: zod.ZodArray<zod.ZodObject<zod.objectUtil.extendShape<{
+        resourceTemplates: zod.ZodArray<zod.ZodObject<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
             name: zod.ZodString;
             title: zod.ZodOptional<zod.ZodString>;
         }, {
@@ -639,7 +652,21 @@ declare class MCPClientManager {
             description: zod.ZodOptional<zod.ZodString>;
             mimeType: zod.ZodOptional<zod.ZodString>;
             _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
-        }>, "passthrough", zod.ZodTypeAny, zod.objectOutputType<zod.objectUtil.extendShape<{
+        }>, {
+            icons: zod.ZodOptional<zod.ZodArray<zod.ZodObject<{
+                src: zod.ZodString;
+                mimeType: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
+            }, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{
+                src: zod.ZodString;
+                mimeType: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
+            }, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{
+                src: zod.ZodString;
+                mimeType: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
+            }, zod.ZodTypeAny, "passthrough">>, "many">>;
+        }>, "passthrough", zod.ZodTypeAny, zod.objectOutputType<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
             name: zod.ZodString;
             title: zod.ZodOptional<zod.ZodString>;
         }, {
@@ -647,7 +674,21 @@ declare class MCPClientManager {
             description: zod.ZodOptional<zod.ZodString>;
             mimeType: zod.ZodOptional<zod.ZodString>;
             _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
-        }>, zod.ZodTypeAny, "passthrough">, zod.objectInputType<zod.objectUtil.extendShape<{
+        }>, {
+            icons: zod.ZodOptional<zod.ZodArray<zod.ZodObject<{
+                src: zod.ZodString;
+                mimeType: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
+            }, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{
+                src: zod.ZodString;
+                mimeType: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
+            }, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{
+                src: zod.ZodString;
+                mimeType: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
+            }, zod.ZodTypeAny, "passthrough">>, "many">>;
+        }>, zod.ZodTypeAny, "passthrough">, zod.objectInputType<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
             name: zod.ZodString;
             title: zod.ZodOptional<zod.ZodString>;
         }, {
@@ -655,6 +696,20 @@ declare class MCPClientManager {
             description: zod.ZodOptional<zod.ZodString>;
             mimeType: zod.ZodOptional<zod.ZodString>;
             _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
+        }>, {
+            icons: zod.ZodOptional<zod.ZodArray<zod.ZodObject<{
+                src: zod.ZodString;
+                mimeType: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
+            }, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{
+                src: zod.ZodString;
+                mimeType: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
+            }, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{
+                src: zod.ZodString;
+                mimeType: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
+            }, zod.ZodTypeAny, "passthrough">>, "many">>;
         }>, zod.ZodTypeAny, "passthrough">>, "many">;
     }, zod.ZodTypeAny, "passthrough">>;
     listPrompts(name: string, params?: ListPromptsParams, options?: ClientRequestOptions): Promise<zod.objectOutputType<{
@@ -662,7 +717,7 @@ declare class MCPClientManager {
     } & {
         nextCursor: zod.ZodOptional<zod.ZodString>;
     } & {
-        prompts: zod.ZodArray<zod.ZodObject<zod.objectUtil.extendShape<{
+        prompts: zod.ZodArray<zod.ZodObject<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
             name: zod.ZodString;
             title: zod.ZodOptional<zod.ZodString>;
         }, {
@@ -680,21 +735,22 @@ declare class MCPClientManager {
                 description: zod.ZodOptional<zod.ZodString>;
                 required: zod.ZodOptional<zod.ZodBoolean>;
             }, zod.ZodTypeAny, "passthrough">>, "many">>;
+            _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
+        }>, {
             icons: zod.ZodOptional<zod.ZodArray<zod.ZodObject<{
                 src: zod.ZodString;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
             }, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{
                 src: zod.ZodString;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
             }, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{
                 src: zod.ZodString;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
             }, zod.ZodTypeAny, "passthrough">>, "many">>;
-            _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
-        }>, "passthrough", zod.ZodTypeAny, zod.objectOutputType<zod.objectUtil.extendShape<{
+        }>, "passthrough", zod.ZodTypeAny, zod.objectOutputType<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
             name: zod.ZodString;
             title: zod.ZodOptional<zod.ZodString>;
         }, {
@@ -712,21 +768,22 @@ declare class MCPClientManager {
                 description: zod.ZodOptional<zod.ZodString>;
                 required: zod.ZodOptional<zod.ZodBoolean>;
             }, zod.ZodTypeAny, "passthrough">>, "many">>;
+            _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
+        }>, {
             icons: zod.ZodOptional<zod.ZodArray<zod.ZodObject<{
                 src: zod.ZodString;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
             }, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{
                 src: zod.ZodString;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
             }, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{
                 src: zod.ZodString;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
             }, zod.ZodTypeAny, "passthrough">>, "many">>;
-            _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
-        }>, zod.ZodTypeAny, "passthrough">, zod.objectInputType<zod.objectUtil.extendShape<{
+        }>, zod.ZodTypeAny, "passthrough">, zod.objectInputType<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
             name: zod.ZodString;
             title: zod.ZodOptional<zod.ZodString>;
         }, {
@@ -744,20 +801,21 @@ declare class MCPClientManager {
                 description: zod.ZodOptional<zod.ZodString>;
                 required: zod.ZodOptional<zod.ZodBoolean>;
             }, zod.ZodTypeAny, "passthrough">>, "many">>;
+            _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
+        }>, {
             icons: zod.ZodOptional<zod.ZodArray<zod.ZodObject<{
                 src: zod.ZodString;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
             }, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{
                 src: zod.ZodString;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
             }, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{
                 src: zod.ZodString;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                sizes: zod.ZodOptional<zod.ZodString>;
+                sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
             }, zod.ZodTypeAny, "passthrough">>, "many">>;
-            _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
         }>, zod.ZodTypeAny, "passthrough">>, "many">;
     }, zod.ZodTypeAny, "passthrough">>;
     getPrompt(name: string, params: GetPromptParams, options?: ClientRequestOptions): Promise<zod.objectOutputType<{
@@ -808,73 +866,76 @@ declare class MCPClientManager {
                 data: zod.ZodEffects<zod.ZodString, string, string>;
                 mimeType: zod.ZodString;
                 _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
-            }, zod.ZodTypeAny, "passthrough">>, zod.ZodObject<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
+            }, zod.ZodTypeAny, "passthrough">>, zod.ZodObject<zod.objectUtil.extendShape<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
                 name: zod.ZodString;
                 title: zod.ZodOptional<zod.ZodString>;
             }, {
                 uri: zod.ZodString;
                 description: zod.ZodOptional<zod.ZodString>;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                icons: zod.ZodOptional<zod.ZodArray<zod.ZodObject<{
-                    src: zod.ZodString;
-                    mimeType: zod.ZodOptional<zod.ZodString>;
-                    sizes: zod.ZodOptional<zod.ZodString>;
-                }, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{
-                    src: zod.ZodString;
-                    mimeType: zod.ZodOptional<zod.ZodString>;
-                    sizes: zod.ZodOptional<zod.ZodString>;
-                }, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{
-                    src: zod.ZodString;
-                    mimeType: zod.ZodOptional<zod.ZodString>;
-                    sizes: zod.ZodOptional<zod.ZodString>;
-                }, zod.ZodTypeAny, "passthrough">>, "many">>;
                 _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
             }>, {
-                type: zod.ZodLiteral<"resource_link">;
-            }>, "passthrough", zod.ZodTypeAny, zod.objectOutputType<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
-                name: zod.ZodString;
-                title: zod.ZodOptional<zod.ZodString>;
-            }, {
-                uri: zod.ZodString;
-                description: zod.ZodOptional<zod.ZodString>;
-                mimeType: zod.ZodOptional<zod.ZodString>;
                 icons: zod.ZodOptional<zod.ZodArray<zod.ZodObject<{
                     src: zod.ZodString;
                     mimeType: zod.ZodOptional<zod.ZodString>;
-                    sizes: zod.ZodOptional<zod.ZodString>;
+                    sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
                 }, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{
                     src: zod.ZodString;
                     mimeType: zod.ZodOptional<zod.ZodString>;
-                    sizes: zod.ZodOptional<zod.ZodString>;
+                    sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
                 }, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{
                     src: zod.ZodString;
                     mimeType: zod.ZodOptional<zod.ZodString>;
-                    sizes: zod.ZodOptional<zod.ZodString>;
+                    sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
                 }, zod.ZodTypeAny, "passthrough">>, "many">>;
-                _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
             }>, {
                 type: zod.ZodLiteral<"resource_link">;
-            }>, zod.ZodTypeAny, "passthrough">, zod.objectInputType<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
+            }>, "passthrough", zod.ZodTypeAny, zod.objectOutputType<zod.objectUtil.extendShape<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
                 name: zod.ZodString;
                 title: zod.ZodOptional<zod.ZodString>;
             }, {
                 uri: zod.ZodString;
                 description: zod.ZodOptional<zod.ZodString>;
                 mimeType: zod.ZodOptional<zod.ZodString>;
+                _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
+            }>, {
                 icons: zod.ZodOptional<zod.ZodArray<zod.ZodObject<{
                     src: zod.ZodString;
                     mimeType: zod.ZodOptional<zod.ZodString>;
-                    sizes: zod.ZodOptional<zod.ZodString>;
+                    sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
                 }, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{
                     src: zod.ZodString;
                     mimeType: zod.ZodOptional<zod.ZodString>;
-                    sizes: zod.ZodOptional<zod.ZodString>;
+                    sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
                 }, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{
                     src: zod.ZodString;
                     mimeType: zod.ZodOptional<zod.ZodString>;
-                    sizes: zod.ZodOptional<zod.ZodString>;
+                    sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
                 }, zod.ZodTypeAny, "passthrough">>, "many">>;
+            }>, {
+                type: zod.ZodLiteral<"resource_link">;
+            }>, zod.ZodTypeAny, "passthrough">, zod.objectInputType<zod.objectUtil.extendShape<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
+                name: zod.ZodString;
+                title: zod.ZodOptional<zod.ZodString>;
+            }, {
+                uri: zod.ZodString;
+                description: zod.ZodOptional<zod.ZodString>;
+                mimeType: zod.ZodOptional<zod.ZodString>;
                 _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
+            }>, {
+                icons: zod.ZodOptional<zod.ZodArray<zod.ZodObject<{
+                    src: zod.ZodString;
+                    mimeType: zod.ZodOptional<zod.ZodString>;
+                    sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
+                }, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{
+                    src: zod.ZodString;
+                    mimeType: zod.ZodOptional<zod.ZodString>;
+                    sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
+                }, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{
+                    src: zod.ZodString;
+                    mimeType: zod.ZodOptional<zod.ZodString>;
+                    sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
+                }, zod.ZodTypeAny, "passthrough">>, "many">>;
             }>, {
                 type: zod.ZodLiteral<"resource_link">;
             }>, zod.ZodTypeAny, "passthrough">>, zod.ZodObject<{
@@ -1042,73 +1103,76 @@ declare class MCPClientManager {
                 data: zod.ZodEffects<zod.ZodString, string, string>;
                 mimeType: zod.ZodString;
                 _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
-            }, zod.ZodTypeAny, "passthrough">>, zod.ZodObject<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
+            }, zod.ZodTypeAny, "passthrough">>, zod.ZodObject<zod.objectUtil.extendShape<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
                 name: zod.ZodString;
                 title: zod.ZodOptional<zod.ZodString>;
             }, {
                 uri: zod.ZodString;
                 description: zod.ZodOptional<zod.ZodString>;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                icons: zod.ZodOptional<zod.ZodArray<zod.ZodObject<{
-                    src: zod.ZodString;
-                    mimeType: zod.ZodOptional<zod.ZodString>;
-                    sizes: zod.ZodOptional<zod.ZodString>;
-                }, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{
-                    src: zod.ZodString;
-                    mimeType: zod.ZodOptional<zod.ZodString>;
-                    sizes: zod.ZodOptional<zod.ZodString>;
-                }, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{
-                    src: zod.ZodString;
-                    mimeType: zod.ZodOptional<zod.ZodString>;
-                    sizes: zod.ZodOptional<zod.ZodString>;
-                }, zod.ZodTypeAny, "passthrough">>, "many">>;
                 _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
             }>, {
-                type: zod.ZodLiteral<"resource_link">;
-            }>, "passthrough", zod.ZodTypeAny, zod.objectOutputType<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
-                name: zod.ZodString;
-                title: zod.ZodOptional<zod.ZodString>;
-            }, {
-                uri: zod.ZodString;
-                description: zod.ZodOptional<zod.ZodString>;
-                mimeType: zod.ZodOptional<zod.ZodString>;
                 icons: zod.ZodOptional<zod.ZodArray<zod.ZodObject<{
                     src: zod.ZodString;
                     mimeType: zod.ZodOptional<zod.ZodString>;
-                    sizes: zod.ZodOptional<zod.ZodString>;
+                    sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
                 }, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{
                     src: zod.ZodString;
                     mimeType: zod.ZodOptional<zod.ZodString>;
-                    sizes: zod.ZodOptional<zod.ZodString>;
+                    sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
                 }, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{
                     src: zod.ZodString;
                     mimeType: zod.ZodOptional<zod.ZodString>;
-                    sizes: zod.ZodOptional<zod.ZodString>;
+                    sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
                 }, zod.ZodTypeAny, "passthrough">>, "many">>;
-                _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
             }>, {
                 type: zod.ZodLiteral<"resource_link">;
-            }>, zod.ZodTypeAny, "passthrough">, zod.objectInputType<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
+            }>, "passthrough", zod.ZodTypeAny, zod.objectOutputType<zod.objectUtil.extendShape<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
                 name: zod.ZodString;
                 title: zod.ZodOptional<zod.ZodString>;
             }, {
                 uri: zod.ZodString;
                 description: zod.ZodOptional<zod.ZodString>;
                 mimeType: zod.ZodOptional<zod.ZodString>;
+                _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
+            }>, {
                 icons: zod.ZodOptional<zod.ZodArray<zod.ZodObject<{
                     src: zod.ZodString;
                     mimeType: zod.ZodOptional<zod.ZodString>;
-                    sizes: zod.ZodOptional<zod.ZodString>;
+                    sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
                 }, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{
                     src: zod.ZodString;
                     mimeType: zod.ZodOptional<zod.ZodString>;
-                    sizes: zod.ZodOptional<zod.ZodString>;
+                    sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
                 }, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{
                     src: zod.ZodString;
                     mimeType: zod.ZodOptional<zod.ZodString>;
-                    sizes: zod.ZodOptional<zod.ZodString>;
+                    sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
                 }, zod.ZodTypeAny, "passthrough">>, "many">>;
+            }>, {
+                type: zod.ZodLiteral<"resource_link">;
+            }>, zod.ZodTypeAny, "passthrough">, zod.objectInputType<zod.objectUtil.extendShape<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
+                name: zod.ZodString;
+                title: zod.ZodOptional<zod.ZodString>;
+            }, {
+                uri: zod.ZodString;
+                description: zod.ZodOptional<zod.ZodString>;
+                mimeType: zod.ZodOptional<zod.ZodString>;
                 _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
+            }>, {
+                icons: zod.ZodOptional<zod.ZodArray<zod.ZodObject<{
+                    src: zod.ZodString;
+                    mimeType: zod.ZodOptional<zod.ZodString>;
+                    sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
+                }, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{
+                    src: zod.ZodString;
+                    mimeType: zod.ZodOptional<zod.ZodString>;
+                    sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
+                }, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{
+                    src: zod.ZodString;
+                    mimeType: zod.ZodOptional<zod.ZodString>;
+                    sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
+                }, zod.ZodTypeAny, "passthrough">>, "many">>;
             }>, {
                 type: zod.ZodLiteral<"resource_link">;
             }>, zod.ZodTypeAny, "passthrough">>, zod.ZodObject<{
@@ -1276,73 +1340,76 @@ declare class MCPClientManager {
                 data: zod.ZodEffects<zod.ZodString, string, string>;
                 mimeType: zod.ZodString;
                 _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
-            }, zod.ZodTypeAny, "passthrough">>, zod.ZodObject<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
+            }, zod.ZodTypeAny, "passthrough">>, zod.ZodObject<zod.objectUtil.extendShape<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
                 name: zod.ZodString;
                 title: zod.ZodOptional<zod.ZodString>;
             }, {
                 uri: zod.ZodString;
                 description: zod.ZodOptional<zod.ZodString>;
                 mimeType: zod.ZodOptional<zod.ZodString>;
-                icons: zod.ZodOptional<zod.ZodArray<zod.ZodObject<{
-                    src: zod.ZodString;
-                    mimeType: zod.ZodOptional<zod.ZodString>;
-                    sizes: zod.ZodOptional<zod.ZodString>;
-                }, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{
-                    src: zod.ZodString;
-                    mimeType: zod.ZodOptional<zod.ZodString>;
-                    sizes: zod.ZodOptional<zod.ZodString>;
-                }, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{
-                    src: zod.ZodString;
-                    mimeType: zod.ZodOptional<zod.ZodString>;
-                    sizes: zod.ZodOptional<zod.ZodString>;
-                }, zod.ZodTypeAny, "passthrough">>, "many">>;
                 _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
             }>, {
-                type: zod.ZodLiteral<"resource_link">;
-            }>, "passthrough", zod.ZodTypeAny, zod.objectOutputType<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
-                name: zod.ZodString;
-                title: zod.ZodOptional<zod.ZodString>;
-            }, {
-                uri: zod.ZodString;
-                description: zod.ZodOptional<zod.ZodString>;
-                mimeType: zod.ZodOptional<zod.ZodString>;
                 icons: zod.ZodOptional<zod.ZodArray<zod.ZodObject<{
                     src: zod.ZodString;
                     mimeType: zod.ZodOptional<zod.ZodString>;
-                    sizes: zod.ZodOptional<zod.ZodString>;
+                    sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
                 }, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{
                     src: zod.ZodString;
                     mimeType: zod.ZodOptional<zod.ZodString>;
-                    sizes: zod.ZodOptional<zod.ZodString>;
+                    sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
                 }, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{
                     src: zod.ZodString;
                     mimeType: zod.ZodOptional<zod.ZodString>;
-                    sizes: zod.ZodOptional<zod.ZodString>;
+                    sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
                 }, zod.ZodTypeAny, "passthrough">>, "many">>;
-                _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
             }>, {
                 type: zod.ZodLiteral<"resource_link">;
-            }>, zod.ZodTypeAny, "passthrough">, zod.objectInputType<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
+            }>, "passthrough", zod.ZodTypeAny, zod.objectOutputType<zod.objectUtil.extendShape<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
                 name: zod.ZodString;
                 title: zod.ZodOptional<zod.ZodString>;
             }, {
                 uri: zod.ZodString;
                 description: zod.ZodOptional<zod.ZodString>;
                 mimeType: zod.ZodOptional<zod.ZodString>;
+                _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
+            }>, {
                 icons: zod.ZodOptional<zod.ZodArray<zod.ZodObject<{
                     src: zod.ZodString;
                     mimeType: zod.ZodOptional<zod.ZodString>;
-                    sizes: zod.ZodOptional<zod.ZodString>;
+                    sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
                 }, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{
                     src: zod.ZodString;
                     mimeType: zod.ZodOptional<zod.ZodString>;
-                    sizes: zod.ZodOptional<zod.ZodString>;
+                    sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
                 }, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{
                     src: zod.ZodString;
                     mimeType: zod.ZodOptional<zod.ZodString>;
-                    sizes: zod.ZodOptional<zod.ZodString>;
+                    sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
                 }, zod.ZodTypeAny, "passthrough">>, "many">>;
+            }>, {
+                type: zod.ZodLiteral<"resource_link">;
+            }>, zod.ZodTypeAny, "passthrough">, zod.objectInputType<zod.objectUtil.extendShape<zod.objectUtil.extendShape<zod.objectUtil.extendShape<{
+                name: zod.ZodString;
+                title: zod.ZodOptional<zod.ZodString>;
+            }, {
+                uri: zod.ZodString;
+                description: zod.ZodOptional<zod.ZodString>;
+                mimeType: zod.ZodOptional<zod.ZodString>;
                 _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
+            }>, {
+                icons: zod.ZodOptional<zod.ZodArray<zod.ZodObject<{
+                    src: zod.ZodString;
+                    mimeType: zod.ZodOptional<zod.ZodString>;
+                    sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
+                }, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{
+                    src: zod.ZodString;
+                    mimeType: zod.ZodOptional<zod.ZodString>;
+                    sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
+                }, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{
+                    src: zod.ZodString;
+                    mimeType: zod.ZodOptional<zod.ZodString>;
+                    sizes: zod.ZodOptional<zod.ZodArray<zod.ZodString, "many">>;
+                }, zod.ZodTypeAny, "passthrough">>, "many">>;
             }>, {
                 type: zod.ZodLiteral<"resource_link">;
             }>, zod.ZodTypeAny, "passthrough">>, zod.ZodObject<{
@@ -1468,26 +1535,28 @@ declare class MCPClientManager {
             }, zod.ZodTypeAny, "passthrough">>]>;
         }, zod.ZodTypeAny, "passthrough">>, "many">;
     }, zod.ZodTypeAny, "passthrough">>;
-    getSessionId(name: string): string | undefined;
+    getSessionIdByServer(name: string): string | undefined;
     addNotificationHandler(name: string, schema: NotificationSchema, handler: NotificationHandler): void;
     onResourceListChanged(name: string, handler: NotificationHandler): void;
     onResourceUpdated(name: string, handler: NotificationHandler): void;
     onPromptListChanged(name: string, handler: NotificationHandler): void;
     getClient(name: string): Client | undefined;
-    private createClientAndConnect;
+    setElicitationHandler(name: string, handler: ElicitationHandler): void;
+    clearElicitationHandler(name: string): void;
     private connectViaStdio;
     private connectViaHttp;
     private safeCloseTransport;
     private applyNotificationHandlers;
-    private ensureState;
+    private applyElicitationHandler;
+    private ensureConnected;
     private resetState;
-    private setTransport;
     private withTimeout;
-    private getServerConfig;
     private buildCapabilities;
     private formatError;
     private getTimeout;
     private isStdioConfig;
+    private normalizeName;
+    private getClientByName;
 }
 
-export { type ExecuteToolArguments, MCPClientManager, type MCPClientManagerConfig, type MCPServerConfig };
+export { type ElicitationHandler, type ExecuteToolArguments, MCPClientManager, type MCPClientManagerConfig, type MCPServerConfig };
