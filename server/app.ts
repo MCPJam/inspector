@@ -11,6 +11,7 @@ import { fileURLToPath } from "url";
 // Import routes
 import mcpRoutes from "./routes/mcp/index.js";
 import { MCPJamClientManager } from "./services/mcpjam-client-manager.js";
+import { MCPClientManager } from "@/shared/mcp-client-manager";
 import path from "path";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -64,6 +65,7 @@ export function createHonoApp() {
 
   // Create the MCPJam client manager instance
   const mcpJamClientManager = new MCPJamClientManager();
+  const mcpClientManager = new MCPClientManager();
   if (process.env.DEBUG_MCP_SELECTION === "1") {
     console.log("[mcpjam][boot] DEBUG_MCP_SELECTION enabled");
   }
@@ -71,6 +73,7 @@ export function createHonoApp() {
   // Middleware to inject the client manager into context
   app.use("*", async (c, next) => {
     c.mcpJamClientManager = mcpJamClientManager;
+    c.mcpClientManager = mcpClientManager;
     await next();
   });
 
