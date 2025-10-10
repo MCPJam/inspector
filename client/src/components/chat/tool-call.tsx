@@ -371,7 +371,6 @@ export function ToolCallDisplay({
                               toolResult={toolResult}
                               onCallTool={onCallTool}
                               onSendFollowup={onSendFollowup}
-                              uiResourceBlob={openaiComponent.htmlBlob}
                               serverId={serverId}
                             />
                           );

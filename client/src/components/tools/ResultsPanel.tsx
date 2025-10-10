@@ -241,7 +241,6 @@ export function ResultsPanel({
                     return {};
                   }}
                   onSendFollowup={onSendFollowup}
-                  uiResourceBlob={openaiComponent.htmlBlob}
                   serverId={serverId}
                 />
               );
