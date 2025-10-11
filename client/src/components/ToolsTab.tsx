@@ -209,7 +209,9 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   const buildParameters = (): Record<string, unknown> =>
     buildParametersFromFields(formFields, (msg, ctx) => logger.warn(msg, ctx));
 
-  const getToolMeta = (toolName: string | null): Record<string, any> | undefined => {
+  const getToolMeta = (
+    toolName: string | null,
+  ): Record<string, any> | undefined => {
     return toolName ? tools[toolName]?._meta : undefined;
   };
 
