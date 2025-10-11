@@ -61,7 +61,7 @@ async function findAvailablePort(startPort = 3000): Promise<number> {
 
 async function startHonoServer(): Promise<number> {
   try {
-    const port = app.isPackaged ? 3000 : await findAvailablePort(3000);
+    const port = await findAvailablePort(3000);
 
     // Set environment variables to tell the server it's running in Electron
     process.env.ELECTRON_APP = "true";
