@@ -63,11 +63,7 @@ export function ServerDetailModal({
               <div>
                 <div className="flex items-center gap-2">
                   {server.name}
-                  {server.config && "url" in server.config && (
-                    <span className="text-xs font-normal px-2 py-0.5 bg-muted rounded-md">
-                      DEV
-                    </span>
-                  )}
+                  {server.config && "url" in server.config}
                 </div>
               </div>
             </DialogTitle>
@@ -112,88 +108,82 @@ export function ServerDetailModal({
                 {error}
               </div>
             ) : tools && tools.tools.length > 0 ? (
-              <div className="space-y-3">
-                {tools.tools.map((tool) => {
-                  const metadata = tools.toolsMetadata?.[tool.name];
+              (() => {
+                // Filter tools that have metadata
+                const toolsWithMetadata = tools.tools.filter(
+                  (tool) => tools.toolsMetadata?.[tool.name]
+                );
 
+                if (toolsWithMetadata.length === 0) {
                   return (
-                    <div
-                      key={tool.name}
-                      className="bg-muted/30 rounded-lg p-4 space-y-2 hover:bg-muted/50 transition-colors"
-                    >
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2">
-                            <h4 className="font-medium text-sm">{tool.name}</h4>
-                            {metadata?.write !== undefined && (
-                              <span className="text-xs px-2 py-0.5 bg-primary/10 text-primary rounded-md uppercase">
-                                {metadata.write ? "WRITE" : "READ"}
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-sm text-muted-foreground mt-1">
-                            {tool.description || "No description available"}
-                          </p>
-                        </div>
-                      </div>
-
-                      {/* Metadata Section */}
-                      {metadata && (
-                        <div className="mt-3 pt-3 border-t border-border/50">
-                          <div className="text-xs text-muted-foreground font-medium mb-2">
-                            METADATA
-                          </div>
-
-                          {metadata.outputTemplate && (
-                            <div className="space-y-1">
-                              <div className="text-xs text-muted-foreground">
-                                Output template
-                              </div>
-                              <div className="font-mono text-xs bg-muted/50 rounded px-2 py-1">
-                                {metadata.outputTemplate}
-                              </div>
-                            </div>
-                          )}
-
-                          {metadata.invokingMessage && (
-                            <div className="space-y-1 mt-2">
-                              <div className="text-xs text-muted-foreground">
-                                Invoking message
-                              </div>
-                              <div className="text-xs bg-muted/50 rounded px-2 py-1">
-                                {metadata.invokingMessage}
-                              </div>
-                            </div>
-                          )}
-
-                          {metadata.invokedMessage && (
-                            <div className="space-y-1 mt-2">
-                              <div className="text-xs text-muted-foreground">
-                                Invoked message
-                              </div>
-                              <div className="text-xs bg-muted/50 rounded px-2 py-1">
-                                {metadata.invokedMessage}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Input Schema */}
-                      {tool.inputSchema && (
-                        <div className="mt-3 pt-3 border-t border-border/50">
-                          <div className="text-xs text-muted-foreground font-medium mb-2">
-                            INPUT SCHEMA
-                          </div>
-                          <pre className="text-xs bg-muted/50 rounded p-2 overflow-x-auto">
-                            {JSON.stringify(tool.inputSchema, null, 2)}
-                          </pre>
-                        </div>
-                      )}
+                    <div className="bg-muted/30 rounded-lg p-8 text-center">
+                      <p className="text-sm text-muted-foreground">
+                        No widget metadata
+                      </p>
                     </div>
                   );
-                })}
-              </div>
+                }
+
+                return (
+                  <div className="space-y-3">
+                    {toolsWithMetadata.map((tool) => {
+                      const metadata = tools.toolsMetadata?.[tool.name];
+
+                      return (
+                        <div
+                          key={tool.name}
+                          className="bg-muted/30 rounded-lg p-4 space-y-2 hover:bg-muted/50 transition-colors"
+                        >
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2">
+                                <h4 className="font-medium text-sm">{tool.name}</h4>
+                                {metadata.write !== undefined && (
+                                  <span className="text-xs px-2 py-0.5 bg-primary/10 text-primary rounded-md uppercase">
+                                    {metadata.write ? "WRITE" : "READ"}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-sm text-muted-foreground mt-1">
+                                {tool.description || "No description available"}
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Metadata Section - Show all metadata fields */}
+                          <div className="mt-3 pt-3 border-t border-border/50">
+                            <div className="text-xs text-muted-foreground font-medium mb-2">
+                              METADATA
+                            </div>
+
+                            {Object.entries(metadata).map(([key, value]) => {
+                              // Skip the 'write' field as it's already shown as a badge
+                              if (key === 'write') return null;
+
+                              return (
+                                <div key={key} className="space-y-1 mt-2">
+                                  <div className="text-xs text-muted-foreground">
+                                    {key.replace(/([A-Z])/g, ' $1').trim()}
+                                  </div>
+                                  <div className={`text-xs rounded px-2 py-1 ${
+                                    typeof value === 'string' && value.includes('://')
+                                      ? 'font-mono bg-muted/50'
+                                      : 'bg-muted/50'
+                                  }`}>
+                                    {typeof value === 'object'
+                                      ? JSON.stringify(value, null, 2)
+                                      : String(value)}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()
             ) : (
               <div className="bg-muted/30 rounded-lg p-8 text-center">
                 <p className="text-sm text-muted-foreground">
