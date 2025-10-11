@@ -102,7 +102,7 @@ export class MCPClientManager {
     Map<NotificationSchema, Set<NotificationHandler>>
   >();
   private readonly elicitationHandlers = new Map<string, ElicitationHandler>();
-  private readonly toolsCache = new Map<string, Map<string, any>>();
+  private readonly toolsMetadataCache = new Map<string, Map<string, any>>();
   private readonly defaultClientVersion: string;
   private readonly defaultCapabilities: ClientCapabilityOptions;
   private readonly defaultTimeout: number;
@@ -259,7 +259,7 @@ export class MCPClientManager {
         metadataMap.set(tool.name, tool._meta);
       }
     }
-    this.toolsCache.set(serverId, metadataMap);
+    this.toolsMetadataCache.set(serverId, metadataMap);
 
     return result;
   }
@@ -283,7 +283,7 @@ export class MCPClientManager {
             metadataMap.set(tool.name, tool._meta);
           }
         }
-        this.toolsCache.set(serverId, metadataMap);
+        this.toolsMetadataCache.set(serverId, metadataMap);
 
         return result.tools;
       }),
@@ -292,15 +292,8 @@ export class MCPClientManager {
     return { tools: toolLists.flat() };
   }
 
-  getToolMetadata(
-    serverId: string,
-    toolName: string,
-  ): Record<string, any> | undefined {
-    return this.toolsCache.get(serverId)?.get(toolName);
-  }
-
   getAllToolsMetadata(serverId: string): Record<string, Record<string, any>> {
-    const metadataMap = this.toolsCache.get(serverId);
+    const metadataMap = this.toolsMetadataCache.get(serverId);
     return metadataMap ? Object.fromEntries(metadataMap) : {};
   }
 
@@ -620,7 +613,7 @@ export class MCPClientManager {
 
   private resetState(serverId: string): void {
     this.clientStates.delete(serverId);
-    this.toolsCache.delete(serverId);
+    this.toolsMetadataCache.delete(serverId);
   }
 
   private withTimeout(
