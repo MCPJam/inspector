@@ -102,6 +102,7 @@ export class MCPClientManager {
     Map<NotificationSchema, Set<NotificationHandler>>
   >();
   private readonly elicitationHandlers = new Map<string, ElicitationHandler>();
+  private readonly toolsCache = new Map<string, Map<string, any>>();
   private readonly defaultClientVersion: string;
   private readonly defaultCapabilities: ClientCapabilityOptions;
   private readonly defaultTimeout: number;
@@ -245,10 +246,20 @@ export class MCPClientManager {
   ) {
     await this.ensureConnected(serverId);
     const client = this.getClientById(serverId);
-    return client.listTools(
+    const result = await client.listTools(
       params,
       this.withTimeout(serverId, options),
     );
+
+    const metadataMap = new Map<string, any>();
+    for (const tool of result.tools) {
+      if (tool._meta) {
+        metadataMap.set(tool.name, tool._meta);
+      }
+    }
+    this.toolsCache.set(serverId, metadataMap);
+
+    return result;
   }
 
   async getTools(serverIds?: string[]): Promise<ListToolsResult> {
@@ -265,11 +276,24 @@ export class MCPClientManager {
           undefined,
           this.withTimeout(serverId),
         );
+
+        const metadataMap = new Map<string, any>();
+        for (const tool of result.tools) {
+          if (tool._meta) {
+            metadataMap.set(tool.name, tool._meta);
+          }
+        }
+        this.toolsCache.set(serverId, metadataMap);
+
         return result.tools;
       }),
     );
 
     return { tools: toolLists.flat() };
+  }
+
+  getToolMetadata(serverId: string, toolName: string): Record<string, any> | undefined {
+    return this.toolsCache.get(serverId)?.get(toolName);
   }
 
   async executeTool(
@@ -604,6 +628,7 @@ export class MCPClientManager {
 
   private resetState(serverId: string): void {
     this.clientStates.delete(serverId);
+    this.toolsCache.delete(serverId);
   }
 
   private withTimeout(
