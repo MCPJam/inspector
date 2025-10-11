@@ -136,6 +136,9 @@ export class MCPClientManager {
     serverId: string,
     config: MCPServerConfig,
   ): Promise<Client> {
+    if (this.clientStates.has(serverId)) {
+      throw new Error(`MCP server "${serverId}" is already connected.`);
+    }
     const timeout = this.getTimeout(config);
     const state = this.clientStates.get(serverId) ?? {
       config,
