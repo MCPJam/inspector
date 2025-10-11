@@ -225,7 +225,8 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
           rawResult.structuredContent as Record<string, unknown>,
         );
         // Check for OpenAI component using tool metadata from definition
-        const hasOpenAIComponent = tools[toolName]?._meta?.["openai/outputTemplate"];
+        const hasOpenAIComponent =
+          tools[toolName]?._meta?.["openai/outputTemplate"];
         setShowStructured(!hasOpenAIComponent);
       } else {
         setStructuredResult(null);

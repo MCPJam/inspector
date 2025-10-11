@@ -361,11 +361,16 @@ export function ToolCallDisplay({
 
                         // 1. Check for OpenAI component first (using tool metadata from definition)
                         const fullResult = (toolResult as any)?.result;
-                        const openaiOutputTemplate = toolMeta?.["openai/outputTemplate"];
+                        const openaiOutputTemplate =
+                          toolMeta?.["openai/outputTemplate"];
 
-                        if (openaiOutputTemplate && typeof openaiOutputTemplate === "string") {
+                        if (
+                          openaiOutputTemplate &&
+                          typeof openaiOutputTemplate === "string"
+                        ) {
                           // Use serverId from props or fallback to toolResult
-                          const serverId = propServerId || (toolResult as any).serverId;
+                          const serverId =
+                            propServerId || (toolResult as any).serverId;
                           return (
                             <OpenAIComponentRenderer
                               componentUrl={openaiOutputTemplate}
