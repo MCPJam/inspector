@@ -16,6 +16,8 @@ import { Button } from "@/components/ui/button";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import { isMCPJamProvidedModel } from "@/shared/types";
+import { listTools } from "@/lib/mcp-tools-api";
+import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 interface ChatTabProps {
   serverConfigs?: Record<string, MastraMCPServerDefinition>;
   connectedServerConfigs?: Record<string, ServerWithName>;
@@ -37,6 +39,7 @@ export function ChatTab({
   );
 
   const [temperatureState, setTemperatureState] = useState(1.0);
+  const [toolsMetadata, setToolsMetadata] = useState<Record<string, Record<string, any>>>({});
   const selectedServerNames = Object.keys(serverConfigs || {});
   const selectedConnectedNames = selectedServerNames.filter(
     (name) => connectedServerConfigs?.[name]?.connectionStatus === "connected",
@@ -85,6 +88,37 @@ export function ChatTab({
       setTemperatureState(getDefaultTemperatureForModel(model));
     }
   }, [model]);
+
+  // Fetch tools metadata when servers connect
+  useEffect(() => {
+    const fetchToolsMetadata = async () => {
+      const metadata: Record<string, Record<string, any>> = {};
+
+      for (const serverId of selectedConnectedNames) {
+        try {
+          const data = await listTools(serverId);
+          const tools = data.tools ?? [];
+          // Add each tool's _meta to the metadata map
+          for (const tool of tools) {
+            if (tool._meta) {
+              metadata[tool.name] = tool._meta;
+            }
+          }
+        } catch (err) {
+          console.error(`Failed to fetch tools for server ${serverId}:`, err);
+        }
+      }
+
+      setToolsMetadata(metadata);
+    };
+
+    if (selectedConnectedNames && selectedConnectedNames.length > 0) {
+      fetchToolsMetadata();
+    } else {
+      setToolsMetadata({});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(selectedConnectedNames)]);
 
   const hasMessages = messages.length > 0;
   const isChatDisabled = showSignInPrompt || noServersConnected;
@@ -135,6 +169,8 @@ export function ChatTab({
         body: JSON.stringify({
           toolName,
           parameters: params,
+          // Pass serverId if only one server is connected
+          ...(selectedConnectedNames.length === 1 ? { serverId: selectedConnectedNames[0] } : {}),
         }),
       });
       const data = await response.json();
@@ -343,6 +379,8 @@ export function ChatTab({
                     serverConfigs={serverConfigs}
                     onCallTool={handleCallTool}
                     onSendFollowup={handleSendFollowup}
+                    toolsMetadata={toolsMetadata}
+                    serverId={selectedConnectedNames.length === 1 ? selectedConnectedNames[0] : undefined}
                   />
                 </motion.div>
               ))}

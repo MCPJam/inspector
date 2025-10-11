@@ -23,6 +23,7 @@ interface ToolCallDisplayProps {
   onCallTool?: (toolName: string, params: Record<string, any>) => Promise<any>;
   onSendFollowup?: (message: string) => void;
   toolMeta?: Record<string, any>; // Tool metadata from definition (_meta field)
+  serverId?: string; // Server ID for OpenAI widget rendering
 }
 
 // JSON syntax highlighting component
@@ -167,6 +168,7 @@ export function ToolCallDisplay({
   onCallTool,
   onSendFollowup,
   toolMeta,
+  serverId: propServerId,
 }: ToolCallDisplayProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [showJsonTree, setShowJsonTree] = useState(false);
@@ -362,8 +364,8 @@ export function ToolCallDisplay({
                         const openaiOutputTemplate = toolMeta?.["openai/outputTemplate"];
 
                         if (openaiOutputTemplate && typeof openaiOutputTemplate === "string") {
-                          // Use serverId from toolResult
-                          const serverId = (toolResult as any).serverId;
+                          // Use serverId from props or fallback to toolResult
+                          const serverId = propServerId || (toolResult as any).serverId;
                           return (
                             <OpenAIComponentRenderer
                               componentUrl={openaiOutputTemplate}
