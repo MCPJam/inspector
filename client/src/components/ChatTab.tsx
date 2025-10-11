@@ -39,7 +39,9 @@ export function ChatTab({
   );
 
   const [temperatureState, setTemperatureState] = useState(1.0);
-  const [toolsMetadata, setToolsMetadata] = useState<Record<string, Record<string, any>>>({});
+  const [toolsMetadata, setToolsMetadata] = useState<
+    Record<string, Record<string, any>>
+  >({});
   const selectedServerNames = Object.keys(serverConfigs || {});
   const selectedConnectedNames = selectedServerNames.filter(
     (name) => connectedServerConfigs?.[name]?.connectionStatus === "connected",
@@ -170,7 +172,9 @@ export function ChatTab({
           toolName,
           parameters: params,
           // Pass serverId if only one server is connected
-          ...(selectedConnectedNames.length === 1 ? { serverId: selectedConnectedNames[0] } : {}),
+          ...(selectedConnectedNames.length === 1
+            ? { serverId: selectedConnectedNames[0] }
+            : {}),
         }),
       });
       const data = await response.json();
@@ -380,7 +384,11 @@ export function ChatTab({
                     onCallTool={handleCallTool}
                     onSendFollowup={handleSendFollowup}
                     toolsMetadata={toolsMetadata}
-                    serverId={selectedConnectedNames.length === 1 ? selectedConnectedNames[0] : undefined}
+                    serverId={
+                      selectedConnectedNames.length === 1
+                        ? selectedConnectedNames[0]
+                        : undefined
+                    }
                   />
                 </motion.div>
               ))}

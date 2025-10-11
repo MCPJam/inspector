@@ -98,7 +98,8 @@ export function ResultsPanel({
   const rawResult = result as unknown as Record<string, unknown> | null;
   // Check for OpenAI component using tool metadata from definition
   const openaiOutputTemplate = toolMeta?.["openai/outputTemplate"];
-  const hasOpenAIComponent = openaiOutputTemplate && typeof openaiOutputTemplate === "string";
+  const hasOpenAIComponent =
+    openaiOutputTemplate && typeof openaiOutputTemplate === "string";
   const uiResource = resolveUIResource(result);
 
   return (
