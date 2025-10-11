@@ -10,6 +10,7 @@ interface OpenAIComponentRendererProps {
   className?: string;
   uiResourceBlob?: string; // HTML blob for ui:// URIs
   serverId?: string; // Server ID for fetching ui:// resources
+  toolMeta?: Record<string, any>; // Tool metadata from tool definition (includes openai/outputTemplate)
 }
 
 interface WindowOpenAIAPI {
@@ -33,6 +34,7 @@ export function OpenAIComponentRenderer({
   className,
   uiResourceBlob,
   serverId,
+  toolMeta,
 }: OpenAIComponentRendererProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [isReady, setIsReady] = useState(false);
