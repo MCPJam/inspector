@@ -157,7 +157,10 @@ export function ServerConnectionCard({
               </div>
             </div>
 
-            <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+            <div
+              className="flex items-center gap-2"
+              onClick={(e) => e.stopPropagation()}
+            >
               <div className="flex items-center gap-2 pr-2 text-xs text-muted-foreground leading-none">
                 <Switch
                   checked={server.connectionStatus === "connected"}
@@ -237,7 +240,10 @@ export function ServerConnectionCard({
           </div>
 
           {/* Command/URL Display */}
-          <div className="font-mono text-xs text-muted-foreground bg-muted/30 p-2 rounded border border-border/30 break-all relative group" onClick={(e) => e.stopPropagation()}>
+          <div
+            className="font-mono text-xs text-muted-foreground bg-muted/30 p-2 rounded border border-border/30 break-all relative group"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="pr-8">{commandDisplay}</div>
             <button
               onClick={(e) => {

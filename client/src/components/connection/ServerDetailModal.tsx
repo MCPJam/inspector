@@ -7,7 +7,10 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { ServerWithName } from "@/hooks/use-app-state";
-import { listTools, type ListToolsResultWithMetadata } from "@/lib/mcp-tools-api";
+import {
+  listTools,
+  type ListToolsResultWithMetadata,
+} from "@/lib/mcp-tools-api";
 import { Loader2, RefreshCw, X } from "lucide-react";
 import { toast } from "sonner";
 
@@ -41,7 +44,8 @@ export function ServerDetailModal({
       const result = await listTools(server.name);
       setTools(result);
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : "Failed to load tools";
+      const errorMessage =
+        err instanceof Error ? err.message : "Failed to load tools";
       setError(errorMessage);
       toast.error(`Failed to load tools: ${errorMessage}`);
     } finally {
@@ -111,7 +115,7 @@ export function ServerDetailModal({
               (() => {
                 // Filter tools that have metadata
                 const toolsWithMetadata = tools.tools.filter(
-                  (tool) => tools.toolsMetadata?.[tool.name]
+                  (tool) => tools.toolsMetadata?.[tool.name],
                 );
 
                 if (toolsWithMetadata.length === 0) {
@@ -137,7 +141,9 @@ export function ServerDetailModal({
                           <div className="flex items-start justify-between">
                             <div className="flex-1">
                               <div className="flex items-center gap-2">
-                                <h4 className="font-medium text-sm">{tool.name}</h4>
+                                <h4 className="font-medium text-sm">
+                                  {tool.name}
+                                </h4>
                                 {metadata.write !== undefined && (
                                   <span className="text-xs px-2 py-0.5 bg-primary/10 text-primary rounded-md uppercase">
                                     {metadata.write ? "WRITE" : "READ"}
@@ -158,19 +164,22 @@ export function ServerDetailModal({
 
                             {Object.entries(metadata).map(([key, value]) => {
                               // Skip the 'write' field as it's already shown as a badge
-                              if (key === 'write') return null;
+                              if (key === "write") return null;
 
                               return (
                                 <div key={key} className="space-y-1 mt-2">
                                   <div className="text-xs text-muted-foreground">
-                                    {key.replace(/([A-Z])/g, ' $1').trim()}
+                                    {key.replace(/([A-Z])/g, " $1").trim()}
                                   </div>
-                                  <div className={`text-xs rounded px-2 py-1 ${
-                                    typeof value === 'string' && value.includes('://')
-                                      ? 'font-mono bg-muted/50'
-                                      : 'bg-muted/50'
-                                  }`}>
-                                    {typeof value === 'object'
+                                  <div
+                                    className={`text-xs rounded px-2 py-1 ${
+                                      typeof value === "string" &&
+                                      value.includes("://")
+                                        ? "font-mono bg-muted/50"
+                                        : "bg-muted/50"
+                                    }`}
+                                  >
+                                    {typeof value === "object"
                                       ? JSON.stringify(value, null, 2)
                                       : String(value)}
                                   </div>
