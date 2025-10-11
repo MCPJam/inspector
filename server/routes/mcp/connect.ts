@@ -27,6 +27,14 @@ connect.post("/", async (c) => {
       );
     }
 
+    if (serverConfig.url) {
+      if (typeof serverConfig.url === 'string') {
+        serverConfig.url = new URL(serverConfig.url);
+      } else if (typeof serverConfig.url === 'object' && serverConfig.url.href) {
+        serverConfig.url = new URL(serverConfig.url.href);
+      }
+    }
+
     const mcpClientManager = c.mcpJamClientManager;
     const mcpClientManagerV2 = c.mcpClientManager;
     try {
