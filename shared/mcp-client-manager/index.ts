@@ -138,8 +138,10 @@ export class MCPClientManager {
     config: MCPServerConfig,
   ): Promise<Client> {
     const normalizedServerName = this.normalizeName(serverName);
-    if(this.clientStates.has(normalizedServerName)) {
-      throw new Error(`MCP server "${normalizedServerName}" is already connected.`);
+    if (this.clientStates.has(normalizedServerName)) {
+      throw new Error(
+        `MCP server "${normalizedServerName}" is already connected.`,
+      );
     }
     const timeout = this.getTimeout(config);
     const state = this.clientStates.get(normalizedServerName) ?? {
@@ -473,6 +475,18 @@ export class MCPClientManager {
     const client = this.clientStates.get(normalizedServerName)?.client;
     if (client) {
       this.applyElicitationHandler(normalizedServerName, client);
+    }
+  }
+
+  pingServer(serverName: string, options?: RequestOptions) {
+    const normalizedServerName = this.normalizeName(serverName);
+    const client = this.getClientByName(normalizedServerName);
+    try {
+      client.ping(options);
+    } catch (error) {
+      throw new Error(
+        `Failed to ping MCP server "${normalizedServerName}": ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
     }
   }
 
