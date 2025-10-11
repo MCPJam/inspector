@@ -17,7 +17,6 @@ import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import { listTools } from "@/lib/mcp-tools-api";
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 interface ChatTabProps {
   serverConfigs?: Record<string, MastraMCPServerDefinition>;
   connectedServerConfigs?: Record<string, ServerWithName>;
@@ -99,12 +98,8 @@ export function ChatTab({
       for (const serverId of selectedConnectedNames) {
         try {
           const data = await listTools(serverId);
-          const tools = data.tools ?? [];
-          // Add each tool's _meta to the metadata map
-          for (const tool of tools) {
-            if (tool._meta) {
-              metadata[tool.name] = tool._meta;
-            }
+          if (data.toolsMetadata) {
+            Object.assign(metadata, data.toolsMetadata);
           }
         } catch (err) {
           console.error(`Failed to fetch tools for server ${serverId}:`, err);

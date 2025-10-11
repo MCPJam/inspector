@@ -299,6 +299,11 @@ export class MCPClientManager {
     return this.toolsCache.get(serverId)?.get(toolName);
   }
 
+  getAllToolsMetadata(serverId: string): Record<string, Record<string, any>> {
+    const metadataMap = this.toolsCache.get(serverId);
+    return metadataMap ? Object.fromEntries(metadataMap) : {};
+  }
+
   async executeTool(
     serverId: string,
     toolName: string,
