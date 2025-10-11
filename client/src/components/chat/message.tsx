@@ -73,6 +73,8 @@ interface MessageProps {
   serverConfigs?: Record<string, MastraMCPServerDefinition>;
   onCallTool?: (toolName: string, params: Record<string, any>) => Promise<any>;
   onSendFollowup?: (message: string) => void;
+  toolsMetadata?: Record<string, Record<string, any>>; // Map of tool name -> tool._meta
+  serverId?: string; // Server ID for widget rendering
 }
 
 // Thinking indicator component
@@ -99,6 +101,8 @@ const PureMessage = ({
   serverConfigs,
   onCallTool,
   onSendFollowup,
+  toolsMetadata,
+  serverId,
 }: MessageProps) => {
   const [mode, setMode] = useState<"view" | "edit">("view");
   const [isHovered, setIsHovered] = useState(false);
@@ -232,6 +236,8 @@ const PureMessage = ({
                             serverConfigs={serverConfigs}
                             onCallTool={onCallTool}
                             onSendFollowup={onSendFollowup}
+                            toolMeta={toolsMetadata?.[block.toolCall.name]}
+                            serverId={serverId}
                           />
                         </motion.div>
                       );
@@ -262,6 +268,8 @@ const PureMessage = ({
                               serverConfigs={serverConfigs}
                               onCallTool={onCallTool}
                               onSendFollowup={onSendFollowup}
+                              toolMeta={toolsMetadata?.[toolCall.name]}
+                              serverId={serverId}
                             />
                           </motion.div>
                         );

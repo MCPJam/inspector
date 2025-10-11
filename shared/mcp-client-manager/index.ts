@@ -102,6 +102,7 @@ export class MCPClientManager {
     Map<NotificationSchema, Set<NotificationHandler>>
   >();
   private readonly elicitationHandlers = new Map<string, ElicitationHandler>();
+  private readonly toolsCache = new Map<string, Map<string, any>>();
   private readonly defaultClientVersion: string;
   private readonly defaultCapabilities: ClientCapabilityOptions;
   private readonly defaultTimeout: number;
@@ -229,7 +230,9 @@ export class MCPClientManager {
 
   async disconnectAllServers(): Promise<void> {
     const serverIds = this.listServers();
-    await Promise.all(serverIds.map((serverId) => this.disconnectServer(serverId)));
+    await Promise.all(
+      serverIds.map((serverId) => this.disconnectServer(serverId)),
+    );
 
     for (const serverId of serverIds) {
       this.resetState(serverId);
@@ -245,17 +248,25 @@ export class MCPClientManager {
   ) {
     await this.ensureConnected(serverId);
     const client = this.getClientById(serverId);
-    return client.listTools(
+    const result = await client.listTools(
       params,
       this.withTimeout(serverId, options),
     );
+
+    const metadataMap = new Map<string, any>();
+    for (const tool of result.tools) {
+      if (tool._meta) {
+        metadataMap.set(tool.name, tool._meta);
+      }
+    }
+    this.toolsCache.set(serverId, metadataMap);
+
+    return result;
   }
 
   async getTools(serverIds?: string[]): Promise<ListToolsResult> {
     const targetServerIds =
-      serverIds && serverIds.length > 0
-        ? serverIds
-        : this.listServers();
+      serverIds && serverIds.length > 0 ? serverIds : this.listServers();
 
     const toolLists = await Promise.all(
       targetServerIds.map(async (serverId) => {
@@ -265,11 +276,32 @@ export class MCPClientManager {
           undefined,
           this.withTimeout(serverId),
         );
+
+        const metadataMap = new Map<string, any>();
+        for (const tool of result.tools) {
+          if (tool._meta) {
+            metadataMap.set(tool.name, tool._meta);
+          }
+        }
+        this.toolsCache.set(serverId, metadataMap);
+
         return result.tools;
       }),
     );
 
     return { tools: toolLists.flat() };
+  }
+
+  getToolMetadata(
+    serverId: string,
+    toolName: string,
+  ): Record<string, any> | undefined {
+    return this.toolsCache.get(serverId)?.get(toolName);
+  }
+
+  getAllToolsMetadata(serverId: string): Record<string, Record<string, any>> {
+    const metadataMap = this.toolsCache.get(serverId);
+    return metadataMap ? Object.fromEntries(metadataMap) : {};
   }
 
   async executeTool(
@@ -297,10 +329,7 @@ export class MCPClientManager {
   ) {
     await this.ensureConnected(serverId);
     const client = this.getClientById(serverId);
-    return client.listResources(
-      params,
-      this.withTimeout(serverId, options),
-    );
+    return client.listResources(params, this.withTimeout(serverId, options));
   }
 
   async readResource(
@@ -310,10 +339,7 @@ export class MCPClientManager {
   ) {
     await this.ensureConnected(serverId);
     const client = this.getClientById(serverId);
-    return client.readResource(
-      params,
-      this.withTimeout(serverId, options),
-    );
+    return client.readResource(params, this.withTimeout(serverId, options));
   }
 
   async subscribeResource(
@@ -362,10 +388,7 @@ export class MCPClientManager {
   ) {
     await this.ensureConnected(serverId);
     const client = this.getClientById(serverId);
-    return client.listPrompts(
-      params,
-      this.withTimeout(serverId, options),
-    );
+    return client.listPrompts(params, this.withTimeout(serverId, options));
   }
 
   async getPrompt(
@@ -375,10 +398,7 @@ export class MCPClientManager {
   ) {
     await this.ensureConnected(serverId);
     const client = this.getClientById(serverId);
-    return client.getPrompt(
-      params,
-      this.withTimeout(serverId, options),
-    );
+    return client.getPrompt(params, this.withTimeout(serverId, options));
   }
 
   getSessionIdByServer(serverId: string): string | undefined {
@@ -399,8 +419,7 @@ export class MCPClientManager {
     schema: NotificationSchema,
     handler: NotificationHandler,
   ): void {
-    const serverHandlers =
-      this.notificationHandlers.get(serverId) ?? new Map();
+    const serverHandlers = this.notificationHandlers.get(serverId) ?? new Map();
     const handlersForSchema =
       serverHandlers.get(schema) ?? new Set<NotificationHandler>();
     handlersForSchema.add(handler);
@@ -416,10 +435,7 @@ export class MCPClientManager {
     }
   }
 
-  onResourceListChanged(
-    serverId: string,
-    handler: NotificationHandler,
-  ): void {
+  onResourceListChanged(serverId: string, handler: NotificationHandler): void {
     this.addNotificationHandler(
       serverId,
       ResourceListChangedNotificationSchema,
@@ -604,6 +620,7 @@ export class MCPClientManager {
 
   private resetState(serverId: string): void {
     this.clientStates.delete(serverId);
+    this.toolsCache.delete(serverId);
   }
 
   private withTimeout(

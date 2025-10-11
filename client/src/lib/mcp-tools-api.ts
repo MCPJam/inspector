@@ -5,6 +5,10 @@ import type {
   ListToolsResult,
 } from "@modelcontextprotocol/sdk/types.js";
 
+export type ListToolsResultWithMetadata = ListToolsResult & {
+  toolsMetadata?: Record<string, Record<string, any>>;
+};
+
 export type ToolExecutionResponse =
   | {
       status: "completed";
@@ -21,7 +25,9 @@ export type ToolExecutionResponse =
       error: string;
     };
 
-export async function listTools(serverId: string): Promise<ListToolsResult> {
+export async function listTools(
+  serverId: string,
+): Promise<ListToolsResultWithMetadata> {
   const res = await fetch("/api/mcp/tools/list", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

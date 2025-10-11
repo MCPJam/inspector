@@ -1,7 +1,6 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { UIResourceRenderer } from "@mcp-ui/client";
 import { CheckCircle, XCircle } from "lucide-react";
-import { extractOpenAIComponent } from "@/lib/openai-apps-sdk-utils";
 import { OpenAIComponentRenderer } from "../chat/openai-component-renderer";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -75,6 +74,7 @@ interface ResultsPanelProps {
   toolName?: string;
   toolParameters?: Record<string, unknown>;
   toolCallTimestamp?: Date;
+  toolMeta?: Record<string, any>; // Tool metadata from definition (_meta field)
 }
 
 export function ResultsPanel({
@@ -93,11 +93,13 @@ export function ResultsPanel({
   toolName,
   toolParameters,
   toolCallTimestamp,
+  toolMeta,
 }: ResultsPanelProps) {
   const rawResult = result as unknown as Record<string, unknown> | null;
-  const openaiComponent = rawResult
-    ? extractOpenAIComponent(rawResult as any)
-    : null;
+  // Check for OpenAI component using tool metadata from definition
+  const openaiOutputTemplate = toolMeta?.["openai/outputTemplate"];
+  const hasOpenAIComponent =
+    openaiOutputTemplate && typeof openaiOutputTemplate === "string";
   const uiResource = resolveUIResource(result);
 
   return (
@@ -122,21 +124,21 @@ export function ResultsPanel({
               </Badge>
             ))}
         </div>
-        {rawResult && (structuredResult || openaiComponent) && (
+        {rawResult && (structuredResult || hasOpenAIComponent) && (
           <div className="flex gap-2">
             <Button
               size="sm"
               variant={!showStructured ? "default" : "outline"}
               onClick={() => onToggleStructured(false)}
             >
-              {openaiComponent ? "Component" : "Raw Output"}
+              {hasOpenAIComponent ? "Component" : "Raw Output"}
             </Button>
             <Button
               size="sm"
               variant={showStructured ? "default" : "outline"}
               onClick={() => onToggleStructured(true)}
             >
-              {openaiComponent ? "Raw JSON" : "Structured Output"}
+              {hasOpenAIComponent ? "Raw JSON" : "Structured Output"}
             </Button>
           </div>
         )}
@@ -178,7 +180,7 @@ export function ResultsPanel({
                 )}
             </div>
           </div>
-        ) : showStructured && rawResult && openaiComponent ? (
+        ) : showStructured && rawResult && hasOpenAIComponent ? (
           <ScrollArea className="h-full">
             <div className="p-4">
               <JsonView
@@ -224,10 +226,10 @@ export function ResultsPanel({
           </ScrollArea>
         ) : rawResult ? (
           (() => {
-            if (!showStructured && openaiComponent) {
+            if (!showStructured && hasOpenAIComponent && openaiOutputTemplate) {
               return (
                 <OpenAIComponentRenderer
-                  componentUrl={openaiComponent.url}
+                  componentUrl={openaiOutputTemplate}
                   toolCall={{
                     id: toolCallId || "tool-result",
                     name: toolName || "tool",
@@ -246,8 +248,8 @@ export function ResultsPanel({
                     return {};
                   }}
                   onSendFollowup={onSendFollowup}
-                  uiResourceBlob={openaiComponent.htmlBlob}
                   serverId={serverId}
+                  toolMeta={toolMeta}
                 />
               );
             }
