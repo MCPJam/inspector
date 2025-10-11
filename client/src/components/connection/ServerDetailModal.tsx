@@ -11,7 +11,7 @@ import {
   listTools,
   type ListToolsResultWithMetadata,
 } from "@/lib/mcp-tools-api";
-import { Loader2, RefreshCw, X } from "lucide-react";
+import { Loader2, X } from "lucide-react";
 import { toast } from "sonner";
 
 interface ServerDetailModalProps {
@@ -85,22 +85,8 @@ export function ServerDetailModal({
         <div className="space-y-6 mt-4">
           {/* Actions Section */}
           <div>
-            <div className="flex items-center justify-between mb-3">
+            <div className="mb-3">
               <h3 className="text-lg font-semibold">Actions</h3>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={loadTools}
-                disabled={isLoading}
-                className="h-8"
-              >
-                {isLoading ? (
-                  <Loader2 className="h-3 w-3 mr-2 animate-spin" />
-                ) : (
-                  <RefreshCw className="h-3 w-3 mr-2" />
-                )}
-                Refresh
-              </Button>
             </div>
 
             {isLoading && !tools ? (
