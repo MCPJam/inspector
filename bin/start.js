@@ -6,6 +6,7 @@ import { fileURLToPath } from "url";
 import { createServer } from "net";
 import { execSync } from "child_process";
 import { existsSync, readFileSync } from "fs";
+import open from "open";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -169,9 +170,16 @@ function spawnPromise(command, args, options) {
 async function showSuccessMessage(port) {
   logDivider();
 
+  // Use BASE_URL if set, otherwise construct from HOST and port
+  // Default: localhost in development, 127.0.0.1 in production
+  const defaultHost =
+    process.env.NODE_ENV === "production" ? "127.0.0.1" : "localhost";
+  const host = process.env.HOST || defaultHost;
+  const baseUrl = process.env.BASE_URL || `http://${host}:${port}`;
+
   const successText = `🎉 MCP Inspector is now running successfully!
 
-📱 Access your application at: http://localhost:${port}
+📱 Access your application at: ${baseUrl}
 🔧 Unified server ready to handle MCP connections
 📊 Monitor your MCP tools and resources
 💬 Start chatting with your MCP-enabled AI
@@ -181,6 +189,16 @@ Press Ctrl+C to stop the server`;
   logBox(successText, "🚀 Ready to Go!");
 
   logDivider();
+
+  // Automatically open the browser
+  try {
+    await open(baseUrl);
+    logSuccess(`🌐 Browser opened at ${baseUrl}`);
+  } catch (error) {
+    logWarning(
+      `Could not open browser automatically. Please visit ${baseUrl} manually.`,
+    );
+  }
 }
 
 async function checkOllamaInstalled() {
@@ -356,7 +374,11 @@ async function main() {
     if (parsingFlags && arg === "--port" && i + 1 < args.length) {
       const port = args[++i];
       envVars.PORT = port;
-      envVars.BASE_URL = `http://localhost:${port}`;
+      // Default: localhost in development, 127.0.0.1 in production
+      const defaultHost =
+        process.env.NODE_ENV === "production" ? "127.0.0.1" : "localhost";
+      const baseHost = process.env.HOST || defaultHost;
+      envVars.BASE_URL = `http://${baseHost}:${port}`;
       continue;
     }
 
@@ -542,7 +564,11 @@ async function main() {
 
     // Update environment variables with the final port
     envVars.PORT = PORT;
-    envVars.BASE_URL = `http://localhost:${PORT}`;
+    // Default: localhost in development, 127.0.0.1 in production
+    const defaultHost =
+      process.env.NODE_ENV === "production" ? "127.0.0.1" : "localhost";
+    const baseHost = process.env.HOST || defaultHost;
+    envVars.BASE_URL = `http://${baseHost}:${PORT}`;
     Object.assign(process.env, envVars);
   } catch (error) {
     logError(`Port configuration failed: ${error.message}`);
@@ -595,20 +621,62 @@ async function main() {
       await delay(500);
     }
 
-    await spawnPromise("node", [distServerPath], {
+    // Spawn the server process but don't wait for it to exit
+    const serverProcess = spawn("node", [distServerPath], {
       env: {
         ...process.env,
         NODE_ENV: "production",
         PORT: PORT,
       },
       cwd: projectRoot,
-      signal: abort.signal,
-      echoOutput: true,
+      stdio: "inherit",
     });
 
+    // Handle server process errors
+    serverProcess.on("error", (error) => {
+      if (!cancelled) {
+        logError(`Failed to start server: ${error.message}`);
+        process.exit(1);
+      }
+    });
+
+    // Handle abort signal
+    abort.signal.addEventListener("abort", () => {
+      serverProcess.kill("SIGTERM");
+    });
+
+    // Wait a bit for the server to start up
+    await delay(2000);
+
     if (!cancelled) {
-      await showSuccessMessage(PORT);
+      // Open the browser automatically
+      // Use BASE_URL if set, otherwise construct from HOST and PORT
+      // Default: localhost in development, 127.0.0.1 in production
+      const defaultHost =
+        process.env.NODE_ENV === "production" ? "127.0.0.1" : "localhost";
+      const host = process.env.HOST || defaultHost;
+      const url = process.env.BASE_URL || `http://${host}:${PORT}`;
+
+      try {
+        await open(url);
+        logSuccess(`🌐 Browser opened at ${url}`);
+      } catch (error) {
+        logWarning(
+          `Could not open browser automatically. Please visit ${url} manually.`,
+        );
+      }
     }
+
+    // Wait for the server process to exit
+    await new Promise((resolve, reject) => {
+      serverProcess.on("close", (code) => {
+        if (code === 0 || cancelled) {
+          resolve(code);
+        } else {
+          reject(new Error(`Server process exited with code ${code}`));
+        }
+      });
+    });
   } catch (e) {
     if (!cancelled || process.env.DEBUG) {
       logDivider();
