@@ -209,6 +209,12 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   const buildParameters = (): Record<string, unknown> =>
     buildParametersFromFields(formFields, (msg, ctx) => logger.warn(msg, ctx));
 
+  const getToolMeta = (
+    toolName: string | null,
+  ): Record<string, any> | undefined => {
+    return toolName ? tools[toolName]?._meta : undefined;
+  };
+
   const handleExecutionResponse = (
     response: ToolExecutionResponse,
     toolName: string,
@@ -224,9 +230,9 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         setStructuredResult(
           rawResult.structuredContent as Record<string, unknown>,
         );
-        const hasOpenAIComponent = (rawResult as any)?._meta?.[
-          "openai/outputTemplate"
-        ];
+        // Check for OpenAI component using tool metadata from definition
+        const toolMeta = getToolMeta(toolName);
+        const hasOpenAIComponent = toolMeta?.["openai/outputTemplate"];
         setShowStructured(!hasOpenAIComponent);
       } else {
         setStructuredResult(null);
@@ -491,6 +497,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
             toolName={lastToolName ?? undefined}
             toolParameters={lastToolParameters ?? undefined}
             toolCallTimestamp={lastToolCallTimestamp ?? undefined}
+            toolMeta={getToolMeta(lastToolName)}
             onExecuteFromUI={async (name, params) => {
               if (!serverName) return;
               await executeToolApi(serverName, name, params || {});

@@ -14,7 +14,6 @@ import { MCPIcon } from "../ui/mcp-icon";
 import { UIResourceRenderer } from "@mcp-ui/client";
 import { MastraMCPServerDefinition } from "@mastra/mcp";
 import { OpenAIComponentRenderer } from "./openai-component-renderer";
-import { extractOpenAIComponent } from "@/lib/openai-apps-sdk-utils";
 
 interface ToolCallDisplayProps {
   toolCall: ToolCall;
@@ -23,6 +22,8 @@ interface ToolCallDisplayProps {
   serverConfigs?: Record<string, MastraMCPServerDefinition>;
   onCallTool?: (toolName: string, params: Record<string, any>) => Promise<any>;
   onSendFollowup?: (message: string) => void;
+  toolMeta?: Record<string, any>; // Tool metadata from definition (_meta field)
+  serverId?: string; // Server ID for OpenAI widget rendering
 }
 
 // JSON syntax highlighting component
@@ -166,6 +167,8 @@ export function ToolCallDisplay({
   serverConfigs,
   onCallTool,
   onSendFollowup,
+  toolMeta,
+  serverId: propServerId,
 }: ToolCallDisplayProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [showJsonTree, setShowJsonTree] = useState(false);
@@ -356,23 +359,27 @@ export function ToolCallDisplay({
                           return null;
                         };
 
-                        // 1. Check for OpenAI component first
+                        // 1. Check for OpenAI component first (using tool metadata from definition)
                         const fullResult = (toolResult as any)?.result;
-                        const openaiComponent =
-                          extractOpenAIComponent(fullResult);
+                        const openaiOutputTemplate =
+                          toolMeta?.["openai/outputTemplate"];
 
-                        if (openaiComponent && serverConfigs) {
-                          // Use serverId from toolResult
-                          const serverId = (toolResult as any).serverId;
+                        if (
+                          openaiOutputTemplate &&
+                          typeof openaiOutputTemplate === "string"
+                        ) {
+                          // Use serverId from props or fallback to toolResult
+                          const serverId =
+                            propServerId || (toolResult as any).serverId;
                           return (
                             <OpenAIComponentRenderer
-                              componentUrl={openaiComponent.url}
+                              componentUrl={openaiOutputTemplate}
                               toolCall={toolCall}
                               toolResult={toolResult}
                               onCallTool={onCallTool}
                               onSendFollowup={onSendFollowup}
-                              uiResourceBlob={openaiComponent.htmlBlob}
                               serverId={serverId}
+                              toolMeta={toolMeta}
                             />
                           );
                         }
