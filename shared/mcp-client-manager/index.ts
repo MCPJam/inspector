@@ -90,6 +90,13 @@ type ListPromptsParams = Parameters<Client["listPrompts"]>[0];
 type GetPromptParams = Parameters<Client["getPrompt"]>[0];
 type ListToolsResult = Awaited<ReturnType<Client["listTools"]>>;
 
+export type MCPConnectionStatus = "connected" | "connecting" | "disconnected";
+type ServerSummary = {
+  id: string;
+  status: MCPConnectionStatus;
+  config?: MCPServerConfig;
+};
+
 export type ExecuteToolArguments = Record<string, unknown>;
 export type ElicitationHandler = (
   params: ElicitRequest["params"],
@@ -131,6 +138,22 @@ export class MCPClientManager {
 
   hasServer(serverId: string): boolean {
     return this.clientStates.has(serverId);
+  }
+
+  getServerSummaries(): ServerSummary[] {
+    return Array.from(this.clientStates.entries()).map(([serverId, state]) => ({
+      id: serverId,
+      status: this.resolveConnectionStatus(state),
+      config: state.config,
+    }));
+  }
+
+  getConnectionStatus(serverId: string): MCPConnectionStatus {
+    return this.resolveConnectionStatus(this.clientStates.get(serverId));
+  }
+
+  getServerConfig(serverId: string): MCPServerConfig | undefined {
+    return this.clientStates.get(serverId)?.config;
   }
 
   async connectToServer(
@@ -226,6 +249,12 @@ export class MCPClientManager {
       }
       this.resetState(serverId);
     }
+  }
+
+  removeServer(serverId: string): void {
+    this.resetState(serverId);
+    this.notificationHandlers.delete(serverId);
+    this.elicitationHandlers.delete(serverId);
   }
 
   async disconnectAllServers(): Promise<void> {
@@ -659,6 +688,21 @@ export class MCPClientManager {
     this.toolsMetadataCache.delete(serverId);
   }
 
+  private resolveConnectionStatus(
+    state: ManagedClientState | undefined,
+  ): MCPConnectionStatus {
+    if (!state) {
+      return "disconnected";
+    }
+    if (state.client) {
+      return "connected";
+    }
+    if (state.promise) {
+      return "connecting";
+    }
+    return "disconnected";
+  }
+
   private withTimeout(
     serverId: string,
     options?: RequestOptions,
@@ -772,3 +816,4 @@ export type MCPResource = MCPResourceListResult["resources"][number];
 export type MCPReadResourceResult = Awaited<
   ReturnType<MCPClientManager["readResource"]>
 >;
+export type MCPServerSummary = ServerSummary;

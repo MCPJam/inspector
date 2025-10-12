@@ -4,7 +4,12 @@ import { useLogger } from "./use-logger";
 import { initialAppState, type ServerWithName } from "@/state/app-types";
 import { appReducer } from "@/state/app-reducer";
 import { loadAppState, saveAppState } from "@/state/storage";
-import { testConnection, deleteServer, listServers } from "@/state/mcp-api";
+import {
+  testConnection,
+  deleteServer,
+  listServers,
+  reconnectServer,
+} from "@/state/mcp-api";
 import {
   ensureAuthorizedForReconnect,
   type OAuthResult,
@@ -456,9 +461,9 @@ export function useAppState() {
           toast.error(`Failed to connect: ${serverName}`);
           return;
         }
-        const result = await testConnection(
-          authResult.serverConfig,
+        const result = await reconnectServer(
           serverName,
+          authResult.serverConfig,
         );
         if (isStaleOp(serverName, token)) return;
         if (result.success) {
@@ -474,10 +479,12 @@ export function useAppState() {
           dispatch({
             type: "CONNECT_FAILURE",
             name: serverName,
-            error: result.error || "Connection test failed",
+            error: result.error || "Reconnection failed",
           });
           logger.error("Reconnection failed", { serverName, result });
-          toast.error(`Failed to connect: ${serverName}`);
+          const errorMessage =
+            result.error || `Failed to reconnect: ${serverName}`;
+          toast.error(errorMessage);
         }
       } catch (error) {
         const errorMessage =

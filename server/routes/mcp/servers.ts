@@ -1,23 +1,21 @@
 import { Hono } from "hono";
+import type { MCPServerConfig } from "@/shared/mcp-client-manager";
 import "../../types/hono"; // Type extensions
 
 const servers = new Hono();
 
 // List all connected servers with their status
 servers.get("/", async (c) => {
-  // TODO: Figure out how to incorporate MCPClientManager
   try {
-    const mcpJamClientManager = c.mcpJamClientManager;
-    // Get all server configurations and statuses
-    const connectedServers = mcpJamClientManager.getConnectedServers();
-    const serverList = Object.entries(connectedServers).map(
-      ([serverId, serverInfo]) => ({
-        id: serverId,
-        name: serverId,
-        status: serverInfo.status,
-        config: serverInfo.config,
-      }),
-    );
+    const mcpClientManager = c.mcpClientManager;
+    const serverList = mcpClientManager
+      .getServerSummaries()
+      .map(({ id, status, config }) => ({
+        id,
+        name: id,
+        status,
+        config,
+      }));
 
     return c.json({
       success: true,
@@ -35,12 +33,11 @@ servers.get("/", async (c) => {
   }
 });
 
-// Get status for a specific server
 servers.get("/status/:serverId", async (c) => {
   try {
     const serverId = c.req.param("serverId");
-    const mcpJamClientManager = c.mcpJamClientManager;
-    const status = mcpJamClientManager.getConnectionStatus(serverId);
+    const mcpClientManager = c.mcpClientManager;
+    const status = mcpClientManager.getConnectionStatus(serverId);
 
     return c.json({
       success: true,
@@ -63,10 +60,22 @@ servers.get("/status/:serverId", async (c) => {
 servers.delete("/:serverId", async (c) => {
   try {
     const serverId = c.req.param("serverId");
-    const mcpJamClientManager = c.mcpJamClientManager; // TODO: Remove MCPJamClientManager
     const mcpClientManager = c.mcpClientManager;
-    await mcpClientManager.disconnectServer(serverId);
-    await mcpJamClientManager.disconnectFromServer(serverId);
+
+    try {
+      const client = mcpClientManager.getClient(serverId);
+      if (client) {
+        await mcpClientManager.disconnectServer(serverId);
+      }
+    } catch (error) {
+      // Ignore disconnect errors for already disconnected servers
+      console.debug(
+        `Failed to disconnect MCP server ${serverId} during removal`,
+        error,
+      );
+    }
+
+    mcpClientManager.removeServer(serverId);
 
     return c.json({
       success: true,
@@ -87,7 +96,10 @@ servers.delete("/:serverId", async (c) => {
 // Reconnect to a server
 servers.post("/reconnect", async (c) => {
   try {
-    const { serverId, serverConfig } = await c.req.json();
+    const { serverId, serverConfig } = (await c.req.json()) as {
+      serverId?: string;
+      serverConfig?: MCPServerConfig;
+    };
 
     if (!serverId || !serverConfig) {
       return c.json(
@@ -99,23 +111,52 @@ servers.post("/reconnect", async (c) => {
       );
     }
 
-    const mcpJamClientManager = c.mcpJamClientManager; // TODO: Remove MCPJamClientManager
     const mcpClientManager = c.mcpClientManager;
 
-    await mcpClientManager.disconnectServer(serverId);
-    await mcpClientManager.connectToServer(serverId, serverConfig);
+    const normalizedConfig: MCPServerConfig = { ...serverConfig };
+    if (
+      "url" in normalizedConfig &&
+      normalizedConfig.url !== undefined &&
+      normalizedConfig.url !== null
+    ) {
+      const urlValue = normalizedConfig.url as unknown;
+      if (typeof urlValue === "string") {
+        normalizedConfig.url = new URL(urlValue);
+      } else if (urlValue instanceof URL) {
+        // already normalized
+      } else if (
+        typeof urlValue === "object" &&
+        urlValue !== null &&
+        "href" in (urlValue as Record<string, unknown>) &&
+        typeof (urlValue as { href?: unknown }).href === "string"
+      ) {
+        normalizedConfig.url = new URL((urlValue as { href: string }).href);
+      }
+    }
 
-    // Disconnect first, then reconnect
-    await mcpJamClientManager.disconnectFromServer(serverId);
-    await mcpJamClientManager.connectToServer(serverId, serverConfig);
+    try {
+      const client = mcpClientManager.getClient(serverId);
+      if (client) {
+        await mcpClientManager.disconnectServer(serverId);
+      }
+    } catch {
+      // Ignore disconnect errors prior to reconnect
+    }
+    await mcpClientManager.connectToServer(serverId, normalizedConfig);
 
-    const status = mcpJamClientManager.getConnectionStatus(serverId);
+    const status = mcpClientManager.getConnectionStatus(serverId);
+    const message =
+      status === "connected"
+        ? `Reconnected to server: ${serverId}`
+        : `Server ${serverId} reconnected with status '${status}'`;
+    const success = status === "connected";
 
     return c.json({
-      success: true,
+      success,
       serverId,
       status,
-      message: `Reconnected to server: ${serverId}`,
+      message,
+      ...(success ? {} : { error: message }),
     });
   } catch (error) {
     console.error("Error reconnecting server:", error);
