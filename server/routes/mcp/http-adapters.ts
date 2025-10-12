@@ -157,7 +157,7 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
       body = await c.req.json();
     } catch {}
 
-    const clientManager = c.mcpJamClientManager;
+    const clientManager = c.mcpClientManager;
     const response = await handleJsonRpc(
       serverId,
       body as any,
@@ -216,7 +216,7 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
       const responseMessage = await handleJsonRpc(
         serverId,
         { id, method, params },
-        c.mcpJamClientManager,
+        c.mcpClientManager,
         mode,
       );
       // If there is a JSON-RPC response, emit it over SSE to the client
