@@ -22,6 +22,11 @@ import type {
   ElicitRequest,
   ElicitResult,
 } from "@modelcontextprotocol/sdk/types.js";
+import {
+  convertMCPToolsToVercelTools,
+  type ConvertedToolSet,
+  type ToolSchemaOverrides,
+} from "./tool-converters";
 type ClientCapabilityOptions = NonNullable<ClientOptions["capabilities"]>;
 
 type BaseServerConfig = {
@@ -301,7 +306,14 @@ export class MCPClientManager {
     }
   }
 
-  async getTools(serverIds?: string[]): Promise<ListToolsResult> {
+  async getTools(
+    serverIds?: string[],
+    conversion?: "ai-sdk",
+  ): Promise<
+    | ListToolsResult
+    | ConvertedToolSet<"automatic">
+    | Record<string, ConvertedToolSet<"automatic">>
+  > {
     const targetServerIds =
       serverIds && serverIds.length > 0 ? serverIds : this.listServers();
 
@@ -326,7 +338,11 @@ export class MCPClientManager {
       }),
     );
 
-    return { tools: toolLists.flat() };
+    if (conversion === "ai-sdk") {
+      return this.getToolsForAiSdk(targetServerIds);
+    }
+
+    return { tools: toolLists.flat() } as ListToolsResult;
   }
 
   getAllToolsMetadata(serverId: string): Record<string, Record<string, any>> {
@@ -343,6 +359,78 @@ export class MCPClientManager {
         `Failed to ping MCP server "${serverId}": ${error instanceof Error ? error.message : "Unknown error"}`,
       );
     }
+  }
+
+  async getToolsForAiSdk<
+    TOOL_SCHEMAS extends ToolSchemaOverrides | "automatic" = "automatic",
+  >(
+    serverId: string,
+    options?: { schemas?: TOOL_SCHEMAS },
+  ): Promise<ConvertedToolSet<TOOL_SCHEMAS>>;
+  async getToolsForAiSdk<
+    TOOL_SCHEMAS extends ToolSchemaOverrides | "automatic" = "automatic",
+  >(
+    serverIds: string[],
+    options?: { schemas?: TOOL_SCHEMAS },
+  ): Promise<Record<string, ConvertedToolSet<TOOL_SCHEMAS>>>;
+  async getToolsForAiSdk<
+    TOOL_SCHEMAS extends ToolSchemaOverrides | "automatic" = "automatic",
+  >(
+    serverIdOrIds: string | string[],
+    options: { schemas?: TOOL_SCHEMAS } = {},
+  ): Promise<
+    | ConvertedToolSet<TOOL_SCHEMAS>
+    | Record<string, ConvertedToolSet<TOOL_SCHEMAS>>
+  > {
+    const serverIds = Array.isArray(serverIdOrIds)
+      ? serverIdOrIds
+      : [serverIdOrIds];
+
+    const loadForServer = async (
+      id: string,
+    ): Promise<ConvertedToolSet<TOOL_SCHEMAS>> => {
+      await this.ensureConnected(id);
+      const listToolsResult = await this.listTools(id);
+
+      return convertMCPToolsToVercelTools(listToolsResult, {
+        schemas: options.schemas,
+        callTool: async ({ name, args, options: callOptions }) => {
+          const requestOptions: RequestOptions | undefined =
+            callOptions?.abortSignal
+              ? { signal: callOptions.abortSignal }
+              : undefined;
+
+          const result = await this.executeTool(
+            id,
+            name,
+            (args ?? {}) as ExecuteToolArguments,
+            requestOptions,
+          );
+
+          return CallToolResultSchema.parse(result);
+        },
+      });
+    };
+
+    if (Array.isArray(serverIdOrIds)) {
+      const toolSets = await Promise.all(
+        serverIds.map(async (id) => {
+          try {
+            const tools = await loadForServer(id);
+            return [id, tools] as const;
+          } catch (error) {
+            if (this.isMethodUnavailableError(error, "tools/list")) {
+              return [id, {} as ConvertedToolSet<TOOL_SCHEMAS>];
+            }
+            throw error;
+          }
+        }),
+      );
+
+      return Object.fromEntries(toolSets);
+    }
+
+    return loadForServer(serverIds[0]);
   }
 
   async executeTool(
@@ -817,3 +905,7 @@ export type MCPReadResourceResult = Awaited<
   ReturnType<MCPClientManager["readResource"]>
 >;
 export type MCPServerSummary = ServerSummary;
+export type MCPConvertedToolSet<
+  SCHEMAS extends ToolSchemaOverrides | "automatic",
+> = ConvertedToolSet<SCHEMAS>;
+export type MCPToolSchemaOverrides = ToolSchemaOverrides;
