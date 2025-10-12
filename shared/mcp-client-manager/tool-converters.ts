@@ -26,7 +26,10 @@ const ensureJsonSchemaObject = (schema: unknown): JSONSchema7 => {
       base.type = "object";
     }
     if (base.type === "object") {
-      base.properties = (base.properties ?? {}) as Record<string, JSONSchema7Definition>;
+      base.properties = (base.properties ?? {}) as Record<
+        string,
+        JSONSchema7Definition
+      >;
       if (base.additionalProperties === undefined) {
         base.additionalProperties = false;
       }
