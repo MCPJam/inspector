@@ -95,7 +95,11 @@ tools.post("/list", async (c) => {
     const result = (await c.mcpClientManager.listTools(
       serverId,
     )) as ListToolsResult;
-    return c.json(result);
+
+    // Get cached metadata map for O(1) frontend lookups
+    const toolsMetadata = c.mcpClientManager.getAllToolsMetadata(serverId);
+
+    return c.json({ ...result, toolsMetadata });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return c.json({ error: message }, 500);

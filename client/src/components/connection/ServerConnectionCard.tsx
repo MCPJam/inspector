@@ -12,8 +12,6 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import {
-  ChevronDown,
-  ChevronUp,
   MoreVertical,
   Link2Off,
   RefreshCw,
@@ -37,6 +35,7 @@ interface ServerConnectionCardProps {
   onReconnect: (serverName: string) => void;
   onEdit: (server: ServerWithName) => void;
   onRemove?: (serverName: string) => void;
+  onViewDetail?: (server: ServerWithName) => void;
 }
 
 export function ServerConnectionCard({
@@ -45,8 +44,8 @@ export function ServerConnectionCard({
   onReconnect,
   onEdit,
   onRemove,
+  onViewDetail,
 }: ServerConnectionCardProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isErrorExpanded, setIsErrorExpanded] = useState(false);
@@ -118,9 +117,16 @@ export function ServerConnectionCard({
     }
   };
 
+  const isConnected = server.connectionStatus === "connected";
+
   return (
     <TooltipProvider>
-      <Card className="border border-border/50 bg-card/50 backdrop-blur-sm hover:border-border transition-colors">
+      <Card
+        className={`border border-border/50 bg-card/50 backdrop-blur-sm hover:border-border transition-colors ${
+          isConnected ? "cursor-pointer" : "cursor-default"
+        }`}
+        onClick={() => isConnected && onViewDetail?.(server)}
+      >
         <div className="p-4 space-y-3 py-0">
           {/* Header Row */}
           <div className="flex items-baseline justify-between">
@@ -151,7 +157,10 @@ export function ServerConnectionCard({
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div
+              className="flex items-center gap-2"
+              onClick={(e) => e.stopPropagation()}
+            >
               <div className="flex items-center gap-2 pr-2 text-xs text-muted-foreground leading-none">
                 <Switch
                   checked={server.connectionStatus === "connected"}
@@ -231,10 +240,16 @@ export function ServerConnectionCard({
           </div>
 
           {/* Command/URL Display */}
-          <div className="font-mono text-xs text-muted-foreground bg-muted/30 p-2 rounded border border-border/30 break-all relative group">
+          <div
+            className="font-mono text-xs text-muted-foreground bg-muted/30 p-2 rounded border border-border/30 break-all relative group"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="pr-8">{commandDisplay}</div>
             <button
-              onClick={() => copyToClipboard(commandDisplay, "command")}
+              onClick={(e) => {
+                e.stopPropagation();
+                copyToClipboard(commandDisplay, "command");
+              }}
               className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
             >
               {copiedField === "command" ? (
@@ -257,7 +272,10 @@ export function ServerConnectionCard({
               </div>
               {server.lastError.length > 100 && (
                 <button
-                  onClick={() => setIsErrorExpanded(!isErrorExpanded)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsErrorExpanded(!isErrorExpanded);
+                  }}
                   className="text-red-500/70 hover:text-red-500 mt-1 underline text-xs cursor-pointer"
                 >
                   {isErrorExpanded ? "Show less" : "Show more"}
@@ -269,55 +287,6 @@ export function ServerConnectionCard({
                   {server.retryCount !== 1 ? "s" : ""}
                 </div>
               )}
-            </div>
-          )}
-          <div className="flex justify-end">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground cursor-pointer"
-              onClick={() => setIsExpanded(!isExpanded)}
-            >
-              {isExpanded ? (
-                <ChevronUp className="h-3 w-3" />
-              ) : (
-                <ChevronDown className="h-3 w-3" />
-              )}
-            </Button>
-          </div>
-          {/* Expandable Details */}
-          {isExpanded && (
-            <div className="space-y-3 pt-2">
-              {/* Server Configuration */}
-              <div className="space-y-2">
-                <div className="space-y-3 text-xs">
-                  <div>
-                    <span className="text-muted-foreground font-medium">
-                      Server Configuration:
-                    </span>
-                    <div className="font-mono text-foreground break-all bg-muted/30 p-2 rounded mt-1 relative group">
-                      <div className="pr-8 whitespace-pre-wrap">
-                        {JSON.stringify(serverConfig, null, 2)}
-                      </div>
-                      <button
-                        onClick={() =>
-                          copyToClipboard(
-                            JSON.stringify(serverConfig, null, 2),
-                            "serverConfig",
-                          )
-                        }
-                        className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
-                      >
-                        {copiedField === "serverConfig" ? (
-                          <Check className="h-3 w-3 text-green-500" />
-                        ) : (
-                          <Copy className="h-3 w-3" />
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
             </div>
           )}
         </div>
