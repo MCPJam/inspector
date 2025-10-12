@@ -128,13 +128,14 @@ resources.get("/widget-content", async (c) => {
     const { serverId, uri, toolInput, toolOutput, toolId } =
       JSON.parse(jsonString);
 
-    const mcpClientManager = c.mcpJamClientManager;
-    const connectedServers = mcpClientManager.getConnectedServers();
+    const mcpClientManager = c.mcpClientManager;
+    const availableServers = mcpClientManager
+      .listServers()
+      .filter((id) => Boolean(mcpClientManager.getClient(id)));
 
     let actualServerId = serverId;
-    if (!connectedServers[serverId]) {
-      const serverNames = Object.keys(connectedServers);
-      const match = serverNames.find(
+    if (!availableServers.includes(serverId)) {
+      const match = availableServers.find(
         (name) => name.toLowerCase() === serverId.toLowerCase(),
       );
       if (match) {
@@ -144,25 +145,39 @@ resources.get("/widget-content", async (c) => {
           `<html><body>
             <h3>Error: Server not connected</h3>
             <p>Requested server: ${serverId}</p>
-            <p>Available servers: ${serverNames.join(", ")}</p>
+            <p>Available servers: ${availableServers.join(", ")}</p>
           </body></html>`,
           404,
         );
       }
     }
 
-    const content = await mcpClientManager.getResource(uri, actualServerId);
+    const content = await mcpClientManager.readResource(actualServerId, {
+      uri,
+    });
 
     let htmlContent = "";
-    if (Array.isArray(content)) {
-      htmlContent = content[0]?.text || content[0]?.blob || "";
-    } else if (content && typeof content === "object") {
-      htmlContent = (content as any).text || (content as any).blob || "";
-      if (!htmlContent && Array.isArray((content as any).contents)) {
-        htmlContent =
-          (content as any).contents[0]?.text ||
-          (content as any).contents[0]?.blob ||
-          "";
+    const contentsArray = Array.isArray(content?.contents)
+      ? content.contents
+      : [];
+
+    const firstContent = contentsArray[0];
+    if (firstContent) {
+      if (typeof (firstContent as { text?: unknown }).text === "string") {
+        htmlContent = (firstContent as { text: string }).text;
+      } else if (
+        typeof (firstContent as { blob?: unknown }).blob === "string"
+      ) {
+        htmlContent = (firstContent as { blob: string }).blob;
+      }
+    }
+
+    if (!htmlContent && content && typeof content === "object") {
+      const recordContent = content as Record<string, unknown>;
+      if (typeof recordContent.text === "string") {
+        htmlContent = recordContent.text;
+      } else if (typeof recordContent.blob === "string") {
+        htmlContent = recordContent.blob;
       }
     }
 
