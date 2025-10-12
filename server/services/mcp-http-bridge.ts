@@ -1,4 +1,4 @@
-import { MCPJamClientManager } from "./mcpjam-client-manager";
+import { MCPClientManager } from "@/shared/mcp-client-manager";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 
@@ -60,7 +60,7 @@ function toJsonSchemaMaybe(schema: any): any {
 export async function handleJsonRpc(
   serverId: string,
   body: JsonRpcBody,
-  clientManager: MCPJamClientManager,
+  clientManager: MCPClientManager,
   mode: BridgeMode,
 ): Promise<any | null> {
   const id = (body?.id ?? null) as any;
@@ -83,39 +83,43 @@ export async function handleJsonRpc(
         return respond({ result });
       }
       case "tools/list": {
-        const toolsets = await clientManager.getToolsetsForServer(serverId);
-        const tools = Object.keys(toolsets).map((name) => ({
-          name,
-          description: (toolsets as any)[name].description,
-          inputSchema: toJsonSchemaMaybe((toolsets as any)[name].inputSchema),
-          outputSchema: toJsonSchemaMaybe((toolsets as any)[name].outputSchema),
+        const list = await clientManager.listTools(serverId);
+        const tools = (list?.tools ?? []).map((tool: any) => ({
+          name: tool.name,
+          description: tool.description,
+          inputSchema: toJsonSchemaMaybe(tool.inputSchema),
+          outputSchema: toJsonSchemaMaybe(
+            tool.outputSchema ?? tool.resultSchema,
+          ),
         }));
         return respond({ result: { tools } });
       }
       case "tools/call": {
         try {
-          const exec = await clientManager.executeToolDirect(
-            `${serverId}:${params?.name}`,
-            params?.arguments || {},
+          let targetServerId = serverId;
+          let toolName = params?.name as string | undefined;
+          if (toolName?.includes(":")) {
+            const [prefix, actualName] = toolName.split(":", 2);
+            if (actualName) {
+              if (clientManager.hasServer(prefix)) {
+                targetServerId = prefix;
+              }
+              toolName = actualName;
+            }
+          }
+          if (!toolName) {
+            throw new Error("Tool name is required");
+          }
+          const exec = await clientManager.executeTool(
+            targetServerId,
+            toolName,
+            (params?.arguments ?? {}) as Record<string, unknown>,
           );
           if (mode === "manager") {
-            // Spec-style CallToolResult
-            const result = {
-              content: [
-                {
-                  type: "text",
-                  text:
-                    typeof (exec as any).result === "string"
-                      ? (exec as any).result
-                      : JSON.stringify((exec as any).result, null, 2),
-                },
-              ],
-              isError: false,
-            };
-            return respond({ result });
+            return respond({ result: exec });
           }
-          // adapter mode returns raw result
-          return respond({ result: (exec as any).result });
+          // adapter mode returns raw call-tool result for compatibility
+          return respond({ result: exec });
         } catch (e: any) {
           if (mode === "manager") {
             const result = {
@@ -132,39 +136,43 @@ export async function handleJsonRpc(
         }
       }
       case "resources/list": {
-        const resources = clientManager
-          .getResourcesForServer(serverId)
-          .map((r) => ({
-            uri: r.uri,
-            name: r.name,
-            description: r.description,
-            mimeType: r.mimeType,
-          }));
+        const list = await clientManager.listResources(serverId);
+        const resources = (list?.resources ?? []).map((r: any) => ({
+          uri: r.uri,
+          name: r.name,
+          description: r.description,
+          mimeType: r.mimeType,
+        }));
         return respond({ result: { resources } });
       }
       case "resources/read": {
         try {
-          const content = await clientManager.getResource(
-            params?.uri,
-            serverId,
-          );
+          const resource = await clientManager.readResource(serverId, {
+            uri: params?.uri,
+          });
           if (mode === "manager") {
+            const firstContent = (resource as any)?.contents?.[0];
+            const text =
+              typeof firstContent?.text === "string"
+                ? firstContent.text
+                : typeof (resource as any) === "string"
+                  ? (resource as any)
+                  : JSON.stringify(resource, null, 2);
             const result = {
               contents: [
                 {
                   uri: params?.uri,
-                  mimeType: (content as any)?.mimeType || "text/plain",
-                  text:
-                    typeof content === "string"
-                      ? content
-                      : JSON.stringify(content, null, 2),
+                  mimeType:
+                    firstContent?.mimeType ||
+                    (typeof text === "string" ? "text/plain" : undefined),
+                  text,
                 },
               ],
             };
             return respond({ result });
           }
           // adapter mode returns raw content
-          return respond({ result: content });
+          return respond({ result: resource });
         } catch (e: any) {
           return respond({
             error: { code: -32000, message: e?.message || String(e) },
@@ -172,35 +180,30 @@ export async function handleJsonRpc(
         }
       }
       case "prompts/list": {
-        const prompts = clientManager
-          .getPromptsForServer(serverId)
-          .map((p) => ({
-            name: p.name,
-            description: p.description,
-            arguments: p.arguments,
-          }));
+        const list = await clientManager.listPrompts(serverId);
+        const prompts = (list?.prompts ?? []).map((p: any) => ({
+          name: p.name,
+          description: p.description,
+          arguments: p.arguments,
+        }));
         return respond({ result: { prompts } });
       }
       case "prompts/get": {
         try {
-          const content = await clientManager.getPrompt(
-            params?.name,
-            serverId,
-            params?.arguments || {},
-          );
+          const prompt = await clientManager.getPrompt(serverId, {
+            name: params?.name,
+            arguments: params?.arguments,
+          });
           if (mode === "manager") {
             const result = {
               description:
-                (content as any)?.description || `Prompt: ${params?.name}`,
-              messages: [
+                (prompt as any)?.description || `Prompt: ${params?.name}`,
+              messages: (prompt as any)?.messages ?? [
                 {
                   role: "user",
                   content: {
                     type: "text",
-                    text:
-                      typeof content === "string"
-                        ? content
-                        : JSON.stringify(content, null, 2),
+                    text: JSON.stringify(prompt, null, 2),
                   },
                 },
               ],
@@ -208,7 +211,7 @@ export async function handleJsonRpc(
             return respond({ result });
           }
           // adapter mode returns raw content
-          return respond({ result: content });
+          return respond({ result: prompt });
         } catch (e: any) {
           return respond({
             error: { code: -32000, message: e?.message || String(e) },
