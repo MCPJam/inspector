@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
@@ -20,46 +20,38 @@ import { MessageSquare, Play, RefreshCw, ChevronRight } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
-import { MCPServerConfig } from "@/shared/mcp-client-manager";
-
-interface Prompt {
-  name: string;
-  description?: string;
-  version?: string;
-  arguments?: {
-    name: string;
-    description?: string;
-    required?: boolean;
-  }[];
-}
+import { MCPServerConfig, type MCPPrompt } from "@/shared/mcp-client-manager";
 
 interface PromptsTabProps {
   serverConfig?: MCPServerConfig;
   serverName?: string;
 }
 
+type PromptArgument = NonNullable<MCPPrompt["arguments"]>[number];
+
 interface FormField {
   name: string;
   type: string;
   description?: string;
   required: boolean;
-  value: any;
+  value: string | boolean;
   enum?: string[];
   minimum?: number;
   maximum?: number;
 }
 
 export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
-  const [prompts, setPrompts] = useState<Record<string, Prompt[]>>({});
+  const [prompts, setPrompts] = useState<MCPPrompt[]>([]);
   const [selectedPrompt, setSelectedPrompt] = useState<string>("");
-  const [selectedPromptData, setSelectedPromptData] = useState<Prompt | null>(
-    null,
-  );
   const [formFields, setFormFields] = useState<FormField[]>([]);
   const [promptContent, setPromptContent] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [fetchingPrompts, setFetchingPrompts] = useState(false);
   const [error, setError] = useState<string>("");
+
+  const selectedPromptData = useMemo(() => {
+    return prompts.find((prompt) => prompt.name === selectedPrompt) ?? null;
+  }, [prompts, selectedPrompt]);
 
   useEffect(() => {
     if (serverConfig && serverName) {
@@ -91,18 +83,31 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
       const data = await response.json();
 
       if (response.ok) {
-        setPrompts(data.prompts || {});
+        const serverPrompts: MCPPrompt[] = Array.isArray(data.prompts)
+          ? data.prompts
+          : [];
+        setPrompts(serverPrompts);
+
+        if (serverPrompts.length === 0) {
+          setSelectedPrompt("");
+          setPromptContent(null);
+        } else if (
+          !serverPrompts.some((prompt) => prompt.name === selectedPrompt)
+        ) {
+          setSelectedPrompt(serverPrompts[0].name);
+          setPromptContent(null);
+        }
       } else {
-        setError(data.error || "Failed to fetch prompts");
+        setError(data.error || "Could not fetch prompts");
       }
     } catch (err) {
-      setError("Network error fetching prompts");
+      setError(`Could not fetch prompts: ${err}`);
     } finally {
       setFetchingPrompts(false);
     }
   };
 
-  const generateFormFields = (args: any[]) => {
+  const generateFormFields = (args: PromptArgument[]) => {
     if (!args || args.length === 0) {
       setFormFields([]);
       return;
@@ -112,14 +117,14 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
       name: arg.name,
       type: "string", // Default to string for now, could be enhanced based on arg type
       description: arg.description,
-      required: arg.required || false,
+      required: Boolean(arg.required),
       value: "",
     }));
 
     setFormFields(fields);
   };
 
-  const updateFieldValue = (fieldName: string, value: any) => {
+  const updateFieldValue = (fieldName: string, value: string | boolean) => {
     setFormFields((prev) =>
       prev.map((field) =>
         field.name === fieldName ? { ...field, value } : field,
@@ -127,26 +132,27 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
     );
   };
 
-  const buildParameters = (): Record<string, any> => {
-    const params: Record<string, any> = {};
+  const buildParameters = (): Record<string, string> => {
+    const params: Record<string, string> = {};
     formFields.forEach((field) => {
       if (
         field.value !== "" &&
         field.value !== null &&
         field.value !== undefined
       ) {
-        let processedValue = field.value;
+        let processedValue: string;
 
-        if (field.type === "number" || field.type === "integer") {
-          processedValue = Number(field.value);
+        if (field.type === "array" || field.type === "object") {
+          processedValue =
+            typeof field.value === "string"
+              ? field.value
+              : JSON.stringify(field.value);
         } else if (field.type === "boolean") {
-          processedValue = Boolean(field.value);
-        } else if (field.type === "array" || field.type === "object") {
-          try {
-            processedValue = JSON.parse(field.value);
-          } catch {
-            processedValue = field.value;
-          }
+          processedValue = field.value ? "true" : "false";
+        } else if (field.type === "number" || field.type === "integer") {
+          processedValue = String(field.value);
+        } else {
+          processedValue = String(field.value);
         }
 
         params[field.name] = processedValue;
@@ -187,9 +193,7 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
     }
   };
 
-  const promptNames = Object.values(prompts)
-    .flat()
-    .map((prompt) => prompt.name);
+  const promptNames = prompts.map((prompt) => prompt.name);
 
   if (!serverConfig || !serverName) {
     return (
@@ -257,47 +261,44 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
                         </div>
                       ) : (
                         <div className="space-y-1">
-                          {promptNames.map((name) => (
-                            <div
-                              key={name}
-                              className={`cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${
-                                selectedPrompt === name
-                                  ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
-                                  : "hover:shadow-sm"
-                              }`}
-                              onClick={() => {
-                                setSelectedPrompt(name);
-                                const promptData = Object.values(prompts)
-                                  .flat()
-                                  .find((p) => p.name === name);
-                                setSelectedPromptData(promptData || null);
-                              }}
-                            >
-                              <div className="flex items-start gap-3">
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2 mb-1">
-                                    <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border">
-                                      {name}
-                                    </code>
+                          {prompts.map((prompt) => {
+                            const isSelected = selectedPrompt === prompt.name;
+                            const displayTitle = prompt.title ?? prompt.name;
+                            return (
+                              <div
+                                key={prompt.name}
+                                className={`cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${
+                                  isSelected
+                                    ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
+                                    : "hover:shadow-sm"
+                                }`}
+                                onClick={() => {
+                                  setSelectedPrompt(prompt.name);
+                                }}
+                              >
+                                <div className="flex items-start gap-3">
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border">
+                                        {prompt.name}
+                                      </code>
+                                      {prompt.title && (
+                                        <span className="text-xs font-semibold text-foreground">
+                                          {displayTitle}
+                                        </span>
+                                      )}
+                                    </div>
+                                    {prompt.description && (
+                                      <p className="text-xs mt-2 line-clamp-2 leading-relaxed text-muted-foreground">
+                                        {prompt.description}
+                                      </p>
+                                    )}
                                   </div>
-                                  {Object.values(prompts)
-                                    .flat()
-                                    .find((p) => p.name === name)
-                                    ?.description && (
-                                    <p className="text-xs mt-2 line-clamp-2 leading-relaxed text-muted-foreground">
-                                      {
-                                        Object.values(prompts)
-                                          .flat()
-                                          .find((p) => p.name === name)
-                                          ?.description
-                                      }
-                                    </p>
-                                  )}
+                                  <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0 mt-1" />
                                 </div>
-                                <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0 mt-1" />
                               </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       )}
                     </div>
@@ -403,7 +404,7 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
                                   <div className="space-y-2">
                                     {field.type === "enum" ? (
                                       <Select
-                                        value={field.value}
+                                        value={String(field.value)}
                                         onValueChange={(value) =>
                                           updateFieldValue(field.name, value)
                                         }
@@ -430,7 +431,7 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
                                       <div className="flex items-center space-x-3 py-2">
                                         <input
                                           type="checkbox"
-                                          checked={field.value}
+                                          checked={field.value === true}
                                           onChange={(e) =>
                                             updateFieldValue(
                                               field.name,
@@ -440,7 +441,9 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
                                           className="w-4 h-4 text-primary bg-background border-border rounded focus:ring-ring focus:ring-2"
                                         />
                                         <span className="text-xs text-foreground font-medium">
-                                          {field.value ? "Enabled" : "Disabled"}
+                                          {field.value === true
+                                            ? "Enabled"
+                                            : "Disabled"}
                                         </span>
                                       </div>
                                     ) : field.type === "array" ||
@@ -472,7 +475,7 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
                                             ? "number"
                                             : "text"
                                         }
-                                        value={field.value}
+                                        value={String(field.value)}
                                         onChange={(e) =>
                                           updateFieldValue(
                                             field.name,

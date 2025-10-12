@@ -688,3 +688,11 @@ export class MCPClientManager {
     return state.client;
   }
 }
+
+export type MCPPromptListResult = Awaited<
+  ReturnType<MCPClientManager["listPrompts"]>
+>;
+export type MCPPrompt = MCPPromptListResult["prompts"][number];
+export type MCPGetPromptResult = Awaited<
+  ReturnType<MCPClientManager["getPrompt"]>
+>;
