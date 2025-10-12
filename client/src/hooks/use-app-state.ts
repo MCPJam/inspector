@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { toast } from "sonner";
-import { MastraMCPServerDefinition } from "@mastra/mcp";
-
 import { useLogger } from "./use-logger";
-
 import { initialAppState, type ServerWithName } from "@/state/app-types";
 import { appReducer } from "@/state/app-reducer";
 import { loadAppState, saveAppState } from "@/state/storage";
@@ -19,7 +16,7 @@ import {
   getStoredTokens,
   clearOAuthData,
 } from "@/lib/mcp-oauth";
-
+import { MCPServerConfig } from "@/shared/mcp-client-manager";
 export type { ServerWithName } from "@/state/app-types";
 
 export function useAppState() {
@@ -622,7 +619,7 @@ export function useAppState() {
         }
         return acc;
       },
-      {} as Record<string, MastraMCPServerDefinition>,
+      {} as Record<string, MCPServerConfig>,
     ),
     isMultiSelectMode: appState.isMultiSelectMode,
 

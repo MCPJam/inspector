@@ -1,4 +1,5 @@
-import { MastraMCPServerDefinition, MCPClientOptions } from "@mastra/mcp";
+import { MCPClientOptions } from "@mastra/mcp";
+import { MCPServerConfig } from "@/shared/mcp-client-manager";
 import { MCPJamClientManager } from "../services/mcpjam-client-manager";
 import {
   LlmsConfig,
@@ -15,7 +16,7 @@ export function transformServerConfigsToEnvironment(
   clientManager: MCPJamClientManager,
 ): MCPClientOptions {
   const connectedServers = clientManager.getConnectedServers();
-  const servers: Record<string, MastraMCPServerDefinition> = {};
+  const servers: Record<string, MCPServerConfig> = {};
 
   for (const serverId of serverIds) {
     const serverData = connectedServers[serverId];
