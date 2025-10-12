@@ -6,14 +6,14 @@ const resources = new Hono();
 // List resources endpoint
 resources.post("/list", async (c) => {
   try {
-    const { serverId } = await c.req.json();
+    const { serverId } = (await c.req.json()) as { serverId?: string };
 
     if (!serverId) {
       return c.json({ success: false, error: "serverId is required" }, 400);
     }
-    const mcpClientManager = c.mcpJamClientManager;
-    const serverResources = mcpClientManager.getResourcesForServer(serverId);
-    return c.json({ resources: { [serverId]: serverResources } });
+    const mcpClientManager = c.mcpClientManager;
+    const { resources } = await mcpClientManager.listResources(serverId);
+    return c.json({ resources });
   } catch (error) {
     console.error("Error fetching resources:", error);
     return c.json(
@@ -29,7 +29,10 @@ resources.post("/list", async (c) => {
 // Read resource endpoint
 resources.post("/read", async (c) => {
   try {
-    const { serverId, uri } = await c.req.json();
+    const { serverId, uri } = (await c.req.json()) as {
+      serverId?: string;
+      uri?: string;
+    };
 
     if (!serverId) {
       return c.json({ success: false, error: "serverId is required" }, 400);
@@ -45,9 +48,11 @@ resources.post("/read", async (c) => {
       );
     }
 
-    const mcpClientManager = c.mcpJamClientManager;
+    const mcpClientManager = c.mcpClientManager;
 
-    const content = await mcpClientManager.getResource(uri, serverId);
+    const content = await mcpClientManager.readResource(serverId, {
+      uri,
+    });
 
     return c.json({ content });
   } catch (error) {
