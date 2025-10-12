@@ -34,6 +34,22 @@ var MCPClientManager = class {
   hasServer(serverId) {
     return this.clientStates.has(serverId);
   }
+  getServerSummaries() {
+    return Array.from(this.clientStates.entries()).map(
+      ([serverId, state]) => ({
+        id: serverId,
+        status: this.resolveConnectionStatus(state),
+        config: state.config
+      })
+    );
+  }
+  getConnectionStatus(serverId) {
+    return this.resolveConnectionStatus(this.clientStates.get(serverId));
+  }
+  getServerConfig(serverId) {
+    var _a;
+    return (_a = this.clientStates.get(serverId)) == null ? void 0 : _a.config;
+  }
   async connectToServer(serverId, config) {
     var _a;
     if (this.clientStates.has(serverId)) {
@@ -114,6 +130,11 @@ var MCPClientManager = class {
       this.resetState(serverId);
     }
   }
+  removeServer(serverId) {
+    this.resetState(serverId);
+    this.notificationHandlers.delete(serverId);
+    this.elicitationHandlers.delete(serverId);
+  }
   async disconnectAllServers() {
     const serverIds = this.listServers();
     await Promise.all(
@@ -128,18 +149,26 @@ var MCPClientManager = class {
   async listTools(serverId, params, options) {
     await this.ensureConnected(serverId);
     const client = this.getClientById(serverId);
-    const result = await client.listTools(
-      params,
-      this.withTimeout(serverId, options)
-    );
-    const metadataMap = /* @__PURE__ */ new Map();
-    for (const tool of result.tools) {
-      if (tool._meta) {
-        metadataMap.set(tool.name, tool._meta);
+    try {
+      const result = await client.listTools(
+        params,
+        this.withTimeout(serverId, options)
+      );
+      const metadataMap = /* @__PURE__ */ new Map();
+      for (const tool of result.tools) {
+        if (tool._meta) {
+          metadataMap.set(tool.name, tool._meta);
+        }
       }
+      this.toolsMetadataCache.set(serverId, metadataMap);
+      return result;
+    } catch (error) {
+      if (this.isMethodUnavailableError(error, "tools/list")) {
+        this.toolsMetadataCache.set(serverId, /* @__PURE__ */ new Map());
+        return { tools: [] };
+      }
+      throw error;
     }
-    this.toolsMetadataCache.set(serverId, metadataMap);
-    return result;
   }
   async getTools(serverIds) {
     const targetServerIds = serverIds && serverIds.length > 0 ? serverIds : this.listServers();
@@ -192,7 +221,19 @@ var MCPClientManager = class {
   async listResources(serverId, params, options) {
     await this.ensureConnected(serverId);
     const client = this.getClientById(serverId);
-    return client.listResources(params, this.withTimeout(serverId, options));
+    try {
+      return await client.listResources(
+        params,
+        this.withTimeout(serverId, options)
+      );
+    } catch (error) {
+      if (this.isMethodUnavailableError(error, "resources/list")) {
+        return {
+          resources: []
+        };
+      }
+      throw error;
+    }
   }
   async readResource(serverId, params, options) {
     await this.ensureConnected(serverId);
@@ -226,7 +267,19 @@ var MCPClientManager = class {
   async listPrompts(serverId, params, options) {
     await this.ensureConnected(serverId);
     const client = this.getClientById(serverId);
-    return client.listPrompts(params, this.withTimeout(serverId, options));
+    try {
+      return await client.listPrompts(
+        params,
+        this.withTimeout(serverId, options)
+      );
+    } catch (error) {
+      if (this.isMethodUnavailableError(error, "prompts/list")) {
+        return {
+          prompts: []
+        };
+      }
+      throw error;
+    }
   }
   async getPrompt(serverId, params, options) {
     await this.ensureConnected(serverId);
@@ -415,6 +468,18 @@ var MCPClientManager = class {
     this.clientStates.delete(serverId);
     this.toolsMetadataCache.delete(serverId);
   }
+  resolveConnectionStatus(state) {
+    if (!state) {
+      return "disconnected";
+    }
+    if (state.client) {
+      return "connected";
+    }
+    if (state.promise) {
+      return "connecting";
+    }
+    return "disconnected";
+  }
   withTimeout(serverId, options) {
     var _a;
     const state = this.clientStates.get(serverId);
@@ -447,6 +512,39 @@ var MCPClientManager = class {
     } catch {
       return String(error);
     }
+  }
+  isMethodUnavailableError(error, method) {
+    if (!(error instanceof Error)) {
+      return false;
+    }
+    const message = error.message.toLowerCase();
+    const methodTokens = /* @__PURE__ */ new Set();
+    const pushToken = (token) => {
+      if (token) {
+        methodTokens.add(token.toLowerCase());
+      }
+    };
+    pushToken(method);
+    for (const part of method.split(/[\/:._-]/)) {
+      pushToken(part);
+    }
+    const indicators = [
+      "method not found",
+      "not implemented",
+      "unsupported",
+      "does not support",
+      "unimplemented"
+    ];
+    const indicatorMatch = indicators.some(
+      (indicator) => message.includes(indicator)
+    );
+    if (!indicatorMatch) {
+      return false;
+    }
+    if (Array.from(methodTokens).some((token) => message.includes(token))) {
+      return true;
+    }
+    return true;
   }
   getTimeout(config) {
     var _a;

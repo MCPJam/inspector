@@ -23,3 +23,15 @@ export async function listServers() {
   const res = await fetch("/api/mcp/servers");
   return res.json();
 }
+
+export async function reconnectServer(
+  serverId: string,
+  serverConfig: MCPServerConfig,
+) {
+  const res = await fetch("/api/mcp/servers/reconnect", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ serverId, serverConfig }),
+  });
+  return res.json();
+}

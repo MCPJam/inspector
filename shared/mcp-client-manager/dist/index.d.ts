@@ -50,6 +50,12 @@ type UnsubscribeResourceParams = Parameters<Client["unsubscribeResource"]>[0];
 type ListPromptsParams = Parameters<Client["listPrompts"]>[0];
 type GetPromptParams = Parameters<Client["getPrompt"]>[0];
 type ListToolsResult = Awaited<ReturnType<Client["listTools"]>>;
+type MCPConnectionStatus = "connected" | "connecting" | "disconnected";
+type ServerSummary = {
+    id: string;
+    status: MCPConnectionStatus;
+    config?: MCPServerConfig;
+};
 type ExecuteToolArguments = Record<string, unknown>;
 type ElicitationHandler = (params: ElicitRequest["params"]) => Promise<ElicitResult> | ElicitResult;
 declare class MCPClientManager {
@@ -67,8 +73,12 @@ declare class MCPClientManager {
     });
     listServers(): string[];
     hasServer(serverId: string): boolean;
+    getServerSummaries(): ServerSummary[];
+    getConnectionStatus(serverId: string): MCPConnectionStatus;
+    getServerConfig(serverId: string): MCPServerConfig | undefined;
     connectToServer(serverId: string, config: MCPServerConfig): Promise<Client>;
     disconnectServer(serverId: string): Promise<void>;
+    removeServer(serverId: string): void;
     disconnectAllServers(): Promise<void>;
     listTools(serverId: string, params?: Parameters<Client["listTools"]>[0], options?: ClientRequestOptions): Promise<zod.objectOutputType<{
         _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
@@ -1552,9 +1562,11 @@ declare class MCPClientManager {
     private applyElicitationHandler;
     private ensureConnected;
     private resetState;
+    private resolveConnectionStatus;
     private withTimeout;
     private buildCapabilities;
     private formatError;
+    private isMethodUnavailableError;
     private getTimeout;
     private isStdioConfig;
     private getClientById;
@@ -1565,5 +1577,6 @@ type MCPGetPromptResult = Awaited<ReturnType<MCPClientManager["getPrompt"]>>;
 type MCPResourceListResult = Awaited<ReturnType<MCPClientManager["listResources"]>>;
 type MCPResource = MCPResourceListResult["resources"][number];
 type MCPReadResourceResult = Awaited<ReturnType<MCPClientManager["readResource"]>>;
+type MCPServerSummary = ServerSummary;
 
-export { type ElicitationHandler, type ExecuteToolArguments, MCPClientManager, type MCPClientManagerConfig, type MCPGetPromptResult, type MCPPrompt, type MCPPromptListResult, type MCPReadResourceResult, type MCPResource, type MCPResourceListResult, type MCPServerConfig };
+export { type ElicitationHandler, type ExecuteToolArguments, MCPClientManager, type MCPClientManagerConfig, type MCPConnectionStatus, type MCPGetPromptResult, type MCPPrompt, type MCPPromptListResult, type MCPReadResourceResult, type MCPResource, type MCPResourceListResult, type MCPServerConfig, type MCPServerSummary };
