@@ -10,14 +10,7 @@ interface OpenAIComponentRendererProps {
   className?: string;
   uiResourceBlob?: string; // HTML blob for ui:// URIs
   serverId?: string; // Server ID for fetching ui:// resources
-}
-
-interface WindowOpenAIAPI {
-  toolInput: Record<string, any>;
-  toolOutput: any;
-  setWidgetState: (state: any) => Promise<void>;
-  callTool: (toolName: string, params?: Record<string, any>) => Promise<any>;
-  sendFollowupTurn: (message: string) => Promise<void>;
+  toolMeta?: Record<string, any>; // Tool metadata from tool definition (includes openai/outputTemplate)
 }
 
 /**
@@ -31,8 +24,8 @@ export function OpenAIComponentRenderer({
   onCallTool,
   onSendFollowup,
   className,
-  uiResourceBlob,
   serverId,
+  toolMeta,
 }: OpenAIComponentRendererProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [isReady, setIsReady] = useState(false);
