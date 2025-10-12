@@ -696,3 +696,10 @@ export type MCPPrompt = MCPPromptListResult["prompts"][number];
 export type MCPGetPromptResult = Awaited<
   ReturnType<MCPClientManager["getPrompt"]>
 >;
+export type MCPResourceListResult = Awaited<
+  ReturnType<MCPClientManager["listResources"]>
+>;
+export type MCPResource = MCPResourceListResult["resources"][number];
+export type MCPReadResourceResult = Awaited<
+  ReturnType<MCPClientManager["readResource"]>
+>;
