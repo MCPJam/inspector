@@ -683,9 +683,7 @@ chat.post("/", async (c) => {
           toolCallIdToName: new Map(),
         };
 
-        // Register elicitation handler with MCPJamClientManager
         mcpClientManager.setElicitationCallback(async (request) => {
-          // Convert MCPJamClientManager format to createElicitationHandler format
           const elicitationRequest = {
             message: request.message,
             requestedSchema: request.schema,
