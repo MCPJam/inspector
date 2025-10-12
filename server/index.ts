@@ -60,7 +60,6 @@ function logBox(content: string, title?: string) {
 // Import routes and services
 import mcpRoutes from "./routes/mcp/index";
 import { interceptorStore } from "./services/interceptor-store";
-import { MCPJamClientManager } from "./services/mcpjam-client-manager";
 import "./types/hono"; // Type extensions
 import { MCPClientManager } from "@/shared/mcp-client-manager";
 
@@ -177,11 +176,9 @@ if (!process.env.CONVEX_HTTP_URL) {
 }
 
 // Initialize centralized MCPJam Client Manager
-const mcpJamClientManager = new MCPJamClientManager();
 const mcpClientManager = new MCPClientManager();
 // Middleware to inject client manager into context
 app.use("*", async (c, next) => {
-  c.mcpJamClientManager = mcpJamClientManager;
   c.mcpClientManager = mcpClientManager;
   await next();
 });
