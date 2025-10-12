@@ -248,20 +248,28 @@ export class MCPClientManager {
   ) {
     await this.ensureConnected(serverId);
     const client = this.getClientById(serverId);
-    const result = await client.listTools(
-      params,
-      this.withTimeout(serverId, options),
-    );
+    try {
+      const result = await client.listTools(
+        params,
+        this.withTimeout(serverId, options),
+      );
 
-    const metadataMap = new Map<string, any>();
-    for (const tool of result.tools) {
-      if (tool._meta) {
-        metadataMap.set(tool.name, tool._meta);
+      const metadataMap = new Map<string, any>();
+      for (const tool of result.tools) {
+        if (tool._meta) {
+          metadataMap.set(tool.name, tool._meta);
+        }
       }
-    }
-    this.toolsMetadataCache.set(serverId, metadataMap);
+      this.toolsMetadataCache.set(serverId, metadataMap);
 
-    return result;
+      return result;
+    } catch (error) {
+      if (this.isMethodUnavailableError(error, "tools/list")) {
+        this.toolsMetadataCache.set(serverId, new Map());
+        return { tools: [] } as Awaited<ReturnType<Client["listTools"]>>;
+      }
+      throw error;
+    }
   }
 
   async getTools(serverIds?: string[]): Promise<ListToolsResult> {
@@ -333,7 +341,19 @@ export class MCPClientManager {
   ) {
     await this.ensureConnected(serverId);
     const client = this.getClientById(serverId);
-    return client.listResources(params, this.withTimeout(serverId, options));
+    try {
+      return await client.listResources(
+        params,
+        this.withTimeout(serverId, options),
+      );
+    } catch (error) {
+      if (this.isMethodUnavailableError(error, "resources/list")) {
+        return {
+          resources: [],
+        } as Awaited<ReturnType<Client["listResources"]>>;
+      }
+      throw error;
+    }
   }
 
   async readResource(
@@ -392,7 +412,19 @@ export class MCPClientManager {
   ) {
     await this.ensureConnected(serverId);
     const client = this.getClientById(serverId);
-    return client.listPrompts(params, this.withTimeout(serverId, options));
+    try {
+      return await client.listPrompts(
+        params,
+        this.withTimeout(serverId, options),
+      );
+    } catch (error) {
+      if (this.isMethodUnavailableError(error, "prompts/list")) {
+        return {
+          prompts: [],
+        } as Awaited<ReturnType<Client["listPrompts"]>>;
+      }
+      throw error;
+    }
   }
 
   async getPrompt(
@@ -670,6 +702,43 @@ export class MCPClientManager {
     } catch {
       return String(error);
     }
+  }
+
+  private isMethodUnavailableError(error: unknown, method: string): boolean {
+    if (!(error instanceof Error)) {
+      return false;
+    }
+    const message = error.message.toLowerCase();
+    const methodTokens = new Set<string>();
+    const pushToken = (token: string) => {
+      if (token) {
+        methodTokens.add(token.toLowerCase());
+      }
+    };
+
+    pushToken(method);
+    for (const part of method.split(/[\/:._-]/)) {
+      pushToken(part);
+    }
+    const indicators = [
+      "method not found",
+      "not implemented",
+      "unsupported",
+      "does not support",
+      "unimplemented",
+    ];
+    const indicatorMatch = indicators.some((indicator) =>
+      message.includes(indicator),
+    );
+    if (!indicatorMatch) {
+      return false;
+    }
+
+    if (Array.from(methodTokens).some((token) => message.includes(token))) {
+      return true;
+    }
+
+    return true;
   }
 
   private getTimeout(config: MCPServerConfig): number {
