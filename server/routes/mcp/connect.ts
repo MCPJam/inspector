@@ -38,27 +38,13 @@ connect.post("/", async (c) => {
       }
     }
 
-    const mcpClientManager = c.mcpJamClientManager;
-    const mcpClientManagerV2 = c.mcpClientManager;
+    const mcpClientManager = c.mcpClientManager;
     try {
       await mcpClientManager.connectToServer(serverId, serverConfig);
-      await mcpClientManagerV2.connectToServer(serverId, serverConfig);
-      const status = mcpClientManager.getConnectionStatus(serverId);
-      if (status === "connected") {
-        return c.json({
-          success: true,
-          status: "connected",
-        });
-      } else {
-        return c.json(
-          {
-            success: false,
-            error: "Connection failed",
-            status,
-          },
-          500,
-        );
-      }
+      return c.json({
+        success: true,
+        status: "connected",
+      });
     } catch (error) {
       return c.json(
         {
