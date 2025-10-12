@@ -23,7 +23,7 @@ import {
 } from "../lib/oauth-flow-types";
 import { OAuthFlowProgress } from "./OAuthFlowProgress";
 import { OAuthStateMachine } from "../lib/oauth-state-machine";
-import { MastraMCPServerDefinition } from "@mastra/mcp";
+import { MCPServerConfig } from "@/shared/mcp-client-manager";
 
 interface StatusMessageProps {
   message: StatusMessage;
@@ -66,7 +66,7 @@ const StatusMessageComponent = ({ message }: StatusMessageProps) => {
 };
 
 interface AuthTabProps {
-  serverConfig?: MastraMCPServerDefinition;
+  serverConfig?: MCPServerConfig;
   serverEntry?: ServerWithName;
   serverName?: string;
 }

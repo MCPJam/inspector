@@ -1,6 +1,6 @@
 import type { ComponentType } from "react";
 import { Check, Loader2, Wifi, X } from "lucide-react";
-import type { MastraMCPServerDefinition } from "@mastra/mcp";
+import type { MCPServerConfig } from "@/shared/mcp-client-manager";
 import type { ConnectionStatus } from "@/state/app-types";
 
 interface ConnectionStatusMeta {
@@ -46,9 +46,7 @@ const connectionStatusMeta: Record<ConnectionStatus, ConnectionStatusMeta> = {
 export const getConnectionStatusMeta = (status: ConnectionStatus) =>
   connectionStatusMeta[status] || connectionStatusMeta.disconnected;
 
-export const getServerCommandDisplay = (
-  config: MastraMCPServerDefinition,
-): string => {
+export const getServerCommandDisplay = (config: MCPServerConfig): string => {
   if (config.url) {
     return config.url.toString();
   }
@@ -58,12 +56,6 @@ export const getServerCommandDisplay = (
   return [command, ...args].filter(Boolean).join(" ").trim();
 };
 
-export const getServerTransportLabel = (
-  config: MastraMCPServerDefinition,
-): string => {
-  if (config.transport) {
-    return config.transport.toUpperCase();
-  }
-
+export const getServerTransportLabel = (config: MCPServerConfig): string => {
   return config.url ? "HTTP/SSE" : "STDIO";
 };
