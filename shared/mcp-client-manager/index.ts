@@ -297,6 +297,17 @@ export class MCPClientManager {
     return metadataMap ? Object.fromEntries(metadataMap) : {};
   }
 
+  pingServer(serverId: string, options?: RequestOptions) {
+    const client = this.getClientById(serverId);
+    try {
+      client.ping(options);
+    } catch (error) {
+      throw new Error(
+        `Failed to ping MCP server "${serverId}": ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
+    }
+  }
+
   async executeTool(
     serverId: string,
     toolName: string,

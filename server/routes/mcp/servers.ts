@@ -5,12 +5,11 @@ const servers = new Hono();
 
 // List all connected servers with their status
 servers.get("/", async (c) => {
+  // TODO: Figure out how to incorporate MCPClientManager
   try {
     const mcpJamClientManager = c.mcpJamClientManager;
-
     // Get all server configurations and statuses
     const connectedServers = mcpJamClientManager.getConnectedServers();
-
     const serverList = Object.entries(connectedServers).map(
       ([serverId, serverInfo]) => ({
         id: serverId,
@@ -41,7 +40,6 @@ servers.get("/status/:serverId", async (c) => {
   try {
     const serverId = c.req.param("serverId");
     const mcpJamClientManager = c.mcpJamClientManager;
-
     const status = mcpJamClientManager.getConnectionStatus(serverId);
 
     return c.json({
@@ -65,8 +63,9 @@ servers.get("/status/:serverId", async (c) => {
 servers.delete("/:serverId", async (c) => {
   try {
     const serverId = c.req.param("serverId");
-    const mcpJamClientManager = c.mcpJamClientManager;
-
+    const mcpJamClientManager = c.mcpJamClientManager; // TODO: Remove MCPJamClientManager
+    const mcpClientManager = c.mcpClientManager;
+    await mcpClientManager.disconnectServer(serverId);
     await mcpJamClientManager.disconnectFromServer(serverId);
 
     return c.json({
@@ -100,7 +99,11 @@ servers.post("/reconnect", async (c) => {
       );
     }
 
-    const mcpJamClientManager = c.mcpJamClientManager;
+    const mcpJamClientManager = c.mcpJamClientManager; // TODO: Remove MCPJamClientManager
+    const mcpClientManager = c.mcpClientManager;
+
+    await mcpClientManager.disconnectServer(serverId);
+    await mcpClientManager.connectToServer(serverId, serverConfig);
 
     // Disconnect first, then reconnect
     await mcpJamClientManager.disconnectFromServer(serverId);
