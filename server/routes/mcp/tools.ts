@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type {
   ElicitRequest,
   ElicitResult,
+  ListToolsResult,
 } from "@modelcontextprotocol/sdk/types.js";
 import "../../types/hono"; // Type extensions
 
@@ -19,9 +20,7 @@ type ExecutionContext = {
   id: string;
   serverId: string;
   toolName: string;
-  execPromise: Promise<
-    CallToolResultSchema | CompatibilityCallToolResultSchema
-  >;
+  execPromise: Promise<ListToolsResult>;
   queue: ElicitationPayload[];
   waiter?: (payload: ElicitationPayload) => void;
 };
@@ -136,9 +135,11 @@ tools.post("/execute", async (c) => {
     id: executionId,
     serverId,
     toolName,
-    execPromise: manager.executeTool(serverId, toolName, parameters) as Promise<
-      CallToolResultSchema | CompatibilityCallToolResultSchema
-    >,
+    execPromise: manager.executeTool(
+      serverId,
+      toolName,
+      parameters,
+    ) as Promise<ListToolsResult>,
     queue: [],
   };
 

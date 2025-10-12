@@ -5,7 +5,7 @@ import { StreamableHTTPClientTransportOptions } from '@modelcontextprotocol/sdk/
 import { RequestOptions } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import { ElicitRequest, ElicitResult } from '@modelcontextprotocol/sdk/types.js';
 
-type ClientCapabilityOptions = NonNullable<ClientOptions['capabilities']>;
+type ClientCapabilityOptions = NonNullable<ClientOptions["capabilities"]>;
 type BaseServerConfig = {
     capabilities?: ClientCapabilityOptions;
     timeout?: number;
@@ -26,11 +26,11 @@ type StdioServerConfig = BaseServerConfig & {
 };
 type HttpServerConfig = BaseServerConfig & {
     url: URL;
-    requestInit?: StreamableHTTPClientTransportOptions['requestInit'];
-    eventSourceInit?: SSEClientTransportOptions['eventSourceInit'];
-    authProvider?: StreamableHTTPClientTransportOptions['authProvider'];
-    reconnectionOptions?: StreamableHTTPClientTransportOptions['reconnectionOptions'];
-    sessionId?: StreamableHTTPClientTransportOptions['sessionId'];
+    requestInit?: StreamableHTTPClientTransportOptions["requestInit"];
+    eventSourceInit?: SSEClientTransportOptions["eventSourceInit"];
+    authProvider?: StreamableHTTPClientTransportOptions["authProvider"];
+    reconnectionOptions?: StreamableHTTPClientTransportOptions["reconnectionOptions"];
+    sessionId?: StreamableHTTPClientTransportOptions["sessionId"];
     preferSSE?: boolean;
     command?: never;
     args?: never;
@@ -38,24 +38,25 @@ type HttpServerConfig = BaseServerConfig & {
 };
 type MCPServerConfig = StdioServerConfig | HttpServerConfig;
 type MCPClientManagerConfig = Record<string, MCPServerConfig>;
-type NotificationSchema = Parameters<Client['setNotificationHandler']>[0];
-type NotificationHandler = Parameters<Client['setNotificationHandler']>[1];
+type NotificationSchema = Parameters<Client["setNotificationHandler"]>[0];
+type NotificationHandler = Parameters<Client["setNotificationHandler"]>[1];
 type ClientRequestOptions = RequestOptions;
 type CallToolOptions = RequestOptions;
-type ListResourcesParams = Parameters<Client['listResources']>[0];
-type ListResourceTemplatesParams = Parameters<Client['listResourceTemplates']>[0];
-type ReadResourceParams = Parameters<Client['readResource']>[0];
-type SubscribeResourceParams = Parameters<Client['subscribeResource']>[0];
-type UnsubscribeResourceParams = Parameters<Client['unsubscribeResource']>[0];
-type ListPromptsParams = Parameters<Client['listPrompts']>[0];
-type GetPromptParams = Parameters<Client['getPrompt']>[0];
-type ListToolsResult = Awaited<ReturnType<Client['listTools']>>;
+type ListResourcesParams = Parameters<Client["listResources"]>[0];
+type ListResourceTemplatesParams = Parameters<Client["listResourceTemplates"]>[0];
+type ReadResourceParams = Parameters<Client["readResource"]>[0];
+type SubscribeResourceParams = Parameters<Client["subscribeResource"]>[0];
+type UnsubscribeResourceParams = Parameters<Client["unsubscribeResource"]>[0];
+type ListPromptsParams = Parameters<Client["listPrompts"]>[0];
+type GetPromptParams = Parameters<Client["getPrompt"]>[0];
+type ListToolsResult = Awaited<ReturnType<Client["listTools"]>>;
 type ExecuteToolArguments = Record<string, unknown>;
-type ElicitationHandler = (params: ElicitRequest['params']) => Promise<ElicitResult> | ElicitResult;
+type ElicitationHandler = (params: ElicitRequest["params"]) => Promise<ElicitResult> | ElicitResult;
 declare class MCPClientManager {
     private readonly clientStates;
     private readonly notificationHandlers;
     private readonly elicitationHandlers;
+    private readonly toolsMetadataCache;
     private readonly defaultClientVersion;
     private readonly defaultCapabilities;
     private readonly defaultTimeout;
@@ -65,11 +66,11 @@ declare class MCPClientManager {
         defaultTimeout?: number;
     });
     listServers(): string[];
-    hasServer(serverName: string): boolean;
-    connectToServer(serverName: string, config: MCPServerConfig): Promise<Client>;
-    disconnectServer(serverName: string): Promise<void>;
+    hasServer(serverId: string): boolean;
+    connectToServer(serverId: string, config: MCPServerConfig): Promise<Client>;
+    disconnectServer(serverId: string): Promise<void>;
     disconnectAllServers(): Promise<void>;
-    listTools(serverName: string, params?: Parameters<Client['listTools']>[0], options?: ClientRequestOptions): Promise<zod.objectOutputType<{
+    listTools(serverId: string, params?: Parameters<Client["listTools"]>[0], options?: ClientRequestOptions): Promise<zod.objectOutputType<{
         _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
     } & {
         nextCursor: zod.ZodOptional<zod.ZodString>;
@@ -271,8 +272,10 @@ declare class MCPClientManager {
             }, zod.ZodTypeAny, "passthrough">>, "many">>;
         }>, zod.ZodTypeAny, "passthrough">>, "many">;
     }, zod.ZodTypeAny, "passthrough">>;
-    getTools(names?: string[]): Promise<ListToolsResult>;
-    executeTool(serverName: string, toolName: string, args?: ExecuteToolArguments, options?: CallToolOptions): Promise<zod.objectOutputType<{
+    getTools(serverIds?: string[]): Promise<ListToolsResult>;
+    getAllToolsMetadata(serverId: string): Record<string, Record<string, any>>;
+    pingServer(serverId: string, options?: RequestOptions): void;
+    executeTool(serverId: string, toolName: string, args?: ExecuteToolArguments, options?: CallToolOptions): Promise<zod.objectOutputType<{
         _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
     } & {
         content: zod.ZodDefault<zod.ZodArray<zod.ZodUnion<[zod.ZodObject<{
@@ -517,7 +520,7 @@ declare class MCPClientManager {
     } & {
         toolResult: zod.ZodUnknown;
     }, zod.ZodTypeAny, "passthrough">>;
-    listResources(serverName: string, params?: ListResourcesParams, options?: ClientRequestOptions): Promise<zod.objectOutputType<{
+    listResources(serverId: string, params?: ListResourcesParams, options?: ClientRequestOptions): Promise<zod.objectOutputType<{
         _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
     } & {
         nextCursor: zod.ZodOptional<zod.ZodString>;
@@ -590,7 +593,7 @@ declare class MCPClientManager {
             }, zod.ZodTypeAny, "passthrough">>, "many">>;
         }>, zod.ZodTypeAny, "passthrough">>, "many">;
     }, zod.ZodTypeAny, "passthrough">>;
-    readResource(serverName: string, params: ReadResourceParams, options?: ClientRequestOptions): Promise<zod.objectOutputType<{
+    readResource(serverId: string, params: ReadResourceParams, options?: ClientRequestOptions): Promise<zod.objectOutputType<{
         _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
     } & {
         contents: zod.ZodArray<zod.ZodUnion<[zod.ZodObject<zod.objectUtil.extendShape<{
@@ -631,13 +634,13 @@ declare class MCPClientManager {
             blob: zod.ZodEffects<zod.ZodString, string, string>;
         }>, zod.ZodTypeAny, "passthrough">>]>, "many">;
     }, zod.ZodTypeAny, "passthrough">>;
-    subscribeResource(serverName: string, params: SubscribeResourceParams, options?: ClientRequestOptions): Promise<{
+    subscribeResource(serverId: string, params: SubscribeResourceParams, options?: ClientRequestOptions): Promise<{
         _meta?: zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough"> | undefined;
     }>;
-    unsubscribeResource(serverName: string, params: UnsubscribeResourceParams, options?: ClientRequestOptions): Promise<{
+    unsubscribeResource(serverId: string, params: UnsubscribeResourceParams, options?: ClientRequestOptions): Promise<{
         _meta?: zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough"> | undefined;
     }>;
-    listResourceTemplates(serverName: string, params?: ListResourceTemplatesParams, options?: ClientRequestOptions): Promise<zod.objectOutputType<{
+    listResourceTemplates(serverId: string, params?: ListResourceTemplatesParams, options?: ClientRequestOptions): Promise<zod.objectOutputType<{
         _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
     } & {
         nextCursor: zod.ZodOptional<zod.ZodString>;
@@ -710,7 +713,7 @@ declare class MCPClientManager {
             }, zod.ZodTypeAny, "passthrough">>, "many">>;
         }>, zod.ZodTypeAny, "passthrough">>, "many">;
     }, zod.ZodTypeAny, "passthrough">>;
-    listPrompts(serverName: string, params?: ListPromptsParams, options?: ClientRequestOptions): Promise<zod.objectOutputType<{
+    listPrompts(serverId: string, params?: ListPromptsParams, options?: ClientRequestOptions): Promise<zod.objectOutputType<{
         _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
     } & {
         nextCursor: zod.ZodOptional<zod.ZodString>;
@@ -816,7 +819,7 @@ declare class MCPClientManager {
             }, zod.ZodTypeAny, "passthrough">>, "many">>;
         }>, zod.ZodTypeAny, "passthrough">>, "many">;
     }, zod.ZodTypeAny, "passthrough">>;
-    getPrompt(serverName: string, params: GetPromptParams, options?: ClientRequestOptions): Promise<zod.objectOutputType<{
+    getPrompt(serverId: string, params: GetPromptParams, options?: ClientRequestOptions): Promise<zod.objectOutputType<{
         _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
     } & {
         description: zod.ZodOptional<zod.ZodString>;
@@ -1533,14 +1536,14 @@ declare class MCPClientManager {
             }, zod.ZodTypeAny, "passthrough">>]>;
         }, zod.ZodTypeAny, "passthrough">>, "many">;
     }, zod.ZodTypeAny, "passthrough">>;
-    getSessionIdByServer(serverName: string): string | undefined;
-    addNotificationHandler(serverName: string, schema: NotificationSchema, handler: NotificationHandler): void;
-    onResourceListChanged(serverName: string, handler: NotificationHandler): void;
-    onResourceUpdated(serverName: string, handler: NotificationHandler): void;
-    onPromptListChanged(serverName: string, handler: NotificationHandler): void;
-    getClient(serverName: string): Client | undefined;
-    setElicitationHandler(serverName: string, handler: ElicitationHandler): void;
-    clearElicitationHandler(serverName: string): void;
+    getSessionIdByServer(serverId: string): string | undefined;
+    addNotificationHandler(serverId: string, schema: NotificationSchema, handler: NotificationHandler): void;
+    onResourceListChanged(serverId: string, handler: NotificationHandler): void;
+    onResourceUpdated(serverId: string, handler: NotificationHandler): void;
+    onPromptListChanged(serverId: string, handler: NotificationHandler): void;
+    getClient(serverId: string): Client | undefined;
+    setElicitationHandler(serverId: string, handler: ElicitationHandler): void;
+    clearElicitationHandler(serverId: string): void;
     private connectViaStdio;
     private connectViaHttp;
     private safeCloseTransport;
@@ -1554,8 +1557,10 @@ declare class MCPClientManager {
     private formatError;
     private getTimeout;
     private isStdioConfig;
-    private normalizeName;
-    private getClientByName;
+    private getClientById;
 }
+type MCPPromptListResult = Awaited<ReturnType<MCPClientManager["listPrompts"]>>;
+type MCPPrompt = MCPPromptListResult["prompts"][number];
+type MCPGetPromptResult = Awaited<ReturnType<MCPClientManager["getPrompt"]>>;
 
-export { type ElicitationHandler, type ExecuteToolArguments, MCPClientManager, type MCPClientManagerConfig, type MCPServerConfig };
+export { type ElicitationHandler, type ExecuteToolArguments, MCPClientManager, type MCPClientManagerConfig, type MCPGetPromptResult, type MCPPrompt, type MCPPromptListResult, type MCPServerConfig };

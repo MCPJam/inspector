@@ -6,18 +6,15 @@ const prompts = new Hono();
 // List prompts endpoint
 prompts.post("/list", async (c) => {
   try {
-    const { serverId } = await c.req.json();
+    const { serverId } = (await c.req.json()) as { serverId?: string };
 
     if (!serverId) {
       return c.json({ success: false, error: "serverId is required" }, 400);
     }
 
-    const mcpJamClientManager = c.mcpJamClientManager;
-
-    // Get prompts for specific server
-    const serverPrompts = mcpJamClientManager.getPromptsForServer(serverId);
-
-    return c.json({ prompts: { [serverId]: serverPrompts } });
+    const mcpClientManager = c.mcpClientManager;
+    const { prompts } = await mcpClientManager.listPrompts(serverId);
+    return c.json({ prompts });
   } catch (error) {
     console.error("Error fetching prompts:", error);
     return c.json(
@@ -33,7 +30,11 @@ prompts.post("/list", async (c) => {
 // Get prompt endpoint
 prompts.post("/get", async (c) => {
   try {
-    const { serverId, name, args } = await c.req.json();
+    const { serverId, name, args } = (await c.req.json()) as {
+      serverId?: string;
+      name?: string;
+      args?: Record<string, unknown>;
+    };
 
     if (!serverId) {
       return c.json({ success: false, error: "serverId is required" }, 400);
@@ -49,14 +50,18 @@ prompts.post("/get", async (c) => {
       );
     }
 
-    const mcpJamClientManager = c.mcpJamClientManager;
+    const mcpClientManager = c.mcpClientManager;
 
-    // Get prompt content directly - servers are already connected
-    const content = await mcpJamClientManager.getPrompt(
+    const promptArguments = args
+      ? Object.fromEntries(
+          Object.entries(args).map(([key, value]) => [key, String(value)]),
+        )
+      : undefined;
+
+    const content = await mcpClientManager.getPrompt(serverId, {
       name,
-      serverId,
-      args || {},
-    );
+      arguments: promptArguments,
+    });
 
     return c.json({ content });
   } catch (error) {
