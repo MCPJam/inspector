@@ -22,6 +22,12 @@ import type {
   ElicitRequest,
   ElicitResult,
 } from "@modelcontextprotocol/sdk/types.js";
+import {
+  convertMCPToolsToVercelTools,
+  type ConvertedToolSet,
+  type ToolSchemaOverrides,
+} from "./tool-converters";
+import type { ToolCallOptions, ToolSet } from "ai";
 type ClientCapabilityOptions = NonNullable<ClientOptions["capabilities"]>;
 
 type BaseServerConfig = {
@@ -113,6 +119,19 @@ export class MCPClientManager {
   private readonly defaultClientVersion: string;
   private readonly defaultCapabilities: ClientCapabilityOptions;
   private readonly defaultTimeout: number;
+  // Global elicitation callback support (used by streaming chat endpoint)
+  private elicitationCallback?: (request: {
+    requestId: string;
+    message: string;
+    schema: unknown;
+  }) => Promise<ElicitResult> | ElicitResult;
+  private readonly pendingElicitations = new Map<
+    string,
+    {
+      resolve: (value: ElicitResult) => void;
+      reject: (error: unknown) => void;
+    }
+  >();
 
   constructor(
     servers: MCPClientManagerConfig = {},
@@ -325,8 +344,7 @@ export class MCPClientManager {
         return result.tools;
       }),
     );
-
-    return { tools: toolLists.flat() };
+    return { tools: toolLists.flat() } as ListToolsResult;
   }
 
   getAllToolsMetadata(serverId: string): Record<string, Record<string, any>> {
@@ -343,6 +361,65 @@ export class MCPClientManager {
         `Failed to ping MCP server "${serverId}": ${error instanceof Error ? error.message : "Unknown error"}`,
       );
     }
+  }
+
+  async getToolsForAiSdk(
+    serverIds?: string[] | string,
+    options: { schemas?: ToolSchemaOverrides | "automatic" } = {},
+  ): Promise<ToolSet> {
+    const ids = Array.isArray(serverIds)
+      ? serverIds
+      : serverIds
+        ? [serverIds]
+        : this.listServers();
+
+    const loadForServer = async (id: string): Promise<ToolSet> => {
+      await this.ensureConnected(id);
+      const listToolsResult = await this.listTools(id);
+      return convertMCPToolsToVercelTools(listToolsResult, {
+        schemas: options.schemas,
+        callTool: async ({ name, args, options: callOptions }) => {
+          const requestOptions = callOptions?.abortSignal
+            ? { signal: callOptions.abortSignal }
+            : undefined;
+          const result = await this.executeTool(
+            id,
+            name,
+            (args ?? {}) as ExecuteToolArguments,
+            requestOptions,
+          );
+          return CallToolResultSchema.parse(result);
+        },
+      });
+    };
+
+    const perServerTools = await Promise.all(
+      ids.map(async (id) => {
+        try {
+          const tools = await loadForServer(id);
+          // Attach server id metadata to each tool object for downstream extraction
+          for (const [name, tool] of Object.entries(tools)) {
+            (tool as any)._serverId = id;
+          }
+          return tools;
+        } catch (error) {
+          if (this.isMethodUnavailableError(error, "tools/list")) {
+            return {} as ToolSet;
+          }
+          throw error;
+        }
+      }),
+    );
+
+    // Flatten into a single ToolSet (last-in wins for name collisions)
+    const flattened: ToolSet = {};
+    for (const toolset of perServerTools) {
+      for (const [name, tool] of Object.entries(toolset)) {
+        flattened[name] = tool;
+      }
+    }
+
+    return flattened;
   }
 
   async executeTool(
@@ -549,6 +626,65 @@ export class MCPClientManager {
     }
   }
 
+  // Global elicitation callback API (no serverId required)
+  setElicitationCallback(
+    callback: (request: {
+      requestId: string;
+      message: string;
+      schema: unknown;
+    }) => Promise<ElicitResult> | ElicitResult,
+  ): void {
+    this.elicitationCallback = callback;
+    // Apply to all connected clients that don't have a server-specific handler
+    for (const [serverId, state] of this.clientStates.entries()) {
+      const client = state.client;
+      if (!client) continue;
+      if (this.elicitationHandlers.has(serverId)) {
+        // Respect server-specific handler
+        this.applyElicitationHandler(serverId, client);
+      } else {
+        this.applyElicitationHandler(serverId, client);
+      }
+    }
+  }
+
+  clearElicitationCallback(): void {
+    this.elicitationCallback = undefined;
+    // Reconfigure clients: keep server-specific handlers, otherwise remove
+    for (const [serverId, state] of this.clientStates.entries()) {
+      const client = state.client;
+      if (!client) continue;
+      if (this.elicitationHandlers.has(serverId)) {
+        this.applyElicitationHandler(serverId, client);
+      } else {
+        client.removeRequestHandler("elicitation/create");
+      }
+    }
+  }
+
+  // Expose the pending elicitation map so callers can add resolvers
+  getPendingElicitations(): Map<
+    string,
+    {
+      resolve: (value: ElicitResult) => void;
+      reject: (error: unknown) => void;
+    }
+  > {
+    return this.pendingElicitations;
+  }
+
+  // Helper to resolve a pending elicitation from outside
+  respondToElicitation(requestId: string, response: ElicitResult): boolean {
+    const pending = this.pendingElicitations.get(requestId);
+    if (!pending) return false;
+    try {
+      pending.resolve(response);
+      return true;
+    } finally {
+      this.pendingElicitations.delete(requestId);
+    }
+  }
+
   private async connectViaStdio(
     client: Client,
     config: StdioServerConfig,
@@ -657,14 +793,29 @@ export class MCPClientManager {
   }
 
   private applyElicitationHandler(serverId: string, client: Client): void {
-    const handler = this.elicitationHandlers.get(serverId);
-    if (!handler) {
+    const serverSpecific = this.elicitationHandlers.get(serverId);
+    if (serverSpecific) {
+      client.setRequestHandler(ElicitRequestSchema, async (request) =>
+        serverSpecific(request.params),
+      );
       return;
     }
 
-    client.setRequestHandler(ElicitRequestSchema, async (request) =>
-      handler(request.params),
-    );
+    if (this.elicitationCallback) {
+      client.setRequestHandler(ElicitRequestSchema, async (request) => {
+        const reqId = `elicit_${Date.now()}_${Math.random()
+          .toString(36)
+          .slice(2, 9)}`;
+        return await this.elicitationCallback!({
+          requestId: reqId,
+          message: (request.params as any)?.message,
+          schema:
+            (request.params as any)?.requestedSchema ??
+            (request.params as any)?.schema,
+        });
+      });
+      return;
+    }
   }
 
   private async ensureConnected(serverId: string): Promise<void> {
@@ -817,3 +968,7 @@ export type MCPReadResourceResult = Awaited<
   ReturnType<MCPClientManager["readResource"]>
 >;
 export type MCPServerSummary = ServerSummary;
+export type MCPConvertedToolSet<
+  SCHEMAS extends ToolSchemaOverrides | "automatic",
+> = ConvertedToolSet<SCHEMAS>;
+export type MCPToolSchemaOverrides = ToolSchemaOverrides;
