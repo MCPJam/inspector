@@ -11,6 +11,14 @@ import { getDefaultTemperatureByProvider } from "../../../client/src/lib/chat-ut
 import { createLlmModel } from "../../utils/chat-helpers";
 import { SSEvent } from "../../../shared/sse";
 import type { ModelMessage, ToolSet } from "ai";
+import { executeToolCallsFromMessages } from "@/shared/http-tool-calls";
+import {
+  BackendToolCallEvent,
+  BackendToolResultEvent,
+  runBackendConversation,
+} from "@/shared/backend-conversation";
+import zodToJsonSchema from "zod-to-json-schema";
+import { MCPClientManager } from "@/shared/mcp-client-manager";
 
 // Types
 interface ElicitationResponse {
@@ -304,8 +312,7 @@ const createStreamingResponse = async (
             const toolName =
               streamingContext.toolCallIdToName.get(currentToolCallId);
             const serverId = toolName ? extractServerId(toolName) : undefined;
-            console.log("serverId", serverId);
-            
+
             iterationToolResults.push({ result });
             sendSseEvent(
               streamingContext.controller,
@@ -394,146 +401,190 @@ const createStreamingResponse = async (
   );
 };
 
-// const sendMessagesToBackend = async (
-//   messages: ChatMessage[],
-//   streamingContext: StreamingContext,
-//   mcpClientManager: any,
-//   baseUrl: string,
-//   modelId: string,
-//   authHeader?: string,
-//   selectedServers?: string[],
-// ): Promise<void> => {
-//   // Build message history
-//   const messageHistory: ModelMessage[] = (messages || []).map((m) => {
-//     switch (m.role) {
-//       case "system":
-//         return { role: "system", content: m.content } as ModelMessage;
-//       case "user":
-//         return { role: "user", content: m.content } as ModelMessage;
-//       case "assistant":
-//         return { role: "assistant", content: m.content } as ModelMessage;
-//       default:
-//         return { role: "user", content: m.content } as ModelMessage;
-//     }
-//   });
+const sendMessagesToBackend = async (
+  messages: ChatMessage[],
+  streamingContext: StreamingContext,
+  mcpClientManager: MCPClientManager,
+  baseUrl: string,
+  modelId: string,
+  authHeader?: string,
+  selectedServers?: string[],
+): Promise<void> => {
+  // Build message history
+  const messageHistory: ModelMessage[] = (messages || []).map((m) => {
+    switch (m.role) {
+      case "system":
+        return { role: "system", content: m.content } as ModelMessage;
+      case "user":
+        return { role: "user", content: m.content } as ModelMessage;
+      case "assistant":
+        return { role: "assistant", content: m.content } as ModelMessage;
+      default:
+        return { role: "user", content: m.content } as ModelMessage;
+    }
+  });
 
-//   // Get toolsets with server mapping
-//   const toolsets =
-//     await mcpClientManager.getToolsetsWithServerIds(selectedServers);
+  const selectedServerIds =
+    Array.isArray(selectedServers) && selectedServers.length > 0
+      ? selectedServers
+      : mcpClientManager.listServers();
 
-//   // Build tool definitions from all servers
-//   const toolDefs: any[] = [];
-//   for (const serverTools of Object.values(toolsets)) {
-//     for (const [name, tool] of Object.entries(serverTools)) {
-//       toolDefs.push({
-//         name,
-//         description: tool?.description,
-//         inputSchema: zodToJsonSchema(tool?.inputSchema),
-//       });
-//     }
-//   }
+  const flattenedTools = await mcpClientManager.getToolsForAiSdk(
+    selectedServerIds.length > 0 ? selectedServerIds : undefined,
+  );
 
-//   if (!baseUrl) {
-//     throw new Error("CONVEX_HTTP_URL is not set");
-//   }
+  const toolsetsByServer: Record<string, ToolSet> = {};
+  const toolDefs: any[] = [];
 
-//   const emitToolCall = (call: BackendToolCallEvent) => {
-//     const currentToolCallId = ++streamingContext.toolCallId;
-//     streamingContext.lastEmittedToolCallId = currentToolCallId;
+  for (const [name, tool] of Object.entries(flattenedTools)) {
+    if (!tool) continue;
 
-//     // Store tool name for serverId lookup later
-//     streamingContext.toolCallIdToName.set(currentToolCallId, call.name);
+    const serverId =
+      (tool as any)._serverId ??
+      (selectedServerIds.length === 1 ? selectedServerIds[0] : "__unknown");
 
-//     sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
-//       type: "tool_call",
-//       toolCall: {
-//         id: currentToolCallId,
-//         name: call.name,
-//         parameters: call.params || {},
-//         timestamp: new Date().toISOString(),
-//         status: "executing",
-//       },
-//     });
-//   };
+    if (!toolsetsByServer[serverId]) {
+      toolsetsByServer[serverId] = {} as ToolSet;
+    }
+    toolsetsByServer[serverId][name] = tool;
 
-//   const emitToolResult = (result: BackendToolResultEvent) => {
-//     const currentToolCallId =
-//       streamingContext.lastEmittedToolCallId != null
-//         ? streamingContext.lastEmittedToolCallId
-//         : ++streamingContext.toolCallId;
-//     sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
-//       type: "tool_result",
-//       toolResult: {
-//         id: currentToolCallId,
-//         toolCallId: currentToolCallId,
-//         result: result.result,
-//         error: result.error,
-//         timestamp: new Date().toISOString(),
-//         serverId: result.serverId, // Propagate serverId
-//       },
-//     });
-//   };
+    const schema = (tool as any).inputSchema;
+    let serializedSchema: Record<string, unknown> | undefined;
 
-//   await runBackendConversation({
-//     maxSteps: MAX_AGENT_STEPS,
-//     messageHistory,
-//     modelId,
-//     toolDefinitions: toolDefs,
-//     fetchBackend: async (payload) => {
-//       const data = await sendBackendRequest(
-//         baseUrl,
-//         authHeader,
-//         payload,
-//         streamingContext,
-//       );
-//       if (data && (!data.ok || !Array.isArray(data.messages))) {
-//         sendBackendErrorText(streamingContext);
-//         return null;
-//       }
-//       return data;
-//     },
-//     executeToolCalls: async (messages) => {
-//       await executeToolCallsFromMessages(messages, {
-//         toolsets: toolsets as any,
-//       });
-//     },
-//     handlers: {
-//       onAssistantText: (text) => {
-//         sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
-//           type: "text",
-//           content: text,
-//         });
-//       },
-//       onToolCall: (call) => {
-//         emitToolCall(call);
-//       },
-//       onToolResult: (result) => {
-//         emitToolResult(result);
-//       },
-//       onStepComplete: ({ text, toolCalls, toolResults }) => {
-//         handleAgentStepFinish(
-//           streamingContext,
-//           text,
-//           toolCalls,
-//           toolResults.map((result) => ({
-//             result: result.result || result,
-//             error: result.error,
-//           })),
-//           false,
-//         );
-//       },
-//     },
-//   });
+    if (schema) {
+      if (
+        typeof schema === "object" &&
+        schema !== null &&
+        "jsonSchema" in (schema as Record<string, unknown>)
+      ) {
+        serializedSchema = (schema as any).jsonSchema as Record<
+          string,
+          unknown
+        >;
+      } else {
+        try {
+          serializedSchema = zodToJsonSchema(schema) as Record<string, unknown>;
+        } catch (err) {
+          console.warn(
+            `[mcp/chat] Failed to convert input schema for tool ${name}:`,
+            err,
+          );
+        }
+      }
+    }
 
-//   sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
-//     type: "elicitation_complete",
-//   });
-//   sendSseEvent(
-//     streamingContext.controller,
-//     streamingContext.encoder!,
-//     "[DONE]",
-//   );
-// };
+    toolDefs.push({
+      name,
+      description: (tool as any).description,
+      inputSchema: serializedSchema ?? {
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      },
+    });
+  }
+
+  if (!baseUrl) {
+    throw new Error("CONVEX_HTTP_URL is not set");
+  }
+
+  const emitToolCall = (call: BackendToolCallEvent) => {
+    const currentToolCallId = ++streamingContext.toolCallId;
+    streamingContext.lastEmittedToolCallId = currentToolCallId;
+
+    // Store tool name for serverId lookup later
+    streamingContext.toolCallIdToName.set(currentToolCallId, call.name);
+
+    sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
+      type: "tool_call",
+      toolCall: {
+        id: currentToolCallId,
+        name: call.name,
+        parameters: call.params as Record<string, unknown>,
+        timestamp: new Date().toISOString(),
+        status: "executing",
+      },
+    });
+  };
+
+  const emitToolResult = (result: BackendToolResultEvent) => {
+    const currentToolCallId =
+      streamingContext.lastEmittedToolCallId != null
+        ? streamingContext.lastEmittedToolCallId
+        : ++streamingContext.toolCallId;
+    sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
+      type: "tool_result",
+      toolResult: {
+        id: currentToolCallId,
+        toolCallId: currentToolCallId,
+        result: result.result,
+        error: result.error as string | undefined,
+        timestamp: new Date().toISOString(),
+        serverId: result.serverId, // Propagate serverId
+      },
+    });
+  };
+
+  await runBackendConversation({
+    maxSteps: MAX_AGENT_STEPS,
+    messageHistory,
+    modelId,
+    toolDefinitions: toolDefs,
+    fetchBackend: async (payload) => {
+      const data = await sendBackendRequest(
+        baseUrl,
+        authHeader,
+        payload,
+        streamingContext,
+      );
+      if (data && (!data.ok || !Array.isArray(data.messages))) {
+        sendBackendErrorText(streamingContext);
+        return null;
+      }
+      return data;
+    },
+    executeToolCalls: async (messages) => {
+      await executeToolCallsFromMessages(messages, {
+        toolsets: toolsetsByServer as any,
+      });
+    },
+    handlers: {
+      onAssistantText: (text) => {
+        sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
+          type: "text",
+          content: text,
+        });
+      },
+      onToolCall: (call) => {
+        emitToolCall(call);
+      },
+      onToolResult: (result) => {
+        emitToolResult(result);
+      },
+      onStepComplete: ({ text, toolCalls, toolResults }) => {
+        handleAgentStepFinish(
+          streamingContext,
+          text,
+          toolCalls,
+          toolResults.map((result) => ({
+            result: result.result || result,
+            error: result.error,
+          })),
+          false,
+        );
+      },
+    },
+  });
+
+  sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
+    type: "elicitation_complete",
+  });
+  sendSseEvent(
+    streamingContext.controller,
+    streamingContext.encoder!,
+    "[DONE]",
+  );
+};
 
 // Main chat endpoint
 
@@ -678,23 +729,21 @@ chat.post("/", async (c) => {
 
         try {
           if (sendToBackend) {
-            // await sendMessagesToBackend(
-            //   messages,
-            //   streamingContext,
-            //   mcpClientManager,
-            //   process.env.CONVEX_HTTP_URL!,
-            //   model!.id,
-            //   authHeader,
-            //   requestData.selectedServers,
-            // );
+            await sendMessagesToBackend(
+              messages,
+              streamingContext,
+              mcpClientManager,
+              process.env.CONVEX_HTTP_URL!,
+              model!.id,
+              authHeader,
+              requestData.selectedServers,
+            );
           } else {
             // Use existing streaming path with tools
             // Get toolsets with server mapping (reusing pattern from sendMessagesToBackend)
             const toolsets = await mcpClientManager.getToolsForAiSdk(
               requestData.selectedServers,
             );
-
-            console.log("toolsets", toolsets);
 
             const llmModel = createLlmModel(
               model as ModelDefinition,

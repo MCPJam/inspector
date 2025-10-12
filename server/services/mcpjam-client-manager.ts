@@ -469,8 +469,8 @@ class MCPJamClientManager {
     if (!tool)
       throw new Error(`Tool '${name}' not found in server '${serverId}'`);
 
-    // Always wrap parameters in context object (matching Chat behavior)
-    const result = await tool.execute({ context: parameters || {} });
+    // Execute tool with raw parameters (manager already wraps where needed)
+    const result = await tool.execute(parameters || {});
 
     // Check if the result indicates an error
     if (result && result.isError) {

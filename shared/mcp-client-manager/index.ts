@@ -320,9 +320,7 @@ export class MCPClientManager {
     }
   }
 
-  async getTools(
-    serverIds?: string[],
-  ): Promise<ListToolsResult> {
+  async getTools(serverIds?: string[]): Promise<ListToolsResult> {
     const targetServerIds =
       serverIds && serverIds.length > 0 ? serverIds : this.listServers();
 
@@ -811,7 +809,9 @@ export class MCPClientManager {
         return await this.elicitationCallback!({
           requestId: reqId,
           message: (request.params as any)?.message,
-          schema: (request.params as any)?.requestedSchema ?? (request.params as any)?.schema,
+          schema:
+            (request.params as any)?.requestedSchema ??
+            (request.params as any)?.schema,
         });
       });
       return;

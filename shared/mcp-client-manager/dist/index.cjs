@@ -17828,7 +17828,6 @@ async function convertMCPToolsToVercelTools(listToolsResult, {
       vercelTool = dynamicTool({
         description,
         inputSchema: jsonSchema({
-          // Force object schema for Anthropic compatibility
           type: "object",
           properties: (_a17 = normalizedInputSchema.properties) != null ? _a17 : {},
           additionalProperties: (_b = normalizedInputSchema.additionalProperties) != null ? _b : false
