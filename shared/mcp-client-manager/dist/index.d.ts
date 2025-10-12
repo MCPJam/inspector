@@ -1562,5 +1562,8 @@ declare class MCPClientManager {
 type MCPPromptListResult = Awaited<ReturnType<MCPClientManager["listPrompts"]>>;
 type MCPPrompt = MCPPromptListResult["prompts"][number];
 type MCPGetPromptResult = Awaited<ReturnType<MCPClientManager["getPrompt"]>>;
+type MCPResourceListResult = Awaited<ReturnType<MCPClientManager["listResources"]>>;
+type MCPResource = MCPResourceListResult["resources"][number];
+type MCPReadResourceResult = Awaited<ReturnType<MCPClientManager["readResource"]>>;
 
-export { type ElicitationHandler, type ExecuteToolArguments, MCPClientManager, type MCPClientManagerConfig, type MCPGetPromptResult, type MCPPrompt, type MCPPromptListResult, type MCPServerConfig };
+export { type ElicitationHandler, type ExecuteToolArguments, MCPClientManager, type MCPClientManagerConfig, type MCPGetPromptResult, type MCPPrompt, type MCPPromptListResult, type MCPReadResourceResult, type MCPResource, type MCPResourceListResult, type MCPServerConfig };

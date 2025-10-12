@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { ScrollArea } from "./ui/scroll-area";
@@ -11,14 +11,11 @@ import { FolderOpen, File, RefreshCw, ChevronRight, Eye } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
-import { MCPServerConfig } from "@/shared/mcp-client-manager";
-
-interface Resource {
-  uri: string;
-  name: string;
-  description?: string;
-  mimeType?: string;
-}
+import {
+  MCPServerConfig,
+  type MCPReadResourceResult,
+  type MCPResource,
+} from "@/shared/mcp-client-manager";
 
 interface ResourcesTabProps {
   serverConfig?: MCPServerConfig;
@@ -26,12 +23,19 @@ interface ResourcesTabProps {
 }
 
 export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
-  const [resources, setResources] = useState<Record<string, Resource[]>>({});
+  const [resources, setResources] = useState<MCPResource[]>([]);
   const [selectedResource, setSelectedResource] = useState<string>("");
-  const [resourceContent, setResourceContent] = useState<any>(null);
+  const [resourceContent, setResourceContent] =
+    useState<MCPReadResourceResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [fetchingResources, setFetchingResources] = useState(false);
   const [error, setError] = useState<string>("");
+
+  const selectedResourceData = useMemo(() => {
+    return (
+      resources.find((resource) => resource.uri === selectedResource) ?? null
+    );
+  }, [resources, selectedResource]);
 
   useEffect(() => {
     if (serverConfig && serverName) {
@@ -44,7 +48,7 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
 
     setFetchingResources(true);
     setError("");
-    setResources({});
+    setResources([]);
 
     try {
       const response = await fetch("/api/mcp/resources/list", {
@@ -56,7 +60,20 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
       const data = await response.json();
 
       if (response.ok) {
-        setResources(data.resources || {});
+        const serverResources: MCPResource[] = Array.isArray(data.resources)
+          ? data.resources
+          : [];
+        setResources(serverResources);
+
+        if (serverResources.length === 0) {
+          setSelectedResource("");
+          setResourceContent(null);
+        } else if (
+          !serverResources.some((resource) => resource.uri === selectedResource)
+        ) {
+          setSelectedResource(serverResources[0].uri);
+          setResourceContent(null);
+        }
       } else {
         setError(data.error || "Failed to fetch resources");
       }
@@ -69,7 +86,6 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
 
   const readResource = async (uri: string) => {
     if (!serverName) return;
-    console.log("uri", uri);
     setLoading(true);
     setError("");
 
@@ -86,7 +102,7 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
       const data = await response.json();
 
       if (response.ok) {
-        setResourceContent(data.content);
+        setResourceContent(data.content ?? null);
       } else {
         setError(data.error || "Failed to read resource");
       }
@@ -96,8 +112,6 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
       setLoading(false);
     }
   };
-
-  const allResources = Object.values(resources).flat();
 
   if (!serverConfig || !serverName) {
     return (
@@ -126,7 +140,7 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
                       Resources
                     </h2>
                     <Badge variant="secondary" className="text-xs font-mono">
-                      {allResources.length}
+                      {resources.length}
                     </Badge>
                   </div>
                   <Button
@@ -157,7 +171,7 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
                             Fetching available resources from server
                           </p>
                         </div>
-                      ) : allResources.length === 0 ? (
+                      ) : resources.length === 0 ? (
                         <div className="text-center py-8">
                           <p className="text-sm text-muted-foreground">
                             No resources available
@@ -165,7 +179,7 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
                         </div>
                       ) : (
                         <div className="space-y-1">
-                          {allResources.map((resource) => (
+                          {resources.map((resource) => (
                             <div
                               key={resource.uri}
                               className={`cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${
@@ -224,9 +238,7 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
                       <div className="space-y-2">
                         <div className="flex items-center gap-3">
                           <code className="font-mono font-semibold text-foreground bg-muted px-2 py-1 rounded-md border border-border text-xs">
-                            {allResources.find(
-                              (r) => r.uri === selectedResource,
-                            )?.name || selectedResource}
+                            {selectedResourceData?.name || selectedResource}
                           </code>
                         </div>
                         <p className="text-xs text-muted-foreground font-mono truncate max-w-md">
@@ -254,14 +266,10 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
                     </div>
 
                     {/* Description */}
-                    {allResources.find((r) => r.uri === selectedResource)
-                      ?.description && (
+                    {selectedResourceData?.description && (
                       <div className="px-6 py-4 bg-muted/50 border-b border-border">
                         <p className="text-xs text-muted-foreground leading-relaxed font-medium">
-                          {
-                            allResources.find((r) => r.uri === selectedResource)
-                              ?.description
-                          }
+                          {selectedResourceData.description}
                         </p>
                       </div>
                     )}
