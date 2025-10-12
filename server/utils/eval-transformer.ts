@@ -1,6 +1,5 @@
 import { MCPClientOptions } from "@mastra/mcp";
-import { MCPServerConfig } from "@/shared/mcp-client-manager";
-import { MCPJamClientManager } from "../services/mcpjam-client-manager";
+import { MCPClientManager, MCPServerConfig } from "@/shared/mcp-client-manager";
 import {
   LlmsConfig,
   LlmsConfigSchema,
@@ -8,34 +7,29 @@ import {
 import { isMCPJamProvidedModel } from "../../shared/types";
 
 /**
- * Transforms server IDs from MCPJamClientManager to MCPClientOptions format
+ * Transforms server IDs from MCPClientManager to MCPClientOptions format
  * required by runEvals
  */
 export function transformServerConfigsToEnvironment(
   serverIds: string[],
-  clientManager: MCPJamClientManager,
+  clientManager: MCPClientManager,
 ): MCPClientOptions {
-  const connectedServers = clientManager.getConnectedServers();
   const servers: Record<string, MCPServerConfig> = {};
 
   for (const serverId of serverIds) {
-    const serverData = connectedServers[serverId];
-
-    if (!serverData) {
+    const config = clientManager.getServerConfig(serverId);
+    if (!config) {
       throw new Error(`Server '${serverId}' not found`);
     }
 
-    if (serverData.status !== "connected") {
+    const status = clientManager.getConnectionStatus(serverId);
+    if (status !== "connected") {
       throw new Error(
-        `Server '${serverId}' is not connected (status: ${serverData.status})`,
+        `Server '${serverId}' is not connected (status: ${status})`,
       );
     }
 
-    if (!serverData.config) {
-      throw new Error(`Server '${serverId}' has no configuration`);
-    }
-
-    servers[serverId] = serverData.config;
+    servers[serverId] = config;
   }
 
   if (Object.keys(servers).length === 0) {

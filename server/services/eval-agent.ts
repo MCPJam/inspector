@@ -1,5 +1,12 @@
-import type { DiscoveredTool } from "./mcpjam-client-manager";
 import type { ModelMessage } from "ai";
+
+export interface DiscoveredTool {
+  name: string;
+  description?: string;
+  inputSchema: any;
+  outputSchema?: any;
+  serverId: string;
+}
 
 export interface GenerateTestsRequest {
   serverIds: string[];

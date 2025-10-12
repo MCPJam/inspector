@@ -6,8 +6,68 @@ import {
   transformLLMConfigToLlmsConfig,
 } from "../../utils/eval-transformer";
 import { ConvexHttpClient } from "convex/browser";
-import { generateTestCases } from "../../services/eval-agent";
+import {
+  generateTestCases,
+  type DiscoveredTool,
+} from "../../services/eval-agent";
+import type { MCPClientManager } from "@/shared/mcp-client-manager";
 import "../../types/hono";
+
+function resolveServerIdsOrThrow(
+  requestedIds: string[],
+  clientManager: MCPClientManager,
+): string[] {
+  const available = clientManager.listServers();
+  const resolved: string[] = [];
+
+  for (const requestedId of requestedIds) {
+    const match =
+      available.find((id) => id === requestedId) ??
+      available.find((id) => id.toLowerCase() === requestedId.toLowerCase());
+
+    if (!match) {
+      throw new Error(`Server '${requestedId}' not found`);
+    }
+
+    if (!resolved.includes(match)) {
+      resolved.push(match);
+    }
+  }
+
+  return resolved;
+}
+
+async function collectToolsForServers(
+  clientManager: MCPClientManager,
+  serverIds: string[],
+): Promise<DiscoveredTool[]> {
+  const perServerTools = await Promise.all(
+    serverIds.map(async (serverId) => {
+      if (clientManager.getConnectionStatus(serverId) !== "connected") {
+        return [] as DiscoveredTool[];
+      }
+
+      try {
+        const { tools } = await clientManager.listTools(serverId);
+        return tools.map((tool) => ({
+          name: tool.name,
+          description: tool.description,
+          inputSchema: tool.inputSchema,
+          outputSchema: (tool as { outputSchema?: unknown }).outputSchema,
+          serverId,
+        }));
+      } catch (error) {
+        console.warn(
+          `[evals] Failed to list tools for server ${serverId}:`,
+          error,
+        );
+        return [] as DiscoveredTool[];
+      }
+    }),
+  );
+
+  return perServerTools.flat();
+}
 
 const evals = new Hono();
 
@@ -59,10 +119,11 @@ evals.post("/run", async (c) => {
     const { tests, serverIds, llmConfig, convexAuthToken } =
       validationResult.data as RunEvalsRequest;
 
-    const clientManager = c.mcpJamClientManager;
+    const clientManager = c.mcpClientManager;
+    const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
 
     const environment = transformServerConfigsToEnvironment(
-      serverIds,
+      resolvedServerIds,
       clientManager,
     );
     const modelId = tests.length > 0 ? tests[0].model : undefined;
@@ -134,20 +195,12 @@ evals.post("/generate-tests", async (c) => {
     const { serverIds, convexAuthToken } =
       validationResult.data as GenerateTestsRequest;
 
-    const clientManager = c.mcpJamClientManager;
+    const clientManager = c.mcpClientManager;
+    const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
 
-    // Get all available tools
-    const allTools = clientManager.getAvailableTools();
-
-    // Filter tools by selected servers
-    const serverIdSet = new Set(
-      serverIds
-        .map((name) => clientManager.getServerIdForName(name))
-        .filter(Boolean),
-    );
-
-    const filteredTools = allTools.filter((tool) =>
-      serverIdSet.has(tool.serverId),
+    const filteredTools = await collectToolsForServers(
+      clientManager,
+      resolvedServerIds,
     );
 
     if (filteredTools.length === 0) {
