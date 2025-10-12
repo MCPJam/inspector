@@ -1,4 +1,4 @@
-import { MastraMCPServerDefinition } from "@mastra/mcp";
+import { MCPServerConfig } from "@/shared/mcp-client-manager";
 import { OauthTokens } from "@/shared/types.js";
 
 export type ConnectionStatus =
@@ -10,7 +10,7 @@ export type ConnectionStatus =
 
 export interface ServerWithName {
   name: string;
-  config: MastraMCPServerDefinition;
+  config: MCPServerConfig;
   oauthTokens?: OauthTokens;
   lastConnectionTime: Date;
   connectionStatus: ConnectionStatus;
@@ -34,13 +34,13 @@ export type AppAction =
   | {
       type: "CONNECT_REQUEST";
       name: string;
-      config: MastraMCPServerDefinition;
+      config: MCPServerConfig;
       select?: boolean;
     }
   | {
       type: "CONNECT_SUCCESS";
       name: string;
-      config: MastraMCPServerDefinition;
+      config: MCPServerConfig;
       tokens?: OauthTokens;
     }
   | { type: "CONNECT_FAILURE"; name: string; error: string }

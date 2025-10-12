@@ -1,7 +1,7 @@
-import { MastraMCPServerDefinition } from "@mastra/mcp";
+import { MCPServerConfig } from "@/shared/mcp-client-manager";
 
 export async function testConnection(
-  serverConfig: MastraMCPServerDefinition,
+  serverConfig: MCPServerConfig,
   serverId: string,
 ) {
   const res = await fetch("/api/mcp/connect", {

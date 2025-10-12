@@ -10,7 +10,8 @@ import { MessageEditor } from "./message-editor";
 import { ToolCallDisplay } from "./tool-call";
 import { getProviderLogoFromModel } from "./chat-helpers";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { MastraMCPServerDefinition, ModelDefinition } from "@/shared/types.js";
+import { ModelDefinition } from "@/shared/types.js";
+import { MCPServerConfig } from "@/shared/mcp-client-manager";
 
 // Reusable Image Attachment Component
 const ImageAttachment = ({
@@ -70,7 +71,7 @@ interface MessageProps {
   isReadonly?: boolean;
   showActions?: boolean;
   model: ModelDefinition | null;
-  serverConfigs?: Record<string, MastraMCPServerDefinition>;
+  serverConfigs?: Record<string, MCPServerConfig>;
   onCallTool?: (toolName: string, params: Record<string, any>) => Promise<any>;
   onSendFollowup?: (message: string) => void;
   toolsMetadata?: Record<string, Record<string, any>>; // Map of tool name -> tool._meta

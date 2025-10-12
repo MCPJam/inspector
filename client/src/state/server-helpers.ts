@@ -1,13 +1,11 @@
-import { MastraMCPServerDefinition } from "@mastra/mcp";
+import { MCPServerConfig } from "@/shared/mcp-client-manager";
 import {
   HttpServerDefinition,
   StdioServerDefinition,
   ServerFormData,
 } from "@/shared/types.js";
 
-export function toMCPConfig(
-  formData: ServerFormData,
-): MastraMCPServerDefinition {
+export function toMCPConfig(formData: ServerFormData): MCPServerConfig {
   if (formData.type === "stdio") {
     return {
       command: formData.command!,
