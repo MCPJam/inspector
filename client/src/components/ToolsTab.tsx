@@ -6,7 +6,6 @@ import type {
   Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { Wrench } from "lucide-react";
-import { MastraMCPServerDefinition } from "@mastra/mcp";
 import { ElicitationDialog } from "./ElicitationDialog";
 import { EmptyState } from "./ui/empty-state";
 import {
@@ -41,6 +40,7 @@ import {
 } from "@/lib/mcp-tools-api";
 import { validateToolOutput } from "@/lib/schema-utils";
 import "react18-json-view/src/style.css";
+import { MCPServerConfig } from "@/shared/mcp-client-manager";
 
 type ToolMap = Record<string, Tool>;
 type FormField = ToolFormField;
@@ -60,7 +60,7 @@ export type DialogElicitation = {
 };
 
 interface ToolsTabProps {
-  serverConfig?: MastraMCPServerDefinition;
+  serverConfig?: MCPServerConfig;
   serverName?: string;
 }
 

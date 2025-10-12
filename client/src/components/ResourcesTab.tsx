@@ -11,7 +11,7 @@ import { FolderOpen, File, RefreshCw, ChevronRight, Eye } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
-import { MastraMCPServerDefinition } from "@mastra/mcp";
+import { MCPServerConfig } from "@/shared/mcp-client-manager";
 
 interface Resource {
   uri: string;
@@ -21,7 +21,7 @@ interface Resource {
 }
 
 interface ResourcesTabProps {
-  serverConfig?: MastraMCPServerDefinition;
+  serverConfig?: MCPServerConfig;
   serverName?: string;
 }
 

@@ -20,7 +20,7 @@ import { MessageSquare, Play, RefreshCw, ChevronRight } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
-import { MastraMCPServerDefinition } from "@mastra/mcp";
+import { MCPServerConfig } from "@/shared/mcp-client-manager";
 
 interface Prompt {
   name: string;
@@ -34,7 +34,7 @@ interface Prompt {
 }
 
 interface PromptsTabProps {
-  serverConfig?: MastraMCPServerDefinition;
+  serverConfig?: MCPServerConfig;
   serverName?: string;
 }
 
