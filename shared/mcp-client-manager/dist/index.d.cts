@@ -4,7 +4,7 @@ import { SSEClientTransportOptions } from '@modelcontextprotocol/sdk/client/sse.
 import { StreamableHTTPClientTransportOptions } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { RequestOptions } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import { ElicitRequest, ElicitResult } from '@modelcontextprotocol/sdk/types.js';
-import { Tool } from 'ai';
+import { Tool, ToolSet } from 'ai';
 import { FlexibleSchema } from '@ai-sdk/provider-utils';
 
 type ToolSchemaOverrides = Record<string, {
@@ -75,6 +75,8 @@ declare class MCPClientManager {
     private readonly defaultClientVersion;
     private readonly defaultCapabilities;
     private readonly defaultTimeout;
+    private elicitationCallback?;
+    private readonly pendingElicitations;
     constructor(servers?: MCPClientManagerConfig, options?: {
         defaultClientVersion?: string;
         defaultCapabilities?: ClientCapabilityOptions;
@@ -291,15 +293,12 @@ declare class MCPClientManager {
             }, zod.ZodTypeAny, "passthrough">>, "many">>;
         }>, zod.ZodTypeAny, "passthrough">>, "many">;
     }, zod.ZodTypeAny, "passthrough">>;
-    getTools(serverIds?: string[], conversion?: "ai-sdk"): Promise<ListToolsResult | ConvertedToolSet<"automatic"> | Record<string, ConvertedToolSet<"automatic">>>;
+    getTools(serverIds?: string[]): Promise<ListToolsResult>;
     getAllToolsMetadata(serverId: string): Record<string, Record<string, any>>;
     pingServer(serverId: string, options?: RequestOptions): void;
-    getToolsForAiSdk<TOOL_SCHEMAS extends ToolSchemaOverrides | "automatic" = "automatic">(serverId: string, options?: {
-        schemas?: TOOL_SCHEMAS;
-    }): Promise<ConvertedToolSet<TOOL_SCHEMAS>>;
-    getToolsForAiSdk<TOOL_SCHEMAS extends ToolSchemaOverrides | "automatic" = "automatic">(serverIds: string[], options?: {
-        schemas?: TOOL_SCHEMAS;
-    }): Promise<Record<string, ConvertedToolSet<TOOL_SCHEMAS>>>;
+    getToolsForAiSdk(serverIds?: string[] | string, options?: {
+        schemas?: ToolSchemaOverrides | "automatic";
+    }): Promise<ToolSet>;
     executeTool(serverId: string, toolName: string, args?: ExecuteToolArguments, options?: CallToolOptions): Promise<zod.objectOutputType<{
         _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
     } & {
@@ -1569,6 +1568,17 @@ declare class MCPClientManager {
     getClient(serverId: string): Client | undefined;
     setElicitationHandler(serverId: string, handler: ElicitationHandler): void;
     clearElicitationHandler(serverId: string): void;
+    setElicitationCallback(callback: (request: {
+        requestId: string;
+        message: string;
+        schema: unknown;
+    }) => Promise<ElicitResult> | ElicitResult): void;
+    clearElicitationCallback(): void;
+    getPendingElicitations(): Map<string, {
+        resolve: (value: ElicitResult) => void;
+        reject: (error: unknown) => void;
+    }>;
+    respondToElicitation(requestId: string, response: ElicitResult): boolean;
     private connectViaStdio;
     private connectViaHttp;
     private safeCloseTransport;

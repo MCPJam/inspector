@@ -17780,12 +17780,20 @@ var uiMessageSchema = external_exports.object({
 
 // tool-converters.ts
 var ensureJsonSchemaObject = (schema) => {
+  var _a17;
   if (schema && typeof schema === "object") {
     const record2 = schema;
-    if (record2.jsonSchema) {
-      return ensureJsonSchemaObject(record2.jsonSchema);
+    const base = record2.jsonSchema ? ensureJsonSchemaObject(record2.jsonSchema) : record2;
+    if (!("type" in base) || base.type === void 0) {
+      base.type = "object";
     }
-    return record2;
+    if (base.type === "object") {
+      base.properties = (_a17 = base.properties) != null ? _a17 : {};
+      if (base.additionalProperties === void 0) {
+        base.additionalProperties = false;
+      }
+    }
+    return base;
   }
   return {
     type: "object",
@@ -17797,13 +17805,13 @@ async function convertMCPToolsToVercelTools(listToolsResult, {
   schemas = "automatic",
   callTool
 }) {
-  var _a17, _b, _c, _d;
+  var _a17, _b;
   const tools = {};
   for (const toolDescription of listToolsResult.tools) {
     const { name: name17, description, inputSchema } = toolDescription;
     const execute = async (args, options) => {
-      var _a18;
-      (_a18 = options == null ? void 0 : options.abortSignal) == null ? void 0 : _a18.throwIfAborted();
+      var _a18, _b2;
+      (_b2 = (_a18 = options == null ? void 0 : options.abortSignal) == null ? void 0 : _a18.throwIfAborted) == null ? void 0 : _b2.call(_a18);
       const result = await callTool({ name: name17, args, options });
       return CallToolResultSchema2.parse(result);
     };
@@ -17813,7 +17821,8 @@ async function convertMCPToolsToVercelTools(listToolsResult, {
       vercelTool = dynamicTool({
         description,
         inputSchema: jsonSchema({
-          ...normalizedInputSchema,
+          // Force object schema for Anthropic compatibility
+          type: "object",
           properties: (_a17 = normalizedInputSchema.properties) != null ? _a17 : {},
           additionalProperties: (_b = normalizedInputSchema.additionalProperties) != null ? _b : false
         }),
@@ -17826,7 +17835,7 @@ async function convertMCPToolsToVercelTools(listToolsResult, {
       }
       vercelTool = tool({
         description,
-        inputSchema: (_d = (_c = overrides[name17]) == null ? void 0 : _c.inputSchema) != null ? _d : jsonSchema(ensureJsonSchemaObject(inputSchema)),
+        inputSchema: overrides[name17].inputSchema,
         execute
       });
     }
@@ -17842,6 +17851,7 @@ var MCPClientManager = class {
     this.notificationHandlers = /* @__PURE__ */ new Map();
     this.elicitationHandlers = /* @__PURE__ */ new Map();
     this.toolsMetadataCache = /* @__PURE__ */ new Map();
+    this.pendingElicitations = /* @__PURE__ */ new Map();
     var _a17, _b, _c;
     this.defaultClientVersion = (_a17 = options.defaultClientVersion) != null ? _a17 : "1.0.0";
     this.defaultCapabilities = { ...(_b = options.defaultCapabilities) != null ? _b : {} };
@@ -17990,7 +18000,7 @@ var MCPClientManager = class {
       throw error40;
     }
   }
-  async getTools(serverIds, conversion) {
+  async getTools(serverIds) {
     const targetServerIds = serverIds && serverIds.length > 0 ? serverIds : this.listServers();
     const toolLists = await Promise.all(
       targetServerIds.map(async (serverId) => {
@@ -18010,12 +18020,6 @@ var MCPClientManager = class {
         return result.tools;
       })
     );
-    if (conversion === "ai-sdk") {
-      if (targetServerIds.length === 1) {
-        return this.getToolsForAiSdk(targetServerIds[0]);
-      }
-      return this.getToolsForAiSdk(targetServerIds);
-    }
     return { tools: toolLists.flat() };
   }
   getAllToolsMetadata(serverId) {
@@ -18032,8 +18036,8 @@ var MCPClientManager = class {
       );
     }
   }
-  async getToolsForAiSdk(serverIdOrIds, options = {}) {
-    const serverIds = Array.isArray(serverIdOrIds) ? serverIdOrIds : [serverIdOrIds];
+  async getToolsForAiSdk(serverIds, options = {}) {
+    const ids = Array.isArray(serverIds) ? serverIds : serverIds ? [serverIds] : this.listServers();
     const loadForServer = async (id) => {
       await this.ensureConnected(id);
       const listToolsResult = await this.listTools(id);
@@ -18051,23 +18055,29 @@ var MCPClientManager = class {
         }
       });
     };
-    if (Array.isArray(serverIdOrIds)) {
-      const toolSets = await Promise.all(
-        serverIds.map(async (id) => {
-          try {
-            const tools = await loadForServer(id);
-            return [id, tools];
-          } catch (error40) {
-            if (this.isMethodUnavailableError(error40, "tools/list")) {
-              return [id, {}];
-            }
-            throw error40;
+    const perServerTools = await Promise.all(
+      ids.map(async (id) => {
+        try {
+          const tools = await loadForServer(id);
+          for (const [name17, tool2] of Object.entries(tools)) {
+            tool2._serverId = id;
           }
-        })
-      );
-      return Object.fromEntries(toolSets);
+          return tools;
+        } catch (error40) {
+          if (this.isMethodUnavailableError(error40, "tools/list")) {
+            return {};
+          }
+          throw error40;
+        }
+      })
+    );
+    const flattened = {};
+    for (const toolset of perServerTools) {
+      for (const [name17, tool2] of Object.entries(toolset)) {
+        flattened[name17] = tool2;
+      }
     }
-    return loadForServer(serverIds[0]);
+    return flattened;
   }
   async executeTool(serverId, toolName, args = {}, options) {
     await this.ensureConnected(serverId);
@@ -18220,6 +18230,46 @@ var MCPClientManager = class {
       client.removeRequestHandler("elicitation/create");
     }
   }
+  // Global elicitation callback API (no serverId required)
+  setElicitationCallback(callback) {
+    this.elicitationCallback = callback;
+    for (const [serverId, state] of this.clientStates.entries()) {
+      const client = state.client;
+      if (!client) continue;
+      if (this.elicitationHandlers.has(serverId)) {
+        this.applyElicitationHandler(serverId, client);
+      } else {
+        this.applyElicitationHandler(serverId, client);
+      }
+    }
+  }
+  clearElicitationCallback() {
+    this.elicitationCallback = void 0;
+    for (const [serverId, state] of this.clientStates.entries()) {
+      const client = state.client;
+      if (!client) continue;
+      if (this.elicitationHandlers.has(serverId)) {
+        this.applyElicitationHandler(serverId, client);
+      } else {
+        client.removeRequestHandler("elicitation/create");
+      }
+    }
+  }
+  // Expose the pending elicitation map so callers can add resolvers
+  getPendingElicitations() {
+    return this.pendingElicitations;
+  }
+  // Helper to resolve a pending elicitation from outside
+  respondToElicitation(requestId, response) {
+    const pending = this.pendingElicitations.get(requestId);
+    if (!pending) return false;
+    try {
+      pending.resolve(response);
+      return true;
+    } finally {
+      this.pendingElicitations.delete(requestId);
+    }
+  }
   async connectViaStdio(client, config2, timeout) {
     var _a17;
     const transport = new StdioClientTransport({
@@ -18304,14 +18354,26 @@ var MCPClientManager = class {
     };
   }
   applyElicitationHandler(serverId, client) {
-    const handler = this.elicitationHandlers.get(serverId);
-    if (!handler) {
+    const serverSpecific = this.elicitationHandlers.get(serverId);
+    if (serverSpecific) {
+      client.setRequestHandler(
+        ElicitRequestSchema,
+        async (request) => serverSpecific(request.params)
+      );
       return;
     }
-    client.setRequestHandler(
-      ElicitRequestSchema,
-      async (request) => handler(request.params)
-    );
+    if (this.elicitationCallback) {
+      client.setRequestHandler(ElicitRequestSchema, async (request) => {
+        var _a17, _b, _c, _d;
+        const reqId = `elicit_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+        return await this.elicitationCallback({
+          requestId: reqId,
+          message: (_a17 = request.params) == null ? void 0 : _a17.message,
+          schema: (_d = (_b = request.params) == null ? void 0 : _b.requestedSchema) != null ? _d : (_c = request.params) == null ? void 0 : _c.schema
+        });
+      });
+      return;
+    }
   }
   async ensureConnected(serverId) {
     const state = this.clientStates.get(serverId);
