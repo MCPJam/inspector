@@ -4,6 +4,15 @@ import { SSEClientTransportOptions } from '@modelcontextprotocol/sdk/client/sse.
 import { StreamableHTTPClientTransportOptions } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { RequestOptions } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import { ElicitRequest, ElicitResult } from '@modelcontextprotocol/sdk/types.js';
+import { Tool } from 'ai';
+import { FlexibleSchema } from '@ai-sdk/provider-utils';
+
+type ToolSchemaOverrides = Record<string, {
+    inputSchema: FlexibleSchema<unknown>;
+}>;
+type ConvertedToolSet<SCHEMAS extends ToolSchemaOverrides | "automatic"> = SCHEMAS extends ToolSchemaOverrides ? {
+    [K in keyof SCHEMAS]: Tool;
+} : Record<string, Tool>;
 
 type ClientCapabilityOptions = NonNullable<ClientOptions["capabilities"]>;
 type BaseServerConfig = {
@@ -282,9 +291,15 @@ declare class MCPClientManager {
             }, zod.ZodTypeAny, "passthrough">>, "many">>;
         }>, zod.ZodTypeAny, "passthrough">>, "many">;
     }, zod.ZodTypeAny, "passthrough">>;
-    getTools(serverIds?: string[]): Promise<ListToolsResult>;
+    getTools(serverIds?: string[], conversion?: "ai-sdk"): Promise<ListToolsResult | ConvertedToolSet<"automatic"> | Record<string, ConvertedToolSet<"automatic">>>;
     getAllToolsMetadata(serverId: string): Record<string, Record<string, any>>;
     pingServer(serverId: string, options?: RequestOptions): void;
+    getToolsForAiSdk<TOOL_SCHEMAS extends ToolSchemaOverrides | "automatic" = "automatic">(serverId: string, options?: {
+        schemas?: TOOL_SCHEMAS;
+    }): Promise<ConvertedToolSet<TOOL_SCHEMAS>>;
+    getToolsForAiSdk<TOOL_SCHEMAS extends ToolSchemaOverrides | "automatic" = "automatic">(serverIds: string[], options?: {
+        schemas?: TOOL_SCHEMAS;
+    }): Promise<Record<string, ConvertedToolSet<TOOL_SCHEMAS>>>;
     executeTool(serverId: string, toolName: string, args?: ExecuteToolArguments, options?: CallToolOptions): Promise<zod.objectOutputType<{
         _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
     } & {
@@ -1578,5 +1593,7 @@ type MCPResourceListResult = Awaited<ReturnType<MCPClientManager["listResources"
 type MCPResource = MCPResourceListResult["resources"][number];
 type MCPReadResourceResult = Awaited<ReturnType<MCPClientManager["readResource"]>>;
 type MCPServerSummary = ServerSummary;
+type MCPConvertedToolSet<SCHEMAS extends ToolSchemaOverrides | "automatic"> = ConvertedToolSet<SCHEMAS>;
+type MCPToolSchemaOverrides = ToolSchemaOverrides;
 
-export { type ElicitationHandler, type ExecuteToolArguments, MCPClientManager, type MCPClientManagerConfig, type MCPConnectionStatus, type MCPGetPromptResult, type MCPPrompt, type MCPPromptListResult, type MCPReadResourceResult, type MCPResource, type MCPResourceListResult, type MCPServerConfig, type MCPServerSummary };
+export { type ElicitationHandler, type ExecuteToolArguments, MCPClientManager, type MCPClientManagerConfig, type MCPConnectionStatus, type MCPConvertedToolSet, type MCPGetPromptResult, type MCPPrompt, type MCPPromptListResult, type MCPReadResourceResult, type MCPResource, type MCPResourceListResult, type MCPServerConfig, type MCPServerSummary, type MCPToolSchemaOverrides };
