@@ -1,6 +1,4 @@
 import { Hono } from "hono";
-import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import "../../types/hono"; // Type extensions
 
 const exporter = new Hono();
@@ -8,52 +6,52 @@ const exporter = new Hono();
 // POST /export/server — export all server info as JSON
 exporter.post("/server", async (c) => {
   try {
-    const { serverId } = await c.req.json();
+    const { serverId } = (await c.req.json()) as { serverId?: string };
     if (!serverId) {
       return c.json({ error: "serverId is required" }, 400);
     }
 
-    const mcp = c.mcpJamClientManager;
-    const status = mcp.getConnectionStatus(serverId);
-    if (status !== "connected") {
-      return c.json({ error: `Server '${serverId}' is not connected` }, 400);
+    const mcp = c.mcpClientManager;
+
+    let toolsResult: Awaited<ReturnType<typeof mcp.listTools>>;
+    let resourcesResult: Awaited<ReturnType<typeof mcp.listResources>>;
+    let promptsResult: Awaited<ReturnType<typeof mcp.listPrompts>>;
+
+    try {
+      [toolsResult, resourcesResult, promptsResult] = await Promise.all([
+        mcp.listTools(serverId),
+        mcp.listResources(serverId),
+        mcp.listPrompts(serverId),
+      ]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (
+        message.includes("not connected") ||
+        message.includes("Unknown MCP server")
+      ) {
+        return c.json({ error: `Server '${serverId}' is not connected` }, 400);
+      }
+      throw error;
     }
 
-    // Tools
-    const flattenedTools = await mcp.getToolsetsForServer(serverId);
-    const tools: Array<{
-      name: string;
-      description?: string;
-      inputSchema: any;
-      outputSchema?: any;
-    }> = [];
-
-    for (const [name, tool] of Object.entries(flattenedTools)) {
-      let inputSchema = (tool as any).inputSchema;
-      try {
-        inputSchema = zodToJsonSchema(inputSchema as z.ZodType<any>);
-      } catch {}
-      tools.push({
-        name,
-        description: (tool as any).description,
-        inputSchema,
-        outputSchema: (tool as any).outputSchema,
-      });
-    }
-
-    // Resources
-    const resources = mcp.getResourcesForServer(serverId).map((r) => ({
-      uri: r.uri,
-      name: r.name,
-      description: r.description,
-      mimeType: r.mimeType,
+    const tools = toolsResult.tools.map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+      outputSchema: tool.outputSchema,
     }));
 
-    // Prompts
-    const prompts = mcp.getPromptsForServer(serverId).map((p) => ({
-      name: p.name,
-      description: p.description,
-      arguments: p.arguments,
+    const resources = resourcesResult.resources.map((resource) => ({
+      uri: resource.uri,
+      name: resource.name,
+      description: resource.description,
+      mimeType: resource.mimeType,
+    }));
+
+    const prompts = promptsResult.prompts.map((prompt) => ({
+      name: prompt.name,
+      description: prompt.description,
+      arguments: prompt.arguments,
     }));
 
     return c.json({
