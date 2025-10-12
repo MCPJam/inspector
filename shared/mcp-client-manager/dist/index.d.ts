@@ -4,6 +4,15 @@ import { SSEClientTransportOptions } from '@modelcontextprotocol/sdk/client/sse.
 import { StreamableHTTPClientTransportOptions } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { RequestOptions } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import { ElicitRequest, ElicitResult } from '@modelcontextprotocol/sdk/types.js';
+import { Tool, ToolSet } from 'ai';
+import { FlexibleSchema } from '@ai-sdk/provider-utils';
+
+type ToolSchemaOverrides = Record<string, {
+    inputSchema: FlexibleSchema<unknown>;
+}>;
+type ConvertedToolSet<SCHEMAS extends ToolSchemaOverrides | "automatic"> = SCHEMAS extends ToolSchemaOverrides ? {
+    [K in keyof SCHEMAS]: Tool;
+} : Record<string, Tool>;
 
 type ClientCapabilityOptions = NonNullable<ClientOptions["capabilities"]>;
 type BaseServerConfig = {
@@ -66,6 +75,8 @@ declare class MCPClientManager {
     private readonly defaultClientVersion;
     private readonly defaultCapabilities;
     private readonly defaultTimeout;
+    private elicitationCallback?;
+    private readonly pendingElicitations;
     constructor(servers?: MCPClientManagerConfig, options?: {
         defaultClientVersion?: string;
         defaultCapabilities?: ClientCapabilityOptions;
@@ -285,6 +296,9 @@ declare class MCPClientManager {
     getTools(serverIds?: string[]): Promise<ListToolsResult>;
     getAllToolsMetadata(serverId: string): Record<string, Record<string, any>>;
     pingServer(serverId: string, options?: RequestOptions): void;
+    getToolsForAiSdk(serverIds?: string[] | string, options?: {
+        schemas?: ToolSchemaOverrides | "automatic";
+    }): Promise<ToolSet>;
     executeTool(serverId: string, toolName: string, args?: ExecuteToolArguments, options?: CallToolOptions): Promise<zod.objectOutputType<{
         _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
     } & {
@@ -1554,6 +1568,17 @@ declare class MCPClientManager {
     getClient(serverId: string): Client | undefined;
     setElicitationHandler(serverId: string, handler: ElicitationHandler): void;
     clearElicitationHandler(serverId: string): void;
+    setElicitationCallback(callback: (request: {
+        requestId: string;
+        message: string;
+        schema: unknown;
+    }) => Promise<ElicitResult> | ElicitResult): void;
+    clearElicitationCallback(): void;
+    getPendingElicitations(): Map<string, {
+        resolve: (value: ElicitResult) => void;
+        reject: (error: unknown) => void;
+    }>;
+    respondToElicitation(requestId: string, response: ElicitResult): boolean;
     private connectViaStdio;
     private connectViaHttp;
     private safeCloseTransport;
@@ -1578,5 +1603,7 @@ type MCPResourceListResult = Awaited<ReturnType<MCPClientManager["listResources"
 type MCPResource = MCPResourceListResult["resources"][number];
 type MCPReadResourceResult = Awaited<ReturnType<MCPClientManager["readResource"]>>;
 type MCPServerSummary = ServerSummary;
+type MCPConvertedToolSet<SCHEMAS extends ToolSchemaOverrides | "automatic"> = ConvertedToolSet<SCHEMAS>;
+type MCPToolSchemaOverrides = ToolSchemaOverrides;
 
-export { type ElicitationHandler, type ExecuteToolArguments, MCPClientManager, type MCPClientManagerConfig, type MCPConnectionStatus, type MCPGetPromptResult, type MCPPrompt, type MCPPromptListResult, type MCPReadResourceResult, type MCPResource, type MCPResourceListResult, type MCPServerConfig, type MCPServerSummary };
+export { type ElicitationHandler, type ExecuteToolArguments, MCPClientManager, type MCPClientManagerConfig, type MCPConnectionStatus, type MCPConvertedToolSet, type MCPGetPromptResult, type MCPPrompt, type MCPPromptListResult, type MCPReadResourceResult, type MCPResource, type MCPResourceListResult, type MCPServerConfig, type MCPServerSummary, type MCPToolSchemaOverrides };

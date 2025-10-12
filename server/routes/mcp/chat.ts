@@ -10,15 +10,15 @@ import { TextEncoder } from "util";
 import { getDefaultTemperatureByProvider } from "../../../client/src/lib/chat-utils";
 import { createLlmModel } from "../../utils/chat-helpers";
 import { SSEvent } from "../../../shared/sse";
-import { convertMastraToolsToVercelTools } from "../../../shared/tools";
-import { executeToolCallsFromMessages } from "../../../shared/http-tool-calls";
+import type { ModelMessage, ToolSet } from "ai";
+import { executeToolCallsFromMessages } from "@/shared/http-tool-calls";
 import {
+  BackendToolCallEvent,
+  BackendToolResultEvent,
   runBackendConversation,
-  type BackendToolCallEvent,
-  type BackendToolResultEvent,
-} from "../../../shared/backend-conversation";
-import { zodToJsonSchema } from "zod-to-json-schema";
-import type { ModelMessage, Tool } from "ai";
+} from "@/shared/backend-conversation";
+import zodToJsonSchema from "zod-to-json-schema";
+import { MCPClientManager } from "@/shared/mcp-client-manager";
 
 // Types
 interface ElicitationResponse {
@@ -206,7 +206,7 @@ const handleAgentStepFinish = (
 
 const createStreamingResponse = async (
   model: any,
-  aiSdkTools: Record<string, Tool>,
+  aiSdkTools: ToolSet,
   messages: ChatMessage[],
   streamingContext: StreamingContext,
   provider: ModelProvider,
@@ -404,7 +404,7 @@ const createStreamingResponse = async (
 const sendMessagesToBackend = async (
   messages: ChatMessage[],
   streamingContext: StreamingContext,
-  mcpClientManager: any,
+  mcpClientManager: MCPClientManager,
   baseUrl: string,
   modelId: string,
   authHeader?: string,
@@ -424,20 +424,64 @@ const sendMessagesToBackend = async (
     }
   });
 
-  // Get toolsets with server mapping
-  const toolsets =
-    await mcpClientManager.getToolsetsWithServerIds(selectedServers);
+  const selectedServerIds =
+    Array.isArray(selectedServers) && selectedServers.length > 0
+      ? selectedServers
+      : mcpClientManager.listServers();
 
-  // Build tool definitions from all servers
+  const flattenedTools = await mcpClientManager.getToolsForAiSdk(
+    selectedServerIds.length > 0 ? selectedServerIds : undefined,
+  );
+
+  const toolsetsByServer: Record<string, ToolSet> = {};
   const toolDefs: any[] = [];
-  for (const serverTools of Object.values(toolsets)) {
-    for (const [name, tool] of Object.entries(serverTools)) {
-      toolDefs.push({
-        name,
-        description: tool?.description,
-        inputSchema: zodToJsonSchema(tool?.inputSchema),
-      });
+
+  for (const [name, tool] of Object.entries(flattenedTools)) {
+    if (!tool) continue;
+
+    const serverId =
+      (tool as any)._serverId ??
+      (selectedServerIds.length === 1 ? selectedServerIds[0] : "__unknown");
+
+    if (!toolsetsByServer[serverId]) {
+      toolsetsByServer[serverId] = {} as ToolSet;
     }
+    toolsetsByServer[serverId][name] = tool;
+
+    const schema = (tool as any).inputSchema;
+    let serializedSchema: Record<string, unknown> | undefined;
+
+    if (schema) {
+      if (
+        typeof schema === "object" &&
+        schema !== null &&
+        "jsonSchema" in (schema as Record<string, unknown>)
+      ) {
+        serializedSchema = (schema as any).jsonSchema as Record<
+          string,
+          unknown
+        >;
+      } else {
+        try {
+          serializedSchema = zodToJsonSchema(schema) as Record<string, unknown>;
+        } catch (err) {
+          console.warn(
+            `[mcp/chat] Failed to convert input schema for tool ${name}:`,
+            err,
+          );
+        }
+      }
+    }
+
+    toolDefs.push({
+      name,
+      description: (tool as any).description,
+      inputSchema: serializedSchema ?? {
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      },
+    });
   }
 
   if (!baseUrl) {
@@ -456,7 +500,7 @@ const sendMessagesToBackend = async (
       toolCall: {
         id: currentToolCallId,
         name: call.name,
-        parameters: call.params || {},
+        parameters: call.params as Record<string, unknown>,
         timestamp: new Date().toISOString(),
         status: "executing",
       },
@@ -474,7 +518,7 @@ const sendMessagesToBackend = async (
         id: currentToolCallId,
         toolCallId: currentToolCallId,
         result: result.result,
-        error: result.error,
+        error: result.error as string | undefined,
         timestamp: new Date().toISOString(),
         serverId: result.serverId, // Propagate serverId
       },
@@ -501,7 +545,7 @@ const sendMessagesToBackend = async (
     },
     executeToolCalls: async (messages) => {
       await executeToolCallsFromMessages(messages, {
-        toolsets: toolsets as any,
+        toolsets: toolsetsByServer as any,
       });
     },
     handlers: {
@@ -543,8 +587,9 @@ const sendMessagesToBackend = async (
 };
 
 // Main chat endpoint
+
 chat.post("/", async (c) => {
-  const mcpClientManager = c.mcpJamClientManager;
+  const mcpClientManager = c.mcpClientManager;
   try {
     const requestData: ChatRequest = await c.req.json();
     const {
@@ -696,28 +741,9 @@ chat.post("/", async (c) => {
           } else {
             // Use existing streaming path with tools
             // Get toolsets with server mapping (reusing pattern from sendMessagesToBackend)
-            const toolsets = await mcpClientManager.getToolsetsWithServerIds(
+            const toolsets = await mcpClientManager.getToolsForAiSdk(
               requestData.selectedServers,
             );
-
-            // Flatten toolsets with serverId metadata attached (same pattern as http-tool-calls.ts)
-            const flatToolsWithServerId: Record<string, any> = {};
-            for (const [serverId, serverTools] of Object.entries(
-              toolsets || {},
-            )) {
-              if (serverTools && typeof serverTools === "object") {
-                for (const [toolName, tool] of Object.entries(serverTools)) {
-                  // Attach serverId metadata to each tool
-                  flatToolsWithServerId[toolName] = {
-                    ...tool,
-                    _serverId: serverId,
-                  };
-                }
-              }
-            }
-
-            const aiSdkTools: Record<string, Tool> =
-              convertMastraToolsToVercelTools(flatToolsWithServerId as any);
 
             const llmModel = createLlmModel(
               model as ModelDefinition,
@@ -726,11 +752,11 @@ chat.post("/", async (c) => {
             );
             await createStreamingResponse(
               llmModel,
-              aiSdkTools,
+              toolsets as ToolSet,
               messages,
               streamingContext,
               provider,
-              flatToolsWithServerId,
+              toolsets,
               temperature,
               systemPrompt,
             );

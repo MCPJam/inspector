@@ -1,6 +1,6 @@
 import { ModelMessage } from "@ai-sdk/provider-utils";
 import { LanguageModelV2ToolResultOutput } from "@ai-sdk/provider-v5";
-import type { MCPClient } from "@mastra/mcp";
+import type { MCPClientManager } from "./mcp-client-manager";
 
 type ToolsMap = Record<string, any>;
 type Toolsets = Record<string, ToolsMap>;
@@ -60,21 +60,28 @@ export const hasUnresolvedToolCalls = (messages: ModelMessage[]): boolean => {
   return false;
 };
 
+type ExecuteToolCallOptions =
+  | { tools: ToolsMap }
+  | { toolsets: Toolsets }
+  | { clientManager: MCPClientManager; serverIds?: string[] };
+
 export async function executeToolCallsFromMessages(
   messages: ModelMessage[],
-  options: { tools: ToolsMap } | { toolsets: Toolsets } | { client: MCPClient },
+  options: ExecuteToolCallOptions,
 ): Promise<void> {
   // Build tools with serverId metadata
   let tools: ToolsMap = {};
 
-  if ((options as any).client) {
-    const toolsets = await (options as any).client.getToolsets();
-    tools = flattenToolsetsWithServerId(toolsets as any);
-  } else if ((options as any).toolsets) {
-    const toolsets = (options as any).toolsets as Toolsets;
+  if ("clientManager" in options) {
+    const flattened = await options.clientManager.getToolsForAiSdk(
+      options.serverIds,
+    );
+    tools = flattened as ToolsMap;
+  } else if ("toolsets" in options) {
+    const toolsets = options.toolsets as Toolsets;
     tools = flattenToolsetsWithServerId(toolsets);
   } else {
-    tools = (options as any).tools as ToolsMap;
+    tools = options.tools as ToolsMap;
   }
 
   const index = buildIndexWithAliases(tools);
@@ -112,7 +119,7 @@ export async function executeToolCallsFromMessages(
           const tool = index[toolName];
           if (!tool) throw new Error(`Tool '${toolName}' not found`);
           const input = content.input || {};
-          const result = await tool.execute({ context: input });
+          const result = await tool.execute(input);
 
           let output: LanguageModelV2ToolResultOutput;
           if (result && typeof result === "object" && (result as any).content) {
