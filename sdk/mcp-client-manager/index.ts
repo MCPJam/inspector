@@ -26,7 +26,7 @@ import {
   convertMCPToolsToVercelTools,
   type ConvertedToolSet,
   type ToolSchemaOverrides,
-} from "./tool-converters";
+} from "./tool-converters.js";
 import type { ToolCallOptions, ToolSet } from "ai";
 type ClientCapabilityOptions = NonNullable<ClientOptions["capabilities"]>;
 

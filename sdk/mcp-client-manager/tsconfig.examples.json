@@ -4,8 +4,8 @@
     "declaration": false,
     "declarationMap": false,
     "emitDeclarationOnly": false,
-    "outDir": "./dist/tests"
+    "outDir": "./dist/examples"
   },
-  "include": ["./tests/**/*.ts"],
+  "include": ["./examples/**/*.ts"],
   "exclude": ["node_modules"]
 }
