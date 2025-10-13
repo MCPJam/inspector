@@ -1,4 +1,4 @@
-import { MCPServerConfig } from "@/shared/mcp-client-manager";
+import { MCPServerConfig } from "@/sdk";
 import {
   HttpServerDefinition,
   StdioServerDefinition,

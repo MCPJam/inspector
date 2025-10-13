@@ -12,6 +12,7 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { readFileSync, existsSync } from "fs";
 import { join, dirname, resolve } from "path";
 import { fileURLToPath } from "url";
+import { MCPClientManager } from "@/sdk";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -61,7 +62,6 @@ function logBox(content: string, title?: string) {
 import mcpRoutes from "./routes/mcp/index";
 import { interceptorStore } from "./services/interceptor-store";
 import "./types/hono"; // Type extensions
-import { MCPClientManager } from "@/shared/mcp-client-manager";
 
 // Utility function to extract MCP server config from environment variables
 function getMCPConfigFromEnv() {

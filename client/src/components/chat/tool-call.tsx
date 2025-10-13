@@ -12,7 +12,7 @@ import { ToolCall, ToolResult } from "@/lib/chat-types";
 import { cn } from "@/lib/utils";
 import { MCPIcon } from "../ui/mcp-icon";
 import { UIResourceRenderer } from "@mcp-ui/client";
-import { MCPServerConfig } from "@/shared/mcp-client-manager";
+import { MCPServerConfig } from "@/sdk";
 import { OpenAIComponentRenderer } from "./openai-component-renderer";
 
 interface ToolCallDisplayProps {

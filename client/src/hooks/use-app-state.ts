@@ -21,7 +21,7 @@ import {
   getStoredTokens,
   clearOAuthData,
 } from "@/lib/mcp-oauth";
-import { MCPServerConfig } from "@/shared/mcp-client-manager";
+import { MCPServerConfig } from "@/sdk";
 export type { ServerWithName } from "@/state/app-types";
 
 export function useAppState() {

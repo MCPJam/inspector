@@ -18,7 +18,7 @@ import {
   runBackendConversation,
 } from "@/shared/backend-conversation";
 import zodToJsonSchema from "zod-to-json-schema";
-import { MCPClientManager } from "@/shared/mcp-client-manager";
+import { MCPClientManager } from "@/sdk";
 
 // Types
 interface ElicitationResponse {

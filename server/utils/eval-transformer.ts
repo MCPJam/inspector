@@ -1,5 +1,5 @@
 import { MCPClientOptions } from "@mastra/mcp";
-import { MCPClientManager, MCPServerConfig } from "@/shared/mcp-client-manager";
+import { MCPClientManager, MCPServerConfig } from "@/sdk";
 import {
   LlmsConfig,
   LlmsConfigSchema,

@@ -8,7 +8,7 @@ import { TooltipProvider } from "./ui/tooltip";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { getDefaultTemperatureForModel } from "@/lib/chat-utils";
-import { MCPServerConfig } from "@/shared/mcp-client-manager";
+import { MCPServerConfig } from "@/sdk";
 import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import type { ServerWithName } from "@/hooks/use-app-state";
