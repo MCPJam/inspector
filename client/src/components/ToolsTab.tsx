@@ -40,7 +40,7 @@ import {
 } from "@/lib/mcp-tools-api";
 import { validateToolOutput } from "@/lib/schema-utils";
 import "react18-json-view/src/style.css";
-import { MCPServerConfig } from "@/shared/mcp-client-manager";
+import { MCPServerConfig } from "@/sdk";
 
 type ToolMap = Record<string, Tool>;
 type FormField = ToolFormField;

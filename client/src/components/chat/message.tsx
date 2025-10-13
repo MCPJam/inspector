@@ -11,7 +11,7 @@ import { ToolCallDisplay } from "./tool-call";
 import { getProviderLogoFromModel } from "./chat-helpers";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { ModelDefinition } from "@/shared/types.js";
-import { MCPServerConfig } from "@/shared/mcp-client-manager";
+import { MCPServerConfig } from "@/sdk";
 
 // Reusable Image Attachment Component
 const ImageAttachment = ({

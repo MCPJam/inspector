@@ -1,6 +1,6 @@
 import type { ComponentType } from "react";
 import { Check, Loader2, Wifi, X } from "lucide-react";
-import type { MCPServerConfig } from "@/shared/mcp-client-manager";
+import type { MCPServerConfig } from "@/sdk";
 import type { ConnectionStatus } from "@/state/app-types";
 
 interface ConnectionStatusMeta {
