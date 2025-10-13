@@ -66,7 +66,6 @@ type HttpServerConfig = BaseServerConfig & {
 };
 
 export type MCPServerConfig = StdioServerConfig | HttpServerConfig;
-
 export type MCPClientManagerConfig = Record<string, MCPServerConfig>;
 
 type NotificationSchema = Parameters<Client["setNotificationHandler"]>[0];
