@@ -82,7 +82,7 @@ export function AuthUpperArea() {
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button className="flex size-10 items-center justify-center rounded-full border border-border/60 bg-background/80 shadow-sm outline-none transition hover:ring-2 hover:ring-ring/20 focus-visible:ring-2 focus-visible:ring-ring">
-          <Avatar className="size-9">
+          <Avatar className="size-9 cursor-pointer">
             <AvatarImage src={avatarUrl} alt={displayName} />
             <AvatarFallback className="bg-muted text-muted-foreground text-sm font-medium">
               {initials !== "?" ? initials : <CircleUser className="size-4" />}
@@ -93,7 +93,7 @@ export function AuthUpperArea() {
       <DropdownMenuContent className="w-56" align="end">
         <DropdownMenuLabel className="pb-3">
           <div className="flex items-center gap-3">
-            <Avatar className="size-10">
+            <Avatar className="size-10 cursor-pointer">
               <AvatarImage src={avatarUrl} alt={displayName} />
               <AvatarFallback className="bg-muted text-muted-foreground text-base font-semibold">
                 {initials !== "?" ? (
@@ -112,12 +112,19 @@ export function AuthUpperArea() {
           </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => (window.location.hash = "settings")}>
+        <DropdownMenuItem
+          onClick={() => (window.location.hash = "settings")}
+          className="cursor-pointer"
+        >
           <Settings className="size-4" />
           Settings
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem variant="destructive" onClick={handleSignOut}>
+        <DropdownMenuItem
+          variant="destructive"
+          onClick={handleSignOut}
+          className="cursor-pointer"
+        >
           <LogOut className="size-4" />
           Log out
         </DropdownMenuItem>
