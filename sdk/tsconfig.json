@@ -14,9 +14,6 @@
     "strict": true,
     "stripInternal": true
   },
-  "include": [
-    "./index.ts",
-    "./mcp-client-manager/**/*.ts"
-  ],
+  "include": ["./index.ts", "./mcp-client-manager/**/*.ts"],
   "exclude": ["dist", "node_modules"]
 }
