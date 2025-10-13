@@ -10,7 +10,7 @@ import {
   generateTestCases,
   type DiscoveredTool,
 } from "../../services/eval-agent";
-import type { MCPClientManager } from "@/shared/mcp-client-manager";
+import type { MCPClientManager } from "@/sdk";
 import "../../types/hono";
 
 function resolveServerIdsOrThrow(

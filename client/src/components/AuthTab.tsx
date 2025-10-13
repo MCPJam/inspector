@@ -23,7 +23,7 @@ import {
 } from "../lib/oauth-flow-types";
 import { OAuthFlowProgress } from "./OAuthFlowProgress";
 import { OAuthStateMachine } from "../lib/oauth-state-machine";
-import { MCPServerConfig } from "@/shared/mcp-client-manager";
+import { MCPServerConfig } from "@/sdk";
 
 interface StatusMessageProps {
   message: StatusMessage;
