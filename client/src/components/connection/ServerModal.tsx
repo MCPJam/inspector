@@ -67,13 +67,30 @@ export function ServerModal({
     if (isHttpServer) {
       const headers =
         (config.requestInit?.headers as Record<string, string>) || {};
-      const hasOAuth = server.oauthTokens != null;
 
-      const storedTokens = hasOAuth ? getStoredTokens(server.name) : null;
-      const storedClientInfo = hasOAuth
-        ? localStorage.getItem(`mcp-client-${server.name}`)
-        : null;
+      // Check if OAuth is configured by looking at multiple sources:
+      // 1. Check if server has oauth tokens
+      // 2. Check if there's stored OAuth server URL (always set when OAuth is initiated)
+      // 3. Check if there's stored OAuth client information
+      // 4. Check if the config has an oauth field
+      const storedServerUrl = localStorage.getItem(`mcp-serverUrl-${server.name}`);
+      const storedClientInfo = localStorage.getItem(`mcp-client-${server.name}`);
+      const storedOAuthConfig = localStorage.getItem(`mcp-oauth-config-${server.name}`);
+      const storedTokens = getStoredTokens(server.name);
+      const hasOAuthTokens = server.oauthTokens != null;
+      const hasStoredOAuthConfig = storedServerUrl != null || storedClientInfo != null || storedTokens != null;
+      const hasOAuthInConfig = "oauth" in config && config.oauth != null;
+      const hasOAuth = hasOAuthTokens || hasStoredOAuthConfig || hasOAuthInConfig;
+
       const clientInfo = storedClientInfo ? JSON.parse(storedClientInfo) : {};
+      const oauthConfig = storedOAuthConfig ? JSON.parse(storedOAuthConfig) : {};
+
+      // Retrieve scopes from multiple sources (in priority order)
+      const scopes =
+        server.oauthTokens?.scope?.split(" ") ||
+        storedTokens?.scope?.split(" ") ||
+        oauthConfig.scopes ||
+        [];
 
       return {
         name: server.name,
@@ -81,7 +98,7 @@ export function ServerModal({
         url: config.url?.toString() || "",
         headers: headers,
         useOAuth: hasOAuth,
-        oauthScopes: server.oauthTokens?.scope?.split(" ") || [],
+        oauthScopes: scopes,
         clientId:
           "clientId" in config
             ? typeof config.clientId === "string"
