@@ -34,7 +34,7 @@
     "test": "npm run build && tsc --project ./tsconfig.examples.json && node ./dist/examples/examples/example-1.js",
     "prepublishOnly": "npm run build"
   },
-  "peerDependencies": {
+  "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.3"
   },
   "devDependencies": {
