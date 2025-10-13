@@ -225,11 +225,10 @@ export function ServerConnectionCard({
                   <Separator />
                   <DropdownMenuItem
                     className="text-destructive text-xs cursor-pointer"
-                    onClick={() =>
-                      onRemove
-                        ? onRemove(server.name)
-                        : onDisconnect(server.name)
-                    }
+                    onClick={() => {
+                      onDisconnect(server.name);
+                      onRemove?.(server.name);
+                    }}
                   >
                     <Link2Off className="h-3 w-3 mr-2" />
                     Remove server
