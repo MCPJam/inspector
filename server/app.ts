@@ -10,7 +10,7 @@ import { fileURLToPath } from "url";
 
 // Import routes
 import mcpRoutes from "./routes/mcp/index.js";
-import { MCPClientManager } from "@/shared/mcp-client-manager";
+import { MCPClientManager } from "@/sdk";
 import path from "path";
 
 const __filename = fileURLToPath(import.meta.url);

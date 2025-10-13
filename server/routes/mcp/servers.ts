@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { MCPServerConfig } from "@/shared/mcp-client-manager";
+import type { MCPServerConfig } from "@/sdk";
 import "../../types/hono"; // Type extensions
 
 const servers = new Hono();

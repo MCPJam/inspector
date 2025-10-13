@@ -15,7 +15,7 @@ import {
   MCPServerConfig,
   type MCPReadResourceResult,
   type MCPResource,
-} from "@/shared/mcp-client-manager";
+} from "@/sdk";
 
 interface ResourcesTabProps {
   serverConfig?: MCPServerConfig;

@@ -20,7 +20,7 @@ import { MessageSquare, Play, RefreshCw, ChevronRight } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
-import { MCPServerConfig, type MCPPrompt } from "@/shared/mcp-client-manager";
+import { MCPServerConfig, type MCPPrompt } from "@/sdk";
 
 interface PromptsTabProps {
   serverConfig?: MCPServerConfig;
