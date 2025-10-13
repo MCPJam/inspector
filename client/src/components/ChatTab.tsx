@@ -83,6 +83,25 @@ export function ChatTab({
     }
   }, [showSignInPrompt, setInput]);
 
+  // Restore model from localStorage on mount
+  useEffect(() => {
+    const savedModelId = localStorage.getItem("chat-selected-model");
+    if (savedModelId && availableModels.length > 0) {
+      const savedModel = availableModels.find((m) => m.id === savedModelId);
+      if (savedModel && (!model || model.id !== savedModelId)) {
+        setModel(savedModel);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [availableModels]);
+
+  // Save model to localStorage when it changes
+  useEffect(() => {
+    if (model) {
+      localStorage.setItem("chat-selected-model", model.id);
+    }
+  }, [model]);
+
   // Update temperature when model changes
   useEffect(() => {
     if (model) {
