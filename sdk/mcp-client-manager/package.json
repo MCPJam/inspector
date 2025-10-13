@@ -1,5 +1,5 @@
 {
-  "name": "@mcpjam/mcp-client-manager",
+  "name": "@mcpjam/sdk/mcp-client-manager",
   "version": "0.1.0",
   "type": "module",
   "description": "MCP client manager helpers built on top of @modelcontextprotocol/sdk",
