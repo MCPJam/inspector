@@ -19,10 +19,11 @@ npm install @mcpjam/sdk
 
 # Constructor
 
-Create a new instance of the `MCPClientManager` class. You can initiate the class with MCP server configs, and additional options. 
+Create a new instance of the `MCPClientManager` class. You can initiate the class with MCP server configs, and additional options. Server IDs must be unique. 
 
 ```ts
 type MCPServerConfig = StdioServerConfig | HttpServerConfig;
+export type MCPClientManagerConfig = Record<string, MCPServerConfig>; // Server ID paired with the config
 
 constructor(
   servers: MCPClientManagerConfig = {},
@@ -54,7 +55,7 @@ const mcpClientManager = new MCPClientManager(
 
 Note that `MCPClientManager` figures out the transport (stdio vs HTTP/SSE) for you based on the server config provided. 
 
-### stdio server 
+### STDIO server 
 The structure of a stdio server connection is basic. Pass in a `command`, `args`, and optional environment variables. 
 
 ```ts
@@ -91,7 +92,8 @@ type HttpServerConfig = BaseServerConfig & {
 };
 ```
 
-To connect to an MCP server with OAuth, pass in the bearer token to the Request Header: 
+### Request Headers (Bearer Tokens)
+Pass in headers in the connection to `requestInit`. This is where you would set up your bearer token. 
 
 ```ts
 import { MCPClientManager } from "@mcpjam/sdk";
@@ -110,4 +112,68 @@ const mcpClientManager = new MCPClientManager(
 );
 ```
 
-# 
+# Capabilities
+`MCPClientManager` has many methods to to interact with connected MCP servers and handle the connection lifecycle. 
+
+## `connectToServer(serverId: string, config: MCPServerConfig)`
+You can connect to a new MCP server even after you've initialized connections in the constructor. The new connection is saved into the object state. The method returns a `Client`. Note that all serverIds must be unique. 
+
+```ts
+import { MCPClientManager } from "@mcpjam/sdk";
+
+const mcpClientManager = new MCPClientManager(
+  {
+    everything: {
+      command: "npx",
+      args: ["-y @modelcontextprotocol/server-everything"],
+    },
+  }
+);
+
+await mcpClientManager.connectToServer("file_system", {
+  command: "npx", 
+  args: ["-y @modelcontextprotocol/file-system"],
+})
+
+console.log(mcpClientManager.listServers()) // ["everything", "file_system"]
+```
+
+## `disconnectServer(serverId: string)`
+Disconnect from MCP server. Closes the connection and removes it from the client manager. 
+
+```ts
+import { MCPClientManager } from "@mcpjam/sdk";
+
+const mcpClientManager = new MCPClientManager(
+  {
+    everything: {
+      command: "npx",
+      args: ["-y @modelcontextprotocol/server-everything"],
+    },
+  }
+);
+
+await mcpClientManager.disconnectServer("everything"); 
+console.log(mcpClientManager.listServers()) // []
+```
+
+## `getTools(serverIds?: string[])`
+List all available tools in a single server or multiple servers. Pass in an array of serverIds. If multiple ids are passed in, then the function will return a flattened list of the tools. 
+
+```ts
+mcpClientManager.listTools(["everything", "asana"]): Promise<ListToolsResult>
+```
+
+## `executeTool(serverId: string, toolName: string, args: {}, options?: RequestOptions)`
+Execute a server's tools. Must pass in the serverId and the tool you want to call 
+
+```ts
+mcpClientManager.executeTool("everything", "add", { a: 4, b: 5 }): ToolResult
+```
+
+## `pingServer(serverId: string, options?: RequestOptions)`
+Ping a server. 
+
+```ts
+mcpClientManager.ping("everything"): void
+```

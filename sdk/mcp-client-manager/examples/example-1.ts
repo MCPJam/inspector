@@ -7,7 +7,7 @@ async function main() {
       args: ["-y", "@modelcontextprotocol/server-everything"],
     },
   });
-  console.log((await manager.listTools("everything")).tools[0].inputSchema);
+  console.log((await manager.listTools("everything")));
 }
 
 main().catch((error) => {
