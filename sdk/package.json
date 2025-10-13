@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/sdk",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "Official MCPJam SDK with reusable client utilities",
   "license": "Apache-2.0",

@@ -121,7 +121,7 @@ const mcpClientManager = new MCPClientManager(
 
 `MCPClientManager` has many methods to to interact with connected MCP servers and handle the connection lifecycle.
 
-## `connectToServer(serverId: string, config: MCPServerConfig)`
+### `connectToServer(serverId: string, config: MCPServerConfig)`
 
 You can connect to a new MCP server even after you've initialized connections in the constructor. The new connection is saved into the object state. The method returns a `Client`. Note that all serverIds must be unique.
 
@@ -143,7 +143,7 @@ await mcpClientManager.connectToServer("file_system", {
 console.log(mcpClientManager.listServers()); // ["everything", "file_system"]
 ```
 
-## `disconnectServer(serverId: string)`
+### `disconnectServer(serverId: string)`
 
 Disconnect from MCP server. Closes the connection and removes it from the client manager.
 
@@ -161,7 +161,7 @@ await mcpClientManager.disconnectServer("everything");
 console.log(mcpClientManager.listServers()); // []
 ```
 
-## `getTools(serverIds?: string[])`
+### `getTools(serverIds?: string[])`
 
 List all available tools in a single server or multiple servers. Pass in an array of serverIds. If multiple ids are passed in, then the function will return a flattened list of the tools.
 
@@ -169,7 +169,7 @@ List all available tools in a single server or multiple servers. Pass in an arra
 mcpClientManager.getTools(["everything", "asana"]): Promise<ListToolsResult>
 ```
 
-## `executeTool(serverId: string, toolName: string, args: {}, options?: RequestOptions)`
+### `executeTool(serverId: string, toolName: string, args: {}, options?: RequestOptions)`
 
 Execute a server's tools. Must pass in the serverId and the tool you want to call
 
@@ -177,7 +177,7 @@ Execute a server's tools. Must pass in the serverId and the tool you want to cal
 mcpClientManager.executeTool("everything", "add", { a: 4, b: 5 }): ToolResult
 ```
 
-## `pingServer(serverId: string, options?: RequestOptions)`
+### `pingServer(serverId: string, options?: RequestOptions)`
 
 Ping a server.
 
@@ -185,7 +185,7 @@ Ping a server.
 mcpClientManager.pingServer("everything"): void
 ```
 
-## `listTools(serverId: string, params?, options?)`
+### `listTools(serverId: string, params?, options?)`
 
 List tools for a single server. Caches tool metadata; returns empty if unsupported.
 
@@ -193,7 +193,7 @@ List tools for a single server. Caches tool metadata; returns empty if unsupport
 mcpClientManager.listTools("everything"): Promise<ListToolsResult>
 ```
 
-## `getAllToolsMetadata(serverId: string)`
+### `getAllToolsMetadata(serverId: string)`
 
 Return `_meta` for each tool keyed by tool name. This is useful for building an MCP client that supports OpenAI's Apps SDK.
 
@@ -201,7 +201,7 @@ Return `_meta` for each tool keyed by tool name. This is useful for building an 
 mcpClientManager.getAllToolsMetadata("everything"); // => Record<string, any>
 ```
 
-## `listResources(serverId: string, params?, options?)`
+### `listResources(serverId: string, params?, options?)`
 
 List server resources. Returns empty if unsupported.
 
@@ -209,7 +209,7 @@ List server resources. Returns empty if unsupported.
 mcpClientManager.listResources("everything");
 ```
 
-## `readResource(serverId: string, params, options?)`
+### `readResource(serverId: string, params, options?)`
 
 Read a resource by URI.
 
@@ -217,7 +217,7 @@ Read a resource by URI.
 mcpClientManager.readResource("everything", { uri: "file:///README.md" });
 ```
 
-## `subscribeResource(serverId: string, params, options?)`
+### `subscribeResource(serverId: string, params, options?)`
 
 Subscribe to resource updates.
 
@@ -225,7 +225,7 @@ Subscribe to resource updates.
 mcpClientManager.subscribeResource("everything", { uri: "file:///README.md" });
 ```
 
-## `unsubscribeResource(serverId: string, params, options?)`
+### `unsubscribeResource(serverId: string, params, options?)`
 
 Unsubscribe from a resource.
 
@@ -235,7 +235,7 @@ mcpClientManager.unsubscribeResource("everything", {
 });
 ```
 
-## `listResourceTemplates(serverId: string, params?, options?)`
+### `listResourceTemplates(serverId: string, params?, options?)`
 
 List resource templates.
 
@@ -243,7 +243,7 @@ List resource templates.
 mcpClientManager.listResourceTemplates("everything");
 ```
 
-## `listPrompts(serverId: string, params?, options?)`
+### `listPrompts(serverId: string, params?, options?)`
 
 List all prompts
 
@@ -251,7 +251,7 @@ List all prompts
 mcpClientManager.listPrompts("everything");
 ```
 
-## `getPrompt(serverId: string, params, options?)`
+### `getPrompt(serverId: string, params, options?)`
 
 Get a prompt by name with optional arguments.
 
@@ -259,7 +259,7 @@ Get a prompt by name with optional arguments.
 mcpClientManager.getPrompt("everything", { name: "help", arguments: {} });
 ```
 
-## `onResourceListChanged(serverId: string, handler)`
+### `onResourceListChanged(serverId: string, handler)`
 
 Handle resource list change notifications.
 
@@ -269,7 +269,7 @@ mcpClientManager.onResourceListChanged("everything", (n) => {
 });
 ```
 
-## `onResourceUpdated(serverId: string, handler)`
+### `onResourceUpdated(serverId: string, handler)`
 
 Handle resource update notifications.
 
@@ -279,7 +279,7 @@ mcpClientManager.onResourceUpdated("everything", (n) => {
 });
 ```
 
-## `onPromptListChanged(serverId: string, handler)`
+### `onPromptListChanged(serverId: string, handler)`
 
 Handle prompt list change notifications.
 
@@ -289,7 +289,7 @@ mcpClientManager.onPromptListChanged("everything", (n) => {
 });
 ```
 
-## `setElicitationHandler(serverId: string, handler)`
+### `setElicitationHandler(serverId: string, handler)`
 
 Set a per-server handler for `elicitation/create` requests.
 
@@ -299,7 +299,7 @@ mcpClientManager.setElicitationHandler("everything", async (params) => ({
 }));
 ```
 
-## `clearElicitationHandler(serverId: string)`
+### `clearElicitationHandler(serverId: string)`
 
 Remove the per-server elicitation handler.
 
@@ -307,7 +307,7 @@ Remove the per-server elicitation handler.
 mcpClientManager.clearElicitationHandler("everything");
 ```
 
-## `setElicitationCallback(callback)`
+### `setElicitationCallback(callback)`
 
 Set a global elicitation callback (used if no server-specific handler).
 
@@ -317,7 +317,7 @@ mcpClientManager.setElicitationCallback(
 );
 ```
 
-## `clearElicitationCallback()`
+### `clearElicitationCallback()`
 
 Clear the global elicitation callback.
 
@@ -325,7 +325,7 @@ Clear the global elicitation callback.
 mcpClientManager.clearElicitationCallback();
 ```
 
-## `getPendingElicitations()`
+### `getPendingElicitations()`
 
 Get map of pending elicitation resolvers.
 
@@ -333,7 +333,7 @@ Get map of pending elicitation resolvers.
 mcpClientManager.getPendingElicitations();
 ```
 
-## `respondToElicitation(requestId: string, response)`
+### `respondToElicitation(requestId: string, response)`
 
 Resolve a pending elicitation by `requestId`. Returns `true` if handled.
 
@@ -341,7 +341,7 @@ Resolve a pending elicitation by `requestId`. Returns `true` if handled.
 mcpClientManager.respondToElicitation("elicit_123", { content: "done" });
 ```
 
-## `disconnectAllServers()`
+### `disconnectAllServers()`
 
 Disconnect all servers and clear state.
 
