@@ -171,9 +171,7 @@ servers.post("/reconnect", async (c) => {
   }
 });
 
-export default servers;
-
-// Stream JSON-RPC messages over SSE for one or more servers.
+// Stream JSON-RPC messages over SSE for all servers.
 servers.get("/rpc/stream", async (c) => {
   const serverIds = c.mcpClientManager.listServers();
   const url = new URL(c.req.url);
@@ -237,14 +235,6 @@ servers.get("/rpc/stream", async (c) => {
   });
 });
 
-// Snapshot of recent JSON-RPC messages
-servers.get("/rpc/snapshot", (c) => {
-  const serverIds = c.mcpClientManager.listServers();
-  const url = new URL(c.req.url);
-  const limit = parseInt(url.searchParams.get("limit") || "500", 10);
-  const events = rpcLogBus
-    .getBuffer(serverIds, isNaN(limit) ? 0 : limit)
-    .map((evt: RpcLogEvent) => ({ type: "rpc", ...evt }));
+export default servers;
 
-  return c.json({ success: true, events });
-});
+
