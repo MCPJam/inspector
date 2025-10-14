@@ -116,7 +116,7 @@ export function TracingTab() {
                     ? "error"
                     : "unknown";
             const summary = `[${serverId}] ${dir} - ${methodName}`;
-            rpcLogger.debug(summary, {
+            rpcLogger.info(summary, {
               serverId,
               direction,
               method: methodName,
