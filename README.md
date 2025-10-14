@@ -93,6 +93,24 @@ npx @mcpjam/inspector@latest --port 4000
 npx @mcpjam/inspector@latest --ollama llama3.2
 ```
 
+## ☁️ Deploy on Vercel
+
+The repository now ships with a `vercel.json` configuration and a shared Hono handler so you can deploy the inspector as a Vite + Hono application on Vercel.
+
+1. Create a new Vercel project and point it at the repository root.
+2. Set required environment variables (at minimum `CONVEX_HTTP_URL`, and optionally `CORS_ORIGINS`, `CLIENT_ORIGIN`, or `MCP_*` overrides).
+3. Vercel will run `npm run build` during the build step. This produces the SPA assets in `dist/client` and bundles the Hono routes.
+4. The `api/index.ts` serverless function serves both the API and the built Vite assets, so no extra rewrites are necessary beyond the defaults in `vercel.json`.
+
+To test the setup locally you can install the Vercel CLI and run:
+
+```bash
+npm run build
+npx vercel dev
+```
+
+The app will be available on the URL printed by the CLI and will use the same runtime entry point as production.
+
 ## 🐳 Docker
 
 Run MCPJam Inspector using Docker:
