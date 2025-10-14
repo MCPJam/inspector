@@ -60,6 +60,7 @@ function logBox(content: string, title?: string) {
 
 // Import routes and services
 import mcpRoutes from "./routes/mcp/index";
+import { rpcLogBus } from "./services/rpc-log-bus";
 import { interceptorStore } from "./services/interceptor-store";
 import "./types/hono"; // Type extensions
 
@@ -175,8 +176,20 @@ if (!process.env.CONVEX_HTTP_URL) {
   );
 }
 
-// Initialize centralized MCPJam Client Manager
-const mcpClientManager = new MCPClientManager();
+// Initialize centralized MCPJam Client Manager and wire RPC logging to SSE bus
+const mcpClientManager = new MCPClientManager(
+  {},
+  {
+    rpcLogger: ({ direction, message, serverId }) => {
+      rpcLogBus.publish({
+        serverId,
+        direction,
+        timestamp: new Date().toISOString(),
+        message,
+      });
+    },
+  },
+);
 // Middleware to inject client manager into context
 app.use("*", async (c, next) => {
   c.mcpClientManager = mcpClientManager;

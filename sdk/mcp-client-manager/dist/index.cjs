@@ -17857,11 +17857,15 @@ var MCPClientManager = class {
     this.notificationHandlers = /* @__PURE__ */ new Map();
     this.elicitationHandlers = /* @__PURE__ */ new Map();
     this.toolsMetadataCache = /* @__PURE__ */ new Map();
+    // Default JSON-RPC logging controls
+    this.defaultLogJsonRpc = false;
     this.pendingElicitations = /* @__PURE__ */ new Map();
-    var _a17, _b, _c;
+    var _a17, _b, _c, _d;
     this.defaultClientVersion = (_a17 = options.defaultClientVersion) != null ? _a17 : "1.0.0";
     this.defaultCapabilities = { ...(_b = options.defaultCapabilities) != null ? _b : {} };
     this.defaultTimeout = (_c = options.defaultTimeout) != null ? _c : import_protocol.DEFAULT_REQUEST_TIMEOUT_MSEC;
+    this.defaultLogJsonRpc = (_d = options.defaultLogJsonRpc) != null ? _d : false;
+    this.defaultRpcLogger = options.rpcLogger;
     for (const [id, config2] of Object.entries(servers)) {
       void this.connectToServer(id, config2);
     }
@@ -17930,7 +17934,7 @@ var MCPClientManager = class {
       };
       let transport;
       if (this.isStdioConfig(config2)) {
-        transport = await this.connectViaStdio(client, config2, timeout);
+        transport = await this.connectViaStdio(serverId, client, config2, timeout);
       } else {
         transport = await this.connectViaHttp(
           serverId,
@@ -18276,15 +18280,16 @@ var MCPClientManager = class {
       this.pendingElicitations.delete(requestId);
     }
   }
-  async connectViaStdio(client, config2, timeout) {
+  async connectViaStdio(serverId, client, config2, timeout) {
     var _a17;
-    const transport = new import_stdio.StdioClientTransport({
+    const underlying = new import_stdio.StdioClientTransport({
       command: config2.command,
       args: config2.args,
       env: { ...(0, import_stdio.getDefaultEnvironment)(), ...(_a17 = config2.env) != null ? _a17 : {} }
     });
-    await client.connect(transport, { timeout });
-    return transport;
+    const wrapped = this.wrapTransportForLogging(serverId, config2, underlying);
+    await client.connect(wrapped, { timeout });
+    return underlying;
   }
   async connectViaHttp(serverId, client, config2, timeout) {
     var _a17;
@@ -18301,7 +18306,12 @@ var MCPClientManager = class {
         }
       );
       try {
-        await client.connect(streamableTransport, {
+        const wrapped = this.wrapTransportForLogging(
+          serverId,
+          config2,
+          streamableTransport
+        );
+        await client.connect(wrapped, {
           timeout: Math.min(timeout, 3e3)
         });
         return streamableTransport;
@@ -18316,7 +18326,12 @@ var MCPClientManager = class {
       authProvider: config2.authProvider
     });
     try {
-      await client.connect(sseTransport, { timeout });
+      const wrapped = this.wrapTransportForLogging(
+        serverId,
+        config2,
+        sseTransport
+      );
+      await client.connect(wrapped, { timeout });
       return sseTransport;
     } catch (error40) {
       await this.safeCloseTransport(sseTransport);
@@ -18443,6 +18458,74 @@ var MCPClientManager = class {
     } catch {
       return String(error40);
     }
+  }
+  // Returns a transport that logs JSON-RPC traffic if enabled for this server
+  wrapTransportForLogging(serverId, config2, transport) {
+    const logger = this.resolveRpcLogger(serverId, config2);
+    if (!logger) return transport;
+    const log = logger;
+    const self = this;
+    class LoggingTransport {
+      constructor(inner) {
+        this.inner = inner;
+        this.inner.onmessage = (message, extra) => {
+          var _a17;
+          try {
+            log({ direction: "receive", message, serverId });
+          } catch {
+          }
+          (_a17 = this.onmessage) == null ? void 0 : _a17.call(this, message, extra);
+        };
+        this.inner.onclose = () => {
+          var _a17;
+          (_a17 = this.onclose) == null ? void 0 : _a17.call(this);
+        };
+        this.inner.onerror = (error40) => {
+          var _a17;
+          (_a17 = this.onerror) == null ? void 0 : _a17.call(this, error40);
+        };
+      }
+      async start() {
+        if (typeof this.inner.start === "function") {
+          await this.inner.start();
+        }
+      }
+      async send(message, options) {
+        try {
+          log({ direction: "send", message, serverId });
+        } catch {
+        }
+        await this.inner.send(message, options);
+      }
+      async close() {
+        await this.inner.close();
+      }
+      get sessionId() {
+        return this.inner.sessionId;
+      }
+      setProtocolVersion(version2) {
+        if (typeof this.inner.setProtocolVersion === "function") {
+          this.inner.setProtocolVersion(version2);
+        }
+      }
+    }
+    return new LoggingTransport(transport);
+  }
+  resolveRpcLogger(serverId, config2) {
+    if (config2.rpcLogger) return config2.rpcLogger;
+    if (config2.logJsonRpc || this.defaultLogJsonRpc) {
+      return ({ direction, message, serverId: id }) => {
+        let printable;
+        try {
+          printable = typeof message === "string" ? message : JSON.stringify(message);
+        } catch {
+          printable = String(message);
+        }
+        console.debug(`[MCP:${id}] ${direction.toUpperCase()} ${printable}`);
+      };
+    }
+    if (this.defaultRpcLogger) return this.defaultRpcLogger;
+    return void 0;
   }
   isMethodUnavailableError(error40, method) {
     if (!(error40 instanceof Error)) {
