@@ -11,6 +11,7 @@ RUN npm cache clean --force
 COPY package.json ./
 COPY client/package.json ./client/
 COPY server/package.json ./server/
+COPY sdk/package.json ./sdk/
 COPY evals-cli/package.json ./evals-cli/
 
 # Install dependencies with clean slate approach (no lock files)
@@ -18,6 +19,7 @@ COPY evals-cli/package.json ./evals-cli/
 RUN npm install --no-package-lock --include=dev --legacy-peer-deps
 RUN cd client && npm install --no-package-lock --include=dev --legacy-peer-deps
 RUN cd server && npm install --no-package-lock --include=dev --legacy-peer-deps
+RUN cd sdk && npm install --no-package-lock --include=dev --legacy-peer-deps
 RUN cd evals-cli && npm install --no-package-lock --include=dev --legacy-peer-deps
 
 # Stage 2: Build client
@@ -29,15 +31,21 @@ COPY .env.production ./
 ENV VITE_DOCKER=true
 RUN cd client && npm run build
 
-# Stage 3: Build server
+# Stage 3: Build SDK (required by server)
+FROM deps-base AS sdk-builder
+COPY sdk/ ./sdk/
+RUN cd sdk && npm run build
+
+# Stage 4: Build server
 FROM deps-base AS server-builder
+COPY --from=sdk-builder /app/sdk/dist ./sdk/dist
 COPY shared/ ./shared/
 COPY evals-cli/ ./evals-cli/
 COPY server/ ./server/
 COPY client/ ./client/
 RUN cd server && npm run build
 
-# Stage 4: Production image - extend existing or create new
+# Stage 5: Production image - extend existing or create new
 FROM node:20-slim AS production
 
 # Install dumb-init for proper signal handling
@@ -50,6 +58,10 @@ WORKDIR /app
 COPY --from=client-builder /app/dist/client ./dist/client
 COPY --from=server-builder /app/dist/server ./dist/server
 
+# Copy built SDK (required by server at runtime)
+COPY --from=sdk-builder /app/sdk/dist ./sdk/dist
+COPY --from=sdk-builder /app/sdk/package.json ./sdk/package.json
+
 # Copy public assets (logos, etc.) to be served at root level
 COPY --from=client-builder /app/client/public ./public
 
@@ -59,6 +71,9 @@ COPY --from=deps-base /app/server/package.json ./server/package.json
 
 # Install production dependencies from root package.json (includes external packages like fix-path)
 RUN npm install --production --legacy-peer-deps
+
+# Install SDK production dependencies
+RUN cd sdk && npm install --production --legacy-peer-deps
 
 # Copy shared types
 COPY shared/ ./shared/
