@@ -186,9 +186,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       logger.error("Failed to fetch tools", { error: message });
-      setError(
-        "Network error fetching tools. Make sure you selected the correct server and the server is running.",
-      );
+      setError(message);
     } finally {
       setFetchingTools(false);
     }
@@ -311,12 +309,13 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       const response = await executeToolApi(serverName, selectedTool, params);
       handleExecutionResponse(response, selectedTool, executionStartTime);
     } catch (err) {
+      console.error("executeTool", err);
       const message = err instanceof Error ? err.message : "Unknown error";
       logger.error("Tool execution network error", {
         toolName: selectedTool,
         error: message,
       });
-      setError("Error executing tool");
+      setError(message);
     } finally {
       setLoading(false);
     }
@@ -349,7 +348,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         action,
         error: message,
       });
-      setError("Error responding to elicitation request");
+      setError(message);
     } finally {
       setElicitationLoading(false);
     }

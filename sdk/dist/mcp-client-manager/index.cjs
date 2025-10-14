@@ -181,7 +181,12 @@ var MCPClientManager = class {
       };
       let transport;
       if (this.isStdioConfig(config)) {
-        transport = await this.connectViaStdio(serverId, client, config, timeout);
+        transport = await this.connectViaStdio(
+          serverId,
+          client,
+          config,
+          timeout
+        );
       } else {
         transport = await this.connectViaHttp(
           serverId,
