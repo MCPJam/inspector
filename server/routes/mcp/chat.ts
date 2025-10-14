@@ -32,10 +32,10 @@ interface StreamingContext {
   controller: ReadableStreamDefaultController;
   encoder: TextEncoder;
   toolCallId: number;
-  lastEmittedToolCallId: number | null;
+  lastEmittedToolCallId: string | null;
   stepIndex: number;
   // Map tool call ID to tool name for serverId lookup
-  toolCallIdToName: Map<number, string>;
+  toolCallIdToName: Map<string, string>;
 }
 
 interface ChatRequest {
@@ -128,7 +128,8 @@ const handleAgentStepFinish = (
       // Handle tool calls
       if (toolCalls && Array.isArray(toolCalls)) {
         for (const call of toolCalls) {
-          const currentToolCallId = ++streamingContext.toolCallId;
+          // Generate unique ID with timestamp and random suffix
+          const currentToolCallId = `tc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
           streamingContext.lastEmittedToolCallId = currentToolCallId;
           const toolName = call.name || call.toolName;
 
@@ -160,7 +161,7 @@ const handleAgentStepFinish = (
           const currentToolCallId =
             streamingContext.lastEmittedToolCallId != null
               ? streamingContext.lastEmittedToolCallId
-              : ++streamingContext.toolCallId;
+              : `tc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
           if (streamingContext.controller && streamingContext.encoder) {
             sendSseEvent(
@@ -269,7 +270,8 @@ const createStreamingResponse = async (
             break;
           }
           case "tool-call": {
-            const currentToolCallId = ++streamingContext.toolCallId;
+            // Generate unique ID with timestamp and random suffix
+            const currentToolCallId = `tc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
             streamingContext.lastEmittedToolCallId = currentToolCallId;
             const name =
               (chunk.chunk as any).toolName || (chunk.chunk as any).name;
@@ -306,7 +308,7 @@ const createStreamingResponse = async (
               (chunk.chunk as any).value;
             const currentToolCallId =
               streamingContext.lastEmittedToolCallId ??
-              ++streamingContext.toolCallId;
+              `tc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
             // Look up serverId from tool metadata
             const toolName =
@@ -358,7 +360,7 @@ const createStreamingResponse = async (
           const currentToolCallId =
             streamingContext.lastEmittedToolCallId != null
               ? streamingContext.lastEmittedToolCallId
-              : ++streamingContext.toolCallId;
+              : `tc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
           const value = (m as any).content;
 
           // Look up serverId from tool metadata
@@ -489,7 +491,8 @@ const sendMessagesToBackend = async (
   }
 
   const emitToolCall = (call: BackendToolCallEvent) => {
-    const currentToolCallId = ++streamingContext.toolCallId;
+    // Generate unique ID with timestamp and random suffix
+    const currentToolCallId = `tc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     streamingContext.lastEmittedToolCallId = currentToolCallId;
 
     // Store tool name for serverId lookup later
@@ -511,7 +514,7 @@ const sendMessagesToBackend = async (
     const currentToolCallId =
       streamingContext.lastEmittedToolCallId != null
         ? streamingContext.lastEmittedToolCallId
-        : ++streamingContext.toolCallId;
+        : `tc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
       type: "tool_result",
       toolResult: {
