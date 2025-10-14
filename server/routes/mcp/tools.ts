@@ -110,8 +110,14 @@ function serializeMcpError(error: unknown) {
 
 function jsonError(c: any, error: unknown, fallbackStatus = 500) {
   const details = serializeMcpError(error);
-  const status = typeof (error as any)?.status === "number" ? (error as any).status : fallbackStatus;
-  return c.json({ error: details.message as string, mcpError: details }, status);
+  const status =
+    typeof (error as any)?.status === "number"
+      ? (error as any).status
+      : fallbackStatus;
+  return c.json(
+    { error: details.message as string, mcpError: details },
+    status,
+  );
 }
 
 tools.post("/list", async (c) => {
