@@ -192,8 +192,10 @@ export function ChatTab({
         }),
       });
       const data = await response.json();
+      console.log("handleCallTool", data);
       return data.result;
     } catch (error) {
+      console.error("handleCallTool", error);
       throw error;
     }
   };
