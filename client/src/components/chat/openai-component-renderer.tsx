@@ -35,7 +35,7 @@ export function OpenAIComponentRenderer({
   // Storage key for widget state
   const widgetStateKey = `openai-widget-state:${toolCall.name}:${toolCall.id}`;
 
-  // Build widget URL (serve at root path for React Router compatibility)
+  // Store widget data server-side and get session URL
   useEffect(() => {
     if (componentUrl.startsWith("ui://") && serverId) {
       // Extract structured content from different result formats
@@ -70,27 +70,41 @@ export function OpenAIComponentRenderer({
         }
       }
 
-      // Unicode-safe base64 encoding
-      const jsonString = JSON.stringify({
-        serverId,
-        uri: componentUrl,
-        toolInput: toolCall.parameters,
-        toolOutput: structuredContent,
-        toolId: toolCall.id,
-      });
+      // Store widget data server-side
+      const storeWidgetData = async () => {
+        try {
+          const response = await fetch("/api/mcp/resources/widget/store", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              serverId,
+              uri: componentUrl,
+              toolInput: toolCall.parameters,
+              toolOutput: structuredContent,
+              toolId: toolCall.id,
+            }),
+          });
 
-      // Convert to UTF-8 bytes then to base64
-      const widgetData = btoa(
-        encodeURIComponent(jsonString).replace(/%([0-9A-F]{2})/g, (_, p1) => {
-          return String.fromCharCode(parseInt(p1, 16));
-        }),
-      );
+          if (!response.ok) {
+            throw new Error(`Failed to store widget data: ${response.status}`);
+          }
 
-      const sessionId = `widget-${toolCall.id}`;
-      // Use src (not srcdoc) so React Router sees a real pathname
-      const url = `/api/mcp/resources/widget/${sessionId}?data=${encodeURIComponent(widgetData)}`;
+          const { sessionId } = await response.json();
+          const url = `/api/mcp/resources/widget/${sessionId}`;
+          setWidgetUrl(url);
+        } catch (error) {
+          console.error("Error storing widget data:", error);
+          setError(
+            error instanceof Error
+              ? error.message
+              : "Failed to prepare widget",
+          );
+        }
+      };
 
-      setWidgetUrl(url);
+      storeWidgetData();
     } else if (
       componentUrl.startsWith("http://") ||
       componentUrl.startsWith("https://")

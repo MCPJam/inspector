@@ -3,6 +3,29 @@ import "../../types/hono"; // Type extensions
 
 const resources = new Hono();
 
+// In-memory storage for widget data (TTL: 1 hour)
+interface WidgetData {
+  serverId: string;
+  uri: string;
+  toolInput: Record<string, any>;
+  toolOutput: any;
+  toolId: string;
+  timestamp: number;
+}
+
+const widgetDataStore = new Map<string, WidgetData>();
+
+// Cleanup expired widget data every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  const ONE_HOUR = 60 * 60 * 1000;
+  for (const [sessionId, data] of widgetDataStore.entries()) {
+    if (now - data.timestamp > ONE_HOUR) {
+      widgetDataStore.delete(sessionId);
+    }
+  }
+}, 5 * 60 * 1000);
+
 // List resources endpoint
 resources.post("/list", async (c) => {
   try {
@@ -67,14 +90,57 @@ resources.post("/read", async (c) => {
   }
 });
 
+// Store widget data and return session ID
+resources.post("/widget/store", async (c) => {
+  try {
+    const body = await c.req.json();
+    const { serverId, uri, toolInput, toolOutput, toolId } = body;
+
+    if (!serverId || !uri || !toolId) {
+      return c.json(
+        { success: false, error: "Missing required fields" },
+        400,
+      );
+    }
+
+    // Generate session ID
+    const sessionId = `widget-${toolId}-${Date.now()}`;
+
+    // Store widget data
+    widgetDataStore.set(sessionId, {
+      serverId,
+      uri,
+      toolInput,
+      toolOutput,
+      toolId,
+      timestamp: Date.now(),
+    });
+
+    return c.json({ success: true, sessionId });
+  } catch (error) {
+    console.error("Error storing widget data:", error);
+    return c.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
+      500,
+    );
+  }
+});
+
 // Simpler widget endpoint for React Router compatibility
 // Container page that changes URL to "/" before loading widget
 resources.get("/widget/:sessionId", async (c) => {
   const sessionId = c.req.param("sessionId");
-  const widgetData = c.req.query("data");
 
+  // Check if data exists in storage
+  const widgetData = widgetDataStore.get(sessionId);
   if (!widgetData) {
-    return c.html("<html><body>Error: Missing widget data</body></html>", 400);
+    return c.html(
+      "<html><body>Error: Widget session not found or expired</body></html>",
+      404,
+    );
   }
 
   // Return a container page that will fetch and load the actual widget
@@ -91,8 +157,8 @@ resources.get("/widget/:sessionId", async (c) => {
           // Change URL to "/" BEFORE loading widget (for React Router)
           history.replaceState(null, '', '/');
 
-          // Fetch the actual widget HTML
-          const response = await fetch('/api/mcp/resources/widget-content?data=${encodeURIComponent(widgetData)}');
+          // Fetch the actual widget HTML using session ID
+          const response = await fetch('/api/mcp/resources/widget-content/${sessionId}');
           const html = await response.text();
 
           // Replace entire document with widget HTML
@@ -107,26 +173,20 @@ resources.get("/widget/:sessionId", async (c) => {
 });
 
 // Actual widget content endpoint
-resources.get("/widget-content", async (c) => {
+resources.get("/widget-content/:sessionId", async (c) => {
   try {
-    const widgetData = c.req.query("data");
+    const sessionId = c.req.param("sessionId");
 
+    // Retrieve widget data from storage
+    const widgetData = widgetDataStore.get(sessionId);
     if (!widgetData) {
       return c.html(
-        "<html><body>Error: Missing widget data</body></html>",
-        400,
+        "<html><body>Error: Widget session not found or expired</body></html>",
+        404,
       );
     }
 
-    // Decode widget data (base64 encoded JSON with Unicode support)
-    const base64Decoded = Buffer.from(widgetData, "base64").toString("binary");
-    const percentEncoded = base64Decoded
-      .split("")
-      .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
-      .join("");
-    const jsonString = decodeURIComponent(percentEncoded);
-    const { serverId, uri, toolInput, toolOutput, toolId } =
-      JSON.parse(jsonString);
+    const { serverId, uri, toolInput, toolOutput, toolId } = widgetData;
 
     const mcpClientManager = c.mcpClientManager;
     const availableServers = mcpClientManager
