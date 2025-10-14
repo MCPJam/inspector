@@ -40,7 +40,7 @@
     "build:server": "cd server && npm run build",
     "start": "NODE_ENV=production node bin/start.js",
     "prettier-fix": "prettier --write .",
-    "install:deps": "npm_config_cache=.npm-cache npm --prefix server install --legacy-peer-deps && npm_config_cache=.npm-cache npm --prefix client install --legacy-peer-deps",
+    "install:deps": "npm --prefix server install --legacy-peer-deps && npm --prefix client install --legacy-peer-deps",
     "sync:lockfiles": "npm_config_cache=.npm-cache npm install --legacy-peer-deps && npm_config_cache=.npm-cache npm --prefix client install --legacy-peer-deps && npm_config_cache=.npm-cache npm --prefix server install --legacy-peer-deps",
     "docker:build": "docker build -t mcpjam/mcp-inspector:latest .",
     "docker:build:dev": "docker build -f Dockerfile.dev -t mcpjam/mcp-inspector:dev .",

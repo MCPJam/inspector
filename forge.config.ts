@@ -59,6 +59,7 @@ const config: ForgeConfig = {
     extraResource: [
       resolve(__dirname, "dist", "client"),
       resolve(__dirname, ".env.production"),
+      resolve(__dirname, "sdk", "dist"),
     ],
     osxSign: osxSignOptions,
     osxNotarize: osxNotarizeOptions,
