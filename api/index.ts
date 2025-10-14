@@ -1,12 +1,8 @@
-import { handle } from "@hono/node-server/vercel";
+import { handle } from "hono/adapter/vercel";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { createApp, getMCPConfigFromEnv } from "../server/app";
-
-export const config = {
-  runtime: "nodejs20.x",
-};
 
 const app = createApp({ env: process.env });
 

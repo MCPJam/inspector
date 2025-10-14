@@ -3,7 +3,6 @@
   "buildCommand": "npm run build",
   "functions": {
     "api/index.ts": {
-      "runtime": "nodejs20.x",
       "includeFiles": "dist/client/**"
     }
   },
