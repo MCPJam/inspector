@@ -11,6 +11,7 @@ import { fileURLToPath } from "url";
 // Import routes
 import mcpRoutes from "./routes/mcp/index.js";
 import { MCPClientManager } from "@/sdk";
+import { rpcLogBus } from "./services/rpc-log-bus";
 import path from "path";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -29,9 +30,9 @@ export function createHonoApp() {
   // 3. Local dev: current working directory
   let envPath = envFile;
 
-  if (process.env.IS_PACKAGED === "true" && process.resourcesPath) {
+  if (process.env.IS_PACKAGED === "true" && (process as any).resourcesPath) {
     // Electron packaged app - use process.resourcesPath directly
-    envPath = join(process.resourcesPath, envFile);
+    envPath = join((process as any).resourcesPath, envFile);
   } else if (process.env.ELECTRON_APP === "true") {
     // Electron dev mode - already handled by src/main.ts setting env vars
     envPath = join(process.env.ELECTRON_RESOURCES_PATH || ".", envFile);
@@ -50,7 +51,7 @@ export function createHonoApp() {
   if (!process.env.CONVEX_HTTP_URL) {
     throw new Error(
       `CONVEX_HTTP_URL is required but not set. Tried loading from: ${envPath}\n` +
-        `IS_PACKAGED=${process.env.IS_PACKAGED}, resourcesPath=${process.resourcesPath}\n` +
+        `IS_PACKAGED=${process.env.IS_PACKAGED}, resourcesPath=${(process as any).resourcesPath}\n` +
         `File exists: ${existsSync(envPath)}`,
     );
   }
@@ -62,8 +63,20 @@ export function createHonoApp() {
   } catch {}
   const app = new Hono();
 
-  // Create the MCPJam client manager instance
-  const mcpClientManager = new MCPClientManager();
+  // Create the MCPJam client manager instance and wire RPC logging to SSE bus
+  const mcpClientManager = new MCPClientManager(
+    {},
+    {
+      rpcLogger: ({ direction, message, serverId }) => {
+        rpcLogBus.publish({
+          serverId,
+          direction,
+          timestamp: new Date().toISOString(),
+          message,
+        });
+      },
+    },
+  );
   if (process.env.DEBUG_MCP_SELECTION === "1") {
     console.log("[mcpjam][boot] DEBUG_MCP_SELECTION enabled");
   }

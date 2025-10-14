@@ -20,6 +20,12 @@ type BaseServerConfig = {
     timeout?: number;
     version?: string;
     onError?: (error: unknown) => void;
+    logJsonRpc?: boolean;
+    rpcLogger?: (event: {
+        direction: "send" | "receive";
+        message: unknown;
+        serverId: string;
+    }) => void;
 };
 type StdioServerConfig = BaseServerConfig & {
     command: string;
@@ -75,12 +81,20 @@ declare class MCPClientManager {
     private readonly defaultClientVersion;
     private readonly defaultCapabilities;
     private readonly defaultTimeout;
+    private defaultLogJsonRpc;
+    private defaultRpcLogger?;
     private elicitationCallback?;
     private readonly pendingElicitations;
     constructor(servers?: MCPClientManagerConfig, options?: {
         defaultClientVersion?: string;
         defaultCapabilities?: ClientCapabilityOptions;
         defaultTimeout?: number;
+        defaultLogJsonRpc?: boolean;
+        rpcLogger?: (event: {
+            direction: "send" | "receive";
+            message: unknown;
+            serverId: string;
+        }) => void;
     });
     listServers(): string[];
     hasServer(serverId: string): boolean;
@@ -1591,6 +1605,8 @@ declare class MCPClientManager {
     private withTimeout;
     private buildCapabilities;
     private formatError;
+    private wrapTransportForLogging;
+    private resolveRpcLogger;
     private isMethodUnavailableError;
     private getTimeout;
     private isStdioConfig;

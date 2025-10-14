@@ -9,7 +9,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { useLoggerState, LogLevel } from "@/hooks/use-logger";
+import { useLoggerState, LogLevel, useLogger } from "@/hooks/use-logger";
 import { LogCard } from "./logging/log-card";
 import { LogLevelBadge } from "./logging/log-level-badge";
 
@@ -17,6 +17,7 @@ const LOG_LEVEL_ORDER = ["error", "warn", "info", "debug", "trace"];
 
 export function TracingTab() {
   const { entries } = useLoggerState();
+  const rpcLogger = useLogger("JSON-RPC");
   const [expandedEntries, setExpandedEntries] = useState<Set<number>>(
     new Set(),
   );
@@ -69,6 +70,57 @@ export function TracingTab() {
       scrollContainerRef.current.scrollTo({ top: 0, behavior: "smooth" });
     }
   };
+
+  // Stream JSON-RPC messages from backend and log them
+  useEffect(() => {
+    let es: EventSource | null = null;
+    try {
+      const params = new URLSearchParams();
+      params.set("replay", "200");
+      es = new EventSource(`/api/mcp/servers/rpc/stream?${params.toString()}`);
+      es.onmessage = (evt) => {
+        try {
+          const data = JSON.parse(evt.data);
+          if (data && data.type === "rpc") {
+            const serverId: string = data.serverId;
+            const direction: string = data.direction;
+            const payload: unknown = data.message;
+            const ts: string | undefined = data.timestamp;
+
+            const dir =
+              typeof direction === "string" ? direction.toUpperCase() : "";
+            const msg: any = payload as any;
+            const methodName: string =
+              typeof msg?.method === "string"
+                ? msg.method
+                : msg?.result !== undefined
+                  ? "result"
+                  : msg?.error !== undefined
+                    ? "error"
+                    : "unknown";
+            const summary = `[${serverId}] ${dir} - {${methodName}}`;
+            rpcLogger.debug(summary, {
+              serverId,
+              direction,
+              method: methodName,
+              timestamp: ts,
+              message: payload,
+            });
+          }
+        } catch {}
+      };
+      es.onerror = () => {
+        try {
+          es?.close();
+        } catch {}
+      };
+    } catch {}
+    return () => {
+      try {
+        es?.close();
+      } catch {}
+    };
+  }, [rpcLogger]);
 
   const toggleExpanded = (index: number) => {
     const newExpanded = new Set(expandedEntries);
