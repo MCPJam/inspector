@@ -33,8 +33,15 @@ export async function listTools(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ serverId }),
   });
-  if (!res.ok) throw new Error(`List tools failed (${res.status})`);
-  return res.json();
+  let body: any = null;
+  try {
+    body = await res.json();
+  } catch {}
+  if (!res.ok) {
+    const message = body?.error || `List tools failed (${res.status})`;
+    throw new Error(message);
+  }
+  return body as ListToolsResultWithMetadata;
 }
 
 export async function executeToolApi(
@@ -47,8 +54,16 @@ export async function executeToolApi(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ serverId, toolName, parameters }),
   });
-  if (!res.ok) throw new Error(`Execute tool failed (${res.status})`);
-  return res.json();
+  let body: any = null;
+  try {
+    body = await res.json();
+  } catch {}
+  if (!res.ok) {
+    // Surface server-provided error message if present
+    const message = body?.error || `Execute tool failed (${res.status})`;
+    return { error: message } as ToolExecutionResponse;
+  }
+  return body as ToolExecutionResponse;
 }
 
 export async function respondToElicitationApi(
@@ -60,6 +75,13 @@ export async function respondToElicitationApi(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ requestId, response }),
   });
-  if (!res.ok) throw new Error(`Respond failed (${res.status})`);
-  return res.json();
+  let body: any = null;
+  try {
+    body = await res.json();
+  } catch {}
+  if (!res.ok) {
+    const message = body?.error || `Respond failed (${res.status})`;
+    return { error: message } as ToolExecutionResponse;
+  }
+  return body as ToolExecutionResponse;
 }

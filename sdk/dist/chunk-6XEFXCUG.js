@@ -1,38 +1,39 @@
-"use strict";
 var __defProp = Object.defineProperty;
-var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
-var __getOwnPropNames = Object.getOwnPropertyNames;
-var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __export = (target, all) => {
   for (var name in all)
     __defProp(target, name, { get: all[name], enumerable: true });
 };
-var __copyProps = (to, from, except, desc) => {
-  if (from && typeof from === "object" || typeof from === "function") {
-    for (let key of __getOwnPropNames(from))
-      if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
-  }
-  return to;
-};
-var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // mcp-client-manager/index.ts
 var mcp_client_manager_exports = {};
 __export(mcp_client_manager_exports, {
   MCPClientManager: () => MCPClientManager
 });
-module.exports = __toCommonJS(mcp_client_manager_exports);
-var import_client = require("@modelcontextprotocol/sdk/client/index.js");
-var import_sse = require("@modelcontextprotocol/sdk/client/sse.js");
-var import_stdio = require("@modelcontextprotocol/sdk/client/stdio.js");
-var import_streamableHttp = require("@modelcontextprotocol/sdk/client/streamableHttp.js");
-var import_protocol = require("@modelcontextprotocol/sdk/shared/protocol.js");
-var import_types2 = require("@modelcontextprotocol/sdk/types.js");
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import {
+  getDefaultEnvironment,
+  StdioClientTransport
+} from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { DEFAULT_REQUEST_TIMEOUT_MSEC } from "@modelcontextprotocol/sdk/shared/protocol.js";
+import {
+  CallToolResultSchema as CallToolResultSchema2,
+  ElicitRequestSchema,
+  ResourceListChangedNotificationSchema,
+  ResourceUpdatedNotificationSchema,
+  PromptListChangedNotificationSchema
+} from "@modelcontextprotocol/sdk/types.js";
 
 // mcp-client-manager/tool-converters.ts
-var import_types = require("@modelcontextprotocol/sdk/types.js");
-var import_ai = require("ai");
+import {
+  CallToolResultSchema
+} from "@modelcontextprotocol/sdk/types.js";
+import {
+  dynamicTool,
+  jsonSchema,
+  tool as defineTool
+} from "ai";
 var ensureJsonSchemaObject = (schema) => {
   var _a;
   if (schema && typeof schema === "object") {
@@ -67,14 +68,14 @@ async function convertMCPToolsToVercelTools(listToolsResult, {
       var _a2, _b2;
       (_b2 = (_a2 = options == null ? void 0 : options.abortSignal) == null ? void 0 : _a2.throwIfAborted) == null ? void 0 : _b2.call(_a2);
       const result = await callTool({ name, args, options });
-      return import_types.CallToolResultSchema.parse(result);
+      return CallToolResultSchema.parse(result);
     };
     let vercelTool;
     if (schemas === "automatic") {
       const normalizedInputSchema = ensureJsonSchemaObject(inputSchema);
-      vercelTool = (0, import_ai.dynamicTool)({
+      vercelTool = dynamicTool({
         description,
-        inputSchema: (0, import_ai.jsonSchema)({
+        inputSchema: jsonSchema({
           type: "object",
           properties: (_a = normalizedInputSchema.properties) != null ? _a : {},
           additionalProperties: (_b = normalizedInputSchema.additionalProperties) != null ? _b : false
@@ -86,7 +87,7 @@ async function convertMCPToolsToVercelTools(listToolsResult, {
       if (!(name in overrides)) {
         continue;
       }
-      vercelTool = (0, import_ai.tool)({
+      vercelTool = defineTool({
         description,
         inputSchema: overrides[name].inputSchema,
         execute
@@ -110,7 +111,7 @@ var MCPClientManager = class {
     var _a, _b, _c, _d;
     this.defaultClientVersion = (_a = options.defaultClientVersion) != null ? _a : "1.0.0";
     this.defaultCapabilities = { ...(_b = options.defaultCapabilities) != null ? _b : {} };
-    this.defaultTimeout = (_c = options.defaultTimeout) != null ? _c : import_protocol.DEFAULT_REQUEST_TIMEOUT_MSEC;
+    this.defaultTimeout = (_c = options.defaultTimeout) != null ? _c : DEFAULT_REQUEST_TIMEOUT_MSEC;
     this.defaultLogJsonRpc = (_d = options.defaultLogJsonRpc) != null ? _d : false;
     this.defaultRpcLogger = options.rpcLogger;
     for (const [id, config] of Object.entries(servers)) {
@@ -159,7 +160,7 @@ var MCPClientManager = class {
     }
     const connectionPromise = (async () => {
       var _a2;
-      const client = new import_client.Client(
+      const client = new Client(
         {
           name: serverId,
           version: (_a2 = config.version) != null ? _a2 : this.defaultClientVersion
@@ -313,7 +314,7 @@ var MCPClientManager = class {
             args != null ? args : {},
             requestOptions
           );
-          return import_types2.CallToolResultSchema.parse(result);
+          return CallToolResultSchema2.parse(result);
         }
       });
     };
@@ -349,7 +350,7 @@ var MCPClientManager = class {
         name: toolName,
         arguments: args
       },
-      import_types2.CallToolResultSchema,
+      CallToolResultSchema2,
       this.withTimeout(serverId, options)
     );
   }
@@ -426,7 +427,7 @@ var MCPClientManager = class {
     if (!(state == null ? void 0 : state.transport)) {
       throw new Error(`Unknown MCP server "${serverId}".`);
     }
-    if (state.transport instanceof import_streamableHttp.StreamableHTTPClientTransport) {
+    if (state.transport instanceof StreamableHTTPClientTransport) {
       return state.transport.sessionId;
     }
     throw new Error(
@@ -451,21 +452,21 @@ var MCPClientManager = class {
   onResourceListChanged(serverId, handler) {
     this.addNotificationHandler(
       serverId,
-      import_types2.ResourceListChangedNotificationSchema,
+      ResourceListChangedNotificationSchema,
       handler
     );
   }
   onResourceUpdated(serverId, handler) {
     this.addNotificationHandler(
       serverId,
-      import_types2.ResourceUpdatedNotificationSchema,
+      ResourceUpdatedNotificationSchema,
       handler
     );
   }
   onPromptListChanged(serverId, handler) {
     this.addNotificationHandler(
       serverId,
-      import_types2.PromptListChangedNotificationSchema,
+      PromptListChangedNotificationSchema,
       handler
     );
   }
@@ -534,10 +535,10 @@ var MCPClientManager = class {
   }
   async connectViaStdio(serverId, client, config, timeout) {
     var _a;
-    const underlying = new import_stdio.StdioClientTransport({
+    const underlying = new StdioClientTransport({
       command: config.command,
       args: config.args,
-      env: { ...(0, import_stdio.getDefaultEnvironment)(), ...(_a = config.env) != null ? _a : {} }
+      env: { ...getDefaultEnvironment(), ...(_a = config.env) != null ? _a : {} }
     });
     const wrapped = this.wrapTransportForLogging(serverId, config, underlying);
     await client.connect(wrapped, { timeout });
@@ -548,7 +549,7 @@ var MCPClientManager = class {
     const preferSSE = (_a = config.preferSSE) != null ? _a : config.url.pathname.endsWith("/sse");
     let streamableError;
     if (!preferSSE) {
-      const streamableTransport = new import_streamableHttp.StreamableHTTPClientTransport(
+      const streamableTransport = new StreamableHTTPClientTransport(
         config.url,
         {
           requestInit: config.requestInit,
@@ -572,7 +573,7 @@ var MCPClientManager = class {
         await this.safeCloseTransport(streamableTransport);
       }
     }
-    const sseTransport = new import_sse.SSEClientTransport(config.url, {
+    const sseTransport = new SSEClientTransport(config.url, {
       requestInit: config.requestInit,
       eventSourceInit: config.eventSourceInit,
       authProvider: config.authProvider
@@ -630,13 +631,13 @@ var MCPClientManager = class {
     const serverSpecific = this.elicitationHandlers.get(serverId);
     if (serverSpecific) {
       client.setRequestHandler(
-        import_types2.ElicitRequestSchema,
+        ElicitRequestSchema,
         async (request) => serverSpecific(request.params)
       );
       return;
     }
     if (this.elicitationCallback) {
-      client.setRequestHandler(import_types2.ElicitRequestSchema, async (request) => {
+      client.setRequestHandler(ElicitRequestSchema, async (request) => {
         var _a, _b, _c, _d;
         const reqId = `elicit_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
         return await this.elicitationCallback({
@@ -827,8 +828,9 @@ var MCPClientManager = class {
     return state.client;
   }
 };
-// Annotate the CommonJS export names for ESM import in node:
-0 && (module.exports = {
-  MCPClientManager
-});
-//# sourceMappingURL=index.cjs.map
+
+export {
+  MCPClientManager,
+  mcp_client_manager_exports
+};
+//# sourceMappingURL=chunk-6XEFXCUG.js.map

@@ -85,6 +85,35 @@ function resetExecution(context: ExecutionContext | null, clear: () => void) {
   }
 }
 
+function serializeMcpError(error: unknown) {
+  const anyErr = error as any;
+  const base = {
+    name: anyErr?.name ?? "Error",
+    message: anyErr?.message ?? String(error),
+    code: anyErr?.code ?? anyErr?.error?.code,
+    data: anyErr?.data ?? anyErr?.error?.data,
+  } as Record<string, unknown>;
+  const cause = anyErr?.cause;
+  if (cause && typeof cause === "object") {
+    base.cause = {
+      name: (cause as any)?.name,
+      message: (cause as any)?.message,
+      code: (cause as any)?.code,
+      data: (cause as any)?.data,
+    };
+  }
+  if (process.env.NODE_ENV === "development" && anyErr?.stack) {
+    base.stack = anyErr.stack;
+  }
+  return base;
+}
+
+function jsonError(c: any, error: unknown, fallbackStatus = 500) {
+  const details = serializeMcpError(error);
+  const status = typeof (error as any)?.status === "number" ? (error as any).status : fallbackStatus;
+  return c.json({ error: details.message as string, mcpError: details }, status);
+}
+
 tools.post("/list", async (c) => {
   try {
     const { serverId } = (await c.req.json()) as { serverId?: string };
@@ -100,8 +129,7 @@ tools.post("/list", async (c) => {
 
     return c.json({ ...result, toolsMetadata });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return c.json({ error: message }, 500);
+    return jsonError(c, error, 500);
   }
 });
 
@@ -197,8 +225,7 @@ tools.post("/execute", async (c) => {
     );
   } catch (error) {
     resetExecution(context, () => manager.clearElicitationHandler(serverId));
-    const message = error instanceof Error ? error.message : String(error);
-    return c.json({ error: message }, 500);
+    return jsonError(c, error, 500);
   }
 });
 
@@ -254,8 +281,7 @@ tools.post("/respond", async (c) => {
     resetExecution(context, () =>
       c.mcpClientManager.clearElicitationHandler(context.serverId),
     );
-    const message = error instanceof Error ? error.message : String(error);
-    return c.json({ error: message }, 500);
+    return jsonError(c, error, 500);
   }
 });
 
