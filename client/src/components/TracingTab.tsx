@@ -22,32 +22,49 @@ export function TracingTab() {
     new Set(),
   );
   const [levelFilter, setLevelFilter] = useState<LogLevel | "all">("all");
+  const [serverFilter, setServerFilter] = useState<string | "all">("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [showScrollToTop, setShowScrollToTop] = useState(false);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  // Available serverIds from logs
+  const serverIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const entry of entries) {
+      const sid = (entry as any)?.data?.serverId;
+      if (typeof sid === "string" && sid.length > 0) ids.add(sid);
+    }
+    return Array.from(ids).sort();
+  }, [entries]);
+
   // Filter entries
   const filteredEntries = useMemo(() => {
-    const filtered =
+    let result =
       levelFilter === "all"
         ? entries
         : entries.filter((entry) => entry.level === levelFilter);
 
+    if (serverFilter !== "all") {
+      result = result.filter(
+        (entry) => (entry as any)?.data?.serverId === serverFilter,
+      );
+    }
+
     if (!searchQuery.trim()) {
-      return filtered;
+      return result;
     }
 
     const queryLower = searchQuery.toLowerCase();
-    return filtered.filter(
+    return result.filter(
       (entry) =>
         entry.message.toLowerCase().includes(queryLower) ||
         entry.context.toLowerCase().includes(queryLower) ||
         (entry.data &&
           JSON.stringify(entry.data).toLowerCase().includes(queryLower)),
     );
-  }, [entries, levelFilter, searchQuery]);
+  }, [entries, levelFilter, serverFilter, searchQuery]);
 
   // Handle scroll events to show/hide scroll to top button
   useEffect(() => {
@@ -98,7 +115,7 @@ export function TracingTab() {
                   : msg?.error !== undefined
                     ? "error"
                     : "unknown";
-            const summary = `[${serverId}] ${dir} - {${methodName}}`;
+            const summary = `[${serverId}] ${dir} - ${methodName}`;
             rpcLogger.debug(summary, {
               serverId,
               direction,
@@ -152,6 +169,23 @@ export function TracingTab() {
               {LOG_LEVEL_ORDER.map((level) => (
                 <SelectItem key={level} value={level}>
                   <LogLevelBadge level={level as LogLevel} />
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select
+            value={serverFilter}
+            onValueChange={(value) => setServerFilter(value as string | "all")}
+          >
+            <SelectTrigger className="w-56">
+              <SelectValue placeholder="All Servers" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Servers</SelectItem>
+              {serverIds.map((id) => (
+                <SelectItem key={id} value={id}>
+                  {id}
                 </SelectItem>
               ))}
             </SelectContent>
