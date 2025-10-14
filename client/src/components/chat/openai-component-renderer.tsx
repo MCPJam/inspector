@@ -93,9 +93,7 @@ export function OpenAIComponentRenderer({
         } catch (error) {
           console.error("Error storing widget data:", error);
           setError(
-            error instanceof Error
-              ? error.message
-              : "Failed to prepare widget",
+            error instanceof Error ? error.message : "Failed to prepare widget",
           );
         }
       };

@@ -16,15 +16,18 @@ interface WidgetData {
 const widgetDataStore = new Map<string, WidgetData>();
 
 // Cleanup expired widget data every 5 minutes
-setInterval(() => {
-  const now = Date.now();
-  const ONE_HOUR = 60 * 60 * 1000;
-  for (const [toolId, data] of widgetDataStore.entries()) {
-    if (now - data.timestamp > ONE_HOUR) {
-      widgetDataStore.delete(toolId);
+setInterval(
+  () => {
+    const now = Date.now();
+    const ONE_HOUR = 60 * 60 * 1000;
+    for (const [toolId, data] of widgetDataStore.entries()) {
+      if (now - data.timestamp > ONE_HOUR) {
+        widgetDataStore.delete(toolId);
+      }
     }
-  }
-}, 5 * 60 * 1000).unref();
+  },
+  5 * 60 * 1000,
+).unref();
 
 // List resources endpoint
 resources.post("/list", async (c) => {
@@ -97,10 +100,7 @@ resources.post("/widget/store", async (c) => {
     const { serverId, uri, toolInput, toolOutput, toolId } = body;
 
     if (!serverId || !uri || !toolId) {
-      return c.json(
-        { success: false, error: "Missing required fields" },
-        400,
-      );
+      return c.json({ success: false, error: "Missing required fields" }, 400);
     }
 
     // Store widget data using toolId as key
