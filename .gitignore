@@ -27,6 +27,7 @@ cli/node_modules/
 cli/package-lock.json
 server/node_modules/
 mcp-chat-client/node_modules/
+.npm-cache/
 temp/
 internals/
 
