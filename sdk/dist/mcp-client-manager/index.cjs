@@ -104,11 +104,15 @@ var MCPClientManager = class {
     this.notificationHandlers = /* @__PURE__ */ new Map();
     this.elicitationHandlers = /* @__PURE__ */ new Map();
     this.toolsMetadataCache = /* @__PURE__ */ new Map();
+    // Default JSON-RPC logging controls
+    this.defaultLogJsonRpc = false;
     this.pendingElicitations = /* @__PURE__ */ new Map();
-    var _a, _b, _c;
+    var _a, _b, _c, _d;
     this.defaultClientVersion = (_a = options.defaultClientVersion) != null ? _a : "1.0.0";
     this.defaultCapabilities = { ...(_b = options.defaultCapabilities) != null ? _b : {} };
     this.defaultTimeout = (_c = options.defaultTimeout) != null ? _c : import_protocol.DEFAULT_REQUEST_TIMEOUT_MSEC;
+    this.defaultLogJsonRpc = (_d = options.defaultLogJsonRpc) != null ? _d : false;
+    this.defaultRpcLogger = options.rpcLogger;
     for (const [id, config] of Object.entries(servers)) {
       void this.connectToServer(id, config);
     }
@@ -177,7 +181,7 @@ var MCPClientManager = class {
       };
       let transport;
       if (this.isStdioConfig(config)) {
-        transport = await this.connectViaStdio(client, config, timeout);
+        transport = await this.connectViaStdio(serverId, client, config, timeout);
       } else {
         transport = await this.connectViaHttp(
           serverId,
@@ -523,15 +527,16 @@ var MCPClientManager = class {
       this.pendingElicitations.delete(requestId);
     }
   }
-  async connectViaStdio(client, config, timeout) {
+  async connectViaStdio(serverId, client, config, timeout) {
     var _a;
-    const transport = new import_stdio.StdioClientTransport({
+    const underlying = new import_stdio.StdioClientTransport({
       command: config.command,
       args: config.args,
       env: { ...(0, import_stdio.getDefaultEnvironment)(), ...(_a = config.env) != null ? _a : {} }
     });
-    await client.connect(transport, { timeout });
-    return transport;
+    const wrapped = this.wrapTransportForLogging(serverId, config, underlying);
+    await client.connect(wrapped, { timeout });
+    return underlying;
   }
   async connectViaHttp(serverId, client, config, timeout) {
     var _a;
@@ -548,7 +553,12 @@ var MCPClientManager = class {
         }
       );
       try {
-        await client.connect(streamableTransport, {
+        const wrapped = this.wrapTransportForLogging(
+          serverId,
+          config,
+          streamableTransport
+        );
+        await client.connect(wrapped, {
           timeout: Math.min(timeout, 3e3)
         });
         return streamableTransport;
@@ -563,7 +573,12 @@ var MCPClientManager = class {
       authProvider: config.authProvider
     });
     try {
-      await client.connect(sseTransport, { timeout });
+      const wrapped = this.wrapTransportForLogging(
+        serverId,
+        config,
+        sseTransport
+      );
+      await client.connect(wrapped, { timeout });
       return sseTransport;
     } catch (error) {
       await this.safeCloseTransport(sseTransport);
@@ -690,6 +705,74 @@ var MCPClientManager = class {
     } catch {
       return String(error);
     }
+  }
+  // Returns a transport that logs JSON-RPC traffic if enabled for this server
+  wrapTransportForLogging(serverId, config, transport) {
+    const logger = this.resolveRpcLogger(serverId, config);
+    if (!logger) return transport;
+    const log = logger;
+    const self = this;
+    class LoggingTransport {
+      constructor(inner) {
+        this.inner = inner;
+        this.inner.onmessage = (message, extra) => {
+          var _a;
+          try {
+            log({ direction: "receive", message, serverId });
+          } catch {
+          }
+          (_a = this.onmessage) == null ? void 0 : _a.call(this, message, extra);
+        };
+        this.inner.onclose = () => {
+          var _a;
+          (_a = this.onclose) == null ? void 0 : _a.call(this);
+        };
+        this.inner.onerror = (error) => {
+          var _a;
+          (_a = this.onerror) == null ? void 0 : _a.call(this, error);
+        };
+      }
+      async start() {
+        if (typeof this.inner.start === "function") {
+          await this.inner.start();
+        }
+      }
+      async send(message, options) {
+        try {
+          log({ direction: "send", message, serverId });
+        } catch {
+        }
+        await this.inner.send(message, options);
+      }
+      async close() {
+        await this.inner.close();
+      }
+      get sessionId() {
+        return this.inner.sessionId;
+      }
+      setProtocolVersion(version) {
+        if (typeof this.inner.setProtocolVersion === "function") {
+          this.inner.setProtocolVersion(version);
+        }
+      }
+    }
+    return new LoggingTransport(transport);
+  }
+  resolveRpcLogger(serverId, config) {
+    if (config.rpcLogger) return config.rpcLogger;
+    if (config.logJsonRpc || this.defaultLogJsonRpc) {
+      return ({ direction, message, serverId: id }) => {
+        let printable;
+        try {
+          printable = typeof message === "string" ? message : JSON.stringify(message);
+        } catch {
+          printable = String(message);
+        }
+        console.debug(`[MCP:${id}] ${direction.toUpperCase()} ${printable}`);
+      };
+    }
+    if (this.defaultRpcLogger) return this.defaultRpcLogger;
+    return void 0;
   }
   isMethodUnavailableError(error, method) {
     if (!(error instanceof Error)) {

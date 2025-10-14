@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { MCPServerConfig } from "@/sdk";
 import "../../types/hono"; // Type extensions
+import { rpcLogBus, type RpcLogEvent } from "../../services/rpc-log-bus";
 
 const servers = new Hono();
 
@@ -168,6 +169,70 @@ servers.post("/reconnect", async (c) => {
       500,
     );
   }
+});
+
+// Stream JSON-RPC messages over SSE for all servers.
+servers.get("/rpc/stream", async (c) => {
+  const serverIds = c.mcpClientManager.listServers();
+  const url = new URL(c.req.url);
+  const replay = parseInt(url.searchParams.get("replay") || "200", 10);
+
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    start(controller) {
+      const send = (data: unknown) => {
+        try {
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify(data)}\n\n`),
+          );
+        } catch {}
+      };
+
+      // Replay recent messages for all known servers
+      try {
+        const recent = rpcLogBus.getBuffer(
+          serverIds,
+          isNaN(replay) ? 0 : replay,
+        );
+        for (const evt of recent) {
+          send({ type: "rpc", ...evt });
+        }
+      } catch {}
+
+      // Subscribe to live events for all known servers
+      const unsubscribe = rpcLogBus.subscribe(serverIds, (evt: RpcLogEvent) => {
+        send({ type: "rpc", ...evt });
+      });
+
+      // Keepalive comments
+      const keepalive = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(`: keepalive ${Date.now()}\n\n`));
+        } catch {}
+      }, 15000);
+
+      // Cleanup on client disconnect
+      c.req.raw.signal.addEventListener("abort", () => {
+        try {
+          clearInterval(keepalive);
+          unsubscribe();
+        } catch {}
+        try {
+          controller.close();
+        } catch {}
+      });
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Expose-Headers": "*",
+    },
+  });
 });
 
 export default servers;
