@@ -167,40 +167,6 @@ function spawnPromise(command, args, options) {
   });
 }
 
-async function showSuccessMessage(port) {
-  logDivider();
-
-  // Use BASE_URL if set, otherwise construct from HOST and port
-  // Default: localhost in development, 127.0.0.1 in production
-  const defaultHost =
-    process.env.NODE_ENV === "production" ? "127.0.0.1" : "localhost";
-  const host = process.env.HOST || defaultHost;
-  const baseUrl = process.env.BASE_URL || `http://${host}:${port}`;
-
-  const successText = `🎉 MCP Inspector is now running successfully!
-
-📱 Access your application at: ${baseUrl}
-🔧 Unified server ready to handle MCP connections
-📊 Monitor your MCP tools and resources
-💬 Start chatting with your MCP-enabled AI
-
-Press Ctrl+C to stop the server`;
-
-  logBox(successText, "🚀 Ready to Go!");
-
-  logDivider();
-
-  // Automatically open the browser
-  try {
-    await open(baseUrl);
-    logSuccess(`🌐 Browser opened at ${baseUrl}`);
-  } catch (error) {
-    logWarning(
-      `Could not open browser automatically. Please visit ${baseUrl} manually.`,
-    );
-  }
-}
-
 async function checkOllamaInstalled() {
   try {
     await spawnPromise("ollama", ["--version"], { echoOutput: false });
@@ -653,7 +619,7 @@ async function main() {
       // Use BASE_URL if set, otherwise construct from HOST and PORT
       // Default: localhost in development, 127.0.0.1 in production
       const defaultHost =
-        process.env.NODE_ENV === "production" ? "127.0.0.1" : "localhost";
+        process.env.ENVIRONMENT === "production" ? "127.0.0.1" : "localhost";
       const host = process.env.HOST || defaultHost;
       const url = process.env.BASE_URL || `http://${host}:${PORT}`;
 
