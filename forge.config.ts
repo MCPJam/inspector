@@ -64,7 +64,11 @@ const config: ForgeConfig = {
     osxSign: osxSignOptions,
     osxNotarize: osxNotarizeOptions,
   },
-  rebuildConfig: {},
+  rebuildConfig: {
+    // Force rebuild to complete faster on Windows
+    force: false,
+    onlyModules: [],
+  },
   makers: [
     new MakerSquirrel({
       name: "mcpjam-inspector",
