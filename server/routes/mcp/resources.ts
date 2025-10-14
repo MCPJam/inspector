@@ -19,12 +19,12 @@ const widgetDataStore = new Map<string, WidgetData>();
 setInterval(() => {
   const now = Date.now();
   const ONE_HOUR = 60 * 60 * 1000;
-  for (const [sessionId, data] of widgetDataStore.entries()) {
+  for (const [toolId, data] of widgetDataStore.entries()) {
     if (now - data.timestamp > ONE_HOUR) {
-      widgetDataStore.delete(sessionId);
+      widgetDataStore.delete(toolId);
     }
   }
-}, 5 * 60 * 1000);
+}, 5 * 60 * 1000).unref();
 
 // List resources endpoint
 resources.post("/list", async (c) => {
@@ -90,7 +90,7 @@ resources.post("/read", async (c) => {
   }
 });
 
-// Store widget data and return session ID
+// Store widget data using toolId as key
 resources.post("/widget/store", async (c) => {
   try {
     const body = await c.req.json();
@@ -103,11 +103,8 @@ resources.post("/widget/store", async (c) => {
       );
     }
 
-    // Generate session ID
-    const sessionId = `widget-${toolId}-${Date.now()}`;
-
-    // Store widget data
-    widgetDataStore.set(sessionId, {
+    // Store widget data using toolId as key
+    widgetDataStore.set(toolId, {
       serverId,
       uri,
       toolInput,
@@ -116,7 +113,7 @@ resources.post("/widget/store", async (c) => {
       timestamp: Date.now(),
     });
 
-    return c.json({ success: true, sessionId });
+    return c.json({ success: true });
   } catch (error) {
     console.error("Error storing widget data:", error);
     return c.json(
@@ -131,14 +128,14 @@ resources.post("/widget/store", async (c) => {
 
 // Simpler widget endpoint for React Router compatibility
 // Container page that changes URL to "/" before loading widget
-resources.get("/widget/:sessionId", async (c) => {
-  const sessionId = c.req.param("sessionId");
+resources.get("/widget/:toolId", async (c) => {
+  const toolId = c.req.param("toolId");
 
   // Check if data exists in storage
-  const widgetData = widgetDataStore.get(sessionId);
+  const widgetData = widgetDataStore.get(toolId);
   if (!widgetData) {
     return c.html(
-      "<html><body>Error: Widget session not found or expired</body></html>",
+      "<html><body>Error: Widget data not found or expired</body></html>",
       404,
     );
   }
@@ -157,8 +154,8 @@ resources.get("/widget/:sessionId", async (c) => {
           // Change URL to "/" BEFORE loading widget (for React Router)
           history.replaceState(null, '', '/');
 
-          // Fetch the actual widget HTML using session ID
-          const response = await fetch('/api/mcp/resources/widget-content/${sessionId}');
+          // Fetch the actual widget HTML using toolId
+          const response = await fetch('/api/mcp/resources/widget-content/${toolId}');
           const html = await response.text();
 
           // Replace entire document with widget HTML
@@ -173,20 +170,20 @@ resources.get("/widget/:sessionId", async (c) => {
 });
 
 // Actual widget content endpoint
-resources.get("/widget-content/:sessionId", async (c) => {
+resources.get("/widget-content/:toolId", async (c) => {
   try {
-    const sessionId = c.req.param("sessionId");
+    const toolId = c.req.param("toolId");
 
     // Retrieve widget data from storage
-    const widgetData = widgetDataStore.get(sessionId);
+    const widgetData = widgetDataStore.get(toolId);
     if (!widgetData) {
       return c.html(
-        "<html><body>Error: Widget session not found or expired</body></html>",
+        "<html><body>Error: Widget data not found or expired</body></html>",
         404,
       );
     }
 
-    const { serverId, uri, toolInput, toolOutput, toolId } = widgetData;
+    const { serverId, uri, toolInput, toolOutput } = widgetData;
 
     const mcpClientManager = c.mcpClientManager;
     const availableServers = mcpClientManager
@@ -425,6 +422,11 @@ resources.get("/widget-content/:sessionId", async (c) => {
     );
     c.header("X-Frame-Options", "SAMEORIGIN");
     c.header("X-Content-Type-Options", "nosniff");
+
+    // Disable caching for widget content (always fetch fresh HTML from MCP server)
+    c.header("Cache-Control", "no-cache, no-store, must-revalidate");
+    c.header("Pragma", "no-cache");
+    c.header("Expires", "0");
 
     return c.html(modifiedHtml);
   } catch (error) {

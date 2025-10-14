@@ -35,9 +35,13 @@ export function OpenAIComponentRenderer({
   // Storage key for widget state
   const widgetStateKey = `openai-widget-state:${toolCall.name}:${toolCall.id}`;
 
-  // Store widget data server-side and get session URL
+  // Store widget data server-side
   useEffect(() => {
     if (componentUrl.startsWith("ui://") && serverId) {
+      // Set URL immediately using toolCall.id
+      const url = `/api/mcp/resources/widget/${toolCall.id}`;
+      setWidgetUrl(url);
+
       // Extract structured content from different result formats
       // 1. Backend flow: toolResult.result.structuredContent
       // 2. Local AI SDK flow: toolResult.result[0].output.value.structuredContent
@@ -70,41 +74,22 @@ export function OpenAIComponentRenderer({
         }
       }
 
-      // Store widget data server-side
-      const storeWidgetData = async () => {
-        try {
-          const response = await fetch("/api/mcp/resources/widget/store", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              serverId,
-              uri: componentUrl,
-              toolInput: toolCall.parameters,
-              toolOutput: structuredContent,
-              toolId: toolCall.id,
-            }),
-          });
-
-          if (!response.ok) {
-            throw new Error(`Failed to store widget data: ${response.status}`);
-          }
-
-          const { sessionId } = await response.json();
-          const url = `/api/mcp/resources/widget/${sessionId}`;
-          setWidgetUrl(url);
-        } catch (error) {
-          console.error("Error storing widget data:", error);
-          setError(
-            error instanceof Error
-              ? error.message
-              : "Failed to prepare widget",
-          );
-        }
-      };
-
-      storeWidgetData();
+      // Fire-and-forget POST to store widget data
+      fetch("/api/mcp/resources/widget/store", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          serverId,
+          uri: componentUrl,
+          toolInput: toolCall.parameters,
+          toolOutput: structuredContent,
+          toolId: toolCall.id,
+        }),
+      }).catch((error) => {
+        console.error("Error storing widget data:", error);
+      });
     } else if (
       componentUrl.startsWith("http://") ||
       componentUrl.startsWith("https://")
