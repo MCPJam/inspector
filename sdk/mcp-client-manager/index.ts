@@ -11,6 +11,7 @@ import type { StreamableHTTPClientTransportOptions } from "@modelcontextprotocol
 import { DEFAULT_REQUEST_TIMEOUT_MSEC } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { TransportSendOptions } from "@modelcontextprotocol/sdk/shared/transport.js";
 import {
   CallToolResultSchema,
   ElicitRequestSchema,
@@ -21,6 +22,8 @@ import {
 import type {
   ElicitRequest,
   ElicitResult,
+  JSONRPCMessage,
+  MessageExtraInfo,
 } from "@modelcontextprotocol/sdk/types.js";
 import {
   convertMCPToolsToVercelTools,
@@ -35,6 +38,14 @@ type BaseServerConfig = {
   timeout?: number;
   version?: string;
   onError?: (error: unknown) => void;
+  // Enable simple console logging of JSON-RPC traffic for this server
+  logJsonRpc?: boolean;
+  // Custom logger for JSON-RPC traffic; overrides logJsonRpc when provided
+  rpcLogger?: (event: {
+    direction: "send" | "receive";
+    message: unknown;
+    serverId: string;
+  }) => void;
 };
 
 type StdioServerConfig = BaseServerConfig & {
@@ -118,6 +129,13 @@ export class MCPClientManager {
   private readonly defaultClientVersion: string;
   private readonly defaultCapabilities: ClientCapabilityOptions;
   private readonly defaultTimeout: number;
+  // Default JSON-RPC logging controls
+  private defaultLogJsonRpc: boolean = false;
+  private defaultRpcLogger?: (event: {
+    direction: "send" | "receive";
+    message: unknown;
+    serverId: string;
+  }) => void;
   // Global elicitation callback support (used by streaming chat endpoint)
   private elicitationCallback?: (request: {
     requestId: string;
@@ -138,12 +156,22 @@ export class MCPClientManager {
       defaultClientVersion?: string;
       defaultCapabilities?: ClientCapabilityOptions;
       defaultTimeout?: number;
+      // Enable console JSON-RPC logs for all servers unless overridden per-server
+      defaultLogJsonRpc?: boolean;
+      // Provide a global JSON-RPC logger
+      rpcLogger?: (event: {
+        direction: "send" | "receive";
+        message: unknown;
+        serverId: string;
+      }) => void;
     } = {},
   ) {
     this.defaultClientVersion = options.defaultClientVersion ?? "1.0.0";
     this.defaultCapabilities = { ...(options.defaultCapabilities ?? {}) };
     this.defaultTimeout =
       options.defaultTimeout ?? DEFAULT_REQUEST_TIMEOUT_MSEC;
+    this.defaultLogJsonRpc = options.defaultLogJsonRpc ?? false;
+    this.defaultRpcLogger = options.rpcLogger;
 
     for (const [id, config] of Object.entries(servers)) {
       void this.connectToServer(id, config);
@@ -226,7 +254,12 @@ export class MCPClientManager {
 
       let transport: Transport;
       if (this.isStdioConfig(config)) {
-        transport = await this.connectViaStdio(client, config, timeout);
+        transport = await this.connectViaStdio(
+          serverId,
+          client,
+          config,
+          timeout,
+        );
       } else {
         transport = await this.connectViaHttp(
           serverId,
@@ -685,17 +718,19 @@ export class MCPClientManager {
   }
 
   private async connectViaStdio(
+    serverId: string,
     client: Client,
     config: StdioServerConfig,
     timeout: number,
   ): Promise<Transport> {
-    const transport = new StdioClientTransport({
+    const underlying = new StdioClientTransport({
       command: config.command,
       args: config.args,
       env: { ...getDefaultEnvironment(), ...(config.env ?? {}) },
     });
-    await client.connect(transport, { timeout });
-    return transport;
+    const wrapped = this.wrapTransportForLogging(serverId, config, underlying);
+    await client.connect(wrapped, { timeout });
+    return underlying;
   }
 
   private async connectViaHttp(
@@ -719,7 +754,12 @@ export class MCPClientManager {
       );
 
       try {
-        await client.connect(streamableTransport, {
+        const wrapped = this.wrapTransportForLogging(
+          serverId,
+          config,
+          streamableTransport,
+        );
+        await client.connect(wrapped, {
           timeout: Math.min(timeout, 3000),
         });
         return streamableTransport;
@@ -736,7 +776,12 @@ export class MCPClientManager {
     });
 
     try {
-      await client.connect(sseTransport, { timeout });
+      const wrapped = this.wrapTransportForLogging(
+        serverId,
+        config,
+        sseTransport,
+      );
+      await client.connect(wrapped, { timeout });
       return sseTransport;
     } catch (error) {
       await this.safeCloseTransport(sseTransport);
@@ -896,6 +941,105 @@ export class MCPClientManager {
     } catch {
       return String(error);
     }
+  }
+
+  // Returns a transport that logs JSON-RPC traffic if enabled for this server
+  private wrapTransportForLogging(
+    serverId: string,
+    config: MCPServerConfig,
+    transport: Transport,
+  ): Transport {
+    const logger = this.resolveRpcLogger(serverId, config);
+    if (!logger) return transport;
+    const log: (event: {
+      direction: "send" | "receive";
+      message: unknown;
+      serverId: string;
+    }) => void = logger;
+
+    // Wrapper that proxies to the underlying transport while emitting logs
+    const self = this;
+    class LoggingTransport implements Transport {
+      onclose?: () => void;
+      onerror?: (error: Error) => void;
+      onmessage?: (message: JSONRPCMessage, extra?: MessageExtraInfo) => void;
+      constructor(private readonly inner: Transport) {
+        this.inner.onmessage = (
+          message: JSONRPCMessage,
+          extra?: MessageExtraInfo,
+        ) => {
+          try {
+            log({ direction: "receive", message, serverId });
+          } catch {
+            // ignore logger errors
+          }
+          this.onmessage?.(message, extra);
+        };
+        this.inner.onclose = () => {
+          this.onclose?.();
+        };
+        this.inner.onerror = (error: Error) => {
+          this.onerror?.(error);
+        };
+      }
+      async start(): Promise<void> {
+        if (typeof (this.inner as any).start === "function") {
+          await (this.inner as any).start();
+        }
+      }
+      async send(
+        message: JSONRPCMessage,
+        options?: TransportSendOptions,
+      ): Promise<void> {
+        try {
+          log({ direction: "send", message, serverId });
+        } catch {
+          // ignore logger errors
+        }
+        await this.inner.send(message as any, options as any);
+      }
+      async close(): Promise<void> {
+        await this.inner.close();
+      }
+      get sessionId(): string | undefined {
+        return (this.inner as any).sessionId;
+      }
+      setProtocolVersion?(version: string): void {
+        if (typeof this.inner.setProtocolVersion === "function") {
+          this.inner.setProtocolVersion(version);
+        }
+      }
+    }
+
+    return new LoggingTransport(transport);
+  }
+
+  private resolveRpcLogger(
+    serverId: string,
+    config: MCPServerConfig,
+  ):
+    | ((event: {
+        direction: "send" | "receive";
+        message: unknown;
+        serverId: string;
+      }) => void)
+    | undefined {
+    if (config.rpcLogger) return config.rpcLogger;
+    if (config.logJsonRpc || this.defaultLogJsonRpc) {
+      return ({ direction, message, serverId: id }) => {
+        let printable: string;
+        try {
+          printable =
+            typeof message === "string" ? message : JSON.stringify(message);
+        } catch {
+          printable = String(message);
+        }
+        // eslint-disable-next-line no-console
+        console.debug(`[MCP:${id}] ${direction.toUpperCase()} ${printable}`);
+      };
+    }
+    if (this.defaultRpcLogger) return this.defaultRpcLogger;
+    return undefined;
   }
 
   private isMethodUnavailableError(error: unknown, method: string): boolean {
