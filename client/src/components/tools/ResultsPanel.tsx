@@ -245,20 +245,24 @@ export function ResultsPanel({
                     timestamp: new Date(),
                   }}
                   onCallTool={async (invocationToolName, params) => {
-                    const toolResponse = await onExecuteFromUI(invocationToolName, params);
+                    const toolResponse = await onExecuteFromUI(
+                      invocationToolName,
+                      params,
+                    );
 
                     // Return the response in ChatGPT's expected format
-                    if ('error' in toolResponse) {
+                    if ("error" in toolResponse) {
                       return {
                         isError: true,
                         error: toolResponse.error,
                       };
                     }
 
-                    if (toolResponse.status === 'completed') {
+                    if (toolResponse.status === "completed") {
                       // Extract structured content from the result
                       const result = toolResponse.result as any;
-                      const structuredContent = result?.structuredContent || result;
+                      const structuredContent =
+                        result?.structuredContent || result;
 
                       return {
                         _meta: null,
@@ -273,7 +277,7 @@ export function ResultsPanel({
                     // Elicitation not supported in widgets yet
                     return {
                       isError: true,
-                      error: 'Elicitation not supported in this context',
+                      error: "Elicitation not supported in this context",
                     };
                   }}
                   onSendFollowup={onSendFollowup}
