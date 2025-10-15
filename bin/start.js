@@ -342,7 +342,7 @@ async function main() {
       envVars.PORT = port;
       // Default: localhost in development, 127.0.0.1 in production
       const defaultHost =
-        process.env.NODE_ENV === "production" ? "127.0.0.1" : "localhost";
+        process.env.ENVIRONMENT === "dev" ? "localhost" : "127.0.0.1";
       const baseHost = process.env.HOST || defaultHost;
       envVars.BASE_URL = `http://${baseHost}:${port}`;
       continue;
@@ -532,7 +532,7 @@ async function main() {
     envVars.PORT = PORT;
     // Default: localhost in development, 127.0.0.1 in production
     const defaultHost =
-      process.env.NODE_ENV === "production" ? "127.0.0.1" : "localhost";
+      process.env.ENVIRONMENT === "dev" ? "localhost" : "127.0.0.1";
     const baseHost = process.env.HOST || defaultHost;
     envVars.BASE_URL = `http://${baseHost}:${PORT}`;
     Object.assign(process.env, envVars);
@@ -619,7 +619,7 @@ async function main() {
       // Use BASE_URL if set, otherwise construct from HOST and PORT
       // Default: localhost in development, 127.0.0.1 in production
       const defaultHost =
-        process.env.ENVIRONMENT === "production" ? "127.0.0.1" : "localhost";
+        process.env.ENVIRONMENT === "dev" ? "localhost" : "127.0.0.1";
       const host = process.env.HOST || defaultHost;
       const url = process.env.BASE_URL || `http://${host}:${PORT}`;
 
