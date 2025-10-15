@@ -10,6 +10,7 @@ export default defineConfig({
   root: "./client",
   resolve: {
     alias: {
+      "@/sdk": resolve(__dirname, "./sdk/index.ts"),
       "@/shared": resolve(__dirname, "./shared"),
       "@": resolve(__dirname, "./client/src"),
     },
