@@ -1,5 +1,6 @@
 import { ProviderTableRow } from "./ProviderTableRow";
 import { OllamaTableRow } from "./OllamaTableRow";
+import { LiteLLMTableRow } from "./LiteLLMTableRow";
 
 interface ProviderConfig {
   id: string;
@@ -18,6 +19,9 @@ interface ProvidersTableProps {
   onDeleteProvider: (providerId: string) => void;
   ollamaBaseUrl: string;
   onEditOllama: () => void;
+  litellmBaseUrl: string;
+  litellmModelAlias: string;
+  onEditLiteLLM: () => void;
 }
 
 export function ProvidersTable({
@@ -27,6 +31,9 @@ export function ProvidersTable({
   onDeleteProvider,
   ollamaBaseUrl,
   onEditOllama,
+  litellmBaseUrl,
+  litellmModelAlias,
+  onEditLiteLLM,
 }: ProvidersTableProps) {
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -43,6 +50,11 @@ export function ProvidersTable({
         );
       })}
       <OllamaTableRow baseUrl={ollamaBaseUrl} onEdit={onEditOllama} />
+      <LiteLLMTableRow
+        baseUrl={litellmBaseUrl}
+        modelAlias={litellmModelAlias}
+        onEdit={onEditLiteLLM}
+      />
     </div>
   );
 }

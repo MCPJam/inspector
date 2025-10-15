@@ -46,6 +46,7 @@ interface ChatRequest {
   temperature?: number;
   messages?: ChatMessage[];
   ollamaBaseUrl?: string;
+  litellmBaseUrl?: string;
   action?: string;
   requestId?: string;
   response?: any;
@@ -603,6 +604,7 @@ chat.post("/", async (c) => {
       temperature,
       messages,
       ollamaBaseUrl: _ollama_unused,
+      litellmBaseUrl: _litellm_unused,
       action,
       requestId,
       response,
@@ -750,6 +752,7 @@ chat.post("/", async (c) => {
               model as ModelDefinition,
               apiKey || "",
               _ollama_unused,
+              _litellm_unused,
             );
             await createStreamingResponse(
               llmModel,
