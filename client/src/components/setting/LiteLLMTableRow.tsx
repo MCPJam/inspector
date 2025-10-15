@@ -8,12 +8,19 @@ interface LiteLLMTableRowProps {
   onEdit: () => void;
 }
 
-export function LiteLLMTableRow({ baseUrl, modelAlias, onEdit }: LiteLLMTableRowProps) {
+export function LiteLLMTableRow({
+  baseUrl,
+  modelAlias,
+  onEdit,
+}: LiteLLMTableRowProps) {
   const isConfigured = Boolean(baseUrl && modelAlias);
 
   // Count the number of models configured
   const modelCount = modelAlias
-    ? modelAlias.split(',').map(m => m.trim()).filter(m => m.length > 0).length
+    ? modelAlias
+        .split(",")
+        .map((m) => m.trim())
+        .filter((m) => m.length > 0).length
     : 0;
 
   return (
@@ -36,7 +43,7 @@ export function LiteLLMTableRow({ baseUrl, modelAlias, onEdit }: LiteLLMTableRow
             </h3>
             <p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">
               {isConfigured
-                ? `${modelCount} model${modelCount !== 1 ? 's' : ''} configured`
+                ? `${modelCount} model${modelCount !== 1 ? "s" : ""} configured`
                 : "Connect to your LiteLLM proxy"}
             </p>
           </div>

@@ -85,7 +85,8 @@ export function LiteLLMConfigDialog({
 
           <div>
             <label htmlFor="litellm-model" className="text-sm font-medium">
-              Model Aliases <span className="text-muted-foreground">(comma-separated)</span>
+              Model Aliases{" "}
+              <span className="text-muted-foreground">(comma-separated)</span>
             </label>
             <Input
               id="litellm-model"
@@ -96,7 +97,8 @@ export function LiteLLMConfigDialog({
               className="mt-1"
             />
             <p className="text-xs text-muted-foreground mt-1">
-              Enter multiple model aliases separated by commas. Each will appear as a separate option in the chat.
+              Enter multiple model aliases separated by commas. Each will appear
+              as a separate option in the chat.
             </p>
           </div>
 
@@ -106,7 +108,10 @@ export function LiteLLMConfigDialog({
               Need help?{" "}
               <button
                 onClick={() =>
-                  window.open("https://docs.litellm.ai/docs/proxy/quick_start", "_blank")
+                  window.open(
+                    "https://docs.litellm.ai/docs/proxy/quick_start",
+                    "_blank",
+                  )
                 }
                 className="underline hover:no-underline"
               >
@@ -120,7 +125,10 @@ export function LiteLLMConfigDialog({
           <Button variant="outline" onClick={onCancel}>
             Cancel
           </Button>
-          <Button onClick={onSave} disabled={!baseUrl.trim() || !modelAlias.trim()}>
+          <Button
+            onClick={onSave}
+            disabled={!baseUrl.trim() || !modelAlias.trim()}
+          >
             Save Configuration
           </Button>
         </DialogFooter>

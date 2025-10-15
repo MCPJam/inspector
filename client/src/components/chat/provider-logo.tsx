@@ -16,7 +16,12 @@ export function ProviderLogo({ provider }: ProviderLogoProps) {
     // Special rendering for LiteLLM with gradient badge
     if (provider === "litellm") {
       return (
-        <div className={cn("h-3 w-3 rounded-sm flex items-center justify-center", getProviderColor(provider))}>
+        <div
+          className={cn(
+            "h-3 w-3 rounded-sm flex items-center justify-center",
+            getProviderColor(provider),
+          )}
+        >
           <span className="text-white font-bold text-[6px]">L</span>
         </div>
       );

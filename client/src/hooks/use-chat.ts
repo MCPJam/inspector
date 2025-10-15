@@ -37,7 +37,14 @@ interface UseChatOptions {
 }
 
 export function useChat(options: UseChatOptions = {}) {
-  const { getToken, hasToken, tokens, getOllamaBaseUrl, getLiteLLMBaseUrl, getLiteLLMModelAlias } = useAiProviderKeys();
+  const {
+    getToken,
+    hasToken,
+    tokens,
+    getOllamaBaseUrl,
+    getLiteLLMBaseUrl,
+    getLiteLLMModelAlias,
+  } = useAiProviderKeys();
   const posthog = usePostHog();
 
   const {
@@ -181,12 +188,12 @@ export function useChat(options: UseChatOptions = {}) {
       const modelAliasString = getLiteLLMModelAlias();
       // Parse comma-separated model aliases
       const modelAliases = modelAliasString
-        .split(',')
-        .map(alias => alias.trim())
-        .filter(alias => alias.length > 0);
+        .split(",")
+        .map((alias) => alias.trim())
+        .filter((alias) => alias.length > 0);
 
       // Create a model definition for each alias
-      modelAliases.forEach(alias => {
+      modelAliases.forEach((alias) => {
         litellmModels.push({
           id: alias,
           name: alias,
@@ -204,7 +211,13 @@ export function useChat(options: UseChatOptions = {}) {
       allModels = allModels.concat(litellmModels);
     }
     return allModels;
-  }, [isOllamaRunning, ollamaModels, hasToken, getLiteLLMBaseUrl, getLiteLLMModelAlias]);
+  }, [
+    isOllamaRunning,
+    ollamaModels,
+    hasToken,
+    getLiteLLMBaseUrl,
+    getLiteLLMModelAlias,
+  ]);
 
   const applySseEvent = useCallback(
     (
