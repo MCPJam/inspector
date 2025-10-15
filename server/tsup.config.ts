@@ -37,8 +37,6 @@ export default defineConfig({
     // Packages with dynamic requires
     "chalk",
     "supports-color",
-    // Internal SDK package (built separately)
-    "@/sdk",
   ],
   noExternal: [
     // Force bundling of problematic packages
