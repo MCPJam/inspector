@@ -214,6 +214,16 @@ export async function initiateOAuth(
     );
     localStorage.setItem("mcp-oauth-pending", options.serverName);
 
+    // Store OAuth configuration (scopes) for recovery if connection fails
+    const oauthConfig: any = {};
+    if (options.scopes && options.scopes.length > 0) {
+      oauthConfig.scopes = options.scopes;
+    }
+    localStorage.setItem(
+      `mcp-oauth-config-${options.serverName}`,
+      JSON.stringify(oauthConfig),
+    );
+
     // Store custom client credentials if provided, so they can be retrieved during callback
     if (options.clientId || options.clientSecret) {
       const existingClientInfo = localStorage.getItem(
@@ -410,6 +420,23 @@ export function getStoredTokens(serverName: string): any {
 }
 
 /**
+ * Checks if OAuth is configured for a server by looking at multiple sources
+ */
+export function hasOAuthConfig(serverName: string): boolean {
+  const storedServerUrl = localStorage.getItem(`mcp-serverUrl-${serverName}`);
+  const storedClientInfo = localStorage.getItem(`mcp-client-${serverName}`);
+  const storedOAuthConfig = localStorage.getItem(`mcp-oauth-config-${serverName}`);
+  const storedTokens = getStoredTokens(serverName);
+
+  return (
+    storedServerUrl != null ||
+    storedClientInfo != null ||
+    storedOAuthConfig != null ||
+    storedTokens != null
+  );
+}
+
+/**
  * Waits for tokens to be available with timeout
  */
 export async function waitForTokens(
@@ -529,6 +556,7 @@ export function clearOAuthData(serverName: string): void {
   localStorage.removeItem(`mcp-client-${serverName}`);
   localStorage.removeItem(`mcp-verifier-${serverName}`);
   localStorage.removeItem(`mcp-serverUrl-${serverName}`);
+  localStorage.removeItem(`mcp-oauth-config-${serverName}`);
 }
 
 /**
