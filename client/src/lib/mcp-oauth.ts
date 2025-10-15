@@ -420,6 +420,23 @@ export function getStoredTokens(serverName: string): any {
 }
 
 /**
+ * Checks if OAuth is configured for a server by looking at multiple sources
+ */
+export function hasOAuthConfig(serverName: string): boolean {
+  const storedServerUrl = localStorage.getItem(`mcp-serverUrl-${serverName}`);
+  const storedClientInfo = localStorage.getItem(`mcp-client-${serverName}`);
+  const storedOAuthConfig = localStorage.getItem(`mcp-oauth-config-${serverName}`);
+  const storedTokens = getStoredTokens(serverName);
+
+  return (
+    storedServerUrl != null ||
+    storedClientInfo != null ||
+    storedOAuthConfig != null ||
+    storedTokens != null
+  );
+}
+
+/**
  * Waits for tokens to be available with timeout
  */
 export async function waitForTokens(

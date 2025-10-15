@@ -1,6 +1,7 @@
 import {
   clearOAuthData,
   getStoredTokens,
+  hasOAuthConfig,
   initiateOAuth,
   refreshOAuthTokens,
   MCPOAuthOptions,
@@ -20,13 +21,7 @@ export async function ensureAuthorizedForReconnect(
   server: ServerWithName,
 ): Promise<OAuthResult> {
   // Check if OAuth was configured by looking at multiple sources
-  const storedServerUrl = localStorage.getItem(`mcp-serverUrl-${server.name}`);
-  const storedClientInfo = localStorage.getItem(`mcp-client-${server.name}`);
-  const storedOAuthConfig = localStorage.getItem(`mcp-oauth-config-${server.name}`);
-  const storedTokens = getStoredTokens(server.name);
-  const hasOAuthConfig = storedServerUrl != null || storedClientInfo != null || storedOAuthConfig != null;
-
-  if (!server.oauthTokens && !hasOAuthConfig) {
+  if (!server.oauthTokens && !hasOAuthConfig(server.name)) {
     // No OAuth was ever configured, use existing config
     return { kind: "ready", serverConfig: server.config, tokens: undefined };
   }
@@ -46,6 +41,11 @@ export async function ensureAuthorizedForReconnect(
 
   // Fallback to a fresh OAuth flow if URL is present
   // This may redirect away; the hook should reflect oauth-flow state
+  const storedServerUrl = localStorage.getItem(`mcp-serverUrl-${server.name}`);
+  const storedClientInfo = localStorage.getItem(`mcp-client-${server.name}`);
+  const storedOAuthConfig = localStorage.getItem(`mcp-oauth-config-${server.name}`);
+  const storedTokens = getStoredTokens(server.name);
+
   const url = (server.config as any)?.url?.toString?.() || storedServerUrl;
   if (url) {
     // Get stored OAuth configuration
