@@ -495,7 +495,7 @@ async function main() {
   Object.assign(process.env, envVars);
 
   // Port configuration (fixed default to 3000)
-  const requestedPort = parseInt(process.env.PORT ?? "3000", 10);
+  const requestedPort = parseInt(process.env.PORT ?? "6274", 10);
   let PORT;
 
   try {
@@ -516,7 +516,7 @@ async function main() {
       }
     } else {
       // Fixed port policy: use default port 3000 and fail fast if unavailable
-      logInfo("No specific port requested, using fixed default port 3000");
+      logInfo("No specific port requested, using fixed default port 6274");
       if (await isPortAvailable(requestedPort)) {
         PORT = requestedPort.toString();
         logSuccess(`Default port ${requestedPort} is available`);
