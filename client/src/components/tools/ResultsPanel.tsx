@@ -1,4 +1,5 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type { ToolExecutionResponse } from "@/lib/mcp-tools-api";
 import { UIResourceRenderer } from "@mcp-ui/client";
 import { CheckCircle, XCircle } from "lucide-react";
 import { OpenAIComponentRenderer } from "../chat/openai-component-renderer";
@@ -63,7 +64,7 @@ interface ResultsPanelProps {
   onExecuteFromUI: (
     toolName: string,
     params?: Record<string, unknown>,
-  ) => Promise<void>;
+  ) => Promise<ToolExecutionResponse>;
   onHandleIntent: (
     intent: string,
     params?: Record<string, unknown>,
@@ -244,8 +245,36 @@ export function ResultsPanel({
                     timestamp: new Date(),
                   }}
                   onCallTool={async (invocationToolName, params) => {
-                    await onExecuteFromUI(invocationToolName, params);
-                    return {};
+                    const toolResponse = await onExecuteFromUI(invocationToolName, params);
+
+                    // Return the response in ChatGPT's expected format
+                    if ('error' in toolResponse) {
+                      return {
+                        isError: true,
+                        error: toolResponse.error,
+                      };
+                    }
+
+                    if (toolResponse.status === 'completed') {
+                      // Extract structured content from the result
+                      const result = toolResponse.result as any;
+                      const structuredContent = result?.structuredContent || result;
+
+                      return {
+                        _meta: null,
+                        content: result?.content || [],
+                        structuredContent: structuredContent,
+                        isError: false,
+                        result: JSON.stringify(structuredContent),
+                        meta: {},
+                      };
+                    }
+
+                    // Elicitation not supported in widgets yet
+                    return {
+                      isError: true,
+                      error: 'Elicitation not supported in this context',
+                    };
                   }}
                   onSendFollowup={onSendFollowup}
                   serverId={serverId}
