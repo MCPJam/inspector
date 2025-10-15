@@ -12,7 +12,7 @@ import {
 } from "../ui/select";
 import { ServerFormData } from "@/shared/types.js";
 import { ServerWithName } from "@/hooks/use-app-state";
-import { getStoredTokens } from "@/lib/mcp-oauth";
+import { getStoredTokens, hasOAuthConfig } from "@/lib/mcp-oauth";
 
 interface ServerModalProps {
   isOpen: boolean;
@@ -70,17 +70,16 @@ export function ServerModal({
 
       // Check if OAuth is configured by looking at multiple sources:
       // 1. Check if server has oauth tokens
-      // 2. Check if there's stored OAuth server URL (always set when OAuth is initiated)
-      // 3. Check if there's stored OAuth client information
-      // 4. Check if the config has an oauth field
-      const storedServerUrl = localStorage.getItem(`mcp-serverUrl-${server.name}`);
-      const storedClientInfo = localStorage.getItem(`mcp-client-${server.name}`);
-      const storedOAuthConfig = localStorage.getItem(`mcp-oauth-config-${server.name}`);
-      const storedTokens = getStoredTokens(server.name);
+      // 2. Check if there's stored OAuth data (server URL, client info, config, or tokens)
+      // 3. Check if the config has an oauth field
       const hasOAuthTokens = server.oauthTokens != null;
-      const hasStoredOAuthConfig = storedServerUrl != null || storedClientInfo != null || storedTokens != null;
+      const hasStoredOAuthConfig = hasOAuthConfig(server.name);
       const hasOAuthInConfig = "oauth" in config && config.oauth != null;
       const hasOAuth = hasOAuthTokens || hasStoredOAuthConfig || hasOAuthInConfig;
+
+      const storedOAuthConfig = localStorage.getItem(`mcp-oauth-config-${server.name}`);
+      const storedClientInfo = localStorage.getItem(`mcp-client-${server.name}`);
+      const storedTokens = getStoredTokens(server.name);
 
       const clientInfo = storedClientInfo ? JSON.parse(storedClientInfo) : {};
       const oauthConfig = storedOAuthConfig ? JSON.parse(storedOAuthConfig) : {};
