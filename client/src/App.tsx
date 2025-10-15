@@ -25,6 +25,7 @@ import { useElectronOAuth } from "./hooks/useElectronOAuth";
 import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
 import { usePostHog } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
+import { useConvexAuth } from "convex/react";
 
 // Import global styles
 import "./index.css";
@@ -34,18 +35,19 @@ import { detectEnvironment, detectPlatform } from "./logs/PosthogUtils";
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
   const posthog = usePostHog();
+  const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
 
-  // Automatically identify users in PostHog when they log in/out
   usePostHogIdentify();
 
-  // Capture app launch event once on mount
   useEffect(() => {
+    if (isAuthLoading) return;
     posthog.capture("app_launched", {
       platform: detectPlatform(),
       environment: detectEnvironment(),
       user_agent: navigator.userAgent,
+      is_authenticated: isAuthenticated,
     });
-  }, []);
+  }, [isAuthLoading]);
 
   // Set up Electron OAuth callback handling
   useElectronOAuth();
