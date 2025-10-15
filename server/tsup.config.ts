@@ -37,8 +37,6 @@ export default defineConfig({
     // Packages with dynamic requires
     "chalk",
     "supports-color",
-    // Internal SDK package (built separately)
-    "@/sdk",
   ],
   noExternal: [
     // Force bundling of problematic packages
@@ -48,8 +46,5 @@ export default defineConfig({
     options.platform = "node";
     options.mainFields = ["module", "main"];
     // Configure path alias for @/sdk
-    options.alias = {
-      "@/sdk": "../sdk/dist/index.js",
-    };
   },
 });
