@@ -48,6 +48,9 @@ jobs:
         run: |
           npm install --legacy-peer-deps --no-optional
           npm run install:deps
+          cd sdk
+          npm install --legacy-peer-deps
+          cd ..
         shell: powershell
 
       - name: Rebuild native modules for Windows
