@@ -498,8 +498,8 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
             toolCallTimestamp={lastToolCallTimestamp ?? undefined}
             toolMeta={getToolMeta(lastToolName)}
             onExecuteFromUI={async (name, params) => {
-              if (!serverName) return;
-              await executeToolApi(serverName, name, params || {});
+              if (!serverName) return { error: "No server selected" };
+              return await executeToolApi(serverName, name, params || {});
             }}
             onHandleIntent={async (intent, params) => {
               if (!serverName) return;
