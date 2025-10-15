@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, ArrowDownToLine, ArrowUpFromLine } from "lucide-react";
+import { useEffect, useRef, useState, useMemo } from "react";
+import { ChevronDown, ChevronRight, ArrowDownToLine, ArrowUpFromLine, Search, Trash2 } from "lucide-react";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import "react18-json-view/src/dark.css";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 
 type RpcDirection = "in" | "out" | string;
 
@@ -31,6 +33,7 @@ export function JsonRpcLoggerView() {
   const [items, setItems] = useState<RenderableRpcItem[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [searchQuery, setSearchQuery] = useState("");
 
   const toggleExpanded = (id: string) => {
     setExpanded((prev) => {
@@ -39,6 +42,11 @@ export function JsonRpcLoggerView() {
       else next.add(id);
       return next;
     });
+  };
+
+  const clearMessages = () => {
+    setItems([]);
+    setExpanded(new Set());
   };
 
   useEffect(() => {
@@ -89,24 +97,64 @@ export function JsonRpcLoggerView() {
     };
   }, []);
 
+  const filteredItems = useMemo(() => {
+    if (!searchQuery.trim()) {
+      return items;
+    }
+    const queryLower = searchQuery.toLowerCase();
+    return items.filter((item) => {
+      return (
+        item.serverId.toLowerCase().includes(queryLower) ||
+        item.method.toLowerCase().includes(queryLower) ||
+        item.direction.toLowerCase().includes(queryLower) ||
+        JSON.stringify(item.payload).toLowerCase().includes(queryLower)
+      );
+    });
+  }, [items, searchQuery]);
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between p-4 border-b border-border">
-        <div className="flex items-center gap-4">
-          <h2 className="text-xs font-semibold text-foreground">JSON-RPC Messages</h2>
+      <div className="flex flex-col gap-3 p-3 border-b border-border">
+        <h2 className="text-xs font-semibold text-foreground">JSON-RPC Messages</h2>
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+            <Input
+              placeholder="Search messages..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="h-7 pl-7 text-xs"
+            />
+          </div>
+          <span className="text-xs text-muted-foreground whitespace-nowrap">
+            {filteredItems.length} / {items.length}
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={clearMessages}
+            disabled={items.length === 0}
+            className="h-7 px-2"
+            title="Clear all messages"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
         </div>
       </div>
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-3">
-        {items.length === 0 ? (
+        {filteredItems.length === 0 ? (
           <div className="text-center py-8">
-            <div className="text-xs text-muted-foreground">No messages yet</div>
+            <div className="text-xs text-muted-foreground">
+              {items.length === 0 ? "No messages yet" : "No matching messages"}
+            </div>
             <div className="text-[10px] text-muted-foreground mt-1">
-              JSON-RPC messages will appear here
+              {items.length === 0
+                ? "JSON-RPC messages will appear here"
+                : "Try adjusting your search query"}
             </div>
           </div>
         ) : (
-          items.map((it) => {
+          filteredItems.map((it) => {
             const isExpanded = expanded.has(it.id);
             return (
               <div
