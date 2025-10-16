@@ -365,7 +365,6 @@ export function ResultsPanel({
                     padding: "16px",
                     borderRadius: "8px",
                     border: "1px solid hsl(var(--border))",
-                    width: "calc(100vw - var(--sidebar-width) - 16px - 16px)",
                   }}
                 />
               </div>

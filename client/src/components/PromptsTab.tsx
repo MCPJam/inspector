@@ -21,6 +21,7 @@ import { EmptyState } from "./ui/empty-state";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import { MCPServerConfig, type MCPPrompt } from "@/sdk";
+import { JsonRpcLoggerView } from "./logging/json-rpc-logger-view";
 
 interface PromptsTabProps {
   serverConfig?: MCPServerConfig;
@@ -517,61 +518,71 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
 
         <ResizableHandle withHandle />
 
-        {/* Bottom Panel - Results */}
+        {/* Bottom Panel - JSON-RPC Logger and Results */}
         <ResizablePanel defaultSize={30} minSize={15} maxSize={70}>
-          <div className="h-full flex flex-col border-t border-border bg-background">
-            {/* Header */}
-            <div className="flex items-center justify-between p-4 border-b border-border">
-              <h2 className="text-xs font-semibold text-foreground">
-                Prompt Content
-              </h2>
-            </div>
+          <ResizablePanelGroup direction="horizontal" className="h-full">
+            <ResizablePanel defaultSize={40} minSize={10}>
+              <JsonRpcLoggerView
+                serverIds={serverName ? [serverName] : undefined}
+              />
+            </ResizablePanel>
+            <ResizableHandle withHandle />
+            <ResizablePanel defaultSize={60} minSize={30}>
+              <div className="h-full flex flex-col border-t border-border bg-background">
+                {/* Header */}
+                <div className="flex items-center justify-between p-4 border-b border-border">
+                  <h2 className="text-xs font-semibold text-foreground">
+                    Prompt Content
+                  </h2>
+                </div>
 
-            {/* Content */}
-            <div className="flex-1 overflow-hidden">
-              {error ? (
-                <div className="p-4">
-                  <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
-                    {error}
-                  </div>
+                {/* Content */}
+                <div className="flex-1 overflow-hidden">
+                  {error ? (
+                    <div className="p-4">
+                      <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
+                        {error}
+                      </div>
+                    </div>
+                  ) : promptContent ? (
+                    <ScrollArea className="h-full">
+                      <div className="p-4">
+                        {typeof promptContent === "string" ? (
+                          <pre className="whitespace-pre-wrap text-xs font-mono bg-muted p-4 rounded-md border border-border">
+                            {promptContent}
+                          </pre>
+                        ) : (
+                          <JsonView
+                            src={promptContent}
+                            dark={true}
+                            theme="atom"
+                            enableClipboard={true}
+                            displaySize={false}
+                            collapseStringsAfterLength={100}
+                            style={{
+                              fontSize: "12px",
+                              fontFamily:
+                                "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                              backgroundColor: "hsl(var(--background))",
+                              padding: "16px",
+                              borderRadius: "8px",
+                              border: "1px solid hsl(var(--border))",
+                            }}
+                          />
+                        )}
+                      </div>
+                    </ScrollArea>
+                  ) : (
+                    <div className="flex items-center justify-center h-full">
+                      <p className="text-xs text-muted-foreground font-medium">
+                        Get a prompt to see its content here
+                      </p>
+                    </div>
+                  )}
                 </div>
-              ) : promptContent ? (
-                <ScrollArea className="h-full">
-                  <div className="p-4">
-                    {typeof promptContent === "string" ? (
-                      <pre className="whitespace-pre-wrap text-xs font-mono bg-muted p-4 rounded-md border border-border">
-                        {promptContent}
-                      </pre>
-                    ) : (
-                      <JsonView
-                        src={promptContent}
-                        dark={true}
-                        theme="atom"
-                        enableClipboard={true}
-                        displaySize={false}
-                        collapseStringsAfterLength={100}
-                        style={{
-                          fontSize: "12px",
-                          fontFamily:
-                            "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                          backgroundColor: "hsl(var(--background))",
-                          padding: "16px",
-                          borderRadius: "8px",
-                          border: "1px solid hsl(var(--border))",
-                        }}
-                      />
-                    )}
-                  </div>
-                </ScrollArea>
-              ) : (
-                <div className="flex items-center justify-center h-full">
-                  <p className="text-xs text-muted-foreground font-medium">
-                    Get a prompt to see its content here
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
+              </div>
+            </ResizablePanel>
+          </ResizablePanelGroup>
         </ResizablePanel>
       </ResizablePanelGroup>
     </div>
