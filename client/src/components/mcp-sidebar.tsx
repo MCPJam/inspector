@@ -39,12 +39,7 @@ const navigationSections = [
         title: "Playground",
         url: "#chat",
         icon: MessageCircle,
-      },
-      {
-        title: "Tracing",
-        url: "#tracing",
-        icon: Activity,
-      },
+      }
     ],
   },
   {

@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState, useMemo } from "react";
-import { ChevronDown, ChevronRight, ArrowDownToLine, ArrowUpFromLine, Search, Trash2 } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  Search,
+  Trash2,
+} from "lucide-react";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import "react18-json-view/src/dark.css";
@@ -24,12 +31,19 @@ interface RenderableRpcItem {
   payload: unknown;
 }
 
-function normalizePayload(payload: unknown): Record<string, unknown> | unknown[] {
-  if (payload !== null && typeof payload === "object") return payload as Record<string, unknown>;
+interface JsonRpcLoggerViewProps {
+  serverIds?: string[]; // Optional filter for specific server IDs
+}
+
+function normalizePayload(
+  payload: unknown,
+): Record<string, unknown> | unknown[] {
+  if (payload !== null && typeof payload === "object")
+    return payload as Record<string, unknown>;
   return { value: payload } as Record<string, unknown>;
 }
 
-export function JsonRpcLoggerView() {
+export function JsonRpcLoggerView({ serverIds }: JsonRpcLoggerViewProps = {}) {
   const [items, setItems] = useState<RenderableRpcItem[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -57,7 +71,9 @@ export function JsonRpcLoggerView() {
       es = new EventSource(`/api/mcp/servers/rpc/stream?${params.toString()}`);
       es.onmessage = (evt) => {
         try {
-          const data = JSON.parse(evt.data) as { type?: string } & RpcEventMessage;
+          const data = JSON.parse(evt.data) as {
+            type?: string;
+          } & RpcEventMessage;
           if (!data || data.type !== "rpc") return;
 
           const { serverId, direction, message, timestamp } = data;
@@ -74,7 +90,8 @@ export function JsonRpcLoggerView() {
           const item: RenderableRpcItem = {
             id: `${timestamp ?? Date.now()}-${Math.random().toString(36).slice(2)}`,
             serverId: typeof serverId === "string" ? serverId : "unknown",
-            direction: typeof direction === "string" ? direction.toUpperCase() : "",
+            direction:
+              typeof direction === "string" ? direction.toUpperCase() : "",
             method,
             timestamp: timestamp ?? new Date().toISOString(),
             payload: message,
@@ -98,24 +115,36 @@ export function JsonRpcLoggerView() {
   }, []);
 
   const filteredItems = useMemo(() => {
-    if (!searchQuery.trim()) {
-      return items;
+    let result = items;
+
+    // Filter by serverIds if provided
+    if (serverIds && serverIds.length > 0) {
+      const serverIdSet = new Set(serverIds);
+      result = result.filter((item) => serverIdSet.has(item.serverId));
     }
-    const queryLower = searchQuery.toLowerCase();
-    return items.filter((item) => {
-      return (
-        item.serverId.toLowerCase().includes(queryLower) ||
-        item.method.toLowerCase().includes(queryLower) ||
-        item.direction.toLowerCase().includes(queryLower) ||
-        JSON.stringify(item.payload).toLowerCase().includes(queryLower)
-      );
-    });
-  }, [items, searchQuery]);
+
+    // Filter by search query
+    if (searchQuery.trim()) {
+      const queryLower = searchQuery.toLowerCase();
+      result = result.filter((item) => {
+        return (
+          item.serverId.toLowerCase().includes(queryLower) ||
+          item.method.toLowerCase().includes(queryLower) ||
+          item.direction.toLowerCase().includes(queryLower) ||
+          JSON.stringify(item.payload).toLowerCase().includes(queryLower)
+        );
+      });
+    }
+
+    return result;
+  }, [items, searchQuery, serverIds]);
 
   return (
     <div className="flex flex-col h-full">
       <div className="flex flex-col gap-3 p-3 border-b border-border">
-        <h2 className="text-xs font-semibold text-foreground">JSON-RPC Messages</h2>
+        <h2 className="text-xs font-semibold text-foreground">
+          JSON-RPC Messages
+        </h2>
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
             <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
@@ -145,12 +174,10 @@ export function JsonRpcLoggerView() {
         {filteredItems.length === 0 ? (
           <div className="text-center py-8">
             <div className="text-xs text-muted-foreground">
-              {items.length === 0 ? "No messages yet" : "No matching messages"}
+              {"No messages yet"}
             </div>
             <div className="text-[10px] text-muted-foreground mt-1">
-              {items.length === 0
-                ? "JSON-RPC messages will appear here"
-                : "Try adjusting your search query"}
+              {"JSON-RPC messages will appear here"}
             </div>
           </div>
         ) : (
@@ -185,7 +212,9 @@ export function JsonRpcLoggerView() {
                           ? "bg-blue-500/10 text-blue-600 dark:text-blue-400"
                           : "bg-green-500/10 text-green-600 dark:text-green-400"
                       }`}
-                      title={it.direction === "RECEIVE" ? "Incoming" : "Outgoing"}
+                      title={
+                        it.direction === "RECEIVE" ? "Incoming" : "Outgoing"
+                      }
                     >
                       {it.direction === "RECEIVE" ? (
                         <ArrowDownToLine className="h-3 w-3" />
