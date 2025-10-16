@@ -58,6 +58,8 @@ const getProviderDisplayName = (provider: ModelProvider): string => {
       return "Meta";
     case "x-ai":
       return "xAI";
+    case "litellm":
+      return "LiteLLM";
     default:
       return provider;
   }

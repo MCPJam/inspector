@@ -9,6 +9,7 @@ export const createLlmModel = (
   modelDefinition: ModelDefinition,
   apiKey: string,
   ollamaBaseUrl?: string,
+  litellmBaseUrl?: string,
 ) => {
   if (!modelDefinition?.id || !modelDefinition?.provider) {
     throw new Error(
@@ -31,6 +32,16 @@ export const createLlmModel = (
         ? raw
         : `${raw.replace(/\/+$/, "")}/api`;
       return createOllama({ baseURL: normalized })(modelDefinition.id);
+    }
+    case "litellm": {
+      // LiteLLM uses OpenAI-compatible endpoints (standard chat completions API)
+      const baseURL = litellmBaseUrl || "http://localhost:4000";
+      const openai = createOpenAI({
+        apiKey: apiKey || "dummy-key", // LiteLLM may not require API key depending on setup
+        baseURL,
+      });
+      // IMPORTANT: Use .chat() to use Chat Completions API instead of Responses API
+      return openai.chat(modelDefinition.id);
     }
     default:
       throw new Error(

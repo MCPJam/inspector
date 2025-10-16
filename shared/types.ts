@@ -104,7 +104,8 @@ export type ModelProvider =
   | "deepseek"
   | "google"
   | "meta"
-  | "x-ai";
+  | "x-ai"
+  | "litellm";
 
 const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
   "meta-llama/llama-3.3-70b-instruct",

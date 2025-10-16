@@ -45,6 +45,9 @@ export const getProviderLogoFromProvider = (
         return isDark ? grokDarkLogo : grokLightLogo;
       }
       return grokLightLogo;
+    case "litellm":
+      // LiteLLM doesn't have a logo file, will be rendered as a colored badge
+      return null;
     default:
       return null;
   }
@@ -71,6 +74,8 @@ export const getProviderColor = (provider: string) => {
       return "text-gray-600 dark:text-gray-400";
     case "x-ai":
       return "text-purple-600 dark:text-purple-400";
+    case "litellm":
+      return "bg-gradient-to-br from-blue-500 to-purple-600";
     default:
       return "text-blue-600 dark:text-blue-400";
   }
