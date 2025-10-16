@@ -175,7 +175,7 @@ servers.post("/reconnect", async (c) => {
 servers.get("/rpc/stream", async (c) => {
   const serverIds = c.mcpClientManager.listServers();
   const url = new URL(c.req.url);
-  const replay = parseInt(url.searchParams.get("replay") || "200", 10);
+  const replay = parseInt(url.searchParams.get("replay") || "0", 10);
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({

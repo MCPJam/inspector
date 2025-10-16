@@ -15,6 +15,7 @@ import {
 } from "./ui/resizable";
 import { ParametersPanel } from "./tools/ParametersPanel";
 import { ResultsPanel } from "./tools/ResultsPanel";
+import { JsonRpcLoggerView } from "./logging/json-rpc-logger-view";
 import { ToolsSidebar } from "./tools/ToolsSidebar";
 import SaveRequestDialog from "./tools/SaveRequestDialog";
 import {
@@ -483,35 +484,47 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         <ResizableHandle withHandle />
 
         <ResizablePanel defaultSize={40} minSize={15} maxSize={85}>
-          <ResultsPanel
-            error={error}
-            showStructured={showStructured}
-            onToggleStructured={setShowStructured}
-            structuredResult={structuredResult}
-            result={result}
-            validationErrors={validationErrors}
-            unstructuredValidationResult={unstructuredValidationResult}
-            serverId={serverName}
-            toolCallId={lastToolCallId ?? undefined}
-            toolName={lastToolName ?? undefined}
-            toolParameters={lastToolParameters ?? undefined}
-            toolCallTimestamp={lastToolCallTimestamp ?? undefined}
-            toolMeta={getToolMeta(lastToolName)}
-            onExecuteFromUI={async (name, params) => {
-              if (!serverName) return { error: "No server selected" };
-              return await executeToolApi(serverName, name, params || {});
-            }}
-            onHandleIntent={async (intent, params) => {
-              if (!serverName) return;
-              await executeToolApi(serverName, "handleIntent", {
-                intent,
-                params: params || {},
-              });
-            }}
-            onSendFollowup={(message) => {
-              logger.info("OpenAI component requested follow-up", { message });
-            }}
-          />
+          <ResizablePanelGroup direction="horizontal" className="h-full">
+            <ResizablePanel defaultSize={40} minSize={10}>
+              <JsonRpcLoggerView
+                serverIds={serverName ? [serverName] : undefined}
+              />
+            </ResizablePanel>
+            <ResizableHandle withHandle />
+            <ResizablePanel defaultSize={60} minSize={30}>
+              <ResultsPanel
+                error={error}
+                showStructured={showStructured}
+                onToggleStructured={setShowStructured}
+                structuredResult={structuredResult}
+                result={result}
+                validationErrors={validationErrors}
+                unstructuredValidationResult={unstructuredValidationResult}
+                serverId={serverName}
+                toolCallId={lastToolCallId ?? undefined}
+                toolName={lastToolName ?? undefined}
+                toolParameters={lastToolParameters ?? undefined}
+                toolCallTimestamp={lastToolCallTimestamp ?? undefined}
+                toolMeta={getToolMeta(lastToolName)}
+                onExecuteFromUI={async (name, params) => {
+                  if (!serverName) return { error: "No server selected" };
+                  return await executeToolApi(serverName, name, params || {});
+                }}
+                onHandleIntent={async (intent, params) => {
+                  if (!serverName) return;
+                  await executeToolApi(serverName, "handleIntent", {
+                    intent,
+                    params: params || {},
+                  });
+                }}
+                onSendFollowup={(message) => {
+                  logger.info("OpenAI component requested follow-up", {
+                    message,
+                  });
+                }}
+              />
+            </ResizablePanel>
+          </ResizablePanelGroup>
         </ResizablePanel>
       </ResizablePanelGroup>
 

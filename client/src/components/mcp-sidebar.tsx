@@ -40,11 +40,6 @@ const navigationSections = [
         url: "#chat",
         icon: MessageCircle,
       },
-      {
-        title: "Tracing",
-        url: "#tracing",
-        icon: Activity,
-      },
     ],
   },
   {

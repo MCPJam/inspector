@@ -37,7 +37,10 @@ class RpcLogBus {
       if (filter.size > 0 && !filter.has(serverId)) continue;
       all.push(...buf);
     }
-    if (!Number.isFinite(limit) || limit <= 0) return all;
+    // If limit is 0, return empty array (no replay)
+    if (limit === 0) return [];
+    // If limit is not finite or negative, return all
+    if (!Number.isFinite(limit) || limit < 0) return all;
     return all.slice(Math.max(0, all.length - limit));
   }
 }
