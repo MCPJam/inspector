@@ -30,7 +30,7 @@ import {
   type ConvertedToolSet,
   type ToolSchemaOverrides,
 } from "./tool-converters.js";
-import type { ToolCallOptions, ToolSet } from "ai";
+import type { ToolSet } from "ai";
 type ClientCapabilityOptions = NonNullable<ClientOptions["capabilities"]>;
 
 type BaseServerConfig = {
@@ -180,6 +180,12 @@ export class MCPClientManager {
 
   listServers(): string[] {
     return Array.from(this.clientStates.keys());
+  }
+
+  listConnectedServers(): string[] {
+    return Array.from(this.clientStates.entries())
+      .filter(([, state]) => this.resolveConnectionStatus(state) === "connected")
+      .map(([serverId]) => serverId);
   }
 
   hasServer(serverId: string): boolean {
@@ -492,6 +498,33 @@ export class MCPClientManager {
       }
       throw error;
     }
+  }
+
+  async getResources(serverIds?: string[]): Promise<MCPResource[]> {
+    const targetServerIds = serverIds ?? this.listConnectedServers();
+    const allResources: MCPResource[] = [];
+
+    for (const serverId of targetServerIds) {
+      const client = this.getClient(serverId);
+      if (client) {
+        try {
+          const result = await client.listResources({});
+          if (result && Array.isArray(result.resources)) {
+            const resourcesWithServerId = result.resources.map((r: any) => ({
+              ...r,
+              _serverId: serverId,
+            }));
+            allResources.push(...resourcesWithServerId);
+          }
+        } catch (error) {
+          console.error(
+            `[MCPClientManager] Failed to list resources for server ${serverId}:`,
+            error,
+          );
+        }
+      }
+    }
+    return allResources;
   }
 
   async readResource(
@@ -958,7 +991,6 @@ export class MCPClientManager {
     }) => void = logger;
 
     // Wrapper that proxies to the underlying transport while emitting logs
-    const self = this;
     class LoggingTransport implements Transport {
       onclose?: () => void;
       onerror?: (error: Error) => void;
@@ -1110,8 +1142,10 @@ export type MCPResource = MCPResourceListResult["resources"][number];
 export type MCPReadResourceResult = Awaited<
   ReturnType<MCPClientManager["readResource"]>
 >;
+export type MCPResourceContent = NonNullable<MCPReadResourceResult>['contents'][number];
 export type MCPServerSummary = ServerSummary;
 export type MCPConvertedToolSet<
   SCHEMAS extends ToolSchemaOverrides | "automatic",
 > = ConvertedToolSet<SCHEMAS>;
 export type MCPToolSchemaOverrides = ToolSchemaOverrides;
+
