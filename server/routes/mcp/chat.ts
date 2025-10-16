@@ -22,7 +22,12 @@ import {
   runBackendConversation,
 } from "@/shared/backend-conversation";
 import zodToJsonSchema from "zod-to-json-schema";
-import { MCPClientManager, MCPResource, MCPResourceContent } from "@/sdk";
+import {
+  MCPClientManager,
+  MCPResource,
+  MCPResourceContent,
+  MCPResourceTemplate,
+} from "@/sdk";
 import { findRelevantResources } from "@/shared/resources";
 
 // Types
@@ -798,7 +803,30 @@ chat.post("/", async (c) => {
                     (r) =>
                       `- ${r.name} (uri: ${r.uri}, server: ${(r as any)._serverId}): ${r.description || "No description"}`,
                   )
-                  .join("\n") +
+                  .join("\n");
+            }
+
+            const allResourceTemplates =
+              await mcpClientManager.getResourceTemplates(
+                requestData.selectedServers,
+              );
+
+            if (allResourceTemplates.length > 0) {
+              if (resourcesContext) {
+                resourcesContext += "\n\n";
+              }
+              resourcesContext +=
+                "Additionally, the following resource templates are available for dynamic data access. To use one, construct a URI by replacing the placeholders (e.g., {path}) with specific values:\n" +
+                allResourceTemplates
+                  .map(
+                    (t: MCPResourceTemplate) =>
+                      `- ${t.name} (uriTemplate: ${t.uriTemplate}, server: ${(t as any)._serverId}): ${t.description || "No description"}`,
+                  )
+                  .join("\n");
+            }
+
+            if (resourcesContext.length > 0) {
+              resourcesContext +=
                 "\nUse the readResource tool with the appropriate uri and server to access their content if needed.";
             }
 
@@ -830,22 +858,20 @@ chat.post("/", async (c) => {
                   server,
                   { uri },
                 );
-                const content: MCPResourceContent | undefined =
-                  readResult?.contents[0];
-                
-                // Add this line for debugging
-                console.log(`[readResource content]:`, content);
 
-                if (!content) {
-                  return { error: "Resource content not found." };
-                }
-
-                if (content.structuredContent) {
+                if (readResult?.structuredContent) {
                   try {
-                    return JSON.stringify(content.structuredContent);
+                    return JSON.stringify(readResult?.structuredContent);
                   } catch (e) {
                     return "Error: Could not serialize structured content.";
                   }
+                }
+
+                const content: MCPResourceContent | undefined =
+                  readResult?.contents[0];
+
+                if (!content) {
+                  return { error: "Resource content not found." };
                 }
 
                 return (

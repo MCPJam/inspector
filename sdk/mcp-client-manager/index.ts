@@ -527,6 +527,37 @@ export class MCPClientManager {
     return allResources;
   }
 
+  async getResourceTemplates(
+    serverIds?: string[],
+  ): Promise<MCPResourceTemplate[]> {
+    const targetServerIds = serverIds ?? this.listConnectedServers();
+    const allResourceTemplates: MCPResourceTemplate[] = [];
+
+    for (const serverId of targetServerIds) {
+      const client = this.getClient(serverId);
+      if (client) {
+        try {
+          const result = await client.listResourceTemplates({});
+          if (result && Array.isArray(result.resourceTemplates)) {
+            const templatesWithServerId = result.resourceTemplates.map(
+              (t: any) => ({
+                ...t,
+                _serverId: serverId,
+              }),
+            );
+            allResourceTemplates.push(...templatesWithServerId);
+          }
+        } catch (error) {
+          console.error(
+            `[MCPClientManager] Failed to list resource templates for server ${serverId}:`,
+            error,
+          );
+        }
+      }
+    }
+    return allResourceTemplates;
+  }
+
   async readResource(
     serverId: string,
     params: ReadResourceParams,
@@ -1142,10 +1173,15 @@ export type MCPResource = MCPResourceListResult["resources"][number];
 export type MCPReadResourceResult = Awaited<
   ReturnType<MCPClientManager["readResource"]>
 >;
-export type MCPResourceContent = NonNullable<MCPReadResourceResult>['contents'][number];
+export type MCPResourceTemplateListResult = Awaited<
+  ReturnType<MCPClientManager["listResourceTemplates"]>
+>;
+export type MCPResourceTemplate =
+  MCPResourceTemplateListResult["resourceTemplates"][number];
+export type MCPResourceContent =
+  NonNullable<MCPReadResourceResult>["contents"][number];
 export type MCPServerSummary = ServerSummary;
 export type MCPConvertedToolSet<
   SCHEMAS extends ToolSchemaOverrides | "automatic",
 > = ConvertedToolSet<SCHEMAS>;
 export type MCPToolSchemaOverrides = ToolSchemaOverrides;
-
