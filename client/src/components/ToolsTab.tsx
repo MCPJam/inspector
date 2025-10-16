@@ -486,7 +486,9 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         <ResizablePanel defaultSize={40} minSize={15} maxSize={85}>
           <ResizablePanelGroup direction="horizontal" className="h-full">
             <ResizablePanel defaultSize={40} minSize={10}>
-              <JsonRpcLoggerView />
+              <JsonRpcLoggerView
+                serverIds={serverName ? [serverName] : undefined}
+              />
             </ResizablePanel>
             <ResizableHandle withHandle />
             <ResizablePanel defaultSize={60} minSize={30}>
@@ -516,7 +518,9 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                   });
                 }}
                 onSendFollowup={(message) => {
-                  logger.info("OpenAI component requested follow-up", { message });
+                  logger.info("OpenAI component requested follow-up", {
+                    message,
+                  });
                 }}
               />
             </ResizablePanel>
