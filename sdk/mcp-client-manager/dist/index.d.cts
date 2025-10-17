@@ -97,6 +97,7 @@ declare class MCPClientManager {
         }) => void;
     });
     listServers(): string[];
+    listConnectedServers(): string[];
     hasServer(serverId: string): boolean;
     getServerSummaries(): ServerSummary[];
     getConnectionStatus(serverId: string): MCPConnectionStatus;
@@ -631,6 +632,8 @@ declare class MCPClientManager {
             }, zod.ZodTypeAny, "passthrough">>, "many">>;
         }>, zod.ZodTypeAny, "passthrough">>, "many">;
     }, zod.ZodTypeAny, "passthrough">>;
+    getResources(serverIds?: string[]): Promise<MCPResource[]>;
+    getResourceTemplates(serverIds?: string[]): Promise<MCPResourceTemplate[]>;
     readResource(serverId: string, params: ReadResourceParams, options?: ClientRequestOptions): Promise<zod.objectOutputType<{
         _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
     } & {
@@ -1618,8 +1621,11 @@ type MCPGetPromptResult = Awaited<ReturnType<MCPClientManager["getPrompt"]>>;
 type MCPResourceListResult = Awaited<ReturnType<MCPClientManager["listResources"]>>;
 type MCPResource = MCPResourceListResult["resources"][number];
 type MCPReadResourceResult = Awaited<ReturnType<MCPClientManager["readResource"]>>;
+type MCPResourceTemplateListResult = Awaited<ReturnType<MCPClientManager["listResourceTemplates"]>>;
+type MCPResourceTemplate = MCPResourceTemplateListResult["resourceTemplates"][number];
+type MCPResourceContent = NonNullable<MCPReadResourceResult>["contents"][number];
 type MCPServerSummary = ServerSummary;
 type MCPConvertedToolSet<SCHEMAS extends ToolSchemaOverrides | "automatic"> = ConvertedToolSet<SCHEMAS>;
 type MCPToolSchemaOverrides = ToolSchemaOverrides;
 
-export { type ElicitationHandler, type ExecuteToolArguments, MCPClientManager, type MCPClientManagerConfig, type MCPConnectionStatus, type MCPConvertedToolSet, type MCPGetPromptResult, type MCPPrompt, type MCPPromptListResult, type MCPReadResourceResult, type MCPResource, type MCPResourceListResult, type MCPServerConfig, type MCPServerSummary, type MCPToolSchemaOverrides };
+export { type ElicitationHandler, type ExecuteToolArguments, MCPClientManager, type MCPClientManagerConfig, type MCPConnectionStatus, type MCPConvertedToolSet, type MCPGetPromptResult, type MCPPrompt, type MCPPromptListResult, type MCPReadResourceResult, type MCPResource, type MCPResourceContent, type MCPResourceListResult, type MCPResourceTemplate, type MCPResourceTemplateListResult, type MCPServerConfig, type MCPServerSummary, type MCPToolSchemaOverrides };

@@ -425,7 +425,9 @@ export function getStoredTokens(serverName: string): any {
 export function hasOAuthConfig(serverName: string): boolean {
   const storedServerUrl = localStorage.getItem(`mcp-serverUrl-${serverName}`);
   const storedClientInfo = localStorage.getItem(`mcp-client-${serverName}`);
-  const storedOAuthConfig = localStorage.getItem(`mcp-oauth-config-${serverName}`);
+  const storedOAuthConfig = localStorage.getItem(
+    `mcp-oauth-config-${serverName}`,
+  );
   const storedTokens = getStoredTokens(serverName);
 
   return (
