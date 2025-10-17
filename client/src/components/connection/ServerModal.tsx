@@ -75,14 +75,21 @@ export function ServerModal({
       const hasOAuthTokens = server.oauthTokens != null;
       const hasStoredOAuthConfig = hasOAuthConfig(server.name);
       const hasOAuthInConfig = "oauth" in config && config.oauth != null;
-      const hasOAuth = hasOAuthTokens || hasStoredOAuthConfig || hasOAuthInConfig;
+      const hasOAuth =
+        hasOAuthTokens || hasStoredOAuthConfig || hasOAuthInConfig;
 
-      const storedOAuthConfig = localStorage.getItem(`mcp-oauth-config-${server.name}`);
-      const storedClientInfo = localStorage.getItem(`mcp-client-${server.name}`);
+      const storedOAuthConfig = localStorage.getItem(
+        `mcp-oauth-config-${server.name}`,
+      );
+      const storedClientInfo = localStorage.getItem(
+        `mcp-client-${server.name}`,
+      );
       const storedTokens = getStoredTokens(server.name);
 
       const clientInfo = storedClientInfo ? JSON.parse(storedClientInfo) : {};
-      const oauthConfig = storedOAuthConfig ? JSON.parse(storedOAuthConfig) : {};
+      const oauthConfig = storedOAuthConfig
+        ? JSON.parse(storedOAuthConfig)
+        : {};
 
       // Retrieve scopes from multiple sources (in priority order)
       const scopes =
