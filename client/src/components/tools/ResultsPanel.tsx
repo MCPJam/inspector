@@ -288,6 +288,7 @@ export function ResultsPanel({
             }
 
             if (!showStructured && uiResource) {
+              console.log("uiResource", uiResource);
               return (
                 <UIResourceRenderer
                   resource={uiResource}

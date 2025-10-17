@@ -1,6 +1,6 @@
 import {
   MCPClientManager
-} from "../chunk-6XEFXCUG.js";
+} from "../chunk-Y7I7HQVS.js";
 export {
   MCPClientManager
 };
