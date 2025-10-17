@@ -1,4 +1,4 @@
-export { ElicitationHandler, ExecuteToolArguments, MCPClientManager, MCPClientManagerConfig, MCPConnectionStatus, MCPConvertedToolSet, MCPGetPromptResult, MCPPrompt, MCPPromptListResult, MCPReadResourceResult, MCPResource, MCPResourceListResult, MCPServerConfig, MCPServerSummary, MCPToolSchemaOverrides, i as mcpClientManager } from './mcp-client-manager/index.js';
+export { ElicitationHandler, ExecuteToolArguments, MCPClientManager, MCPClientManagerConfig, MCPConnectionStatus, MCPConvertedToolSet, MCPGetPromptResult, MCPPrompt, MCPPromptListResult, MCPReadResourceResult, MCPResource, MCPResourceContent, MCPResourceListResult, MCPResourceTemplate, MCPResourceTemplateListResult, MCPServerConfig, MCPServerSummary, MCPToolSchemaOverrides, i as mcpClientManager } from './mcp-client-manager/index.js';
 import 'zod';
 import '@modelcontextprotocol/sdk/client/index.js';
 import '@modelcontextprotocol/sdk/client/sse.js';

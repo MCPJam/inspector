@@ -121,6 +121,9 @@ var MCPClientManager = class {
   listServers() {
     return Array.from(this.clientStates.keys());
   }
+  listConnectedServers() {
+    return Array.from(this.clientStates.entries()).filter(([, state]) => this.resolveConnectionStatus(state) === "connected").map(([serverId]) => serverId);
+  }
   hasServer(serverId) {
     return this.clientStates.has(serverId);
   }
@@ -370,6 +373,58 @@ var MCPClientManager = class {
       }
       throw error;
     }
+  }
+  async getResources(serverIds) {
+    const targetServerIds = serverIds != null ? serverIds : this.listConnectedServers();
+    const allResources = [];
+    for (const serverId of targetServerIds) {
+      const client = this.getClient(serverId);
+      if (client) {
+        try {
+          const result = await client.listResources({});
+          if (result && Array.isArray(result.resources)) {
+            const resourcesWithServerId = result.resources.map((r) => ({
+              ...r,
+              _serverId: serverId
+            }));
+            allResources.push(...resourcesWithServerId);
+          }
+        } catch (error) {
+          console.error(
+            `[MCPClientManager] Failed to list resources for server ${serverId}:`,
+            error
+          );
+        }
+      }
+    }
+    return allResources;
+  }
+  async getResourceTemplates(serverIds) {
+    const targetServerIds = serverIds != null ? serverIds : this.listConnectedServers();
+    const allResourceTemplates = [];
+    for (const serverId of targetServerIds) {
+      const client = this.getClient(serverId);
+      if (client) {
+        try {
+          const result = await client.listResourceTemplates({});
+          if (result && Array.isArray(result.resourceTemplates)) {
+            const templatesWithServerId = result.resourceTemplates.map(
+              (t) => ({
+                ...t,
+                _serverId: serverId
+              })
+            );
+            allResourceTemplates.push(...templatesWithServerId);
+          }
+        } catch (error) {
+          console.error(
+            `[MCPClientManager] Failed to list resource templates for server ${serverId}:`,
+            error
+          );
+        }
+      }
+    }
+    return allResourceTemplates;
   }
   async readResource(serverId, params, options) {
     await this.ensureConnected(serverId);
@@ -717,7 +772,6 @@ var MCPClientManager = class {
     const logger = this.resolveRpcLogger(serverId, config);
     if (!logger) return transport;
     const log = logger;
-    const self = this;
     class LoggingTransport {
       constructor(inner) {
         this.inner = inner;
@@ -833,4 +887,4 @@ export {
   MCPClientManager,
   mcp_client_manager_exports
 };
-//# sourceMappingURL=chunk-6XEFXCUG.js.map
+//# sourceMappingURL=chunk-Y7I7HQVS.js.map
