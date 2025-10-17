@@ -528,3 +528,4 @@ export function ChatTab({
     </TooltipProvider>
   );
 }
+

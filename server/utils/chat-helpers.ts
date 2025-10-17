@@ -1,4 +1,4 @@
-import { ModelDefinition } from "@/shared/types";
+import { ModelDefinition, ModelProvider } from "@/shared/types";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createDeepSeek } from "@ai-sdk/deepseek";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
@@ -38,3 +38,29 @@ export const createLlmModel = (
       );
   }
 };
+
+export const createEmbeddingModel = (
+  provider: ModelProvider,
+  embeddingModelName: string,
+  apiKey: string,
+) => {
+  if (!provider || !embeddingModelName) {
+    throw new Error(
+      `Invalid embedding model definition: provider=${provider}, model=${embeddingModelName}`,
+    );
+  }
+
+  switch (provider) {
+    case "openai":
+      return createOpenAI({ apiKey }).textEmbeddingModel(embeddingModelName);
+    case "deepseek":
+      return createDeepSeek({ apiKey }).textEmbeddingModel(embeddingModelName);
+    case "google":
+      return createGoogleGenerativeAI({ apiKey }).textEmbeddingModel(
+        embeddingModelName,
+      );
+    default:
+      throw new Error(`Unsupported provider for embeddings: ${provider}`);
+  }
+};
+
