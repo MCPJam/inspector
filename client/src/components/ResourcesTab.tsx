@@ -16,6 +16,7 @@ import {
   type MCPReadResourceResult,
   type MCPResource,
 } from "@/sdk";
+import { JsonRpcLoggerView } from "./logging/json-rpc-logger-view";
 
 interface ResourcesTabProps {
   serverConfig?: MCPServerConfig;
@@ -370,31 +371,43 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
 
         <ResizableHandle withHandle />
 
-        {/* Bottom Panel - Error Display */}
+        {/* Bottom Panel - JSON-RPC Logger and Status */}
         <ResizablePanel defaultSize={30} minSize={15} maxSize={70}>
-          <div className="h-full flex flex-col border-t border-border bg-background">
-            {/* Header */}
-            <div className="flex items-center justify-between p-4 border-b border-border">
-              <h2 className="text-xs font-semibold text-foreground">Status</h2>
-            </div>
+          <ResizablePanelGroup direction="horizontal" className="h-full">
+            <ResizablePanel defaultSize={40} minSize={10}>
+              <JsonRpcLoggerView
+                serverIds={serverName ? [serverName] : undefined}
+              />
+            </ResizablePanel>
+            <ResizableHandle withHandle />
+            <ResizablePanel defaultSize={60} minSize={30}>
+              <div className="h-full flex flex-col border-t border-border bg-background">
+                {/* Header */}
+                <div className="flex items-center justify-between p-4 border-b border-border">
+                  <h2 className="text-xs font-semibold text-foreground">
+                    Status
+                  </h2>
+                </div>
 
-            {/* Content */}
-            <div className="flex-1 overflow-hidden">
-              {error ? (
-                <div className="p-4">
-                  <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
-                    {error}
-                  </div>
+                {/* Content */}
+                <div className="flex-1 overflow-hidden">
+                  {error ? (
+                    <div className="p-4">
+                      <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
+                        {error}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-center h-full">
+                      <p className="text-xs text-muted-foreground font-medium">
+                        Resource operations status will appear here
+                      </p>
+                    </div>
+                  )}
                 </div>
-              ) : (
-                <div className="flex items-center justify-center h-full">
-                  <p className="text-xs text-muted-foreground font-medium">
-                    Resource operations status will appear here
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
+              </div>
+            </ResizablePanel>
+          </ResizablePanelGroup>
         </ResizablePanel>
       </ResizablePanelGroup>
     </div>

@@ -159,7 +159,7 @@ npm install
 npm run dev
 ```
 
-The development server will start at `http://localhost:3000` with hot reloading enabled.
+The development server will start at `http://localhost:6274` with hot reloading enabled.
 
 ### Build for Production
 
