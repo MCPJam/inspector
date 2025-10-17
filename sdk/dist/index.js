@@ -1,7 +1,7 @@
 import {
   MCPClientManager,
   mcp_client_manager_exports
-} from "./chunk-Y7I7HQVS.js";
+} from "./chunk-6XEFXCUG.js";
 export {
   MCPClientManager,
   mcp_client_manager_exports as mcpClientManager
