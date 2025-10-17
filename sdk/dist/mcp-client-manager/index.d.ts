@@ -97,7 +97,6 @@ declare class MCPClientManager {
         }) => void;
     });
     listServers(): string[];
-    listConnectedServers(): string[];
     hasServer(serverId: string): boolean;
     getServerSummaries(): ServerSummary[];
     getConnectionStatus(serverId: string): MCPConnectionStatus;
@@ -632,8 +631,6 @@ declare class MCPClientManager {
             }, zod.ZodTypeAny, "passthrough">>, "many">>;
         }>, zod.ZodTypeAny, "passthrough">>, "many">;
     }, zod.ZodTypeAny, "passthrough">>;
-    getResources(serverIds?: string[]): Promise<MCPResource[]>;
-    getResourceTemplates(serverIds?: string[]): Promise<MCPResourceTemplate[]>;
     readResource(serverId: string, params: ReadResourceParams, options?: ClientRequestOptions): Promise<zod.objectOutputType<{
         _meta: zod.ZodOptional<zod.ZodObject<{}, "passthrough", zod.ZodTypeAny, zod.objectOutputType<{}, zod.ZodTypeAny, "passthrough">, zod.objectInputType<{}, zod.ZodTypeAny, "passthrough">>>;
     } & {
@@ -1621,9 +1618,6 @@ type MCPGetPromptResult = Awaited<ReturnType<MCPClientManager["getPrompt"]>>;
 type MCPResourceListResult = Awaited<ReturnType<MCPClientManager["listResources"]>>;
 type MCPResource = MCPResourceListResult["resources"][number];
 type MCPReadResourceResult = Awaited<ReturnType<MCPClientManager["readResource"]>>;
-type MCPResourceTemplateListResult = Awaited<ReturnType<MCPClientManager["listResourceTemplates"]>>;
-type MCPResourceTemplate = MCPResourceTemplateListResult["resourceTemplates"][number];
-type MCPResourceContent = NonNullable<MCPReadResourceResult>["contents"][number];
 type MCPServerSummary = ServerSummary;
 type MCPConvertedToolSet<SCHEMAS extends ToolSchemaOverrides | "automatic"> = ConvertedToolSet<SCHEMAS>;
 type MCPToolSchemaOverrides = ToolSchemaOverrides;
@@ -1640,15 +1634,12 @@ type index_MCPPrompt = MCPPrompt;
 type index_MCPPromptListResult = MCPPromptListResult;
 type index_MCPReadResourceResult = MCPReadResourceResult;
 type index_MCPResource = MCPResource;
-type index_MCPResourceContent = MCPResourceContent;
 type index_MCPResourceListResult = MCPResourceListResult;
-type index_MCPResourceTemplate = MCPResourceTemplate;
-type index_MCPResourceTemplateListResult = MCPResourceTemplateListResult;
 type index_MCPServerConfig = MCPServerConfig;
 type index_MCPServerSummary = MCPServerSummary;
 type index_MCPToolSchemaOverrides = MCPToolSchemaOverrides;
 declare namespace index {
-  export { type index_ElicitationHandler as ElicitationHandler, type index_ExecuteToolArguments as ExecuteToolArguments, index_MCPClientManager as MCPClientManager, type index_MCPClientManagerConfig as MCPClientManagerConfig, type index_MCPConnectionStatus as MCPConnectionStatus, type index_MCPConvertedToolSet as MCPConvertedToolSet, type index_MCPGetPromptResult as MCPGetPromptResult, type index_MCPPrompt as MCPPrompt, type index_MCPPromptListResult as MCPPromptListResult, type index_MCPReadResourceResult as MCPReadResourceResult, type index_MCPResource as MCPResource, type index_MCPResourceContent as MCPResourceContent, type index_MCPResourceListResult as MCPResourceListResult, type index_MCPResourceTemplate as MCPResourceTemplate, type index_MCPResourceTemplateListResult as MCPResourceTemplateListResult, type index_MCPServerConfig as MCPServerConfig, type index_MCPServerSummary as MCPServerSummary, type index_MCPToolSchemaOverrides as MCPToolSchemaOverrides };
+  export { type index_ElicitationHandler as ElicitationHandler, type index_ExecuteToolArguments as ExecuteToolArguments, index_MCPClientManager as MCPClientManager, type index_MCPClientManagerConfig as MCPClientManagerConfig, type index_MCPConnectionStatus as MCPConnectionStatus, type index_MCPConvertedToolSet as MCPConvertedToolSet, type index_MCPGetPromptResult as MCPGetPromptResult, type index_MCPPrompt as MCPPrompt, type index_MCPPromptListResult as MCPPromptListResult, type index_MCPReadResourceResult as MCPReadResourceResult, type index_MCPResource as MCPResource, type index_MCPResourceListResult as MCPResourceListResult, type index_MCPServerConfig as MCPServerConfig, type index_MCPServerSummary as MCPServerSummary, type index_MCPToolSchemaOverrides as MCPToolSchemaOverrides };
 }
 
-export { type ElicitationHandler, type ExecuteToolArguments, MCPClientManager, type MCPClientManagerConfig, type MCPConnectionStatus, type MCPConvertedToolSet, type MCPGetPromptResult, type MCPPrompt, type MCPPromptListResult, type MCPReadResourceResult, type MCPResource, type MCPResourceContent, type MCPResourceListResult, type MCPResourceTemplate, type MCPResourceTemplateListResult, type MCPServerConfig, type MCPServerSummary, type MCPToolSchemaOverrides, index as i };
+export { type ElicitationHandler, type ExecuteToolArguments, MCPClientManager, type MCPClientManagerConfig, type MCPConnectionStatus, type MCPConvertedToolSet, type MCPGetPromptResult, type MCPPrompt, type MCPPromptListResult, type MCPReadResourceResult, type MCPResource, type MCPResourceListResult, type MCPServerConfig, type MCPServerSummary, type MCPToolSchemaOverrides, index as i };
