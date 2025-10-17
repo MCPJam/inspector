@@ -66,3 +66,7 @@ convex/
 
 # Sentry Config File
 .env.sentry-build-plugin
+
+# sdk
+sdk/dist/
+sdk/node_modules/
