@@ -1,0 +1,70 @@
+---
+title: "Setup"
+description: "Set up your development environment for MCPJam Inspector"
+icon: "code"
+---
+
+## Prerequisites
+
+Make sure you have the following installed:
+
+- [Node.js](https://nodejs.org/) (LTS version recommended)
+- [npm](https://www.npmjs.com/) (comes with Node.js)
+
+## Quick Setup
+
+1. **Fork and clone** the repository:
+   ```bash
+   git clone https://github.com/YOUR_USERNAME/inspector.git
+   cd inspector
+   ```
+
+2. **Install dependencies**:
+   ```bash
+   npm install
+   ```
+
+3. **Start development server**:
+   ```bash
+   npm run dev
+   ```
+
+   For Windows users:
+   ```bash
+   npm run dev:windows
+   ```
+
+4. **Open your browser** to `http://localhost:3000`
+
+## Development Commands
+
+- **Run tests**: `npm test`
+- **Format code**: `npm run prettier-fix`
+- **Build project**: `npm run build`
+
+## Testing with Config Files
+
+When developing, you can test your changes with configuration files:
+
+```bash
+# Build first, then run with config
+npm run build
+npm start -- --config ../config.json --server everything
+
+# Or run the CLI script directly
+node bin/start.js --config ../config.json --server everything
+```
+
+<Warning>
+Remember to use `--` when passing arguments through npm scripts: `npm start -- --config file.json`
+</Warning>
+
+This is useful for:
+- Testing changes on a specific branch
+- Validating configuration file handling
+- Development workflow with multiple MCP servers
+
+## Next Steps
+
+- Check out our [Contributing Guide](/inspector/contributing-guide) for detailed guidelines
+- Join our [Discord](https://discord.com/invite/JEnDtz8X6z) for community support
