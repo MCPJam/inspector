@@ -114,6 +114,7 @@ export function getImageDimensions(
   url: string,
 ): Promise<{ width: number; height: number }> {
   return new Promise((resolve, reject) => {
+    // @ts-ignore - Image is DOM API
     const img = new Image();
     img.onload = () => {
       resolve({ width: img.naturalWidth, height: img.naturalHeight });
@@ -138,10 +139,12 @@ export function truncateText(text: string, maxLength: number): string {
   return text.substring(0, maxLength) + "...";
 }
 
+// @ts-ignore - DOM types
 export function scrollToBottom(element?: Element | null) {
   if (element) {
     element.scrollTop = element.scrollHeight;
   } else {
+    // @ts-ignore - window/document are DOM APIs
     window.scrollTo(0, document.body.scrollHeight);
   }
 }

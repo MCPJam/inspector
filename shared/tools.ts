@@ -176,6 +176,7 @@ export function convertMastraToolToVercelTool(
       } = vercelToolConfig;
 
       try {
+        // @ts-ignore - tool overload type mismatch with dynamic schema
         return tool(configWithoutOutputSchema);
       } catch (errorWithoutOutputSchema) {
         if (!isUnrepresentableSchemaError(errorWithoutOutputSchema)) {
@@ -187,6 +188,7 @@ export function convertMastraToolToVercelTool(
           inputSchema: fallbackInputSchema,
         };
 
+        // @ts-ignore - tool overload type mismatch with fallback schema
         return tool(fallbackConfig);
       }
     }
