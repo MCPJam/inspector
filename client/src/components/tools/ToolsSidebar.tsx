@@ -50,8 +50,8 @@ export function ToolsSidebar({
 }: ToolsSidebarProps) {
   return (
     <ResizablePanel defaultSize={35} minSize={20} maxSize={55}>
-      <div className="h-full border-r border-border bg-background">
-        <div className="border-b border-border">
+      <div className="h-full flex flex-col border-r border-border bg-background">
+        <div className="border-b border-border flex-shrink-0">
           <div className="flex">
             <button
               onClick={() => onChangeTab("tools")}
@@ -81,7 +81,7 @@ export function ToolsSidebar({
           </div>
         </div>
 
-        <div className="px-4 py-4 border-b border-border bg-background space-y-3">
+        <div className="px-4 py-4 border-b border-border bg-background space-y-3 flex-shrink-0">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <Wrench className="h-3 w-3 text-muted-foreground" />
@@ -112,52 +112,48 @@ export function ToolsSidebar({
           />
         </div>
 
-        {activeTab === "tools" ? (
-          <div className="h-[calc(100%-49px)] flex flex-col">
-            <div className="flex-1 overflow-hidden">
-              <ScrollArea className="h-full">
-                <div className="p-2">
-                  {fetchingTools ? (
-                    <div className="flex flex-col items-center justify-center py-16 text-center">
-                      <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center mb-3">
-                        <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin cursor-pointer" />
-                      </div>
-                      <p className="text-xs text-muted-foreground font-semibold mb-1">
-                        Loading tools...
-                      </p>
-                      <p className="text-xs text-muted-foreground/70">
-                        Fetching available tools from server
-                      </p>
-                    </div>
-                  ) : filteredToolNames.length === 0 ? (
-                    <div className="text-center py-8">
-                      <p className="text-sm text-muted-foreground">
-                        {tools && toolNames.length === 0
-                          ? "No tools were found. Try refreshing. Make sure you selected the correct server and the server is running."
-                          : "No tools match your search."}
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-1 gap-2">
-                      {filteredToolNames.map((name) => (
-                        <ToolItem
-                          key={name}
-                          tool={tools[name]}
-                          name={name}
-                          isSelected={selectedToolName === name}
-                          onClick={() => onSelectTool(name)}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </ScrollArea>
-            </div>
-          </div>
-        ) : (
-          <div className="h-full">
+        <div className="flex-1 overflow-hidden">
+          {activeTab === "tools" ? (
             <ScrollArea className="h-full">
-              <div className="p-3 space-y-1">
+              <div className="p-2 pb-16">
+                {fetchingTools ? (
+                  <div className="flex flex-col items-center justify-center py-16 text-center">
+                    <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center mb-3">
+                      <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin cursor-pointer" />
+                    </div>
+                    <p className="text-xs text-muted-foreground font-semibold mb-1">
+                      Loading tools...
+                    </p>
+                    <p className="text-xs text-muted-foreground/70">
+                      Fetching available tools from server
+                    </p>
+                  </div>
+                ) : filteredToolNames.length === 0 ? (
+                  <div className="text-center py-8">
+                    <p className="text-sm text-muted-foreground">
+                      {tools && toolNames.length === 0
+                        ? "No tools were found. Try refreshing. Make sure you selected the correct server and the server is running."
+                        : "No tools match your search."}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 gap-2">
+                    {filteredToolNames.map((name) => (
+                      <ToolItem
+                        key={name}
+                        tool={tools[name]}
+                        name={name}
+                        isSelected={selectedToolName === name}
+                        onClick={() => onSelectTool(name)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            </ScrollArea>
+          ) : (
+            <ScrollArea className="h-full">
+              <div className="p-3 space-y-1 pb-16">
                 {savedRequests.length === 0 ? (
                   <div className="text-center py-8">
                     <p className="text-sm text-muted-foreground">
@@ -179,8 +175,8 @@ export function ToolsSidebar({
                 )}
               </div>
             </ScrollArea>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </ResizablePanel>
   );
