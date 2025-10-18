@@ -1,0 +1,49 @@
+---
+title: "Overview"
+description: "MCPJam inspector is a testing and debugging platform for Model Context Protocol (MCP) servers"
+icon: "Book"
+---
+
+The inspector lets you test whether or not you built your MCP server correctly. You can test your server's tools, prompts, OAuth implementation, and more. If your server works on MCPJam, it'll work with any LLM client. 
+
+## Quick Start
+
+Start up the MCPJam inspector with a bash command
+
+<Card
+  title="Start MCPJam Inspector"
+  icon="rocket"
+  href="/getting-started"
+  horizontal
+>
+  Start testing your MCP servers immediately
+</Card>
+
+
+## MCPJam Inspector can
+
+- Test your MCP tools, prompts, and resources. Manually trigger your server features to quickly iterate on its development. 
+- Validate your OAuth 2 implementation with the OAuth step by step feature. 
+- Check your MCP server's behavior against different LLM's in the LLM playground. Simulate how your server would behave in environments like Claude, ChatGPT, Gemini, and more. 
+- Debug JSON-RPC messages sent back and forth between your server and client. 
+
+<Frame>
+<img
+  className="block"
+  src="/images/demo_1.png"
+  alt="MCPJam Inspector Logo"
+  width="300"
+/>
+</Frame>
+
+## Key Features
+
+| Feature                      | Description                                                                                                                              |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| **Full MCP Spec Compliance** | Test your MCP server's tools, resources, prompts, elicitation, and OAuth 2. MCPJam is compliant with the latest MCP specs.               |
+| **All transports supported** | Connect to any MCP server. MCPJam inspector supports STDIO, SSE, and Streamable HTTP transports.                                         |
+| **LLM Playground**           | Integrated chat playground with OpenAI, Anthropic Claude, and Ollama model support. Test how your MCP server would behave against an LLM |
+| **Debugging**                | Comprehensive logging, tracing, and error reporting for MCP server development                                                           |
+| **Developer Experience**     | Connect to multiple MCP servers. Save configurations. Upgraded UI/UX for modern dev experience.                                          |
+
+

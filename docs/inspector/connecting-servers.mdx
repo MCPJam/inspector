@@ -1,0 +1,72 @@
+---
+title: "Multi-server connections"
+description: "Connect to multiple MCP servers with different transport methods"
+icon: "Plug"
+---
+
+You can connect to MCP servers using all transports: STDIO, SSE, and Streamable HTTP. With OAuth 2 and Dynamic Client Registration (DCR) support. 
+
+## Manage connections 
+
+You can connect to multiple MCP servers simultaneously. To manage connections, go to the "MCP Servers" tab in the MCPJam inspector.
+
+<Frame>
+<img
+  className="block"
+  src="/images/connection/multiple.png"
+  alt="Multiple"
+  width="300"
+/>
+</Frame>
+
+- Toggle MCP servers to enable or temporarily deactivate a server. 
+- Hit the 3 dots. You can reconnect, edit, or disconnect to a server.
+
+## STDIO servers
+
+Connect to STDIO with commands. Commands vary based on what language your MCP server is built with. For example, connecting to an MCP server built with Node might look like: 
+
+```bash
+node /path/to/your/server.js
+```
+
+<Info>
+For local development, always use absolute paths (e.g., `/Users/yourname/project/server.py`) to avoid path resolution issues.
+</Info>
+
+<Frame>
+<img
+  className="block"
+  src="/images/connection/stdio.png"
+  alt="STDIO"
+  width="300"
+/>
+</Frame>
+
+### Environment variables
+
+You can configure environment variables with STDIO. Click "Add Variable" in the Environment Variables section. This is often used to pass dynamic values like API tokens to a STDIO server. 
+
+
+## SSE / Streamable HTTP servers
+
+Connect to SSE and Streamable HTTP servers. To do this, click the transport dropdown and select `SSE/HTTP`. They connect the same way: pass in a URL. 
+
+SSE server URLs typically end with `/sse` and Streamable HTTP servers typically end with `/mcp`. 
+
+<Frame>
+<img
+  className="block"
+  src="/images/connection/streamable.png"
+  alt="Streamable HTTP"
+  width="300"
+/>
+</Frame>
+
+### OAuth 2
+
+MCPJam is compliant with the MCP OAuth spec and Dynamic Client Registration (DCR). You can: 
+1. Choose `No Authentication` 
+2. Choose `Bearer Token`. Use this if you already have an API token and don't need to go through DCR. 
+3. Choose `OAuth 2.0`. This will take you through [MCP Authorization](https://modelcontextprotocol.io/specification/draft/basic/authorization) to fetch a bearer token. You can also configure OAuth Scopes or custom OAuth credentials. 
+
