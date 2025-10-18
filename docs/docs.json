@@ -69,6 +69,19 @@
             ]
           }
         ]
+      },
+      {
+        "dropdown": "Changelog",
+        "icon": "clock",
+        "description": "Latest updates and releases",
+        "groups": [
+          {
+            "group": "Releases",
+            "pages": [
+              "changelog/overview"
+            ]
+          }
+        ]
       }
     ],
     "global": {
