@@ -154,14 +154,12 @@ ${toolsContext}
 
   const data = await response.json();
 
-  // @ts-ignore - data is unknown from json(), runtime check below
   if (!data.ok || !Array.isArray(data.messages)) {
     throw new Error("Invalid response from backend LLM");
   }
 
   // Extract the assistant's response
   let assistantResponse = "";
-  // @ts-ignore - data.messages checked above
   for (const msg of data.messages) {
     if (msg.role === "assistant") {
       const content = msg.content;
