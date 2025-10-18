@@ -4,6 +4,7 @@
 sdk/node_modules/
 /node_modules/
 /.pnp
+.npm-cache/
 .pnp.*
 .yarn/*
 !.yarn/patches
