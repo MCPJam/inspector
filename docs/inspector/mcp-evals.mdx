@@ -1,0 +1,48 @@
+---
+title: "MCP Evals (Beta)"
+description: "Evaluate your MCP server's performance"
+icon: "Vial"
+---
+
+We are working on a GUI for MCP evals. Feature is a work in progress and incomplete. We highly recommend users use the MCPJam Evals CLI for now. 
+
+## MCP Evals CLI
+
+Run MCP evals via CLI. We are working on maturing the CLI before building our GUI. 
+
+<Card
+  title="MCPJam Evals CLI"
+  icon="Terminal"
+  href="/getting-started"
+  horizontal
+>
+  Start testing your MCP servers immediately
+</Card>
+
+## How MCP E2E Testing Works
+
+E2E testing simulates real user workflows by testing complete chains of interactions. For MCP servers, this means testing how they work when used by actual LLMs and agents in real-world scenarios.
+
+### Why Test MCP Servers Differently?
+
+- **APIs** are consumed by other APIs or web clients
+- **MCP servers** are consumed by LLMs and agents (like Claude Desktop, Cursor)
+- We need to simulate the actual user environment where MCP servers operate
+
+### How It Works
+
+1. **Setup**: Connect your MCP server to a testing agent
+2. **Simulate**: Configure the agent to behave like a real user (e.g., Claude Desktop)
+3. **Test**: Have the agent run realistic user queries
+4. **Verify**: Check the agent's trace to confirm correct tool usage
+
+### Example: PayPal MCP Test
+
+```
+1. Connect PayPal MCP server to testing agent
+2. Ask: "Create a refund for order ID 412"
+3. Agent runs the query using MCP tools
+4. Verify: Did it call create_refund tool successfully?
+```
+
+An LLM judge can analyze the agent's trace to determine if the test passed.

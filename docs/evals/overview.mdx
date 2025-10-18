@@ -1,0 +1,18 @@
+---
+title: "MCP Evals"
+description: "Test your MCP server's performance in different environments"
+icon: "vial"
+---
+
+Your users are connecting to your MCP server from different clients like Claude Desktop, Cursor, etc, and with different LLMs. MCP evals ensures that your MCP server works across all environments. 
+
+# E2E testing (beta)
+
+We built a CLI that performs MCP evals and End to End (E2E) testing. The CLI creates a simulated end user's environment and tests popular user flows. 
+
+An example of E2E test for PayPal MCP: 
+
+1. Connect the PayPal MCP server to testing agent. To simulate Claude Desktop, we can configure the agent to use a Claude model with a default system prompt.
+2. Query the agent to run a typical user query like "Create a refund for order ID 412"
+3. Let the testing agent run the query.
+4. Check the testing agents' tracing, make sure that it called the tool `create_refund` and successfully created a refund.

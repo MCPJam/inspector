@@ -1,0 +1,54 @@
+---
+title: "Quickstart"
+description: "The MCPJam inspector can be started with a `npx` command"
+icon: "rocket"
+---
+
+## Quick start
+
+Run the command in your terminal
+
+    ```bash
+    npx @mcpjam/inspector@latest
+    ```
+
+After installing the package, you should see a link to `localhost`. Open that link up to see the inspector. 
+
+If you don't have Node.js installed, check out our [desktop app](https://mcpjam.com). 
+
+## Connect to your first MCP server 
+Click on "Add server" and connect to your first MCP server
+
+```
+npx -y @modelcontextprotocol/server-everything
+```
+<Frame>
+<img src="/images/everything-demo.png" alt="Server everything demo" />
+</Frame>
+
+Once you hit submit, you should see the connection status as "Connected". This page is your server connections page. You can connect to multiple MCP servers simulatenously on MCPJam.
+
+<Info>
+  `@modelcontextprotocol/server-everything` is the example server from Anthropic
+</Info>
+
+## Test an MCP tool
+
+Go to the "Tools" tab. You'll be able to see all of the MCP tools `server-everything` has. Tools tab lets you test individual tools with configured params. 
+
+Try testing out the `add` tool and set params for `a` and `b`. Upon hitting "Execute", you should see the tool's return value on the bottom. 
+
+<Frame>
+<img src="/images/tool-add.png" alt="Add tool demo" />
+</Frame>
+## Try other features 
+
+Hope this showed you the basics of the inspector. Explore additional parts of the inspector: 
+
+- Advanced server connections (HTTP/SSE, STDIO, Auth)
+- LLM playground 
+- Prompts testing
+- Resources testing
+- Tracing 
+- Elicitation
+- Evals (CLI)

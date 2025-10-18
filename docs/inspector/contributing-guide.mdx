@@ -1,0 +1,86 @@
+---
+title: "Contributing Guide"
+description: "How to contribute to MCPJam Inspector"
+icon: "code"
+---
+
+## Getting Started
+
+Thank you for considering contributing to MCPJam Inspector! It's people like you that make the open source community such a great place.
+
+Before you get started, please consider giving the project a star ⭐. It helps grow the project and gives your contributions more recognition.
+
+Also join our [Discord channel](https://discord.com/invite/JEnDtz8X6z). That's where the community and other open source contributors communicate.
+
+## Finding Issues to Work On
+
+1. **Browse our issues** in the [issues tab](https://github.com/MCPJam/inspector/issues)
+2. **Look for starter labels**:
+   - `good first issue` - Great for newcomers
+   - `very easy` - Low commitment tasks
+3. **Claim an issue**:
+   - Comment on the issue you want to work on
+   - Tag `@matteo8p` in your comment
+   - Assign yourself to the issue
+   - This helps avoid multiple contributors working on the same issue
+
+## Development Workflow
+
+### 1. Fork and Clone
+```bash
+git clone https://github.com/YOUR_USERNAME/inspector.git
+cd inspector
+```
+
+### 2. Create a Branch
+```bash
+git checkout -b my-feature-branch
+```
+
+### 3. Make Your Changes
+- Follow our [Development Setup](/inspector/dev-setup) guide
+- Write clean, readable code
+- Add tests for new functionality
+
+### 4. Test Your Changes
+```bash
+npm test
+npm run prettier-fix
+```
+
+### 5. Submit a Pull Request
+1. Push your branch: `git push origin my-feature-branch`
+2. Open a Pull Request to the `main` branch
+3. In your PR description, explain your changes and link any relevant issues
+
+## Code Style
+
+We use [Prettier](https://prettier.io/) to maintain consistent code style:
+
+```bash
+npm run prettier-fix
+```
+
+## Commit Messages
+
+We follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/):
+
+```
+<type>[optional scope]: <description>
+
+[optional body]
+
+[optional footer(s)]
+```
+
+**Examples:**
+- `feat(client): add new button to the main component`
+- `fix(server): resolve issue with API endpoint`
+
+## Need Help?
+
+- Join our [Discord](https://discord.com/invite/JEnDtz8X6z) for community support
+- Check out our [Development Setup](/inspector/dev-setup) for environment setup
+- Look at existing issues and PRs for examples
+
+Thank you for contributing! 🎉
