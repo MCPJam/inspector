@@ -1,0 +1,81 @@
+---
+title: "LLM Playground"
+description: "Test your MCP server's behavior against various LLMs"
+icon: "Robot"
+---
+
+Use the LLM playground to test your server against different LLMs. This is helpful to simulate how LLMs interpret your server and test for hallucinations. 
+
+The playground is also great for simulating agent behaviors. You can customize the system prompt, swap models, and configure system prompts and temperature as if you would building an agent. 
+
+<Frame>
+<img
+  className="block"
+  src="/images/playground/llm-playground.png"
+  alt="MCPJam Inspector Logo"
+  width="300"
+/>
+</Frame>
+
+## Set up LLM Playground
+You need to set up at least one LLM to use the playground. Go to the settings tab in the inspector and follow instructions from there. 
+
+### OpenAI
+
+Get an API key from [OpenAI Platform](https://platform.openai.com/api-keys). 
+
+`gpt-4o`, `gpt-4o-mini`, `gpt-4-turbo`, `gpt-4`, `gpt-5`, `gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano`, `gpt-3.5-turbo`,`o3-mini`, `o3`, `o4-mini`, `o1`
+
+### Claude (Anthropic)
+Get an API key from [Anthropic Console](https://console.anthropic.com/). 
+
+`claude-opus-4-0`, `claude-sonnet-4-0`, `claude-3-7-sonnet-latest`, `claude-3-5-sonnet-latest`, `claude-3-5-haiku-latest`
+
+### Gemini 
+Get an API key from [Google AI Studio](https://aistudio.google.com/)
+
+`gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.0-flash-exp`, `gemini-1.5-pro`, `gemini-1.5-pro-002`, `gemini-1.5-flash`, `gemini-1.5-flash-002`, `gemini-1.5-flash-8b`, `gemini-1.5-flash-8b-001`, `gemma-3-2b`, `gemma-3-9b`, `gemma-3-27b`, `gemma-2-2b`, `gemma-2-9b`, `gemma-2-27b`, `codegemma-2b`, `codegemma-7b`
+
+### Deepseek 
+Get an API key from [Deepseek Platform](https://platform.deepseek.com/)
+
+`deepseek-chat`, `deepseek-reasoner`
+
+### Ollama
+Make sure you have [Ollama installed](https://ollama.com/), and the MCPJam Ollama URL configuration is pointing to your Ollama instance. 
+
+Start an Ollama instance with `ollama serve <model>`. MCPJam will automatically detect any Ollama models running. 
+
+## Choose an LLM model
+
+Once you've configured your LLM API keys, go to the Playground tab. On the bottom near the text input, you should see a LLM model selector. Select the model from the ones you've configured
+
+<Frame>
+<img
+  className="block"
+  src="/images/playground/model-selector.png"
+  alt="Model selector"
+  width="300"
+/>
+</Frame>
+
+## System prompt and temperature 
+
+You can configure the system prompt and temperature, just like you would building an agent. The temperature is defaulted to the default value of the LLM providers (Claude = 0, OpenAI = 1.0).
+
+<Info>
+  Higher temperature settings tend to hallucinate more with MCP interactions
+</Info>
+
+<Frame>
+<img
+  className="block"
+  src="/images/playground/prompt-config.png"
+  alt="Model selector"
+  width="300"
+/>
+</Frame>
+
+## Elicitation support 
+
+MCPJam has elicitation support in the LLM playground. Any elicitation requests will be shown as a popup modal. 

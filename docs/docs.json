@@ -1,0 +1,112 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "maple",
+  "name": "MCPJam Inspector",
+  "colors": {
+    "primary": "#EF5B25",
+    "light": "#FF7A4D",
+    "dark": "#D44A1A"
+  },
+  "favicon": "/mcp_jam.svg",
+  "navigation": {
+    "dropdowns": [
+      {
+        "dropdown": "MCPJam Inspector",
+        "icon": "book",
+        "description": "Inspector docs",
+        "groups": [
+          {
+            "group": "Getting started",
+            "pages": [
+              "index",
+              "getting-started",
+              "installation"
+            ]
+          },
+          {
+            "group": "Features",
+            "pages": [
+              "inspector/connecting-servers",
+              "inspector/llm-playground",
+              "inspector/tools-prompts-resources",
+              "inspector/debugging",
+              "inspector/guided-oauth",  
+              "inspector/mcp-evals"
+            ]
+          },
+          {
+            "group": "Developer Guide",
+            "pages": [
+              "inspector/dev-setup",
+              "inspector/contributing-guide"
+            ]
+          }
+        ]
+      },
+      {
+        "dropdown": "MCP Evals",
+        "icon": "terminal",
+        "description": "Test your MCP servers",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "evals/overview",
+              "evals/installation"
+            ]
+          }
+        ]
+      }
+    ],
+    "global": {
+      "anchors": [
+        {
+          "anchor": "Discord",
+          "href": "https://discord.gg/JEnDtz8X6z",
+          "icon": "discord"
+        },
+        {
+          "anchor": "GitHub",
+          "href": "https://github.com/MCPJam/inspector",
+          "icon": "github"
+        },
+        {
+          "anchor": "Website",
+          "href": "https://mcpjam.com",
+          "icon": "globe"
+        }
+      ]
+    }
+  },
+  "logo": {
+    "light": "/logo/mcp_jam_light.png",
+    "dark": "/logo/mcp_jam_dark.png"
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "GitHub",
+        "href": "https://github.com/MCPJam/inspector"
+      }
+    ]
+  },
+  "contextual": {
+    "options": [
+     "copy",
+     "view",
+     "chatgpt",
+     "claude",
+     "perplexity",
+     "mcp",
+     "cursor",
+     "vscode"
+   ]
+  },
+  "footer": {
+    "socials": {
+      "discord": "https://discord.gg/JEnDtz8X6z",
+      "github": "https://github.com/MCPJam/inspector",
+      "website": "https://mcpjam.com"
+    }
+  }
+}
