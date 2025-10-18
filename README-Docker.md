@@ -47,7 +47,7 @@ npm run docker:run
 
 ```bash
 # Start development environment with hot-reloading
-docker-compose --profile dev up -d
+docker run -e CONVEX_HTTP_URL=https://your-convex-url.convex.cloud -p 3001:3001 mcpjam/mcp-inspector:latest
 
 # View logs
 docker-compose logs -f mcp-inspector-dev
