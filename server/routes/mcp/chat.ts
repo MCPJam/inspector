@@ -143,7 +143,6 @@ const handleAgentStepFinish = (
               {
                 type: "tool_call",
                 toolCall: {
-                  // @ts-expect-error - currentToolCallId is string but type expects number
                   id: currentToolCallId,
                   name: toolName,
                   parameters: call.params || call.args || {},
@@ -171,11 +170,8 @@ const handleAgentStepFinish = (
               {
                 type: "tool_result",
                 toolResult: {
-                  // @ts-expect-error - currentToolCallId is string but type expects number
                   id: currentToolCallId,
-                  // @ts-expect-error - currentToolCallId is string but type expects number
                   toolCallId: currentToolCallId,
-                  // Preserve full result which may include _meta for OpenAI Apps SDK
                   result: result.result || result,
                   error: (result as any).error,
                   timestamp: new Date().toISOString(),
@@ -294,7 +290,6 @@ const createStreamingResponse = async (
               {
                 type: "tool_call",
                 toolCall: {
-                  // @ts-expect-error - currentToolCallId is string but type expects number
                   id: currentToolCallId,
                   name,
                   parameters,
@@ -326,9 +321,7 @@ const createStreamingResponse = async (
               {
                 type: "tool_result",
                 toolResult: {
-                  // @ts-expect-error - currentToolCallId is string but type expects number
                   id: currentToolCallId,
-                  // @ts-expect-error - currentToolCallId is string but type expects number
                   toolCallId: currentToolCallId,
                   result,
                   timestamp: new Date().toISOString(),
@@ -378,9 +371,7 @@ const createStreamingResponse = async (
           sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
             type: "tool_result",
             toolResult: {
-              // @ts-expect-error - currentToolCallId is string but type expects number
               id: currentToolCallId,
-              // @ts-expect-error - currentToolCallId is string but type expects number
               toolCallId: currentToolCallId,
               result: value,
               timestamp: new Date().toISOString(),
@@ -509,7 +500,6 @@ const sendMessagesToBackend = async (
     sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
       type: "tool_call",
       toolCall: {
-        // @ts-expect-error - currentToolCallId is string but type expects number
         id: currentToolCallId,
         name: call.name,
         parameters: call.params as Record<string, unknown>,
@@ -527,9 +517,7 @@ const sendMessagesToBackend = async (
     sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
       type: "tool_result",
       toolResult: {
-        // @ts-expect-error - currentToolCallId is string but type expects number
         id: currentToolCallId,
-        // @ts-expect-error - currentToolCallId is string but type expects number
         toolCallId: currentToolCallId,
         result: result.result,
         error: result.error as string | undefined,

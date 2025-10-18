@@ -130,10 +130,8 @@ export function ServerDetailModal({
                                 <h4 className="font-medium text-sm">
                                   {tool.name}
                                 </h4>
-                                {/* @ts-ignore - metadata checked above */}
                                 {metadata.write !== undefined && (
                                   <span className="text-xs px-2 py-0.5 bg-primary/10 text-primary rounded-md uppercase">
-                                    {/* @ts-ignore - metadata checked above */}
                                     {metadata.write ? "WRITE" : "READ"}
                                   </span>
                                 )}
@@ -150,7 +148,6 @@ export function ServerDetailModal({
                               METADATA
                             </div>
 
-                            {/* @ts-ignore - metadata checked above */}
                             {Object.entries(metadata).map(([key, value]) => {
                               // Skip the 'write' field as it's already shown as a badge
                               if (key === "write") return null;
