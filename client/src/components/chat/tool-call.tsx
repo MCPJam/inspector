@@ -334,6 +334,41 @@ export function ToolCallDisplay({
                             : payload;
                           if (!actualPayload) return null;
 
+                          // Check for nested output.value structure (chat tab structure)
+                          const nestedValue = actualPayload?.output?.value;
+                          if (nestedValue && typeof nestedValue === "object") {
+                            // Check output.value.content array
+                            const nestedContent = nestedValue.content;
+                            if (Array.isArray(nestedContent)) {
+                              for (const item of nestedContent) {
+                                if (
+                                  item?.type === "resource" &&
+                                  item?.resource?.uri &&
+                                  typeof item.resource.uri === "string" &&
+                                  item.resource.uri.startsWith("ui://")
+                                ) {
+                                  return item.resource;
+                                }
+                              }
+                            }
+
+                            // Check output.value.structuredContent.result array
+                            const structuredResult = nestedValue.structuredContent?.result;
+                            if (Array.isArray(structuredResult)) {
+                              for (const item of structuredResult) {
+                                if (
+                                  item?.type === "resource" &&
+                                  item?.resource?.uri &&
+                                  typeof item.resource.uri === "string" &&
+                                  item.resource.uri.startsWith("ui://")
+                                ) {
+                                  return item.resource;
+                                }
+                              }
+                            }
+                          }
+
+                          // Fallback: Check for direct resource at root level
                           const direct = actualPayload?.resource;
                           if (
                             direct &&
@@ -343,6 +378,8 @@ export function ToolCallDisplay({
                           ) {
                             return direct;
                           }
+
+                          // Fallback: Check content array at root level. Left this for backwards compatibility. 
                           const content = actualPayload?.content;
                           if (Array.isArray(content)) {
                             for (const item of content) {
