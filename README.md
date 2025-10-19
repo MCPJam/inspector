@@ -18,18 +18,7 @@ www.mcpjam.com
 <br/>
 </div>
 
-MCPJam inspector is an open source testing platform for MCP servers. It’s a great place to start evaluating an MCP server by inspecting the protocol handshake and getting a deterministic list of tools, resources, prompts from the server.
-
-## Key Features
-
-| Feature                                | Description                                                                                                                              |
-| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| **Protocol handshake testing**         | Test your MCP server's tools, resources, prompts, elicitation, and OAuth 2. MCPJam is compliant with the latest MCP specs.               |
-| **All transports supported**           | Connect to any MCP server. MCPJam inspector supports STDIO, SSE, and Streamable HTTP transports.                                         |
-| **LLM Playground**                     | Integrated chat playground with OpenAI, Anthropic Claude, and Ollama model support. Test how your MCP server would behave against an LLM |
-| **Evals testing**                      | Simulate users flows to catch security vulnerabilities and performance regressions before your server hits production.                   |
-| **Multiple server connections**        | Connect to multiple MCP servers. Save configurations. Upgraded UI/UX for modern dev experience.                                          |
-| **MCP-UI and OpenAI Apps SDK support** | Test your MCP server's implementation of MCP-UI or OpenAI Apps SDK                                                                       |
+MCPJam inspector is the local-first development platform for MCP servers. Visually test your server's tools, resources, and prompts. Try your server against different models in the LLM playground. Now with support for OpenAI Apps SDK.
 
 ## 📸 Screenshots
 
@@ -56,13 +45,26 @@ MCPJam inspector is an open source testing platform for MCP servers. It’s a gr
 
 </details>
 
-## 🎉 Open AI Apps SDK support now in beta!
+## 🚀 Quick Start
 
-Start up the MCPJam inspector in beta:
+Start up the MCPJam inspector:
 
 ```bash
-npx @mcpjam/inspector@beta
+npx @mcpjam/inspector@latest
 ```
+
+## Key Features
+
+| Feature                        | Description                                                                                                                                             |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Protocol handshake testing** | Visually test your MCP server's tools, resources, prompts, elicitation, and OAuth 2. MCPJam is compliant with the latest MCP specs.                     |
+| **All transports**             | Connect to any MCP server. MCPJam inspector supports STDIO, SSE, and Streamable HTTP transports.                                                        |
+| **LLM Playground**             | Integrated chat playground with OpenAI, Anthropic Claude, Google Gemini, and Ollama model support. Test how your MCP server would behave against an LLM |
+| **Test OAuth**                 | Test your server's OAuth and Dynamic Client Registration implementation.                                                                                |
+| **View JSON-RPC**              | View every JSON-RPC message sent over network. Provides granular observability and debugging.                                                           |
+| **MCP-UI and OpenAI Apps SDK** | Test your MCP server's implementation of MCP-UI or OpenAI Apps SDK                                                                                      |
+
+## 🎉 Now with OpenAI Apps SDK support!
 
 <img alt="OpenAI Apps SDK Demo" src="./client/public/apps_sdk_pizza.png">
 
@@ -75,23 +77,15 @@ Test your Apps SDK app with:
 
 The feature is in beta, and still needs polishing. Please report any bugs in the issues tab. We encourage the community to contibute!
 
-## 🚀 Quick Start
+# Installation Guides
 
-Start up the MCPJam inspector:
+We recommend starting MCPJam inspector via `npx`:
 
 ```bash
 npx @mcpjam/inspector@latest
 ```
 
-Other commands:
-
-```bash
-# Launch with custom port
-npx @mcpjam/inspector@latest --port 4000
-
-# Shortcut for starting MCPJam and an Ollama model
-npx @mcpjam/inspector@latest --ollama llama3.2
-```
+or download the Mac / Windows desktop app [on our site](https://www.mcpjam.com/).
 
 ## 🐳 Docker
 
@@ -107,6 +101,22 @@ docker run -d -p 3001:3001 --name mcp-inspector mcpjam/mcp-inspector:latest
 
 The application will be available at `http://localhost:3001`.
 
+## Open commands
+
+```bash
+# Launch with custom port
+npx @mcpjam/inspector@latest --port 4000
+
+# Shortcut for starting MCPJam and an Ollama model
+npx @mcpjam/inspector@latest --ollama llama3.2
+
+# Local FastMCP STDIO example
+npx @mcpjam/inspector@latest uv run fastmcp run /Users/matt8p/demo/src/server.py
+
+# Local Node example
+npx @mcpjam/inspector@latest npx -y /Users/matt8p/demo-ts/dist/index.js
+```
+
 ## Connecting to MCP servers
 
 ### mcp.json
@@ -117,17 +127,6 @@ You can import your `mcp.json` MCP server configs from Claude Desktop and Cursor
 npx @mcpjam/inspector@latest --config mcp.json
 ```
 
-### STDIO
-
-Note: Always use global file paths
-
-```
-# Local FastMCP STDIO example
-npx @mcpjam/inspector@latest uv run fastmcp run /Users/matt8p/demo/src/server.py
-# Local Node example
-npx @mcpjam/inspector@latest npx -y /Users/matt8p/demo-ts/dist/index.js
-```
-
 ### SSE / Streamable HTTP
 
 Spin up the MCPJam inspector
@@ -136,7 +135,7 @@ Spin up the MCPJam inspector
 npx @mcpjam/inspector@latest
 ```
 
-In the UI "MCP Servers" tab, click add server, select HTTP, then paste in your server URL
+In the UI "MCP Servers" tab, click add server, select HTTP, then paste in your server URL. Support for OAuth 2.0 testing.
 
 ## Requirements
 
@@ -171,38 +170,14 @@ npm run build
 npm run start
 ```
 
-### Available Scripts
-
-| Script                 | Description                                     |
-| ---------------------- | ----------------------------------------------- |
-| `npm run dev`          | Start Next.js development server with Turbopack |
-| `npm run build`        | Build the application for production            |
-| `npm run start`        | Start the production server                     |
-| `npm run lint`         | Run ESLint code linting                         |
-| `npm run prettier-fix` | Format code with Prettier                       |
-
----
-
 ## 🤝 Contributing
 
 We welcome contributions to MCPJam Inspector V1! Please read our [CONTRIBUTING.md](./CONTRIBUTING.md) for development guidelines and best practices.
-
-### Development Workflow
-
-1. **Fork** the repository
-2. **Create** a feature branch (`git checkout -b feature/amazing-feature`)
-3. **Develop** your changes with proper testing
-4. **Format** code with `npm run prettier-fix`
-5. **Lint** code with `npm run lint`
-6. **Commit** your changes (`git commit -m 'Add amazing feature'`)
-7. **Push** to your branch (`git push origin feature/amazing-feature`)
-8. **Open** a Pull Request
 
 ## 📚 Resources
 
 - **💬 Discord**: [Join the MCPJam Community](https://discord.gg/JEnDtz8X6z)
 - **📖 MCP Protocol**: [Model Context Protocol Documentation](https://modelcontextprotocol.io/)
-- **🔧 Mastra Framework**: [Mastra MCP Integration](https://github.com/mastra-ai/mastra)
 - **🤖 AI SDK**: [Vercel AI SDK](https://sdk.vercel.ai/)
 
 ---

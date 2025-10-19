@@ -38,20 +38,20 @@ This document describes the interceptor architecture that enables MCP clients (C
 
 ## Proxy Flow
 
-1) **Create proxy** (`POST /api/mcp/interceptor/create?tunnel=true`)
+1. **Create proxy** (`POST /api/mcp/interceptor/create?tunnel=true`)
    - External URL Mode: `targetUrl` is a full MCP HTTP URL.
    - Connected Server Mode: pass `serverId` and optionally `targetUrl`.
      - If HTTP: derive `injectHeaders` (Authorization) from the connected server config.
      - If stdio: set `targetUrl` to the local stdio adapter: `/api/mcp/adapter-http/:serverId`.
    - Start (or reuse) ngrok for the Node API port and return `proxyUrl`.
 
-2) **Use proxy**
+2. **Use proxy**
    - Clients send MCP traffic to `…/proxy[:id]/…`.
    - The interceptor builds the upstream URL by preserving trailing path/query after `/proxy/:id`.
    - Hop‑by‑hop headers are stripped; `Host` and `Content-Length` are removed; `Accept` is normalized to include both `application/json` and `text/event-stream`.
    - If `injectHeaders` exists and the client didn’t set `Authorization`, add it.
 
-3) **Logging & Streaming**
+3. **Logging & Streaming**
    - Non‑streaming responses: clone and log body text.
    - Streaming (SSE/NDJSON): don’t drain the stream, but still log content:
      - SSE: tee/parse and append a `200 SSE message` log per `event: message` with the JSON body.
@@ -61,17 +61,20 @@ This document describes the interceptor architecture that enables MCP clients (C
 ## Streamable HTTP Compatibility
 
 ### Upstream SSE (server already streams)
+
 - Rewrite upstream `event: endpoint` to the proxy messages endpoint (`…/proxy/messages?sessionId=…`).
 - Record `sessionId -> upstream messages URL` in the store.
 - POSTs to `…/proxy/messages` forward to the exact upstream messages URL and return `202` while delivering the real JSON‑RPC response on SSE.
 
 ### Stateless Servers (no SSE)
+
 - Provide an **SSE shim** when the client GETs with `Accept: text/event-stream`:
   - Emit `ping` and `endpoint` pointing at the proxy messages URL.
   - Map `sessionId -> upstream base URL` (stateless POST endpoint).
   - POSTs to `…/proxy/messages` forward to the upstream base URL and return `202`.
 
 ### Endpoint Payload Nuances (Claude vs Cursor)
+
 - Upstream rewrite: emit a **string** endpoint (broad compatibility; avoids JSON‑in‑path bugs).
 - SSE shim (local stream):
   - Detect User-Agent; emit **string‑only** for Claude; **JSON then string** for Cursor/others.
@@ -134,4 +137,3 @@ This document describes the interceptor architecture that enables MCP clients (C
 - Store (logs, sessions, bulk destroy): `server/services/interceptor-store.ts`
 - Stdio adapter: `server/routes/mcp/adapter-http.ts`
 - UI: Interceptor tab `client/src/components/InterceptorTab.tsx`, Servers tab `client/src/components/ServersTab.tsx`
-
