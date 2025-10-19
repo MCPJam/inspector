@@ -172,7 +172,6 @@ const handleAgentStepFinish = (
                 toolResult: {
                   id: currentToolCallId,
                   toolCallId: currentToolCallId,
-                  // Preserve full result which may include _meta for OpenAI Apps SDK
                   result: result.result || result,
                   error: (result as any).error,
                   timestamp: new Date().toISOString(),
