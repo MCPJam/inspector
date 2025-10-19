@@ -4,7 +4,7 @@ description: "Build your first eval with the CLI"
 icon: "rocket"
 ---
 
-## Install 
+## Install
 
 ```bash
 npm install -g @mcpjam/cli
@@ -12,10 +12,11 @@ npm install -g @mcpjam/cli
 
 ## Set up tests
 
-To set up, create a new folder directory. In that directory, we'll create a test file and an server connection file. 
+To set up, create a new folder directory. In that directory, we'll create a test file and an server connection file.
 
-### Test file 
-- `prompt` is what a user would type in the chat to interact with your server. 
+### Test file
+
+- `prompt` is what a user would type in the chat to interact with your server.
 - `expectedTools` is what tools you'd expect to be called given the prompt
 - Customize the environment with `model` and optional `advancedConfig`
 
@@ -39,8 +40,9 @@ To set up, create a new folder directory. In that directory, we'll create a test
 }
 ```
 
-## Server connection file 
-This file is configured very similar to a `mcp.json` file. You must provide at least one `providerApiKey`. 
+## Server connection file
+
+This file is configured very similar to a `mcp.json` file. You must provide at least one `providerApiKey`.
 
 ```json local-dev.json
 {
@@ -85,4 +87,3 @@ mcpjam evals run -t weather-tests.json -e local-dev.json
 - `--environment, -e <file>`: Path to the environment configuration file (required)
 - `--help, -h`: Show help information
 - `--version, -V`: Display version number
-

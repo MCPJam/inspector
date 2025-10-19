@@ -96,4 +96,3 @@ curl -N -i -X POST 'https://<tunnel>/api/mcp/interceptor/<id>/proxy' \
   -H 'Content-Type: application/json' \
   --data '{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{}}}'
 ```
-

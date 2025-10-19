@@ -14,22 +14,26 @@ Make sure you have the following installed:
 ## Quick Setup
 
 1. **Fork and clone** the repository:
+
    ```bash
    git clone https://github.com/YOUR_USERNAME/inspector.git
    cd inspector
    ```
 
 2. **Install dependencies**:
+
    ```bash
    npm install
    ```
 
 3. **Start development server**:
+
    ```bash
    npm run dev
    ```
 
    For Windows users:
+
    ```bash
    npm run dev:windows
    ```
@@ -56,10 +60,12 @@ node bin/start.js --config ../config.json --server everything
 ```
 
 <Warning>
-Remember to use `--` when passing arguments through npm scripts: `npm start -- --config file.json`
+  Remember to use `--` when passing arguments through npm scripts: `npm start --
+  --config file.json`
 </Warning>
 
 This is useful for:
+
 - Testing changes on a specific branch
 - Validating configuration file handling
 - Development workflow with multiple MCP servers

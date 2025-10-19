@@ -17,11 +17,7 @@
         "groups": [
           {
             "group": "Getting started",
-            "pages": [
-              "index",
-              "getting-started",
-              "installation"
-            ]
+            "pages": ["index", "getting-started", "installation"]
           },
           {
             "group": "Features",
@@ -30,16 +26,13 @@
               "inspector/llm-playground",
               "inspector/tools-prompts-resources",
               "inspector/debugging",
-              "inspector/guided-oauth",  
+              "inspector/guided-oauth",
               "inspector/mcp-evals"
             ]
           },
           {
             "group": "Developer Guide",
-            "pages": [
-              "inspector/dev-setup",
-              "inspector/contributing-guide"
-            ]
+            "pages": ["inspector/dev-setup", "inspector/contributing-guide"]
           },
           {
             "group": "Engineering Onboarding",
@@ -57,10 +50,7 @@
         "groups": [
           {
             "group": "Overview",
-            "pages": [
-              "evals/overview",
-              "evals/installation"
-            ]
+            "pages": ["evals/overview", "evals/installation"]
           }
         ]
       },
@@ -71,9 +61,7 @@
         "groups": [
           {
             "group": "Getting Started",
-            "pages": [
-              "contributing/docs-server"
-            ]
+            "pages": ["contributing/docs-server"]
           }
         ]
       },
@@ -84,9 +72,7 @@
         "groups": [
           {
             "group": "Releases",
-            "pages": [
-              "changelog/overview"
-            ]
+            "pages": ["changelog/overview"]
           }
         ]
       }
@@ -125,15 +111,15 @@
   },
   "contextual": {
     "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
+      "copy",
+      "view",
+      "chatgpt",
+      "claude",
+      "perplexity",
+      "mcp",
+      "cursor",
+      "vscode"
+    ]
   },
   "footer": {
     "socials": {
