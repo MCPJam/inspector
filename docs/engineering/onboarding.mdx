@@ -1,0 +1,235 @@
+---
+title: 'Engineering Onboarding'
+description: 'Get started with MCPJam Inspector development'
+icon: 'rocket'
+---
+
+## Welcome to MCPJam Inspector
+
+This guide will help you get up to speed with the MCPJam Inspector codebase and start contributing effectively.
+
+## Project Overview
+
+MCPJam Inspector is a developer tool for testing and debugging Model Context Protocol (MCP) servers. Built with:
+
+<CardGroup cols={3}>
+  <Card title="Frontend" icon="react">
+    Vite + React + TypeScript
+  </Card>
+  <Card title="Backend" icon="server">
+    Hono.js (Node.js)
+  </Card>
+  <Card title="Desktop" icon="desktop">
+    Electron
+  </Card>
+</CardGroup>
+
+## Architecture
+
+### High-Level Structure
+
+```
+/inspector
+  /client        # Vite + React frontend
+    /src         # UI components, hooks, stores
+    /public      # Static assets
+  /server        # Hono.js backend
+    /routes      # API endpoints, MCP handlers
+    /utils       # Server utilities
+  /src           # Electron main process
+    /ipc         # Inter-process communication
+  /shared        # Common types, utilities
+  /docs          # Documentation (Mintlify)
+  /evals-cli     # MCP Evals CLI tool
+```
+
+### Key Technologies
+
+| Technology | Purpose | Location |
+|------------|---------|----------|
+| **React + Vite** | Frontend UI | `/client` |
+| **Hono.js** | Backend API server | `/server` |
+| **Electron** | Desktop app wrapper | `/src` |
+| **TypeScript** | Type safety | Throughout |
+| **Zustand** | State management | `/client/src/stores` |
+| **Shadcn/ui** | UI components | `/client/src/components/ui` |
+| **MCP SDK** | MCP protocol implementation | Dependencies |
+
+## Core Concepts
+
+### 1. MCP Server Connections
+
+MCPJam Inspector supports multiple transport protocols:
+
+<AccordionGroup>
+  <Accordion title="STDIO Transport" icon="terminal">
+    Bidirectional streaming with local processes. Used for local MCP servers running as command-line tools.
+
+    **Key files:**
+    - `server/routes/mcp/stdio.ts` - STDIO connection handling
+    - `client/src/hooks/use-stdio-connection.ts` - React hook for STDIO
+  </Accordion>
+
+  <Accordion title="SSE Transport" icon="rss">
+    Server-Sent Events for real-time updates. Used for remote MCP servers with SSE endpoints.
+
+    **Key files:**
+    - `server/routes/mcp/sse.ts` - SSE connection handling
+    - `client/src/hooks/use-sse-connection.ts` - React hook for SSE
+  </Accordion>
+
+  <Accordion title="HTTP Streamable" icon="cloud">
+    HTTP with chunked transfer encoding. Used for HTTP-based MCP servers.
+
+    **Key files:**
+    - `server/routes/mcp/streamable.ts` - HTTP streamable handling
+    - `client/src/hooks/use-http-connection.ts` - React hook for HTTP
+  </Accordion>
+</AccordionGroup>
+
+### 2. OAuth Flow
+
+MCPJam Inspector implements a complete OAuth 2.0 flow with PKCE for secure authentication.
+
+<Card title="OAuth Architecture Deep Dive" icon="lock" href="/engineering/oauth-architecture">
+  Learn about the OAuth implementation, state machine, and CORS proxy architecture
+</Card>
+
+### 3. State Management
+
+We use Zustand for state management with the following stores:
+
+| Store | Purpose | Location |
+|-------|---------|----------|
+| **Servers Store** | MCP server connections | `client/src/stores/servers` |
+| **Chat Store** | LLM playground state | `client/src/stores/chat` |
+| **Preferences** | User settings | `client/src/stores/preferences` |
+| **Evals Store** | Evaluation results | `client/src/stores/evals` |
+
+### 4. LLM Integration
+
+MCPJam supports multiple LLM providers:
+
+- OpenAI (GPT-3.5, GPT-4)
+- Anthropic (Claude 2, Claude 3)
+- DeepSeek (DeepSeek R1)
+- Ollama (Local models)
+
+**Key file:** `client/src/lib/llm-providers.ts`
+
+## Development Workflow
+
+### Initial Setup
+
+<Steps>
+  <Step title="Clone Repository">
+    ```bash
+    git clone https://github.com/MCPJam/inspector.git
+    cd inspector
+    ```
+  </Step>
+
+  <Step title="Install Dependencies">
+    ```bash
+    npm install
+    ```
+  </Step>
+
+  <Step title="Set Environment Variables">
+    Create a `.env` file in the root directory with your API keys:
+    ```bash
+    OPENAI_API_KEY=your_key_here
+    ANTHROPIC_API_KEY=your_key_here
+    # Optional: Add other provider keys
+    ```
+  </Step>
+
+  <Step title="Start Development Server">
+    ```bash
+    npm run dev
+    ```
+  </Step>
+</Steps>
+
+
+## Code Style & Conventions
+
+### TypeScript
+
+- Use strict mode (`strict: true` in tsconfig)
+- Define interfaces for all data structures
+- Avoid `any` - use `unknown` or proper types
+- Use type guards for runtime type checking
+
+### React
+
+- Prefer functional components with hooks
+- Use `useCallback` and `useMemo` for optimization
+- Keep components small and focused
+- Co-locate component-specific code
+
+### File Naming
+
+| Type | Convention | Example |
+|------|------------|---------|
+| Components | kebab-case | `mcp-sidebar.tsx` |
+| Hooks | use-prefix | `use-mcp-connection.ts` |
+| Stores | kebab-case | `servers-store.ts` |
+| Types | PascalCase | `ServerDefinition` |
+| Utilities | kebab-case | `format-date.ts` |
+
+### Manual Testing
+
+1. Test with multiple MCP servers
+2. Verify all transport types work
+3. Check OAuth flow end-to-end
+4. Test LLM playground with different models
+5. Verify evals run successfully
+
+## Building & Deployment
+
+### Build for Production
+
+```bash
+# Build all packages
+npm run build
+
+# Build specific package
+npm run build:client  # Frontend only
+npm run build:server  # Backend only
+```
+
+### Electron Distribution
+
+```bash
+# Create distributable
+npm run electron:make
+
+# Platform-specific builds
+npm run electron:make:mac
+npm run electron:make:win
+npm run electron:make:linux
+```
+
+### Docker
+
+```bash
+# Build Docker image
+docker build -t mcpjam/mcp-inspector .
+
+# Run container
+docker run -p 3001:3001 mcpjam/mcp-inspector
+```
+
+## Next Steps
+
+Now that you understand the basics, dive into specific topics:
+
+1. **Explore the OAuth Architecture** - Understand how authentication works
+2. **Read the Contributing Guide** - Learn our contribution workflow
+3. **Pick a Good First Issue** - Start contributing to the project
+4. **Join Discord** - Connect with other contributors
+
+<Check>
+  Ready to start contributing? Check out our [Contributing Guide](/inspector/contributing-guide) for next steps!
+</Check>

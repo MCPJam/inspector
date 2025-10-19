@@ -1,0 +1,404 @@
+---
+title: 'OAuth Architecture'
+description: 'Understanding OAuth flow implementation in MCPJam Inspector'
+icon: 'lock'
+---
+
+## Architecture Overview
+
+The OAuth implementation uses:
+- **Client-side state machine** for flow orchestration
+- **CORS proxy server** for metadata discovery
+- **localStorage** for persistence
+- **MCP SDK** for OAuth operations
+
+## Complete OAuth Flow
+
+The following diagram shows the complete OAuth flow from user initiation through token exchange:
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Client as Inspector Client<br/>(React)
+    participant SM as OAuth State Machine
+    participant Proxy as Inspector Server<br/>(CORS Proxy)
+    participant MCP as MCP OAuth Server
+    participant AS as Auth Server
+
+    Note over User,AS: 1. METADATA DISCOVERY
+    User->>Client: Click "Authenticate"
+    Client->>SM: startGuidedFlow()
+    SM->>SM: State: metadata_discovery
+
+    Note over SM,Proxy: Fetch interceptor proxies .well-known requests
+    SM->>Proxy: GET /api/mcp/oauth/metadata?url=...
+    Proxy->>MCP: GET /.well-known/oauth-authorization-server
+    MCP-->>Proxy: OAuth metadata JSON
+    Proxy-->>SM: OAuth metadata (CORS-safe)
+
+    SM->>MCP: GET /.well-known/oauth-protected-resource (optional)
+    MCP-->>SM: Resource metadata + scopes
+
+    SM->>SM: updateState({oauthMetadata, resourceMetadata})
+    SM->>SM: State: client_registration
+
+    Note over User,AS: 2. CLIENT REGISTRATION
+    SM->>SM: Check localStorage for existing client
+    alt Dynamic Client Registration supported
+        SM->>AS: POST /register (DCR)
+        AS-->>SM: client_id, client_secret
+        SM->>Client: Save to localStorage
+    else DCR not supported
+        SM->>SM: Use pre-configured client_id
+    end
+
+    SM->>SM: updateState({oauthClientInfo})
+    SM->>SM: State: authorization_redirect
+
+    Note over User,AS: 3. AUTHORIZATION REDIRECT
+    SM->>SM: Generate PKCE code_verifier
+    SM->>SM: Generate state for CSRF
+    SM->>AS: Build authorization URL
+    AS-->>SM: authorizationUrl
+    SM->>Client: Save code_verifier to localStorage
+    SM->>Client: Set localStorage('mcp-oauth-pending', serverName)
+
+    SM->>SM: updateState({authorizationUrl})
+    SM->>SM: State: authorization_code
+
+    Client->>User: Display authorization URL
+    User->>AS: Open URL in browser & authorize
+    AS->>User: Redirect to callback with code
+
+    Note over User,AS: 4. OAUTH CALLBACK HANDLING
+    User->>Client: Navigate to /oauth/callback?code=...
+    Client->>SM: handleOAuthCallback(code)
+    SM->>SM: Get serverName from localStorage
+    SM->>SM: Get code_verifier from localStorage
+
+    User->>SM: Paste authorization code
+    SM->>SM: updateState({authorizationCode})
+    SM->>SM: State: token_request
+
+    Note over User,AS: 5. TOKEN EXCHANGE
+    SM->>AS: POST /token<br/>(code, code_verifier, client_id)
+    AS-->>SM: access_token, refresh_token, expires_in
+
+    SM->>Client: Save tokens to localStorage
+    SM->>Client: Clear 'mcp-oauth-pending'
+    SM->>SM: updateState({oauthTokens})
+    SM->>SM: State: complete
+
+    Note over User,AS: 6. AUTHENTICATED REQUESTS
+    Client->>Client: Create server config with tokens
+    Client->>MCP: MCP requests with<br/>Authorization: Bearer {access_token}
+
+    Note over User,AS: 7. TOKEN REFRESH (when expired)
+    Client->>SM: refreshOAuthTokens(serverName)
+    SM->>SM: Get refresh_token from localStorage
+    SM->>AS: POST /token<br/>(grant_type=refresh_token)
+    AS-->>SM: New access_token, refresh_token
+    SM->>Client: Update localStorage with new tokens
+```
+
+## State Machine Transitions
+
+The OAuth flow is managed by a state machine with 6 distinct states:
+
+```mermaid
+stateDiagram-v2
+    [*] --> metadata_discovery
+
+    metadata_discovery --> client_registration: OAuth metadata discovered
+    metadata_discovery --> metadata_discovery: Error (retry)
+
+    client_registration --> authorization_redirect: Client registered
+    client_registration --> client_registration: Error (retry)
+
+    authorization_redirect --> authorization_code: Auth URL generated
+    authorization_redirect --> authorization_redirect: Error (retry)
+
+    authorization_code --> token_request: Code entered
+    authorization_code --> authorization_code: Validation error
+
+    token_request --> complete: Tokens obtained
+    token_request --> token_request: Error (retry)
+
+    complete --> [*]: Flow complete
+
+    note right of metadata_discovery
+        - Discover OAuth metadata
+        - Discover resource metadata
+        - Select resource URL
+    end note
+
+    note right of client_registration
+        - Dynamic Client Registration (DCR)
+        - Or use pre-configured client
+        - Save client info to localStorage
+    end note
+
+    note right of authorization_redirect
+        - Generate PKCE code_verifier
+        - Generate CSRF state
+        - Build authorization URL
+        - Save code_verifier
+    end note
+
+    note right of authorization_code
+        - User authorizes in browser
+        - Receives authorization code
+        - Validates code format
+    end note
+
+    note right of token_request
+        - Exchange code for tokens
+        - Use code_verifier (PKCE)
+        - Save tokens to localStorage
+    end note
+```
+
+## Data Persistence (localStorage)
+
+All OAuth data is persisted in the browser's localStorage with server-specific keys:
+
+```mermaid
+graph TD
+    A[localStorage Keys] --> B[mcp-tokens-serverName]
+    A --> C[mcp-client-serverName]
+    A --> D[mcp-verifier-serverName]
+    A --> E[mcp-serverUrl-serverName]
+    A --> F[mcp-oauth-config-serverName]
+    A --> G[mcp-oauth-pending]
+
+    B --> B1[access_token<br/>refresh_token<br/>expires_in]
+    C --> C1[client_id<br/>client_secret]
+    D --> D1[PKCE code_verifier]
+    E --> E1[MCP server URL]
+    F --> F1[scopes array]
+    G --> G1[Pending server name<br/>for callback recovery]
+
+    style B fill:#e1f5e1
+    style C fill:#e1f5e1
+    style D fill:#fff4e1
+    style E fill:#e1f5e1
+    style F fill:#e1f5e1
+    style G fill:#ffe1e1
+```
+
+## CORS Proxy Architecture
+
+To bypass CORS restrictions when fetching OAuth metadata, we use a proxy server:
+
+```mermaid
+graph LR
+    A[Client fetch interceptor] -->|Detects .well-known URL| B[Proxy Request]
+    B -->|GET /api/mcp/oauth/metadata?url=...| C[Inspector Server]
+    C -->|Validates HTTPS| D[Fetch OAuth metadata]
+    D -->|Returns with CORS headers| E[Client receives metadata]
+
+    A -->|Other requests| F[Direct fetch]
+
+    style C fill:#e1f4ff
+    style B fill:#fff4e1
+```
+
+## Key Components
+
+### 1. MCPOAuthProvider
+
+**Location:** `client/src/lib/mcp-oauth.ts:72`
+
+Implements the `OAuthClientProvider` interface from the MCP SDK:
+
+<CodeGroup>
+```typescript Methods
+// Get/create client info with custom credentials
+clientInformation()
+
+// Store client info to localStorage
+saveClientInformation(clientInfo)
+
+// Retrieve stored tokens
+tokens()
+
+// Store tokens to localStorage
+saveTokens(tokens)
+
+// Redirect user to auth server
+redirectToAuthorization(url)
+
+// Retrieve PKCE verifier
+codeVerifier()
+
+// Store PKCE verifier
+saveCodeVerifier(verifier)
+```
+</CodeGroup>
+
+### 2. OAuth State Machine
+
+**Location:** `client/src/lib/oauth-state-machine.ts:353`
+
+Manages the step-by-step OAuth flow:
+
+- Each step has `canTransition` and `execute` methods
+- Handles errors and retries automatically
+- Updates UI state via callbacks
+- Validates preconditions before transitions
+
+### 3. CORS Proxy
+
+**Location:** `server/routes/mcp/oauth.ts:10`
+
+Proxies OAuth metadata requests to bypass CORS:
+
+- Enforces HTTPS for security
+- Adds proper CORS headers
+- Validates URL format
+- Returns OAuth metadata JSON
+
+### 4. Fetch Interceptor
+
+**Location:** `client/src/lib/mcp-oauth.ts:17`
+
+Intercepts and proxies OAuth metadata requests:
+
+<CodeGroup>
+```typescript Interceptor
+function createOAuthFetchInterceptor() {
+  return async function interceptedFetch(input, init) {
+    const url = extractUrl(input);
+
+    // Check if this is an OAuth metadata request
+    if (url.includes('/.well-known/oauth-authorization-server')) {
+      // Proxy through our server to avoid CORS
+      const proxyUrl = `/api/mcp/oauth/metadata?url=${encodeURIComponent(url)}`;
+      return await originalFetch(proxyUrl, init);
+    }
+
+    // For all other requests, use original fetch
+    return await originalFetch(input, init);
+  };
+}
+```
+</CodeGroup>
+
+## OAuth Flow States
+
+From `client/src/lib/oauth-flow-types.ts:10-16`:
+
+| State | Description |
+|-------|-------------|
+| `metadata_discovery` | Discover OAuth & resource metadata from server |
+| `client_registration` | Register client (DCR) or use pre-configured |
+| `authorization_redirect` | Generate auth URL with PKCE |
+| `authorization_code` | Wait for user authorization |
+| `token_request` | Exchange code for tokens |
+| `complete` | OAuth flow finished |
+
+## Security Features
+
+<CardGroup cols={2}>
+  <Card title="PKCE" icon="shield-check">
+    Code verifier stored at `oauth-state-machine.ts:248` for secure authorization without client secrets
+  </Card>
+
+  <Card title="CSRF Protection" icon="shield-halved">
+    Random state parameter generated at `oauth-state-machine.ts:231-236`
+  </Card>
+
+  <Card title="HTTPS Enforcement" icon="lock">
+    Proxy validates HTTPS at `oauth.ts:22`
+  </Card>
+
+  <Card title="Scope Validation" icon="list-check">
+    Uses advertised scopes from metadata at `oauth-state-machine.ts:222-229`
+  </Card>
+</CardGroup>
+
+## Error Handling
+
+Each state handles errors gracefully:
+
+- Stores error in `latestError` state field
+- Updates `statusMessage` with user-friendly error
+- Provides helpful error messages for common issues:
+  - `invalid_client` - Client ID verification failed
+  - `unauthorized_client` - Client not authorized for this server
+  - `invalid_grant` - Authorization code expired or invalid
+- Allows retry from current step without restarting flow
+
+## Token Management
+
+<Steps>
+  <Step title="Storage">
+    Tokens stored in localStorage with server-specific keys
+  </Step>
+
+  <Step title="Refresh">
+    Automatic token refresh using refresh_token at `mcp-oauth.ts:464`
+  </Step>
+
+  <Step title="Usage">
+    Tokens added as Bearer token in Authorization header at `mcp-oauth.ts:577-580`
+  </Step>
+
+  <Step title="Cleanup">
+    `clearOAuthData()` removes all OAuth-related localStorage entries
+  </Step>
+</Steps>
+
+## Usage Example
+
+<CodeGroup>
+```typescript Initiate OAuth
+// Initiate OAuth flow
+const result = await initiateOAuth({
+  serverName: 'my-mcp-server',
+  serverUrl: 'https://mcp.example.com',
+  scopes: ['read', 'write'],
+  clientId: 'optional-custom-client-id', // Optional
+  clientSecret: 'optional-client-secret' // Optional
+});
+
+if (result.success && result.serverConfig) {
+  // Use server config for authenticated requests
+  // serverConfig includes Authorization header with Bearer token
+}
+```
+
+```typescript Handle Callback
+// Handle OAuth callback (after user authorizes)
+const callbackResult = await handleOAuthCallback(authorizationCode);
+```
+
+```typescript Refresh Tokens
+// Refresh tokens when needed
+const refreshResult = await refreshOAuthTokens(serverName);
+```
+
+```typescript Helper Functions
+// Check if OAuth is configured
+const hasConfig = hasOAuthConfig(serverName);
+
+// Get stored tokens
+const tokens = getStoredTokens(serverName);
+
+// Clear OAuth data
+clearOAuthData(serverName);
+```
+</CodeGroup>
+
+## File References
+
+| Component | Location |
+|-----------|----------|
+| OAuth Flow Types | `client/src/lib/oauth-flow-types.ts` |
+| State Machine | `client/src/lib/oauth-state-machine.ts` |
+| OAuth Provider | `client/src/lib/mcp-oauth.ts` |
+| CORS Proxy | `server/routes/mcp/oauth.ts` |
+
+<Note>
+  The OAuth implementation follows the MCP specification and uses PKCE for enhanced security. All sensitive data is stored in localStorage and never sent to unauthorized servers.
+</Note>

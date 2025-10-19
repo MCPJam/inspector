@@ -40,6 +40,13 @@
               "inspector/dev-setup",
               "inspector/contributing-guide"
             ]
+          },
+          {
+            "group": "Engineering Onboarding",
+            "pages": [
+              "engineering/onboarding",
+              "engineering/oauth-architecture"
+            ]
           }
         ]
       },
