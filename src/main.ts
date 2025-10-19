@@ -66,7 +66,10 @@ async function startHonoServer(): Promise<number> {
     // Set environment variables to tell the server it's running in Electron
     process.env.ELECTRON_APP = "true";
     process.env.IS_PACKAGED = app.isPackaged ? "true" : "false";
-    process.env.ELECTRON_RESOURCES_PATH = process.resourcesPath;
+    // In dev mode, use app path (project root), in packaged mode use resourcesPath
+    process.env.ELECTRON_RESOURCES_PATH = app.isPackaged
+      ? process.resourcesPath
+      : app.getAppPath();
     process.env.NODE_ENV = app.isPackaged ? "production" : "development";
 
     const honoApp = createHonoApp();
