@@ -12,7 +12,7 @@ Run the command in your terminal
     npx @mcpjam/inspector@latest
     ```
 
-After installing the package, you should see a link to `localhost`. Open that link up to see the inspector. 
+After installing the package, you should see a link to `localhost`. Open that link up to see the inspector.
 
 ## Docker
 
@@ -48,14 +48,16 @@ This will open the MCPJam inspector and connect to a STDIO using the commands yo
     # Direct Node.js execution
     npx @mcpjam/inspector@latest node /path/to/your/server.js
     ```
+
   </Tab>
 </Tabs>
 
 <Info>
-**Use Absolute Paths**: Always use absolute file paths (e.g., `/Users/yourname/project/server.py`) to avoid path resolution issues.
+  **Use Absolute Paths**: Always use absolute file paths (e.g.,
+  `/Users/yourname/project/server.py`) to avoid path resolution issues.
 </Info>
 
-## Start with custom port 
+## Start with custom port
 
 This will start the MCPJam inspector with a custom port number. The default port is `6274`.
 
@@ -63,9 +65,9 @@ This will start the MCPJam inspector with a custom port number. The default port
 npx @mcpjam/inspector@latest --port 4000
 ```
 
-## Start with Ollama 
+## Start with Ollama
 
-This will open the MCPJam inspector and start an Ollama model with the `ollama serve <model>` command. Make sure you have Ollama installed. 
+This will open the MCPJam inspector and start an Ollama model with the `ollama serve <model>` command. Make sure you have Ollama installed.
 
 ```bash
 npx @mcpjam/inspector@latest --ollama llama3.2
@@ -85,7 +87,8 @@ npm start -- --config path/to/config.json --server myserver
 ```
 
 <Info>
-**Note**: When using `npm start`, you need the `--` separator to pass arguments to the underlying script.
+  **Note**: When using `npm start`, you need the `--` separator to pass
+  arguments to the underlying script.
 </Info>
 
 Example configuration file structure:
@@ -110,8 +113,3 @@ Example configuration file structure:
   }
 }
 ```
-
-
-
-
-
