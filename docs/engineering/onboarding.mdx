@@ -1,7 +1,7 @@
 ---
-title: 'Engineering Onboarding'
-description: 'Get started with MCPJam Inspector development'
-icon: 'rocket'
+title: "Engineering Onboarding"
+description: "Get started with MCPJam Inspector development"
+icon: "rocket"
 ---
 
 ## Welcome to MCPJam Inspector
@@ -45,15 +45,15 @@ MCPJam Inspector is a developer tool for testing and debugging Model Context Pro
 
 ### Key Technologies
 
-| Technology | Purpose | Location |
-|------------|---------|----------|
-| **React + Vite** | Frontend UI | `/client` |
-| **Hono.js** | Backend API server | `/server` |
-| **Electron** | Desktop app wrapper | `/src` |
-| **TypeScript** | Type safety | Throughout |
-| **Zustand** | State management | `/client/src/stores` |
-| **Shadcn/ui** | UI components | `/client/src/components/ui` |
-| **MCP SDK** | MCP protocol implementation | Dependencies |
+| Technology       | Purpose                     | Location                    |
+| ---------------- | --------------------------- | --------------------------- |
+| **React + Vite** | Frontend UI                 | `/client`                   |
+| **Hono.js**      | Backend API server          | `/server`                   |
+| **Electron**     | Desktop app wrapper         | `/src`                      |
+| **TypeScript**   | Type safety                 | Throughout                  |
+| **Zustand**      | State management            | `/client/src/stores`        |
+| **Shadcn/ui**    | UI components               | `/client/src/components/ui` |
+| **MCP SDK**      | MCP protocol implementation | Dependencies                |
 
 ## Core Concepts
 
@@ -68,6 +68,7 @@ MCPJam Inspector supports multiple transport protocols:
     **Key files:**
     - `server/routes/mcp/stdio.ts` - STDIO connection handling
     - `client/src/hooks/use-stdio-connection.ts` - React hook for STDIO
+
   </Accordion>
 
   <Accordion title="SSE Transport" icon="rss">
@@ -76,6 +77,7 @@ MCPJam Inspector supports multiple transport protocols:
     **Key files:**
     - `server/routes/mcp/sse.ts` - SSE connection handling
     - `client/src/hooks/use-sse-connection.ts` - React hook for SSE
+
   </Accordion>
 
   <Accordion title="HTTP Streamable" icon="cloud">
@@ -84,6 +86,7 @@ MCPJam Inspector supports multiple transport protocols:
     **Key files:**
     - `server/routes/mcp/streamable.ts` - HTTP streamable handling
     - `client/src/hooks/use-http-connection.ts` - React hook for HTTP
+
   </Accordion>
 </AccordionGroup>
 
@@ -91,20 +94,25 @@ MCPJam Inspector supports multiple transport protocols:
 
 MCPJam Inspector implements a complete OAuth 2.0 flow with PKCE for secure authentication.
 
-<Card title="OAuth Architecture Deep Dive" icon="lock" href="/engineering/oauth-architecture">
-  Learn about the OAuth implementation, state machine, and CORS proxy architecture
+<Card
+  title="OAuth Architecture Deep Dive"
+  icon="lock"
+  href="/engineering/oauth-architecture"
+>
+  Learn about the OAuth implementation, state machine, and CORS proxy
+  architecture
 </Card>
 
 ### 3. State Management
 
 We use Zustand for state management with the following stores:
 
-| Store | Purpose | Location |
-|-------|---------|----------|
-| **Servers Store** | MCP server connections | `client/src/stores/servers` |
-| **Chat Store** | LLM playground state | `client/src/stores/chat` |
-| **Preferences** | User settings | `client/src/stores/preferences` |
-| **Evals Store** | Evaluation results | `client/src/stores/evals` |
+| Store             | Purpose                | Location                        |
+| ----------------- | ---------------------- | ------------------------------- |
+| **Servers Store** | MCP server connections | `client/src/stores/servers`     |
+| **Chat Store**    | LLM playground state   | `client/src/stores/chat`        |
+| **Preferences**   | User settings          | `client/src/stores/preferences` |
+| **Evals Store**   | Evaluation results     | `client/src/stores/evals`       |
 
 ### 4. LLM Integration
 
@@ -129,20 +137,13 @@ MCPJam supports multiple LLM providers:
     ```
   </Step>
 
-  <Step title="Install Dependencies">
-    ```bash
-    npm install
-    ```
-  </Step>
+<Step title="Install Dependencies">```bash npm install ```</Step>
 
-  <Step title="Set Environment Variables">
-    Create a `.env` file in the root directory with your API keys:
-    ```bash
-    OPENAI_API_KEY=your_key_here
-    ANTHROPIC_API_KEY=your_key_here
-    # Optional: Add other provider keys
-    ```
-  </Step>
+<Step title="Set Environment Variables">
+  Create a `.env` file in the root directory with your API keys: ```bash
+  OPENAI_API_KEY=your_key_here ANTHROPIC_API_KEY=your_key_here # Optional: Add
+  other provider keys ```
+</Step>
 
   <Step title="Start Development Server">
     ```bash
@@ -150,7 +151,6 @@ MCPJam supports multiple LLM providers:
     ```
   </Step>
 </Steps>
-
 
 ## Code Style & Conventions
 
@@ -170,13 +170,13 @@ MCPJam supports multiple LLM providers:
 
 ### File Naming
 
-| Type | Convention | Example |
-|------|------------|---------|
-| Components | kebab-case | `mcp-sidebar.tsx` |
-| Hooks | use-prefix | `use-mcp-connection.ts` |
-| Stores | kebab-case | `servers-store.ts` |
-| Types | PascalCase | `ServerDefinition` |
-| Utilities | kebab-case | `format-date.ts` |
+| Type       | Convention | Example                 |
+| ---------- | ---------- | ----------------------- |
+| Components | kebab-case | `mcp-sidebar.tsx`       |
+| Hooks      | use-prefix | `use-mcp-connection.ts` |
+| Stores     | kebab-case | `servers-store.ts`      |
+| Types      | PascalCase | `ServerDefinition`      |
+| Utilities  | kebab-case | `format-date.ts`        |
 
 ### Manual Testing
 
@@ -231,5 +231,6 @@ Now that you understand the basics, dive into specific topics:
 4. **Join Discord** - Connect with other contributors
 
 <Check>
-  Ready to start contributing? Check out our [Contributing Guide](/inspector/contributing-guide) for next steps!
+  Ready to start contributing? Check out our [Contributing
+  Guide](/inspector/contributing-guide) for next steps!
 </Check>

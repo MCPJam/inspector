@@ -1,12 +1,13 @@
 ---
-title: 'OAuth Architecture'
-description: 'Understanding OAuth flow implementation in MCPJam Inspector'
-icon: 'lock'
+title: "OAuth Architecture"
+description: "Understanding OAuth flow implementation in MCPJam Inspector"
+icon: "lock"
 ---
 
 ## Architecture Overview
 
 The OAuth implementation uses:
+
 - **Client-side state machine** for flow orchestration
 - **CORS proxy server** for metadata discovery
 - **localStorage** for persistence
@@ -233,7 +234,8 @@ codeVerifier()
 
 // Store PKCE verifier
 saveCodeVerifier(verifier)
-```
+
+````
 </CodeGroup>
 
 ### 2. OAuth State Machine
@@ -281,21 +283,22 @@ function createOAuthFetchInterceptor() {
     return await originalFetch(input, init);
   };
 }
-```
+````
+
 </CodeGroup>
 
 ## OAuth Flow States
 
 From `client/src/lib/oauth-flow-types.ts:10-16`:
 
-| State | Description |
-|-------|-------------|
-| `metadata_discovery` | Discover OAuth & resource metadata from server |
-| `client_registration` | Register client (DCR) or use pre-configured |
-| `authorization_redirect` | Generate auth URL with PKCE |
-| `authorization_code` | Wait for user authorization |
-| `token_request` | Exchange code for tokens |
-| `complete` | OAuth flow finished |
+| State                    | Description                                    |
+| ------------------------ | ---------------------------------------------- |
+| `metadata_discovery`     | Discover OAuth & resource metadata from server |
+| `client_registration`    | Register client (DCR) or use pre-configured    |
+| `authorization_redirect` | Generate auth URL with PKCE                    |
+| `authorization_code`     | Wait for user authorization                    |
+| `token_request`          | Exchange code for tokens                       |
+| `complete`               | OAuth flow finished                            |
 
 ## Security Features
 
@@ -304,13 +307,13 @@ From `client/src/lib/oauth-flow-types.ts:10-16`:
     Code verifier stored at `oauth-state-machine.ts:248` for secure authorization without client secrets
   </Card>
 
-  <Card title="CSRF Protection" icon="shield-halved">
-    Random state parameter generated at `oauth-state-machine.ts:231-236`
-  </Card>
+<Card title="CSRF Protection" icon="shield-halved">
+  Random state parameter generated at `oauth-state-machine.ts:231-236`
+</Card>
 
-  <Card title="HTTPS Enforcement" icon="lock">
-    Proxy validates HTTPS at `oauth.ts:22`
-  </Card>
+<Card title="HTTPS Enforcement" icon="lock">
+  Proxy validates HTTPS at `oauth.ts:22`
+</Card>
 
   <Card title="Scope Validation" icon="list-check">
     Uses advertised scopes from metadata at `oauth-state-machine.ts:222-229`
@@ -336,13 +339,13 @@ Each state handles errors gracefully:
     Tokens stored in localStorage with server-specific keys
   </Step>
 
-  <Step title="Refresh">
-    Automatic token refresh using refresh_token at `mcp-oauth.ts:464`
-  </Step>
+<Step title="Refresh">
+  Automatic token refresh using refresh_token at `mcp-oauth.ts:464`
+</Step>
 
-  <Step title="Usage">
-    Tokens added as Bearer token in Authorization header at `mcp-oauth.ts:577-580`
-  </Step>
+<Step title="Usage">
+  Tokens added as Bearer token in Authorization header at `mcp-oauth.ts:577-580`
+</Step>
 
   <Step title="Cleanup">
     `clearOAuthData()` removes all OAuth-related localStorage entries
@@ -363,15 +366,16 @@ const result = await initiateOAuth({
 });
 
 if (result.success && result.serverConfig) {
-  // Use server config for authenticated requests
-  // serverConfig includes Authorization header with Bearer token
+// Use server config for authenticated requests
+// serverConfig includes Authorization header with Bearer token
 }
-```
+
+````
 
 ```typescript Handle Callback
 // Handle OAuth callback (after user authorizes)
 const callbackResult = await handleOAuthCallback(authorizationCode);
-```
+````
 
 ```typescript Refresh Tokens
 // Refresh tokens when needed
@@ -388,17 +392,20 @@ const tokens = getStoredTokens(serverName);
 // Clear OAuth data
 clearOAuthData(serverName);
 ```
+
 </CodeGroup>
 
 ## File References
 
-| Component | Location |
-|-----------|----------|
-| OAuth Flow Types | `client/src/lib/oauth-flow-types.ts` |
-| State Machine | `client/src/lib/oauth-state-machine.ts` |
-| OAuth Provider | `client/src/lib/mcp-oauth.ts` |
-| CORS Proxy | `server/routes/mcp/oauth.ts` |
+| Component        | Location                                |
+| ---------------- | --------------------------------------- |
+| OAuth Flow Types | `client/src/lib/oauth-flow-types.ts`    |
+| State Machine    | `client/src/lib/oauth-state-machine.ts` |
+| OAuth Provider   | `client/src/lib/mcp-oauth.ts`           |
+| CORS Proxy       | `server/routes/mcp/oauth.ts`            |
 
 <Note>
-  The OAuth implementation follows the MCP specification and uses PKCE for enhanced security. All sensitive data is stored in localStorage and never sent to unauthorized servers.
+  The OAuth implementation follows the MCP specification and uses PKCE for
+  enhanced security. All sensitive data is stored in localStorage and never sent
+  to unauthorized servers.
 </Note>
