@@ -8,7 +8,7 @@ import { EvalsResultsTab } from "./components/EvalsResultsTab";
 import { EvalsRunTab } from "./components/EvalsRunTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { TracingTab } from "./components/TracingTab";
-import { InterceptorTab } from "./components/InterceptorTab";
+// import { InterceptorTab } from "./components/InterceptorTab"; // Temporarily disabled
 import { AuthTab } from "./components/AuthTab";
 import OAuthDebugCallback from "./components/OAuthDebugCallback";
 import { MCPSidebar } from "./components/mcp-sidebar";
@@ -155,13 +155,12 @@ export default function App() {
           </header>
 
           <div className="flex-1">
-            {/* Active Server Selector - Only show on Tools, Resources, Prompts, Auth, and Interceptor pages */}
+            {/* Active Server Selector - Only show on Tools, Resources, Prompts, Auth, and Chat pages */}
             {(activeTab === "tools" ||
               activeTab === "resources" ||
               activeTab === "prompts" ||
               activeTab === "auth" ||
-              activeTab === "chat" ||
-              activeTab === "interceptor") && (
+              activeTab === "chat") && (
               <ActiveServerSelector
                 connectedServerConfigs={connectedServerConfigs}
                 selectedServer={appState.selectedServer}
@@ -222,12 +221,13 @@ export default function App() {
               />
             )}
 
-            {activeTab === "interceptor" && (
+            {/* Temporarily disabled interceptor feature */}
+            {/* {activeTab === "interceptor" && (
               <InterceptorTab
                 connectedServerConfigs={connectedServerConfigs}
                 selectedServer={appState.selectedServer}
               />
-            )}
+            )} */}
 
             {activeTab === "tracing" && <TracingTab />}
 
