@@ -307,8 +307,8 @@ const PureMessage = ({
               )}
 
               {/* Timestamp and Actions - Positioned below content */}
-              {mode === "view" && isHovered && (
-                <div className="flex items-center justify-between mt-4">
+              {mode === "view" && (
+                <div className={`flex items-center justify-between mt-4 transition-opacity duration-200 ${isHovered ? 'opacity-100' : 'opacity-0'}`}>
                   <div className="text-xs text-muted-foreground/60">
                     {formatTimestamp(message.timestamp)}
                   </div>
@@ -408,8 +408,8 @@ const PureMessage = ({
               {mode === "view" ? (
                 <div className="flex items-start gap-2 justify-end">
                   {/* User Actions - Left of bubble when hovered */}
-                  {showActions && !isReadonly && isHovered && (
-                    <div className="flex items-center gap-1 mt-1">
+                  {showActions && !isReadonly && (
+                    <div className={`flex items-center gap-1 mt-1 transition-opacity duration-200 ${isHovered ? 'opacity-100' : 'opacity-0'}`}>
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Button
@@ -437,11 +437,9 @@ const PureMessage = ({
                       </div>
                     </div>
                     {/* Timestamp - absolute positioned below message */}
-                    {isHovered && (
-                      <div className="absolute -bottom-6 right-0 text-xs text-muted-foreground/60">
-                        {formatTimestamp(message.timestamp)}
-                      </div>
-                    )}
+                    <div className={`absolute -bottom-6 right-0 text-xs text-muted-foreground/60 transition-opacity duration-200 ${isHovered ? 'opacity-100' : 'opacity-0'}`}>
+                      {formatTimestamp(message.timestamp)}
+                    </div>
                   </div>
                 </div>
               ) : (
