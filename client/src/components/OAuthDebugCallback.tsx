@@ -1,5 +1,3 @@
-import React from "react";
-
 export default function OAuthDebugCallback() {
   const params = new URLSearchParams(window.location.search);
   const code = params.get("code");
