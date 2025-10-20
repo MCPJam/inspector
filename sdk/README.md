@@ -113,7 +113,7 @@ npm run dev
 
 ## Contributing
 
-We welcome contributions! The SDK is part of the [MCPJam Inspector monorepo](https://github.com/MCPJam/inspector). Please see our [Contributing Guide](https://docs.mcpjam.com/inspector/contributing-guide) for guidelines.
+We welcome contributions! The SDK is part of the [MCPJam Inspector monorepo](https://github.com/MCPJam/inspector). Please see our [Contributing Guide](https://docs.mcpjam.com/CONTRIBUTING) for guidelines.
 
 ## License
 
