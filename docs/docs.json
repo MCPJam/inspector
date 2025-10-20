@@ -36,6 +36,7 @@
           "contributing/documentation",
           "contributing/onboarding",
           "contributing/mcp-client-manager",
+          "contributing/playground-architecture",
           "contributing/oauth-architecture"
         ]
       },
