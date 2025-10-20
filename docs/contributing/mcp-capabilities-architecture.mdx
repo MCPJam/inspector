@@ -9,6 +9,7 @@ icon: "wrench"
 MCPJam Inspector provides dedicated testing interfaces for the three core MCP capabilities: **Tools**, **Resources**, and **Prompts**. Each tab offers a complete development environment with parameter configuration, execution/reading, result visualization, and JSON-RPC logging.
 
 **Key Features**:
+
 - Interactive parameter forms with schema-based validation
 - Real-time execution and result display
 - Elicitation support for interactive tool workflows
@@ -19,6 +20,7 @@ MCPJam Inspector provides dedicated testing interfaces for the three core MCP ca
 - Prompt template testing (Prompts)
 
 **Location**:
+
 - Frontend Components:
   - `client/src/components/ToolsTab.tsx`
   - `client/src/components/ResourcesTab.tsx`
@@ -119,6 +121,7 @@ graph TB
 The **Tools Tab** provides a complete interface for testing MCP tools with parameter configuration, execution, and result visualization. It supports interactive elicitation workflows and saves tool executions for reuse.
 
 **Key Features**:
+
 - Schema-based parameter forms
 - Tool execution with elicitation support
 - Result validation against output schemas
@@ -135,8 +138,12 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   const [selectedTool, setSelectedTool] = useState<string>("");
   const [formFields, setFormFields] = useState<FormField[]>([]);
   const [result, setResult] = useState<CallToolResult | null>(null);
-  const [structuredResult, setStructuredResult] = useState<Record<string, unknown> | null>(null);
-  const [activeElicitation, setActiveElicitation] = useState<ActiveElicitation | null>(null);
+  const [structuredResult, setStructuredResult] = useState<Record<
+    string,
+    unknown
+  > | null>(null);
+  const [activeElicitation, setActiveElicitation] =
+    useState<ActiveElicitation | null>(null);
   const [savedRequests, setSavedRequests] = useState<SavedRequest[]>([]);
   // ...
 }
@@ -154,7 +161,7 @@ const fetchTools = async () => {
   const data = await listTools(serverName);
   const toolArray = data.tools ?? [];
   const dictionary = Object.fromEntries(
-    toolArray.map((tool) => [tool.name, tool])
+    toolArray.map((tool) => [tool.name, tool]),
   );
   setTools(dictionary);
 };
@@ -256,13 +263,14 @@ tools.post("/execute", async (c) => {
 
 // 1. Frontend handles elicitation response
 const handleElicitationResponse = async (action, parameters) => {
-  const payload = action === "accept"
-    ? { action: "accept", content: parameters ?? {} }
-    : { action };
+  const payload =
+    action === "accept"
+      ? { action: "accept", content: parameters ?? {} }
+      : { action };
 
   const response = await respondToElicitationApi(
     activeElicitation.requestId,
-    payload
+    payload,
   );
 
   handleExecutionResponse(response, selectedTool, Date.now());
@@ -279,7 +287,10 @@ tools.post("/respond", async (c) => {
   // Race again for next elicitation or completion
   const next = await Promise.race([
     context.execPromise.then((result) => ({ kind: "done", result })),
-    takeNextRequest(context).then((payload) => ({ kind: "elicitation", payload })),
+    takeNextRequest(context).then((payload) => ({
+      kind: "elicitation",
+      payload,
+    })),
   ]);
 
   if (next.kind === "done") {
@@ -287,11 +298,14 @@ tools.post("/respond", async (c) => {
   }
 
   // Another elicitation needed
-  return c.json({
-    status: "elicitation_required",
-    requestId: next.payload.requestId,
-    request: next.payload.request,
-  }, 202);
+  return c.json(
+    {
+      status: "elicitation_required",
+      requestId: next.payload.requestId,
+      request: next.payload.request,
+    },
+    202,
+  );
 });
 ```
 
@@ -304,7 +318,7 @@ tools.post("/respond", async (c) => {
 useEffect(() => {
   if (selectedTool && tools[selectedTool]) {
     setFormFields(
-      generateFormFieldsFromSchema(tools[selectedTool].inputSchema)
+      generateFormFieldsFromSchema(tools[selectedTool].inputSchema),
     );
   }
 }, [selectedTool, tools]);
@@ -325,7 +339,7 @@ const currentTool = tools[toolName];
 if (currentTool?.outputSchema) {
   const validationReport = validateToolOutput(
     rawResult,
-    currentTool.outputSchema
+    currentTool.outputSchema,
   );
   setValidationErrors(validationReport.structuredErrors);
   setUnstructuredValidationResult(validationReport.unstructuredStatus);
@@ -384,7 +398,7 @@ type ExecutionContext = {
   serverId: string;
   toolName: string;
   execPromise: Promise<ListToolsResult>; // Tool execution promise
-  queue: ElicitationPayload[];           // Queued elicitation requests
+  queue: ElicitationPayload[]; // Queued elicitation requests
   waiter?: (payload: ElicitationPayload) => void; // Promise resolver
 };
 
@@ -402,6 +416,7 @@ let activeExecution: ExecutionContext | null = null;
 The **Resources Tab** provides browsing and reading capabilities for MCP resources. It supports text and binary content preview with special handling for OpenAI Apps SDK widgets.
 
 **Key Features**:
+
 - Resource listing with metadata
 - Content reading and display
 - Text/JSON preview
@@ -470,7 +485,11 @@ Resources can contain HTML widgets for OpenAI Apps SDK:
 resources.post("/widget/store", async (c) => {
   const { serverId, uri, toolInput, toolOutput, toolId } = await c.req.json();
   widgetDataStore.set(toolId, {
-    serverId, uri, toolInput, toolOutput, toolId,
+    serverId,
+    uri,
+    toolInput,
+    toolOutput,
+    toolId,
     timestamp: Date.now(),
   });
 });
@@ -501,6 +520,7 @@ resources.get("/widget/:toolId", async (c) => {
 ```
 
 **Widget Features**:
+
 - `window.openai` API shim for tool calling
 - State persistence via localStorage
 - postMessage communication with parent
@@ -516,6 +536,7 @@ resources.get("/widget/:toolId", async (c) => {
 The **Prompts Tab** provides testing for MCP prompt templates with argument substitution and result preview.
 
 **Key Features**:
+
 - Prompt listing with descriptions
 - Dynamic argument forms
 - Prompt retrieval with substitution
@@ -575,7 +596,7 @@ prompts.post("/get", async (c) => {
   // MCP requires string arguments
   const promptArguments = args
     ? Object.fromEntries(
-        Object.entries(args).map(([key, value]) => [key, String(value)])
+        Object.entries(args).map(([key, value]) => [key, String(value)]),
       )
     : undefined;
 
@@ -720,44 +741,50 @@ function jsonError(c: any, error: unknown, fallbackStatus = 500) {
 <ResponseField name="POST /api/mcp/tools/list" type="{ serverId: string }">
   List available tools for a server.
 
-  **Response**:
-  ```typescript
-  {
-    tools: Tool[];
-    toolsMetadata: Record<string, Record<string, any>>; // OpenAI metadata cache
-  }
-  ```
+**Response**:
+
+```typescript
+{
+  tools: Tool[];
+  toolsMetadata: Record<string, Record<string, any>>; // OpenAI metadata cache
+}
+```
+
 </ResponseField>
 
 <ResponseField name="POST /api/mcp/tools/execute" type="{ serverId: string, toolName: string, parameters: Record<string, unknown> }">
   Execute a tool with parameters. Returns immediately with result or elicitation request.
 
-  **Response** (completed):
-  ```typescript
-  {
-    status: "completed";
-    result: CallToolResult;
-  }
-  ```
+**Response** (completed):
 
-  **Response** (elicitation needed):
-  ```typescript
-  {
-    status: "elicitation_required";
-    executionId: string;
-    requestId: string;
-    request: ElicitRequest["params"];
-    timestamp: string;
-  }
-  ```
+```typescript
+{
+  status: "completed";
+  result: CallToolResult;
+}
+```
 
-  **Status Code**: 202 for elicitation, 200 for completion, 409 if another execution is active
+**Response** (elicitation needed):
+
+```typescript
+{
+  status: "elicitation_required";
+  executionId: string;
+  requestId: string;
+  request: ElicitRequest["params"];
+  timestamp: string;
+}
+```
+
+**Status Code**: 202 for elicitation, 200 for completion, 409 if another execution is active
+
 </ResponseField>
 
 <ResponseField name="POST /api/mcp/tools/respond" type="{ requestId: string, response: ElicitResult }">
   Respond to an elicitation request. Resumes tool execution and returns next state (completed or another elicitation).
 
-  **Response**: Same as `/execute`
+**Response**: Same as `/execute`
+
 </ResponseField>
 
 ### Resources Endpoints
@@ -765,30 +792,40 @@ function jsonError(c: any, error: unknown, fallbackStatus = 500) {
 <ResponseField name="POST /api/mcp/resources/list" type="{ serverId: string }">
   List available resources for a server.
 
-  **Response**:
-  ```typescript
-  {
-    resources: MCPResource[];
-  }
-  ```
+**Response**:
+
+```typescript
+{
+  resources: MCPResource[];
+}
+```
+
 </ResponseField>
 
 <ResponseField name="POST /api/mcp/resources/read" type="{ serverId: string, uri: string }">
   Read resource content by URI.
 
-  **Response**:
-  ```typescript
-  {
-    content: MCPReadResourceResult;
-  }
-  ```
+**Response**:
+
+```typescript
+{
+  content: MCPReadResourceResult;
+}
+```
+
 </ResponseField>
 
-<ResponseField name="POST /api/mcp/resources/widget/store" type="{ serverId, uri, toolInput, toolOutput, toolId }">
+<ResponseField
+  name="POST /api/mcp/resources/widget/store"
+  type="{ serverId, uri, toolInput, toolOutput, toolId }"
+>
   Store widget metadata for OpenAI Apps SDK rendering (TTL: 1 hour).
 </ResponseField>
 
-<ResponseField name="GET /api/mcp/resources/widget/:toolId" type="Path parameter: toolId">
+<ResponseField
+  name="GET /api/mcp/resources/widget/:toolId"
+  type="Path parameter: toolId"
+>
   Render OpenAI widget with injected API shims. Returns HTML with CSP headers.
 </ResponseField>
 
@@ -797,23 +834,27 @@ function jsonError(c: any, error: unknown, fallbackStatus = 500) {
 <ResponseField name="POST /api/mcp/prompts/list" type="{ serverId: string }">
   List available prompts for a server.
 
-  **Response**:
-  ```typescript
-  {
-    prompts: MCPPrompt[];
-  }
-  ```
+**Response**:
+
+```typescript
+{
+  prompts: MCPPrompt[];
+}
+```
+
 </ResponseField>
 
 <ResponseField name="POST /api/mcp/prompts/get" type="{ serverId: string, name: string, args?: Record<string, string> }">
   Get prompt with argument substitution.
 
-  **Response**:
-  ```typescript
-  {
-    content: GetPromptResult;
-  }
-  ```
+**Response**:
+
+```typescript
+{
+  content: GetPromptResult;
+}
+```
+
 </ResponseField>
 
 ---
@@ -849,7 +890,10 @@ manager.setElicitationHandler(serverId, async (params) => {
 // 3. Race between execution and elicitation
 const next = await Promise.race([
   context.execPromise.then((result) => ({ kind: "done", result })),
-  takeNextRequest(context).then((payload) => ({ kind: "elicitation", payload })),
+  takeNextRequest(context).then((payload) => ({
+    kind: "elicitation",
+    payload,
+  })),
 ]);
 
 // 4. Clean up on completion
@@ -918,8 +962,12 @@ The widget endpoint injects JavaScript that provides OpenAI-compatible APIs:
 // server/routes/mcp/resources.ts:250-376
 
 window.openai = {
-  toolInput: { /* passed from tool call */ },
-  toolOutput: { /* tool result */ },
+  toolInput: {
+    /* passed from tool call */
+  },
+  toolOutput: {
+    /* tool result */
+  },
 
   async callTool(toolName, params) {
     // postMessage to parent frame
@@ -938,7 +986,7 @@ window.openai = {
 
   async requestDisplayMode(options) {
     // Change display mode (inline, modal, sidebar)
-    this.displayMode = options.mode || 'inline';
+    this.displayMode = options.mode || "inline";
   },
 };
 
@@ -953,6 +1001,7 @@ window.webplus = window.openai;
 ### Adding New Tool Features
 
 1. **Update Form Generation**:
+
 ```typescript
 // @/lib/tool-form.ts
 export function generateFormFieldsFromSchema(schema: any) {
@@ -962,12 +1011,14 @@ export function generateFormFieldsFromSchema(schema: any) {
 ```
 
 2. **Extend Result Display**:
+
 ```typescript
 // client/src/components/tools/ResultsPanel.tsx
 // Add new content renderers (e.g., images, tables)
 ```
 
 3. **Add Validation Rules**:
+
 ```typescript
 // @/lib/schema-utils.ts
 export function validateToolOutput(output: any, schema: any) {
@@ -999,7 +1050,10 @@ const tool = {
   handler: async (params, elicit) => {
     const response = await elicit({
       message: "Enter your name",
-      requestedSchema: { type: "object", properties: { name: { type: "string" } } },
+      requestedSchema: {
+        type: "object",
+        properties: { name: { type: "string" } },
+      },
     });
 
     if (response.action === "accept") {
@@ -1019,6 +1073,7 @@ const tool = {
 ### Debugging Tips
 
 **Enable Console Logging**:
+
 ```typescript
 // Add to components
 useEffect(() => {
@@ -1029,6 +1084,7 @@ useEffect(() => {
 ```
 
 **Inspect JSON-RPC Messages**:
+
 ```typescript
 // Check JsonRpcLoggerView for:
 // - tools/list request/response
@@ -1038,6 +1094,7 @@ useEffect(() => {
 ```
 
 **Check Network Tab**:
+
 ```bash
 # Monitor API calls
 /api/mcp/tools/list
