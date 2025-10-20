@@ -35,6 +35,7 @@
           "CONTRIBUTING",
           "contributing/documentation",
           "contributing/onboarding",
+          "contributing/mcp-client-manager",
           "contributing/oauth-architecture"
         ]
       },

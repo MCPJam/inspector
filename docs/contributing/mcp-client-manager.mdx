@@ -1,0 +1,682 @@
+---
+title: "MCPClientManager"
+description: "Technical documentation for the MCPClientManager orchestration class"
+icon: "server"
+---
+
+## Overview
+
+`MCPClientManager` is the central orchestration class for managing multiple MCP (Model Context Protocol) server connections within MCPJam Inspector. It provides a high-level abstraction over the `@modelcontextprotocol/sdk` Client class, handling connection lifecycle, transport selection, and unified access to MCP capabilities across multiple servers.
+
+**Location**: `sdk/mcp-client-manager/index.ts`
+
+**Key Responsibilities**:
+- Managing multiple MCP server connections with unique identifiers
+- Auto-detecting and configuring appropriate transports (STDIO, SSE, Streamable HTTP)
+- Providing unified APIs for tools, resources, prompts, and elicitations
+- Handling connection state, reconnection, and error recovery
+- Integrating with AI frameworks (Vercel AI SDK)
+- Supporting elicitation (interactive prompts from MCP servers)
+
+## Architecture
+
+### Class Structure
+
+```typescript
+export class MCPClientManager {
+  // State management
+  private readonly clientStates: Map<string, ManagedClientState>
+  private readonly notificationHandlers: Map<string, Map<NotificationSchema, Set<NotificationHandler>>>
+  private readonly elicitationHandlers: Map<string, ElicitationHandler>
+  private readonly toolsMetadataCache: Map<string, Map<string, any>>
+
+  // Configuration
+  private readonly defaultClientVersion: string
+  private readonly defaultCapabilities: ClientCapabilityOptions
+  private readonly defaultTimeout: number
+
+  // Logging
+  private defaultLogJsonRpc: boolean
+  private defaultRpcLogger?: (event: {...}) => void
+
+  // Elicitation support
+  private elicitationCallback?: (request: {...}) => Promise<ElicitResult>
+  private readonly pendingElicitations: Map<string, {...}>
+}
+```
+
+### Server Configuration Types
+
+The manager supports two transport types, automatically selected based on configuration:
+
+#### STDIO Configuration
+```typescript
+type StdioServerConfig = BaseServerConfig & {
+  command: string;           // Command to execute (e.g., "npx")
+  args?: string[];          // Command arguments
+  env?: Record<string, string>;  // Environment variables
+}
+```
+
+#### HTTP/SSE Configuration
+```typescript
+type HttpServerConfig = BaseServerConfig & {
+  url: URL;                 // Server endpoint
+  requestInit?: RequestInit;  // Fetch options (headers, etc.)
+  eventSourceInit?: EventSourceInit;  // SSE options
+  authProvider?: AuthProvider;  // OAuth provider
+  reconnectionOptions?: ReconnectionOptions;
+  sessionId?: string;
+  preferSSE?: boolean;      // Force SSE over Streamable HTTP
+}
+```
+
+#### Base Configuration
+```typescript
+type BaseServerConfig = {
+  capabilities?: ClientCapabilityOptions;  // MCP capabilities to advertise
+  timeout?: number;         // Request timeout (default: 120s)
+  version?: string;         // Client version string
+  onError?: (error: unknown) => void;  // Error callback
+  logJsonRpc?: boolean;     // Enable console JSON-RPC logging
+  rpcLogger?: (event: {...}) => void;  // Custom RPC logger
+}
+```
+
+## Core Concepts
+
+### 1. Connection Lifecycle
+
+The manager maintains three connection states:
+
+- **`disconnected`**: No client exists, no connection attempt in progress
+- **`connecting`**: Connection attempt in progress (tracked via `state.promise`)
+- **`connected`**: Client successfully connected and ready
+
+State transitions:
+```
+disconnected → connecting (via connectToServer)
+connecting → connected (on successful connect)
+connecting → disconnected (on connection failure)
+connected → disconnected (on close/disconnect)
+```
+
+### 2. Transport Selection
+
+The manager automatically selects the appropriate transport:
+
+1. **STDIO Transport**: Used when config has `command` property
+   - Spawns subprocess with `StdioClientTransport`
+   - Manages stdin/stdout/stderr streams
+   - Includes default environment variables
+
+2. **HTTP Transport**: Used when config has `url` property
+   - **Streamable HTTP** (default): Bidirectional streaming over HTTP
+   - **SSE** (fallback): Server-Sent Events for unidirectional streaming
+   - Auto-fallback: Tries Streamable HTTP first, falls back to SSE on failure
+   - Force SSE: Set `preferSSE: true` or use URL ending in `/sse`
+
+### 3. Tool Metadata Caching
+
+The manager caches tool `_meta` fields for OpenAI Apps SDK compatibility:
+
+```typescript
+// During listTools, metadata is extracted and cached
+for (const tool of result.tools) {
+  if (tool._meta) {
+    metadataMap.set(tool.name, tool._meta);
+  }
+}
+this.toolsMetadataCache.set(serverId, metadataMap);
+```
+
+Access via `getAllToolsMetadata(serverId)` to get all tool metadata for a server.
+
+### 4. Elicitation Support
+
+Elicitation allows MCP servers to request interactive input during tool execution:
+
+**Two modes**:
+
+1. **Server-specific handler**: Set per-server via `setElicitationHandler(serverId, handler)`
+2. **Global callback**: Set globally via `setElicitationCallback(callback)`
+
+**Pending elicitation pattern** (used in chat endpoint):
+```typescript
+// Set global callback that emits SSE event and waits for response
+manager.setElicitationCallback(async (request) => {
+  emitSSE({ type: 'elicitation_request', requestId: request.requestId, ... });
+
+  return new Promise((resolve, reject) => {
+    manager.getPendingElicitations().set(request.requestId, { resolve, reject });
+    setTimeout(() => reject(new Error('Timeout')), 300000);
+  });
+});
+
+// Later, when user responds via API:
+manager.respondToElicitation(requestId, userResponse);
+```
+
+### 5. JSON-RPC Logging
+
+RPC logging can be enabled at three levels:
+
+1. **Global default**: `new MCPClientManager({}, { defaultLogJsonRpc: true })`
+2. **Global custom logger**: `new MCPClientManager({}, { rpcLogger: (event) => {...} })`
+3. **Per-server**: `{ serverId: { ..., logJsonRpc: true } }` or `rpcLogger: (event) => {...}`
+
+The manager wraps transports with a `LoggingTransport` that intercepts all JSON-RPC messages.
+
+## Usage Patterns in MCPJam Inspector
+
+### 1. App Initialization
+
+<CodeGroup>
+```typescript server/app.ts
+const mcpClientManager = new MCPClientManager(
+  {},  // Start with no servers
+  {
+    // Wire RPC logging to SSE bus for real-time inspection
+    rpcLogger: ({ direction, message, serverId }) => {
+      rpcLogBus.publish({
+        serverId,
+        direction,
+        timestamp: new Date().toISOString(),
+        message,
+      });
+    },
+  }
+);
+
+// Inject into Hono context for all routes
+app.use("*", async (c, next) => {
+  c.mcpClientManager = mcpClientManager;
+  await next();
+});
+```
+</CodeGroup>
+
+### 2. Chat Endpoint
+
+<CodeGroup>
+```typescript server/routes/mcp/chat.ts
+// Get tools with server metadata attached
+const toolsets = await mcpClientManager.getToolsForAiSdk(
+  requestData.selectedServers  // Optional: specific servers only
+);
+
+// Set up elicitation handling
+mcpClientManager.setElicitationCallback(async (request) => {
+  // Emit SSE event to client
+  sendSseEvent(controller, encoder, {
+    type: 'elicitation_request',
+    requestId: request.requestId,
+    message: request.message,
+    schema: request.schema,
+  });
+
+  // Return promise resolved when user responds
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('Timeout')), 300000);
+    mcpClientManager.getPendingElicitations().set(request.requestId, {
+      resolve: (response) => { clearTimeout(timeout); resolve(response); },
+      reject: (error) => { clearTimeout(timeout); reject(error); },
+    });
+  });
+});
+
+// Stream text with tools
+const streamResult = await streamText({
+  model,
+  tools: toolsets,
+  messages,
+  // Tool calls handled automatically by AI SDK using mcpClientManager.executeTool
+});
+
+// Clean up
+mcpClientManager.clearElicitationCallback();
+```
+</CodeGroup>
+
+### 3. HTTP Bridge
+
+<CodeGroup>
+```typescript server/services/mcp-http-bridge.ts
+// Handle JSON-RPC tool call
+case "tools/call": {
+  // Support prefixed tool names (serverId:toolName)
+  let targetServerId = serverId;
+  let toolName = params?.name;
+
+  if (toolName?.includes(":")) {
+    const [prefix, actualName] = toolName.split(":", 2);
+    if (clientManager.hasServer(prefix)) {
+      targetServerId = prefix;
+    }
+    toolName = actualName;
+  }
+
+  const result = await clientManager.executeTool(
+    targetServerId,
+    toolName,
+    params?.arguments ?? {}
+  );
+
+  return respond({ result });
+}
+```
+</CodeGroup>
+
+### 4. Managing Server Connections
+
+<CodeGroup>
+```typescript Connection Management
+// Add server dynamically
+await mcpClientManager.connectToServer("filesystem", {
+  command: "npx",
+  args: ["-y", "@modelcontextprotocol/server-filesystem", "/path"],
+  env: { DEBUG: "1" },
+});
+
+// Check status
+const status = mcpClientManager.getConnectionStatus("filesystem");
+// Returns: "connected" | "connecting" | "disconnected"
+
+// Get all servers
+const summaries = mcpClientManager.getServerSummaries();
+// Returns: { id: string, status: MCPConnectionStatus, config: MCPServerConfig }[]
+
+// Disconnect
+await mcpClientManager.disconnectServer("filesystem");
+
+// Disconnect all
+await mcpClientManager.disconnectAllServers();
+```
+</CodeGroup>
+
+## API Reference
+
+### Connection Management
+
+<ResponseField name="connectToServer" type="(serverId: string, config: MCPServerConfig) => Promise<Client>">
+  Connect to an MCP server. Throws if server ID already exists. Returns the connected Client instance.
+</ResponseField>
+
+<ResponseField name="disconnectServer" type="(serverId: string) => Promise<void>">
+  Disconnect from a server and clean up resources.
+</ResponseField>
+
+<ResponseField name="disconnectAllServers" type="() => Promise<void>">
+  Disconnect from all servers and reset state.
+</ResponseField>
+
+<ResponseField name="removeServer" type="(serverId: string) => void">
+  Remove server from state without attempting disconnection.
+</ResponseField>
+
+<ResponseField name="listServers" type="() => string[]">
+  Get array of all server IDs.
+</ResponseField>
+
+<ResponseField name="hasServer" type="(serverId: string) => boolean">
+  Check if a server is registered.
+</ResponseField>
+
+<ResponseField name="getServerSummaries" type="() => ServerSummary[]">
+  Get status and config for all servers.
+</ResponseField>
+
+<ResponseField name="getConnectionStatus" type="(serverId: string) => MCPConnectionStatus">
+  Get connection status: `"connected"` | `"connecting"` | `"disconnected"`.
+</ResponseField>
+
+<ResponseField name="getServerConfig" type="(serverId: string) => MCPServerConfig | undefined">
+  Get configuration for a server.
+</ResponseField>
+
+### Tools
+
+<ResponseField name="listTools" type="(serverId: string, params?, options?) => Promise<ListToolsResult>">
+  List tools for a single server. Caches metadata. Returns empty list if unsupported.
+</ResponseField>
+
+<ResponseField name="getTools" type="(serverIds?: string[]) => Promise<ListToolsResult>">
+  Get tools from multiple servers (or all if not specified). Returns flattened list.
+</ResponseField>
+
+<ResponseField name="executeTool" type="(serverId: string, toolName: string, args: Record<string, unknown>, options?) => Promise<CallToolResult>">
+  Execute a tool on a specific server.
+</ResponseField>
+
+<ResponseField name="getToolsForAiSdk" type="(serverIds?: string[] | string, options?) => Promise<ToolSet>">
+  Get tools in Vercel AI SDK format. Automatically wires up tool execution. Each tool has `_serverId` metadata attached.
+
+  Options:
+  - `schemas?: ToolSchemaOverrides | "automatic"` - Control schema conversion
+</ResponseField>
+
+<ResponseField name="getAllToolsMetadata" type="(serverId: string) => Record<string, Record<string, any>>">
+  Get all tool `_meta` fields for OpenAI Apps SDK.
+</ResponseField>
+
+<ResponseField name="pingServer" type="(serverId: string, options?) => void">
+  Send ping to server.
+</ResponseField>
+
+### Resources
+
+<ResponseField name="listResources" type="(serverId: string, params?, options?) => Promise<ResourceListResult>">
+  List available resources. Returns empty if unsupported.
+</ResponseField>
+
+<ResponseField name="readResource" type="(serverId: string, params: { uri: string }, options?) => Promise<ReadResourceResult>">
+  Read a resource by URI.
+</ResponseField>
+
+<ResponseField name="subscribeResource" type="(serverId: string, params: { uri: string }, options?) => Promise<void>">
+  Subscribe to resource updates.
+</ResponseField>
+
+<ResponseField name="unsubscribeResource" type="(serverId: string, params: { uri: string }, options?) => Promise<void>">
+  Unsubscribe from resource updates.
+</ResponseField>
+
+<ResponseField name="listResourceTemplates" type="(serverId: string, params?, options?) => Promise<ResourceTemplateListResult>">
+  List resource templates.
+</ResponseField>
+
+### Prompts
+
+<ResponseField name="listPrompts" type="(serverId: string, params?, options?) => Promise<PromptListResult>">
+  List available prompts. Returns empty if unsupported.
+</ResponseField>
+
+<ResponseField name="getPrompt" type="(serverId: string, params: { name: string, arguments?: Record<string, string> }, options?) => Promise<GetPromptResult>">
+  Get a prompt with optional arguments.
+</ResponseField>
+
+### Notifications
+
+<ResponseField name="addNotificationHandler" type="(serverId: string, schema: NotificationSchema, handler: NotificationHandler) => void">
+  Add a notification handler for a server.
+</ResponseField>
+
+<ResponseField name="onResourceListChanged" type="(serverId: string, handler: NotificationHandler) => void">
+  Handle `resources/list_changed` notifications.
+</ResponseField>
+
+<ResponseField name="onResourceUpdated" type="(serverId: string, handler: NotificationHandler) => void">
+  Handle `resources/updated` notifications.
+</ResponseField>
+
+<ResponseField name="onPromptListChanged" type="(serverId: string, handler: NotificationHandler) => void">
+  Handle `prompts/list_changed` notifications.
+</ResponseField>
+
+### Elicitation
+
+<ResponseField name="setElicitationHandler" type="(serverId: string, handler: ElicitationHandler) => void">
+  Set server-specific elicitation handler.
+</ResponseField>
+
+<ResponseField name="clearElicitationHandler" type="(serverId: string) => void">
+  Remove server-specific handler.
+</ResponseField>
+
+<ResponseField name="setElicitationCallback" type="(callback: (request: {...}) => Promise<ElicitResult>) => void">
+  Set global elicitation callback (used if no server-specific handler).
+</ResponseField>
+
+<ResponseField name="clearElicitationCallback" type="() => void">
+  Remove global callback.
+</ResponseField>
+
+<ResponseField name="getPendingElicitations" type="() => Map<string, { resolve, reject }>">
+  Get map of pending elicitation promise resolvers.
+</ResponseField>
+
+<ResponseField name="respondToElicitation" type="(requestId: string, response: ElicitResult) => boolean">
+  Resolve a pending elicitation. Returns `true` if found.
+</ResponseField>
+
+### Advanced
+
+<ResponseField name="getClient" type="(serverId: string) => Client | undefined">
+  Get raw MCP SDK Client instance for advanced usage.
+</ResponseField>
+
+<ResponseField name="getSessionIdByServer" type="(serverId: string) => string | undefined">
+  Get session ID for Streamable HTTP servers.
+</ResponseField>
+
+## Examples
+
+### Example 1: Basic Setup with Multiple Servers
+
+<CodeGroup>
+```typescript Basic Setup
+import { MCPClientManager } from "@/sdk";
+
+const manager = new MCPClientManager({
+  // STDIO server
+  filesystem: {
+    command: "npx",
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+  },
+
+  // HTTP server with auth
+  asana: {
+    url: new URL("https://mcp.asana.com/sse"),
+    requestInit: {
+      headers: {
+        Authorization: `Bearer ${process.env.ASANA_TOKEN}`,
+      },
+    },
+  },
+});
+
+// List all tools
+const { tools } = await manager.getTools();
+console.log(`Total tools: ${tools.length}`);
+
+// Execute tool
+const result = await manager.executeTool("filesystem", "read_file", {
+  path: "/tmp/test.txt",
+});
+```
+</CodeGroup>
+
+### Example 2: Vercel AI SDK Integration
+
+<CodeGroup>
+```typescript AI SDK Integration
+import { generateText } from "ai";
+import { openai } from "@ai-sdk/openai";
+
+const manager = new MCPClientManager({
+  everything: {
+    command: "npx",
+    args: ["-y", "@modelcontextprotocol/server-everything"],
+  },
+});
+
+const response = await generateText({
+  model: openai("gpt-4o"),
+  tools: await manager.getToolsForAiSdk(),
+  messages: [{ role: "user", content: "Add 5 and 7" }],
+});
+
+console.log(response.text);
+```
+</CodeGroup>
+
+### Example 3: Dynamic Server Management
+
+<CodeGroup>
+```typescript Dynamic Management
+const manager = new MCPClientManager();
+
+// Add server on demand
+await manager.connectToServer("weather", {
+  url: new URL("http://localhost:3000/mcp"),
+});
+
+// Check status
+if (manager.getConnectionStatus("weather") === "connected") {
+  const { resources } = await manager.listResources("weather");
+  console.log(resources);
+}
+
+// Remove when done
+await manager.disconnectServer("weather");
+```
+</CodeGroup>
+
+### Example 4: Resource Subscriptions
+
+<CodeGroup>
+```typescript Resource Subscriptions
+// Subscribe to resource updates
+manager.onResourceUpdated("docs", (notification) => {
+  console.log("Resource updated:", notification.params.uri);
+});
+
+await manager.subscribeResource("docs", {
+  uri: "file:///README.md",
+});
+
+// Read resource
+const resource = await manager.readResource("docs", {
+  uri: "file:///README.md",
+});
+console.log(resource.contents[0].text);
+```
+</CodeGroup>
+
+### Example 5: Custom RPC Logging
+
+<CodeGroup>
+```typescript Custom Logging
+const manager = new MCPClientManager(
+  {
+    server1: { command: "mcp-server", args: [] },
+  },
+  {
+    rpcLogger: ({ direction, message, serverId }) => {
+      const timestamp = new Date().toISOString();
+      console.log(`[${timestamp}][${serverId}][${direction}]`, message);
+
+      // Save to database or monitoring system
+      logToDatabase({ timestamp, serverId, direction, message });
+    },
+  }
+);
+```
+</CodeGroup>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Connection Management" icon="plug">
+    **DO**:
+    - Use unique, descriptive server IDs
+    - Check connection status before operations
+    - Handle connection errors gracefully
+    - Clean up connections when no longer needed
+
+    **DON'T**:
+    - Reuse server IDs without disconnecting first
+    - Assume connections are always ready
+    - Leave connections open indefinitely
+    - Ignore connection state changes
+  </Card>
+
+  <Card title="Tool Execution" icon="wrench">
+    **DO**:
+    - Validate tool arguments before execution
+    - Set appropriate timeouts for long-running tools
+    - Handle tool errors with meaningful messages
+    - Use `getToolsForAiSdk` for AI framework integration
+
+    **DON'T**:
+    - Execute tools without checking server status
+    - Use hardcoded tool names without verification
+    - Ignore tool execution errors
+    - Mix manual tool calling with AI SDK integration
+  </Card>
+
+  <Card title="Elicitation Handling" icon="comments">
+    **DO**:
+    - Set timeouts for elicitation responses
+    - Clean up pending elicitations on errors
+    - Use server-specific handlers for custom logic
+    - Clear callbacks when done to prevent leaks
+
+    **DON'T**:
+    - Leave elicitations pending indefinitely
+    - Forget to respond to elicitation requests
+    - Mix server-specific and global handlers unexpectedly
+    - Ignore elicitation errors
+  </Card>
+
+  <Card title="Performance" icon="gauge-high">
+    **DO**:
+    - Cache tool metadata when possible
+    - Reuse connections across requests
+    - Use parallel operations with `getTools()`
+    - Monitor connection health
+
+    **DON'T**:
+    - Create new connections for each request
+    - Poll for updates without subscriptions
+    - Ignore connection pool limits
+    - Skip cleanup on shutdown
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title='"MCP server is already connected"'>
+    **Cause**: Attempting to connect with a server ID that's already in use.
+
+    **Solution**: Disconnect first or use a different ID.
+  </Accordion>
+
+  <Accordion title='"MCP server is not connected"'>
+    **Cause**: Attempting operations on a disconnected server.
+
+    **Solution**: Check `getConnectionStatus()` and connect if needed.
+  </Accordion>
+
+  <Accordion title='"Method not found" or "Method not implemented"'>
+    **Cause**: Server doesn't support the requested capability.
+
+    **Solution**: The manager returns empty results for unsupported methods (tools/list, resources/list, prompts/list).
+  </Accordion>
+
+  <Accordion title="Transport connection failures">
+    **Cause**: Network issues, server not running, or incorrect configuration.
+
+    **Solution**:
+    - Verify server is accessible
+    - Check configuration (URL, command, args)
+    - Review server logs for errors
+    - Use RPC logging to debug protocol issues
+  </Accordion>
+</AccordionGroup>
+
+## Related Documentation
+
+- [MCP Specification](https://spec.modelcontextprotocol.io/)
+- [MCPJam Inspector](https://github.com/MCPJam/inspector)
+- [Vercel AI SDK](https://sdk.vercel.ai/)
+- [@modelcontextprotocol/sdk](https://github.com/modelcontextprotocol/sdk)
+
+## See Also
+
+- `sdk/mcp-client-manager/README.md` - Public-facing documentation
+- `sdk/mcp-client-manager/goal.md` - Original design goals
+- `sdk/mcp-client-manager/tool-converters.ts` - AI SDK conversion logic
+- `server/routes/mcp/chat.ts` - Chat endpoint usage
+- `server/services/mcp-http-bridge.ts` - HTTP bridge implementation
