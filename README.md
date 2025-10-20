@@ -172,7 +172,7 @@ npm run start
 
 ## 🤝 Contributing
 
-We welcome contributions to MCPJam Inspector V1! Please read our [CONTRIBUTING.md](./CONTRIBUTING.md) for development guidelines and best practices.
+We welcome contributions to MCPJam Inspector V1! Please read our [Contributing Guide](https://docs.mcpjam.com/inspector/contributing-guide) for development guidelines and best practices.
 
 ## 📚 Resources
 
