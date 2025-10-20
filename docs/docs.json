@@ -9,72 +9,50 @@
   },
   "favicon": "/mcp_jam.svg",
   "navigation": {
-    "dropdowns": [
+    "groups": [
       {
-        "dropdown": "MCPJam Inspector",
-        "icon": "book",
-        "description": "Inspector docs",
-        "groups": [
-          {
-            "group": "Getting started",
-            "pages": ["index", "getting-started", "installation"]
-          },
-          {
-            "group": "Features",
-            "pages": [
-              "inspector/connecting-servers",
-              "inspector/llm-playground",
-              "inspector/tools-prompts-resources",
-              "inspector/debugging",
-              "inspector/guided-oauth",
-              "inspector/mcp-evals"
-            ]
-          },
-          {
-            "group": "Developer Guide",
-            "pages": ["inspector/dev-setup", "inspector/contributing-guide"]
-          },
-          {
-            "group": "Engineering Onboarding",
-            "pages": [
-              "engineering/onboarding",
-              "engineering/oauth-architecture"
-            ]
-          }
+        "group": "Overview",
+        "icon": "book-open",
+        "pages": ["index", "getting-started", "installation"]
+      },
+      {
+        "group": "Features",
+        "icon": "sparkles",
+        "pages": [
+          "inspector/connecting-servers",
+          "inspector/llm-playground",
+          "inspector/tools-prompts-resources",
+          "inspector/debugging",
+          "inspector/guided-oauth",
+          "inspector/mcp-evals"
         ]
       },
       {
-        "dropdown": "MCP Evals",
+        "group": "MCP Evals",
         "icon": "terminal",
-        "description": "Test your MCP servers",
-        "groups": [
-          {
-            "group": "Overview",
-            "pages": ["evals/overview", "evals/installation"]
-          }
-        ]
+        "pages": ["evals/overview", "evals/installation"]
       },
       {
-        "dropdown": "Contributing",
+        "group": "Developer Guide",
         "icon": "code",
-        "description": "Contribute to MCPJam",
-        "groups": [
-          {
-            "group": "Getting Started",
-            "pages": ["contributing/docs-server"]
-          }
+        "pages": [
+          "inspector/dev-setup",
+          "inspector/contributing-guide",
+          "contributing/docs-server"
         ]
       },
       {
-        "dropdown": "Changelog",
-        "icon": "clock",
-        "description": "Latest updates and releases",
-        "groups": [
-          {
-            "group": "Releases",
-            "pages": ["changelog/overview"]
-          }
+        "group": "Contributing",
+        "icon": "wrench",
+        "pages": [
+          "engineering/onboarding",
+          "engineering/oauth-architecture"
         ]
+      },
+      {
+        "group": "Changelog",
+        "icon": "clock",
+        "pages": ["changelog/overview"]
       }
     ],
     "global": {
