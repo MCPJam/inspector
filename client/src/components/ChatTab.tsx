@@ -380,12 +380,12 @@ export function ChatTab({
       <ResizablePanelGroup direction="horizontal" className="h-screen">
         {/* Main Chat Panel */}
         <ResizablePanel defaultSize={70} minSize={40}>
-          <div className="relative bg-background h-full overflow-hidden">
+          <div className="flex flex-col bg-background h-full overflow-hidden">
             {/* Messages Area - Scrollable with bottom padding for input */}
             <div
               ref={messagesContainerRef}
               onScroll={handleScroll}
-              className="h-full overflow-y-auto pb-40"
+              className="flex-1 overflow-y-auto pb-4"
             >
               <div className="max-w-4xl mx-auto px-4 pt-8 pb-8">
                 <AnimatePresence mode="popLayout">
@@ -447,14 +447,14 @@ export function ChatTab({
               </div>
             </div>
 
-            {/* Error Display - Absolute positioned above input */}
+            {/* Error Display */}
             <AnimatePresence>
               {error && (
                 <motion.div
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: 20 }}
-                  className="absolute bottom-40 left-0 right-0 px-4 py-3 bg-destructive/5 border-t border-destructive/10 z-10"
+                  className="px-4 py-3 bg-destructive/5 border-t border-destructive/10"
                 >
                   <div className="max-w-4xl mx-auto">
                     <p className="text-sm text-destructive">{error}</p>
@@ -463,8 +463,8 @@ export function ChatTab({
               )}
             </AnimatePresence>
 
-            {/* Fixed Bottom Input - Absolute positioned */}
-            <div className="absolute bottom-0 left-0 right-0 border-t border-border/50 bg-background/80 backdrop-blur-sm">
+            {/* Fixed Bottom Input */}
+            <div className="border-t border-border/50 bg-background/80 backdrop-blur-sm flex-shrink-0">
               <div className="max-w-4xl mx-auto p-4">
                 <div>
                   <ChatInput
