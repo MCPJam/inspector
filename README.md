@@ -179,6 +179,8 @@ We welcome contributions to MCPJam Inspector V1! Please read our [Contributing G
 - **💬 Discord**: [Join the MCPJam Community](https://discord.gg/JEnDtz8X6z)
 - **📖 MCP Protocol**: [Model Context Protocol Documentation](https://modelcontextprotocol.io/)
 - **🤖 AI SDK**: [Vercel AI SDK](https://sdk.vercel.ai/)
+- **⚡ FastApps** [DooiLabs/FastApps](https://github.com/DooiLabs/FastApps) - The Python framework to build OpenAI Apps.
+- **✖️ xMCP** [xMCP](https://xmcp.dev/) - The Typescript MCP framework. Ship on Vercel instantly.
 
 ---
 
