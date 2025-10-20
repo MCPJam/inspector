@@ -383,12 +383,12 @@ export function ChatTab({
       >
         {/* Main Chat Panel */}
         <ResizablePanel defaultSize={70} minSize={40}>
-          <div className="flex flex-col bg-background h-full min-h-0 overflow-hidden">
+          <div className="flex flex-col bg-background h-full min-h-0 relative overflow-hidden">
             {/* Messages Area - Scrollable with bottom padding for input */}
             <div
               ref={messagesContainerRef}
               onScroll={handleScroll}
-              className="flex-1 min-h-0 overflow-y-auto pb-28"
+              className="flex-1 min-h-0 overflow-y-auto pb-24"
             >
               <div className="max-w-4xl mx-auto px-4 pt-8 pb-8">
                 <AnimatePresence mode="popLayout">
@@ -464,8 +464,8 @@ export function ChatTab({
                 )}
               </AnimatePresence>
 
-              {/* Sticky input inside the scroll container so it never leaves viewport */}
-              <div className="fixed bottom-0 left-0 right-0 border-t border-border/50 bg-background/90 backdrop-blur-sm z-20">
+              {/* Sticky input inside the chat panel (no bleed into sidebar/JSON-RPC) */}
+              <div className="sticky bottom-0 border-t border-border/50 bg-background/90 backdrop-blur-sm z-10">
                 <div className="max-w-4xl mx-auto p-4">
                   <ChatInput
                     value={input}
