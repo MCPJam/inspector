@@ -32,8 +32,8 @@
         "group": "Contributing",
         "icon": "code",
         "pages": [
+          "CONTRIBUTING",
           "inspector/dev-setup",
-          "inspector/contributing-guide",
           "contributing/documentation",
           "contributing/onboarding",
           "contributing/oauth-architecture"
