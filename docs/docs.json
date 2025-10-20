@@ -24,14 +24,9 @@
           "inspector/tools-prompts-resources",
           "inspector/debugging",
           "inspector/guided-oauth",
-          "inspector/mcp-evals",
+          "evals/overview",
           "inspector/docs-server"
         ]
-      },
-      {
-        "group": "MCP Evals",
-        "icon": "terminal",
-        "pages": ["evals/overview", "evals/installation"]
       },
       {
         "group": "Contributing",
