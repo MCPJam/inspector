@@ -31,6 +31,8 @@ import { useConvexAuth } from "convex/react";
 import "./index.css";
 import { AuthUpperArea } from "./components/auth/auth-upper-area";
 import { detectEnvironment, detectPlatform } from "./logs/PosthogUtils";
+import CompletingSignInLoading from "./components/CompletingSignInLoading";
+import LoadingScreen from "./components/LoadingScreen";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
@@ -114,28 +116,11 @@ export default function App() {
       return () => clearTimeout(timeout);
     }, []);
 
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
-          <p className="mt-4 text-muted-foreground">Completing sign in...</p>
-          <p className="mt-2 text-xs text-muted-foreground">
-            If this takes too long, you'll be redirected automatically
-          </p>
-        </div>
-      </div>
-    );
+    return <CompletingSignInLoading />;
   }
 
   if (isLoading) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
-          <p className="mt-4 text-muted-foreground">Loading...</p>
-        </div>
-      </div>
-    );
+    return <LoadingScreen />;
   }
 
   return (
