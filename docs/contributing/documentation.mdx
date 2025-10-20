@@ -1,0 +1,188 @@
+---
+title: "Documentation"
+description: "Learn how to edit and test MCPJam documentation locally"
+icon: "file-edit"
+---
+
+## Overview
+
+MCPJam uses [Mintlify](https://mintlify.com) for our documentation. This guide will help you make changes to the docs and preview them locally before submitting a PR.
+
+## Documentation Structure
+
+```
+/docs
+  ├── docs.json           # Navigation and site configuration
+  ├── index.mdx           # Homepage
+  ├── getting-started.mdx # Getting started guide
+  ├── installation.mdx    # Installation instructions
+  ├── /inspector          # Inspector feature docs
+  ├── /evals              # MCP Evals docs
+  ├── /contributing       # Contributing guides
+  ├── /engineering        # Engineering/internal docs
+  └── /changelog          # Release notes
+```
+
+## Setting Up Local Preview
+
+### 1. Install Mintlify CLI
+
+Install the Mintlify CLI globally using npm:
+
+```bash
+npm i -g mint
+```
+
+### 2. Navigate to Docs Directory
+
+```bash
+cd docs
+```
+
+### 3. Start Development Server
+
+```bash
+mint dev
+```
+
+This will start a local preview server. By default, it tries port 3000, but will automatically use the next available port if 3000 is in use.
+
+### 4. View Your Changes
+
+Open your browser to the URL shown in the terminal (typically `http://localhost:3000` or `http://localhost:3001`).
+
+The preview will automatically reload when you save changes to any `.mdx` files.
+
+## Making Changes
+
+### Editing Content
+
+1. Find the relevant `.mdx` file in the `/docs` directory
+2. Make your changes using Markdown or MDX syntax
+3. Save the file
+4. Check the preview in your browser
+
+### Adding New Pages
+
+1. Create a new `.mdx` file in the appropriate directory
+2. Add frontmatter with title and description:
+
+```mdx
+---
+title: "Your Page Title"
+description: "A brief description of the page"
+---
+
+Your content here...
+```
+
+3. Add the page to `docs.json` navigation:
+
+```json
+{
+  "group": "Group Name",
+  "icon": "icon-name",
+  "pages": [
+    "path/to/your-new-page"  // Without .mdx extension
+  ]
+}
+```
+
+### Updating Navigation
+
+Edit `docs.json` to modify the sidebar navigation structure. The navigation uses groups to organize content:
+
+```json
+{
+  "navigation": {
+    "groups": [
+      {
+        "group": "Group Name",
+        "icon": "lucide-icon-name",
+        "pages": ["page1", "page2", "folder/page3"]
+      }
+    ]
+  }
+}
+```
+
+## Mintlify Components
+
+Mintlify provides several built-in components you can use:
+
+### Code Blocks
+
+```javascript
+console.log("Hello, world!");
+```
+
+### Callouts
+
+<Note>
+This is a note callout for helpful information.
+</Note>
+
+<Warning>
+This is a warning callout for important notices.
+</Warning>
+
+<Tip>
+This is a tip callout for best practices.
+</Tip>
+
+### Cards
+
+<Card title="Card Title" icon="icon-name" href="/link">
+  Card description goes here
+</Card>
+
+### Accordions
+
+<Accordion title="Click to expand">
+  Hidden content goes here
+</Accordion>
+
+## Best Practices
+
+1. **Keep it Simple**: Write clear, concise documentation
+2. **Use Headers**: Organize content with proper heading hierarchy (H2, H3, etc.)
+3. **Add Examples**: Include code examples where relevant
+4. **Test Locally**: Always preview changes before submitting a PR
+5. **Follow Structure**: Keep files organized in the appropriate directories
+
+## Troubleshooting
+
+### Preview Not Starting
+
+If the dev server isn't running, try updating the CLI:
+
+```bash
+mint update
+```
+
+### Page Shows 404
+
+Make sure:
+- The file path in `docs.json` matches the actual file location
+- You're not including the `.mdx` extension in `docs.json`
+- The file has valid frontmatter
+
+### Changes Not Showing
+
+- The preview auto-reloads, but sometimes you may need to manually refresh
+- Check the terminal for any error messages
+- Verify your `.mdx` file has no syntax errors
+
+## Submitting Changes
+
+1. Test your changes locally with `mint dev`
+2. Commit your changes with a descriptive message
+3. Push to a new branch
+4. Open a Pull Request
+5. Request review from the maintainers
+
+## Resources
+
+- [Mintlify Documentation](https://mintlify.com/docs)
+- [MDX Documentation](https://mdxjs.com/)
+- [Lucide Icons](https://lucide.dev/) (for navigation icons)

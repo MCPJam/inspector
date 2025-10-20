@@ -38,15 +38,16 @@
         "pages": [
           "inspector/dev-setup",
           "inspector/contributing-guide",
-          "contributing/docs-server"
+          "inspector/docs-server"
         ]
       },
       {
         "group": "Contributing",
         "icon": "wrench",
         "pages": [
-          "engineering/onboarding",
-          "engineering/oauth-architecture"
+          "contributing/documentation",
+          "contributing/onboarding",
+          "contributing/oauth-architecture"
         ]
       },
       {
