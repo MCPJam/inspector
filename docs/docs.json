@@ -33,19 +33,13 @@
         "pages": ["evals/overview", "evals/installation"]
       },
       {
-        "group": "Developer Guide",
+        "group": "Contributing",
         "icon": "code",
         "pages": [
           "inspector/dev-setup",
           "inspector/contributing-guide",
-          "inspector/docs-server"
-        ]
-      },
-      {
-        "group": "Contributing",
-        "icon": "wrench",
-        "pages": [
           "contributing/documentation",
+          "inspector/docs-server",
           "contributing/onboarding",
           "contributing/oauth-architecture"
         ]
