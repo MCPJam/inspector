@@ -33,7 +33,6 @@
         "icon": "code",
         "pages": [
           "CONTRIBUTING",
-          "inspector/dev-setup",
           "contributing/documentation",
           "contributing/onboarding",
           "contributing/oauth-architecture"
