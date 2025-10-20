@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, type ReactNode } from "react";
+import { useRef, useEffect, useLayoutEffect, useState, useCallback, type ReactNode } from "react";
 import { MessageCircle, PlusCircle, Settings, Sparkles } from "lucide-react";
 import { useChat } from "@/hooks/use-chat";
 import { Message } from "./chat/message";
@@ -36,6 +36,17 @@ export function ChatTab({
 }: ChatTabProps) {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
+  const chatPanelRef = useRef<HTMLDivElement>(null);
+  const [fixedBarStyle, setFixedBarStyle] = useState<React.CSSProperties>({});
+  const updateBarBounds = useCallback(() => {
+    const el = chatPanelRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    setFixedBarStyle({
+      left: `${rect.left}px`,
+      right: `${window.innerWidth - rect.right}px`,
+    });
+  }, []);
   const { isAuthenticated } = useConvexAuth();
   const { signUp } = useAuth();
   const posthog = usePostHog();
@@ -88,6 +99,61 @@ export function ChatTab({
       setInput("");
     }
   }, [showSignInPrompt, setInput]);
+
+  // Keep the bottom bar fixed to the viewport but constrained to the chat panel width
+  useLayoutEffect(() => {
+    // Recalculate aggressively during initial layout (before first paints)
+    let frames = 0;
+    const tick = () => {
+      updateBarBounds();
+      if (frames++ < 20) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+    // Fallback timeouts for late reflows
+    [0, 50, 100, 200, 400, 800, 1200].forEach((t) => setTimeout(updateBarBounds, t));
+    // Short interval for the first few seconds to catch late reflows
+    const start = Date.now();
+    const intervalId = setInterval(() => {
+      updateBarBounds();
+      if (Date.now() - start > 4000) clearInterval(intervalId);
+    }, 120);
+    window.addEventListener("resize", updateBarBounds);
+    window.addEventListener("scroll", updateBarBounds, true);
+    document.addEventListener("pointerup", updateBarBounds);
+    const ro = new ResizeObserver(updateBarBounds);
+    if (chatPanelRef.current) ro.observe(chatPanelRef.current);
+    return () => {
+      window.removeEventListener("resize", updateBarBounds);
+      window.removeEventListener("scroll", updateBarBounds, true);
+      document.removeEventListener("pointerup", updateBarBounds);
+      clearInterval(intervalId);
+      ro.disconnect();
+    };
+  }, [updateBarBounds]);
+
+  // Recompute when messages change or fonts/resources finish loading
+  useEffect(() => {
+    updateBarBounds();
+  }, [updateBarBounds, messages.length, isLoading]);
+
+  useEffect(() => {
+    const onReady = () => updateBarBounds();
+    window.addEventListener("load", onReady);
+    document.addEventListener("readystatechange", onReady);
+    // Font loading can change widths
+    // @ts-expect-error
+    const fonts = (document as any).fonts;
+    if (fonts && fonts.addEventListener) {
+      fonts.addEventListener("loadingdone", onReady);
+    }
+    return () => {
+      window.removeEventListener("load", onReady);
+      document.removeEventListener("readystatechange", onReady);
+      if (fonts && fonts.removeEventListener) {
+        fonts.removeEventListener("loadingdone", onReady);
+      }
+    };
+  }, [updateBarBounds]);
 
   // Restore model from localStorage on mount
   useEffect(() => {
@@ -383,7 +449,10 @@ export function ChatTab({
       >
         {/* Main Chat Panel */}
         <ResizablePanel defaultSize={70} minSize={40}>
-          <div className="flex flex-col bg-background h-full min-h-0 relative overflow-hidden">
+          <div
+            ref={chatPanelRef}
+            className="flex flex-col bg-background h-full min-h-0 relative overflow-hidden"
+          >
             {/* Messages Area - Scrollable with bottom padding for input */}
             <div
               ref={messagesContainerRef}
@@ -464,9 +533,12 @@ export function ChatTab({
                 )}
               </AnimatePresence>
 
-              {/* Sticky input inside the chat panel (no bleed into sidebar/JSON-RPC) */}
-              <div className="sticky bottom-0 border-t border-border/50 bg-background/90 backdrop-blur-sm z-10">
-                <div className="max-w-4xl mx-auto p-4">
+              {/* Fixed to viewport but width-clamped to chat panel to avoid bleed */}
+              <div
+                className="fixed bottom-0 border-t border-border/50 bg-background/90 backdrop-blur-sm z-20"
+                style={fixedBarStyle}
+              >
+                <div className="w-full px-6 py-5">
                   <ChatInput
                     value={input}
                     onChange={setInput}
