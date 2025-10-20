@@ -131,6 +131,7 @@ flowchart TD
     **Key Files:**
     - `server/app.ts:135-142` - Development mode routing
     - `client/vite.config.ts` - Vite configuration
+
   </Accordion>
 
   <Accordion title="Web Production Mode" icon="server">
@@ -146,6 +147,7 @@ flowchart TD
     **Key Files:**
     - `server/app.ts:119-126` - Production static serving
     - `server/index.ts` - Standalone server entry point
+
   </Accordion>
 
   <Accordion title="Electron Development Mode" icon="bolt">
@@ -161,6 +163,7 @@ flowchart TD
     **Key Files:**
     - `src/main.ts:62-92` - Server startup
     - `src/main.ts:112` - Vite dev server URL loading
+
   </Accordion>
 
   <Accordion title="Electron Production Mode" icon="package">
@@ -176,6 +179,7 @@ flowchart TD
     **Key Files:**
     - `src/main.ts:68-73` - Environment setup
     - `server/app.ts:119-124` - Packaged static serving
+
   </Accordion>
 </AccordionGroup>
 
@@ -217,6 +221,7 @@ flowchart LR
 **Key Implementation:** `server/app.ts:20-146`
 
 The factory function `createHonoApp()` is called from:
+
 - `server/index.ts` - Standalone web server
 - `src/main.ts:75` - Electron embedded server
 
@@ -323,7 +328,8 @@ graph TB
 ```
 
 <Info>
-  **Security Note:** The renderer process has no direct access to Node.js APIs. All privileged operations must go through the preload script and IPC.
+  **Security Note:** The renderer process has no direct access to Node.js APIs.
+  All privileged operations must go through the preload script and IPC.
 </Info>
 
 ### Startup Sequence
@@ -370,13 +376,13 @@ sequenceDiagram
     `src/main.ts:66-73` sets critical environment variables that tell the server it's running in Electron
   </Step>
 
-  <Step title="Server Start" icon="server">
-    `src/main.ts:62-92` starts the embedded Hono server on an available port
-  </Step>
+<Step title="Server Start" icon="server">
+  `src/main.ts:62-92` starts the embedded Hono server on an available port
+</Step>
 
-  <Step title="Window Creation" icon="window">
-    `src/main.ts:94-133` creates the main BrowserWindow with security settings
-  </Step>
+<Step title="Window Creation" icon="window">
+  `src/main.ts:94-133` creates the main BrowserWindow with security settings
+</Step>
 
   <Step title="IPC Setup" icon="bolt">
     `src/ipc/listeners-register.ts` registers all IPC event handlers
@@ -387,8 +393,13 @@ sequenceDiagram
 
 The Electron app handles OAuth callbacks through a custom protocol handler:
 
-<Card title="OAuth Architecture" icon="lock" href="/contributing/oauth-architecture">
-  Learn about the complete OAuth flow including deep linking, state management, and security
+<Card
+  title="OAuth Architecture"
+  icon="lock"
+  href="/contributing/oauth-architecture"
+>
+  Learn about the complete OAuth flow including deep linking, state management,
+  and security
 </Card>
 
 **Quick Overview:**
@@ -413,6 +424,7 @@ sequenceDiagram
 ```
 
 **Key Files:**
+
 - `src/main.ts:31-33` - Protocol registration
 - `src/main.ts:273-313` - Deep link handler
 - `client/src/hooks/useElectronOAuth.ts` - React OAuth hook
@@ -490,7 +502,8 @@ stateDiagram-v2
 ```
 
 <Tip>
-  For detailed MCP client implementation, see [MCP Client Manager Architecture](/contributing/mcp-client-manager)
+  For detailed MCP client implementation, see [MCP Client Manager
+  Architecture](/contributing/mcp-client-manager)
 </Tip>
 
 ## State Management
@@ -548,6 +561,7 @@ graph TB
     - Optimistic updates
     - Request deduplication
     - Stale-while-revalidate
+
   </Accordion>
 
   <Accordion title="Zustand (Client State)" icon="box">
@@ -564,6 +578,7 @@ graph TB
     - No boilerplate
     - TypeScript support
     - Middleware (persist, devtools)
+
   </Accordion>
 
   <Accordion title="Context API (Scoped State)" icon="circle-nodes">
@@ -578,6 +593,7 @@ graph TB
     - React-native
     - Component composition
     - Clean separation of concerns
+
   </Accordion>
 </AccordionGroup>
 
@@ -626,6 +642,7 @@ graph TB
 6. React components update UI
 
 **Key Files:**
+
 - `server/services/rpc-log-bus.ts` - Event bus implementation
 - `server/app.ts:67-79` - RPC logger setup
 - `client/src/hooks/useRPCLogs.ts` - Frontend subscription
@@ -665,15 +682,15 @@ flowchart TD
 
 ### Required Environment Variables
 
-| Variable | Purpose | Set By | Required |
-|----------|---------|--------|----------|
-| `CONVEX_HTTP_URL` | Convex backend URL | User/CI | ✅ Yes |
-| `ELECTRON_APP` | Indicates Electron runtime | Main process | Auto |
-| `IS_PACKAGED` | Indicates packaged app | Main process | Auto |
-| `ELECTRON_RESOURCES_PATH` | Resources directory | Main process | Auto |
-| `NODE_ENV` | Runtime environment | Build/User | Auto |
-| `PORT` | Server port | User | Optional (default: 3001) |
-| `DEBUG_MCP_SELECTION` | Enable debug logs | User | Optional |
+| Variable                  | Purpose                    | Set By       | Required                 |
+| ------------------------- | -------------------------- | ------------ | ------------------------ |
+| `CONVEX_HTTP_URL`         | Convex backend URL         | User/CI      | ✅ Yes                   |
+| `ELECTRON_APP`            | Indicates Electron runtime | Main process | Auto                     |
+| `IS_PACKAGED`             | Indicates packaged app     | Main process | Auto                     |
+| `ELECTRON_RESOURCES_PATH` | Resources directory        | Main process | Auto                     |
+| `NODE_ENV`                | Runtime environment        | Build/User   | Auto                     |
+| `PORT`                    | Server port                | User         | Optional (default: 3001) |
+| `DEBUG_MCP_SELECTION`     | Enable debug logs          | User         | Optional                 |
 
 ## Build & Deployment
 
@@ -713,6 +730,7 @@ flowchart LR
     - `dist/server/` - Backend Node.js files
 
     **Server:** Hono serves both API and static files
+
   </Tab>
 
   <Tab title="Electron Deployment">
@@ -727,6 +745,7 @@ flowchart LR
     - `out/*.deb` - Linux package
 
     **Includes:** Bundled client, server, and Node.js runtime
+
   </Tab>
 
   <Tab title="Docker Deployment">
@@ -741,6 +760,7 @@ flowchart LR
     ```
 
     **Includes:** Complete application in Alpine Linux
+
   </Tab>
 </Tabs>
 
@@ -777,6 +797,7 @@ graph TB
 ```
 
 **Key Optimizations:**
+
 - Query cache reduces API calls by 80%+
 - Stale-while-revalidate provides instant UI updates
 - Background refetching keeps data fresh
@@ -818,7 +839,8 @@ graph LR
 ## Security Architecture
 
 <Warning>
-  The application handles sensitive data including API keys, OAuth tokens, and MCP server access. Security is a top priority.
+  The application handles sensitive data including API keys, OAuth tokens, and
+  MCP server access. Security is a top priority.
 </Warning>
 
 ### Security Layers
@@ -880,6 +902,7 @@ graph TB
     **No Remote Module:** Disabled for security
 
     **Protocol Registration:** Custom `mcpjam://` protocol for OAuth
+
   </Accordion>
 
   <Accordion title="Authentication" icon="lock">
@@ -890,6 +913,7 @@ graph TB
     **PKCE Flow:** Proof Key for Code Exchange in Electron
 
     **Convex Integration:** Server-side token validation
+
   </Accordion>
 
   <Accordion title="Input Validation" icon="check">
@@ -900,6 +924,7 @@ graph TB
     **Rate Limiting:** Prevent abuse
 
     **Error Handling:** No sensitive data in error messages
+
   </Accordion>
 </AccordionGroup>
 
@@ -932,12 +957,14 @@ flowchart LR
 ```
 
 **Error Tracking:**
+
 - Sentry integration in both main and renderer processes
 - Automatic error reporting in production
 - Source maps for stack traces
 - User context and breadcrumbs
 
 **Performance Monitoring:**
+
 - React Query DevTools for cache inspection
 - Browser DevTools for profiling
 - Network tab for API timing
@@ -950,13 +977,21 @@ flowchart LR
     Deep dive into MCP protocol implementation
   </Card>
 
-  <Card title="OAuth Architecture" icon="lock" href="/contributing/oauth-architecture">
-    Learn about authentication and OAuth flow
-  </Card>
+<Card
+  title="OAuth Architecture"
+  icon="lock"
+  href="/contributing/oauth-architecture"
+>
+  Learn about authentication and OAuth flow
+</Card>
 
-  <Card title="Playground Architecture" icon="messages" href="/contributing/playground-architecture">
-    Understand the LLM playground system
-  </Card>
+<Card
+  title="Playground Architecture"
+  icon="messages"
+  href="/contributing/playground-architecture"
+>
+  Understand the LLM playground system
+</Card>
 
   <Card title="Evals Architecture" icon="chart-line" href="/contributing/evals-architecture">
     Explore the evaluation framework
@@ -964,5 +999,6 @@ flowchart LR
 </CardGroup>
 
 <Check>
-  Now you understand the complete system architecture! Ready to contribute? Check out the [Contributing Guide](/CONTRIBUTING).
+  Now you understand the complete system architecture! Ready to contribute?
+  Check out the [Contributing Guide](/CONTRIBUTING).
 </Check>
