@@ -1,0 +1,968 @@
+---
+title: "System Architecture"
+description: "Deep dive into MCPJam Inspector's multi-mode architecture"
+icon: "sitemap"
+---
+
+## Overview
+
+MCPJam Inspector is a sophisticated multi-platform application that runs in three distinct modes: Web Application, Electron Desktop App, and Docker Container. This architecture guide explains how the system adapts to each deployment mode while maintaining a unified codebase.
+
+<CardGroup cols={3}>
+  <Card title="Web App" icon="globe">
+    Standalone web application with separate client and server
+  </Card>
+  <Card title="Desktop App" icon="desktop">
+    Electron application with embedded Hono server
+  </Card>
+  <Card title="Container" icon="docker">
+    Dockerized deployment for cloud hosting
+  </Card>
+</CardGroup>
+
+## High-Level Architecture
+
+The application consists of distinct layers that work together across all deployment modes:
+
+```mermaid
+graph TB
+    subgraph Client["Client Layer"]
+        React["React Frontend (Vite + React 19)"]
+        UI["UI Components (Shadcn/Radix)"]
+        Stores["State Management (Zustand + React Query)"]
+    end
+
+    subgraph Server["Server Layer"]
+        Hono["Hono.js Backend (API Server)"]
+        MCPManager["MCPClientManager (SDK Integration)"]
+        Routes["API Routes (/api/mcp/*)"]
+    end
+
+    subgraph MCP["MCP Integration"]
+        SDK["@mastra/mcp SDK"]
+        Transports["Transport Protocols (STDIO, SSE, HTTP)"]
+        MCPServers["MCP Servers (External Tools)"]
+    end
+
+    subgraph External["External Services"]
+        Convex["Convex Backend (Auth + Data)"]
+        LLMs["LLM Providers (OpenAI, Anthropic, etc.)"]
+        Sentry["Sentry (Error Tracking)"]
+    end
+
+    React --> Hono
+    UI --> React
+    Stores --> React
+    Hono --> Routes
+    Hono --> MCPManager
+    MCPManager --> SDK
+    SDK --> Transports
+    Transports --> MCPServers
+    Hono --> Convex
+    MCPManager --> LLMs
+    Hono --> Sentry
+    React --> Sentry
+```
+
+## Deployment Modes
+
+### Mode Detection Flow
+
+The application automatically detects its runtime environment and configures itself accordingly:
+
+```mermaid
+flowchart TD
+    Boot(["Application Boot"])
+    EnvCheck["Load Environment Variables"]
+    ElectronCheck{"ELECTRON_APP === 'true'?"}
+    PackagedCheck{"IS_PACKAGED === 'true'?"}
+    NodeEnvCheck{"NODE_ENV?"}
+
+    EProd["Electron Production Mode
+    • Server: 127.0.0.1:3000
+    • Resources: process.resourcesPath
+    • Client: Bundled in resources/client
+    • Static: Serve from bundle"]
+
+    EDev["Electron Development Mode
+    • Server: localhost:3000
+    • Resources: app.getAppPath
+    • Client: Vite dev server :8080
+    • Static: Redirect to Vite"]
+
+    WProd["Web Production Mode
+    • Server: 0.0.0.0:3001
+    • Client: dist/client
+    • Static: Serve bundled files
+    • SPA: Fallback to index.html"]
+
+    WDev["Web Development Mode
+    • Server: localhost:3000
+    • Client: Vite dev server :8080
+    • Static: API only, CORS enabled
+    • SPA: No static serving"]
+
+    Boot --> EnvCheck
+    EnvCheck --> ElectronCheck
+    ElectronCheck -->|Yes| PackagedCheck
+    ElectronCheck -->|No| NodeEnvCheck
+    PackagedCheck -->|Yes| EProd
+    PackagedCheck -->|No| EDev
+    NodeEnvCheck -->|production| WProd
+    NodeEnvCheck -->|development| WDev
+
+    style EProd fill:#90EE90
+    style EDev fill:#FFD700
+    style WProd fill:#87CEEB
+    style WDev fill:#FFA07A
+```
+
+<AccordionGroup>
+  <Accordion title="Web Development Mode" icon="code">
+    **When:** `NODE_ENV=development` (no Electron)
+
+    **Characteristics:**
+    - Backend: Hono server on `localhost:3000`
+    - Frontend: Vite dev server on `localhost:8080`
+    - CORS enabled for cross-origin requests
+    - Hot module replacement (HMR)
+    - API-only server (no static file serving)
+
+    **Key Files:**
+    - `server/app.ts:135-142` - Development mode routing
+    - `client/vite.config.ts` - Vite configuration
+  </Accordion>
+
+  <Accordion title="Web Production Mode" icon="server">
+    **When:** `NODE_ENV=production` (no Electron)
+
+    **Characteristics:**
+    - Backend: Hono server on `0.0.0.0:3001`
+    - Frontend: Served from `dist/client`
+    - SPA fallback to `index.html`
+    - Optimized production bundles
+    - No CORS (same-origin)
+
+    **Key Files:**
+    - `server/app.ts:119-126` - Production static serving
+    - `server/index.ts` - Standalone server entry point
+  </Accordion>
+
+  <Accordion title="Electron Development Mode" icon="bolt">
+    **When:** `ELECTRON_APP=true` and `IS_PACKAGED=false`
+
+    **Characteristics:**
+    - Embedded Hono server on `localhost:3000`
+    - Frontend: Vite dev server redirects
+    - Resources from `app.getAppPath()`
+    - DevTools enabled
+    - Auto-reload on changes
+
+    **Key Files:**
+    - `src/main.ts:62-92` - Server startup
+    - `src/main.ts:112` - Vite dev server URL loading
+  </Accordion>
+
+  <Accordion title="Electron Production Mode" icon="package">
+    **When:** `ELECTRON_APP=true` and `IS_PACKAGED=true`
+
+    **Characteristics:**
+    - Embedded Hono server on `127.0.0.1:3000`
+    - Frontend: Bundled in `resources/client`
+    - Resources from `process.resourcesPath`
+    - Code signing enabled
+    - Single .app/.exe bundle
+
+    **Key Files:**
+    - `src/main.ts:68-73` - Environment setup
+    - `server/app.ts:119-124` - Packaged static serving
+  </Accordion>
+</AccordionGroup>
+
+## Server Architecture
+
+### Hono Application Factory
+
+The server uses a factory pattern to create the Hono app, allowing it to be reused across different contexts:
+
+```mermaid
+flowchart LR
+    Factory["createHonoApp"]
+    EnvLoad["Load .env Based on mode"]
+    Validate["Validate CONVEX_HTTP_URL"]
+    FixPath["Fix PATH for GUI apps (fixPath)"]
+    CreateApp["Create Hono instance"]
+    MCPManager["Initialize MCPClientManager + RPC Logger"]
+    Middleware["Setup Middleware (CORS, Logger)"]
+    Routes["Mount Routes (/api/mcp)"]
+    Bus["Wire to rpcLogBus (SSE events)"]
+    App["Return Hono App"]
+
+    Factory --> EnvLoad
+    EnvLoad --> Validate
+    Validate --> FixPath
+    FixPath --> CreateApp
+    CreateApp --> MCPManager
+    CreateApp --> Middleware
+    CreateApp --> Routes
+    MCPManager --> Bus
+    Routes --> App
+    Middleware --> App
+    Bus --> App
+
+    style Factory fill:#e1f5ff
+    style App fill:#90EE90
+```
+
+**Key Implementation:** `server/app.ts:20-146`
+
+The factory function `createHonoApp()` is called from:
+- `server/index.ts` - Standalone web server
+- `src/main.ts:75` - Electron embedded server
+
+### Request Lifecycle
+
+Every HTTP request flows through multiple layers:
+
+```mermaid
+sequenceDiagram
+    participant Client as HTTP Client
+    participant Hono as Hono Server
+    participant Middleware as Middleware Stack
+    participant Route as Route Handler
+    participant Manager as MCPClientManager
+    participant RPC as rpcLogBus
+    participant MCP as MCP Server
+
+    Client->>Hono: HTTP Request
+    Hono->>Middleware: Process request
+    Middleware->>Middleware: Logger middleware
+    Middleware->>Middleware: CORS middleware
+    Middleware->>Middleware: Inject mcpClientManager
+    Middleware->>Route: Forward to route
+
+    Route->>Manager: Get server client
+    Manager->>RPC: Publish outgoing RPC
+    Manager->>MCP: Execute MCP call
+    MCP-->>Manager: Response
+    Manager->>RPC: Publish incoming RPC
+    Manager-->>Route: Return result
+
+    Route->>Route: Format response
+    Route-->>Middleware: Return JSON
+    Middleware-->>Hono: Response
+    Hono-->>Client: HTTP Response
+
+    Note over RPC: SSE subscribers receive<br/>real-time logs
+```
+
+### API Routes Structure
+
+<Tabs>
+  <Tab title="MCP Routes">
+    ```
+    /api/mcp
+    ├── /servers
+    │   ├── GET / - List all servers
+    │   ├── POST /:id/connect - Connect to server
+    │   ├── POST /:id/disconnect - Disconnect from server
+    │   ├── /tools
+    │   │   ├── GET / - List tools
+    │   │   └── POST /:name/call - Call tool
+    │   ├── /resources
+    │   │   ├── GET / - List resources
+    │   │   └── GET /:uri - Read resource
+    │   └── /prompts
+    │       ├── GET / - List prompts
+    │       └── POST /:name/get - Get prompt
+    ├── /health - Health check
+    └── /rpc-logs - SSE logs stream
+    ```
+  </Tab>
+
+  <Tab title="File Locations">
+    | Route | File | Line |
+    |-------|------|------|
+    | `/api/mcp` | `server/routes/mcp/index.ts` | - |
+    | `/servers` | `server/routes/mcp/servers.ts` | - |
+    | `/tools` | `server/routes/mcp/tools.ts` | - |
+    | `/resources` | `server/routes/mcp/resources.ts` | - |
+    | `/prompts` | `server/routes/mcp/prompts.ts` | - |
+  </Tab>
+</Tabs>
+
+## Electron Integration
+
+### Process Architecture
+
+Electron uses a multi-process architecture for security and stability:
+
+```mermaid
+graph TB
+    Main["Main Process (src/main.ts)"]
+    Server["Embedded Hono Server (127.0.0.1:3000)"]
+    Window["BrowserWindow"]
+    IPC["IPC Handlers (src/ipc/*)"]
+    Protocol["Protocol Handler (mcpjam://)"]
+    Renderer["Renderer Process (client/src/*)"]
+    Preload["Preload Script (src/preload.ts)"]
+
+    Main --> Server
+    Main --> Window
+    Main --> IPC
+    Main --> Protocol
+    Window --> Renderer
+    Renderer --> Preload
+    Renderer -.HTTP.-> Server
+    Renderer -.IPC.-> IPC
+    Protocol -.Deep Links.-> Main
+
+    style Main fill:#f8d7da
+    style Renderer fill:#fff3cd
+    style Server fill:#d4edda
+```
+
+<Info>
+  **Security Note:** The renderer process has no direct access to Node.js APIs. All privileged operations must go through the preload script and IPC.
+</Info>
+
+### Startup Sequence
+
+Here's what happens when you launch the Electron app:
+
+```mermaid
+sequenceDiagram
+    participant OS as Operating System
+    participant Main as Main Process
+    participant Server as Hono Server
+    participant Window as BrowserWindow
+    participant Renderer as Renderer Process
+
+    OS->>Main: Launch app
+    Main->>Main: app.whenReady()
+
+    Note over Main: Set environment variables:<br/>ELECTRON_APP=true<br/>IS_PACKAGED<br/>ELECTRON_RESOURCES_PATH
+
+    Main->>Server: startHonoServer()
+    Server->>Server: Find available port
+    Server->>Server: createHonoApp()
+    Server-->>Main: Return port (e.g., 3000)
+
+    Main->>Window: createMainWindow(serverUrl)
+    Window->>Window: Create BrowserWindow
+    Window->>Renderer: Load URL
+
+    alt Development Mode
+        Renderer->>Renderer: Load from Vite<br/>MAIN_WINDOW_VITE_DEV_SERVER_URL
+    else Production Mode
+        Renderer->>Renderer: Load from server<br/>http://127.0.0.1:3000
+    end
+
+    Main->>Main: registerListeners()
+    Main->>Main: createAppMenu()
+
+    Renderer->>Renderer: React app boots
+    Renderer->>Server: Fetch data via HTTP
+```
+
+<Steps>
+  <Step title="Environment Setup" icon="gear">
+    `src/main.ts:66-73` sets critical environment variables that tell the server it's running in Electron
+  </Step>
+
+  <Step title="Server Start" icon="server">
+    `src/main.ts:62-92` starts the embedded Hono server on an available port
+  </Step>
+
+  <Step title="Window Creation" icon="window">
+    `src/main.ts:94-133` creates the main BrowserWindow with security settings
+  </Step>
+
+  <Step title="IPC Setup" icon="bolt">
+    `src/ipc/listeners-register.ts` registers all IPC event handlers
+  </Step>
+</Steps>
+
+### OAuth Deep Linking
+
+The Electron app handles OAuth callbacks through a custom protocol handler:
+
+<Card title="OAuth Architecture" icon="lock" href="/contributing/oauth-architecture">
+  Learn about the complete OAuth flow including deep linking, state management, and security
+</Card>
+
+**Quick Overview:**
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant App as Electron App
+    participant Browser as System Browser
+    participant OAuth as OAuth Provider
+    participant Renderer as Renderer Process
+
+    User->>App: Click "Sign In"
+    App->>Browser: Open OAuth URL
+    Browser->>OAuth: Authenticate
+    OAuth-->>Browser: mcpjam://oauth/callback?code=xxx
+    Browser->>App: Deep link captured
+    App->>Renderer: Load /callback with code
+    Renderer->>OAuth: Exchange code for token
+    OAuth-->>Renderer: Access token
+    Renderer->>User: Signed in!
+```
+
+**Key Files:**
+- `src/main.ts:31-33` - Protocol registration
+- `src/main.ts:273-313` - Deep link handler
+- `client/src/hooks/useElectronOAuth.ts` - React OAuth hook
+
+## MCP Client Management
+
+### MCPClientManager Architecture
+
+The `MCPClientManager` is the heart of MCP server integration:
+
+```mermaid
+graph TB
+    Manager["MCPClientManager (sdk/src/index.ts)"]
+    Config["Server Configurations (STDIO, SSE, HTTP)"]
+    Pool["Client Pool (Map: serverId → Client)"]
+    Logger["RPC Logger (Callback function)"]
+    STDIO["STDIO Client (Child process spawn)"]
+    SSE["SSE Client (EventSource)"]
+    HTTP["HTTP Client (Fetch API)"]
+    Transport1["Transport Layer (stdin/stdout streams)"]
+    Transport2["Transport Layer (Server-Sent Events)"]
+    Transport3["Transport Layer (HTTP/Streamable)"]
+    Bus["rpcLogBus (Publish-Subscribe)"]
+    SSEStream["SSE /api/mcp/rpc-logs"]
+    Frontend["Frontend Subscribers (Real-time logs)"]
+
+    Manager --> Config
+    Manager --> Pool
+    Manager --> Logger
+    Pool --> STDIO
+    Pool --> SSE
+    Pool --> HTTP
+    STDIO --> Transport1
+    SSE --> Transport2
+    HTTP --> Transport3
+    Logger --> Bus
+    Bus --> SSEStream
+    SSEStream --> Frontend
+
+    style Manager fill:#e1f5ff
+    style Logger fill:#fff3cd
+    style Bus fill:#d4edda
+```
+
+<CardGroup cols={3}>
+  <Card title="STDIO Transport" icon="terminal">
+    Spawns child processes for local MCP servers
+  </Card>
+  <Card title="SSE Transport" icon="rss">
+    EventSource connections for remote servers
+  </Card>
+  <Card title="HTTP Transport" icon="cloud">
+    Fetch-based requests with streaming support
+  </Card>
+</CardGroup>
+
+### Client Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> Disconnected
+
+    Disconnected --> Connecting: connect()
+    Connecting --> Connected: Success
+    Connecting --> Failed: Error
+
+    Connected --> Active: ready
+    Active --> Disconnecting: disconnect()
+    Active --> Failed: Transport error
+
+    Disconnecting --> Disconnected: Cleanup complete
+    Failed --> Disconnected: Reset
+
+    Disconnected --> [*]
+```
+
+<Tip>
+  For detailed MCP client implementation, see [MCP Client Manager Architecture](/contributing/mcp-client-manager)
+</Tip>
+
+## State Management
+
+### Frontend State Architecture
+
+The application uses a hybrid state management approach:
+
+```mermaid
+graph TB
+    subgraph Query["React Query (Server State)"]
+        Queries["TanStack Query"]
+        Cache["Query Cache"]
+        Mutations["Mutations"]
+    end
+
+    subgraph Zustand["Zustand (Client State)"]
+        Preferences["Preferences Store"]
+        UI["UI State Store"]
+    end
+
+    subgraph Context["Context (Scoped State)"]
+        Auth["Auth Context (WorkOS AuthKit)"]
+    end
+
+    Components["React Components"]
+
+    Components --> Queries
+    Components --> Mutations
+    Components --> Preferences
+    Components --> UI
+    Components --> Auth
+    Queries --> Cache
+    Mutations --> Cache
+    Cache --> Refetch["Auto-refetch"]
+    Refetch --> API["API Calls"]
+
+    style Queries fill:#fff3cd
+    style Preferences fill:#d4edda
+    style Auth fill:#e1f5ff
+```
+
+<AccordionGroup>
+  <Accordion title="TanStack Query (Server State)" icon="database">
+    **Purpose:** Manage server-side data with caching and auto-refetch
+
+    **Used for:**
+    - MCP server lists
+    - Tool/resource/prompt data
+    - Eval results
+    - Real-time data synchronization
+
+    **Key features:**
+    - Automatic background refetching
+    - Optimistic updates
+    - Request deduplication
+    - Stale-while-revalidate
+  </Accordion>
+
+  <Accordion title="Zustand (Client State)" icon="box">
+    **Purpose:** Manage client-side UI state
+
+    **Used for:**
+    - User preferences (theme, layout)
+    - UI state (modals, sidebars)
+    - Form state
+    - Temporary local data
+
+    **Key features:**
+    - Simple API
+    - No boilerplate
+    - TypeScript support
+    - Middleware (persist, devtools)
+  </Accordion>
+
+  <Accordion title="Context API (Scoped State)" icon="circle-nodes">
+    **Purpose:** Provide scoped state to component trees
+
+    **Used for:**
+    - Authentication (WorkOS AuthKit)
+    - Theme provider
+    - Feature flags
+
+    **Key features:**
+    - React-native
+    - Component composition
+    - Clean separation of concerns
+  </Accordion>
+</AccordionGroup>
+
+## Real-time Communication
+
+### SSE Event Bus
+
+Real-time RPC logging uses Server-Sent Events for live updates:
+
+```mermaid
+graph TB
+    subgraph Backend["Backend"]
+        Manager["MCPClientManager"]
+        Logger["RPC Logger Callback"]
+        Bus["rpcLogBus (Publish-Subscribe)"]
+        Route["/api/mcp/rpc-logs (SSE Endpoint)"]
+    end
+
+    subgraph Transport["Transport"]
+        SSEStream["Server-Sent Events (event: message)"]
+    end
+
+    subgraph Frontend["Frontend"]
+        EventSource["EventSource API"]
+        Subscribers["Log Subscribers (React components)"]
+    end
+
+    Manager --> Logger
+    Logger --> Bus
+    Bus --> Route
+    Route --> SSEStream
+    SSEStream --> EventSource
+    EventSource --> Subscribers
+
+    style Bus fill:#d4edda
+    style SSEStream fill:#fff3cd
+```
+
+**Flow:**
+
+1. MCPClientManager calls a tool
+2. RPC logger callback fires
+3. Publishes to rpcLogBus
+4. Bus emits to all SSE connections
+5. Frontend EventSource receives event
+6. React components update UI
+
+**Key Files:**
+- `server/services/rpc-log-bus.ts` - Event bus implementation
+- `server/app.ts:67-79` - RPC logger setup
+- `client/src/hooks/useRPCLogs.ts` - Frontend subscription
+
+## Environment Configuration
+
+The application adapts to its environment through a series of configuration steps:
+
+```mermaid
+flowchart TD
+    Start(["Application Start"])
+    CheckMode{"Deployment Mode?"}
+    ElectronProd["Load from: process.resourcesPath/.env.production"]
+    ElectronDev["Load from: app.getAppPath()/.env.development"]
+    WebMode["Load from: packageRoot/.env.production or .env.development"]
+    Validate{"CONVEX_HTTP_URL exists?"}
+    Error["Throw Error (Show env path + debug info)"]
+    SetEnv["Set Environment: ELECTRON_APP, IS_PACKAGED, ELECTRON_RESOURCES_PATH, NODE_ENV"]
+    FixPath["Fix PATH (fixPath for GUI apps)"]
+    Ready(["Ready to Start"])
+
+    Start --> CheckMode
+    CheckMode -->|Electron Packaged| ElectronProd
+    CheckMode -->|Electron Dev| ElectronDev
+    CheckMode -->|Web/Docker| WebMode
+    ElectronProd --> Validate
+    ElectronDev --> Validate
+    WebMode --> Validate
+    Validate -->|No| Error
+    Validate -->|Yes| SetEnv
+    SetEnv --> FixPath
+    FixPath --> Ready
+
+    style Error fill:#f8d7da
+    style Ready fill:#90EE90
+```
+
+### Required Environment Variables
+
+| Variable | Purpose | Set By | Required |
+|----------|---------|--------|----------|
+| `CONVEX_HTTP_URL` | Convex backend URL | User/CI | ✅ Yes |
+| `ELECTRON_APP` | Indicates Electron runtime | Main process | Auto |
+| `IS_PACKAGED` | Indicates packaged app | Main process | Auto |
+| `ELECTRON_RESOURCES_PATH` | Resources directory | Main process | Auto |
+| `NODE_ENV` | Runtime environment | Build/User | Auto |
+| `PORT` | Server port | User | Optional (default: 3001) |
+| `DEBUG_MCP_SELECTION` | Enable debug logs | User | Optional |
+
+## Build & Deployment
+
+### Build Process Flow
+
+```mermaid
+flowchart LR
+    Start(["npm run build"])
+    Clean["Clean (rm -rf dist out)"]
+    Install["Install deps (client + server + sdk)"]
+    SDK["Build SDK (npm run build:sdk)"]
+    Client["Build Client (Vite build → dist/client)"]
+    Server["Build Server (tsx build → dist/server)"]
+    Done(["Ready for Production"])
+
+    Start --> Clean
+    Clean --> Install
+    Install --> SDK
+    SDK --> Client
+    Client --> Server
+    Server --> Done
+
+    style Start fill:#e1f5ff
+    style Done fill:#90EE90
+```
+
+<Tabs>
+  <Tab title="Web Deployment">
+    **Production Build:**
+    ```bash
+    npm run build
+    npm start
+    ```
+
+    **Artifacts:**
+    - `dist/client/` - Frontend static files
+    - `dist/server/` - Backend Node.js files
+
+    **Server:** Hono serves both API and static files
+  </Tab>
+
+  <Tab title="Electron Deployment">
+    **Build Process:**
+    ```bash
+    npm run electron:make
+    ```
+
+    **Artifacts:**
+    - `out/*.dmg` - macOS installer
+    - `out/*.exe` - Windows installer
+    - `out/*.deb` - Linux package
+
+    **Includes:** Bundled client, server, and Node.js runtime
+  </Tab>
+
+  <Tab title="Docker Deployment">
+    **Build Image:**
+    ```bash
+    docker build -t mcpjam/inspector .
+    ```
+
+    **Run Container:**
+    ```bash
+    docker run -p 3001:3001 mcpjam/inspector
+    ```
+
+    **Includes:** Complete application in Alpine Linux
+  </Tab>
+</Tabs>
+
+## Performance Considerations
+
+### Caching Strategy
+
+```mermaid
+graph TB
+    Request["API Request"]
+    QueryCache{"In Query Cache?"}
+    Instant["Return Immediately (0ms)"]
+    Background["Return cached data (Refetch in background)"]
+    Fetch["Fetch from API"]
+    Update["Update on completion"]
+    Cache["Cache result"]
+    Invalidation{"Auto-invalidation?"}
+    InvalidateRelated["Invalidate related queries"]
+    StaleTime["Mark stale after X seconds"]
+
+    Request --> QueryCache
+    QueryCache -->|Yes + Fresh| Instant
+    QueryCache -->|Yes + Stale| Background
+    QueryCache -->|No| Fetch
+    Background --> Update
+    Fetch --> Cache
+    Cache --> Invalidation
+    Invalidation -->|Mutation| InvalidateRelated
+    Invalidation -->|Time| StaleTime
+
+    style Instant fill:#90EE90
+    style Background fill:#FFD700
+    style Fetch fill:#FFA07A
+```
+
+**Key Optimizations:**
+- Query cache reduces API calls by 80%+
+- Stale-while-revalidate provides instant UI updates
+- Background refetching keeps data fresh
+- Mutation invalidation ensures consistency
+
+### Connection Pooling
+
+The MCPClientManager maintains a pool of connections to avoid repeated handshakes:
+
+```mermaid
+graph LR
+    subgraph Manager["MCPClientManager"]
+        Pool["Client Pool (Map: serverId → Client)"]
+    end
+
+    subgraph Clients["Clients"]
+        Client1["Server 1 Client (STDIO)"]
+        Client2["Server 2 Client (SSE)"]
+        Client3["Server 3 Client (HTTP)"]
+    end
+
+    Request1["Tool Request Server 1"]
+    Request2["Resource Request Server 2"]
+    Request3["Prompt Request Server 3"]
+
+    Request1 --> Pool
+    Request2 --> Pool
+    Request3 --> Pool
+    Pool --> Client1
+    Pool --> Client2
+    Pool --> Client3
+    Client1 -.Reused connection.-> Pool
+    Client2 -.Reused connection.-> Pool
+    Client3 -.Reused connection.-> Pool
+
+    style Pool fill:#d4edda
+```
+
+## Security Architecture
+
+<Warning>
+  The application handles sensitive data including API keys, OAuth tokens, and MCP server access. Security is a top priority.
+</Warning>
+
+### Security Layers
+
+```mermaid
+graph TB
+    subgraph Frontend["Frontend Security"]
+        CSP["Content Security Policy"]
+        XSS["XSS Protection"]
+        HTTPS["HTTPS Only"]
+    end
+
+    subgraph Transport["Transport Security"]
+        CORS["CORS Configuration"]
+        Auth["WorkOS Authentication"]
+        RateLimit["Rate Limiting"]
+    end
+
+    subgraph Backend["Backend Security"]
+        Validation["Input Validation"]
+        Sanitization["Data Sanitization"]
+        Secrets["Secret Management"]
+    end
+
+    subgraph Electron["Electron Security"]
+        NoNodeInt["No Node Integration in renderer"]
+        ContextIso["Context Isolation"]
+        Preload["Secure Preload Script"]
+    end
+
+    Request["User Request"]
+    Safe["Safe Execution"]
+
+    Request --> CSP
+    Request --> XSS
+    Request --> HTTPS
+    CSP --> CORS
+    XSS --> CORS
+    HTTPS --> CORS
+    CORS --> Auth
+    Auth --> RateLimit
+    RateLimit --> Validation
+    Validation --> Sanitization
+    Sanitization --> Secrets
+    NoNodeInt --> Safe
+    ContextIso --> Safe
+    Preload --> Safe
+
+    style Auth fill:#90EE90
+    style Secrets fill:#f8d7da
+```
+
+<AccordionGroup>
+  <Accordion title="Electron Security" icon="shield">
+    **Context Isolation:** Renderer has no direct Node.js access
+
+    **Secure Preload:** `src/preload.ts` exposes only safe APIs
+
+    **No Remote Module:** Disabled for security
+
+    **Protocol Registration:** Custom `mcpjam://` protocol for OAuth
+  </Accordion>
+
+  <Accordion title="Authentication" icon="lock">
+    **WorkOS AuthKit:** Enterprise-grade OAuth 2.0
+
+    **Token Storage:** Secure localStorage with expiration
+
+    **PKCE Flow:** Proof Key for Code Exchange in Electron
+
+    **Convex Integration:** Server-side token validation
+  </Accordion>
+
+  <Accordion title="Input Validation" icon="check">
+    **Zod Schemas:** Runtime type validation
+
+    **Sanitization:** All user inputs cleaned
+
+    **Rate Limiting:** Prevent abuse
+
+    **Error Handling:** No sensitive data in error messages
+  </Accordion>
+</AccordionGroup>
+
+## Monitoring & Observability
+
+### Telemetry Pipeline
+
+```mermaid
+flowchart LR
+    App["Application Events"]
+    Console["Console Logs (Development)"]
+    Sentry["Sentry (Error Tracking)"]
+    Metrics["Performance Metrics (TanStack Query DevTools)"]
+    Dev["Developers (Local debugging)"]
+    Dashboard["Sentry Dashboard (Production errors)"]
+    Analysis["Performance Analysis (Query timing, Cache hit rates)"]
+    Alerts["Notifications (Critical errors)"]
+
+    App --> Console
+    App --> Sentry
+    App --> Metrics
+    Console --> Dev
+    Sentry --> Dashboard
+    Metrics --> Analysis
+    Dashboard --> Alerts
+
+    style Sentry fill:#f8d7da
+    style Console fill:#fff3cd
+    style Metrics fill:#d4edda
+```
+
+**Error Tracking:**
+- Sentry integration in both main and renderer processes
+- Automatic error reporting in production
+- Source maps for stack traces
+- User context and breadcrumbs
+
+**Performance Monitoring:**
+- React Query DevTools for cache inspection
+- Browser DevTools for profiling
+- Network tab for API timing
+- Electron process manager for memory
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="MCP Client Manager" icon="network-wired" href="/contributing/mcp-client-manager">
+    Deep dive into MCP protocol implementation
+  </Card>
+
+  <Card title="OAuth Architecture" icon="lock" href="/contributing/oauth-architecture">
+    Learn about authentication and OAuth flow
+  </Card>
+
+  <Card title="Playground Architecture" icon="messages" href="/contributing/playground-architecture">
+    Understand the LLM playground system
+  </Card>
+
+  <Card title="Evals Architecture" icon="chart-line" href="/contributing/evals-architecture">
+    Explore the evaluation framework
+  </Card>
+</CardGroup>
+
+<Check>
+  Now you understand the complete system architecture! Ready to contribute? Check out the [Contributing Guide](/CONTRIBUTING).
+</Check>
