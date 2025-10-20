@@ -24,7 +24,8 @@
           "inspector/tools-prompts-resources",
           "inspector/debugging",
           "inspector/guided-oauth",
-          "inspector/mcp-evals"
+          "inspector/mcp-evals",
+          "inspector/docs-server"
         ]
       },
       {
@@ -39,7 +40,6 @@
           "inspector/dev-setup",
           "inspector/contributing-guide",
           "contributing/documentation",
-          "inspector/docs-server",
           "contributing/onboarding",
           "contributing/oauth-architecture"
         ]
