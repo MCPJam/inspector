@@ -377,15 +377,18 @@ export function ChatTab({
   // Active state - messages with bottom input
   return (
     <TooltipProvider>
-      <ResizablePanelGroup direction="horizontal" className="h-screen">
+      <ResizablePanelGroup
+        direction="horizontal"
+        className="h-screen min-h-0 overflow-hidden"
+      >
         {/* Main Chat Panel */}
         <ResizablePanel defaultSize={70} minSize={40}>
-          <div className="flex flex-col bg-background h-full overflow-hidden">
+          <div className="flex flex-col bg-background h-full min-h-0 overflow-hidden">
             {/* Messages Area - Scrollable with bottom padding for input */}
             <div
               ref={messagesContainerRef}
               onScroll={handleScroll}
-              className="flex-1 overflow-y-auto pb-4"
+              className="flex-1 min-h-0 overflow-y-auto pb-28"
             >
               <div className="max-w-4xl mx-auto px-4 pt-8 pb-8">
                 <AnimatePresence mode="popLayout">
@@ -445,28 +448,25 @@ export function ChatTab({
                     )}
                 </AnimatePresence>
               </div>
-            </div>
+              {/* Error Display (inline, above input) */}
+              <AnimatePresence>
+                {error && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 20 }}
+                    className="px-4 py-3 bg-destructive/5 border-t border-destructive/10"
+                  >
+                    <div className="max-w-4xl mx-auto">
+                      <p className="text-sm text-destructive">{error}</p>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
-            {/* Error Display */}
-            <AnimatePresence>
-              {error && (
-                <motion.div
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: 20 }}
-                  className="px-4 py-3 bg-destructive/5 border-t border-destructive/10"
-                >
-                  <div className="max-w-4xl mx-auto">
-                    <p className="text-sm text-destructive">{error}</p>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-
-            {/* Fixed Bottom Input */}
-            <div className="border-t border-border/50 bg-background/80 backdrop-blur-sm flex-shrink-0">
-              <div className="max-w-4xl mx-auto p-4">
-                <div>
+              {/* Sticky input inside the scroll container so it never leaves viewport */}
+              <div className="fixed bottom-0 left-0 right-0 border-t border-border/50 bg-background/90 backdrop-blur-sm z-20">
+                <div className="max-w-4xl mx-auto p-4">
                   <ChatInput
                     value={input}
                     onChange={setInput}
@@ -489,9 +489,7 @@ export function ChatTab({
                     }
                     isLoading={isLoading}
                     placeholder={
-                      showSignInPrompt
-                        ? signInPromptMessage
-                        : "Send a message..."
+                      showSignInPrompt ? signInPromptMessage : "Send a message..."
                     }
                     className="border-2 shadow-sm"
                     currentModel={model}
