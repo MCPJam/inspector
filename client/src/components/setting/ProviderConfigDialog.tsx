@@ -101,7 +101,9 @@ export function ProviderConfigDialog({
             <Alert>
               <AlertDescription>
                 <p>
-                  <strong>GPT-5 models require organization verification.</strong>{" "}
+                  <strong>
+                    GPT-5 models require organization verification.
+                  </strong>{" "}
                   If you encounter access errors, visit{" "}
                   <a
                     href="https://platform.openai.com/settings/organization/general"
@@ -111,7 +113,8 @@ export function ProviderConfigDialog({
                   >
                     OpenAI Settings
                   </a>{" "}
-                  and verify your organization. Access may take up to 15 minutes after verification.
+                  and verify your organization. Access may take up to 15 minutes
+                  after verification.
                 </p>
               </AlertDescription>
             </Alert>
