@@ -78,6 +78,15 @@ export function SettingsTab() {
       placeholder: "AI...",
       getApiKeyUrl: "https://aistudio.google.com/app/apikey",
     },
+    {
+      id: "mistral",
+      name: "Mistral AI",
+      logo: "/mistral_logo.png",
+      logoAlt: "Mistral AI",
+      description: "Mistral Large, Mistral Small, Codestral, etc.",
+      placeholder: "...",
+      getApiKeyUrl: "https://console.mistral.ai/api-keys/",
+    },
   ];
 
   const handleEdit = (providerId: string) => {

@@ -4,6 +4,7 @@ import openaiLogo from "/openai_logo.png";
 import deepseekLogo from "/deepseek_logo.svg";
 import googleLogo from "/google_logo.png";
 import metaLogo from "/meta_logo.svg";
+import mistralLogo from "/mistral_logo.png";
 import ollamaLogo from "/ollama_logo.svg";
 import ollamaDarkLogo from "/ollama_dark.png";
 import grokLightLogo from "/grok_light.svg";
@@ -23,6 +24,8 @@ export const getProviderLogoFromProvider = (
       return deepseekLogo;
     case "google":
       return googleLogo;
+    case "mistral":
+      return mistralLogo;
     case "ollama":
       // Return dark logo when in dark mode
       if (themeMode === "dark") {
@@ -70,6 +73,8 @@ export const getProviderColor = (provider: string) => {
       return "text-blue-600 dark:text-blue-400";
     case "google":
       return "text-red-600 dark:text-red-400";
+    case "mistral":
+      return "text-orange-500 dark:text-orange-400";
     case "ollama":
       return "text-gray-600 dark:text-gray-400";
     case "x-ai":
