@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import { useLoginPage } from "@/hooks/use-log-in-page";
+import { useEffect } from "react";
 
 export default function LoginPage() {
   const { signUp } = useAuth();
@@ -13,11 +14,19 @@ export default function LoginPage() {
   const themeMode = usePreferencesStore((state) => state.themeMode);
   const { hideLoginPage } = useLoginPage();
 
+  useEffect(() => {
+    posthog.capture("login_page_viewed", {
+      location: "login_page",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+    });
+  }, []);
+
   const logoSrc =
     themeMode === "dark" ? "/mcp_jam_dark.png" : "/mcp_jam_light.png";
 
   const handleSignUp = () => {
-    posthog.capture("create_account", {
+    posthog.capture("sign_up_button_clicked", {
       location: "login_page",
       platform: detectPlatform(),
       environment: detectEnvironment(),
@@ -36,7 +45,7 @@ export default function LoginPage() {
         >
           <X className="h-4 w-4" />
         </button>
-        <img src={logoSrc} alt="MCPJam" className="h-12 w-auto mb-8" />
+        <img src={logoSrc} alt="MCPJam" className="h-10 w-auto mb-2" />
         <div className="space-y-4 mb-12"></div>
         <Button
           size="lg"
@@ -47,8 +56,15 @@ export default function LoginPage() {
         </Button>
         <button
           type="button"
-          onClick={hideLoginPage}
           className="text-sm text-muted-foreground/80 underline hover:text-muted-foreground transition-colors cursor-pointer"
+          onClick={() => {
+            posthog.capture("continue_as_guest_button_clicked", {
+              location: "login_page",
+              platform: detectPlatform(),
+              environment: detectEnvironment(),
+            });
+            hideLoginPage();
+          }}
         >
           Or continue as guest
         </button>
