@@ -211,6 +211,10 @@ npm run electron:make:win
 npm run electron:make:linux
 ```
 
+<Note>
+**macOS Code Signing**: For local development builds on macOS, you don't need to set `MAC_CODESIGN_IDENTITY`. The build will proceed with default signing. For distributable builds, set the environment variable to your Developer ID Application certificate.
+</Note>
+
 ### Docker
 
 ```bash
