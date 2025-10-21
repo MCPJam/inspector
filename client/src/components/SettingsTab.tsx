@@ -3,6 +3,7 @@ import { useState } from "react";
 import { ProvidersTable } from "./setting/ProvidersTable";
 import { ProviderConfigDialog } from "./setting/ProviderConfigDialog";
 import { OllamaConfigDialog } from "./setting/OllamaConfigDialog";
+import { LiteLLMConfigDialog } from "./setting/LiteLLMConfigDialog";
 import { AccountApiKeySection } from "./setting/AccountApiKeySection";
 
 interface ProviderConfig {
@@ -23,6 +24,10 @@ export function SettingsTab() {
     hasToken,
     getOllamaBaseUrl,
     setOllamaBaseUrl,
+    getLiteLLMBaseUrl,
+    setLiteLLMBaseUrl,
+    getLiteLLMModelAlias,
+    setLiteLLMModelAlias,
   } = useAiProviderKeys();
 
   const [editingValue, setEditingValue] = useState("");
@@ -31,6 +36,10 @@ export function SettingsTab() {
     useState<ProviderConfig | null>(null);
   const [ollamaDialogOpen, setOllamaDialogOpen] = useState(false);
   const [ollamaUrl, setOllamaUrl] = useState("");
+  const [litellmDialogOpen, setLitellmDialogOpen] = useState(false);
+  const [litellmUrl, setLitellmUrl] = useState("");
+  const [litellmApiKey, setLitellmApiKey] = useState("");
+  const [litellmModelAlias, setLitellmModelAlias] = useState("");
 
   const providerConfigs: ProviderConfig[] = [
     {
@@ -115,6 +124,30 @@ export function SettingsTab() {
     setOllamaUrl("");
   };
 
+  const handleLiteLLMEdit = () => {
+    setLitellmUrl(getLiteLLMBaseUrl());
+    setLitellmApiKey(tokens.litellm || "");
+    setLitellmModelAlias(getLiteLLMModelAlias());
+    setLitellmDialogOpen(true);
+  };
+
+  const handleLiteLLMSave = () => {
+    setLiteLLMBaseUrl(litellmUrl);
+    setToken("litellm", litellmApiKey);
+    setLiteLLMModelAlias(litellmModelAlias);
+    setLitellmDialogOpen(false);
+    setLitellmUrl("");
+    setLitellmApiKey("");
+    setLitellmModelAlias("");
+  };
+
+  const handleLiteLLMCancel = () => {
+    setLitellmDialogOpen(false);
+    setLitellmUrl("");
+    setLitellmApiKey("");
+    setLitellmModelAlias("");
+  };
+
   return (
     <div className="container mx-auto p-6 max-w-6xl space-y-8">
       <div className="flex items-center gap-3 mb-6">
@@ -135,6 +168,9 @@ export function SettingsTab() {
           onDeleteProvider={handleDelete}
           ollamaBaseUrl={getOllamaBaseUrl()}
           onEditOllama={handleOllamaEdit}
+          litellmBaseUrl={getLiteLLMBaseUrl()}
+          litellmModelAlias={getLiteLLMModelAlias()}
+          onEditLiteLLM={handleLiteLLMEdit}
         />
       </div>
 
@@ -157,6 +193,20 @@ export function SettingsTab() {
         onValueChange={setOllamaUrl}
         onSave={handleOllamaSave}
         onCancel={handleOllamaCancel}
+      />
+
+      {/* LiteLLM Configuration Dialog */}
+      <LiteLLMConfigDialog
+        open={litellmDialogOpen}
+        onOpenChange={setLitellmDialogOpen}
+        baseUrl={litellmUrl}
+        apiKey={litellmApiKey}
+        modelAlias={litellmModelAlias}
+        onBaseUrlChange={setLitellmUrl}
+        onApiKeyChange={setLitellmApiKey}
+        onModelAliasChange={setLitellmModelAlias}
+        onSave={handleLiteLLMSave}
+        onCancel={handleLiteLLMCancel}
       />
     </div>
   );

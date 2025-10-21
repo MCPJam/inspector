@@ -51,6 +51,33 @@ Make sure you have [Ollama installed](https://ollama.com/), and the MCPJam Ollam
 
 Start an Ollama instance with `ollama serve <model>`. MCPJam will automatically detect any Ollama models running.
 
+### LiteLLM Proxy
+
+Use [LiteLLM Proxy](https://docs.litellm.ai/docs/proxy/quick_start) to connect to 100+ LLMs through a unified OpenAI-compatible interface.
+
+1. **Start LiteLLM Proxy**: Follow the [LiteLLM Proxy Quick Start Guide](https://docs.litellm.ai/docs/proxy/quick_start) to set up your proxy server
+2. **Configure in MCPJam**: Go to Settings → LiteLLM card → Click "Configure"
+3. **Enter Connection Details**:
+   - **Base URL**: Your LiteLLM proxy URL (default: `http://localhost:4000`)
+   - **API Key**: Your proxy API key (use the same key you use in your API requests)
+   - **Model Aliases**: Comma-separated list of model names configured in your proxy (e.g., `gpt-3.5-turbo, claude-3-opus, gemini-pro`)
+
+<Info>
+  Use the exact model names that work with your LiteLLM proxy's `/v1/chat/completions` endpoint. These are typically the model names without provider prefixes (e.g., `gpt-3.5-turbo` instead of `openai/gpt-3.5-turbo`).
+</Info>
+
+**Example configuration:**
+```yaml
+# In your LiteLLM config.yaml
+model_list:
+  - model_name: gpt-3.5-turbo
+    litellm_params:
+      model: openai/gpt-3.5-turbo
+      api_key: os.environ/OPENAI_API_KEY
+```
+
+Then in MCPJam, use `gpt-3.5-turbo` as the model alias.
+
 ## Choose an LLM model
 
 Once you've configured your LLM API keys, go to the Playground tab. On the bottom near the text input, you should see a LLM model selector. Select the model from the ones you've configured
