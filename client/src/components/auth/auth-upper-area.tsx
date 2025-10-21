@@ -51,7 +51,6 @@ export function AuthUpperArea() {
             });
             signUp();
           }}
-          style={{ backgroundColor: "#E55A3A" }}
         >
           Create account
         </Button>
