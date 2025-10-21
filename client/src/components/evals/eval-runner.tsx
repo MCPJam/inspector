@@ -42,6 +42,7 @@ interface TestCase {
   model: string;
   provider: string;
   expectedToolCalls: string[];
+  expectedToolCallsInput?: string; // Raw input string to preserve commas while typing
 }
 
 interface EvalRunnerProps {
@@ -87,6 +88,7 @@ const buildBlankTestCase = (
   model: model?.id ?? "",
   provider: model?.provider ?? "",
   expectedToolCalls: [],
+  expectedToolCallsInput: "",
 });
 
 export function EvalRunner({
@@ -360,16 +362,20 @@ export function EvalRunner({
       }
 
       if (result.tests && result.tests.length > 0) {
-        const generatedTests = result.tests.map((test: any, index: number) => ({
-          title: test.title || `Generated test ${index + 1}`,
-          query: test.query || "",
-          runs: Number(test.runs) > 0 ? Number(test.runs) : 1,
-          model: selectedModel?.id || "",
-          provider: selectedModel?.provider || "",
-          expectedToolCalls: Array.isArray(test.expectedToolCalls)
+        const generatedTests = result.tests.map((test: any, index: number) => {
+          const expectedToolCalls = Array.isArray(test.expectedToolCalls)
             ? test.expectedToolCalls
-            : [],
-        }));
+            : [];
+          return {
+            title: test.title || `Generated test ${index + 1}`,
+            query: test.query || "",
+            runs: Number(test.runs) > 0 ? Number(test.runs) : 1,
+            model: selectedModel?.id || "",
+            provider: selectedModel?.provider || "",
+            expectedToolCalls,
+            expectedToolCallsInput: expectedToolCalls.join(", "),
+          };
+        });
 
         setTestCases(generatedTests);
         setCurrentStep(2);
@@ -709,17 +715,26 @@ export function EvalRunner({
                               Expected tools (comma separated)
                             </Label>
                             <Input
-                              value={testCase.expectedToolCalls.join(", ")}
+                              value={testCase.expectedToolCallsInput ?? testCase.expectedToolCalls.join(", ")}
                               onChange={(event) =>
                                 handleUpdateTestCase(
                                   index,
-                                  "expectedToolCalls",
-                                  event.target.value
-                                    .split(",")
-                                    .map((entry) => entry.trim())
-                                    .filter(Boolean),
+                                  "expectedToolCallsInput",
+                                  event.target.value,
                                 )
                               }
+                              onBlur={(event) => {
+                                // Process the input when user leaves the field
+                                const processed = event.target.value
+                                  .split(",")
+                                  .map((entry) => entry.trim())
+                                  .filter(Boolean);
+                                handleUpdateTestCase(
+                                  index,
+                                  "expectedToolCalls",
+                                  processed,
+                                );
+                              }}
                               placeholder="paypal_list_transactions, paypal_create_invoice"
                             />
                           </div>
