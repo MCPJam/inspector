@@ -56,28 +56,28 @@ Understanding the system architecture will help you contribute more effectively.
 
 ```mermaid
 graph TB
-    subgraph "Client Layer"
-        React[React Frontend<br/>Vite + React 19]
-        UI[UI Components<br/>Shadcn/Radix]
-        Stores[State Management<br/>Zustand + React Query]
+    subgraph ClientLayer["Client Layer"]
+        React["React Frontend<br/>Vite + React 19"]
+        UI["UI Components<br/>Shadcn/Radix"]
+        Stores["State Management<br/>Zustand + React Query"]
     end
 
-    subgraph "Server Layer"
-        Hono[Hono.js Backend<br/>API Server]
-        MCPManager[MCPClientManager<br/>SDK Integration]
-        Routes[API Routes<br/>/api/mcp/*]
+    subgraph ServerLayer["Server Layer"]
+        Hono["Hono.js Backend<br/>API Server"]
+        MCPManager["MCPClientManager<br/>SDK Integration"]
+        Routes["API Routes<br/>/api/mcp/*"]
     end
 
-    subgraph "MCP Integration"
-        SDK[@mastra/mcp SDK]
-        Transports[Transport Protocols<br/>STDIO | SSE | HTTP]
-        MCPServers[MCP Servers<br/>External Tools]
+    subgraph MCPIntegration["MCP Integration"]
+        SDK["@mastra/mcp SDK"]
+        Transports["Transport Protocols<br/>STDIO, SSE, HTTP"]
+        MCPServers["MCP Servers<br/>External Tools"]
     end
 
-    subgraph "External Services"
-        Convex[Convex Backend<br/>Auth + Data]
-        LLMs[LLM Providers<br/>OpenAI, Anthropic, etc.]
-        Sentry[Sentry<br/>Error Tracking]
+    subgraph ExternalServices["External Services"]
+        Convex["Convex Backend<br/>Auth + Data"]
+        LLMs["LLM Providers<br/>OpenAI, Anthropic, etc."]
+        Sentry["Sentry<br/>Error Tracking"]
     end
 
     React --> Hono
@@ -98,21 +98,21 @@ graph TB
 
 ```mermaid
 graph LR
-    Root[/inspector]
+    Root["/inspector"]
 
-    Root --> Client[/client<br/>React Frontend]
-    Root --> Server[/server<br/>Hono Backend]
-    Root --> Src[/src<br/>Electron Main]
-    Root --> SDK[/sdk<br/>MCP SDK]
-    Root --> Shared[/shared<br/>Common Utils]
+    Root --> Client["/client<br/>React Frontend"]
+    Root --> Server["/server<br/>Hono Backend"]
+    Root --> Src["/src<br/>Electron Main"]
+    Root --> SDK["/sdk<br/>MCP SDK"]
+    Root --> Shared["/shared<br/>Common Utils"]
 
-    Client --> ClientSrc[/src<br/>Components, Hooks]
-    Client --> ClientPublic[/public<br/>Assets]
+    Client --> ClientSrc["/src<br/>Components, Hooks"]
+    Client --> ClientPublic["/public<br/>Assets"]
 
-    Server --> ServerRoutes[/routes<br/>API Endpoints]
-    Server --> ServerServices[/services<br/>Business Logic]
+    Server --> ServerRoutes["/routes<br/>API Endpoints"]
+    Server --> ServerServices["/services<br/>Business Logic"]
 
-    Src --> IPC[/ipc<br/>IPC Handlers]
+    Src --> IPC["/ipc<br/>IPC Handlers"]
 
     style Root fill:#e1f5ff
     style Client fill:#fff3cd
@@ -127,31 +127,31 @@ MCPJam Inspector supports three deployment modes:
 
 ```mermaid
 graph TB
-    subgraph "Development Mode"
-        DevClient[Vite Dev Server<br/>:8080]
-        DevServer[Hono Server<br/>:3000]
+    subgraph DevelopmentMode["Development Mode"]
+        DevClient["Vite Dev Server<br/>Port 8080"]
+        DevServer["Hono Server<br/>Port 3000"]
         DevClient -.HTTP.-> DevServer
     end
 
-    subgraph "Web Production"
-        WebServer[Hono Server<br/>:3001]
-        WebStatic[Static Files<br/>dist/client]
+    subgraph WebProduction["Web Production"]
+        WebServer["Hono Server<br/>Port 3001"]
+        WebStatic["Static Files<br/>dist/client"]
         WebServer --> WebStatic
     end
 
-    subgraph "Electron App"
-        ElectronMain[Electron Main<br/>Process]
-        ElectronRenderer[Renderer<br/>BrowserWindow]
-        EmbeddedHono[Embedded Hono<br/>127.0.0.1:3000]
+    subgraph ElectronApp["Electron App"]
+        ElectronMain["Electron Main<br/>Process"]
+        ElectronRenderer["Renderer<br/>BrowserWindow"]
+        EmbeddedHono["Embedded Hono<br/>127.0.0.1 Port 3000"]
 
         ElectronMain --> EmbeddedHono
         ElectronMain --> ElectronRenderer
         ElectronRenderer -.HTTP.-> EmbeddedHono
     end
 
-    subgraph "Docker"
-        DockerContainer[Container]
-        DockerHono[Hono Server<br/>:3001]
+    subgraph Docker["Docker"]
+        DockerContainer["Container"]
+        DockerHono["Hono Server<br/>Port 3001"]
         DockerContainer --> DockerHono
     end
 
@@ -176,8 +176,8 @@ sequenceDiagram
     participant MCP as MCP Server
     participant SSE as SSE Stream
 
-    React->>Query: useMutation('callTool')
-    Query->>API: POST /api/mcp/servers/:id/tools/:name/call
+    React->>Query: useMutation callTool
+    Query->>API: POST /api/mcp/servers/id/tools/name/call
     API->>Manager: Get server client
     Manager->>Logger: Log outgoing RPC
     Logger->>SSE: Publish to SSE subscribers
@@ -239,14 +239,14 @@ Build process flow:
 
 ```mermaid
 flowchart LR
-    Start([npm run build])
+    Start(["npm run build"])
 
-    Start --> Clean[Clean<br/>rm -rf dist out]
-    Clean --> Install[Install deps<br/>client + server + sdk]
-    Install --> SDK[Build SDK<br/>npm run build:sdk]
-    SDK --> Client[Build Client<br/>Vite build → dist/client]
-    Client --> Server[Build Server<br/>tsx build → dist/server]
-    Server --> Done([Ready for Production])
+    Start --> Clean["Clean<br/>rm -rf dist out"]
+    Clean --> Install["Install deps<br/>client, server, sdk"]
+    Install --> SDK["Build SDK<br/>npm run build:sdk"]
+    SDK --> Client["Build Client<br/>Vite build to dist/client"]
+    Client --> Server["Build Server<br/>tsx build to dist/server"]
+    Server --> Done(["Ready for Production"])
 
     style Start fill:#e1f5ff
     style Done fill:#90EE90
@@ -276,18 +276,18 @@ One of the unique aspects of MCPJam Inspector is its Electron integration. Under
 
 ```mermaid
 flowchart TD
-    Start([Application Start])
+    Start(["Application Start"])
 
-    Start --> CheckElectron{Is Electron?<br/>ELECTRON_APP=true}
+    Start --> CheckElectron{"Is Electron?<br/>ELECTRON_APP=true"}
 
-    CheckElectron -->|Yes| CheckPackaged{Is Packaged?<br/>IS_PACKAGED=true}
-    CheckElectron -->|No| CheckNodeEnv{NODE_ENV?}
+    CheckElectron -->|Yes| CheckPackaged{"Is Packaged?<br/>IS_PACKAGED=true"}
+    CheckElectron -->|No| CheckNodeEnv{"NODE_ENV?"}
 
-    CheckPackaged -->|Yes| ElectronProd[Electron Production<br/>- Use process.resourcesPath<br/>- Serve from bundled client<br/>- Bind to 127.0.0.1]
-    CheckPackaged -->|No| ElectronDev[Electron Development<br/>- Use app.getAppPath<br/>- Redirect to Vite dev server<br/>- Bind to localhost]
+    CheckPackaged -->|Yes| ElectronProd["Electron Production<br/>- Use process.resourcesPath<br/>- Serve from bundled client<br/>- Bind to 127.0.0.1"]
+    CheckPackaged -->|No| ElectronDev["Electron Development<br/>- Use app.getAppPath<br/>- Redirect to Vite dev server<br/>- Bind to localhost"]
 
-    CheckNodeEnv -->|production| WebProd[Web Production<br/>- Serve static from dist/client<br/>- SPA fallback to index.html<br/>- Port from env or 3001]
-    CheckNodeEnv -->|development| WebDev[Web Development<br/>- API only mode<br/>- CORS enabled for :8080<br/>- Separate Vite server]
+    CheckNodeEnv -->|production| WebProd["Web Production<br/>- Serve static from dist/client<br/>- SPA fallback to index.html<br/>- Port from env or 3001"]
+    CheckNodeEnv -->|development| WebDev["Web Development<br/>- API only mode<br/>- CORS enabled for port 8080<br/>- Separate Vite server"]
 
     style ElectronProd fill:#90EE90
     style ElectronDev fill:#FFD700
@@ -302,28 +302,28 @@ One of the most complex features is handling OAuth authentication in Electron. H
 ```mermaid
 sequenceDiagram
     participant User
-    participant Renderer as Renderer Process<br/>(React App)
-    participant Main as Main Process<br/>(Electron)
+    participant Renderer as Renderer Process (React App)
+    participant Main as Main Process (Electron)
     participant Browser as External Browser
-    participant AuthProvider as WorkOS/Auth Provider
+    participant AuthProvider as WorkOS Auth Provider
 
-    User->>Renderer: Click "Sign In"
+    User->>Renderer: Click Sign In
     Renderer->>Browser: Open OAuth URL
     Browser->>AuthProvider: Initiate OAuth flow
-    AuthProvider->>Browser: Redirect to mcpjam://oauth/callback?code=xxx
-    Browser->>Main: Deep link captured (open-url event)
+    AuthProvider->>Browser: Redirect to mcpjam callback with code
+    Browser->>Main: Deep link captured
 
-    Note over Main: Parse URL, extract code + state
+    Note over Main: Parse URL, extract code and state
 
-    Main->>Main: Build /callback URL<br/>with code + state params
-    Main->>Renderer: Load /callback URL<br/>window.loadURL()
-    Main->>Renderer: Send IPC event<br/>'oauth-callback'
+    Main->>Main: Build callback URL with params
+    Main->>Renderer: Load callback URL via loadURL
+    Main->>Renderer: Send IPC oauth-callback event
 
-    Note over Renderer: useElectronOAuth hook<br/>listens for callback
+    Note over Renderer: useElectronOAuth hook listens
 
-    Renderer->>Renderer: Extract code + state<br/>from URL params
-    Renderer->>Renderer: Navigate to /callback<br/>window.location.href
-    Renderer->>AuthProvider: Complete OAuth flow<br/>(handled by AuthKit)
+    Renderer->>Renderer: Extract code and state from params
+    Renderer->>Renderer: Navigate to callback route
+    Renderer->>AuthProvider: Complete OAuth flow via AuthKit
     AuthProvider->>Renderer: Return tokens
 
     Renderer->>User: Sign in complete!
@@ -341,23 +341,23 @@ Different modes require different environment setups:
 
 ```mermaid
 flowchart TD
-    Start([Application Start])
+    Start(["Application Start"])
 
-    Start --> CheckMode{Deployment Mode?}
+    Start --> CheckMode{"Deployment Mode?"}
 
-    CheckMode -->|Electron Packaged| ElectronProd[Load from:<br/>process.resourcesPath/<br/>.env.production]
-    CheckMode -->|Electron Dev| ElectronDev[Load from:<br/>app.getAppPath()/<br/>.env.development]
-    CheckMode -->|Web/Docker| WebMode[Load from:<br/>packageRoot/<br/>.env.production or .env.development]
+    CheckMode -->|Electron Packaged| ElectronProd["Load from process.resourcesPath<br/>.env.production"]
+    CheckMode -->|Electron Dev| ElectronDev["Load from app.getAppPath<br/>.env.development"]
+    CheckMode -->|Web/Docker| WebMode["Load from packageRoot<br/>.env.production or .env.development"]
 
-    ElectronProd --> Validate{CONVEX_HTTP_URL<br/>exists?}
+    ElectronProd --> Validate{"CONVEX_HTTP_URL<br/>exists?"}
     ElectronDev --> Validate
     WebMode --> Validate
 
-    Validate -->|No| Error[Throw Error<br/>Show env path + debug info]
-    Validate -->|Yes| SetEnv[Set Environment:<br/>- ELECTRON_APP<br/>- IS_PACKAGED<br/>- ELECTRON_RESOURCES_PATH<br/>- NODE_ENV]
+    Validate -->|No| Error["Throw Error<br/>Show env path and debug info"]
+    Validate -->|Yes| SetEnv["Set Environment:<br/>- ELECTRON_APP<br/>- IS_PACKAGED<br/>- ELECTRON_RESOURCES_PATH<br/>- NODE_ENV"]
 
-    SetEnv --> FixPath[Fix PATH<br/>fixPath() for GUI apps]
-    FixPath --> Ready([Ready to Start])
+    SetEnv --> FixPath["Fix PATH<br/>fixPath for GUI apps"]
+    FixPath --> Ready(["Ready to Start"])
 
     style Error fill:#f8d7da
     style Ready fill:#90EE90
@@ -371,18 +371,18 @@ The central manager for all MCP server connections lives in the SDK.
 
 ```mermaid
 graph TB
-    Manager[MCPClientManager]
+    Manager["MCPClientManager"]
 
-    Manager --> Config[Configuration<br/>- Server definitions<br/>- Transport settings]
-    Manager --> Logger[RPC Logger<br/>- Publishes to rpcLogBus<br/>- SSE streaming]
-    Manager --> Clients[Client Instances<br/>- One per MCP server<br/>- Connection pooling]
+    Manager --> Config["Configuration<br/>- Server definitions<br/>- Transport settings"]
+    Manager --> Logger["RPC Logger<br/>- Publishes to rpcLogBus<br/>- SSE streaming"]
+    Manager --> Clients["Client Instances<br/>- One per MCP server<br/>- Connection pooling"]
 
-    Clients --> STDIO[STDIO Client<br/>- Process spawning<br/>- Stream handling]
-    Clients --> SSE[SSE Client<br/>- Event source<br/>- Auto-reconnect]
-    Clients --> HTTP[HTTP Client<br/>- Streamable requests<br/>- Connection pooling]
+    Clients --> STDIO["STDIO Client<br/>- Process spawning<br/>- Stream handling"]
+    Clients --> SSE["SSE Client<br/>- Event source<br/>- Auto-reconnect"]
+    Clients --> HTTP["HTTP Client<br/>- Streamable requests<br/>- Connection pooling"]
 
-    Logger --> Bus[rpcLogBus<br/>SSE Event Bus]
-    Bus --> Frontend[Frontend<br/>Real-time logs]
+    Logger --> Bus["rpcLogBus<br/>SSE Event Bus"]
+    Bus --> Frontend["Frontend<br/>Real-time logs"]
 
     style Manager fill:#e1f5ff
     style Logger fill:#fff3cd
@@ -454,19 +454,19 @@ npm start
 
 ```mermaid
 flowchart LR
-    Issue([Debugging Issue])
+    Issue(["Debugging Issue"])
 
-    Issue --> Location{Where's the issue?}
+    Issue --> Location{"Where's the issue?"}
 
-    Location -->|Frontend| DevTools[Open Browser DevTools<br/>- React components<br/>- Network tab<br/>- Console errors]
+    Location -->|Frontend| DevTools["Open Browser DevTools<br/>- React components<br/>- Network tab<br/>- Console errors"]
 
-    Location -->|Backend| ServerLogs[Check Server Logs<br/>- Console output<br/>- Hono logger<br/>- Error traces]
+    Location -->|Backend| ServerLogs["Check Server Logs<br/>- Console output<br/>- Hono logger<br/>- Error traces"]
 
-    Location -->|Electron| ElectronDebug[Electron DevTools<br/>- Main process logs<br/>- Renderer DevTools<br/>- IPC messages]
+    Location -->|Electron| ElectronDebug["Electron DevTools<br/>- Main process logs<br/>- Renderer DevTools<br/>- IPC messages"]
 
-    Location -->|MCP Server| MCPLogs[MCP Logs<br/>- RPC log bus<br/>- SSE stream<br/>- Transport errors]
+    Location -->|MCP Server| MCPLogs["MCP Logs<br/>- RPC log bus<br/>- SSE stream<br/>- Transport errors"]
 
-    DevTools --> Sentry[Check Sentry<br/>for error tracking]
+    DevTools --> Sentry["Check Sentry<br/>for error tracking"]
     ServerLogs --> Sentry
     ElectronDebug --> Sentry
     MCPLogs --> Sentry
@@ -481,27 +481,27 @@ Here's the typical workflow for adding a new feature:
 
 ```mermaid
 flowchart TD
-    Start([New Feature Request])
+    Start(["New Feature Request"])
 
-    Start --> Frontend{Requires<br/>Frontend Changes?}
-    Frontend -->|Yes| ReactComp[Create/Modify<br/>React Components<br/>in client/src/]
+    Start --> Frontend{"Requires<br/>Frontend Changes?"}
+    Frontend -->|Yes| ReactComp["Create or Modify<br/>React Components<br/>in client/src"]
     Frontend -->|No| Backend
 
-    ReactComp --> State[Add State<br/>Zustand store or<br/>React Query]
+    ReactComp --> State["Add State<br/>Zustand store or<br/>React Query"]
 
-    State --> Backend{Requires<br/>Backend API?}
-    Backend -->|Yes| Route[Add API Route<br/>server/routes/]
+    State --> Backend{"Requires<br/>Backend API?"}
+    Backend -->|Yes| Route["Add API Route<br/>server/routes"]
     Backend -->|No| Test
 
-    Route --> Service[Add Business Logic<br/>server/services/]
-    Service --> Manager{Needs MCP<br/>Integration?}
+    Route --> Service["Add Business Logic<br/>server/services"]
+    Service --> Manager{"Needs MCP<br/>Integration?"}
 
-    Manager -->|Yes| SDK[Update MCPClientManager<br/>or sdk/]
+    Manager -->|Yes| SDK["Update MCPClientManager<br/>or sdk"]
     Manager -->|No| Test
 
-    SDK --> Test[Write Tests<br/>vitest + playwright]
-    Test --> Doc[Update Documentation<br/>CLAUDE.md, CONTRIBUTING.md]
-    Doc --> PR([Submit PR])
+    SDK --> Test["Write Tests<br/>vitest and playwright"]
+    Test --> Doc["Update Documentation<br/>CLAUDE.md, CONTRIBUTING.md"]
+    Doc --> PR(["Submit PR"])
 
     style Start fill:#e1f5ff
     style PR fill:#90EE90
