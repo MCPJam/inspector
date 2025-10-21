@@ -71,7 +71,14 @@ export function ParametersPanel({
               )}
             </Button>
             <Button
-              onClick={onSave}
+              onClick={() => {
+                posthog.capture("save_tool_button_clicked", {
+                  location: "tools_tab",
+                  platform: detectPlatform(),
+                  environment: detectEnvironment(),
+                });
+                onSave();
+              }}
               variant="outline"
               size="sm"
               disabled={!selectedTool}
