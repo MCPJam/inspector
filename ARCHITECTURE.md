@@ -17,6 +17,7 @@ This document provides a deep technical dive into the MCPJam Inspector architect
 ## System Overview
 
 MCPJam Inspector is a sophisticated multi-platform application that can run as:
+
 1. A standalone web application (client + server)
 2. An Electron desktop application (embedded server)
 3. A Docker container
@@ -315,6 +316,7 @@ sequenceDiagram
 #### Key Implementation Details
 
 **Protocol Registration** (`src/main.ts:31-33`):
+
 ```typescript
 if (!app.isDefaultProtocolClient("mcpjam")) {
   app.setAsDefaultProtocolClient("mcpjam");
@@ -322,6 +324,7 @@ if (!app.isDefaultProtocolClient("mcpjam")) {
 ```
 
 **Deep Link Handler** (`src/main.ts:273-313`):
+
 ```typescript
 app.on("open-url", (event, url) => {
   event.preventDefault();
@@ -346,6 +349,7 @@ app.on("open-url", (event, url) => {
 ```
 
 **React Hook** (`client/src/hooks/useElectronOAuth.ts`):
+
 ```typescript
 useEffect(() => {
   if (!window.isElectron || !window.electronAPI?.oauth) {
@@ -937,44 +941,47 @@ flowchart LR
 
 ### Environment Variables
 
-| Variable | Purpose | Set By |
-|----------|---------|--------|
-| `CONVEX_HTTP_URL` | Convex backend URL | User (required) |
-| `ELECTRON_APP` | Indicates Electron runtime | Electron main process |
-| `IS_PACKAGED` | Indicates packaged Electron app | Electron main process |
-| `ELECTRON_RESOURCES_PATH` | Path to Electron resources | Electron main process |
-| `NODE_ENV` | Runtime environment | Build scripts / user |
-| `PORT` | Server port | User (default: 3001) |
-| `DEBUG_MCP_SELECTION` | Enable MCP debug logs | User (optional) |
+| Variable                  | Purpose                         | Set By                |
+| ------------------------- | ------------------------------- | --------------------- |
+| `CONVEX_HTTP_URL`         | Convex backend URL              | User (required)       |
+| `ELECTRON_APP`            | Indicates Electron runtime      | Electron main process |
+| `IS_PACKAGED`             | Indicates packaged Electron app | Electron main process |
+| `ELECTRON_RESOURCES_PATH` | Path to Electron resources      | Electron main process |
+| `NODE_ENV`                | Runtime environment             | Build scripts / user  |
+| `PORT`                    | Server port                     | User (default: 3001)  |
+| `DEBUG_MCP_SELECTION`     | Enable MCP debug logs           | User (optional)       |
 
 ### Key File Locations
 
-| Path | Purpose |
-|------|---------|
-| `server/index.ts:180-192` | MCPClientManager initialization (npm package) |
-| `server/app.ts:67-79` | MCPClientManager setup (Electron) |
-| `src/main.ts:62-92` | Hono server startup in Electron |
-| `src/main.ts:273-313` | OAuth deep link handler |
-| `client/src/hooks/useElectronOAuth.ts` | React OAuth hook |
-| `server/routes/mcp/index.ts` | MCP API routes |
-| `server/services/rpc-log-bus.ts` | SSE event bus |
-| `sdk/src/index.ts` | MCP SDK wrapper |
+| Path                                   | Purpose                                       |
+| -------------------------------------- | --------------------------------------------- |
+| `server/index.ts:180-192`              | MCPClientManager initialization (npm package) |
+| `server/app.ts:67-79`                  | MCPClientManager setup (Electron)             |
+| `src/main.ts:62-92`                    | Hono server startup in Electron               |
+| `src/main.ts:273-313`                  | OAuth deep link handler                       |
+| `client/src/hooks/useElectronOAuth.ts` | React OAuth hook                              |
+| `server/routes/mcp/index.ts`           | MCP API routes                                |
+| `server/services/rpc-log-bus.ts`       | SSE event bus                                 |
+| `sdk/src/index.ts`                     | MCP SDK wrapper                               |
 
 ### Common Patterns
 
 **Adding a new MCP endpoint:**
+
 1. Add route in `server/routes/mcp/`
 2. Use `c.mcpClientManager` from context
 3. Handle errors and log via `rpcLogBus`
 4. Return JSON response
 
 **Adding a new React feature:**
+
 1. Create component in `client/src/components/`
 2. Use TanStack Query for server state
 3. Use Zustand for client state
 4. Follow Shadcn UI patterns
 
 **Testing in Electron:**
+
 1. Run `npm run electron:dev`
 2. Open DevTools with `Cmd+Option+I` (Mac) or `Ctrl+Shift+I` (Windows)
 3. Check main process logs in terminal
@@ -983,6 +990,7 @@ flowchart LR
 ---
 
 For more information, see:
+
 - [CONTRIBUTING.md](./CONTRIBUTING.md) - Contribution guidelines
 - [CLAUDE.md](./CLAUDE.md) - AI assistant instructions
 - [README.md](./README.md) - User-facing documentation
