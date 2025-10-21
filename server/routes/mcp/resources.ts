@@ -98,7 +98,14 @@ resources.post("/read", async (c) => {
 resources.post("/widget/store", async (c) => {
   try {
     const body = await c.req.json();
-    const { serverId, uri, toolInput, toolOutput, toolResponseMetadata, toolId } = body;
+    const {
+      serverId,
+      uri,
+      toolInput,
+      toolOutput,
+      toolResponseMetadata,
+      toolId,
+    } = body;
 
     if (!serverId || !uri || !toolId) {
       return c.json({ success: false, error: "Missing required fields" }, 400);
@@ -185,7 +192,8 @@ resources.get("/widget-content/:toolId", async (c) => {
       );
     }
 
-    const { serverId, uri, toolInput, toolOutput, toolResponseMetadata } = widgetData;
+    const { serverId, uri, toolInput, toolOutput, toolResponseMetadata } =
+      widgetData;
 
     const mcpClientManager = c.mcpClientManager;
     const availableServers = mcpClientManager
