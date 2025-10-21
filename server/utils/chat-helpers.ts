@@ -4,6 +4,7 @@ import { createDeepSeek } from "@ai-sdk/deepseek";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createMistral } from "@ai-sdk/mistral";
 import { createOpenAI } from "@ai-sdk/openai";
+import { createXai } from "@ai-sdk/xai";
 import { createOllama } from "ollama-ai-provider-v2";
 
 export const createLlmModel = (
@@ -36,6 +37,8 @@ export const createLlmModel = (
     }
     case "mistral":
       return createMistral({ apiKey })(modelDefinition.id);
+    case "xai":
+      return createXai({ apiKey })(modelDefinition.id);
     case "litellm": {
       // LiteLLM uses OpenAI-compatible endpoints (standard chat completions API)
       const baseURL = litellmBaseUrl || "http://localhost:4000";
