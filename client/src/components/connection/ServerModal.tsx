@@ -13,6 +13,8 @@ import {
 import { ServerFormData } from "@/shared/types.js";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { getStoredTokens, hasOAuthConfig } from "@/lib/mcp-oauth";
+import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
+import { usePostHog } from "posthog-js/react";
 
 interface ServerModalProps {
   isOpen: boolean;
@@ -29,6 +31,7 @@ export function ServerModal({
   onSubmit,
   server,
 }: ServerModalProps) {
+  const posthog = usePostHog();
   const [serverFormData, setServerFormData] = useState<ServerFormData>({
     name: "",
     type: "stdio",
@@ -428,7 +431,17 @@ export function ServerModal({
           </DialogTitle>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
+        <form
+          onSubmit={(e) => {
+            posthog.capture("add_server_button_clicked", {
+              location: "server_modal",
+              platform: detectPlatform(),
+              environment: detectEnvironment(),
+            });
+            handleSubmit(e);
+          }}
+          className="space-y-6"
+        >
           <div className="space-y-2">
             <label className="block text-sm font-medium text-foreground">
               Server Name
@@ -781,7 +794,14 @@ export function ServerModal({
             <Button
               type="button"
               variant="outline"
-              onClick={handleClose}
+              onClick={() => {
+                posthog.capture("cancel_button_clicked", {
+                  location: "server_modal",
+                  platform: detectPlatform(),
+                  environment: detectEnvironment(),
+                });
+                handleClose();
+              }}
               className="px-4"
             >
               Cancel

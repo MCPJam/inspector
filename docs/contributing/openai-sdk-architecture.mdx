@@ -82,6 +82,7 @@ graph TB
 When a tool is executed that returns OpenAI SDK components, the system detects this in two ways:
 
 **Method A: `_meta["openai/outputTemplate"]` field**
+
 ```typescript
 // Tool definition includes OpenAI output template
 {
@@ -94,6 +95,7 @@ When a tool is executed that returns OpenAI SDK components, the system detects t
 ```
 
 **Method B: `ui://` resource in response**
+
 ```typescript
 // Tool result contains ui:// resource
 {
@@ -120,6 +122,7 @@ const uiResource = resolveUIResource(result);
 ```
 
 The `resolveUIResource` function searches for `ui://` URIs in:
+
 1. Direct `resource` field at root level
 2. `content` array items with `type: "resource"`
 
@@ -143,6 +146,7 @@ sequenceDiagram
 ```
 
 **Why Store Server-Side?**
+
 - Iframes need access to `toolInput` and `toolOutput` for `window.openai` API
 - Client localStorage can't be shared across iframe sandbox boundaries
 - Server becomes the source of truth for widget initialization data
@@ -164,15 +168,18 @@ interface WidgetData {
 const widgetDataStore = new Map<string, WidgetData>();
 
 // Cleanup expired widget data every 5 minutes
-setInterval(() => {
-  const now = Date.now();
-  const ONE_HOUR = 60 * 60 * 1000;
-  for (const [toolId, data] of widgetDataStore.entries()) {
-    if (now - data.timestamp > ONE_HOUR) {
-      widgetDataStore.delete(toolId);
+setInterval(
+  () => {
+    const now = Date.now();
+    const ONE_HOUR = 60 * 60 * 1000;
+    for (const [toolId, data] of widgetDataStore.entries()) {
+      if (now - data.timestamp > ONE_HOUR) {
+        widgetDataStore.delete(toolId);
+      }
     }
-  }
-}, 5 * 60 * 1000).unref();
+  },
+  5 * 60 * 1000,
+).unref();
 ```
 
 ### 3. Two-Stage Widget Loading
@@ -199,6 +206,7 @@ sequenceDiagram
 ```
 
 **Why Two Stages?**
+
 - Many widgets use React Router's `BrowserRouter` which expects clean URLs
 - Stage 1 changes URL to "/" before widget code loads
 - Stage 2 fetches actual content after URL is reset
@@ -251,6 +259,7 @@ resources.get(\"/widget/:toolId\", async (c) => {
 Located in `server/routes/mcp/resources.ts:173-438`:
 
 Key steps:
+
 1. Retrieve widget data from store
 2. Read HTML from MCP server via `readResource(uri)`
 3. Inject `window.openai` API script
@@ -377,6 +386,7 @@ window.webplus = openaiAPI; // Compatibility alias
 ```
 
 **Security Notes:**
+
 - API is frozen with `writable: false, configurable: false`
 - 30-second timeout on tool calls prevents hanging requests
 - Origin validation in parent ensures only iframe messages are processed
@@ -506,6 +516,7 @@ Located in `client/src/components/chat/openai-component-renderer.tsx:218-230`:
 ```
 
 **Sandbox Permissions:**
+
 - `allow-scripts`: Enable JavaScript execution
 - `allow-same-origin`: Allow localStorage access (required for state)
 - `allow-forms`: Support form submissions
@@ -513,6 +524,7 @@ Located in `client/src/components/chat/openai-component-renderer.tsx:218-230`:
 - `allow-popups-to-escape-sandbox`: Allow popup windows to load normally
 
 **Security Trade-offs:**
+
 - `allow-same-origin` + `allow-scripts` = Full JavaScript capabilities
 - Required for React Router and modern frameworks
 - Mitigated by CSP headers and origin validation
@@ -741,21 +753,21 @@ server.connect(transport);
 
 ```javascript
 // Add to widget for debugging
-window.addEventListener('message', (e) => {
-  console.log('[Widget] Received message:', e.data);
+window.addEventListener("message", (e) => {
+  console.log("[Widget] Received message:", e.data);
 });
 
 // Monitor all postMessage calls
 const originalPostMessage = window.parent.postMessage;
-window.parent.postMessage = function(...args) {
-  console.log('[Widget] Sending message:', args[0]);
+window.parent.postMessage = function (...args) {
+  console.log("[Widget] Sending message:", args[0]);
   return originalPostMessage.apply(window.parent, args);
 };
 
 // Check openai API availability
-console.log('openai API:', window.openai);
-console.log('toolInput:', window.openai?.toolInput);
-console.log('toolOutput:', window.openai?.toolOutput);
+console.log("openai API:", window.openai);
+console.log("toolInput:", window.openai?.toolInput);
+console.log("toolOutput:", window.openai?.toolOutput);
 ```
 
 ### Extending the Implementation
@@ -812,11 +824,13 @@ case \"openai:openExternal\":
 ## Security Best Practices
 
 1. **Validate postMessage Origins:**
+
    ```typescript
    if (event.source !== iframeRef.current?.contentWindow) return;
    ```
 
 2. **Sanitize Tool Parameters:**
+
    ```typescript
    const params = JSON.parse(JSON.stringify(event.data.params)); // Deep clone
    // Validate against tool schema before execution
