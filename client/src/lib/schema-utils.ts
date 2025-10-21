@@ -42,7 +42,7 @@ export function validateToolOutput(
           params: {},
           message:
             "The provided outputSchema is invalid and could not be compiled.",
-        },
+        } as any,
       ];
     }
   }

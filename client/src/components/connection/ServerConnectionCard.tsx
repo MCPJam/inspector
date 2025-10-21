@@ -28,6 +28,8 @@ import {
   getServerCommandDisplay,
   getServerTransportLabel,
 } from "./server-card-utils";
+import { usePostHog } from "posthog-js/react";
+import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 
 interface ServerConnectionCardProps {
   server: ServerWithName;
@@ -46,11 +48,11 @@ export function ServerConnectionCard({
   onRemove,
   onViewDetail,
 }: ServerConnectionCardProps) {
+  const posthog = usePostHog();
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isErrorExpanded, setIsErrorExpanded] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
-  const serverConfig = server.config;
   const {
     label: connectionStatusLabel,
     Icon: ConnectionStatusIcon,
@@ -165,6 +167,11 @@ export function ServerConnectionCard({
                 <Switch
                   checked={server.connectionStatus === "connected"}
                   onCheckedChange={(checked) => {
+                    posthog.capture("connection_switch_toggled", {
+                      location: "server_connection_card",
+                      platform: detectPlatform(),
+                      environment: detectEnvironment(),
+                    });
                     if (!checked) {
                       onDisconnect(server.name);
                     } else {
@@ -186,7 +193,14 @@ export function ServerConnectionCard({
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-40">
                   <DropdownMenuItem
-                    onClick={handleReconnect}
+                    onClick={() => {
+                      posthog.capture("reconnect_server_clicked", {
+                        location: "server_connection_card",
+                        platform: detectPlatform(),
+                        environment: detectEnvironment(),
+                      });
+                      handleReconnect();
+                    }}
                     disabled={
                       isReconnecting ||
                       server.connectionStatus === "connecting" ||
@@ -202,14 +216,28 @@ export function ServerConnectionCard({
                     {isReconnecting ? "Reconnecting..." : "Reconnect"}
                   </DropdownMenuItem>
                   <DropdownMenuItem
-                    onClick={() => onEdit(server)}
+                    onClick={() => {
+                      posthog.capture("edit_server_clicked", {
+                        location: "server_connection_card",
+                        platform: detectPlatform(),
+                        environment: detectEnvironment(),
+                      });
+                      onEdit(server);
+                    }}
                     className="text-xs cursor-pointer"
                   >
                     <Edit className="h-3 w-3 mr-2" />
                     Edit
                   </DropdownMenuItem>
                   <DropdownMenuItem
-                    onClick={handleExport}
+                    onClick={() => {
+                      posthog.capture("export_server_clicked", {
+                        location: "server_connection_card",
+                        platform: detectPlatform(),
+                        environment: detectEnvironment(),
+                      });
+                      handleExport();
+                    }}
                     disabled={
                       isExporting || server.connectionStatus !== "connected"
                     }
@@ -226,6 +254,11 @@ export function ServerConnectionCard({
                   <DropdownMenuItem
                     className="text-destructive text-xs cursor-pointer"
                     onClick={() => {
+                      posthog.capture("remove_server_clicked", {
+                        location: "server_connection_card",
+                        platform: detectPlatform(),
+                        environment: detectEnvironment(),
+                      });
                       onDisconnect(server.name);
                       onRemove?.(server.name);
                     }}

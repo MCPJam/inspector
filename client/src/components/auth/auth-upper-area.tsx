@@ -32,7 +32,7 @@ export function AuthUpperArea() {
         <Button
           variant="outline"
           onClick={() => {
-            posthog.capture("sign_in", {
+            posthog.capture("login_button_clicked", {
               location: "auth_upper_area",
               platform: detectPlatform(),
               environment: detectEnvironment(),
@@ -44,14 +44,13 @@ export function AuthUpperArea() {
         </Button>
         <Button
           onClick={() => {
-            posthog.capture("create_account", {
+            posthog.capture("sign_up_button_clicked", {
               location: "auth_upper_area",
               platform: detectPlatform(),
               environment: detectEnvironment(),
             });
             signUp();
           }}
-          style={{ backgroundColor: "#E55A3A" }}
         >
           Create account
         </Button>

@@ -12,7 +12,9 @@ import {
 } from "../ui/select";
 import { ServerFormData } from "@/shared/types.js";
 import { ServerWithName } from "@/hooks/use-app-state";
-import { getStoredTokens } from "@/lib/mcp-oauth";
+import { getStoredTokens, hasOAuthConfig } from "@/lib/mcp-oauth";
+import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
+import { usePostHog } from "posthog-js/react";
 
 interface ServerModalProps {
   isOpen: boolean;
@@ -29,6 +31,7 @@ export function ServerModal({
   onSubmit,
   server,
 }: ServerModalProps) {
+  const posthog = usePostHog();
   const [serverFormData, setServerFormData] = useState<ServerFormData>({
     name: "",
     type: "stdio",
@@ -67,13 +70,36 @@ export function ServerModal({
     if (isHttpServer) {
       const headers =
         (config.requestInit?.headers as Record<string, string>) || {};
-      const hasOAuth = server.oauthTokens != null;
 
-      const storedTokens = hasOAuth ? getStoredTokens(server.name) : null;
-      const storedClientInfo = hasOAuth
-        ? localStorage.getItem(`mcp-client-${server.name}`)
-        : null;
+      // Check if OAuth is configured by looking at multiple sources:
+      // 1. Check if server has oauth tokens
+      // 2. Check if there's stored OAuth data (server URL, client info, config, or tokens)
+      // 3. Check if the config has an oauth field
+      const hasOAuthTokens = server.oauthTokens != null;
+      const hasStoredOAuthConfig = hasOAuthConfig(server.name);
+      const hasOAuthInConfig = "oauth" in config && config.oauth != null;
+      const hasOAuth =
+        hasOAuthTokens || hasStoredOAuthConfig || hasOAuthInConfig;
+
+      const storedOAuthConfig = localStorage.getItem(
+        `mcp-oauth-config-${server.name}`,
+      );
+      const storedClientInfo = localStorage.getItem(
+        `mcp-client-${server.name}`,
+      );
+      const storedTokens = getStoredTokens(server.name);
+
       const clientInfo = storedClientInfo ? JSON.parse(storedClientInfo) : {};
+      const oauthConfig = storedOAuthConfig
+        ? JSON.parse(storedOAuthConfig)
+        : {};
+
+      // Retrieve scopes from multiple sources (in priority order)
+      const scopes =
+        server.oauthTokens?.scope?.split(" ") ||
+        storedTokens?.scope?.split(" ") ||
+        oauthConfig.scopes ||
+        [];
 
       return {
         name: server.name,
@@ -81,7 +107,7 @@ export function ServerModal({
         url: config.url?.toString() || "",
         headers: headers,
         useOAuth: hasOAuth,
-        oauthScopes: server.oauthTokens?.scope?.split(" ") || [],
+        oauthScopes: scopes,
         clientId:
           "clientId" in config
             ? typeof config.clientId === "string"
@@ -405,7 +431,17 @@ export function ServerModal({
           </DialogTitle>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
+        <form
+          onSubmit={(e) => {
+            posthog.capture("add_server_button_clicked", {
+              location: "server_modal",
+              platform: detectPlatform(),
+              environment: detectEnvironment(),
+            });
+            handleSubmit(e);
+          }}
+          className="space-y-6"
+        >
           <div className="space-y-2">
             <label className="block text-sm font-medium text-foreground">
               Server Name
@@ -758,7 +794,14 @@ export function ServerModal({
             <Button
               type="button"
               variant="outline"
-              onClick={handleClose}
+              onClick={() => {
+                posthog.capture("cancel_button_clicked", {
+                  location: "server_modal",
+                  platform: detectPlatform(),
+                  environment: detectEnvironment(),
+                });
+                handleClose();
+              }}
               className="px-4"
             >
               Cancel

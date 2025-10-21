@@ -1,0 +1,94 @@
+name: Auto-update Documentation
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  update-docs:
+    # Only run if PR was actually merged (not just closed)
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Get PR details
+        id: pr_details
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get PR diff
+          PR_DIFF=$(gh api \
+            -H "Accept: application/vnd.github.v3.diff" \
+            /repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }})
+
+          # Get list of changed files
+          FILES_CHANGED=$(gh api \
+            /repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files \
+            --jq '[.[] | .filename] | join(", ")')
+
+          # Save to output (escape for JSON)
+          echo "pr_diff<<EOF" >> $GITHUB_OUTPUT
+          echo "$PR_DIFF" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          echo "files_changed=$FILES_CHANGED" >> $GITHUB_OUTPUT
+
+      - name: Call Mintlify Agent API
+        env:
+          MINTLIFY_API_KEY: ${{ secrets.MINTLIFY_API_KEY }}
+          PROJECT_ID: ${{ secrets.MINTLIFY_PROJECT_ID }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_DIFF: ${{ steps.pr_details.outputs.pr_diff }}
+          FILES_CHANGED: ${{ steps.pr_details.outputs.files_changed }}
+        run: |
+          # Escape and format the message content
+          MESSAGE=$(cat <<EOF
+          You are a documentation maintainer for ${{ github.event.repository.name }}.
+
+          ## Merged PR Details
+          - **PR**: #${{ github.event.pull_request.number }} — ${{ github.event.pull_request.title }}
+          - **URL**: ${{ github.event.pull_request.html_url }}
+          - **Files Changed**: ${FILES_CHANGED}
+
+          ## PR Description
+          ${PR_BODY:-No description provided}
+
+          ## Code Changes (Diff)
+          \`\`\`diff
+          ${PR_DIFF}
+          \`\`\`
+
+          ## Instructions
+          First, review the merged diff and the repository's docs/ directory to assess whether documentation changes are actually needed. If no relevant updates are needed, make no file changes and do not open a PR.
+
+          If updates are needed, categorize the change and update only the appropriate docs. We have two main types of docs:
+          1. **Feature docs** (how users use features)
+          2. **Contributing docs** (engineering concepts for technical contributors) live under docs/contributing/ and docs/evals/
+
+          Keep edits minimal, precise, and user-focused. When adding/moving pages, update docs/docs.json to keep navigation accurate. Use concise commit messages and open a focused PR only when changes are required. Use .mmd files for diagrams and other visual content if needed.
+          EOF
+          )
+
+          # Create JSON payload
+          JSON_PAYLOAD=$(jq -n \
+            --arg branch "docs-update-from-${{ github.event.repository.name }}-pr-${{ github.event.pull_request.number }}" \
+            --arg content "$MESSAGE" \
+            '{
+              branch: $branch,
+              messages: [
+                {
+                  role: "system",
+                  content: $content
+                }
+              ]
+            }')
+
+          # Call the API
+          curl -X POST "https://api.mintlify.com/v1/agent/${PROJECT_ID}/job" \
+            -H "Authorization: Bearer ${MINTLIFY_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$JSON_PAYLOAD"
+
+      - name: Log result
+        if: always()
+        run: echo "Documentation update workflow completed"

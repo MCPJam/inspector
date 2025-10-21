@@ -15,6 +15,7 @@ import {
 } from "./ui/resizable";
 import { ParametersPanel } from "./tools/ParametersPanel";
 import { ResultsPanel } from "./tools/ResultsPanel";
+import { JsonRpcLoggerView } from "./logging/json-rpc-logger-view";
 import { ToolsSidebar } from "./tools/ToolsSidebar";
 import SaveRequestDialog from "./tools/SaveRequestDialog";
 import {
@@ -41,6 +42,8 @@ import {
 import { validateToolOutput } from "@/lib/schema-utils";
 import "react18-json-view/src/style.css";
 import { MCPServerConfig } from "@/sdk";
+import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
+import { usePostHog } from "posthog-js/react";
 
 type ToolMap = Record<string, Tool>;
 type FormField = ToolFormField;
@@ -66,6 +69,7 @@ interface ToolsTabProps {
 
 export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   const logger = useLogger("ToolsTab");
+  const posthog = usePostHog();
   const [tools, setTools] = useState<ToolMap>({});
   const [selectedTool, setSelectedTool] = useState<string>("");
   const [formFields, setFormFields] = useState<FormField[]>([]);
@@ -154,6 +158,14 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       );
     }
   }, [selectedTool, tools]);
+
+  useEffect(() => {
+    posthog.capture("tools_tab_viewed", {
+      location: "tools_tab",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+    });
+  }, []);
 
   const fetchTools = async () => {
     if (!serverName) {
@@ -483,35 +495,47 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         <ResizableHandle withHandle />
 
         <ResizablePanel defaultSize={40} minSize={15} maxSize={85}>
-          <ResultsPanel
-            error={error}
-            showStructured={showStructured}
-            onToggleStructured={setShowStructured}
-            structuredResult={structuredResult}
-            result={result}
-            validationErrors={validationErrors}
-            unstructuredValidationResult={unstructuredValidationResult}
-            serverId={serverName}
-            toolCallId={lastToolCallId ?? undefined}
-            toolName={lastToolName ?? undefined}
-            toolParameters={lastToolParameters ?? undefined}
-            toolCallTimestamp={lastToolCallTimestamp ?? undefined}
-            toolMeta={getToolMeta(lastToolName)}
-            onExecuteFromUI={async (name, params) => {
-              if (!serverName) return { error: "No server selected" };
-              return await executeToolApi(serverName, name, params || {});
-            }}
-            onHandleIntent={async (intent, params) => {
-              if (!serverName) return;
-              await executeToolApi(serverName, "handleIntent", {
-                intent,
-                params: params || {},
-              });
-            }}
-            onSendFollowup={(message) => {
-              logger.info("OpenAI component requested follow-up", { message });
-            }}
-          />
+          <ResizablePanelGroup direction="horizontal" className="h-full">
+            <ResizablePanel defaultSize={40} minSize={10}>
+              <JsonRpcLoggerView
+                serverIds={serverName ? [serverName] : undefined}
+              />
+            </ResizablePanel>
+            <ResizableHandle withHandle />
+            <ResizablePanel defaultSize={60} minSize={30}>
+              <ResultsPanel
+                error={error}
+                showStructured={showStructured}
+                onToggleStructured={setShowStructured}
+                structuredResult={structuredResult}
+                result={result}
+                validationErrors={validationErrors}
+                unstructuredValidationResult={unstructuredValidationResult}
+                serverId={serverName}
+                toolCallId={lastToolCallId ?? undefined}
+                toolName={lastToolName ?? undefined}
+                toolParameters={lastToolParameters ?? undefined}
+                toolCallTimestamp={lastToolCallTimestamp ?? undefined}
+                toolMeta={getToolMeta(lastToolName)}
+                onExecuteFromUI={async (name, params) => {
+                  if (!serverName) return { error: "No server selected" };
+                  return await executeToolApi(serverName, name, params || {});
+                }}
+                onHandleIntent={async (intent, params) => {
+                  if (!serverName) return;
+                  await executeToolApi(serverName, "handleIntent", {
+                    intent,
+                    params: params || {},
+                  });
+                }}
+                onSendFollowup={(message) => {
+                  logger.info("OpenAI component requested follow-up", {
+                    message,
+                  });
+                }}
+              />
+            </ResizablePanel>
+          </ResizablePanelGroup>
         </ResizablePanel>
       </ResizablePanelGroup>
 

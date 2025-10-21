@@ -5,22 +5,19 @@
 FROM node:20-slim AS deps-base
 WORKDIR /app
 
-# Clear npm cache and remove any existing lock files to avoid conflicts
-RUN npm cache clean --force
+# Copy package.json and package-lock.json files
+COPY package.json package-lock.json ./
+COPY client/package.json client/package-lock.json ./client/
+COPY server/package.json server/package-lock.json ./server/
+COPY sdk/package.json sdk/package-lock.json ./sdk/
+COPY evals-cli/package.json evals-cli/package-lock.json ./evals-cli/
 
-COPY package.json ./
-COPY client/package.json ./client/
-COPY server/package.json ./server/
-COPY sdk/package.json ./sdk/
-COPY evals-cli/package.json ./evals-cli/
-
-# Install dependencies with clean slate approach (no lock files)
-
-RUN npm install --no-package-lock --include=dev --legacy-peer-deps
-RUN cd client && npm install --no-package-lock --include=dev --legacy-peer-deps
-RUN cd server && npm install --no-package-lock --include=dev --legacy-peer-deps
-RUN cd sdk && npm install --no-package-lock --include=dev --legacy-peer-deps
-RUN cd evals-cli && npm install --no-package-lock --include=dev --legacy-peer-deps
+# Install dependencies using package-lock files for consistent versions
+RUN npm ci --legacy-peer-deps
+RUN cd client && npm ci --legacy-peer-deps
+RUN cd server && npm ci --legacy-peer-deps
+RUN cd sdk && npm ci --legacy-peer-deps
+RUN cd evals-cli && npm ci --legacy-peer-deps
 
 # Stage 2: Build client
 FROM deps-base AS client-builder
@@ -48,6 +45,10 @@ RUN cd server && npm run build
 # Stage 5: Production image - extend existing or create new
 FROM node:20-slim AS production
 
+# Build arguments for runtime configuration
+ARG CONVEX_HTTP_URL
+ENV CONVEX_HTTP_URL=${CONVEX_HTTP_URL}
+
 # Install dumb-init for proper signal handling
 RUN apt-get update && apt-get install -y --no-install-recommends dumb-init && rm -rf /var/lib/apt/lists/*
 
@@ -61,19 +62,16 @@ COPY --from=server-builder /app/dist/server ./dist/server
 # Copy built SDK (required by server at runtime)
 COPY --from=sdk-builder /app/sdk/dist ./sdk/dist
 COPY --from=sdk-builder /app/sdk/package.json ./sdk/package.json
+COPY --from=deps-base /app/sdk/node_modules ./sdk/node_modules
 
 # Copy public assets (logos, etc.) to be served at root level
 COPY --from=client-builder /app/client/public ./public
 
-# Copy package.json files for dependencies
+# Copy package.json and node_modules for runtime dependencies
 COPY --from=deps-base /app/package.json ./package.json
+COPY --from=deps-base /app/node_modules ./node_modules
 COPY --from=deps-base /app/server/package.json ./server/package.json
-
-# Install production dependencies from root package.json (includes external packages like fix-path)
-RUN npm install --production --legacy-peer-deps
-
-# Install SDK production dependencies
-RUN cd sdk && npm install --production --legacy-peer-deps
+COPY --from=deps-base /app/server/node_modules ./server/node_modules
 
 # Copy shared types
 COPY shared/ ./shared/

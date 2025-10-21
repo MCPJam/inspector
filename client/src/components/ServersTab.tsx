@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
 import { Plus, Database, FileText } from "lucide-react";
@@ -38,17 +38,6 @@ export function ServersTab({
   const [isViewingServerDetail, setIsViewingServerDetail] = useState(false);
   const [serverToView, setServerToView] = useState<ServerWithName | null>(null);
 
-  // Removed automatic reconnection since centralized agent maintains persistent connections
-  // useEffect(() => {
-  //   Object.entries(connectedServerConfigs).forEach(([serverName, server]) => {
-  //     if (server.enabled !== false) {
-  //       onReconnect(serverName);
-  //     }
-  //   });
-  // }, []);
-
-  // Filter and search servers
-  // TODO: Search and filter is not implemented yet
   const filteredServers = Object.entries(connectedServerConfigs).filter(
     ([name, server]) => {
       const matchesSearch = name
@@ -58,10 +47,18 @@ export function ServersTab({
         filterType === "all" ||
         (filterType === "stdio" && "command" in server.config) ||
         (filterType === "http" && "url" in server.config);
-      const isEnabled = server.enabled !== false; // show disabled too, but keep for now
       return matchesSearch && matchesFilter;
     },
   );
+
+  useEffect(() => {
+    posthog.capture("servers_tab_viewed", {
+      location: "servers_tab",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+      num_servers: Object.keys(connectedServerConfigs).length,
+    });
+  }, []);
 
   const connectedCount = Object.keys(connectedServerConfigs).length;
 
@@ -86,7 +83,6 @@ export function ServersTab({
   };
 
   const handleJsonImport = (servers: ServerFormData[]) => {
-    // Import each server by calling onConnect for each one
     servers.forEach((server) => {
       onConnect(server);
     });
@@ -101,7 +97,14 @@ export function ServersTab({
         </div>
         <div className="flex items-center gap-2">
           <Button
-            onClick={() => setIsImportingJson(true)}
+            onClick={() => {
+              posthog.capture("import_json_button_clicked", {
+                location: "servers_tab",
+                platform: detectPlatform(),
+                environment: detectEnvironment(),
+              });
+              setIsImportingJson(true);
+            }}
             variant="outline"
             className="cursor-pointer"
           >
@@ -109,7 +112,14 @@ export function ServersTab({
             Import JSON
           </Button>
           <Button
-            onClick={() => setIsAddingServer(true)}
+            onClick={() => {
+              posthog.capture("add_server_button_clicked", {
+                location: "servers_tab",
+                platform: detectPlatform(),
+                environment: detectEnvironment(),
+              });
+              setIsAddingServer(true);
+            }}
             className="cursor-pointer"
           >
             <Plus className="h-4 w-4 mr-2" />

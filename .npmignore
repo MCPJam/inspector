@@ -26,5 +26,4 @@ vite.*.config.*
 tsconfig.json
 Dockerfile*
 docker-compose*
-CONTRIBUTING.md
 SECURITY.md
