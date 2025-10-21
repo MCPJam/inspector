@@ -7,13 +7,13 @@
     "declarationMap": true,
     "emitDeclarationOnly": false,
     "outDir": "./dist",
-    "rootDir": "./",
+    "rootDir": "./src",
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "target": "ES2019",
     "strict": true,
     "stripInternal": true
   },
-  "include": ["./index.ts", "./mcp-client-manager/**/*.ts"],
+  "include": ["src/**/*.ts"],
   "exclude": ["dist", "node_modules"]
 }
