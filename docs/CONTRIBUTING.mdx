@@ -203,6 +203,7 @@ npm run dev
 ```
 
 This runs:
+
 - **Client**: Vite dev server on `:8080`
 - **Server**: Hono dev server on `:3000`
 
@@ -221,6 +222,7 @@ npm run electron:dev
 ```
 
 This runs:
+
 - Electron main process
 - Embedded Hono server
 - Vite dev server for renderer
@@ -328,6 +330,7 @@ sequenceDiagram
 ```
 
 **Key OAuth Files:**
+
 - `src/main.ts:31-33` - Protocol registration
 - `src/main.ts:273-313` - Deep link handler
 - `client/src/hooks/useElectronOAuth.ts` - React hook for OAuth events
@@ -388,16 +391,16 @@ graph TB
 
 ### Key Files Reference
 
-| File | Purpose | Line Numbers to Know |
-|------|---------|---------------------|
-| `server/index.ts` | Main server entry (npm package) | 180-192 (MCPClientManager init) |
-| `server/app.ts` | Hono app factory (shared) | 67-79 (MCPClientManager setup) |
-| `src/main.ts` | Electron main process | 62-92 (Server startup), 273-313 (OAuth) |
-| `client/src/App.tsx` | React app entry point | - |
-| `server/routes/mcp/index.ts` | MCP API routes | - |
-| `sdk/src/index.ts` | MCP SDK integration | - |
-| `CLAUDE.md` | AI assistant instructions | - |
-| `forge.config.ts` | Electron build config | - |
+| File                         | Purpose                         | Line Numbers to Know                    |
+| ---------------------------- | ------------------------------- | --------------------------------------- |
+| `server/index.ts`            | Main server entry (npm package) | 180-192 (MCPClientManager init)         |
+| `server/app.ts`              | Hono app factory (shared)       | 67-79 (MCPClientManager setup)          |
+| `src/main.ts`                | Electron main process           | 62-92 (Server startup), 273-313 (OAuth) |
+| `client/src/App.tsx`         | React app entry point           | -                                       |
+| `server/routes/mcp/index.ts` | MCP API routes                  | -                                       |
+| `sdk/src/index.ts`           | MCP SDK integration             | -                                       |
+| `CLAUDE.md`                  | AI assistant instructions       | -                                       |
+| `forge.config.ts`            | Electron build config           | -                                       |
 
 ## Code Style
 

@@ -353,7 +353,8 @@ export function ToolCallDisplay({
                             }
 
                             // Check output.value.structuredContent.result array
-                            const structuredResult = nestedValue.structuredContent?.result;
+                            const structuredResult =
+                              nestedValue.structuredContent?.result;
                             if (Array.isArray(structuredResult)) {
                               for (const item of structuredResult) {
                                 if (
@@ -379,7 +380,7 @@ export function ToolCallDisplay({
                             return direct;
                           }
 
-                          // Fallback: Check content array at root level. Left this for backwards compatibility. 
+                          // Fallback: Check content array at root level. Left this for backwards compatibility.
                           const content = actualPayload?.content;
                           if (Array.isArray(content)) {
                             for (const item of content) {
