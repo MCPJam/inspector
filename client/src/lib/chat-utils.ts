@@ -165,6 +165,8 @@ export function getDefaultTemperatureByProvider(provider: string): number {
       return 0;
     case "google":
       return 0.9; // Google's recommended default
+    case "mistral":
+      return 0.7; // Mistral's recommended default
     default:
       return 0;
   }
