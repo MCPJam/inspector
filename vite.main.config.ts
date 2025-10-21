@@ -5,7 +5,7 @@ import { resolve } from "path";
 export default defineConfig({
   resolve: {
     alias: {
-      "@/sdk": resolve(__dirname, "sdk/index.ts"),
+      "@/sdk": resolve(__dirname, "sdk/src/index.ts"),
       "@/shared": resolve(__dirname, "shared"),
     },
     mainFields: ["module", "jsnext:main", "jsnext"],
