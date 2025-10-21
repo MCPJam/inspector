@@ -18,18 +18,9 @@ export default defineConfig({
     },
     rollupOptions: {
       external: [
-        // Core Electron & Node modules
+        // Core Electron & Node modules only
         "electron",
-        // External runtime dependencies (must be in package.json dependencies)
-        "@hono/node-server",
-        "hono",
-        "@modelcontextprotocol/sdk",
-        "fix-path",
-        "dotenv",
-        "electron-log",
-        "update-electron-app",
-        "@sentry/electron",
-        // @/sdk and @/shared will be bundled (not marked as external)
+        // Bundle everything else including electron-log, update-electron-app, etc.
       ],
     },
   },
