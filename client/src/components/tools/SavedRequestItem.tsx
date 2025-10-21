@@ -1,7 +1,8 @@
 import { Button } from "../ui/button";
 import { Edit2, Copy, Trash2 } from "lucide-react";
 import type { SavedRequest } from "@/lib/request-types";
-
+import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
+import { usePostHog } from "posthog-js/react";
 interface SavedRequestItemProps {
   request: SavedRequest;
   isHighlighted: boolean;
@@ -19,6 +20,7 @@ export function SavedRequestItem({
   onDuplicate,
   onDelete,
 }: SavedRequestItemProps) {
+  const posthog = usePostHog();
   return (
     <div
       className={`group p-2 rounded mx-2 cursor-pointer transition-all duration-200 ${
@@ -26,7 +28,14 @@ export function SavedRequestItem({
           ? "bg-primary/20 border border-primary/30 shadow-sm"
           : "hover:bg-muted/40"
       }`}
-      onClick={() => onLoad(request)}
+      onClick={() => {
+        posthog.capture("saved_request_item_loaded", {
+          location: "tools_sidebar",
+          platform: detectPlatform(),
+          environment: detectEnvironment(),
+        });
+        onLoad(request);
+      }}
     >
       <div className="flex items-start justify-between">
         <div className="min-w-0 pr-2">
