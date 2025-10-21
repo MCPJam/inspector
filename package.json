@@ -63,7 +63,7 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^2.0.17",
+    "@ai-sdk/anthropic": "^2.0.35",
     "@ai-sdk/deepseek": "^1.0.5",
     "@ai-sdk/google": "^2.0.11",
     "@ai-sdk/openai": "^2.0.32",
@@ -86,7 +86,7 @@
     "@tanstack/react-table": "^8.21.3",
     "@uiw/react-json-view": "^2.0.0-alpha.33",
     "@workos-inc/authkit-react": "^0.12.0",
-    "ai": "^5.0.11",
+    "ai": "^5.0.76",
     "ajv": "^8.17.1",
     "class-variance-authority": "^0.7.1",
     "classnames": "^2.5.1",

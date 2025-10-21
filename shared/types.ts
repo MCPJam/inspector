@@ -128,6 +128,9 @@ export interface ModelDefinition {
 }
 
 export enum Model {
+  CLAUDE_SONNET_4_5 = "claude-sonnet-4-5",
+  CLAUDE_HAIKU_4_5 = "claude-haiku-4-5",
+  CLAUDE_OPUS_4_1 = "claude-opus-4-1",
   CLAUDE_OPUS_4_0 = "claude-opus-4-0",
   CLAUDE_SONNET_4_0 = "claude-sonnet-4-0",
   CLAUDE_3_7_SONNET_LATEST = "claude-3-7-sonnet-latest",
@@ -178,6 +181,21 @@ export enum Model {
 }
 
 export const SUPPORTED_MODELS: ModelDefinition[] = [
+  {
+    id: Model.CLAUDE_SONNET_4_5,
+    name: "Claude Sonnet 4.5",
+    provider: "anthropic",
+  },
+  {
+    id: Model.CLAUDE_HAIKU_4_5,
+    name: "Claude Haiku 4.5",
+    provider: "anthropic",
+  },
+  {
+    id: Model.CLAUDE_OPUS_4_1,
+    name: "Claude Opus 4.1",
+    provider: "anthropic",
+  },
   {
     id: Model.CLAUDE_OPUS_4_0,
     name: "Claude Opus 4",

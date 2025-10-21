@@ -729,7 +729,7 @@ function pickDefaultModel(
     if (local) return local;
   }
   const priorities = [
-    Model.CLAUDE_3_5_SONNET_LATEST,
+    Model.CLAUDE_HAIKU_4_5,
     Model.GPT_4O,
     Model.DEEPSEEK_CHAT,
     Model.GEMINI_2_5_FLASH,
