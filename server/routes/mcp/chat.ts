@@ -246,7 +246,23 @@ const createStreamingResponse = async (
     let streamErrorMessage = "";
     let response: any = null;
 
-    console.log("[createStreamingResponse] Starting streamText call...");
+    // Helper to extract clean error message from AI SDK error structures
+    const extractErrorMessage = (error: any): string => {
+      if (error.error && typeof error.error === 'object') {
+        const apiError = error.error as any;
+        if (apiError.data?.error?.message) return apiError.data.error.message;
+        if (apiError.responseBody) {
+          try {
+            const parsed = JSON.parse(apiError.responseBody);
+            if (parsed.error?.message) return parsed.error.message;
+          } catch {}
+        }
+        if (apiError.message) return apiError.message;
+      }
+      if (error.error instanceof Error) return error.error.message;
+      return String(error.error || error.message || "Unknown error occurred");
+    };
+
     streamResult = streamText({
         model,
         system:
@@ -255,33 +271,8 @@ const createStreamingResponse = async (
         tools: aiSdkTools,
         messages: messageHistory,
         onError: (error) => {
-          console.log("[createStreamingResponse] onError callback triggered:", error);
           hadStreamError = true;
-
-          // Extract the actual error message from the AI SDK error
-          if (error.error && typeof error.error === 'object') {
-            const apiError = error.error as any;
-            if (apiError.data?.error?.message) {
-              streamErrorMessage = apiError.data.error.message;
-            } else if (apiError.responseBody) {
-              try {
-                const responseData = JSON.parse(apiError.responseBody);
-                if (responseData.error?.message) {
-                  streamErrorMessage = responseData.error.message;
-                }
-              } catch (parseError) {
-                streamErrorMessage = apiError.message || "Unknown error occurred";
-              }
-            } else if (apiError.message) {
-              streamErrorMessage = apiError.message;
-            }
-          } else if (error.error instanceof Error) {
-            streamErrorMessage = error.error.message;
-          } else {
-            streamErrorMessage = String(error.error);
-          }
-
-          console.log("[createStreamingResponse] Extracted error message:", streamErrorMessage);
+          streamErrorMessage = extractErrorMessage(error);
         },
         onChunk: async (chunk) => {
         try {
@@ -373,94 +364,48 @@ const createStreamingResponse = async (
             break;
         }
         } catch (chunkError) {
-          console.error("[createStreamingResponse] Error in onChunk:", chunkError);
           hadStreamError = true;
-          if (chunkError instanceof Error) {
-            streamErrorMessage = (chunkError as any).data?.error?.message || chunkError.message;
-          }
+          streamErrorMessage = chunkError instanceof Error
+            ? chunkError.message
+            : "Error processing chunk";
         }
       },
     });
 
     try {
-      console.log("[createStreamingResponse] Starting consumeStream...");
       await streamResult.consumeStream();
-      console.log("[createStreamingResponse] consumeStream completed");
 
-      // Check if there was an error during streaming (caught by onError callback)
+      // If onError was triggered, throw the extracted error message
       if (hadStreamError) {
-        console.log("[createStreamingResponse] Error was caught by onError callback:", streamErrorMessage);
-        throw new Error(streamErrorMessage || "An error occurred during streaming");
+        throw new Error(streamErrorMessage);
       }
 
-      // Get the response - this may throw "No output generated" if there was an error
-      // we didn't catch, but we should have caught it in onError
       response = await streamResult.response;
-      console.log("[createStreamingResponse] Response received, checking for errors...");
 
-      const streamError = response.error;
-      if (streamError) {
-        console.log("[createStreamingResponse] Found error in response:", streamError);
-        throw streamError;
+      // Check for any additional error states in the response
+      if (response.error) {
+        throw response.error;
       }
 
-      // Also check the experimental_providerMetadata for errors
-      const providerMetadata = response.experimental_providerMetadata;
-      if (providerMetadata?.openai?.error) {
-        console.log("[createStreamingResponse] Found OpenAI error in metadata:", providerMetadata.openai.error);
-        throw new Error(providerMetadata.openai.error.message || JSON.stringify(providerMetadata.openai.error));
+      if (response.experimental_providerMetadata?.openai?.error) {
+        throw new Error(response.experimental_providerMetadata.openai.error.message || "OpenAI API error");
       }
     } catch (error) {
-      // Send error to client with detailed message
-      // Extract error message from AI SDK error structure
-      let errorMessage = "Unknown error occurred";
-      if (error instanceof Error) {
-        errorMessage = error.message;
-        console.log("[createStreamingResponse] Error message:", errorMessage);
-        console.log("[createStreamingResponse] Error cause:", (error as any).cause);
-        console.log("[createStreamingResponse] Error data:", JSON.stringify((error as any).data, null, 2));
-
-        // Check if it's an AI SDK error with nested error data
-        if ((error as any).data?.error?.message) {
-          errorMessage = (error as any).data.error.message;
-          console.log("[createStreamingResponse] Extracted nested error message:", errorMessage);
-        }
-        // Also check the cause if it exists
-        else if ((error as any).cause?.data?.error?.message) {
-          errorMessage = (error as any).cause.data.error.message;
-          console.log("[createStreamingResponse] Extracted error from cause:", errorMessage);
-        }
-        // Check responseBody for OpenAI errors
-        else if ((error as any).responseBody) {
-          try {
-            const responseData = JSON.parse((error as any).responseBody);
-            if (responseData.error?.message) {
-              errorMessage = responseData.error.message;
-              console.log("[createStreamingResponse] Extracted error from responseBody:", errorMessage);
-            }
-          } catch (parseError) {
-            console.log("[createStreamingResponse] Could not parse responseBody");
-          }
-        }
-      }
-
-      console.error("[createStreamingResponse] Sending error to client:", errorMessage);
+      // Use the already-extracted error message, or extract a new one
+      const errorMessage = streamErrorMessage || extractErrorMessage(error);
 
       sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
         type: "error",
         error: errorMessage,
       });
 
-      // Send [DONE] to signal end of stream
       sendSseEvent(
         streamingContext.controller,
         streamingContext.encoder!,
         "[DONE]",
       );
 
-      // Mark that an error occurred and exit the loop
       hadError = true;
-      // Skip all the rest of the iteration
       steps++;
       break;
     }
