@@ -8,7 +8,8 @@ import { ResizablePanel } from "../ui/resizable";
 import { ToolItem } from "./ToolItem";
 import { SavedRequestItem } from "./SavedRequestItem";
 import type { SavedRequest } from "@/lib/request-types";
-
+import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
+import { usePostHog } from "posthog-js/react";
 interface ToolsSidebarProps {
   activeTab: "tools" | "saved";
   onChangeTab: (tab: "tools" | "saved") => void;
@@ -48,6 +49,7 @@ export function ToolsSidebar({
   onDuplicateRequest,
   onDeleteRequest,
 }: ToolsSidebarProps) {
+  const posthog = usePostHog();
   return (
     <ResizablePanel defaultSize={35} minSize={20} maxSize={55}>
       <div className="h-full flex flex-col border-r border-border bg-background">
@@ -93,7 +95,14 @@ export function ToolsSidebar({
               </Badge>
             </div>
             <Button
-              onClick={onRefresh}
+              onClick={() => {
+                posthog.capture("refresh_tools_clicked", {
+                  location: "tools_sidebar",
+                  platform: detectPlatform(),
+                  environment: detectEnvironment(),
+                });
+                onRefresh();
+              }}
               variant="ghost"
               size="sm"
               disabled={fetchingTools}
