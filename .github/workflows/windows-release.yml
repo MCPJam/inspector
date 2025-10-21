@@ -80,6 +80,7 @@ jobs:
         env:
           WINDOWS_PFX_FILE: ${{ runner.temp }}\\codesign.pfx
           WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
+          NODE_OPTIONS: --max-old-space-size=6144
         run: npm run electron:make
         shell: powershell
 
