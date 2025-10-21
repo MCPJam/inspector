@@ -5,6 +5,7 @@ export interface ProviderTokens {
   openai: string;
   deepseek: string;
   google: string;
+  mistral: string;
   ollama: string;
   ollamaBaseUrl: string;
   litellm: string;
@@ -34,6 +35,7 @@ const defaultTokens: ProviderTokens = {
   openai: "",
   deepseek: "",
   google: "",
+  mistral: "",
   ollama: "local", // Ollama runs locally, no API key needed
   ollamaBaseUrl: "http://localhost:11434/api",
   litellm: "", // LiteLLM API key (optional, depends on proxy setup)

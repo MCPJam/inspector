@@ -2,6 +2,7 @@ import { ModelDefinition } from "@/shared/types";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createDeepSeek } from "@ai-sdk/deepseek";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { createMistral } from "@ai-sdk/mistral";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOllama } from "ollama-ai-provider-v2";
 
@@ -33,6 +34,8 @@ export const createLlmModel = (
         : `${raw.replace(/\/+$/, "")}/api`;
       return createOllama({ baseURL: normalized })(modelDefinition.id);
     }
+    case "mistral":
+      return createMistral({ apiKey })(modelDefinition.id);
     case "litellm": {
       // LiteLLM uses OpenAI-compatible endpoints (standard chat completions API)
       const baseURL = litellmBaseUrl || "http://localhost:4000";

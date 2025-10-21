@@ -169,6 +169,7 @@ export function useChat(options: UseChatOptions = {}) {
       openai: hasToken("openai"),
       deepseek: hasToken("deepseek"),
       google: hasToken("google"),
+      mistral: hasToken("mistral"),
       ollama: isOllamaRunning,
       litellm: Boolean(getLiteLLMBaseUrl() && getLiteLLMModelAlias()),
       meta: false,
