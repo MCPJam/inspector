@@ -9,6 +9,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../ui/dialog";
+import { Alert, AlertDescription } from "../ui/alert";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 interface ProviderConfig {
@@ -97,24 +98,23 @@ export function ProviderConfigDialog({
           </div>
 
           {provider?.id === "openai" && (
-            <div className="flex items-start gap-2 p-3 bg-amber-50 dark:bg-amber-950/20 rounded-lg border border-amber-200 dark:border-amber-800">
-              <span className="text-amber-600 dark:text-amber-400 text-sm">
-                <strong>GPT-5 models require organization verification.</strong>{" "}
-                If you encounter access errors, visit{" "}
-                <button
-                  onClick={() =>
-                    window.open(
-                      "https://platform.openai.com/settings/organization/general",
-                      "_blank"
-                    )
-                  }
-                  className="underline hover:no-underline font-medium"
-                >
-                  OpenAI Settings
-                </button>{" "}
-                and verify your organization. Access may take up to 15 minutes after verification.
-              </span>
-            </div>
+            <Alert>
+              <AlertDescription>
+                <p>
+                  <strong>GPT-5 models require organization verification.</strong>{" "}
+                  If you encounter access errors, visit{" "}
+                  <a
+                    href="https://platform.openai.com/settings/organization/general"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline hover:no-underline font-medium align-baseline inline"
+                  >
+                    OpenAI Settings
+                  </a>{" "}
+                  and verify your organization. Access may take up to 15 minutes after verification.
+                </p>
+              </AlertDescription>
+            </Alert>
           )}
         </div>
 
