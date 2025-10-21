@@ -304,7 +304,7 @@ export function ChatTab({
         <div className="flex justify-center gap-2">
           <Button
             onClick={() => {
-              (posthog.capture("create_account", {
+              (posthog.capture("sign_up_button_clicked", {
                 location: "chat_tab",
                 platform: detectPlatform(),
                 environment: detectEnvironment(),
