@@ -40,8 +40,12 @@ export function LiteLLMConfigDialog({
       <DialogContent className="max-w-md">
         <DialogHeader>
           <div className="flex items-center gap-3 mb-4">
-            <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 p-2 flex items-center justify-center">
-              <span className="text-white font-bold text-xl">L</span>
+            <div className="w-12 h-12 rounded-lg bg-white dark:bg-gray-800 p-2 flex items-center justify-center">
+              <img
+                src="/litellm_logo.png"
+                alt="LiteLLM Logo"
+                className="w-full h-full object-contain"
+              />
             </div>
             <div>
               <DialogTitle className="text-left pb-2">

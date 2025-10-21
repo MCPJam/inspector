@@ -8,6 +8,7 @@ import ollamaLogo from "/ollama_logo.svg";
 import ollamaDarkLogo from "/ollama_dark.png";
 import grokLightLogo from "/grok_light.svg";
 import grokDarkLogo from "/grok_dark.png";
+import litellmLogo from "/litellm_logo.png";
 
 export const getProviderLogoFromProvider = (
   provider: string,
@@ -46,8 +47,7 @@ export const getProviderLogoFromProvider = (
       }
       return grokLightLogo;
     case "litellm":
-      // LiteLLM doesn't have a logo file, will be rendered as a colored badge
-      return null;
+      return litellmLogo;
     default:
       return null;
   }

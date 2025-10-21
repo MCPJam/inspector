@@ -34,8 +34,12 @@ export function LiteLLMTableRow({
     >
       <div className="flex items-start justify-between gap-6">
         <div className="flex items-center gap-4">
-          <div className="size-6 rounded bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
-            <span className="text-white font-bold text-xs">L</span>
+          <div className="size-6 rounded bg-white dark:bg-gray-800 p-0.5 flex items-center justify-center">
+            <img
+              src="/litellm_logo.png"
+              alt="LiteLLM Logo"
+              className="w-full h-full object-contain"
+            />
           </div>
           <div className="">
             <h3 className="text-md font-semibold text-foreground pb-1">
