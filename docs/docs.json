@@ -33,7 +33,6 @@
         "icon": "code",
         "pages": [
           "CONTRIBUTING",
-          "contributing/documentation",
           "contributing/onboarding",
           "contributing/system-architecture",
           "contributing/mcp-client-manager",
