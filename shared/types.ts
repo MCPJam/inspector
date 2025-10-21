@@ -105,7 +105,8 @@ export type ModelProvider =
   | "google"
   | "meta"
   | "x-ai"
-  | "litellm";
+  | "litellm"
+  | "mistral";
 
 const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
   "meta-llama/llama-3.3-70b-instruct",
@@ -163,6 +164,15 @@ export enum Model {
   GEMMA_2_27B = "gemma-2-27b",
   CODE_GEMMA_2B = "codegemma-2b",
   CODE_GEMMA_7B = "codegemma-7b",
+  // Mistral models
+  MISTRAL_LARGE_LATEST = "mistral-large-latest",
+  MISTRAL_SMALL_LATEST = "mistral-small-latest",
+  OPEN_MISTRAL_7B = "open-mistral-7b",
+  OPEN_MIXTRAL_8X7B = "open-mixtral-8x7b",
+  OPEN_MIXTRAL_8X22B = "open-mixtral-8x22b",
+  CODESTRAL_LATEST = "codestral-latest",
+  MINISTRAL_8B_LATEST = "ministral-8b-latest",
+  MINISTRAL_3B_LATEST = "ministral-3b-latest",
 }
 
 export const SUPPORTED_MODELS: ModelDefinition[] = [
@@ -257,6 +267,47 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     id: "openai/gpt-5-nano",
     name: "GPT-5 Nano (Free)",
     provider: "openai",
+  },
+  // Mistral models
+  {
+    id: Model.MISTRAL_LARGE_LATEST,
+    name: "Mistral Large",
+    provider: "mistral",
+  },
+  {
+    id: Model.MISTRAL_SMALL_LATEST,
+    name: "Mistral Small",
+    provider: "mistral",
+  },
+  {
+    id: Model.CODESTRAL_LATEST,
+    name: "Codestral",
+    provider: "mistral",
+  },
+  {
+    id: Model.MINISTRAL_8B_LATEST,
+    name: "Ministral 8B",
+    provider: "mistral",
+  },
+  {
+    id: Model.MINISTRAL_3B_LATEST,
+    name: "Ministral 3B",
+    provider: "mistral",
+  },
+  {
+    id: Model.OPEN_MISTRAL_7B,
+    name: "Open Mistral 7B",
+    provider: "mistral",
+  },
+  {
+    id: Model.OPEN_MIXTRAL_8X7B,
+    name: "Open Mixtral 8x7B",
+    provider: "mistral",
+  },
+  {
+    id: Model.OPEN_MIXTRAL_8X22B,
+    name: "Open Mixtral 8x22B",
+    provider: "mistral",
   },
 ];
 
