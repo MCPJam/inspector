@@ -73,7 +73,7 @@ export function ParametersPanel({
             <Button
               onClick={() => {
                 posthog.capture("save_tool_button_clicked", {
-                  location: "tools_tab",
+                  location: "parameters_panel",
                   platform: detectPlatform(),
                   environment: detectEnvironment(),
                 });
