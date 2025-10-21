@@ -361,7 +361,29 @@ export function useChat(options: UseChatOptions = {}) {
           break;
         }
         case "error": {
-          throw new Error(evt.error);
+          // Add error as a content block instead of throwing
+          contentBlocksRef.current = [
+            ...contentBlocksRef.current,
+            {
+              id: `error-${Date.now()}`,
+              type: "error" as const,
+              content: evt.error,
+              timestamp: new Date(),
+            },
+          ];
+
+          setState((prev) => ({
+            ...prev,
+            messages: prev.messages.map((msg) =>
+              msg.id === assistantMessage.id
+                ? {
+                    ...msg,
+                    contentBlocks: [...contentBlocksRef.current],
+                  }
+                : msg,
+            ),
+          }));
+          break;
         }
       }
     },

@@ -242,6 +242,25 @@ const PureMessage = ({
                           />
                         </motion.div>
                       );
+                    } else if (block.type === "error" && block.content) {
+                      return (
+                        <motion.div
+                          key={block.id}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.3, delay: index * 0.05 }}
+                          className="p-4 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-lg"
+                        >
+                          <div className="flex items-start gap-3">
+                            <div className="text-red-600 dark:text-red-400 font-semibold shrink-0">
+                              Error:
+                            </div>
+                            <div className="text-sm text-red-700 dark:text-red-300 whitespace-pre-wrap break-words">
+                              {block.content}
+                            </div>
+                          </div>
+                        </motion.div>
+                      );
                     }
                     return null;
                   })}
