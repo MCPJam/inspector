@@ -7,6 +7,9 @@ export interface ProviderTokens {
   google: string;
   ollama: string;
   ollamaBaseUrl: string;
+  litellm: string;
+  litellmBaseUrl: string;
+  litellmModelAlias: string;
 }
 
 export interface useAiProviderKeysReturn {
@@ -18,6 +21,10 @@ export interface useAiProviderKeysReturn {
   getToken: (provider: keyof ProviderTokens) => string;
   getOllamaBaseUrl: () => string;
   setOllamaBaseUrl: (url: string) => void;
+  getLiteLLMBaseUrl: () => string;
+  setLiteLLMBaseUrl: (url: string) => void;
+  getLiteLLMModelAlias: () => string;
+  setLiteLLMModelAlias: (alias: string) => void;
 }
 
 const STORAGE_KEY = "mcp-inspector-provider-tokens";
@@ -29,6 +36,9 @@ const defaultTokens: ProviderTokens = {
   google: "",
   ollama: "local", // Ollama runs locally, no API key needed
   ollamaBaseUrl: "http://localhost:11434/api",
+  litellm: "", // LiteLLM API key (optional, depends on proxy setup)
+  litellmBaseUrl: "http://localhost:4000", // Default LiteLLM proxy URL
+  litellmModelAlias: "", // Model name/alias to use with LiteLLM
 };
 
 export function useAiProviderKeys(): useAiProviderKeysReturn {
@@ -111,6 +121,28 @@ export function useAiProviderKeys(): useAiProviderKeysReturn {
     }));
   }, []);
 
+  const getLiteLLMBaseUrl = useCallback(() => {
+    return tokens.litellmBaseUrl || defaultTokens.litellmBaseUrl;
+  }, [tokens.litellmBaseUrl]);
+
+  const setLiteLLMBaseUrl = useCallback((url: string) => {
+    setTokens((prev) => ({
+      ...prev,
+      litellmBaseUrl: url,
+    }));
+  }, []);
+
+  const getLiteLLMModelAlias = useCallback(() => {
+    return tokens.litellmModelAlias || defaultTokens.litellmModelAlias;
+  }, [tokens.litellmModelAlias]);
+
+  const setLiteLLMModelAlias = useCallback((alias: string) => {
+    setTokens((prev) => ({
+      ...prev,
+      litellmModelAlias: alias,
+    }));
+  }, []);
+
   return {
     tokens,
     setToken,
@@ -120,5 +152,9 @@ export function useAiProviderKeys(): useAiProviderKeysReturn {
     getToken,
     getOllamaBaseUrl,
     setOllamaBaseUrl,
+    getLiteLLMBaseUrl,
+    setLiteLLMBaseUrl,
+    getLiteLLMModelAlias,
+    setLiteLLMModelAlias,
   };
 }
