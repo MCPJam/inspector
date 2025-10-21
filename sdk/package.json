@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/sdk",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "type": "module",
   "description": "Official MCPJam SDK with reusable client utilities",
   "license": "Apache-2.0",
@@ -34,15 +34,13 @@
   "sideEffects": false,
   "scripts": {
     "clean": "rm -rf dist",
-    "clean:all": "npm run clean --silent && npm run --prefix ./mcp-client-manager clean --silent",
-    "build": "npm run build:packages && npm run build:bundle",
-    "build:bundle": "tsup index.ts mcp-client-manager/index.ts --clean --format esm,cjs --dts --sourcemap --out-dir dist --external @modelcontextprotocol/sdk --external ai",
-    "build:packages": "npm run --prefix ./mcp-client-manager build",
-    "dev": "tsup index.ts mcp-client-manager/index.ts --watch --format esm,cjs --dts --sourcemap --out-dir dist --external @modelcontextprotocol/sdk --external ai",
+    "build": "npm run clean --silent && tsup --config tsup.config.ts",
+    "dev": "tsup --config tsup.config.ts --watch",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.17.3"
+    "@modelcontextprotocol/sdk": "^1.17.3",
+    "ai": "^5.0.76"
   },
   "devDependencies": {
     "tsup": "^8.3.5",
