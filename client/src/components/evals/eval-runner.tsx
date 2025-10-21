@@ -715,6 +715,7 @@ export function EvalRunner({
                                 const rawValue = event.target.value;
                                 const processed = rawValue
                                   .split(",")
+                                  .map((entry) => entry.trim());
                                 handleUpdateTestCase(
                                   index,
                                   "expectedToolCalls",
