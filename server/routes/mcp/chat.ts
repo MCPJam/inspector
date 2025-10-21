@@ -1,5 +1,6 @@
 import { Hono } from "hono";
-import { streamText } from "ai";
+import { LanguageModel, streamText, tool } from "ai";
+import { z } from "zod";
 import {
   ChatMessage,
   ModelDefinition,
@@ -8,7 +9,10 @@ import {
 } from "../../../shared/types";
 import { TextEncoder } from "util";
 import { getDefaultTemperatureByProvider } from "../../../client/src/lib/chat-utils";
-import { createLlmModel } from "../../utils/chat-helpers";
+import {
+  createLlmModel,
+  createEmbeddingModel,
+} from "../../utils/chat-helpers";
 import { SSEvent } from "../../../shared/sse";
 import type { ModelMessage, ToolSet } from "ai";
 import { executeToolCallsFromMessages } from "@/shared/http-tool-calls";
@@ -18,7 +22,13 @@ import {
   runBackendConversation,
 } from "@/shared/backend-conversation";
 import zodToJsonSchema from "zod-to-json-schema";
-import { MCPClientManager } from "@/sdk";
+import {
+  MCPClientManager,
+  MCPResource,
+  MCPResourceContent,
+  MCPResourceTemplate,
+} from "@/sdk";
+import { findRelevantResources } from "@/shared/resources";
 
 // Types
 interface ElicitationResponse {
@@ -58,6 +68,19 @@ const ELICITATION_TIMEOUT = 300000; // 5 minutes
 const MAX_AGENT_STEPS = 10;
 const BACKEND_FETCH_ERROR_MESSAGE =
   "We are having difficulties processing your message right now. Please try again later.";
+
+const getEmbeddingModel = (provider: string) => {
+  switch (provider) {
+    case "google":
+      return "gemini-embedding-001";
+    case "openai":
+      return "text-embedding-3-small";
+    case "deepseek":
+      return "deepseek-embedder";
+    default:
+      return null;
+  }
+};
 
 try {
   (process as any).setMaxListeners?.(50);
@@ -739,17 +762,123 @@ chat.post("/", async (c) => {
               requestData.selectedServers,
             );
           } else {
-            // Use existing streaming path with tools
-            // Get toolsets with server mapping (reusing pattern from sendMessagesToBackend)
-            const toolsets = await mcpClientManager.getToolsForAiSdk(
-              requestData.selectedServers,
-            );
-
             const llmModel = createLlmModel(
               model as ModelDefinition,
               apiKey || "",
               _ollama_unused,
             );
+
+            const embeddingModelName = getEmbeddingModel(model.provider);
+
+            // Get latest user message for RAG
+            const userMessage =
+              messages.length > 0 ? messages[messages.length - 1].content : "";
+
+            let relevantResources: MCPResource[] = [];
+            // Only perform RAG if we successfully created an embedding model.
+            if (embeddingModelName) {
+              const embeddingModelInstance = createEmbeddingModel(
+                model.provider,
+                embeddingModelName,
+                apiKey || "",
+              );
+              const allResources = await mcpClientManager.getResources(
+                requestData.selectedServers,
+              );
+              relevantResources = await findRelevantResources(
+                userMessage,
+                allResources,
+                embeddingModelInstance,
+              );
+            }
+
+            // Build context for system prompt
+            let resourcesContext = "";
+            if (relevantResources.length > 0) {
+              resourcesContext =
+                "Based on the user's query, the following resources might be relevant:\n" +
+                relevantResources
+                  .map(
+                    (r) =>
+                      `- ${r.name} (uri: ${r.uri}, server: ${(r as any)._serverId}): ${r.description || "No description"}`,
+                  )
+                  .join("\n");
+            }
+
+            const allResourceTemplates =
+              await mcpClientManager.getResourceTemplates(
+                requestData.selectedServers,
+              );
+
+            if (allResourceTemplates.length > 0) {
+              if (resourcesContext) {
+                resourcesContext += "\n\n";
+              }
+              resourcesContext +=
+                "Additionally, the following resource templates are available for dynamic data access. To use one, construct a URI by replacing the placeholders (e.g., {path}) with specific values:\n" +
+                allResourceTemplates
+                  .map(
+                    (t: MCPResourceTemplate) =>
+                      `- ${t.name} (uriTemplate: ${t.uriTemplate}, server: ${(t as any)._serverId}): ${t.description || "No description"}`,
+                  )
+                  .join("\n");
+            }
+
+            if (resourcesContext.length > 0) {
+              resourcesContext +=
+                "\nUse the readResource tool with the appropriate uri and server to access their content if needed.";
+            }
+
+            const finalSystemPrompt = [systemPrompt, resourcesContext]
+              .filter(Boolean)
+              .join("\n\n");
+
+            // Get toolsets with server mapping
+            const toolsets = await mcpClientManager.getToolsForAiSdk(
+              requestData.selectedServers,
+            );
+
+            // Add the readResource tool dynamically
+            toolsets["readResource"] = tool({
+              description:
+                "Reads the content of a specific resource using its URI to get information to answer the user's question.",
+              inputSchema: z.object({
+                uri: z
+                  .string()
+                  .describe("The unique URI of the resource to read."),
+                server: z
+                  .string()
+                  .describe(
+                    "The ID of the server where the resource is located.",
+                  ),
+              }),
+              execute: async ({ uri, server }) => {
+                const readResult = await mcpClientManager.readResource(
+                  server,
+                  { uri },
+                );
+
+                if (readResult?.structuredContent) {
+                  try {
+                    return JSON.stringify(readResult?.structuredContent);
+                  } catch (e) {
+                    return "Error: Could not serialize structured content.";
+                  }
+                }
+
+                const content: MCPResourceContent | undefined =
+                  readResult?.contents[0];
+
+                if (!content) {
+                  return { error: "Resource content not found." };
+                }
+
+                return (
+                  content.text || `Binary content of type ${content.mimeType}`
+                );
+              },
+            });
+
             await createStreamingResponse(
               llmModel,
               toolsets as ToolSet,
@@ -758,7 +887,7 @@ chat.post("/", async (c) => {
               provider,
               toolsets,
               temperature,
-              systemPrompt,
+              finalSystemPrompt,
             );
           }
         } catch (error) {
@@ -801,3 +930,4 @@ chat.post("/", async (c) => {
 });
 
 export default chat;
+
