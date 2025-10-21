@@ -331,6 +331,19 @@ resources.get("/widget-content/:toolId", async (c) => {
             async sendFollowUpMessage(args) {
               const prompt = typeof args === 'string' ? args : (args?.prompt || '');
               return this.sendFollowupTurn(prompt);
+            },
+
+            async openExternal(options) {
+              const href = typeof options === 'string' ? options : options?.href;
+              if (!href) {
+                throw new Error('href is required for openExternal');
+              }
+              window.parent.postMessage({
+                type: 'openai:openExternal',
+                href
+              }, '*');
+              // Also open in new tab as fallback
+              window.open(href, '_blank', 'noopener,noreferrer');
             }
           };
 
