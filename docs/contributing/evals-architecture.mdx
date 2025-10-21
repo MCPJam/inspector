@@ -1,7 +1,7 @@
 ---
-title: 'Evals System Architecture'
-description: 'Comprehensive guide to the evaluation system architecture in MCPJam Inspector'
-icon: 'flask'
+title: "Evals System Architecture"
+description: "Comprehensive guide to the evaluation system architecture in MCPJam Inspector"
+icon: "flask"
 ---
 
 # Evals System Architecture
@@ -11,6 +11,7 @@ The Evals system in MCPJam Inspector is a comprehensive testing framework design
 ## Overview
 
 The Evals system allows developers to:
+
 - **Run automated tests** against MCP servers to validate tool implementations
 - **Generate test cases** using AI based on available server tools
 - **Track results** in real-time with detailed metrics and analytics
@@ -216,6 +217,7 @@ flowchart TD
 ```
 
 **Key Functions:**
+
 - `resolveServerIdsOrThrow()`: Case-insensitive server ID matching
 - `transformServerConfigsToEnvironment()`: Converts server manager format to CLI format
 - `transformLLMConfigToLlmsConfig()`: Routes API keys appropriately
@@ -355,6 +357,7 @@ sequenceDiagram
 ```
 
 **Key Features:**
+
 - Max 20 conversation turns to prevent infinite loops
 - Token usage tracking (prompt + completion)
 - Duration measurement
@@ -369,29 +372,30 @@ Compares expected vs actual tool calls to determine pass/fail status.
 ```typescript
 function evaluateResults(
   expectedToolCalls: string[],
-  actualToolCalls: string[]
+  actualToolCalls: string[],
 ): {
-  passed: boolean
-  missing: string[]
-  unexpected: string[]
+  passed: boolean;
+  missing: string[];
+  unexpected: string[];
 } {
-  const passed = expectedToolCalls.every(tool =>
-    actualToolCalls.includes(tool)
-  )
+  const passed = expectedToolCalls.every((tool) =>
+    actualToolCalls.includes(tool),
+  );
 
-  const missing = expectedToolCalls.filter(tool =>
-    !actualToolCalls.includes(tool)
-  )
+  const missing = expectedToolCalls.filter(
+    (tool) => !actualToolCalls.includes(tool),
+  );
 
-  const unexpected = actualToolCalls.filter(tool =>
-    !expectedToolCalls.includes(tool)
-  )
+  const unexpected = actualToolCalls.filter(
+    (tool) => !expectedToolCalls.includes(tool),
+  );
 
-  return { passed, missing, unexpected }
+  return { passed, missing, unexpected };
 }
 ```
 
 **Pass Criteria:**
+
 - ✅ All expected tools must be called
 - ⚠️ Additional unexpected tools are allowed (marked but don't fail)
 
@@ -409,28 +413,26 @@ Database interface for persisting evaluation results.
 ```typescript
 interface RunRecorder {
   ensureSuite(config: EvalConfig): Promise<{
-    suiteId: string
-    caseIdsByTitle: Map<string, string>
-  }>
+    suiteId: string;
+    caseIdsByTitle: Map<string, string>;
+  }>;
 
   recordTestCase(
     suiteId: string,
-    testCase: TestCase
-  ): Promise<string | undefined>
+    testCase: TestCase,
+  ): Promise<string | undefined>;
 
-  startIteration(
-    testCaseId: string
-  ): Promise<string | undefined>
+  startIteration(testCaseId: string): Promise<string | undefined>;
 
   finishIteration(
     iterationId: string,
     result: {
-      result: "passed" | "failed" | "cancelled"
-      actualToolCalls: string[]
-      tokensUsed: number
-      durationMs: number
-    }
-  ): Promise<void>
+      result: "passed" | "failed" | "cancelled";
+      actualToolCalls: string[];
+      tokensUsed: number;
+      durationMs: number;
+    },
+  ): Promise<void>;
 }
 ```
 
@@ -516,49 +518,49 @@ erDiagram
 ```typescript
 // Suite configuration
 type EvalSuite = {
-  _id: string
-  createdBy: string  // User ID from auth
+  _id: string;
+  createdBy: string; // User ID from auth
   config: {
-    tests: EvalCase[]
+    tests: EvalCase[];
     environment: {
-      servers: string[]
-    }
-  }
-  _creationTime: number
-}
+      servers: string[];
+    };
+  };
+  _creationTime: number;
+};
 
 // Individual test case
 type EvalCase = {
-  _id: string
-  evalTestSuiteId: string  // FK to EvalSuite
-  title: string
-  query: string
-  provider: string
-  model: string
-  expectedToolCalls: string[]
-  judgeRequirement?: string
+  _id: string;
+  evalTestSuiteId: string; // FK to EvalSuite
+  title: string;
+  query: string;
+  provider: string;
+  model: string;
+  expectedToolCalls: string[];
+  judgeRequirement?: string;
   advancedConfig?: {
-    system?: string
-    temperature?: number
-    toolChoice?: string
-  }
-}
+    system?: string;
+    temperature?: number;
+    toolChoice?: string;
+  };
+};
 
 // Single test run result
 type EvalIteration = {
-  _id: string
-  testCaseId: string  // FK to EvalCase
-  status: "pending" | "running" | "completed" | "failed" | "cancelled"
-  result: "pending" | "passed" | "failed" | "cancelled"
-  actualToolCalls: string[]
-  missing: string[]  // Expected tools not called
-  unexpected: string[]  // Unexpected tools called
-  tokensUsed: number
-  durationMs: number
-  startedAt?: number
-  updatedAt: number
-  createdAt: number
-}
+  _id: string;
+  testCaseId: string; // FK to EvalCase
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  result: "pending" | "passed" | "failed" | "cancelled";
+  actualToolCalls: string[];
+  missing: string[]; // Expected tools not called
+  unexpected: string[]; // Unexpected tools called
+  tokensUsed: number;
+  durationMs: number;
+  startedAt?: number;
+  updatedAt: number;
+  createdAt: number;
+};
 ```
 
 ---
@@ -651,6 +653,7 @@ sequenceDiagram
 **Transport Support:**
 
 1. **STDIO**: Command execution with stdin/stdout
+
    ```typescript
    {
      transport: "stdio",
@@ -660,6 +663,7 @@ sequenceDiagram
    ```
 
 2. **HTTP/SSE**: Server-Sent Events
+
    ```typescript
    {
      transport: "sse",
@@ -731,22 +735,28 @@ evals:getAllTestCasesAndIterationsBySuite(
 ```typescript
 const LlmsConfigSchema = z.object({
   // Add your provider
-  myProvider: z.object({
-    apiKey: z.string(),
-    model: z.string()
-  }).optional()
-})
+  myProvider: z
+    .object({
+      apiKey: z.string(),
+      model: z.string(),
+    })
+    .optional(),
+});
 ```
 
 2. **Add provider case** in `evals-cli/src/evals/runner.ts`:
 
 ```typescript
-function getModelForProvider(llms: LlmsConfig, provider: string, modelId: string) {
+function getModelForProvider(
+  llms: LlmsConfig,
+  provider: string,
+  modelId: string,
+) {
   switch (provider) {
     case "myProvider":
       return myProvider.chat(modelId, {
-        apiKey: llms.myProvider?.apiKey
-      })
+        apiKey: llms.myProvider?.apiKey,
+      });
     // ...
   }
 }
@@ -759,11 +769,9 @@ const availableModels: ModelDefinition[] = [
   {
     provider: "MyProvider",
     providerId: "myProvider",
-    models: [
-      { name: "My Model", id: "my-model-v1" }
-    ]
-  }
-]
+    models: [{ name: "My Model", id: "my-model-v1" }],
+  },
+];
 ```
 
 ### Adding a New MCP Transport
@@ -775,13 +783,13 @@ const MyTransportSchema = z.object({
   type: z.literal("my-transport"),
   endpoint: z.string().url(),
   // Add transport-specific config
-})
+});
 
 export const ServerDefinitionSchema = z.discriminatedUnion("type", [
   StdioServerDefinitionSchema,
   HttpServerDefinitionSchema,
-  MyTransportSchema  // Add new transport
-])
+  MyTransportSchema, // Add new transport
+]);
 ```
 
 2. **Implement transport** in Mastra MCP client (external library).
@@ -791,10 +799,10 @@ export const ServerDefinitionSchema = z.discriminatedUnion("type", [
 ```typescript
 function transformServerConfigsToEnvironment(
   serverIds: string[],
-  clientManager: MCPClientManager
+  clientManager: MCPClientManager,
 ): MCPClientOptions {
   for (const serverId of serverIds) {
-    const server = clientManager.getServer(serverId)
+    const server = clientManager.getServer(serverId);
 
     if (server.transport.type === "my-transport") {
       // Transform to CLI format
@@ -809,12 +817,12 @@ function transformServerConfigsToEnvironment(
 
 ```typescript
 // In runner.ts
-const DEBUG = true
+const DEBUG = true;
 
 if (DEBUG) {
-  console.log("LLM Response:", response)
-  console.log("Tool Calls:", toolCalls)
-  console.log("Message History:", messages)
+  console.log("LLM Response:", response);
+  console.log("Tool Calls:", toolCalls);
+  console.log("Message History:", messages);
 }
 ```
 
@@ -822,8 +830,8 @@ if (DEBUG) {
 
 ```typescript
 // In runner.ts
-console.log("Available tools:", tools)
-console.log("Server status:", mcpClient.getConnectionStatus())
+console.log("Available tools:", tools);
+console.log("Server status:", mcpClient.getConnectionStatus());
 ```
 
 ### Testing Changes
@@ -854,16 +862,19 @@ mcpjam evals run \
 ### Common Issues
 
 **Issue: Test cases are not created**
+
 - Check Convex auth token validity
 - Verify `CONVEX_URL` and `CONVEX_HTTP_URL` environment variables
 - Inspect browser network tab for failed requests
 
 **Issue: Tools are not being called**
+
 - Verify server connection status in ClientManager
 - Check tool definitions in `listTools()` response
 - Ensure tool names match exactly (case-sensitive)
 
 **Issue: Backend LLM fails**
+
 - Confirm `/streaming` endpoint is accessible
 - Check Convex auth token in request headers
 - Verify model ID format (`@mcpjam/...`)
@@ -875,29 +886,28 @@ mcpjam evals run \
 ### Optimization Strategies
 
 1. **Parallel Execution**: Run multiple test cases concurrently
+
    ```typescript
-   await Promise.all(
-     testCases.map(testCase => runTestCase(testCase))
-   )
+   await Promise.all(testCases.map((testCase) => runTestCase(testCase)));
    ```
 
 2. **Tool Batching**: Execute independent tools in parallel
+
    ```typescript
    const results = await Promise.all(
-     toolCalls.map(call => mcpClient.callTool(call))
-   )
+     toolCalls.map((call) => mcpClient.callTool(call)),
+   );
    ```
 
 3. **Database Batching**: Batch iteration updates
+
    ```typescript
-   await Promise.all(
-     iterations.map(it => recorder.finishIteration(it))
-   )
+   await Promise.all(iterations.map((it) => recorder.finishIteration(it)));
    ```
 
 4. **Caching**: Cache tool definitions between iterations
    ```typescript
-   const toolsCache = new Map<string, Tool[]>()
+   const toolsCache = new Map<string, Tool[]>();
    ```
 
 ### Metrics
@@ -932,8 +942,8 @@ const TestCaseSchema = z.object({
   title: z.string().min(1).max(200),
   query: z.string().min(1),
   runs: z.number().int().positive().max(100),
-  expectedToolCalls: z.array(z.string()).min(1)
-})
+  expectedToolCalls: z.array(z.string()).min(1),
+});
 ```
 
 ### Error Handling
@@ -962,19 +972,19 @@ Potential areas for contribution:
 
 ## Glossary
 
-| Term | Definition |
-|------|------------|
-| **Eval Suite** | A collection of test cases executed together |
-| **Test Case** | A single test with a query and expected tool calls |
-| **Iteration** | One execution of a test case (test cases can have multiple runs) |
-| **Agentic Loop** | Iterative LLM conversation with tool calling |
-| **Tool Call** | Invocation of an MCP server tool by the LLM |
-| **Expected Tools** | Tools that should be called for a test to pass |
-| **Actual Tools** | Tools that were actually called during execution |
-| **Missing Tools** | Expected tools that were not called (causes failure) |
-| **Unexpected Tools** | Tools called but not expected (logged, doesn't fail) |
-| **RunRecorder** | Interface for persisting eval results to database |
-| **MCPClient** | Mastra client for communicating with MCP servers |
+| Term                 | Definition                                                       |
+| -------------------- | ---------------------------------------------------------------- |
+| **Eval Suite**       | A collection of test cases executed together                     |
+| **Test Case**        | A single test with a query and expected tool calls               |
+| **Iteration**        | One execution of a test case (test cases can have multiple runs) |
+| **Agentic Loop**     | Iterative LLM conversation with tool calling                     |
+| **Tool Call**        | Invocation of an MCP server tool by the LLM                      |
+| **Expected Tools**   | Tools that should be called for a test to pass                   |
+| **Actual Tools**     | Tools that were actually called during execution                 |
+| **Missing Tools**    | Expected tools that were not called (causes failure)             |
+| **Unexpected Tools** | Tools called but not expected (logged, doesn't fail)             |
+| **RunRecorder**      | Interface for persisting eval results to database                |
+| **MCPClient**        | Mastra client for communicating with MCP servers                 |
 
 ---
 
@@ -994,4 +1004,3 @@ If you have questions or need help contributing:
 1. Check the [GitHub Issues](https://github.com/MCPJam/inspector/issues)
 2. Join our [Discord community](https://discord.gg/JEnDtz8X6z)
 3. Read the main [Contributing Guide](./CONTRIBUTING.md)
-
