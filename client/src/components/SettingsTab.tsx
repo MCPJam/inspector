@@ -81,7 +81,7 @@ export function SettingsTab() {
     {
       id: "mistral",
       name: "Mistral AI",
-      logo: "/mistral_logo.svg",
+      logo: "/mistral_logo.png",
       logoAlt: "Mistral AI",
       description: "Mistral Large, Mistral Small, Codestral, etc.",
       placeholder: "...",

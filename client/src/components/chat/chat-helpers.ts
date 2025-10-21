@@ -4,7 +4,7 @@ import openaiLogo from "/openai_logo.png";
 import deepseekLogo from "/deepseek_logo.svg";
 import googleLogo from "/google_logo.png";
 import metaLogo from "/meta_logo.svg";
-import mistralLogo from "/mistral_logo.svg";
+import mistralLogo from "/mistral_logo.png";
 import ollamaLogo from "/ollama_logo.svg";
 import ollamaDarkLogo from "/ollama_dark.png";
 import grokLightLogo from "/grok_light.svg";
