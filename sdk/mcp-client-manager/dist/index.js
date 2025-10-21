@@ -9592,28 +9592,28 @@ var $ZodFunction = class {
     if (typeof func !== "function") {
       throw new Error("implement() must be called with a function");
     }
-    const impl = (...args) => {
+    const impl = ((...args) => {
       const parsedArgs = this._def.input ? parse(this._def.input, args, void 0, { callee: impl }) : args;
       if (!Array.isArray(parsedArgs)) {
         throw new Error("Invalid arguments schema: not an array or tuple schema.");
       }
       const output = func(...parsedArgs);
       return this._def.output ? parse(this._def.output, output, void 0, { callee: impl }) : output;
-    };
+    });
     return impl;
   }
   implementAsync(func) {
     if (typeof func !== "function") {
       throw new Error("implement() must be called with a function");
     }
-    const impl = async (...args) => {
+    const impl = (async (...args) => {
       const parsedArgs = this._def.input ? await parseAsync(this._def.input, args, void 0, { callee: impl }) : args;
       if (!Array.isArray(parsedArgs)) {
         throw new Error("Invalid arguments schema: not an array or tuple schema.");
       }
       const output = await func(...parsedArgs);
       return this._def.output ? parseAsync(this._def.output, output, void 0, { callee: impl }) : output;
-    };
+    });
     return impl;
   }
   input(...args) {
@@ -9661,8 +9661,8 @@ var JSONSchemaGenerator = class {
     this.metadataRegistry = (_a17 = params == null ? void 0 : params.metadata) != null ? _a17 : globalRegistry;
     this.target = (_b = params == null ? void 0 : params.target) != null ? _b : "draft-2020-12";
     this.unrepresentable = (_c = params == null ? void 0 : params.unrepresentable) != null ? _c : "throw";
-    this.override = (_d = params == null ? void 0 : params.override) != null ? _d : () => {
-    };
+    this.override = (_d = params == null ? void 0 : params.override) != null ? _d : (() => {
+    });
     this.io = (_e = params == null ? void 0 : params.io) != null ? _e : "output";
     this.seen = /* @__PURE__ */ new Map();
   }
@@ -10152,7 +10152,7 @@ var JSONSchemaGenerator = class {
       const defsSegment = this.target === "draft-2020-12" ? "$defs" : "definitions";
       if (params.external) {
         const externalId = (_a18 = params.external.registry.get(entry[0])) == null ? void 0 : _a18.id;
-        const uriGenerator = (_b2 = params.external.uri) != null ? _b2 : (id2) => id2;
+        const uriGenerator = (_b2 = params.external.uri) != null ? _b2 : ((id2) => id2);
         if (externalId) {
           return { ref: uriGenerator(externalId) };
         }
@@ -10529,10 +10529,10 @@ var ZodType = /* @__PURE__ */ $constructor("ZodType", (inst, def) => {
   };
   inst.clone = (def2, params) => clone(inst, def2, params);
   inst.brand = () => inst;
-  inst.register = (reg, meta) => {
+  inst.register = ((reg, meta) => {
     reg.add(inst, meta);
     return inst;
-  };
+  });
   inst.parse = (data, params) => parse2(inst, data, params, { callee: inst.parse });
   inst.safeParse = (data, params) => safeParse2(inst, data, params);
   inst.parseAsync = async (data, params) => parseAsync2(inst, data, params, { callee: inst.parseAsync });
@@ -11398,7 +11398,7 @@ function check(fn) {
   return ch;
 }
 function custom(fn, _params) {
-  return _custom(ZodCustom, fn != null ? fn : () => true, _params);
+  return _custom(ZodCustom, fn != null ? fn : (() => true), _params);
 }
 function refine(fn, _params = {}) {
   return _refine(ZodCustom, fn, _params);
