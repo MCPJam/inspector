@@ -9,7 +9,7 @@ import { useLoginPage } from "@/hooks/use-log-in-page";
 import { useEffect } from "react";
 
 export default function LoginPage() {
-  const { signUp } = useAuth();
+  const { signUp, signIn } = useAuth();
   const posthog = usePostHog();
   const themeMode = usePreferencesStore((state) => state.themeMode);
   const { hideLoginPage } = useLoginPage();
@@ -34,6 +34,15 @@ export default function LoginPage() {
     signUp();
   };
 
+  const handleLogin = () => {
+    posthog.capture("login_button_clicked", {
+      location: "login_page",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+    });
+    signIn();
+  };
+
   return (
     <div className="min-h-screen bg-background">
       <div className="mx-auto flex min-h-screen max-w-xl flex-col items-center justify-center px-6 text-center">
@@ -47,13 +56,23 @@ export default function LoginPage() {
         </button>
         <img src={logoSrc} alt="MCPJam" className="h-10 w-auto mb-2" />
         <div className="space-y-4 mb-12"></div>
-        <Button
-          size="lg"
-          onClick={handleSignUp}
-          className="px-16 py-6 text-lg mb-6"
-        >
-          Sign up
-        </Button>
+        <div className="flex flex-col gap-3 w-full max-w-sm mb-6">
+          <Button
+            size="lg"
+            variant="outline"
+            onClick={handleLogin}
+            className="px-16 py-6 text-lg w-full"
+          >
+            Log in
+          </Button>
+          <Button
+            size="lg"
+            onClick={handleSignUp}
+            className="px-16 py-6 text-lg w-full"
+          >
+            Sign up
+          </Button>
+        </div>
         <button
           type="button"
           className="text-sm text-muted-foreground/80 underline hover:text-muted-foreground transition-colors cursor-pointer"
