@@ -311,7 +311,6 @@ export function ChatTab({
               }),
                 signUp());
             }}
-            style={{ backgroundColor: "#E55A3A" }}
             className="hover:opacity-90 cursor-pointer"
           >
             Create account
