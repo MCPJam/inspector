@@ -10,10 +10,18 @@ import { FuseV1Options, FuseVersion } from "@electron/fuses";
 import { resolve } from "path";
 
 const enableMacSigning = process.platform === "darwin";
+const macSignIdentity = process.env.MAC_CODESIGN_IDENTITY?.trim();
 
-const osxSignOptions = enableMacSigning
+if (enableMacSigning && !macSignIdentity) {
+  // eslint-disable-next-line no-console
+  console.warn(
+    "[forge] MAC_CODESIGN_IDENTITY not set - macOS build will be ad-hoc signed only. Set MAC_CODESIGN_IDENTITY for distributable builds.",
+  );
+}
+
+const osxSignOptions = enableMacSigning && macSignIdentity
   ? {
-      identity: process.env.MAC_CODESIGN_IDENTITY || "Developer ID Application",
+      identity: macSignIdentity,
       "hardened-runtime": true,
       entitlements: resolve(__dirname, "assets", "entitlements.mac.plist"),
       "entitlements-inherit": resolve(
@@ -25,7 +33,7 @@ const osxSignOptions = enableMacSigning
     }
   : undefined;
 
-const osxNotarizeOptions = enableMacSigning
+const osxNotarizeOptions = enableMacSigning && macSignIdentity
   ? process.env.APPLE_API_KEY_ID &&
     process.env.APPLE_API_ISSUER_ID &&
     process.env.APPLE_API_KEY_FILE
@@ -144,6 +152,7 @@ const config: ForgeConfig = {
     // at package time, before code signing the application
     new FusesPlugin({
       version: FuseVersion.V1,
+      resetAdHocDarwinSignature: true,
       [FuseV1Options.RunAsNode]: false,
       [FuseV1Options.EnableCookieEncryption]: true,
       [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
