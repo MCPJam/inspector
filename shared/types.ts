@@ -105,6 +105,7 @@ export type ModelProvider =
   | "google"
   | "meta"
   | "x-ai"
+  | "xai"
   | "litellm"
   | "mistral";
 
@@ -170,6 +171,23 @@ export enum Model {
   CODESTRAL_LATEST = "codestral-latest",
   MINISTRAL_8B_LATEST = "ministral-8b-latest",
   MINISTRAL_3B_LATEST = "ministral-3b-latest",
+  // xAI models
+  GROK_4_FAST_NON_REASONING = "grok-4-fast-non-reasoning",
+  GROK_4_FAST_REASONING = "grok-4-fast-reasoning",
+  GROK_CODE_FAST_1 = "grok-code-fast-1",
+  GROK_4 = "grok-4",
+  GROK_3 = "grok-3",
+  GROK_3_LATEST = "grok-3-latest",
+  GROK_3_FAST = "grok-3-fast",
+  GROK_3_FAST_LATEST = "grok-3-fast-latest",
+  GROK_3_MINI = "grok-3-mini",
+  GROK_3_MINI_LATEST = "grok-3-mini-latest",
+  GROK_3_MINI_FAST = "grok-3-mini-fast",
+  GROK_3_MINI_FAST_LATEST = "grok-3-mini-fast-latest",
+  GROK_2 = "grok-2",
+  GROK_2_LATEST = "grok-2-latest",
+  GROK_2_VISION = "grok-2-vision",
+  GROK_2_VISION_LATEST = "grok-2-vision-latest",
 }
 
 export const SUPPORTED_MODELS: ModelDefinition[] = [
@@ -290,6 +308,87 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     id: Model.MINISTRAL_3B_LATEST,
     name: "Ministral 3B",
     provider: "mistral",
+  },
+  // xAI models
+  {
+    id: Model.GROK_4_FAST_NON_REASONING,
+    name: "Grok 4 Fast (Non-Reasoning)",
+    provider: "xai",
+  },
+  {
+    id: Model.GROK_4_FAST_REASONING,
+    name: "Grok 4 Fast (Reasoning)",
+    provider: "xai",
+  },
+  {
+    id: Model.GROK_CODE_FAST_1,
+    name: "Grok Code Fast 1",
+    provider: "xai",
+  },
+  {
+    id: Model.GROK_4,
+    name: "Grok 4",
+    provider: "xai",
+  },
+  {
+    id: Model.GROK_3,
+    name: "Grok 3",
+    provider: "xai",
+  },
+  {
+    id: Model.GROK_3_LATEST,
+    name: "Grok 3 (Latest)",
+    provider: "xai",
+  },
+  {
+    id: Model.GROK_3_FAST,
+    name: "Grok 3 Fast",
+    provider: "xai",
+  },
+  {
+    id: Model.GROK_3_FAST_LATEST,
+    name: "Grok 3 Fast (Latest)",
+    provider: "xai",
+  },
+  {
+    id: Model.GROK_3_MINI,
+    name: "Grok 3 Mini",
+    provider: "xai",
+  },
+  {
+    id: Model.GROK_3_MINI_LATEST,
+    name: "Grok 3 Mini (Latest)",
+    provider: "xai",
+  },
+  {
+    id: Model.GROK_3_MINI_FAST,
+    name: "Grok 3 Mini Fast",
+    provider: "xai",
+  },
+  {
+    id: Model.GROK_3_MINI_FAST_LATEST,
+    name: "Grok 3 Mini Fast (Latest)",
+    provider: "xai",
+  },
+  {
+    id: Model.GROK_2,
+    name: "Grok 2",
+    provider: "xai",
+  },
+  {
+    id: Model.GROK_2_LATEST,
+    name: "Grok 2 (Latest)",
+    provider: "xai",
+  },
+  {
+    id: Model.GROK_2_VISION,
+    name: "Grok 2 Vision",
+    provider: "xai",
+  },
+  {
+    id: Model.GROK_2_VISION_LATEST,
+    name: "Grok 2 Vision (Latest)",
+    provider: "xai",
   },
 ];
 
