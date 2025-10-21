@@ -8,6 +8,7 @@ import ollamaLogo from "/ollama_logo.svg";
 import ollamaDarkLogo from "/ollama_dark.png";
 import grokLightLogo from "/grok_light.svg";
 import grokDarkLogo from "/grok_dark.png";
+import litellmLogo from "/litellm_logo.png";
 
 export const getProviderLogoFromProvider = (
   provider: string,
@@ -45,6 +46,8 @@ export const getProviderLogoFromProvider = (
         return isDark ? grokDarkLogo : grokLightLogo;
       }
       return grokLightLogo;
+    case "litellm":
+      return litellmLogo;
     default:
       return null;
   }
@@ -71,6 +74,8 @@ export const getProviderColor = (provider: string) => {
       return "text-gray-600 dark:text-gray-400";
     case "x-ai":
       return "text-purple-600 dark:text-purple-400";
+    case "litellm":
+      return "bg-gradient-to-br from-blue-500 to-purple-600";
     default:
       return "text-blue-600 dark:text-blue-400";
   }
