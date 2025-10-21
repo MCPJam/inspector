@@ -710,16 +710,18 @@ export function EvalRunner({
                             </Label>
                             <Input
                               value={testCase.expectedToolCalls.join(", ")}
-                              onChange={(event) =>
+                              onChange={(event) => {
+                                // Split and process but keep empty strings to preserve commas being typed
+                                const rawValue = event.target.value;
+                                const processed = rawValue
+                                  .split(",")
+                                  .map((entry) => entry.trim());
                                 handleUpdateTestCase(
                                   index,
                                   "expectedToolCalls",
-                                  event.target.value
-                                    .split(",")
-                                    .map((entry) => entry.trim())
-                                    .filter(Boolean),
-                                )
-                              }
+                                  processed,
+                                );
+                              }}
                               placeholder="paypal_list_transactions, paypal_create_invoice"
                             />
                           </div>
