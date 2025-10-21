@@ -12,6 +12,7 @@ import { getProviderLogoFromModel } from "./chat-helpers";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { ModelDefinition } from "@/shared/types.js";
 import { MCPServerConfig } from "@/sdk";
+import { Alert, AlertDescription } from "../ui/alert";
 
 // Reusable Image Attachment Component
 const ImageAttachment = ({
@@ -249,16 +250,12 @@ const PureMessage = ({
                           initial={{ opacity: 0, y: 10 }}
                           animate={{ opacity: 1, y: 0 }}
                           transition={{ duration: 0.3, delay: index * 0.05 }}
-                          className="p-4 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-lg"
                         >
-                          <div className="flex items-start gap-3">
-                            <div className="text-red-600 dark:text-red-400 font-semibold shrink-0">
-                              Error:
-                            </div>
-                            <div className="text-sm text-red-700 dark:text-red-300 whitespace-pre-wrap break-words">
-                              {block.content}
-                            </div>
-                          </div>
+                          <Alert variant="destructive">
+                            <AlertDescription className="whitespace-pre-wrap break-words">
+                              <strong>Error:</strong> {block.content}
+                            </AlertDescription>
+                          </Alert>
                         </motion.div>
                       );
                     }
