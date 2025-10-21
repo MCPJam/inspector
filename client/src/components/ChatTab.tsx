@@ -1,4 +1,4 @@
-import { useRef, useEffect, useLayoutEffect, useState, useCallback, type ReactNode } from "react";
+import { useRef, useEffect, useState, type ReactNode } from "react";
 import { MessageCircle, PlusCircle, Settings, Sparkles } from "lucide-react";
 import { useChat } from "@/hooks/use-chat";
 import { Message } from "./chat/message";
@@ -37,16 +37,6 @@ export function ChatTab({
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const chatPanelRef = useRef<HTMLDivElement>(null);
-  const [fixedBarStyle, setFixedBarStyle] = useState<React.CSSProperties>({});
-  const updateBarBounds = useCallback(() => {
-    const el = chatPanelRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    setFixedBarStyle({
-      left: `${rect.left}px`,
-      right: `${window.innerWidth - rect.right}px`,
-    });
-  }, []);
   const { isAuthenticated } = useConvexAuth();
   const { signUp } = useAuth();
   const posthog = usePostHog();
@@ -100,60 +90,7 @@ export function ChatTab({
     }
   }, [showSignInPrompt, setInput]);
 
-  // Keep the bottom bar fixed to the viewport but constrained to the chat panel width
-  useLayoutEffect(() => {
-    // Recalculate aggressively during initial layout (before first paints)
-    let frames = 0;
-    const tick = () => {
-      updateBarBounds();
-      if (frames++ < 20) requestAnimationFrame(tick);
-    };
-    requestAnimationFrame(tick);
-    // Fallback timeouts for late reflows
-    [0, 50, 100, 200, 400, 800, 1200].forEach((t) => setTimeout(updateBarBounds, t));
-    // Short interval for the first few seconds to catch late reflows
-    const start = Date.now();
-    const intervalId = setInterval(() => {
-      updateBarBounds();
-      if (Date.now() - start > 4000) clearInterval(intervalId);
-    }, 120);
-    window.addEventListener("resize", updateBarBounds);
-    window.addEventListener("scroll", updateBarBounds, true);
-    document.addEventListener("pointerup", updateBarBounds);
-    const ro = new ResizeObserver(updateBarBounds);
-    if (chatPanelRef.current) ro.observe(chatPanelRef.current);
-    return () => {
-      window.removeEventListener("resize", updateBarBounds);
-      window.removeEventListener("scroll", updateBarBounds, true);
-      document.removeEventListener("pointerup", updateBarBounds);
-      clearInterval(intervalId);
-      ro.disconnect();
-    };
-  }, [updateBarBounds]);
-
-  // Recompute when messages change or fonts/resources finish loading
-  useEffect(() => {
-    updateBarBounds();
-  }, [updateBarBounds, messages.length, isLoading]);
-
-  useEffect(() => {
-    const onReady = () => updateBarBounds();
-    window.addEventListener("load", onReady);
-    document.addEventListener("readystatechange", onReady);
-    // Font loading can change widths
-    // @ts-expect-error
-    const fonts = (document as any).fonts;
-    if (fonts && fonts.addEventListener) {
-      fonts.addEventListener("loadingdone", onReady);
-    }
-    return () => {
-      window.removeEventListener("load", onReady);
-      document.removeEventListener("readystatechange", onReady);
-      if (fonts && fonts.removeEventListener) {
-        fonts.removeEventListener("loadingdone", onReady);
-      }
-    };
-  }, [updateBarBounds]);
+  // CSS-only layout; no JS sizing for the footer
 
   // Restore model from localStorage on mount
   useEffect(() => {
@@ -220,6 +157,8 @@ export function ChatTab({
       icon: Sparkles,
     },
   ];
+  // Keep bottom padding minimal when thread is short; add space when long/streaming
+  const bottomPaddingClass = (messages.length > 2 || isLoading) ? "pb-16" : "pb-2";
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     if (isAtBottom && messagesContainerRef.current) {
@@ -449,17 +388,15 @@ export function ChatTab({
       >
         {/* Main Chat Panel */}
         <ResizablePanel defaultSize={70} minSize={40}>
-          <div
-            ref={chatPanelRef}
-            className="flex flex-col bg-background h-full min-h-0 relative overflow-hidden"
-          >
-            {/* Messages Area - Scrollable with bottom padding for input */}
+          <div ref={chatPanelRef} className="grid bg-background h-full min-h-0 overflow-hidden grid-rows-[1fr_auto]">
+            {/* Messages Area - only scrollable region */
+            }
             <div
               ref={messagesContainerRef}
               onScroll={handleScroll}
-              className="flex-1 min-h-0 overflow-y-auto pb-24"
+              className="min-h-0 overflow-y-auto"
             >
-              <div className="max-w-4xl mx-auto px-4 pt-8 pb-8">
+              <div className={`max-w-4xl mx-auto px-4 pt-8 pb-4`}>
                 <AnimatePresence mode="popLayout">
                   {messages.map((message, index) => (
                     <motion.div
@@ -533,49 +470,47 @@ export function ChatTab({
                 )}
               </AnimatePresence>
 
-              {/* Fixed to viewport but width-clamped to chat panel to avoid bleed */}
-              <div
-                className="fixed bottom-0 border-t border-border/50 bg-background/90 backdrop-blur-sm z-20"
-                style={fixedBarStyle}
-              >
-                <div className="w-full px-6 py-5">
-                  <ChatInput
-                    value={input}
-                    onChange={setInput}
-                    onSubmit={(message, attachments) => {
-                      posthog.capture("send_message", {
-                        location: "chat_tab",
-                        platform: detectPlatform(),
-                        environment: detectEnvironment(),
-                        model_id: model?.id ?? null,
-                        model_name: model?.name ?? null,
-                        model_provider: model?.provider ?? null,
-                      });
-                      sendMessage(message, attachments);
-                    }}
-                    onStop={stopGeneration}
-                    disabled={
-                      availableModels.length === 0 ||
-                      noServersConnected ||
-                      showSignInPrompt
-                    }
-                    isLoading={isLoading}
-                    placeholder={
-                      showSignInPrompt ? signInPromptMessage : "Send a message..."
-                    }
-                    className="border-2 shadow-sm"
-                    currentModel={model}
-                    availableModels={availableModels}
-                    onModelChange={setModel}
-                    onClearChat={clearChat}
-                    hasMessages={hasMessages}
-                    systemPrompt={systemPromptState}
-                    onSystemPromptChange={setSystemPromptState}
-                    temperature={temperatureState}
-                    onTemperatureChange={setTemperatureState}
-                    isSendBlocked={showSignInPrompt}
-                  />
-                </div>
+            </div>
+
+            {/* Bottom input row (pinned by grid, full panel width) */}
+            <div className="border-t border-border/50 bg-background/90 backdrop-blur-sm">
+              <div className="w-full px-4 py-4">
+                <ChatInput
+                  value={input}
+                  onChange={setInput}
+                  onSubmit={(message, attachments) => {
+                    posthog.capture("send_message", {
+                      location: "chat_tab",
+                      platform: detectPlatform(),
+                      environment: detectEnvironment(),
+                      model_id: model?.id ?? null,
+                      model_name: model?.name ?? null,
+                      model_provider: model?.provider ?? null,
+                    });
+                    sendMessage(message, attachments);
+                  }}
+                  onStop={stopGeneration}
+                  disabled={
+                    availableModels.length === 0 ||
+                    noServersConnected ||
+                    showSignInPrompt
+                  }
+                  isLoading={isLoading}
+                  placeholder={
+                    showSignInPrompt ? signInPromptMessage : "Send a message..."
+                  }
+                  className="border-2 shadow-sm"
+                  currentModel={model}
+                  availableModels={availableModels}
+                  onModelChange={setModel}
+                  onClearChat={clearChat}
+                  hasMessages={hasMessages}
+                  systemPrompt={systemPromptState}
+                  onSystemPromptChange={setSystemPromptState}
+                  temperature={temperatureState}
+                  onTemperatureChange={setTemperatureState}
+                  isSendBlocked={showSignInPrompt}
+                />
               </div>
             </div>
 
