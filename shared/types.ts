@@ -167,9 +167,6 @@ export enum Model {
   // Mistral models
   MISTRAL_LARGE_LATEST = "mistral-large-latest",
   MISTRAL_SMALL_LATEST = "mistral-small-latest",
-  OPEN_MISTRAL_7B = "open-mistral-7b",
-  OPEN_MIXTRAL_8X7B = "open-mixtral-8x7b",
-  OPEN_MIXTRAL_8X22B = "open-mixtral-8x22b",
   CODESTRAL_LATEST = "codestral-latest",
   MINISTRAL_8B_LATEST = "ministral-8b-latest",
   MINISTRAL_3B_LATEST = "ministral-3b-latest",
@@ -292,21 +289,6 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
   {
     id: Model.MINISTRAL_3B_LATEST,
     name: "Ministral 3B",
-    provider: "mistral",
-  },
-  {
-    id: Model.OPEN_MISTRAL_7B,
-    name: "Open Mistral 7B",
-    provider: "mistral",
-  },
-  {
-    id: Model.OPEN_MIXTRAL_8X7B,
-    name: "Open Mixtral 8x7B",
-    provider: "mistral",
-  },
-  {
-    id: Model.OPEN_MIXTRAL_8X22B,
-    name: "Open Mixtral 8x22B",
     provider: "mistral",
   },
 ];
