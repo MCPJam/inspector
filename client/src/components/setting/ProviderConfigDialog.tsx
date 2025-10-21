@@ -95,6 +95,27 @@ export function ProviderConfigDialog({
               </button>
             </span>
           </div>
+
+          {provider?.id === "openai" && (
+            <div className="flex items-start gap-2 p-3 bg-amber-50 dark:bg-amber-950/20 rounded-lg border border-amber-200 dark:border-amber-800">
+              <span className="text-amber-600 dark:text-amber-400 text-sm">
+                <strong>GPT-5 models require organization verification.</strong>{" "}
+                If you encounter access errors, visit{" "}
+                <button
+                  onClick={() =>
+                    window.open(
+                      "https://platform.openai.com/settings/organization/general",
+                      "_blank"
+                    )
+                  }
+                  className="underline hover:no-underline font-medium"
+                >
+                  OpenAI Settings
+                </button>{" "}
+                and verify your organization. Access may take up to 15 minutes after verification.
+              </span>
+            </div>
+          )}
         </div>
 
         <DialogFooter>

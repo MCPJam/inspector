@@ -235,20 +235,57 @@ const createStreamingResponse = async (
   });
 
   let steps = 0;
+  let hadError = false;
   while (steps < MAX_AGENT_STEPS) {
     let accumulatedText = "";
     const iterationToolCalls: any[] = [];
     const iterationToolResults: any[] = [];
 
-    const streamResult = await streamText({
-      model,
-      system:
-        systemPrompt || "You are a helpful assistant with access to MCP tools.",
-      temperature: temperature ?? getDefaultTemperatureByProvider(provider),
-      tools: aiSdkTools,
-      messages: messageHistory,
-      onChunk: async (chunk) => {
-        switch (chunk.chunk.type) {
+    let streamResult;
+    let hadStreamError = false;
+    let streamErrorMessage = "";
+    let response: any = null;
+
+    console.log("[createStreamingResponse] Starting streamText call...");
+    streamResult = streamText({
+        model,
+        system:
+          systemPrompt || "You are a helpful assistant with access to MCP tools.",
+        temperature: temperature ?? getDefaultTemperatureByProvider(provider),
+        tools: aiSdkTools,
+        messages: messageHistory,
+        onError: (error) => {
+          console.log("[createStreamingResponse] onError callback triggered:", error);
+          hadStreamError = true;
+
+          // Extract the actual error message from the AI SDK error
+          if (error.error && typeof error.error === 'object') {
+            const apiError = error.error as any;
+            if (apiError.data?.error?.message) {
+              streamErrorMessage = apiError.data.error.message;
+            } else if (apiError.responseBody) {
+              try {
+                const responseData = JSON.parse(apiError.responseBody);
+                if (responseData.error?.message) {
+                  streamErrorMessage = responseData.error.message;
+                }
+              } catch (parseError) {
+                streamErrorMessage = apiError.message || "Unknown error occurred";
+              }
+            } else if (apiError.message) {
+              streamErrorMessage = apiError.message;
+            }
+          } else if (error.error instanceof Error) {
+            streamErrorMessage = error.error.message;
+          } else {
+            streamErrorMessage = String(error.error);
+          }
+
+          console.log("[createStreamingResponse] Extracted error message:", streamErrorMessage);
+        },
+        onChunk: async (chunk) => {
+        try {
+          switch (chunk.chunk.type) {
           case "text-delta":
           case "reasoning-delta": {
             const text = chunk.chunk.text;
@@ -335,10 +372,104 @@ const createStreamingResponse = async (
           default:
             break;
         }
+        } catch (chunkError) {
+          console.error("[createStreamingResponse] Error in onChunk:", chunkError);
+          hadStreamError = true;
+          if (chunkError instanceof Error) {
+            streamErrorMessage = (chunkError as any).data?.error?.message || chunkError.message;
+          }
+        }
       },
     });
 
-    await streamResult.consumeStream();
+    try {
+      console.log("[createStreamingResponse] Starting consumeStream...");
+      await streamResult.consumeStream();
+      console.log("[createStreamingResponse] consumeStream completed");
+
+      // Check if there was an error during streaming (caught by onError callback)
+      if (hadStreamError) {
+        console.log("[createStreamingResponse] Error was caught by onError callback:", streamErrorMessage);
+        throw new Error(streamErrorMessage || "An error occurred during streaming");
+      }
+
+      // Get the response - this may throw "No output generated" if there was an error
+      // we didn't catch, but we should have caught it in onError
+      response = await streamResult.response;
+      console.log("[createStreamingResponse] Response received, checking for errors...");
+
+      const streamError = response.error;
+      if (streamError) {
+        console.log("[createStreamingResponse] Found error in response:", streamError);
+        throw streamError;
+      }
+
+      // Also check the experimental_providerMetadata for errors
+      const providerMetadata = response.experimental_providerMetadata;
+      if (providerMetadata?.openai?.error) {
+        console.log("[createStreamingResponse] Found OpenAI error in metadata:", providerMetadata.openai.error);
+        throw new Error(providerMetadata.openai.error.message || JSON.stringify(providerMetadata.openai.error));
+      }
+    } catch (error) {
+      // Send error to client with detailed message
+      // Extract error message from AI SDK error structure
+      let errorMessage = "Unknown error occurred";
+      if (error instanceof Error) {
+        errorMessage = error.message;
+        console.log("[createStreamingResponse] Error message:", errorMessage);
+        console.log("[createStreamingResponse] Error cause:", (error as any).cause);
+        console.log("[createStreamingResponse] Error data:", JSON.stringify((error as any).data, null, 2));
+
+        // Check if it's an AI SDK error with nested error data
+        if ((error as any).data?.error?.message) {
+          errorMessage = (error as any).data.error.message;
+          console.log("[createStreamingResponse] Extracted nested error message:", errorMessage);
+        }
+        // Also check the cause if it exists
+        else if ((error as any).cause?.data?.error?.message) {
+          errorMessage = (error as any).cause.data.error.message;
+          console.log("[createStreamingResponse] Extracted error from cause:", errorMessage);
+        }
+        // Check responseBody for OpenAI errors
+        else if ((error as any).responseBody) {
+          try {
+            const responseData = JSON.parse((error as any).responseBody);
+            if (responseData.error?.message) {
+              errorMessage = responseData.error.message;
+              console.log("[createStreamingResponse] Extracted error from responseBody:", errorMessage);
+            }
+          } catch (parseError) {
+            console.log("[createStreamingResponse] Could not parse responseBody");
+          }
+        }
+      }
+
+      console.error("[createStreamingResponse] Sending error to client:", errorMessage);
+
+      sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
+        type: "error",
+        error: errorMessage,
+      });
+
+      // Send [DONE] to signal end of stream
+      sendSseEvent(
+        streamingContext.controller,
+        streamingContext.encoder!,
+        "[DONE]",
+      );
+
+      // Mark that an error occurred and exit the loop
+      hadError = true;
+      // Skip all the rest of the iteration
+      steps++;
+      break;
+    }
+
+    // If streamResult is undefined (due to error), exit the loop
+    if (!streamResult || hadError) {
+      steps++;
+      break;
+    }
 
     handleAgentStepFinish(
       streamingContext,
@@ -348,8 +479,8 @@ const createStreamingResponse = async (
       false,
     );
 
-    const resp = await streamResult.response;
-    const responseMessages = (resp?.messages || []) as ModelMessage[];
+    // Use the response we already fetched in the try block
+    const responseMessages = (response?.messages || []) as ModelMessage[];
     if (responseMessages.length) {
       messageHistory.push(...responseMessages);
 
@@ -384,7 +515,9 @@ const createStreamingResponse = async (
     }
 
     steps++;
-    const finishReason = await streamResult.finishReason;
+
+    // Get finish reason from the response we already fetched
+    const finishReason = response?.finishReason || "stop";
     const shouldContinue =
       finishReason === "tool-calls" ||
       (accumulatedText.length === 0 && iterationToolResults.length > 0);
@@ -392,15 +525,18 @@ const createStreamingResponse = async (
     if (!shouldContinue) break;
   }
 
-  sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
-    type: "elicitation_complete",
-  });
+  // Only send completion events if no error occurred
+  if (!hadError) {
+    sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
+      type: "elicitation_complete",
+    });
 
-  sendSseEvent(
-    streamingContext.controller,
-    streamingContext.encoder!,
-    "[DONE]",
-  );
+    sendSseEvent(
+      streamingContext.controller,
+      streamingContext.encoder!,
+      "[DONE]",
+    );
+  }
 };
 
 const sendMessagesToBackend = async (
