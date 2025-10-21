@@ -235,110 +235,190 @@ const createStreamingResponse = async (
   });
 
   let steps = 0;
+  let hadError = false;
   while (steps < MAX_AGENT_STEPS) {
     let accumulatedText = "";
     const iterationToolCalls: any[] = [];
     const iterationToolResults: any[] = [];
 
-    const streamResult = await streamText({
+    let streamResult;
+    let hadStreamError = false;
+    let streamErrorMessage = "";
+    let response: any = null;
+
+    // Helper to extract clean error message from AI SDK error structures
+    const extractErrorMessage = (error: any): string => {
+      if (error.error && typeof error.error === "object") {
+        const apiError = error.error as any;
+        if (apiError.data?.error?.message) return apiError.data.error.message;
+        if (apiError.responseBody) {
+          try {
+            const parsed = JSON.parse(apiError.responseBody);
+            if (parsed.error?.message) return parsed.error.message;
+          } catch {}
+        }
+        if (apiError.message) return apiError.message;
+      }
+      if (error.error instanceof Error) return error.error.message;
+      return String(error.error || error.message || "Unknown error occurred");
+    };
+
+    streamResult = streamText({
       model,
       system:
         systemPrompt || "You are a helpful assistant with access to MCP tools.",
       temperature: temperature ?? getDefaultTemperatureByProvider(provider),
       tools: aiSdkTools,
       messages: messageHistory,
+      onError: (error) => {
+        hadStreamError = true;
+        streamErrorMessage = extractErrorMessage(error);
+      },
       onChunk: async (chunk) => {
-        switch (chunk.chunk.type) {
-          case "text-delta":
-          case "reasoning-delta": {
-            const text = chunk.chunk.text;
-            if (text) {
-              accumulatedText += text;
+        try {
+          switch (chunk.chunk.type) {
+            case "text-delta":
+            case "reasoning-delta": {
+              const text = chunk.chunk.text;
+              if (text) {
+                accumulatedText += text;
+                sendSseEvent(
+                  streamingContext.controller,
+                  streamingContext.encoder!,
+                  {
+                    type: "text",
+                    content: text,
+                  },
+                );
+              }
+              break;
+            }
+            case "tool-input-start": {
+              // Do not emit a tool_call for input-start; wait for the concrete tool-call
+              break;
+            }
+            case "tool-call": {
+              // Generate unique ID with timestamp and random suffix
+              const currentToolCallId = `tc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+              streamingContext.lastEmittedToolCallId = currentToolCallId;
+              const name =
+                (chunk.chunk as any).toolName || (chunk.chunk as any).name;
+              const parameters =
+                (chunk.chunk as any).input ??
+                (chunk.chunk as any).parameters ??
+                (chunk.chunk as any).args ??
+                {};
+
+              // Store tool name for serverId lookup later
+              streamingContext.toolCallIdToName.set(currentToolCallId, name);
+
+              iterationToolCalls.push({ name, params: parameters });
               sendSseEvent(
                 streamingContext.controller,
                 streamingContext.encoder!,
                 {
-                  type: "text",
-                  content: text,
+                  type: "tool_call",
+                  toolCall: {
+                    id: currentToolCallId,
+                    name,
+                    parameters,
+                    timestamp: new Date().toISOString(),
+                    status: "executing",
+                  },
                 },
               );
+              break;
             }
-            break;
-          }
-          case "tool-input-start": {
-            // Do not emit a tool_call for input-start; wait for the concrete tool-call
-            break;
-          }
-          case "tool-call": {
-            // Generate unique ID with timestamp and random suffix
-            const currentToolCallId = `tc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-            streamingContext.lastEmittedToolCallId = currentToolCallId;
-            const name =
-              (chunk.chunk as any).toolName || (chunk.chunk as any).name;
-            const parameters =
-              (chunk.chunk as any).input ??
-              (chunk.chunk as any).parameters ??
-              (chunk.chunk as any).args ??
-              {};
+            case "tool-result": {
+              const result =
+                (chunk.chunk as any).output ??
+                (chunk.chunk as any).result ??
+                (chunk.chunk as any).value;
+              const currentToolCallId =
+                streamingContext.lastEmittedToolCallId ??
+                `tc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-            // Store tool name for serverId lookup later
-            streamingContext.toolCallIdToName.set(currentToolCallId, name);
+              // Look up serverId from tool metadata
+              const toolName =
+                streamingContext.toolCallIdToName.get(currentToolCallId);
+              const serverId = toolName ? extractServerId(toolName) : undefined;
 
-            iterationToolCalls.push({ name, params: parameters });
-            sendSseEvent(
-              streamingContext.controller,
-              streamingContext.encoder!,
-              {
-                type: "tool_call",
-                toolCall: {
-                  id: currentToolCallId,
-                  name,
-                  parameters,
-                  timestamp: new Date().toISOString(),
-                  status: "executing",
+              iterationToolResults.push({ result });
+              sendSseEvent(
+                streamingContext.controller,
+                streamingContext.encoder!,
+                {
+                  type: "tool_result",
+                  toolResult: {
+                    id: currentToolCallId,
+                    toolCallId: currentToolCallId,
+                    result,
+                    timestamp: new Date().toISOString(),
+                    serverId,
+                  },
                 },
-              },
-            );
-            break;
+              );
+              break;
+            }
+            default:
+              break;
           }
-          case "tool-result": {
-            const result =
-              (chunk.chunk as any).output ??
-              (chunk.chunk as any).result ??
-              (chunk.chunk as any).value;
-            const currentToolCallId =
-              streamingContext.lastEmittedToolCallId ??
-              `tc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-
-            // Look up serverId from tool metadata
-            const toolName =
-              streamingContext.toolCallIdToName.get(currentToolCallId);
-            const serverId = toolName ? extractServerId(toolName) : undefined;
-
-            iterationToolResults.push({ result });
-            sendSseEvent(
-              streamingContext.controller,
-              streamingContext.encoder!,
-              {
-                type: "tool_result",
-                toolResult: {
-                  id: currentToolCallId,
-                  toolCallId: currentToolCallId,
-                  result,
-                  timestamp: new Date().toISOString(),
-                  serverId,
-                },
-              },
-            );
-            break;
-          }
-          default:
-            break;
+        } catch (chunkError) {
+          hadStreamError = true;
+          streamErrorMessage =
+            chunkError instanceof Error
+              ? chunkError.message
+              : "Error processing chunk";
         }
       },
     });
 
-    await streamResult.consumeStream();
+    try {
+      await streamResult.consumeStream();
+
+      // If onError was triggered, throw the extracted error message
+      if (hadStreamError) {
+        throw new Error(streamErrorMessage);
+      }
+
+      response = await streamResult.response;
+
+      // Check for any additional error states in the response
+      if (response.error) {
+        throw response.error;
+      }
+
+      if (response.experimental_providerMetadata?.openai?.error) {
+        throw new Error(
+          response.experimental_providerMetadata.openai.error.message ||
+            "OpenAI API error",
+        );
+      }
+    } catch (error) {
+      // Use the already-extracted error message, or extract a new one
+      const errorMessage = streamErrorMessage || extractErrorMessage(error);
+
+      sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
+        type: "error",
+        error: errorMessage,
+      });
+
+      sendSseEvent(
+        streamingContext.controller,
+        streamingContext.encoder!,
+        "[DONE]",
+      );
+
+      hadError = true;
+      steps++;
+      break;
+    }
+
+    // If streamResult is undefined (due to error), exit the loop
+    if (!streamResult || hadError) {
+      steps++;
+      break;
+    }
 
     handleAgentStepFinish(
       streamingContext,
@@ -348,8 +428,8 @@ const createStreamingResponse = async (
       false,
     );
 
-    const resp = await streamResult.response;
-    const responseMessages = (resp?.messages || []) as ModelMessage[];
+    // Use the response we already fetched in the try block
+    const responseMessages = (response?.messages || []) as ModelMessage[];
     if (responseMessages.length) {
       messageHistory.push(...responseMessages);
 
@@ -384,7 +464,9 @@ const createStreamingResponse = async (
     }
 
     steps++;
-    const finishReason = await streamResult.finishReason;
+
+    // Get finish reason from the response we already fetched
+    const finishReason = response?.finishReason || "stop";
     const shouldContinue =
       finishReason === "tool-calls" ||
       (accumulatedText.length === 0 && iterationToolResults.length > 0);
@@ -392,15 +474,18 @@ const createStreamingResponse = async (
     if (!shouldContinue) break;
   }
 
-  sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
-    type: "elicitation_complete",
-  });
+  // Only send completion events if no error occurred
+  if (!hadError) {
+    sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
+      type: "elicitation_complete",
+    });
 
-  sendSseEvent(
-    streamingContext.controller,
-    streamingContext.encoder!,
-    "[DONE]",
-  );
+    sendSseEvent(
+      streamingContext.controller,
+      streamingContext.encoder!,
+      "[DONE]",
+    );
+  }
 };
 
 const sendMessagesToBackend = async (

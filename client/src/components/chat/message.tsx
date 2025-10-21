@@ -12,6 +12,7 @@ import { getProviderLogoFromModel } from "./chat-helpers";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { ModelDefinition } from "@/shared/types.js";
 import { MCPServerConfig } from "@/sdk";
+import { Alert, AlertDescription } from "../ui/alert";
 
 // Reusable Image Attachment Component
 const ImageAttachment = ({
@@ -240,6 +241,21 @@ const PureMessage = ({
                             toolMeta={toolsMetadata?.[block.toolCall.name]}
                             serverId={serverId}
                           />
+                        </motion.div>
+                      );
+                    } else if (block.type === "error" && block.content) {
+                      return (
+                        <motion.div
+                          key={block.id}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.3, delay: index * 0.05 }}
+                        >
+                          <Alert variant="destructive">
+                            <AlertDescription className="whitespace-pre-wrap break-words">
+                              <strong>Error:</strong> {block.content}
+                            </AlertDescription>
+                          </Alert>
                         </motion.div>
                       );
                     }
