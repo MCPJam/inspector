@@ -127,16 +127,16 @@ export class MCPClientManager {
   private readonly elicitationHandlers = new Map<string, ElicitationHandler>();
   private readonly toolsMetadataCache = new Map<string, Map<string, any>>();
   private readonly defaultClientVersion: string;
+  private readonly defaultClientName: string | undefined;
   private readonly defaultCapabilities: ClientCapabilityOptions;
   private readonly defaultTimeout: number;
-  // Default JSON-RPC logging controls
   private defaultLogJsonRpc: boolean = false;
+
   private defaultRpcLogger?: (event: {
     direction: "send" | "receive";
     message: unknown;
     serverId: string;
   }) => void;
-  // Global elicitation callback support (used by streaming chat endpoint)
   private elicitationCallback?: (request: {
     requestId: string;
     message: string;
@@ -153,12 +153,11 @@ export class MCPClientManager {
   constructor(
     servers: MCPClientManagerConfig = {},
     options: {
+      defaultClientName?: string;
       defaultClientVersion?: string;
       defaultCapabilities?: ClientCapabilityOptions;
       defaultTimeout?: number;
-      // Enable console JSON-RPC logs for all servers unless overridden per-server
       defaultLogJsonRpc?: boolean;
-      // Provide a global JSON-RPC logger
       rpcLogger?: (event: {
         direction: "send" | "receive";
         message: unknown;
@@ -167,6 +166,7 @@ export class MCPClientManager {
     } = {},
   ) {
     this.defaultClientVersion = options.defaultClientVersion ?? "1.0.0";
+    this.defaultClientName = options.defaultClientName ?? undefined;
     this.defaultCapabilities = { ...(options.defaultCapabilities ?? {}) };
     this.defaultTimeout =
       options.defaultTimeout ?? DEFAULT_REQUEST_TIMEOUT_MSEC;
@@ -231,7 +231,7 @@ export class MCPClientManager {
     const connectionPromise = (async () => {
       const client = new Client(
         {
-          name: serverId,
+          name: this.defaultClientName ? `${this.defaultClientName}` : serverId,
           version: config.version ?? this.defaultClientVersion,
         },
         {
