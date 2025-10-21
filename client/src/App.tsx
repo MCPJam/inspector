@@ -25,7 +25,6 @@ import { useElectronOAuth } from "./hooks/useElectronOAuth";
 import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
 import { usePostHog } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
-import { useConvexAuth } from "convex/react";
 
 // Import global styles
 import "./index.css";
@@ -33,11 +32,14 @@ import { AuthUpperArea } from "./components/auth/auth-upper-area";
 import { detectEnvironment, detectPlatform } from "./logs/PosthogUtils";
 import CompletingSignInLoading from "./components/CompletingSignInLoading";
 import LoadingScreen from "./components/LoadingScreen";
+import LoginPage from "./components/LoginPage";
+import { useLoginPage } from "./hooks/use-log-in-page";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
   const posthog = usePostHog();
-  const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
+  const { shouldShowLoginPage, isAuthenticated, isAuthLoading } =
+    useLoginPage();
 
   usePostHogIdentify();
 
@@ -49,18 +51,23 @@ export default function App() {
       user_agent: navigator.userAgent,
       is_authenticated: isAuthenticated,
     });
-  }, [isAuthLoading]);
+  }, [isAuthLoading, isAuthenticated]);
 
   // Set up Electron OAuth callback handling
   useElectronOAuth();
   // Ensure a `users` row exists after Convex auth
   useEnsureDbUser();
+
   const isDebugCallback = useMemo(
     () => window.location.pathname.startsWith("/oauth/callback/debug"),
     [],
   );
   const isOAuthCallback = useMemo(
     () => window.location.pathname === "/callback",
+    [],
+  );
+  const isOAuthCallbackComplete = useMemo(
+    () => window.location.pathname.startsWith("/oauth/callback"),
     [],
   );
 
@@ -123,104 +130,112 @@ export default function App() {
     return <LoadingScreen />;
   }
 
+  const appContent = (
+    <SidebarProvider defaultOpen={true}>
+      <MCPSidebar onNavigate={handleNavigate} activeTab={activeTab} />
+      <SidebarInset className="flex flex-col">
+        <header className="flex h-12 shrink-0 items-center gap-2 border-b transition-[width,height] ease-linear drag">
+          <div className="flex w-full items-center justify-between px-4 lg:px-6">
+            <div className="flex items-center gap-1 lg:gap-2">
+              <SidebarTrigger className="-ml-1" />
+            </div>
+            <div className="flex items-center gap-2">
+              <AuthUpperArea />
+            </div>
+          </div>
+        </header>
+
+        <div className="flex-1">
+          {/* Active Server Selector - Only show on Tools, Resources, Prompts, Auth, and Interceptor pages */}
+          {(activeTab === "tools" ||
+            activeTab === "resources" ||
+            activeTab === "prompts" ||
+            activeTab === "auth" ||
+            activeTab === "chat" ||
+            activeTab === "interceptor") && (
+            <ActiveServerSelector
+              connectedServerConfigs={connectedServerConfigs}
+              selectedServer={appState.selectedServer}
+              onServerChange={setSelectedServer}
+              onConnect={handleConnect}
+              isMultiSelectEnabled={activeTab === "chat"}
+              onMultiServerToggle={toggleServerSelection}
+              selectedMultipleServers={appState.selectedMultipleServers}
+            />
+          )}
+
+          {/* Content Areas */}
+          {activeTab === "servers" && (
+            <ServersTab
+              connectedServerConfigs={connectedServerConfigs}
+              onConnect={handleConnect}
+              onDisconnect={handleDisconnect}
+              onReconnect={handleReconnect}
+              onUpdate={handleUpdate}
+              onRemove={handleRemoveServer}
+            />
+          )}
+
+          {activeTab === "tools" && (
+            <ToolsTab
+              serverConfig={selectedMCPConfig}
+              serverName={appState.selectedServer}
+            />
+          )}
+          {activeTab === "evals" && <EvalsRunTab />}
+          {activeTab === "eval-results" && <EvalsResultsTab />}
+          {activeTab === "resources" && (
+            <ResourcesTab
+              serverConfig={selectedMCPConfig}
+              serverName={appState.selectedServer}
+            />
+          )}
+
+          {activeTab === "prompts" && (
+            <PromptsTab
+              serverConfig={selectedMCPConfig}
+              serverName={appState.selectedServer}
+            />
+          )}
+
+          {activeTab === "auth" && (
+            <AuthTab
+              serverConfig={selectedMCPConfig}
+              serverEntry={appState.servers[appState.selectedServer]}
+              serverName={appState.selectedServer}
+            />
+          )}
+
+          {activeTab === "chat" && (
+            <ChatTab
+              serverConfigs={selectedMCPConfigsMap}
+              connectedServerConfigs={connectedServerConfigs}
+            />
+          )}
+
+          {activeTab === "interceptor" && (
+            <InterceptorTab
+              connectedServerConfigs={connectedServerConfigs}
+              selectedServer={appState.selectedServer}
+            />
+          )}
+
+          {activeTab === "tracing" && <TracingTab />}
+
+          {activeTab === "settings" && <SettingsTab />}
+        </div>
+      </SidebarInset>
+    </SidebarProvider>
+  );
+
   return (
     <PreferencesStoreProvider themeMode="light" themePreset="default">
-      <SidebarProvider defaultOpen={true}>
-        <MCPSidebar onNavigate={handleNavigate} activeTab={activeTab} />
-        <SidebarInset className="flex flex-col">
-          <header className="flex h-12 shrink-0 items-center gap-2 border-b transition-[width,height] ease-linear drag">
-            <div className="flex w-full items-center justify-between px-4 lg:px-6">
-              <div className="flex items-center gap-1 lg:gap-2">
-                <SidebarTrigger className="-ml-1" />
-              </div>
-              <div className="flex items-center gap-2">
-                <AuthUpperArea />
-              </div>
-            </div>
-          </header>
-
-          <div className="flex-1">
-            {/* Active Server Selector - Only show on Tools, Resources, Prompts, Auth, and Interceptor pages */}
-            {(activeTab === "tools" ||
-              activeTab === "resources" ||
-              activeTab === "prompts" ||
-              activeTab === "auth" ||
-              activeTab === "chat" ||
-              activeTab === "interceptor") && (
-              <ActiveServerSelector
-                connectedServerConfigs={connectedServerConfigs}
-                selectedServer={appState.selectedServer}
-                onServerChange={setSelectedServer}
-                onConnect={handleConnect}
-                isMultiSelectEnabled={activeTab === "chat"}
-                onMultiServerToggle={toggleServerSelection}
-                selectedMultipleServers={appState.selectedMultipleServers}
-              />
-            )}
-
-            {/* Content Areas */}
-            {activeTab === "servers" && (
-              <ServersTab
-                connectedServerConfigs={connectedServerConfigs}
-                onConnect={handleConnect}
-                onDisconnect={handleDisconnect}
-                onReconnect={handleReconnect}
-                onUpdate={handleUpdate}
-                onRemove={handleRemoveServer}
-              />
-            )}
-
-            {activeTab === "tools" && (
-              <ToolsTab
-                serverConfig={selectedMCPConfig}
-                serverName={appState.selectedServer}
-              />
-            )}
-            {activeTab === "evals" && <EvalsRunTab />}
-            {activeTab === "eval-results" && <EvalsResultsTab />}
-            {activeTab === "resources" && (
-              <ResourcesTab
-                serverConfig={selectedMCPConfig}
-                serverName={appState.selectedServer}
-              />
-            )}
-
-            {activeTab === "prompts" && (
-              <PromptsTab
-                serverConfig={selectedMCPConfig}
-                serverName={appState.selectedServer}
-              />
-            )}
-
-            {activeTab === "auth" && (
-              <AuthTab
-                serverConfig={selectedMCPConfig}
-                serverEntry={appState.servers[appState.selectedServer]}
-                serverName={appState.selectedServer}
-              />
-            )}
-
-            {activeTab === "chat" && (
-              <ChatTab
-                serverConfigs={selectedMCPConfigsMap}
-                connectedServerConfigs={connectedServerConfigs}
-              />
-            )}
-
-            {activeTab === "interceptor" && (
-              <InterceptorTab
-                connectedServerConfigs={connectedServerConfigs}
-                selectedServer={appState.selectedServer}
-              />
-            )}
-
-            {activeTab === "tracing" && <TracingTab />}
-
-            {activeTab === "settings" && <SettingsTab />}
-          </div>
-        </SidebarInset>
-      </SidebarProvider>
       <Toaster />
+      {shouldShowLoginPage && !isOAuthCallbackComplete ? (
+        <LoginPage />
+      ) : (
+        appContent
+      )}
     </PreferencesStoreProvider>
   );
 }
