@@ -91,6 +91,13 @@ export function ChatTab({
 
   // Restore model from localStorage on mount
   useEffect(() => {
+    posthog.capture("chat_tab_viewed", {
+      location: "chat_tab",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+    });
+  }, []);
+  useEffect(() => {
     const savedModelId = localStorage.getItem("chat-selected-model");
     if (savedModelId && availableModels.length > 0) {
       const savedModel = availableModels.find((m) => m.id === savedModelId);
@@ -198,10 +205,8 @@ export function ChatTab({
         }),
       });
       const data = await response.json();
-      console.log("handleCallTool", data);
       return data.result;
     } catch (error) {
-      console.error("handleCallTool", error);
       throw error;
     }
   };
