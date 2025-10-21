@@ -56,6 +56,7 @@ export function ServersTab({
       location: "servers_tab",
       platform: detectPlatform(),
       environment: detectEnvironment(),
+      num_servers: Object.keys(connectedServerConfigs).length,
     });
   }, []);
 
