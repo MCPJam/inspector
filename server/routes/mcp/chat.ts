@@ -248,7 +248,7 @@ const createStreamingResponse = async (
 
     // Helper to extract clean error message from AI SDK error structures
     const extractErrorMessage = (error: any): string => {
-      if (error.error && typeof error.error === 'object') {
+      if (error.error && typeof error.error === "object") {
         const apiError = error.error as any;
         if (apiError.data?.error?.message) return apiError.data.error.message;
         if (apiError.responseBody) {
@@ -264,110 +264,111 @@ const createStreamingResponse = async (
     };
 
     streamResult = streamText({
-        model,
-        system:
-          systemPrompt || "You are a helpful assistant with access to MCP tools.",
-        temperature: temperature ?? getDefaultTemperatureByProvider(provider),
-        tools: aiSdkTools,
-        messages: messageHistory,
-        onError: (error) => {
-          hadStreamError = true;
-          streamErrorMessage = extractErrorMessage(error);
-        },
-        onChunk: async (chunk) => {
+      model,
+      system:
+        systemPrompt || "You are a helpful assistant with access to MCP tools.",
+      temperature: temperature ?? getDefaultTemperatureByProvider(provider),
+      tools: aiSdkTools,
+      messages: messageHistory,
+      onError: (error) => {
+        hadStreamError = true;
+        streamErrorMessage = extractErrorMessage(error);
+      },
+      onChunk: async (chunk) => {
         try {
           switch (chunk.chunk.type) {
-          case "text-delta":
-          case "reasoning-delta": {
-            const text = chunk.chunk.text;
-            if (text) {
-              accumulatedText += text;
+            case "text-delta":
+            case "reasoning-delta": {
+              const text = chunk.chunk.text;
+              if (text) {
+                accumulatedText += text;
+                sendSseEvent(
+                  streamingContext.controller,
+                  streamingContext.encoder!,
+                  {
+                    type: "text",
+                    content: text,
+                  },
+                );
+              }
+              break;
+            }
+            case "tool-input-start": {
+              // Do not emit a tool_call for input-start; wait for the concrete tool-call
+              break;
+            }
+            case "tool-call": {
+              // Generate unique ID with timestamp and random suffix
+              const currentToolCallId = `tc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+              streamingContext.lastEmittedToolCallId = currentToolCallId;
+              const name =
+                (chunk.chunk as any).toolName || (chunk.chunk as any).name;
+              const parameters =
+                (chunk.chunk as any).input ??
+                (chunk.chunk as any).parameters ??
+                (chunk.chunk as any).args ??
+                {};
+
+              // Store tool name for serverId lookup later
+              streamingContext.toolCallIdToName.set(currentToolCallId, name);
+
+              iterationToolCalls.push({ name, params: parameters });
               sendSseEvent(
                 streamingContext.controller,
                 streamingContext.encoder!,
                 {
-                  type: "text",
-                  content: text,
+                  type: "tool_call",
+                  toolCall: {
+                    id: currentToolCallId,
+                    name,
+                    parameters,
+                    timestamp: new Date().toISOString(),
+                    status: "executing",
+                  },
                 },
               );
+              break;
             }
-            break;
-          }
-          case "tool-input-start": {
-            // Do not emit a tool_call for input-start; wait for the concrete tool-call
-            break;
-          }
-          case "tool-call": {
-            // Generate unique ID with timestamp and random suffix
-            const currentToolCallId = `tc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-            streamingContext.lastEmittedToolCallId = currentToolCallId;
-            const name =
-              (chunk.chunk as any).toolName || (chunk.chunk as any).name;
-            const parameters =
-              (chunk.chunk as any).input ??
-              (chunk.chunk as any).parameters ??
-              (chunk.chunk as any).args ??
-              {};
+            case "tool-result": {
+              const result =
+                (chunk.chunk as any).output ??
+                (chunk.chunk as any).result ??
+                (chunk.chunk as any).value;
+              const currentToolCallId =
+                streamingContext.lastEmittedToolCallId ??
+                `tc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-            // Store tool name for serverId lookup later
-            streamingContext.toolCallIdToName.set(currentToolCallId, name);
+              // Look up serverId from tool metadata
+              const toolName =
+                streamingContext.toolCallIdToName.get(currentToolCallId);
+              const serverId = toolName ? extractServerId(toolName) : undefined;
 
-            iterationToolCalls.push({ name, params: parameters });
-            sendSseEvent(
-              streamingContext.controller,
-              streamingContext.encoder!,
-              {
-                type: "tool_call",
-                toolCall: {
-                  id: currentToolCallId,
-                  name,
-                  parameters,
-                  timestamp: new Date().toISOString(),
-                  status: "executing",
+              iterationToolResults.push({ result });
+              sendSseEvent(
+                streamingContext.controller,
+                streamingContext.encoder!,
+                {
+                  type: "tool_result",
+                  toolResult: {
+                    id: currentToolCallId,
+                    toolCallId: currentToolCallId,
+                    result,
+                    timestamp: new Date().toISOString(),
+                    serverId,
+                  },
                 },
-              },
-            );
-            break;
+              );
+              break;
+            }
+            default:
+              break;
           }
-          case "tool-result": {
-            const result =
-              (chunk.chunk as any).output ??
-              (chunk.chunk as any).result ??
-              (chunk.chunk as any).value;
-            const currentToolCallId =
-              streamingContext.lastEmittedToolCallId ??
-              `tc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-
-            // Look up serverId from tool metadata
-            const toolName =
-              streamingContext.toolCallIdToName.get(currentToolCallId);
-            const serverId = toolName ? extractServerId(toolName) : undefined;
-
-            iterationToolResults.push({ result });
-            sendSseEvent(
-              streamingContext.controller,
-              streamingContext.encoder!,
-              {
-                type: "tool_result",
-                toolResult: {
-                  id: currentToolCallId,
-                  toolCallId: currentToolCallId,
-                  result,
-                  timestamp: new Date().toISOString(),
-                  serverId,
-                },
-              },
-            );
-            break;
-          }
-          default:
-            break;
-        }
         } catch (chunkError) {
           hadStreamError = true;
-          streamErrorMessage = chunkError instanceof Error
-            ? chunkError.message
-            : "Error processing chunk";
+          streamErrorMessage =
+            chunkError instanceof Error
+              ? chunkError.message
+              : "Error processing chunk";
         }
       },
     });
@@ -388,7 +389,10 @@ const createStreamingResponse = async (
       }
 
       if (response.experimental_providerMetadata?.openai?.error) {
-        throw new Error(response.experimental_providerMetadata.openai.error.message || "OpenAI API error");
+        throw new Error(
+          response.experimental_providerMetadata.openai.error.message ||
+            "OpenAI API error",
+        );
       }
     } catch (error) {
       // Use the already-extracted error message, or extract a new one
