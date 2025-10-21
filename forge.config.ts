@@ -104,8 +104,6 @@ const config: ForgeConfig = {
             height: 380,
           },
         },
-        background: undefined,
-        icon: undefined,
       },
     }),
     new MakerDeb({
