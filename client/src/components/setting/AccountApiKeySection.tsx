@@ -164,7 +164,7 @@ export function AccountApiKeySection() {
         <Button
           type="button"
           onClick={() => {
-            posthog.capture("sign_in", {
+            posthog.capture("login_button_clicked", {
               location: "account_api_key_section",
               platform: detectPlatform(),
               environment: detectEnvironment(),
