@@ -9,6 +9,7 @@ interface WidgetData {
   uri: string;
   toolInput: Record<string, any>;
   toolOutput: any;
+  toolResponseMetadata?: Record<string, any> | null;
   toolId: string;
   timestamp: number;
 }
@@ -97,7 +98,7 @@ resources.post("/read", async (c) => {
 resources.post("/widget/store", async (c) => {
   try {
     const body = await c.req.json();
-    const { serverId, uri, toolInput, toolOutput, toolId } = body;
+    const { serverId, uri, toolInput, toolOutput, toolResponseMetadata, toolId } = body;
 
     if (!serverId || !uri || !toolId) {
       return c.json({ success: false, error: "Missing required fields" }, 400);
@@ -109,6 +110,7 @@ resources.post("/widget/store", async (c) => {
       uri,
       toolInput,
       toolOutput,
+      toolResponseMetadata: toolResponseMetadata ?? null,
       toolId,
       timestamp: Date.now(),
     });
@@ -183,7 +185,7 @@ resources.get("/widget-content/:toolId", async (c) => {
       );
     }
 
-    const { serverId, uri, toolInput, toolOutput } = widgetData;
+    const { serverId, uri, toolInput, toolOutput, toolResponseMetadata } = widgetData;
 
     const mcpClientManager = c.mcpClientManager;
     const availableServers = mcpClientManager
@@ -255,6 +257,7 @@ resources.get("/widget-content/:toolId", async (c) => {
           const openaiAPI = {
             toolInput: ${JSON.stringify(toolInput)},
             toolOutput: ${JSON.stringify(toolOutput)},
+            toolResponseMetadata: ${JSON.stringify(toolResponseMetadata ?? null)},
             displayMode: 'inline',
             maxHeight: 600,
             theme: 'dark',
