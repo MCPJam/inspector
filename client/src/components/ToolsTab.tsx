@@ -42,6 +42,8 @@ import {
 import { validateToolOutput } from "@/lib/schema-utils";
 import "react18-json-view/src/style.css";
 import { MCPServerConfig } from "@/sdk";
+import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
+import { usePostHog } from "posthog-js/react";
 
 type ToolMap = Record<string, Tool>;
 type FormField = ToolFormField;
@@ -67,6 +69,7 @@ interface ToolsTabProps {
 
 export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   const logger = useLogger("ToolsTab");
+  const posthog = usePostHog();
   const [tools, setTools] = useState<ToolMap>({});
   const [selectedTool, setSelectedTool] = useState<string>("");
   const [formFields, setFormFields] = useState<FormField[]>([]);
@@ -155,6 +158,14 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       );
     }
   }, [selectedTool, tools]);
+
+  useEffect(() => {
+    posthog.capture("tools_tab_viewed", {
+      location: "tools_tab",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+    });
+  }, []);
 
   const fetchTools = async () => {
     if (!serverName) {
