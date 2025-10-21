@@ -63,10 +63,13 @@ Use [LiteLLM Proxy](https://docs.litellm.ai/docs/proxy/quick_start) to connect t
    - **Model Aliases**: Comma-separated list of model names configured in your proxy (e.g., `gpt-3.5-turbo, claude-3-opus, gemini-pro`)
 
 <Info>
-  Use the exact model names that work with your LiteLLM proxy's `/v1/chat/completions` endpoint. These are typically the model names without provider prefixes (e.g., `gpt-3.5-turbo` instead of `openai/gpt-3.5-turbo`).
+  Use the exact model names that work with your LiteLLM proxy's
+  `/v1/chat/completions` endpoint. These are typically the model names without
+  provider prefixes (e.g., `gpt-3.5-turbo` instead of `openai/gpt-3.5-turbo`).
 </Info>
 
 **Example configuration:**
+
 ```yaml
 # In your LiteLLM config.yaml
 model_list:
