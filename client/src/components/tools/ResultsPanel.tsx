@@ -203,7 +203,9 @@ export function ResultsPanel({
               />
             </div>
           </ScrollArea>
-        ) : showStructured && structuredResult && validationErrors === null ? (
+        ) : showStructured &&
+          structuredResult &&
+          (validationErrors === null || validationErrors === undefined) ? (
           <ScrollArea className="h-full">
             <div className="p-4">
               <JsonView
