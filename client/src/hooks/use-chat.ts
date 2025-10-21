@@ -37,7 +37,14 @@ interface UseChatOptions {
 }
 
 export function useChat(options: UseChatOptions = {}) {
-  const { getToken, hasToken, tokens, getOllamaBaseUrl } = useAiProviderKeys();
+  const {
+    getToken,
+    hasToken,
+    tokens,
+    getOllamaBaseUrl,
+    getLiteLLMBaseUrl,
+    getLiteLLMModelAlias,
+  } = useAiProviderKeys();
   const posthog = usePostHog();
 
   const {
@@ -163,6 +170,7 @@ export function useChat(options: UseChatOptions = {}) {
       deepseek: hasToken("deepseek"),
       google: hasToken("google"),
       ollama: isOllamaRunning,
+      litellm: Boolean(getLiteLLMBaseUrl() && getLiteLLMModelAlias()),
       meta: false,
       "x-ai": false,
     } as const;
@@ -173,10 +181,43 @@ export function useChat(options: UseChatOptions = {}) {
       }
       return providerHasKey[m.provider];
     });
-    return isOllamaRunning && ollamaModels.length > 0
-      ? cloud.concat(ollamaModels)
-      : cloud;
-  }, [isOllamaRunning, ollamaModels, hasToken]);
+
+    // Add user's configured LiteLLM models if configured
+    const litellmModels: ModelDefinition[] = [];
+    if (providerHasKey.litellm) {
+      const modelAliasString = getLiteLLMModelAlias();
+      // Parse comma-separated model aliases
+      const modelAliases = modelAliasString
+        .split(",")
+        .map((alias) => alias.trim())
+        .filter((alias) => alias.length > 0);
+
+      // Create a model definition for each alias
+      modelAliases.forEach((alias) => {
+        litellmModels.push({
+          id: alias,
+          name: alias,
+          provider: "litellm",
+        });
+      });
+    }
+
+    // Combine all models: cloud + ollama + litellm
+    let allModels = cloud;
+    if (isOllamaRunning && ollamaModels.length > 0) {
+      allModels = allModels.concat(ollamaModels);
+    }
+    if (litellmModels.length > 0) {
+      allModels = allModels.concat(litellmModels);
+    }
+    return allModels;
+  }, [
+    isOllamaRunning,
+    ollamaModels,
+    hasToken,
+    getLiteLLMBaseUrl,
+    getLiteLLMModelAlias,
+  ]);
 
   const applySseEvent = useCallback(
     (
@@ -375,6 +416,7 @@ export function useChat(options: UseChatOptions = {}) {
             temperature,
             messages: messagesRef.current.concat(userMessage),
             ollamaBaseUrl: getOllamaBaseUrl(),
+            litellmBaseUrl: getLiteLLMBaseUrl(),
             sendMessagesToBackend: routeThroughBackend,
             selectedServers,
           }),
@@ -451,6 +493,7 @@ export function useChat(options: UseChatOptions = {}) {
       onMessageReceived,
       applySseEvent,
       getOllamaBaseUrl,
+      getLiteLLMBaseUrl,
       sendMessagesToBackend,
       getAccessToken,
       selectedServers,
