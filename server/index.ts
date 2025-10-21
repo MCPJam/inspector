@@ -379,11 +379,40 @@ const hostname = process.env.ENVIRONMENT === "dev" ? "localhost" : "127.0.0.1";
 logBox(`http://${hostname}:${port}`, "🚀 Inspector Launched");
 
 // Graceful shutdown handling
-const server = serve({
-  fetch: app.fetch,
-  port,
-  hostname: "0.0.0.0", // Bind to all interfaces for Docker
-});
+let server: any;
+try {
+  server = serve({
+    fetch: app.fetch,
+    port,
+    hostname: "0.0.0.0", // Bind to all interfaces for Docker
+  });
+} catch (error: any) {
+  // Handle port already in use error
+  if (error.code === "EADDRINUSE" || error.message?.includes("address already in use")) {
+    console.error("\n┌────────────────────────────────────────────────────────────┐");
+    console.error("│ ❌ ERROR: Port Already In Use                             │");
+    console.error("├────────────────────────────────────────────────────────────┤");
+    console.error(`│ Port ${port} is already being used by another process.     │`);
+    console.error("│                                                            │");
+    console.error("│ Solutions:                                                 │");
+    console.error("│ 1. Stop the other process using this port                 │");
+    console.error("│ 2. Use a different port with --port <number>              │");
+    console.error("│ 3. Set PORT environment variable                          │");
+    console.error("│                                                            │");
+    console.error("│ Find process using this port:                             │");
+    if (process.platform === "win32") {
+      console.error(`│   netstat -ano | findstr :${port}                           │`);
+      console.error(`│   taskkill /PID <PID> /F                                   │`);
+    } else {
+      console.error(`│   lsof -ti:${port}                                          │`);
+      console.error(`│   kill $(lsof -ti:${port})                                  │`);
+    }
+    console.error("└────────────────────────────────────────────────────────────┘\n");
+    process.exit(1);
+  }
+  // Re-throw other errors
+  throw error;
+}
 
 // Handle graceful shutdown
 process.on("SIGINT", () => {

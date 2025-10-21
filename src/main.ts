@@ -85,7 +85,20 @@ async function startHonoServer(): Promise<number> {
 
     log.info(`🚀 MCPJam Server started on port ${port}`);
     return port;
-  } catch (error) {
+  } catch (error: any) {
+    // Handle port already in use error with a helpful message
+    if (error.code === "EADDRINUSE" || error.message?.includes("address already in use")) {
+      const errorMessage = `Port ${port} is already in use by another process. Please close the other application and try again.`;
+      log.error(errorMessage);
+
+      // Show a user-friendly dialog
+      const { dialog } = require("electron");
+      dialog.showErrorBox(
+        "Port Conflict",
+        `${errorMessage}\n\nFind and stop the process using port ${port}:\n${process.platform === "win32" ? `netstat -ano | findstr :${port}` : `lsof -ti:${port}`}`
+      );
+      throw new Error(errorMessage);
+    }
     log.error("Failed to start Hono server:", error);
     throw error;
   }

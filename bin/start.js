@@ -509,9 +509,12 @@ async function main() {
         logSuccess(`Port ${requestedPort} is available and ready`);
       } else {
         logError(`Explicitly requested port ${requestedPort} is not available`);
-        logInfo(
-          "Use a different port with --port <number> or let the system find one automatically",
+        logDivider();
+        logBox(
+          `Port ${requestedPort} is already being used by another process.\n\nSolutions:\n1. Stop the process using this port\n2. Use a different port with --port <number>\n\nFind process using this port:\n${process.platform === "win32" ? `netstat -ano | findstr :${requestedPort}\ntaskkill /PID <PID> /F` : `lsof -ti:${requestedPort}\nkill $(lsof -ti:${requestedPort})`}`,
+          "❌ Port Conflict"
         );
+        logDivider();
         throw new Error(`Port ${requestedPort} is already in use`);
       }
     } else {
@@ -524,6 +527,12 @@ async function main() {
         logError(
           `Default port ${requestedPort} is already in use. Please free the port`,
         );
+        logDivider();
+        logBox(
+          `Port ${requestedPort} is already being used by another process.\n\nSolutions:\n1. Stop the process using this port\n2. Specify a different port with --port <number>\n3. Set PORT environment variable\n\nFind process using this port:\n${process.platform === "win32" ? `netstat -ano | findstr :${requestedPort}\ntaskkill /PID <PID> /F` : `lsof -ti:${requestedPort}\nkill $(lsof -ti:${requestedPort})`}`,
+          "❌ Port Conflict"
+        );
+        logDivider();
         throw new Error(`Port ${requestedPort} is already in use`);
       }
     }
