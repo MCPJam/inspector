@@ -1,6 +1,6 @@
 export interface ContentBlock {
   id: string;
-  type: "text" | "tool_call" | "tool_result";
+  type: "text" | "tool_call" | "tool_result" | "error";
   content?: string;
   toolCall?: ToolCall;
   toolResult?: ToolResult;

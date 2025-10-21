@@ -9,6 +9,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../ui/dialog";
+import { Alert, AlertDescription } from "../ui/alert";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 interface ProviderConfig {
@@ -95,6 +96,29 @@ export function ProviderConfigDialog({
               </button>
             </span>
           </div>
+
+          {provider?.id === "openai" && (
+            <Alert>
+              <AlertDescription>
+                <p>
+                  <strong>
+                    GPT-5 models require organization verification.
+                  </strong>{" "}
+                  If you encounter access errors, visit{" "}
+                  <a
+                    href="https://platform.openai.com/settings/organization/general"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline hover:no-underline font-medium align-baseline inline"
+                  >
+                    OpenAI Settings
+                  </a>{" "}
+                  and verify your organization. Access may take up to 15 minutes
+                  after verification.
+                </p>
+              </AlertDescription>
+            </Alert>
+          )}
         </div>
 
         <DialogFooter>
