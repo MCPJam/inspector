@@ -15,47 +15,49 @@ const macSignIdentity = process.env.MAC_CODESIGN_IDENTITY?.trim();
 if (enableMacSigning && !macSignIdentity) {
   // eslint-disable-next-line no-console
   console.warn(
-    "[forge] MAC_CODESIGN_IDENTITY not set - macOS build will be ad-hoc signed only. Set MAC_CODESIGN_IDENTITY for distributable builds.",
+    "[forge] MAC_CODESIGN_IDENTITY not set - macOS build will use default signing (no identity configured). Set MAC_CODESIGN_IDENTITY for distributable builds.",
   );
 }
 
-const osxSignOptions = enableMacSigning && macSignIdentity
-  ? {
-      identity: macSignIdentity,
-      "hardened-runtime": true,
-      entitlements: resolve(__dirname, "assets", "entitlements.mac.plist"),
-      "entitlements-inherit": resolve(
-        __dirname,
-        "assets",
-        "entitlements.mac.plist",
-      ),
-      "gatekeeper-assess": false,
-    }
-  : undefined;
-
-const osxNotarizeOptions = enableMacSigning && macSignIdentity
-  ? process.env.APPLE_API_KEY_ID &&
-    process.env.APPLE_API_ISSUER_ID &&
-    process.env.APPLE_API_KEY_FILE
+const osxSignOptions =
+  enableMacSigning && macSignIdentity
     ? {
-        // For notarytool auth with ASC API key
-        // appleApiKey: path to the .p8 file
-        // appleApiKeyId: the key ID (e.g., QN5YX8VT8S)
-        // appleApiIssuer: the issuer ID (GUID)
-        appleApiKey: process.env.APPLE_API_KEY_FILE,
-        appleApiKeyId: process.env.APPLE_API_KEY_ID,
-        appleApiIssuer: process.env.APPLE_API_ISSUER_ID,
+        identity: macSignIdentity,
+        "hardened-runtime": true,
+        entitlements: resolve(__dirname, "assets", "entitlements.mac.plist"),
+        "entitlements-inherit": resolve(
+          __dirname,
+          "assets",
+          "entitlements.mac.plist",
+        ),
+        "gatekeeper-assess": false,
       }
-    : process.env.APPLE_ID &&
-        process.env.APPLE_APP_SPECIFIC_PASSWORD &&
-        process.env.APPLE_TEAM_ID
+    : undefined;
+
+const osxNotarizeOptions =
+  enableMacSigning && macSignIdentity
+    ? process.env.APPLE_API_KEY_ID &&
+      process.env.APPLE_API_ISSUER_ID &&
+      process.env.APPLE_API_KEY_FILE
       ? {
-          appleId: process.env.APPLE_ID,
-          appleIdPassword: process.env.APPLE_APP_SPECIFIC_PASSWORD,
-          teamId: process.env.APPLE_TEAM_ID,
+          // For notarytool auth with ASC API key
+          // appleApiKey: path to the .p8 file
+          // appleApiKeyId: the key ID (e.g., QN5YX8VT8S)
+          // appleApiIssuer: the issuer ID (GUID)
+          appleApiKey: process.env.APPLE_API_KEY_FILE,
+          appleApiKeyId: process.env.APPLE_API_KEY_ID,
+          appleApiIssuer: process.env.APPLE_API_ISSUER_ID,
         }
-      : undefined
-  : undefined;
+      : process.env.APPLE_ID &&
+          process.env.APPLE_APP_SPECIFIC_PASSWORD &&
+          process.env.APPLE_TEAM_ID
+        ? {
+            appleId: process.env.APPLE_ID,
+            appleIdPassword: process.env.APPLE_APP_SPECIFIC_PASSWORD,
+            teamId: process.env.APPLE_TEAM_ID,
+          }
+        : undefined
+    : undefined;
 
 const config: ForgeConfig = {
   packagerConfig: {
