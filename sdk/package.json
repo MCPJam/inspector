@@ -25,6 +25,11 @@
       "types": "./dist/mcp-client-manager/index.d.ts",
       "import": "./dist/mcp-client-manager/index.js",
       "require": "./dist/mcp-client-manager/index.cjs"
+    },
+    "./telemetry": {
+      "types": "./dist/telemetry/index.d.ts",
+      "import": "./dist/telemetry/index.js",
+      "require": "./dist/telemetry/index.cjs"
     }
   },
   "files": [
@@ -40,7 +45,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.3",
-    "ai": "^5.0.76"
+    "ai": "^5.0.76",
+    "posthog-node": "^5.10.1"
   },
   "devDependencies": {
     "tsup": "^8.3.5",

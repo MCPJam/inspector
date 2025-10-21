@@ -20,8 +20,8 @@
     "paths": {
       "@/*": ["./src/*"],
       "@/shared/*": ["../shared/*"],
-      "@/sdk": ["../sdk/index.ts"],
-      "@/sdk/*": ["../sdk/*"]
+      "@/sdk": ["../sdk/src/index.ts"],
+      "@/sdk/*": ["../sdk/src/*"]
     }
   },
   "include": ["src", "../shared/**/*.ts"],
