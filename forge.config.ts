@@ -10,44 +10,54 @@ import { FuseV1Options, FuseVersion } from "@electron/fuses";
 import { resolve } from "path";
 
 const enableMacSigning = process.platform === "darwin";
+const macSignIdentity = process.env.MAC_CODESIGN_IDENTITY?.trim();
 
-const osxSignOptions = enableMacSigning
-  ? {
-      identity: process.env.MAC_CODESIGN_IDENTITY || "Developer ID Application",
-      "hardened-runtime": true,
-      entitlements: resolve(__dirname, "assets", "entitlements.mac.plist"),
-      "entitlements-inherit": resolve(
-        __dirname,
-        "assets",
-        "entitlements.mac.plist",
-      ),
-      "gatekeeper-assess": false,
-    }
-  : undefined;
+if (enableMacSigning && !macSignIdentity) {
+  // eslint-disable-next-line no-console
+  console.warn(
+    "[forge] MAC_CODESIGN_IDENTITY not set - macOS build will use default signing (no identity configured). Set MAC_CODESIGN_IDENTITY for distributable builds.",
+  );
+}
 
-const osxNotarizeOptions = enableMacSigning
-  ? process.env.APPLE_API_KEY_ID &&
-    process.env.APPLE_API_ISSUER_ID &&
-    process.env.APPLE_API_KEY_FILE
+const osxSignOptions =
+  enableMacSigning && macSignIdentity
     ? {
-        // For notarytool auth with ASC API key
-        // appleApiKey: path to the .p8 file
-        // appleApiKeyId: the key ID (e.g., QN5YX8VT8S)
-        // appleApiIssuer: the issuer ID (GUID)
-        appleApiKey: process.env.APPLE_API_KEY_FILE,
-        appleApiKeyId: process.env.APPLE_API_KEY_ID,
-        appleApiIssuer: process.env.APPLE_API_ISSUER_ID,
+        identity: macSignIdentity,
+        "hardened-runtime": true,
+        entitlements: resolve(__dirname, "assets", "entitlements.mac.plist"),
+        "entitlements-inherit": resolve(
+          __dirname,
+          "assets",
+          "entitlements.mac.plist",
+        ),
+        "gatekeeper-assess": false,
       }
-    : process.env.APPLE_ID &&
-        process.env.APPLE_APP_SPECIFIC_PASSWORD &&
-        process.env.APPLE_TEAM_ID
+    : undefined;
+
+const osxNotarizeOptions =
+  enableMacSigning && macSignIdentity
+    ? process.env.APPLE_API_KEY_ID &&
+      process.env.APPLE_API_ISSUER_ID &&
+      process.env.APPLE_API_KEY_FILE
       ? {
-          appleId: process.env.APPLE_ID,
-          appleIdPassword: process.env.APPLE_APP_SPECIFIC_PASSWORD,
-          teamId: process.env.APPLE_TEAM_ID,
+          // For notarytool auth with ASC API key
+          // appleApiKey: path to the .p8 file
+          // appleApiKeyId: the key ID (e.g., QN5YX8VT8S)
+          // appleApiIssuer: the issuer ID (GUID)
+          appleApiKey: process.env.APPLE_API_KEY_FILE,
+          appleApiKeyId: process.env.APPLE_API_KEY_ID,
+          appleApiIssuer: process.env.APPLE_API_ISSUER_ID,
         }
-      : undefined
-  : undefined;
+      : process.env.APPLE_ID &&
+          process.env.APPLE_APP_SPECIFIC_PASSWORD &&
+          process.env.APPLE_TEAM_ID
+        ? {
+            appleId: process.env.APPLE_ID,
+            appleIdPassword: process.env.APPLE_APP_SPECIFIC_PASSWORD,
+            teamId: process.env.APPLE_TEAM_ID,
+          }
+        : undefined
+    : undefined;
 
 const config: ForgeConfig = {
   packagerConfig: {
@@ -94,8 +104,6 @@ const config: ForgeConfig = {
             height: 380,
           },
         },
-        background: undefined,
-        icon: undefined,
       },
     }),
     new MakerDeb({
@@ -144,6 +152,7 @@ const config: ForgeConfig = {
     // at package time, before code signing the application
     new FusesPlugin({
       version: FuseVersion.V1,
+      resetAdHocDarwinSignature: true,
       [FuseV1Options.RunAsNode]: false,
       [FuseV1Options.EnableCookieEncryption]: true,
       [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
