@@ -75,7 +75,7 @@ export function LiteLLMConfigDialog({
 
           <div>
             <label htmlFor="litellm-api-key" className="text-sm font-medium">
-              API Key <span className="text-muted-foreground">(optional)</span>
+              API Key
             </label>
             <Input
               id="litellm-api-key"
