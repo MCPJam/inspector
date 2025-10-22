@@ -66,6 +66,7 @@
     "@ai-sdk/anthropic": "^2.0.17",
     "@ai-sdk/deepseek": "^1.0.5",
     "@ai-sdk/google": "^2.0.11",
+    "@ai-sdk/mistral": "^2.0.19",
     "@ai-sdk/openai": "^2.0.32",
     "@ai-sdk/provider": "^2.0.0",
     "@convex-dev/auth": "^0.0.88",
