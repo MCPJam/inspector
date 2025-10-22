@@ -36,7 +36,6 @@ export function ChatTab({
 }: ChatTabProps) {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
-  const chatPanelRef = useRef<HTMLDivElement>(null);
   const { isAuthenticated } = useConvexAuth();
   const { signUp } = useAuth();
   const posthog = usePostHog();
@@ -90,7 +89,6 @@ export function ChatTab({
     }
   }, [showSignInPrompt, setInput]);
 
-  // CSS-only layout; no JS sizing for the footer
 
   // Restore model from localStorage on mount
   useEffect(() => {
@@ -157,8 +155,7 @@ export function ChatTab({
       icon: Sparkles,
     },
   ];
-  // Keep bottom padding minimal when thread is short; add space when long/streaming
-  const bottomPaddingClass = (messages.length > 2 || isLoading) ? "pb-16" : "pb-2";
+  // No JS needed; layout keeps input pinned
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     if (isAtBottom && messagesContainerRef.current) {
@@ -388,15 +385,14 @@ export function ChatTab({
       >
         {/* Main Chat Panel */}
         <ResizablePanel defaultSize={70} minSize={40}>
-          <div ref={chatPanelRef} className="grid bg-background h-full min-h-0 overflow-hidden grid-rows-[1fr_auto]">
-            {/* Messages Area - only scrollable region */
-            }
+          <div className="relative h-full bg-background overflow-hidden">
+            {/* Messages Area - scrollable with bottom padding for input */}
             <div
               ref={messagesContainerRef}
               onScroll={handleScroll}
-              className="min-h-0 overflow-y-auto"
+              className="absolute inset-0 overflow-y-auto pb-32"
             >
-              <div className={`max-w-4xl mx-auto px-4 pt-8 pb-4`}>
+              <div className="max-w-4xl mx-auto px-4 pt-8 pb-8">
                 <AnimatePresence mode="popLayout">
                   {messages.map((message, index) => (
                     <motion.div
@@ -469,47 +465,46 @@ export function ChatTab({
                   </motion.div>
                 )}
               </AnimatePresence>
-
             </div>
 
-            {/* Bottom input row (pinned by grid, full panel width) */}
-            <div className="border-t border-border/50 bg-background/90 backdrop-blur-sm">
-              <div className="w-full px-4 py-4">
+            {/* Input footer - absolutely positioned at bottom */}
+            <div className="absolute bottom-0 left-0 right-0 border-t border-border/50 bg-background">
+              <div className="max-w-4xl mx-auto px-4 py-4">
                 <ChatInput
-                  value={input}
-                  onChange={setInput}
-                  onSubmit={(message, attachments) => {
-                    posthog.capture("send_message", {
-                      location: "chat_tab",
-                      platform: detectPlatform(),
-                      environment: detectEnvironment(),
-                      model_id: model?.id ?? null,
-                      model_name: model?.name ?? null,
-                      model_provider: model?.provider ?? null,
-                    });
-                    sendMessage(message, attachments);
-                  }}
-                  onStop={stopGeneration}
-                  disabled={
-                    availableModels.length === 0 ||
-                    noServersConnected ||
-                    showSignInPrompt
-                  }
-                  isLoading={isLoading}
-                  placeholder={
-                    showSignInPrompt ? signInPromptMessage : "Send a message..."
-                  }
-                  className="border-2 shadow-sm"
-                  currentModel={model}
-                  availableModels={availableModels}
-                  onModelChange={setModel}
-                  onClearChat={clearChat}
-                  hasMessages={hasMessages}
-                  systemPrompt={systemPromptState}
-                  onSystemPromptChange={setSystemPromptState}
-                  temperature={temperatureState}
-                  onTemperatureChange={setTemperatureState}
-                  isSendBlocked={showSignInPrompt}
+                value={input}
+                onChange={setInput}
+                onSubmit={(message, attachments) => {
+                  posthog.capture("send_message", {
+                    location: "chat_tab",
+                    platform: detectPlatform(),
+                    environment: detectEnvironment(),
+                    model_id: model?.id ?? null,
+                    model_name: model?.name ?? null,
+                    model_provider: model?.provider ?? null,
+                  });
+                  sendMessage(message, attachments);
+                }}
+                onStop={stopGeneration}
+                disabled={
+                  availableModels.length === 0 ||
+                  noServersConnected ||
+                  showSignInPrompt
+                }
+                isLoading={isLoading}
+                placeholder={
+                  showSignInPrompt ? signInPromptMessage : "Send a message..."
+                }
+                className="border-2 shadow-sm w-full"
+                currentModel={model}
+                availableModels={availableModels}
+                onModelChange={setModel}
+                onClearChat={clearChat}
+                hasMessages={hasMessages}
+                systemPrompt={systemPromptState}
+                onSystemPromptChange={setSystemPromptState}
+                temperature={temperatureState}
+                onTemperatureChange={setTemperatureState}
+                isSendBlocked={showSignInPrompt}
                 />
               </div>
             </div>
