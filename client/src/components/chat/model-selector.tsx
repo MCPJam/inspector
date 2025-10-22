@@ -54,6 +54,8 @@ const getProviderDisplayName = (provider: ModelProvider): string => {
       return "Google AI";
     case "mistral":
       return "Mistral AI";
+    case "bedrock":
+      return "Amazon Bedrock";
     case "ollama":
       return "Ollama";
     case "meta":

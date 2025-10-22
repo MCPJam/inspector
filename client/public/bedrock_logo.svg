@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none">
+  <defs>
+    <linearGradient id="bedrockGradient" x1="8" y1="8" x2="40" y2="40" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F28E1C" />
+      <stop offset="1" stop-color="#FFB347" />
+    </linearGradient>
+  </defs>
+  <rect x="6" y="6" width="36" height="36" rx="8" fill="url(#bedrockGradient)" />
+  <path
+    d="M16 32V16h8l8 8-8 8h-8zm10.8-8 4.2-4.2V27.8L26.8 24z"
+    fill="#fff"
+  />
+</svg>
