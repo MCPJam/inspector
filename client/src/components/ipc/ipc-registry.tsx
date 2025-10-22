@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Button } from "../ui/button";
+import { X } from "lucide-react";
 
 export type HeaderIpc = {
   id: string;
@@ -12,31 +13,55 @@ export const headerIpcs: HeaderIpc[] = [
   {
     id: "ipc-2024-beta-feedback",
     render: ({ dismiss }) => (
-      <div className="no-drag bg-indigo-600 px-4 py-2 text-white lg:px-6">
-        <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
-          <p className="leading-snug">
-            Inspector Cloud is in active development - share feedback so we can
-            improve MDC tooling!
-          </p>
-          <div className="flex items-center gap-2">
-            <Button
-              asChild
-              size="sm"
-              variant="secondary"
-              className="bg-white text-indigo-700 hover:bg-white/90"
+      <div className="no-drag bg-orange-200 px-4 py-2 text-gray-900 lg:px-6">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-4 flex-1">
+            <p className="text-sm font-normal leading-snug">
+              You can now try frontier models in the playground, for free!
+            </p>
+            <a
+              href="#chat"
+              onClick={dismiss}
+              className="text-sm font-normal text-orange-700 hover:text-orange-800 underline underline-offset-2"
             >
-              <a
-                href="https://example.com/feedback"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Give feedback
-              </a>
-            </Button>
-            <Button size="sm" variant="ghost" onClick={dismiss}>
-              Dismiss
-            </Button>
+              Try it now
+            </a>
+            <div className="hidden sm:flex items-center gap-2 ml-2">
+              <img
+                src="/claude_logo.png"
+                alt="Claude"
+                className="w-6 h-6 object-contain opacity-80"
+              />
+              <img
+                src="/openai_logo.png"
+                alt="OpenAI"
+                className="w-6 h-6 object-contain opacity-80"
+              />
+              <img
+                src="/google_logo.png"
+                alt="Google"
+                className="w-6 h-6 object-contain opacity-80"
+              />
+              <img
+                src="/meta_logo.svg"
+                alt="Meta"
+                className="w-6 h-6 object-contain opacity-80"
+              />
+              <img
+                src="/grok_light.svg"
+                alt="Grok"
+                className="w-6 h-6 object-contain opacity-80"
+              />
+            </div>
           </div>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={dismiss}
+            className="hover:bg-orange-200 p-1 h-8 w-8"
+          >
+            <X className="h-5 w-5" />
+          </Button>
         </div>
       </div>
     ),
