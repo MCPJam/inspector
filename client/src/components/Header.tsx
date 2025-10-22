@@ -7,7 +7,6 @@ export const Header = () => {
 
   return (
     <header className="flex shrink-0 flex-col border-b transition-[width,height] ease-linear">
-      {activeIpc && activeIpc.render({ dismiss: dismissActiveIpc })}
       <div className="flex h-12 shrink-0 items-center gap-2 px-4 lg:px-6 drag">
         <div className="flex items-center gap-1 lg:gap-2 no-drag">
           <SidebarTrigger className="-ml-1" />
@@ -16,6 +15,7 @@ export const Header = () => {
           <AuthUpperArea />
         </div>
       </div>
+      {activeIpc && activeIpc.render({ dismiss: dismissActiveIpc })}
     </header>
   );
 };
