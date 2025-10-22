@@ -290,33 +290,95 @@ export function ChatTab({
     </div>
   );
 
-  if (!hasMessages && isChatDisabled) {
-    const disabledContent = showSignInPrompt ? (
-      <div className="space-y-4">
-        <div className="space-y-1">
-          <h2 className="text-base font-medium">
-            Create an account to use free models
-          </h2>
-          <p className="text-sm text-muted-foreground">
-            or bring your own API key in the settings tab
-          </p>
+  const renderSignUpForFreeModels = (
+    <div className="max-w-2xl mx-auto space-y-4">
+      {/* Header */}
+      <div className="space-y-1 text-center">
+        <h2 className="text-2xl font-semibold tracking-tight">
+          Test your MCP server with frontier models for free
+        </h2>
+      </div>
+
+      {/* Model Showcase */}
+      <div className="flex justify-center items-center gap-4 py-3">
+        {/* Claude */}
+        <div className="flex items-center justify-center">
+          <img
+            src="/claude_logo.png"
+            alt="Claude"
+            className="w-8 h-8 object-contain opacity-70 hover:opacity-100 transition-opacity"
+          />
         </div>
-        <div className="flex justify-center gap-2">
-          <Button
-            onClick={() => {
-              (posthog.capture("sign_up_button_clicked", {
-                location: "chat_tab",
-                platform: detectPlatform(),
-                environment: detectEnvironment(),
-              }),
-                signUp());
-            }}
-            className="hover:opacity-90 cursor-pointer"
-          >
-            Create account
-          </Button>
+
+        {/* GPT */}
+        <div className="flex items-center justify-center">
+          <img
+            src="/openai_logo.png"
+            alt="OpenAI"
+            className="w-8 h-8 object-contain opacity-70 hover:opacity-100 transition-opacity"
+          />
+        </div>
+
+        {/* Gemini */}
+        <div className="flex items-center justify-center">
+          <img
+            src="/google_logo.png"
+            alt="Google"
+            className="w-8 h-8 object-contain opacity-70 hover:opacity-100 transition-opacity"
+          />
+        </div>
+
+        {/* Meta */}
+        <div className="flex items-center justify-center">
+          <img
+            src="/meta_logo.svg"
+            alt="Meta"
+            className="w-8 h-8 object-contain opacity-70 hover:opacity-100 transition-opacity"
+          />
+        </div>
+
+        {/* Grok/xAI */}
+        <div className="flex items-center justify-center">
+          <img
+            src="/grok_light.svg"
+            alt="Grok"
+            className="w-8 h-8 object-contain opacity-70 hover:opacity-100 transition-opacity"
+          />
         </div>
       </div>
+
+      {/* CTA */}
+      <div className="space-y-2 text-center">
+        <Button
+          onClick={() => {
+            posthog.capture("sign_up_button_clicked", {
+              location: "chat_tab",
+              platform: detectPlatform(),
+              environment: detectEnvironment(),
+            });
+            signUp();
+          }}
+          size="lg"
+          className="hover:opacity-90 cursor-pointer font-semibold px-8 py-6 text-base"
+        >
+          Get started
+        </Button>
+        <p className="text-xs text-muted-foreground">
+          or bring your own API key in{" "}
+          <a
+            href="#settings"
+            className="underline hover:text-foreground transition-colors"
+          >
+            settings
+          </a>
+        </p>
+      </div>
+    </div>
+  );
+
+  if (!hasMessages && isChatDisabled) {
+    const disabledContent = showSignInPrompt ? (
+      renderSignUpForFreeModels
     ) : (
       <div className="space-y-4">
         <div className="space-y-1">
