@@ -348,14 +348,55 @@ const createStreamingResponse = async (
                 (chunk.chunk as any).output ??
                 (chunk.chunk as any).result ??
                 (chunk.chunk as any).value;
-              const currentToolCallId =
-                streamingContext.lastEmittedToolCallId ??
-                `tc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+              const toolName =
+                (chunk.chunk as any).toolName ||
+                (chunk.chunk as any).name ||
+                null;
+              let currentToolCallId =
+                (chunk.chunk as any).toolCallId || undefined;
+
+              if (!currentToolCallId && toolName) {
+                const queue = streamingContext.toolNameToCallIds.get(toolName);
+                if (queue && queue.length > 0) {
+                  currentToolCallId = queue.shift();
+                }
+              }
+
+              if (!currentToolCallId && streamingContext.lastEmittedToolCallId) {
+                currentToolCallId = streamingContext.lastEmittedToolCallId;
+              }
+
+              if (!currentToolCallId) {
+                currentToolCallId = `tc_${Date.now()}_${Math.random()
+                  .toString(36)
+                  .substr(2, 9)}`;
+              }
+
+              // If the provider sends an explicit ID, ensure it is removed from the queue.
+              if (toolName && streamingContext.toolNameToCallIds.has(toolName)) {
+                const queue = streamingContext.toolNameToCallIds.get(toolName)!;
+                const index = queue.indexOf(currentToolCallId);
+                if (index !== -1) {
+                  queue.splice(index, 1);
+                }
+              }
+
+              streamingContext.lastEmittedToolCallId = currentToolCallId;
+
+              if (toolName) {
+                streamingContext.toolCallIdToName.set(
+                  currentToolCallId,
+                  toolName,
+                );
+              }
 
               // Look up serverId from tool metadata
-              const toolName =
+              const toolNameForLookup =
+                toolName ||
                 streamingContext.toolCallIdToName.get(currentToolCallId);
-              const serverId = toolName ? extractServerId(toolName) : undefined;
+              const serverId = toolNameForLookup
+                ? extractServerId(toolNameForLookup)
+                : undefined;
 
               iterationToolResults.push({ result });
               sendSseEvent(
