@@ -140,8 +140,8 @@ export function JsonRpcLoggerView({ serverIds }: JsonRpcLoggerViewProps = {}) {
   }, [items, searchQuery, serverIds]);
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex flex-col gap-3 p-3 border-b border-border">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <div className="flex flex-col gap-3 p-3 border-b border-border flex-shrink-0">
         <h2 className="text-xs font-semibold text-foreground">
           JSON-RPC Messages
         </h2>
@@ -170,7 +170,10 @@ export function JsonRpcLoggerView({ serverIds }: JsonRpcLoggerViewProps = {}) {
           </Button>
         </div>
       </div>
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-3">
+      <div
+        ref={scrollRef}
+        className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3"
+      >
         {filteredItems.length === 0 ? (
           <div className="text-center py-8">
             <div className="text-xs text-muted-foreground">
@@ -230,23 +233,25 @@ export function JsonRpcLoggerView({ serverIds }: JsonRpcLoggerViewProps = {}) {
                 {isExpanded && (
                   <div className="border-t bg-muted/20">
                     <div className="p-3">
-                      <JsonView
-                        src={normalizePayload(it.payload) as object}
-                        dark={true}
-                        theme="atom"
-                        enableClipboard={true}
-                        displaySize={false}
-                        collapseStringsAfterLength={100}
-                        style={{
-                          fontSize: "11px",
-                          fontFamily:
-                            "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                          backgroundColor: "transparent",
-                          padding: "0",
-                          borderRadius: "0",
-                          border: "none",
-                        }}
-                      />
+                      <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
+                        <JsonView
+                          src={normalizePayload(it.payload) as object}
+                          dark={true}
+                          theme="atom"
+                          enableClipboard={true}
+                          displaySize={false}
+                          collapseStringsAfterLength={100}
+                          style={{
+                            fontSize: "11px",
+                            fontFamily:
+                              "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                            backgroundColor: "transparent",
+                            padding: "0",
+                            borderRadius: "0",
+                            border: "none",
+                          }}
+                        />
+                      </div>
                     </div>
                   </div>
                 )}

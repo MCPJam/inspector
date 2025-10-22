@@ -133,7 +133,7 @@ export default function App() {
   const appContent = (
     <SidebarProvider defaultOpen={true}>
       <MCPSidebar onNavigate={handleNavigate} activeTab={activeTab} />
-      <SidebarInset className="flex flex-col">
+      <SidebarInset className="flex flex-col min-h-0">
         <header className="flex h-12 shrink-0 items-center gap-2 border-b transition-[width,height] ease-linear drag">
           <div className="flex w-full items-center justify-between px-4 lg:px-6">
             <div className="flex items-center gap-1 lg:gap-2">
@@ -145,7 +145,7 @@ export default function App() {
           </div>
         </header>
 
-        <div className="flex-1">
+        <div className="flex flex-1 min-h-0 flex-col overflow-hidden h-full">
           {/* Active Server Selector - Only show on Tools, Resources, Prompts, Auth, and Interceptor pages */}
           {(activeTab === "tools" ||
             activeTab === "resources" ||
