@@ -34,6 +34,7 @@ import CompletingSignInLoading from "./components/CompletingSignInLoading";
 import LoadingScreen from "./components/LoadingScreen";
 import LoginPage from "./components/LoginPage";
 import { useLoginPage } from "./hooks/use-log-in-page";
+import { Header } from "./components/Header";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
@@ -134,17 +135,7 @@ export default function App() {
     <SidebarProvider defaultOpen={true}>
       <MCPSidebar onNavigate={handleNavigate} activeTab={activeTab} />
       <SidebarInset className="flex flex-col min-h-0">
-        <header className="flex h-12 shrink-0 items-center gap-2 border-b transition-[width,height] ease-linear drag">
-          <div className="flex w-full items-center justify-between px-4 lg:px-6">
-            <div className="flex items-center gap-1 lg:gap-2">
-              <SidebarTrigger className="-ml-1" />
-            </div>
-            <div className="flex items-center gap-2">
-              <AuthUpperArea />
-            </div>
-          </div>
-        </header>
-
+        <Header />
         <div className="flex flex-1 min-h-0 flex-col overflow-hidden h-full">
           {/* Active Server Selector - Only show on Tools, Resources, Prompts, Auth, and Interceptor pages */}
           {(activeTab === "tools" ||
