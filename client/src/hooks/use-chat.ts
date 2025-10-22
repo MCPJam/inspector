@@ -170,6 +170,7 @@ export function useChat(options: UseChatOptions = {}) {
       deepseek: hasToken("deepseek"),
       google: hasToken("google"),
       mistral: hasToken("mistral"),
+      bedrock: hasToken("bedrock"),
       ollama: isOllamaRunning,
       litellm: Boolean(getLiteLLMBaseUrl() && getLiteLLMModelAlias()),
       meta: false,

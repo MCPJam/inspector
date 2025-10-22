@@ -121,6 +121,7 @@ MCPJam supports multiple LLM providers:
 - OpenAI (GPT-3.5, GPT-4)
 - Anthropic (Claude 2, Claude 3)
 - DeepSeek (DeepSeek R1)
+- Amazon Bedrock (Titan, Claude, Llama via AWS)
 - Ollama (Local models)
 
 **Key file:** `client/src/lib/llm-providers.ts`
@@ -141,8 +142,9 @@ MCPJam supports multiple LLM providers:
 
 <Step title="Set Environment Variables">
   Create a `.env` file in the root directory with your API keys: ```bash
-  OPENAI_API_KEY=your_key_here ANTHROPIC_API_KEY=your_key_here # Optional: Add
-  other provider keys ```
+  OPENAI_API_KEY=your_key_here ANTHROPIC_API_KEY=your_key_here \
+  BEDROCK_CREDENTIALS="accessKeyId|secretAccessKey" \
+  AWS_BEDROCK_REGION=us-west-2 # Optional: Add other provider keys ```
 </Step>
 
   <Step title="Start Development Server">

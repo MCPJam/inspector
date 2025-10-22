@@ -167,6 +167,8 @@ export function getDefaultTemperatureByProvider(provider: string): number {
       return 0.9; // Google's recommended default
     case "mistral":
       return 0.7; // Mistral's recommended default
+    case "bedrock":
+      return 0;
     default:
       return 0;
   }

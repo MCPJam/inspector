@@ -55,6 +55,12 @@ Get an API key from [Mistral AI Console](https://console.mistral.ai/api-keys/)
 
 `mistral-large-latest`, `mistral-small-latest`, `codestral-latest`, `ministral-8b-latest`, `ministral-3b-latest`
 
+### Amazon Bedrock
+
+Create an IAM user with Bedrock permissions and generate an access key in the [AWS console](https://console.aws.amazon.com/iam/home#/security_credentials). In MCPJam enter your credentials as `accessKeyId|secretAccessKey[|sessionToken]` from the Settings tab. You can optionally set `AWS_BEDROCK_REGION` (defaults to `us-west-2`).
+
+`amazon.titan-text-lite-v1`, `anthropic.claude-3-5-sonnet-20241022-v2:0`, `meta.llama3-3-70b-instruct-v1:0`
+
 ### Ollama
 
 Make sure you have [Ollama installed](https://ollama.com/), and the MCPJam Ollama URL configuration is pointing to your Ollama instance.

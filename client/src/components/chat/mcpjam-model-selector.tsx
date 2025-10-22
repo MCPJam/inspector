@@ -39,6 +39,7 @@ const PROVIDER_DISPLAY_NAME: Partial<Record<string, string>> = {
   moonshotai: "Moonshot AI",
   "z-ai": "Zhipu AI",
   mistral: "Mistral AI",
+  bedrock: "Amazon Bedrock",
 };
 
 function toDisplayName(
