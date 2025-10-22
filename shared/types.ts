@@ -106,13 +106,24 @@ export type ModelProvider =
   | "meta"
   | "x-ai"
   | "litellm"
-  | "mistral";
+  | "mistral"
+  | "moonshotai"
+  | "z-ai";
 
 const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
   "meta-llama/llama-3.3-70b-instruct",
   "openai/gpt-oss-120b",
   "x-ai/grok-4-fast",
   "openai/gpt-5-nano",
+  "anthropic/claude-sonnet-4.5",
+  "anthropic/claude-haiku-4.5",
+  "openai/gpt-5-codex",
+  "openai/gpt-5",
+  "openai/gpt-5-mini",
+  "google/gemini-2.5-flash-preview-09-2025",
+  "moonshotai/kimi-k2-0905",
+  "google/gemini-2.5-flash",
+  "z-ai/glm-4.6",
 ];
 
 export const isMCPJamProvidedModel = (modelId: string): boolean => {
@@ -143,7 +154,7 @@ export enum Model {
   GPT_5 = "gpt-5",
   GPT_5_MINI = "gpt-5-mini",
   GPT_5_NANO = "gpt-5-nano",
-  GPT_5_CHAT_LATEST = "gpt-5-chat-latest",
+  GPT_5_MAIN = "openai/gpt-5",
   GPT_5_PRO = "gpt-5-pro",
   GPT_5_CODEX = "gpt-5-codex",
   GPT_3_5_TURBO = "gpt-3.5-turbo",
@@ -275,6 +286,51 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     id: "openai/gpt-5-nano",
     name: "GPT-5 Nano (Free)",
     provider: "openai",
+  },
+  {
+    id: "anthropic/claude-sonnet-4.5",
+    name: "Claude Sonnet 4.5 (Free)",
+    provider: "anthropic",
+  },
+  {
+    id: "anthropic/claude-haiku-4.5",
+    name: "Claude Haiku 4.5 (Free)",
+    provider: "anthropic",
+  },
+  {
+    id: "openai/gpt-5-codex",
+    name: "GPT-5 Codex (Free)",
+    provider: "openai",
+  },
+  {
+    id: "openai/gpt-5",
+    name: "GPT-5 (Free)",
+    provider: "openai",
+  },
+  {
+    id: "openai/gpt-5-mini",
+    name: "GPT-5 Mini (Free)",
+    provider: "openai",
+  },
+  {
+    id: "google/gemini-2.5-flash-preview-09-2025",
+    name: "Gemini 2.5 Flash Preview (Free)",
+    provider: "google",
+  },
+  {
+    id: "moonshotai/kimi-k2-0905",
+    name: "Kimi K2 (Free)",
+    provider: "moonshotai",
+  },
+  {
+    id: "google/gemini-2.5-flash",
+    name: "Gemini 2.5 Flash (Free)",
+    provider: "google",
+  },
+  {
+    id: "z-ai/glm-4.6",
+    name: "GLM 4.6 (Free)",
+    provider: "z-ai",
   },
   // Mistral models
   {
