@@ -62,6 +62,10 @@ const getProviderDisplayName = (provider: ModelProvider): string => {
       return "xAI";
     case "litellm":
       return "LiteLLM";
+    case "moonshotai":
+      return "Moonshot AI";
+    case "z-ai":
+      return "Zhipu AI";
     default:
       return provider;
   }

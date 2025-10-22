@@ -34,6 +34,11 @@ const PROVIDER_DISPLAY_NAME: Partial<Record<string, string>> = {
   anthropic: "Anthropic",
   google: "Google AI",
   deepseek: "DeepSeek",
+  meta: "Meta",
+  "x-ai": "xAI",
+  moonshotai: "Moonshot AI",
+  "z-ai": "Zhipu AI",
+  mistral: "Mistral AI",
 };
 
 function toDisplayName(

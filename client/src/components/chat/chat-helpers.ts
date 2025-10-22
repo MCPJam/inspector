@@ -10,6 +10,9 @@ import ollamaDarkLogo from "/ollama_dark.png";
 import grokLightLogo from "/grok_light.svg";
 import grokDarkLogo from "/grok_dark.png";
 import litellmLogo from "/litellm_logo.png";
+import moonshotLightLogo from "/moonshot_light.png";
+import moonshotDarkLogo from "/moonshot_dark.png";
+import zAiLogo from "/z-ai.png";
 
 export const getProviderLogoFromProvider = (
   provider: string,
@@ -51,6 +54,17 @@ export const getProviderLogoFromProvider = (
       return grokLightLogo;
     case "litellm":
       return litellmLogo;
+    case "moonshotai":
+      if (themeMode === "dark") {
+        return moonshotDarkLogo;
+      }
+      if (themeMode === "system" && typeof document !== "undefined") {
+        const isDark = document.documentElement.classList.contains("dark");
+        return isDark ? moonshotDarkLogo : moonshotLightLogo;
+      }
+      return moonshotLightLogo;
+    case "z-ai":
+      return zAiLogo;
     default:
       return null;
   }
@@ -81,6 +95,12 @@ export const getProviderColor = (provider: string) => {
       return "text-purple-600 dark:text-purple-400";
     case "litellm":
       return "bg-gradient-to-br from-blue-500 to-purple-600";
+    case "moonshotai":
+      return "text-cyan-600 dark:text-cyan-400";
+    case "z-ai":
+      return "text-indigo-600 dark:text-indigo-400";
+    case "meta":
+      return "text-blue-500 dark:text-blue-400";
     default:
       return "text-blue-600 dark:text-blue-400";
   }
