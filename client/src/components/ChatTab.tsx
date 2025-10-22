@@ -295,7 +295,7 @@ export function ChatTab({
       {/* Header */}
       <div className="space-y-1 text-center">
         <h2 className="text-2xl font-semibold tracking-tight">
-          Test your MCP server with premier models for free
+          Test your MCP server with frontier models for free
         </h2>
       </div>
 
