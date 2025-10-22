@@ -82,15 +82,16 @@ export function ModelSelector({
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false);
   const currentModelData = currentModel;
   const { isAuthenticated } = useConvexAuth();
-
   const groupedModels = groupModelsByProvider(availableModels);
   const sortedProviders = Array.from(groupedModels.keys()).sort();
+
   const mcpjamProviders = hideProvidedModels
     ? []
     : sortedProviders.filter((p) => {
         const models = groupedModels.get(p) || [];
         return models.some((m) => isMCPJamProvidedModel(m.id));
       });
+
   const otherProviders = sortedProviders.filter((p) => {
     const models = groupedModels.get(p) || [];
     return models.some((m) => !isMCPJamProvidedModel(m.id));
@@ -119,7 +120,7 @@ export function ModelSelector({
       <DropdownMenuContent align="start" className="min-w-[200px]">
         {mcpjamProviders.length > 0 && (
           <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
-            MCPJam Provided Models
+            MCPJam Free Models
           </div>
         )}
         {mcpjamProviders.map((provider) => {
