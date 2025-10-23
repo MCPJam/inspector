@@ -42,6 +42,7 @@ export function OpenAIComponentRenderer({
       // 1. Backend flow: toolResult.result.structuredContent
       // 2. Local AI SDK flow: toolResult.result[0].output.value.structuredContent
       let structuredContent = null;
+      let toolResponseMetadata = null;
 
       if (toolResult?.result) {
         const result = toolResult.result;
@@ -68,6 +69,10 @@ export function OpenAIComponentRenderer({
         if (!structuredContent) {
           structuredContent = result;
         }
+
+        // Extract _meta field (toolResponseMetadata)
+        // _meta is delivered only to the component (hidden from model)
+        toolResponseMetadata = result._meta ?? null;
       }
 
       // Store widget data, then set URL once storage completes
@@ -83,6 +88,7 @@ export function OpenAIComponentRenderer({
               uri: componentUrl,
               toolInput: toolCall.parameters,
               toolOutput: structuredContent,
+              toolResponseMetadata: toolResponseMetadata,
               toolId: toolCall.id,
             }),
           });

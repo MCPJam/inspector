@@ -1,9 +1,10 @@
 import { memo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { formatTimestamp, sanitizeText, isImageFile } from "@/lib/chat-utils";
+import { formatTimestamp, sanitizeText, isImageFile, parseReasoningTags } from "@/lib/chat-utils";
 import { ChatMessage } from "@/lib/chat-types";
 import { Check, Copy, CopyIcon, RotateCcw } from "lucide-react";
 import { Markdown } from "./markdown";
+import { Reasoning } from "./reasoning";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { MessageEditor } from "./message-editor";
@@ -213,15 +214,21 @@ const PureMessage = ({
                 <div className="space-y-4">
                   {message.contentBlocks.map((block, index) => {
                     if (block.type === "text" && block.content) {
+                      const parsed = parseReasoningTags(block.content);
                       return (
                         <motion.div
                           key={block.id}
                           initial={{ opacity: 0, y: 10 }}
                           animate={{ opacity: 1, y: 0 }}
                           transition={{ duration: 0.3, delay: index * 0.05 }}
-                          className="prose prose-sm max-w-none dark:prose-invert prose-p:leading-relaxed prose-pre:bg-muted/50 prose-pre:border prose-pre:border-border/30 flex-1 min-w-0"
+                          className="space-y-3"
                         >
-                          <Markdown>{sanitizeText(block.content)}</Markdown>
+                          {parsed.reasoning && <Reasoning content={parsed.reasoning} />}
+                          {parsed.content && (
+                            <div className="prose prose-sm max-w-none dark:prose-invert prose-p:leading-relaxed prose-pre:bg-muted/50 prose-pre:border prose-pre:border-border/30 flex-1 min-w-0">
+                              <Markdown>{sanitizeText(parsed.content)}</Markdown>
+                            </div>
+                          )}
                         </motion.div>
                       );
                     } else if (block.type === "tool_call" && block.toolCall) {
@@ -304,9 +311,19 @@ const PureMessage = ({
                       <ThinkingIndicator />
                     </motion.div>
                   ) : mode === "view" && message.content ? (
-                    <div className="prose prose-sm max-w-none dark:prose-invert prose-p:leading-relaxed prose-pre:bg-muted/50 prose-pre:border prose-pre:border-border/30 flex-1 min-w-0">
-                      <Markdown>{sanitizeText(message.content)}</Markdown>
-                    </div>
+                    (() => {
+                      const parsed = parseReasoningTags(message.content);
+                      return (
+                        <div className="space-y-3">
+                          {parsed.reasoning && <Reasoning content={parsed.reasoning} />}
+                          {parsed.content && (
+                            <div className="prose prose-sm max-w-none dark:prose-invert prose-p:leading-relaxed prose-pre:bg-muted/50 prose-pre:border prose-pre:border-border/30 flex-1 min-w-0">
+                              <Markdown>{sanitizeText(parsed.content)}</Markdown>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()
                   ) : null}
                 </>
               )}
