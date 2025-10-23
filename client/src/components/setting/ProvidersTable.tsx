@@ -23,7 +23,7 @@ interface ProvidersTableProps {
   litellmBaseUrl: string;
   litellmModelAlias: string;
   onEditLiteLLM: () => void;
-  openRouterModelAlias: string;
+  openRouterSelectedModels: string[];
   onEditOpenRouter: () => void;
 }
 
@@ -37,7 +37,7 @@ export function ProvidersTable({
   litellmBaseUrl,
   litellmModelAlias,
   onEditLiteLLM,
-  openRouterModelAlias,
+  openRouterSelectedModels,
   onEditOpenRouter,
 }: ProvidersTableProps) {
   return (
@@ -61,7 +61,7 @@ export function ProvidersTable({
         onEdit={onEditLiteLLM}
       />
       <OpenRouterTableRow
-        modelAlias={openRouterModelAlias}
+        modelAlias={openRouterSelectedModels}
         onEdit={onEditOpenRouter}
         onDelete={() => onDeleteProvider("openrouter")}
       />

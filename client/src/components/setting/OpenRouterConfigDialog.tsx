@@ -1,6 +1,9 @@
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, X } from "lucide-react";
+import { useState, useEffect } from "react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Badge } from "../ui/badge";
+import { Combobox } from "../ui/combobox";
 import {
   Dialog,
   DialogContent,
@@ -9,15 +12,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../ui/dialog";
+import { useOpenRouterModels } from "@/hooks/use-openrouter-models";
 
 interface OpenRouterConfigDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   apiKey: string;
-  modelAlias: string;
+  selectedModels: string[];
   onApiKeyChange: (value: string) => void;
-  onModelAliasChange: (value: string) => void;
-  onSave: () => void;
+  onSelectedModelsChange: (models: string[]) => void;
+  onSave: (apiKey: string, selectedModels: string[]) => void;
   onCancel: () => void;
 }
 
@@ -25,12 +29,24 @@ export function OpenRouterConfigDialog({
   open,
   onOpenChange,
   apiKey,
-  modelAlias,
+  selectedModels,
   onApiKeyChange,
-  onModelAliasChange,
+  onSelectedModelsChange,
   onSave,
   onCancel,
 }: OpenRouterConfigDialogProps) {
+  const { models, loading, error } = useOpenRouterModels();
+  const [internalSelectedModels, setInternalSelectedModels] = useState<string[]>(selectedModels);
+
+  // Sync internal state with props when they change
+  useEffect(() => {
+    setInternalSelectedModels(selectedModels);
+  }, [selectedModels]);
+
+  const handleSave = () => {
+    onSelectedModelsChange(internalSelectedModels);
+    onSave(apiKey, internalSelectedModels);
+  };
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
@@ -71,23 +87,62 @@ export function OpenRouterConfigDialog({
 
           <div>
             <label htmlFor="openrouter-model" className="text-sm font-medium">
-              Model Aliases{" "}
-              <span className="text-muted-foreground">(comma-separated)</span>
+              Models
             </label>
-            <Input
-              id="openrouter-model"
-              type="text"
-              value={modelAlias}
-              onChange={(e) => onModelAliasChange(e.target.value)}
-              placeholder="gemini/gemini-2.5-flash, gpt-4, claude-3-opus"
-              className="mt-1"
-            />
-            <p className="text-xs text-muted-foreground mt-1">
-              Enter multiple model aliases separated by commas. Each will appear
-              as a separate option in the chat.
-            </p>
+            {loading ? (
+              <div className="w-full mt-1 p-2 text-sm text-muted-foreground">
+                Loading models...
+              </div>
+            ) : error ? (
+              <div className="w-full mt-1 p-2 text-sm text-destructive">
+                {error}
+              </div>
+            ) : (
+              <>
+                <Combobox
+                  items={models}
+                  placeholder="Select models..."
+                  searchPlaceholder="Search models..."
+                  value={internalSelectedModels}
+                  onValueChange={setInternalSelectedModels}
+                  className="w-full mt-1"
+                />
+                {internalSelectedModels.length > 0 && (
+                  <div className="mt-3">
+                    <div className="flex flex-wrap gap-2">
+                      {internalSelectedModels.map((modelId) => {
+                        const model = models.find((m) => m.value === modelId);
+                        return (
+                          <Badge
+                            key={modelId}
+                            variant="secondary"
+                            className="flex items-center gap-1 pr-1"
+                          >
+                            {model?.label || modelId}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setInternalSelectedModels((prev) =>
+                                  prev.filter((id) => id !== modelId),
+                                );
+                              }}
+                              className="ml-1 hover:bg-destructive hover:text-destructive-foreground rounded-sm p-0.5 transition-colors"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </Badge>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+                <p className="text-xs text-muted-foreground mt-1">
+                  We only show models that support tool calling. Select one or
+                  more to surface them in the chat.
+                </p>
+              </>
+            )}
           </div>
-
           <div className="flex items-center gap-2 p-3 bg-blue-50 dark:bg-blue-950/20 rounded-lg">
             <ExternalLink className="w-4 h-4 text-blue-600" />
             <span className="text-sm text-blue-600">
@@ -109,7 +164,7 @@ export function OpenRouterConfigDialog({
           <Button variant="outline" onClick={onCancel}>
             Cancel
           </Button>
-          <Button onClick={onSave} disabled={!modelAlias.trim()}>
+          <Button onClick={handleSave} disabled={internalSelectedModels.length === 0}>
             Save Configuration
           </Button>
         </DialogFooter>

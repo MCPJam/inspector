@@ -29,8 +29,8 @@ export function SettingsTab() {
     setLiteLLMBaseUrl,
     getLiteLLMModelAlias,
     setLiteLLMModelAlias,
-    getOpenRouterModelAlias,
-    setOpenRouterModelAlias,
+    getOpenRouterSelectedModels,
+    setOpenRouterSelectedModels,
   } = useAiProviderKeys();
 
   const [editingValue, setEditingValue] = useState("");
@@ -45,8 +45,8 @@ export function SettingsTab() {
   const [litellmModelAlias, setLitellmModelAlias] = useState("");
   const [openRouterDialogOpen, setOpenRouterDialogOpen] = useState(false);
   const [openRouterApiKeyInput, setOpenRouterApiKeyInput] = useState("");
-  const [openRouterModelAliasInput, setOpenRouterModelAliasInput] =
-    useState("");
+  const [openRouterSelectedModelsInput, setOpenRouterSelectedModelsInput] =
+    useState<string[]>([]);
 
   const providerConfigs: ProviderConfig[] = [
     {
@@ -100,7 +100,8 @@ export function SettingsTab() {
     const provider = providerConfigs.find((p) => p.id === providerId);
     if (provider) {
       setSelectedProvider(provider);
-      setEditingValue(tokens[providerId as keyof typeof tokens] || "");
+      const tokenValue = tokens[providerId as keyof typeof tokens];
+      setEditingValue(Array.isArray(tokenValue) ? tokenValue.join(", ") : (tokenValue || ""));
       setDialogOpen(true);
     }
   };
@@ -122,9 +123,9 @@ export function SettingsTab() {
 
   const handleDelete = (providerId: string) => {
     clearToken(providerId as keyof typeof tokens);
-    // Also clear OpenRouter model alias if deleting OpenRouter provider
+    // Also clear OpenRouter selected models if deleting OpenRouter provider
     if (providerId === "openrouter") {
-      setOpenRouterModelAlias("");
+      setOpenRouterSelectedModels([]);
     }
   };
 
@@ -169,23 +170,26 @@ export function SettingsTab() {
   };
 
   const handleOpenRouterEdit = () => {
+    const currentModels = getOpenRouterSelectedModels();
     setOpenRouterApiKeyInput(tokens.openrouter || "");
-    setOpenRouterModelAliasInput(getOpenRouterModelAlias());
+    setOpenRouterSelectedModelsInput(currentModels);
     setOpenRouterDialogOpen(true);
   };
 
-  const handleOpenRouterSave = () => {
-    setToken("openrouter", openRouterApiKeyInput);
-    setOpenRouterModelAlias(openRouterModelAliasInput);
+  const handleOpenRouterSave = (apiKey: string, selectedModels: string[]) => {
+    setToken("openrouter", apiKey);
+    setOpenRouterSelectedModels(selectedModels);
     setOpenRouterDialogOpen(false);
-    setOpenRouterApiKeyInput("");
-    setOpenRouterModelAliasInput("");
+  };
+
+  const handleOpenRouterModelsChange = (models: string[]) => {
+    setOpenRouterSelectedModelsInput(models);
   };
 
   const handleOpenRouterCancel = () => {
     setOpenRouterDialogOpen(false);
     setOpenRouterApiKeyInput("");
-    setOpenRouterModelAliasInput("");
+    setOpenRouterSelectedModelsInput([]);
   };
 
   return (
@@ -211,7 +215,7 @@ export function SettingsTab() {
           litellmBaseUrl={getLiteLLMBaseUrl()}
           litellmModelAlias={getLiteLLMModelAlias()}
           onEditLiteLLM={handleLiteLLMEdit}
-          openRouterModelAlias={getOpenRouterModelAlias()}
+          openRouterSelectedModels={getOpenRouterSelectedModels()}
           onEditOpenRouter={handleOpenRouterEdit}
         />
       </div>
@@ -256,9 +260,9 @@ export function SettingsTab() {
         open={openRouterDialogOpen}
         onOpenChange={setOpenRouterDialogOpen}
         apiKey={openRouterApiKeyInput}
-        modelAlias={openRouterModelAliasInput}
+        selectedModels={openRouterSelectedModelsInput}
         onApiKeyChange={setOpenRouterApiKeyInput}
-        onModelAliasChange={setOpenRouterModelAliasInput}
+        onSelectedModelsChange={handleOpenRouterModelsChange}
         onSave={handleOpenRouterSave}
         onCancel={handleOpenRouterCancel}
       />

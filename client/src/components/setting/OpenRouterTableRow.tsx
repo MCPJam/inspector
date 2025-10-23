@@ -10,7 +10,7 @@ import {
 import { cn } from "@/lib/utils";
 
 interface OpenRouterTableRowProps {
-  modelAlias: string;
+  modelAlias: string[];
   onEdit: () => void;
   onDelete: () => void;
 }
@@ -20,15 +20,10 @@ export function OpenRouterTableRow({
   onEdit,
   onDelete,
 }: OpenRouterTableRowProps) {
-  const isConfigured = Boolean(modelAlias);
+  const isConfigured = Boolean(modelAlias && modelAlias.length > 0);
 
   // Count the number of models configured
-  const modelCount = modelAlias
-    ? modelAlias
-        .split(",")
-        .map((m) => m.trim())
-        .filter((m) => m.length > 0).length
-    : 0;
+  const modelCount = modelAlias ? modelAlias.length : 0;
 
   return (
     <Card
