@@ -12,7 +12,7 @@ export interface ProviderTokens {
   litellmBaseUrl: string;
   litellmModelAlias: string;
   openrouter: string;
-  openRouterModelAlias: string;
+  openRouterSelectedModels: string[];
 }
 
 export interface useAiProviderKeysReturn {
@@ -28,8 +28,8 @@ export interface useAiProviderKeysReturn {
   setLiteLLMBaseUrl: (url: string) => void;
   getLiteLLMModelAlias: () => string;
   setLiteLLMModelAlias: (alias: string) => void;
-  getOpenRouterModelAlias: () => string;
-  setOpenRouterModelAlias: (alias: string) => void;
+  getOpenRouterSelectedModels: () => string[];
+  setOpenRouterSelectedModels: (models: string[]) => void;
 }
 
 const STORAGE_KEY = "mcp-inspector-provider-tokens";
@@ -46,7 +46,7 @@ const defaultTokens: ProviderTokens = {
   litellmBaseUrl: "http://localhost:4000", // Default LiteLLM proxy URL
   litellmModelAlias: "", // Model name/alias to use with LiteLLM
   openrouter: "",
-  openRouterModelAlias: "", // Models to choose with openrouter
+  openRouterSelectedModels: [],
 };
 
 export function useAiProviderKeys(): useAiProviderKeysReturn {
@@ -106,14 +106,26 @@ export function useAiProviderKeys(): useAiProviderKeysReturn {
 
   const hasToken = useCallback(
     (provider: keyof ProviderTokens) => {
-      return Boolean(tokens[provider]?.trim());
+      const value = tokens[provider];
+      if (provider === "openrouter") {
+        // For OpenRouter, check both API key and selected models
+        return Boolean(tokens.openrouter?.trim()) && tokens.openRouterSelectedModels.length > 0;
+      }
+      if (Array.isArray(value)) {
+        return value.length > 0;
+      }
+      return Boolean(value?.trim());
     },
     [tokens],
   );
 
   const getToken = useCallback(
     (provider: keyof ProviderTokens) => {
-      return tokens[provider] || "";
+      const value = tokens[provider];
+      if (Array.isArray(value)) {
+        return value.join(", ");
+      }
+      return value || "";
     },
     [tokens],
   );
@@ -151,14 +163,14 @@ export function useAiProviderKeys(): useAiProviderKeysReturn {
     }));
   }, []);
 
-  const getOpenRouterModelAlias = useCallback(() => {
-    return tokens.openRouterModelAlias || defaultTokens.openRouterModelAlias;
-  }, [tokens.openRouterModelAlias]);
+  const getOpenRouterSelectedModels = useCallback(() => {
+    return tokens.openRouterSelectedModels || defaultTokens.openRouterSelectedModels;
+  }, [tokens.openRouterSelectedModels]);
 
-  const setOpenRouterModelAlias = useCallback((alias: string) => {
+  const setOpenRouterSelectedModels = useCallback((models: string[]) => {
     setTokens((prev) => ({
       ...prev,
-      openRouterModelAlias: alias,
+      openRouterSelectedModels: models,
     }));
   }, []);
 
@@ -175,7 +187,7 @@ export function useAiProviderKeys(): useAiProviderKeysReturn {
     setLiteLLMBaseUrl,
     getLiteLLMModelAlias,
     setLiteLLMModelAlias,
-    getOpenRouterModelAlias,
-    setOpenRouterModelAlias,
+    getOpenRouterSelectedModels,
+    setOpenRouterSelectedModels,
   };
 }
