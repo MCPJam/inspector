@@ -7,6 +7,7 @@ import {
   Model,
   ModelDefinition,
   SUPPORTED_MODELS,
+  ModelProvider,
   isMCPJamProvidedModel,
 } from "@/shared/types.js";
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
@@ -185,43 +186,34 @@ export function useChat(options: UseChatOptions = {}) {
       return providerHasKey[m.provider];
     });
 
+    const parseModelAliases = (
+      aliasString: string,
+      provider: ModelProvider,
+    ): ModelDefinition[] => {
+      return aliasString
+        .split(",")
+        .map((alias) => alias.trim())
+        .filter((alias) => alias.length > 0)
+        .map((alias) => ({
+          id: alias,
+          name: alias,
+          provider,
+        }));
+    };
+
     // Add user's configured LiteLLM models if configured
     const litellmModels: ModelDefinition[] = [];
     if (providerHasKey.litellm) {
       const modelAliasString = getLiteLLMModelAlias();
-      // Parse comma-separated model aliases
-      const modelAliases = modelAliasString
-        .split(",")
-        .map((alias) => alias.trim())
-        .filter((alias) => alias.length > 0);
-
-      // Create a model definition for each alias
-      modelAliases.forEach((alias) => {
-        litellmModels.push({
-          id: alias,
-          name: alias,
-          provider: "litellm",
-        });
-      });
+      litellmModels.push(...parseModelAliases(modelAliasString, "litellm"));
     }
 
     const openRouterModels: ModelDefinition[] = [];
     if (providerHasKey.openrouter) {
       const modelAliasString = getOpenRouterModelAlias();
-      // Parse comma-separated model aliases
-      const modelAliases = modelAliasString
-        .split(",")
-        .map((alias) => alias.trim())
-        .filter((alias) => alias.length > 0);
-
-      // Create a model definition for each alias
-      modelAliases.forEach((alias) => {
-        openRouterModels.push({
-          id: alias,
-          name: alias,
-          provider: "openrouter",
-        });
-      });
+      openRouterModels.push(
+        ...parseModelAliases(modelAliasString, "openrouter"),
+      );
     }
 
     // Combine all models: cloud + ollama + litellm
