@@ -1,63 +1,182 @@
-import { OAuthFlowState, OAuthStep } from "@/lib/oauth-flow-types";
-import { CheckCircle2, Circle, ExternalLink } from "lucide-react";
+import { useMemo, useCallback, memo, useEffect } from "react";
+import type { ReactNode } from "react";
+import {
+  Background,
+  Controls,
+  Edge,
+  Handle,
+  Node,
+  NodeProps,
+  OnInit,
+  MarkerType,
+  Position,
+  ReactFlow,
+} from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
 import { Button } from "./ui/button";
-import { useEffect, useMemo, useState } from "react";
-import { OAuthClientInformation } from "@modelcontextprotocol/sdk/shared/auth.js";
-import { DebugMCPOAuthClientProvider } from "@/lib/debug-oauth-provider";
+import { Badge } from "./ui/badge";
+import { Input } from "./ui/input";
+import { Label } from "./ui/label";
+import { OAuthFlowState, OAuthStep } from "@/lib/oauth-flow-types";
+import { cn } from "@/lib/utils";
 
-interface OAuthStepProps {
-  label: string;
-  isComplete: boolean;
-  isCurrent: boolean;
-  error?: Error | null;
-  children?: React.ReactNode;
+type NodeStatus = "complete" | "current" | "pending";
+
+interface OAuthFlowNodeData {
+  title: string;
+  status: NodeStatus;
+  summary: string;
+  details?: Array<{ label: string; value: ReactNode }>;
+  note?: string;
+  error?: string | null;
+  secondaryAction?: {
+    label: string;
+    onClick: () => void;
+    disabled?: boolean;
+  };
+  input?: {
+    label: string;
+    value: string;
+    placeholder?: string;
+    onChange: (value: string) => void;
+    error?: string | null;
+  };
 }
 
-const OAuthStepDetails = ({
-  label,
-  isComplete,
-  isCurrent,
-  error,
-  children,
-}: OAuthStepProps) => {
+const STEP_TITLES: Record<OAuthStep, string> = {
+  metadata_discovery: "Discover Metadata",
+  client_registration: "Register Client",
+  authorization_redirect: "Authorize User",
+  authorization_code: "Capture Code",
+  token_request: "Exchange Tokens",
+  complete: "Complete",
+};
+
+const STATUS_LABEL: Record<NodeStatus, string> = {
+  complete: "Complete",
+  current: "In Progress",
+  pending: "Pending",
+};
+
+const STATUS_BADGE_CLASS: Record<NodeStatus, string> = {
+  complete: "border-green-500/30 bg-green-500/10 text-green-600",
+  current: "border-blue-500/30 bg-blue-500/10 text-blue-600",
+  pending: "border-border bg-muted text-muted-foreground",
+};
+
+const statusBorderClass = (status: NodeStatus) => {
+  switch (status) {
+    case "complete":
+      return "border-green-500/50 shadow-[0_10px_25px_-18px_rgba(16,185,129,0.6)]";
+    case "current":
+      return "border-blue-500/60 shadow-[0_16px_35px_-20px_rgba(37,99,235,0.7)]";
+    default:
+      return "border-border";
+  }
+};
+
+const truncateValue = (value: string | null | undefined, max = 64) => {
+  if (!value) return "—";
+  return value.length > max ? `${value.slice(0, max)}…` : value;
+};
+
+const formatList = (values?: readonly string[]) => {
+  if (!values || values.length === 0) return "—";
+  return values.join(", ");
+};
+
+const DetailRow = ({ label, value }: { label: string; value: ReactNode }) => (
+  <div className="space-y-1">
+    <p className="text-[11px] font-medium text-muted-foreground">{label}</p>
+    <div className="text-[11px] leading-5 break-words text-foreground">
+      {value ?? "—"}
+    </div>
+  </div>
+);
+
+const OAuthFlowNode = memo(({ data }: NodeProps<OAuthFlowNodeData>) => {
   return (
-    <div>
+    <>
+      <Handle type="target" position={Position.Top} />
       <div
-        className={`flex items-center p-2 rounded-md ${isCurrent ? "bg-accent" : ""}`}
-      >
-        {isComplete ? (
-          <CheckCircle2 className="h-5 w-5 text-green-500 mr-2" />
-        ) : (
-          <Circle className="h-5 w-5 text-muted-foreground mr-2" />
+        className={cn(
+          "min-w-[260px] max-w-[320px] rounded-xl border bg-card p-4",
+          statusBorderClass(data.status),
         )}
-        <span className={`${isCurrent ? "font-medium" : ""}`}>{label}</span>
-      </div>
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="space-y-1">
+            <p className="text-sm font-semibold text-foreground">{data.title}</p>
+            <p className="text-[11px] text-muted-foreground">{data.summary}</p>
+          </div>
+          <Badge variant="outline" className={STATUS_BADGE_CLASS[data.status]}>
+            {STATUS_LABEL[data.status]}
+          </Badge>
+        </div>
 
-      {/* Show children if current step or complete and children exist */}
-      {(isCurrent || isComplete) && children && (
-        <div className="ml-7 mt-1">{children}</div>
-      )}
-
-      {/* Display error if current step and an error exists */}
-      {isCurrent && error && (
-        <div className="ml-7 mt-2 p-3 border border-red-300 bg-red-50 dark:bg-red-950/50 rounded-md">
-          <p className="text-sm font-medium text-red-700 dark:text-red-400">
-            Error:
-          </p>
-          <p className="text-xs text-red-600 dark:text-red-500 mt-1">
-            {error.message}
-          </p>
+      {data.details && data.details.length > 0 && (
+        <div className="mt-4 space-y-2">
+          {data.details.map((detail) => (
+            <DetailRow key={detail.label} {...detail} />
+          ))}
         </div>
       )}
-    </div>
+
+      {data.input && (
+        <div className="mt-4 space-y-2">
+          <Label
+            htmlFor={`node-input-${data.title}`}
+            className="text-[11px] font-medium text-muted-foreground"
+          >
+            {data.input.label}
+          </Label>
+          <Input
+            id={`node-input-${data.title}`}
+            value={data.input.value}
+            placeholder={data.input.placeholder}
+            onChange={(event) => data.input?.onChange(event.target.value)}
+            className={data.input.error ? "border-destructive" : undefined}
+            autoComplete="off"
+          />
+          {data.input.error && (
+            <p className="text-[11px] text-destructive">{data.input.error}</p>
+          )}
+        </div>
+      )}
+
+      {data.note && (
+        <p className="mt-3 text-[11px] text-muted-foreground">{data.note}</p>
+      )}
+
+      {data.error && (
+        <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 p-2">
+          <p className="text-[11px] font-medium text-destructive">{data.error}</p>
+        </div>
+      )}
+
+      {data.secondaryAction && (
+        <div className="mt-4 space-y-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={data.secondaryAction.onClick}
+            disabled={data.secondaryAction.disabled}
+          >
+            {data.secondaryAction.label}
+          </Button>
+        </div>
+      )}
+      </div>
+      <Handle type="source" position={Position.Bottom} />
+    </>
   );
-};
+});
 
 interface OAuthFlowProgressProps {
   serverUrl: string;
   flowState: OAuthFlowState;
   updateFlowState: (updates: Partial<OAuthFlowState>) => void;
-  proceedToNextStep: () => Promise<void>;
+  onGuardStateChange?: (guard: { canProceed: boolean; reason?: string }) => void;
 }
 
 const steps: Array<OAuthStep> = [
@@ -69,306 +188,436 @@ const steps: Array<OAuthStep> = [
   "complete",
 ];
 
+const nodeTypes = { "oauth-step": OAuthFlowNode };
+
 export const OAuthFlowProgress = ({
   serverUrl,
   flowState,
   updateFlowState,
-  proceedToNextStep,
+  onGuardStateChange,
 }: OAuthFlowProgressProps) => {
-  const provider = useMemo(
-    () => new DebugMCPOAuthClientProvider(serverUrl),
-    [serverUrl],
-  );
-  const [clientInfo, setClientInfo] = useState<OAuthClientInformation | null>(
-    null,
+  const currentStepIndex = Math.max(
+    steps.findIndex((step) => step === flowState.oauthStep),
+    0,
   );
 
-  const currentStepIdx = steps.findIndex((s) => s === flowState.oauthStep);
+  const statusForStep = useCallback(
+    (step: OAuthStep): NodeStatus => {
+      const index = steps.indexOf(step);
+      if (index < currentStepIndex) return "complete";
+      if (index === currentStepIndex) return "current";
+      return "pending";
+    },
+    [currentStepIndex],
+  );
 
-  useEffect(() => {
-    const fetchClientInfo = async () => {
-      if (flowState.oauthClientInfo) {
-        setClientInfo(flowState.oauthClientInfo);
-      } else {
-        try {
-          const info = await provider.clientInformation();
-          if (info) {
-            setClientInfo(info);
+  const stepGuards = useMemo<Record<OAuthStep, { canProceed: boolean; reason?: string }>>(
+    () => ({
+      metadata_discovery: { canProceed: true },
+      client_registration: {
+        canProceed: !!flowState.oauthMetadata,
+        reason: flowState.oauthMetadata
+          ? undefined
+          : "Waiting for OAuth metadata from the server.",
+      },
+      authorization_redirect: {
+        canProceed:
+          !!flowState.oauthClientInfo && !!flowState.oauthMetadata,
+        reason:
+          flowState.oauthClientInfo && flowState.oauthMetadata
+            ? undefined
+            : "Client registration is still running.",
+      },
+      authorization_code: {
+        canProceed: !!flowState.authorizationUrl,
+        reason: flowState.authorizationUrl
+          ? undefined
+          : "Waiting for the authorization URL.",
+      },
+      token_request: {
+        canProceed: !!flowState.authorizationCode.trim(),
+        reason: flowState.authorizationCode.trim()
+          ? undefined
+          : "Enter the authorization code to continue.",
+      },
+      complete: { canProceed: false },
+    }),
+    [
+      flowState.authorizationCode,
+      flowState.authorizationUrl,
+      flowState.oauthClientInfo,
+      flowState.oauthMetadata,
+    ],
+  );
+
+  const handleAuthorizationCodeChange = useCallback(
+    (value: string) => {
+      updateFlowState({
+        authorizationCode: value,
+        validationError: null,
+      });
+    },
+    [updateFlowState],
+  );
+
+  const handleOpenAuthorization = useCallback(() => {
+    if (flowState.authorizationUrl) {
+      window.open(flowState.authorizationUrl, "_blank", "noreferrer");
+    }
+  }, [flowState.authorizationUrl]);
+
+  const nodes: Array<Node<OAuthFlowNodeData>> = useMemo(() => {
+    const dataForStep = (step: OAuthStep): OAuthFlowNodeData => {
+      const status = statusForStep(step);
+      const isCurrent = status === "current";
+      const base: OAuthFlowNodeData = {
+        title: STEP_TITLES[step],
+        status,
+        summary: "",
+      };
+
+      switch (step) {
+        case "metadata_discovery": {
+          base.summary =
+            status === "complete"
+              ? "Completed automatically when the guided flow started."
+              : `Discovering OAuth metadata from ${serverUrl}`;
+          base.details = flowState.oauthMetadata
+            ? [
+                {
+                  label: "Authorization Server",
+                  value: flowState.authServerUrl?.toString() ?? "—",
+                },
+                {
+                  label: "Issuer",
+                  value: flowState.oauthMetadata.issuer,
+                },
+                {
+                  label: "Authorization Endpoint",
+                  value: flowState.oauthMetadata.authorization_endpoint,
+                },
+                {
+                  label: "Token Endpoint",
+                  value: flowState.oauthMetadata.token_endpoint,
+                },
+                {
+                  label: "Supported Scopes",
+                  value: formatList(flowState.oauthMetadata.scopes_supported),
+                },
+                flowState.resource
+                  ? {
+                      label: "Protected Resource",
+                      value: flowState.resource.toString(),
+                    }
+                  : undefined,
+              ].filter(Boolean) as Array<{ label: string; value: string }>
+            : undefined;
+
+          if (isCurrent) {
+            base.error =
+              flowState.latestError ? flowState.latestError.message : null;
           }
-        } catch (error) {
-          console.error("Failed to fetch client information:", error);
+          if (flowState.resourceMetadataError) {
+            base.note = `Protected resource metadata failed: ${flowState.resourceMetadataError.message}`;
+          }
+          break;
+        }
+        case "client_registration": {
+          base.summary =
+            status === "complete"
+              ? "OAuth client registered with the authorization server."
+              : "Prepare an OAuth client for this server.";
+          base.details = flowState.oauthClientInfo
+            ? [
+                {
+                  label: "Client ID",
+                  value: truncateValue(flowState.oauthClientInfo.client_id),
+                },
+                "client_secret" in flowState.oauthClientInfo &&
+                flowState.oauthClientInfo.client_secret
+                  ? {
+                      label: "Client Secret",
+                      value: truncateValue(
+                        flowState.oauthClientInfo.client_secret,
+                      ),
+                    }
+                  : undefined,
+                {
+                  label: "Redirect URIs",
+                  value: formatList(flowState.oauthClientInfo.redirect_uris),
+                },
+                "token_endpoint_auth_method" in flowState.oauthClientInfo &&
+                flowState.oauthClientInfo.token_endpoint_auth_method
+                  ? {
+                      label: "Auth Method",
+                      value:
+                        flowState.oauthClientInfo.token_endpoint_auth_method,
+                    }
+                  : undefined,
+                "grant_types" in flowState.oauthClientInfo
+                  ? {
+                      label: "Grant Types",
+                      value: formatList(flowState.oauthClientInfo.grant_types),
+                    }
+                  : undefined,
+              ].filter(Boolean) as Array<{ label: string; value: string }>
+            : undefined;
+
+          if (isCurrent) {
+            base.error =
+              flowState.latestError ? flowState.latestError.message : null;
+          }
+          break;
+        }
+        case "authorization_redirect": {
+          base.summary =
+            status === "complete"
+              ? "Authorization URL generated."
+              : "Open the authorization URL to grant access.";
+          base.details = flowState.authorizationUrl
+            ? [
+                {
+                  label: "Authorization URL",
+                  value: (
+                    <span className="break-all">
+                      {flowState.authorizationUrl}
+                    </span>
+                  ),
+                },
+              ]
+            : undefined;
+
+          if (flowState.authorizationUrl) {
+            base.secondaryAction = {
+              label: "Open in Browser",
+              onClick: handleOpenAuthorization,
+            };
+          }
+
+          if (isCurrent) {
+            base.error =
+              flowState.latestError ? flowState.latestError.message : null;
+          }
+          break;
+        }
+        case "authorization_code": {
+          base.summary =
+            status === "complete"
+              ? "Authorization code captured."
+              : "Paste the one-time code returned after authorizing.";
+          base.input = {
+            label: "Authorization Code",
+            value: flowState.authorizationCode,
+            placeholder: "Paste the authorization code to continue",
+            onChange: handleAuthorizationCodeChange,
+            error: flowState.validationError,
+          };
+          base.note =
+            "After approving access in the browser, paste the returned code here.";
+
+          if (isCurrent) {
+            base.error =
+              flowState.latestError ? flowState.latestError.message : null;
+          }
+          break;
+        }
+        case "token_request": {
+          base.summary =
+            status === "complete"
+              ? "OAuth tokens acquired."
+              : "Exchange the authorization code for tokens.";
+          base.details = flowState.oauthTokens
+            ? [
+                {
+                  label: "Access Token",
+                  value: truncateValue(flowState.oauthTokens.access_token),
+                },
+                flowState.oauthTokens.refresh_token
+                  ? {
+                      label: "Refresh Token",
+                      value: truncateValue(
+                        flowState.oauthTokens.refresh_token,
+                      ),
+                    }
+                  : undefined,
+                flowState.oauthTokens.expires_in
+                  ? {
+                      label: "Expires In",
+                      value: `${flowState.oauthTokens.expires_in}s`,
+                    }
+                  : undefined,
+                flowState.oauthTokens.scope
+                  ? {
+                      label: "Scope",
+                      value: flowState.oauthTokens.scope,
+                    }
+                  : undefined,
+              ].filter(Boolean) as Array<{ label: string; value: string }>
+            : undefined;
+
+          if (isCurrent) {
+            base.error =
+              flowState.latestError ? flowState.latestError.message : null;
+          }
+          break;
+        }
+        case "complete": {
+          base.summary =
+            "Authentication successful! These tokens are stored for future requests.";
+          base.details = flowState.oauthTokens
+            ? [
+                {
+                  label: "Access Token",
+                  value: truncateValue(flowState.oauthTokens.access_token),
+                },
+                flowState.oauthTokens.refresh_token
+                  ? {
+                      label: "Refresh Token",
+                      value: truncateValue(
+                        flowState.oauthTokens.refresh_token,
+                      ),
+                    }
+                  : undefined,
+                flowState.oauthTokens.expires_in
+                  ? {
+                      label: "Expires In",
+                      value: `${flowState.oauthTokens.expires_in}s`,
+                    }
+                  : undefined,
+                flowState.oauthTokens.scope
+                  ? {
+                      label: "Scope",
+                      value: flowState.oauthTokens.scope,
+                    }
+                  : undefined,
+              ].filter(Boolean) as Array<{ label: string; value: string }>
+            : undefined;
+          break;
         }
       }
+
+      return base;
     };
 
-    if (currentStepIdx > steps.indexOf("client_registration")) {
-      fetchClientInfo();
-    }
+    return steps.map((step, index) => ({
+      id: step,
+      type: "oauth-step",
+      position: { x: 0, y: index * 450 },
+      data: dataForStep(step),
+      selectable: false,
+      draggable: false,
+    }));
   }, [
-    provider,
-    flowState.oauthStep,
+    flowState.authServerUrl,
+    flowState.authorizationCode,
+    flowState.authorizationUrl,
+    flowState.latestError,
     flowState.oauthClientInfo,
-    currentStepIdx,
+    flowState.oauthMetadata,
+    flowState.oauthStep,
+    flowState.oauthTokens,
+    flowState.resource,
+    flowState.resourceMetadataError,
+    flowState.validationError,
+    handleAuthorizationCodeChange,
+    handleOpenAuthorization,
+    serverUrl,
+    statusForStep,
   ]);
 
-  // Helper to get step props
-  const getStepProps = (stepName: OAuthStep) => ({
-    isComplete:
-      currentStepIdx > steps.indexOf(stepName) ||
-      currentStepIdx === steps.length - 1, // last step is "complete"
-    isCurrent: flowState.oauthStep === stepName,
-    error: flowState.oauthStep === stepName ? flowState.latestError : null,
-  });
+  const edges: Array<Edge> = useMemo(
+    () =>
+      steps.slice(1).map((step, index) => {
+        const previous = steps[index];
+        const targetIndex = steps.indexOf(step);
+        const isComplete = targetIndex < currentStepIndex;
+        const isCurrent = targetIndex === currentStepIndex;
+
+        // Determine edge color based on status
+        let strokeColor: string;
+        let markerColor: string;
+
+        if (isComplete) {
+          strokeColor = "rgba(16, 185, 129, 0.7)"; // Green for completed
+          markerColor = "rgb(16, 185, 129)";
+        } else if (isCurrent) {
+          strokeColor = "rgba(37, 99, 235, 0.7)"; // Blue for current
+          markerColor = "rgb(37, 99, 235)";
+        } else {
+          strokeColor = "#d4d4d8"; // Gray for pending
+          markerColor = "#94a3b8";
+        }
+
+        return {
+          id: `${previous}-${step}`,
+          source: previous,
+          target: step,
+          type: "smoothstep",
+          animated: isComplete || isCurrent,
+          style: {
+            stroke: strokeColor,
+            strokeWidth: isComplete || isCurrent ? 2.5 : 2,
+          },
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            color: markerColor,
+            width: 20,
+            height: 20,
+          },
+        };
+      }),
+    [currentStepIndex],
+  );
+
+  const defaultEdgeOptions = useMemo(
+    () => ({
+      type: "smoothstep" as const,
+    }),
+    [],
+  );
+
+  const onInit = useCallback<OnInit>((instance) => {
+    instance.fitView({ padding: 0.25, duration: 300 });
+  }, []);
+
+  const currentGuard = stepGuards[flowState.oauthStep];
+
+  useEffect(() => {
+    if (onGuardStateChange) {
+      onGuardStateChange({
+        canProceed: currentGuard.canProceed,
+        reason: currentGuard.reason,
+      });
+    }
+  }, [currentGuard, onGuardStateChange]);
+
+  // Debug edges
+  useEffect(() => {
+    console.log('Nodes:', nodes.length);
+    console.log('Edges:', edges);
+  }, [nodes, edges]);
 
   return (
-    <div className="rounded-md border p-6 space-y-4 mt-4">
-      <h3 className="text-lg font-medium">OAuth Flow Progress</h3>
-      <p className="text-sm text-muted-foreground">
-        Follow these steps to complete OAuth authentication with the server.
-      </p>
-
-      <div className="space-y-3">
-        <OAuthStepDetails
-          label="Metadata Discovery"
-          {...getStepProps("metadata_discovery")}
-        >
-          {flowState.oauthMetadata && (
-            <details className="text-xs mt-2">
-              <summary className="cursor-pointer text-muted-foreground font-medium">
-                OAuth Metadata Sources
-                {!flowState.resourceMetadata && " ℹ️"}
-              </summary>
-
-              {flowState.resourceMetadata && (
-                <div className="mt-2">
-                  <p className="font-medium">Resource Metadata:</p>
-                  <p className="text-xs text-muted-foreground">
-                    From{" "}
-                    {
-                      new URL(
-                        "/.well-known/oauth-protected-resource",
-                        serverUrl,
-                      ).href
-                    }
-                  </p>
-                  <pre className="mt-2 p-2 bg-muted rounded-md overflow-auto max-h-[300px]">
-                    {JSON.stringify(flowState.resourceMetadata, null, 2)}
-                  </pre>
-                </div>
-              )}
-
-              {flowState.resourceMetadataError && (
-                <div className="mt-2 p-3 border border-blue-300 bg-blue-50 dark:bg-blue-950/50 rounded-md">
-                  <p className="text-sm font-medium text-blue-700 dark:text-blue-400">
-                    ℹ️ Problem with resource metadata from{" "}
-                    <a
-                      href={
-                        new URL(
-                          "/.well-known/oauth-protected-resource",
-                          serverUrl,
-                        ).href
-                      }
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
-                    >
-                      {
-                        new URL(
-                          "/.well-known/oauth-protected-resource",
-                          serverUrl,
-                        ).href
-                      }
-                    </a>
-                  </p>
-                  <p className="text-xs text-blue-600 dark:text-blue-500 mt-1">
-                    Resource metadata was added in the{" "}
-                    <a
-                      href="https://modelcontextprotocol.io/specification/draft/basic/authorization#2-3-1-authorization-server-location"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="underline"
-                    >
-                      2025-DRAFT-v2 specification update
-                    </a>
-                    <br />
-                    {flowState.resourceMetadataError.message}
-                    {flowState.resourceMetadataError instanceof TypeError &&
-                      " (This could indicate the endpoint doesn't exist or does not have CORS configured)"}
-                  </p>
-                </div>
-              )}
-
-              {flowState.oauthMetadata && (
-                <div className="mt-2">
-                  <p className="font-medium">Authorization Server Metadata:</p>
-                  {flowState.authServerUrl && (
-                    <p className="text-xs text-muted-foreground">
-                      From{" "}
-                      {
-                        new URL(
-                          "/.well-known/oauth-authorization-server",
-                          flowState.authServerUrl,
-                        ).href
-                      }
-                    </p>
-                  )}
-                  <pre className="mt-2 p-2 bg-muted rounded-md overflow-auto max-h-[300px]">
-                    {JSON.stringify(flowState.oauthMetadata, null, 2)}
-                  </pre>
-                </div>
-              )}
-            </details>
-          )}
-        </OAuthStepDetails>
-
-        <OAuthStepDetails
-          label="Client Registration"
-          {...getStepProps("client_registration")}
-        >
-          {clientInfo && (
-            <details className="text-xs mt-2">
-              <summary className="cursor-pointer text-muted-foreground font-medium">
-                Registered Client Information
-              </summary>
-              <pre className="mt-2 p-2 bg-muted rounded-md overflow-auto max-h-[300px]">
-                {JSON.stringify(clientInfo, null, 2)}
-              </pre>
-            </details>
-          )}
-        </OAuthStepDetails>
-
-        <OAuthStepDetails
-          label="Preparing Authorization"
-          {...getStepProps("authorization_redirect")}
-        >
-          {flowState.authorizationUrl && (
-            <div className="mt-2 p-3 border rounded-md bg-muted">
-              <p className="font-medium mb-2 text-sm">Authorization URL:</p>
-              <div className="flex items-center gap-2">
-                <p className="text-xs break-all">
-                  {flowState.authorizationUrl}
-                </p>
-                <a
-                  href={flowState.authorizationUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
-                  aria-label="Open authorization URL in new tab"
-                  title="Open authorization URL"
-                >
-                  <ExternalLink className="h-4 w-4" />
-                </a>
-              </div>
-              <p className="text-xs text-muted-foreground mt-2">
-                Click the link to authorize in your browser. After
-                authorization, you'll be redirected back to continue the flow.
-              </p>
-            </div>
-          )}
-        </OAuthStepDetails>
-
-        <OAuthStepDetails
-          label="Request Authorization and acquire authorization code"
-          {...getStepProps("authorization_code")}
-        >
-          <div className="mt-3">
-            <label
-              htmlFor="authCode"
-              className="block text-sm font-medium mb-1"
-            >
-              Authorization Code
-            </label>
-            <div className="flex gap-2">
-              <input
-                id="authCode"
-                value={flowState.authorizationCode}
-                onChange={(e) => {
-                  updateFlowState({
-                    authorizationCode: e.target.value,
-                    validationError: null,
-                  });
-                }}
-                placeholder="Enter the code from the authorization server"
-                className={`flex h-9 w-full rounded-md border bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
-                  flowState.validationError ? "border-red-500" : "border-input"
-                }`}
-              />
-            </div>
-            {flowState.validationError && (
-              <p className="text-xs text-red-600 dark:text-red-500 mt-1">
-                {flowState.validationError}
-              </p>
-            )}
-            <p className="text-xs text-muted-foreground mt-1">
-              Once you've completed authorization in the link, paste the code
-              here.
-            </p>
-          </div>
-        </OAuthStepDetails>
-
-        <OAuthStepDetails
-          label="Token Request"
-          {...getStepProps("token_request")}
-        >
-          {flowState.oauthMetadata && (
-            <details className="text-xs mt-2">
-              <summary className="cursor-pointer text-muted-foreground font-medium">
-                Token Request Details
-              </summary>
-              <div className="mt-2 p-2 bg-muted rounded-md">
-                <p className="font-medium">Token Endpoint:</p>
-                <code className="block mt-1 text-xs overflow-x-auto">
-                  {flowState.oauthMetadata.token_endpoint}
-                </code>
-              </div>
-            </details>
-          )}
-        </OAuthStepDetails>
-
-        <OAuthStepDetails
-          label="Authentication Complete"
-          {...getStepProps("complete")}
-        >
-          {flowState.oauthTokens && (
-            <details className="text-xs mt-2">
-              <summary className="cursor-pointer text-muted-foreground font-medium">
-                Access Tokens
-              </summary>
-              <p className="mt-1 text-sm">
-                Authentication successful! You can now use the authenticated
-                connection. These tokens will be used automatically for server
-                requests.
-              </p>
-              <pre className="mt-2 p-2 bg-muted rounded-md overflow-auto max-h-[300px]">
-                {JSON.stringify(flowState.oauthTokens, null, 2)}
-              </pre>
-            </details>
-          )}
-        </OAuthStepDetails>
-      </div>
-
-      <div className="flex gap-3 mt-4">
-        {flowState.oauthStep !== "complete" && (
-          <>
-            <Button
-              onClick={proceedToNextStep}
-              disabled={flowState.isInitiatingAuth}
-            >
-              {flowState.isInitiatingAuth ? "Processing..." : "Continue"}
-            </Button>
-          </>
-        )}
-
-        {flowState.oauthStep === "authorization_redirect" &&
-          flowState.authorizationUrl && (
-            <Button
-              variant="outline"
-              onClick={() => window.open(flowState.authorizationUrl!, "_blank")}
-            >
-              Open in New Tab
-            </Button>
-          )}
-      </div>
+    <div className="h-full w-full">
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        nodeTypes={nodeTypes}
+        nodesDraggable={false}
+        nodesConnectable={false}
+        elementsSelectable={false}
+        zoomOnDoubleClick={false}
+        zoomOnScroll={true}
+        panOnDrag={true}
+        defaultEdgeOptions={defaultEdgeOptions}
+        onInit={onInit}
+        fitView
+        minZoom={0.1}
+        maxZoom={2}
+      >
+        <Background />
+        <Controls showInteractive={false} />
+      </ReactFlow>
     </div>
   );
 };
