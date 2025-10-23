@@ -11,6 +11,33 @@ export function generateId(): string {
   return Math.random().toString(36).substr(2, 9);
 }
 
+export interface ParsedMessageContent {
+  reasoning?: string;
+  content: string;
+}
+
+/**
+ * Parses LLM reasoning tags and extracts both reasoning and final content
+ * Example: <|channel|>analysis<|message|>reasoning here<|end|><|start|>assistant<|channel|>final<|message|>response here
+ */
+export function parseReasoningTags(text: string): ParsedMessageContent {
+  const reasoningMatch = text.match(/<\|channel\|>analysis<\|message\|>(.*?)(?:<\|end\|>|<\|start\|>)/s);
+  const finalMatch = text.match(/<\|channel\|>final<\|message\|>(.*?)$/s);
+
+  // If we found structured content with tags
+  if (reasoningMatch || finalMatch) {
+    return {
+      reasoning: reasoningMatch ? reasoningMatch[1].trim() : undefined,
+      content: finalMatch ? finalMatch[1].trim() : text.replace(/<\|[^|]+\|>/g, '').trim(),
+    };
+  }
+
+  // No tags found, return original content
+  return {
+    content: text,
+  };
+}
+
 export function sanitizeText(text: string): string {
   // Basic trimming
   let value = text.trim();
