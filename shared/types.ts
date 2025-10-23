@@ -108,6 +108,7 @@ export type ModelProvider =
   | "litellm"
   | "mistral"
   | "moonshotai"
+  | "openrouter"
   | "z-ai";
 
 const MCPJAM_PROVIDED_MODEL_IDS: string[] = [

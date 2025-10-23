@@ -44,6 +44,7 @@ export function useChat(options: UseChatOptions = {}) {
     getOllamaBaseUrl,
     getLiteLLMBaseUrl,
     getLiteLLMModelAlias,
+    getOpenRouterModelAlias,
   } = useAiProviderKeys();
   const posthog = usePostHog();
 
@@ -172,6 +173,7 @@ export function useChat(options: UseChatOptions = {}) {
       mistral: hasToken("mistral"),
       ollama: isOllamaRunning,
       litellm: Boolean(getLiteLLMBaseUrl() && getLiteLLMModelAlias()),
+      openrouter: Boolean(getOpenRouterModelAlias()),
       meta: false,
       "x-ai": false,
     } as const;
@@ -203,6 +205,25 @@ export function useChat(options: UseChatOptions = {}) {
       });
     }
 
+    const openRouterModels: ModelDefinition[] = [];
+    if (providerHasKey.openrouter) {
+      const modelAliasString = getOpenRouterModelAlias();
+      // Parse comma-separated model aliases
+      const modelAliases = modelAliasString
+        .split(",")
+        .map((alias) => alias.trim())
+        .filter((alias) => alias.length > 0);
+
+      // Create a model definition for each alias
+      modelAliases.forEach((alias) => {
+        openRouterModels.push({
+          id: alias,
+          name: alias,
+          provider: "openrouter",
+        });
+      });
+    }
+
     // Combine all models: cloud + ollama + litellm
     let allModels = cloud;
     if (isOllamaRunning && ollamaModels.length > 0) {
@@ -211,6 +232,9 @@ export function useChat(options: UseChatOptions = {}) {
     if (litellmModels.length > 0) {
       allModels = allModels.concat(litellmModels);
     }
+    if (openRouterModels.length > 0) {
+      allModels = allModels.concat(openRouterModels);
+    }
     return allModels;
   }, [
     isOllamaRunning,
@@ -218,6 +242,7 @@ export function useChat(options: UseChatOptions = {}) {
     hasToken,
     getLiteLLMBaseUrl,
     getLiteLLMModelAlias,
+    getOpenRouterModelAlias,
   ]);
 
   const applySseEvent = useCallback(

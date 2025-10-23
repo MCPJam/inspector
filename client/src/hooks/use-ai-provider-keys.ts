@@ -11,6 +11,8 @@ export interface ProviderTokens {
   litellm: string;
   litellmBaseUrl: string;
   litellmModelAlias: string;
+  openrouter: string;
+  openRouterModelAlias: string;
 }
 
 export interface useAiProviderKeysReturn {
@@ -26,6 +28,8 @@ export interface useAiProviderKeysReturn {
   setLiteLLMBaseUrl: (url: string) => void;
   getLiteLLMModelAlias: () => string;
   setLiteLLMModelAlias: (alias: string) => void;
+  getOpenRouterModelAlias: () => string;
+  setOpenRouterModelAlias: (alias: string) => void;
 }
 
 const STORAGE_KEY = "mcp-inspector-provider-tokens";
@@ -41,6 +45,8 @@ const defaultTokens: ProviderTokens = {
   litellm: "", // LiteLLM API key (optional, depends on proxy setup)
   litellmBaseUrl: "http://localhost:4000", // Default LiteLLM proxy URL
   litellmModelAlias: "", // Model name/alias to use with LiteLLM
+  openrouter: "",
+  openRouterModelAlias: "", // Models to choose with openrouter
 };
 
 export function useAiProviderKeys(): useAiProviderKeysReturn {
@@ -145,6 +151,17 @@ export function useAiProviderKeys(): useAiProviderKeysReturn {
     }));
   }, []);
 
+  const getOpenRouterModelAlias = useCallback(() => {
+    return tokens.openRouterModelAlias || defaultTokens.openRouterModelAlias;
+  }, [tokens.openRouterModelAlias]);
+
+  const setOpenRouterModelAlias = useCallback((alias: string) => {
+    setTokens((prev) => ({
+      ...prev,
+      openRouterModelAlias: alias,
+    }));
+  }, []);
+
   return {
     tokens,
     setToken,
@@ -158,5 +175,7 @@ export function useAiProviderKeys(): useAiProviderKeysReturn {
     setLiteLLMBaseUrl,
     getLiteLLMModelAlias,
     setLiteLLMModelAlias,
+    getOpenRouterModelAlias,
+    setOpenRouterModelAlias,
   };
 }

@@ -4,6 +4,7 @@ import { ProvidersTable } from "./setting/ProvidersTable";
 import { ProviderConfigDialog } from "./setting/ProviderConfigDialog";
 import { OllamaConfigDialog } from "./setting/OllamaConfigDialog";
 import { LiteLLMConfigDialog } from "./setting/LiteLLMConfigDialog";
+import { OpenRouterConfigDialog } from "./setting/OpenRouterConfigDialog";
 import { AccountApiKeySection } from "./setting/AccountApiKeySection";
 
 interface ProviderConfig {
@@ -28,6 +29,8 @@ export function SettingsTab() {
     setLiteLLMBaseUrl,
     getLiteLLMModelAlias,
     setLiteLLMModelAlias,
+    getOpenRouterModelAlias,
+    setOpenRouterModelAlias,
   } = useAiProviderKeys();
 
   const [editingValue, setEditingValue] = useState("");
@@ -40,6 +43,10 @@ export function SettingsTab() {
   const [litellmUrl, setLitellmUrl] = useState("");
   const [litellmApiKey, setLitellmApiKey] = useState("");
   const [litellmModelAlias, setLitellmModelAlias] = useState("");
+  const [openRouterDialogOpen, setOpenRouterDialogOpen] = useState(false);
+  const [openRouterApiKeyInput, setOpenRouterApiKeyInput] = useState("");
+  const [openRouterModelAliasInput, setOpenRouterModelAliasInput] =
+    useState("");
 
   const providerConfigs: ProviderConfig[] = [
     {
@@ -115,6 +122,10 @@ export function SettingsTab() {
 
   const handleDelete = (providerId: string) => {
     clearToken(providerId as keyof typeof tokens);
+    // Also clear OpenRouter model alias if deleting OpenRouter provider
+    if (providerId === "openrouter") {
+      setOpenRouterModelAlias("");
+    }
   };
 
   const handleOllamaEdit = () => {
@@ -157,6 +168,26 @@ export function SettingsTab() {
     setLitellmModelAlias("");
   };
 
+  const handleOpenRouterEdit = () => {
+    setOpenRouterApiKeyInput(tokens.openrouter || "");
+    setOpenRouterModelAliasInput(getOpenRouterModelAlias());
+    setOpenRouterDialogOpen(true);
+  };
+
+  const handleOpenRouterSave = () => {
+    setToken("openrouter", openRouterApiKeyInput);
+    setOpenRouterModelAlias(openRouterModelAliasInput);
+    setOpenRouterDialogOpen(false);
+    setOpenRouterApiKeyInput("");
+    setOpenRouterModelAliasInput("");
+  };
+
+  const handleOpenRouterCancel = () => {
+    setOpenRouterDialogOpen(false);
+    setOpenRouterApiKeyInput("");
+    setOpenRouterModelAliasInput("");
+  };
+
   return (
     <div className="container mx-auto p-6 max-w-6xl space-y-8">
       <div className="flex items-center gap-3 mb-6">
@@ -180,6 +211,8 @@ export function SettingsTab() {
           litellmBaseUrl={getLiteLLMBaseUrl()}
           litellmModelAlias={getLiteLLMModelAlias()}
           onEditLiteLLM={handleLiteLLMEdit}
+          openRouterModelAlias={getOpenRouterModelAlias()}
+          onEditOpenRouter={handleOpenRouterEdit}
         />
       </div>
 
@@ -216,6 +249,18 @@ export function SettingsTab() {
         onModelAliasChange={setLitellmModelAlias}
         onSave={handleLiteLLMSave}
         onCancel={handleLiteLLMCancel}
+      />
+
+      {/* OpenRouter Configuration Dialog */}
+      <OpenRouterConfigDialog
+        open={openRouterDialogOpen}
+        onOpenChange={setOpenRouterDialogOpen}
+        apiKey={openRouterApiKeyInput}
+        modelAlias={openRouterModelAliasInput}
+        onApiKeyChange={setOpenRouterApiKeyInput}
+        onModelAliasChange={setOpenRouterModelAliasInput}
+        onSave={handleOpenRouterSave}
+        onCancel={handleOpenRouterCancel}
       />
     </div>
   );
