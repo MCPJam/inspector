@@ -174,7 +174,7 @@ export function useChat(options: UseChatOptions = {}) {
       mistral: hasToken("mistral"),
       ollama: isOllamaRunning,
       litellm: Boolean(getLiteLLMBaseUrl() && getLiteLLMModelAlias()),
-      openrouter: Boolean(getOpenRouterModelAlias()),
+      openrouter: Boolean(hasToken("openrouter") && getOpenRouterModelAlias()),
       meta: false,
       "x-ai": false,
     } as const;
