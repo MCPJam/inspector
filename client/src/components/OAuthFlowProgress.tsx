@@ -8,7 +8,6 @@ import {
   Node,
   NodeProps,
   OnInit,
-  MarkerType,
   Position,
   ReactFlow,
 } from "@xyflow/react";
@@ -22,18 +21,25 @@ import { cn } from "@/lib/utils";
 
 type NodeStatus = "complete" | "current" | "pending";
 
-interface OAuthFlowNodeData {
-  title: string;
+// Actor/Swimlane node types
+interface ActorNodeData extends Record<string, unknown> {
+  label: string;
+  color: string;
+  segments: Array<{
+    id: string;
+    type: 'box' | 'line';
+    height: number;
+    handleId?: string; // For boxes that need handles
+  }>;
+}
+
+interface ActionNodeData extends Record<string, unknown> {
+  label: string;
+  description: string;
   status: NodeStatus;
-  summary: string;
+  direction: "request" | "response";
   details?: Array<{ label: string; value: ReactNode }>;
-  note?: string;
   error?: string | null;
-  secondaryAction?: {
-    label: string;
-    onClick: () => void;
-    disabled?: boolean;
-  };
   input?: {
     label: string;
     value: string;
@@ -41,16 +47,12 @@ interface OAuthFlowNodeData {
     onChange: (value: string) => void;
     error?: string | null;
   };
+  secondaryAction?: {
+    label: string;
+    onClick: () => void;
+    disabled?: boolean;
+  };
 }
-
-const STEP_TITLES: Record<OAuthStep, string> = {
-  metadata_discovery: "Discover Metadata",
-  client_registration: "Register Client",
-  authorization_redirect: "Authorize User",
-  authorization_code: "Capture Code",
-  token_request: "Exchange Tokens",
-  complete: "Complete",
-};
 
 const STATUS_LABEL: Record<NodeStatus, string> = {
   complete: "Complete",
@@ -64,16 +66,16 @@ const STATUS_BADGE_CLASS: Record<NodeStatus, string> = {
   pending: "border-border bg-muted text-muted-foreground",
 };
 
-const statusBorderClass = (status: NodeStatus) => {
-  switch (status) {
-    case "complete":
-      return "border-green-500/50 shadow-[0_10px_25px_-18px_rgba(16,185,129,0.6)]";
-    case "current":
-      return "border-blue-500/60 shadow-[0_16px_35px_-20px_rgba(37,99,235,0.7)]";
-    default:
-      return "border-border";
-  }
+// Actor configuration
+const ACTORS = {
+  client: { label: "Inspector Client", color: "#10b981" }, // Green
+  mcpServer: { label: "MCP Server", color: "#f59e0b" }, // Orange
+  authServer: { label: "Authorization Server", color: "#3b82f6" }, // Blue
 };
+
+// Layout constants
+const ACTION_SPACING = 200; // Vertical space between actions
+const START_Y = 150; // Initial Y position for first action
 
 const truncateValue = (value: string | null | undefined, max = 64) => {
   if (!value) return "—";
@@ -94,86 +96,221 @@ const DetailRow = ({ label, value }: { label: string; value: ReactNode }) => (
   </div>
 );
 
-const OAuthFlowNode = memo(({ data }: NodeProps<OAuthFlowNodeData>) => {
+// Actor Node - Segmented vertical swimlane with boxes and lines
+const ActorNode = memo((props: NodeProps<Node<ActorNodeData>>) => {
+  const { data } = props;
+
+  let currentY = 50; // Start below label
+
   return (
-    <>
-      <Handle type="target" position={Position.Top} />
+    <div className="flex flex-col items-center relative" style={{ width: 120 }}>
+      {/* Actor label at top */}
       <div
         className={cn(
-          "min-w-[260px] max-w-[320px] rounded-xl border bg-card p-4",
-          statusBorderClass(data.status),
+          "px-4 py-2 rounded-md font-semibold text-xs border-2 bg-card shadow-sm z-10 mb-2"
+        )}
+        style={{ borderColor: data.color }}
+      >
+        {data.label}
+      </div>
+
+      {/* Segmented vertical line with alternating boxes and lines */}
+      <div className="relative" style={{ width: 2 }}>
+        {data.segments.map((segment, index) => {
+          const segmentY = currentY;
+          currentY += segment.height;
+
+          if (segment.type === 'box') {
+            // Colored box segment with handles
+            return (
+              <div
+                key={segment.id}
+                className="absolute left-1/2 -translate-x-1/2"
+                style={{
+                  top: segmentY,
+                  width: 24,
+                  height: segment.height,
+                  backgroundColor: data.color,
+                  opacity: 0.6,
+                  borderRadius: 2,
+                }}
+              >
+                {/* Handles for connecting edges */}
+                {segment.handleId && (
+                  <>
+                    <Handle
+                      type="source"
+                      position={Position.Right}
+                      id={`${segment.handleId}-right`}
+                      style={{
+                        right: -4,
+                        top: '50%',
+                        background: data.color,
+                        width: 8,
+                        height: 8,
+                        border: '2px solid white',
+                      }}
+                    />
+                    <Handle
+                      type="target"
+                      position={Position.Left}
+                      id={`${segment.handleId}-left`}
+                      style={{
+                        left: -4,
+                        top: '50%',
+                        background: data.color,
+                        width: 8,
+                        height: 8,
+                        border: '2px solid white',
+                      }}
+                    />
+                  </>
+                )}
+              </div>
+            );
+          } else {
+            // Plain line segment
+            return (
+              <div
+                key={segment.id}
+                className="absolute left-1/2 -translate-x-1/2"
+                style={{
+                  top: segmentY,
+                  width: 2,
+                  height: segment.height,
+                  backgroundColor: data.color,
+                  opacity: 0.2,
+                }}
+              />
+            );
+          }
+        })}
+      </div>
+    </div>
+  );
+});
+
+// Action Node - Simple div with text and handles on left/right
+const ActionNode = memo((props: NodeProps<Node<ActionNodeData>>) => {
+  const { data } = props;
+  const statusColor = {
+    complete: "border-green-500/50 bg-card",
+    current: "border-blue-500/70 bg-blue-500/5",
+    pending: "border-border bg-muted/30",
+  }[data.status];
+
+  const isExpanded = data.details || data.input || data.error || data.secondaryAction;
+
+  return (
+    <>
+      {/* Left handle for connections from source actor */}
+      <Handle
+        type="target"
+        position={Position.Left}
+        style={{
+          left: -4,
+          background: "hsl(var(--primary))",
+          width: 8,
+          height: 8,
+          border: "2px solid hsl(var(--background))",
+        }}
+      />
+
+      <div
+        className={cn(
+          "rounded-md border-2 bg-card shadow-md",
+          isExpanded ? "min-w-[320px] max-w-[380px] p-3" : "min-w-[280px] max-w-[340px] px-4 py-2.5",
+          statusColor
         )}
       >
-        <div className="flex items-start justify-between gap-3">
-          <div className="space-y-1">
-            <p className="text-sm font-semibold text-foreground">{data.title}</p>
-            <p className="text-[11px] text-muted-foreground">{data.summary}</p>
+        {/* Header */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-foreground truncate">{data.label}</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5 leading-tight">
+              {data.description}
+            </p>
           </div>
-          <Badge variant="outline" className={STATUS_BADGE_CLASS[data.status]}>
-            {STATUS_LABEL[data.status]}
-          </Badge>
-        </div>
-
-      {data.details && data.details.length > 0 && (
-        <div className="mt-4 space-y-2">
-          {data.details.map((detail) => (
-            <DetailRow key={detail.label} {...detail} />
-          ))}
-        </div>
-      )}
-
-      {data.input && (
-        <div className="mt-4 space-y-2">
-          <Label
-            htmlFor={`node-input-${data.title}`}
-            className="text-[11px] font-medium text-muted-foreground"
-          >
-            {data.input.label}
-          </Label>
-          <Input
-            id={`node-input-${data.title}`}
-            value={data.input.value}
-            placeholder={data.input.placeholder}
-            onChange={(event) => data.input?.onChange(event.target.value)}
-            className={data.input.error ? "border-destructive" : undefined}
-            autoComplete="off"
-          />
-          {data.input.error && (
-            <p className="text-[11px] text-destructive">{data.input.error}</p>
+          {data.status !== "pending" && (
+            <Badge variant="outline" className={cn("shrink-0 text-[10px] py-0 px-1.5", STATUS_BADGE_CLASS[data.status])}>
+              {STATUS_LABEL[data.status]}
+            </Badge>
           )}
         </div>
-      )}
 
-      {data.note && (
-        <p className="mt-3 text-[11px] text-muted-foreground">{data.note}</p>
-      )}
+        {/* Expandable content */}
+        {isExpanded && (
+          <div className="mt-3 space-y-2">
+            {data.details && data.details.length > 0 && (
+              <div className="space-y-1.5 pt-2 border-t border-border/50">
+                {data.details.map((detail) => (
+                  <DetailRow key={detail.label} {...detail} />
+                ))}
+              </div>
+            )}
 
-      {data.error && (
-        <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 p-2">
-          <p className="text-[11px] font-medium text-destructive">{data.error}</p>
-        </div>
-      )}
+            {data.input && (
+              <div className="space-y-1.5 pt-2 border-t border-border/50">
+                <Label
+                  htmlFor={`action-input-${data.label}`}
+                  className="text-[10px] font-medium text-muted-foreground"
+                >
+                  {data.input.label}
+                </Label>
+                <Input
+                  id={`action-input-${data.label}`}
+                  value={data.input.value}
+                  placeholder={data.input.placeholder}
+                  onChange={(event) => data.input?.onChange(event.target.value)}
+                  className={cn("text-xs h-8", data.input.error ? "border-destructive" : undefined)}
+                  autoComplete="off"
+                />
+                {data.input.error && (
+                  <p className="text-[10px] text-destructive">{data.input.error}</p>
+                )}
+              </div>
+            )}
 
-      {data.secondaryAction && (
-        <div className="mt-4 space-y-2">
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={data.secondaryAction.onClick}
-            disabled={data.secondaryAction.disabled}
-          >
-            {data.secondaryAction.label}
-          </Button>
-        </div>
-      )}
+            {data.error && (
+              <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2">
+                <p className="text-[10px] font-medium text-destructive">{data.error}</p>
+              </div>
+            )}
+
+            {data.secondaryAction && (
+              <div className="pt-2 border-t border-border/50">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={data.secondaryAction.onClick}
+                  disabled={data.secondaryAction.disabled}
+                  className="w-full h-7 text-xs"
+                >
+                  {data.secondaryAction.label}
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
-      <Handle type="source" position={Position.Bottom} />
+
+      {/* Right handle for connections to target actor */}
+      <Handle
+        type="source"
+        position={Position.Right}
+        style={{
+          right: -4,
+          background: "hsl(var(--primary))",
+          width: 8,
+          height: 8,
+          border: "2px solid hsl(var(--background))",
+        }}
+      />
     </>
   );
 });
 
 interface OAuthFlowProgressProps {
-  serverUrl: string;
   flowState: OAuthFlowState;
   updateFlowState: (updates: Partial<OAuthFlowState>) => void;
   onGuardStateChange?: (guard: { canProceed: boolean; reason?: string }) => void;
@@ -188,10 +325,12 @@ const steps: Array<OAuthStep> = [
   "complete",
 ];
 
-const nodeTypes = { "oauth-step": OAuthFlowNode };
+const nodeTypes = {
+  actor: ActorNode,
+  action: ActionNode,
+};
 
 export const OAuthFlowProgress = ({
-  serverUrl,
   flowState,
   updateFlowState,
   onGuardStateChange,
@@ -266,312 +405,356 @@ export const OAuthFlowProgress = ({
     }
   }, [flowState.authorizationUrl]);
 
-  const nodes: Array<Node<OAuthFlowNodeData>> = useMemo(() => {
-    const dataForStep = (step: OAuthStep): OAuthFlowNodeData => {
-      const status = statusForStep(step);
-      const isCurrent = status === "current";
-      const base: OAuthFlowNodeData = {
-        title: STEP_TITLES[step],
-        status,
-        summary: "",
-      };
-
-      switch (step) {
-        case "metadata_discovery": {
-          base.summary =
-            status === "complete"
-              ? "Completed automatically when the guided flow started."
-              : `Discovering OAuth metadata from ${serverUrl}`;
-          base.details = flowState.oauthMetadata
-            ? [
-                {
-                  label: "Authorization Server",
-                  value: flowState.authServerUrl?.toString() ?? "—",
-                },
-                {
-                  label: "Issuer",
-                  value: flowState.oauthMetadata.issuer,
-                },
-                {
-                  label: "Authorization Endpoint",
-                  value: flowState.oauthMetadata.authorization_endpoint,
-                },
-                {
-                  label: "Token Endpoint",
-                  value: flowState.oauthMetadata.token_endpoint,
-                },
-                {
-                  label: "Supported Scopes",
-                  value: formatList(flowState.oauthMetadata.scopes_supported),
-                },
-                flowState.resource
-                  ? {
-                      label: "Protected Resource",
-                      value: flowState.resource.toString(),
-                    }
-                  : undefined,
-              ].filter(Boolean) as Array<{ label: string; value: string }>
-            : undefined;
-
-          if (isCurrent) {
-            base.error =
-              flowState.latestError ? flowState.latestError.message : null;
-          }
-          if (flowState.resourceMetadataError) {
-            base.note = `Protected resource metadata failed: ${flowState.resourceMetadataError.message}`;
-          }
-          break;
-        }
-        case "client_registration": {
-          base.summary =
-            status === "complete"
-              ? "OAuth client registered with the authorization server."
-              : "Prepare an OAuth client for this server.";
-          base.details = flowState.oauthClientInfo
-            ? [
-                {
-                  label: "Client ID",
-                  value: truncateValue(flowState.oauthClientInfo.client_id),
-                },
-                "client_secret" in flowState.oauthClientInfo &&
-                flowState.oauthClientInfo.client_secret
-                  ? {
-                      label: "Client Secret",
-                      value: truncateValue(
-                        flowState.oauthClientInfo.client_secret,
-                      ),
-                    }
-                  : undefined,
-                {
-                  label: "Redirect URIs",
-                  value: formatList(flowState.oauthClientInfo.redirect_uris),
-                },
-                "token_endpoint_auth_method" in flowState.oauthClientInfo &&
-                flowState.oauthClientInfo.token_endpoint_auth_method
-                  ? {
-                      label: "Auth Method",
-                      value:
-                        flowState.oauthClientInfo.token_endpoint_auth_method,
-                    }
-                  : undefined,
-                "grant_types" in flowState.oauthClientInfo
-                  ? {
-                      label: "Grant Types",
-                      value: formatList(flowState.oauthClientInfo.grant_types),
-                    }
-                  : undefined,
-              ].filter(Boolean) as Array<{ label: string; value: string }>
-            : undefined;
-
-          if (isCurrent) {
-            base.error =
-              flowState.latestError ? flowState.latestError.message : null;
-          }
-          break;
-        }
-        case "authorization_redirect": {
-          base.summary =
-            status === "complete"
-              ? "Authorization URL generated."
-              : "Open the authorization URL to grant access.";
-          base.details = flowState.authorizationUrl
-            ? [
-                {
-                  label: "Authorization URL",
-                  value: (
-                    <span className="break-all">
-                      {flowState.authorizationUrl}
-                    </span>
-                  ),
-                },
-              ]
-            : undefined;
-
-          if (flowState.authorizationUrl) {
-            base.secondaryAction = {
-              label: "Open in Browser",
-              onClick: handleOpenAuthorization,
-            };
-          }
-
-          if (isCurrent) {
-            base.error =
-              flowState.latestError ? flowState.latestError.message : null;
-          }
-          break;
-        }
-        case "authorization_code": {
-          base.summary =
-            status === "complete"
-              ? "Authorization code captured."
-              : "Paste the one-time code returned after authorizing.";
-          base.input = {
-            label: "Authorization Code",
-            value: flowState.authorizationCode,
-            placeholder: "Paste the authorization code to continue",
-            onChange: handleAuthorizationCodeChange,
-            error: flowState.validationError,
-          };
-          base.note =
-            "After approving access in the browser, paste the returned code here.";
-
-          if (isCurrent) {
-            base.error =
-              flowState.latestError ? flowState.latestError.message : null;
-          }
-          break;
-        }
-        case "token_request": {
-          base.summary =
-            status === "complete"
-              ? "OAuth tokens acquired."
-              : "Exchange the authorization code for tokens.";
-          base.details = flowState.oauthTokens
-            ? [
-                {
-                  label: "Access Token",
-                  value: truncateValue(flowState.oauthTokens.access_token),
-                },
-                flowState.oauthTokens.refresh_token
-                  ? {
-                      label: "Refresh Token",
-                      value: truncateValue(
-                        flowState.oauthTokens.refresh_token,
-                      ),
-                    }
-                  : undefined,
-                flowState.oauthTokens.expires_in
-                  ? {
-                      label: "Expires In",
-                      value: `${flowState.oauthTokens.expires_in}s`,
-                    }
-                  : undefined,
-                flowState.oauthTokens.scope
-                  ? {
-                      label: "Scope",
-                      value: flowState.oauthTokens.scope,
-                    }
-                  : undefined,
-              ].filter(Boolean) as Array<{ label: string; value: string }>
-            : undefined;
-
-          if (isCurrent) {
-            base.error =
-              flowState.latestError ? flowState.latestError.message : null;
-          }
-          break;
-        }
-        case "complete": {
-          base.summary =
-            "Authentication successful! These tokens are stored for future requests.";
-          base.details = flowState.oauthTokens
-            ? [
-                {
-                  label: "Access Token",
-                  value: truncateValue(flowState.oauthTokens.access_token),
-                },
-                flowState.oauthTokens.refresh_token
-                  ? {
-                      label: "Refresh Token",
-                      value: truncateValue(
-                        flowState.oauthTokens.refresh_token,
-                      ),
-                    }
-                  : undefined,
-                flowState.oauthTokens.expires_in
-                  ? {
-                      label: "Expires In",
-                      value: `${flowState.oauthTokens.expires_in}s`,
-                    }
-                  : undefined,
-                flowState.oauthTokens.scope
-                  ? {
-                      label: "Scope",
-                      value: flowState.oauthTokens.scope,
-                    }
-                  : undefined,
-              ].filter(Boolean) as Array<{ label: string; value: string }>
-            : undefined;
-          break;
-        }
-      }
-
-      return base;
+  // Sequence diagram: Define interactions between actors
+  const sequenceActions = useMemo(() => {
+    type SequenceAction = {
+      id: string;
+      from: keyof typeof ACTORS;
+      to: keyof typeof ACTORS;
+      label: string;
+      description: string;
+      step: OAuthStep;
+      getDetails?: () => Array<{ label: string; value: ReactNode }> | undefined;
+      getInput?: () => ActionNodeData["input"];
+      getSecondaryAction?: () => ActionNodeData["secondaryAction"];
+      getError?: () => string | null;
     };
 
-    return steps.map((step, index) => ({
-      id: step,
-      type: "oauth-step",
-      position: { x: 0, y: index * 450 },
-      data: dataForStep(step),
-      selectable: false,
-      draggable: false,
-    }));
+    const actions: SequenceAction[] = [
+      {
+        id: "discover-metadata",
+        from: "client",
+        to: "authServer",
+        label: "Discover Metadata",
+        description: "GET /.well-known/oauth-protected-resource",
+        step: "metadata_discovery",
+        getDetails: () => flowState.oauthMetadata ? [
+          {
+            label: "Authorization Server",
+            value: flowState.authServerUrl?.toString() ?? "—",
+          },
+          {
+            label: "Authorization Endpoint",
+            value: flowState.oauthMetadata.authorization_endpoint,
+          },
+          {
+            label: "Token Endpoint",
+            value: flowState.oauthMetadata.token_endpoint,
+          },
+          {
+            label: "Supported Scopes",
+            value: formatList(flowState.oauthMetadata.scopes_supported),
+          },
+        ] : undefined,
+        getError: () => flowState.latestError && currentStepIndex === 0 ? flowState.latestError.message : null,
+      },
+      {
+        id: "return-metadata",
+        from: "authServer",
+        to: "client",
+        label: "Return Metadata",
+        description: "OAuth server configuration",
+        step: "metadata_discovery",
+      },
+      {
+        id: "register-client",
+        from: "client",
+        to: "authServer",
+        label: "Register Client",
+        description: "POST to registration_endpoint",
+        step: "client_registration",
+        getDetails: () => flowState.oauthClientInfo ? [
+          {
+            label: "Client ID",
+            value: truncateValue(flowState.oauthClientInfo.client_id),
+          },
+          ...("redirect_uris" in flowState.oauthClientInfo && flowState.oauthClientInfo.redirect_uris ? [{
+            label: "Redirect URIs",
+            value: formatList(flowState.oauthClientInfo.redirect_uris),
+          }] : []),
+        ] : undefined,
+        getError: () => flowState.latestError && currentStepIndex === 1 ? flowState.latestError.message : null,
+      },
+      {
+        id: "return-credentials",
+        from: "authServer",
+        to: "client",
+        label: "Return Client Credentials",
+        description: "Client ID and secret",
+        step: "client_registration",
+      },
+      {
+        id: "authorization-redirect",
+        from: "client",
+        to: "authServer",
+        label: "Authorization Redirect",
+        description: "Redirect user to authorization_endpoint with PKCE",
+        step: "authorization_redirect",
+        getDetails: () => flowState.authorizationUrl ? [
+          {
+            label: "Authorization URL",
+            value: <span className="break-all">{flowState.authorizationUrl}</span>,
+          },
+        ] : undefined,
+        getSecondaryAction: () => flowState.authorizationUrl ? {
+          label: "Open in Browser",
+          onClick: handleOpenAuthorization,
+        } : undefined,
+        getError: () => flowState.latestError && currentStepIndex === 2 ? flowState.latestError.message : null,
+      },
+      {
+        id: "user-consent",
+        from: "authServer",
+        to: "authServer",
+        label: "User Consent",
+        description: "User approves/denies access",
+        step: "authorization_redirect",
+      },
+      {
+        id: "return-code",
+        from: "authServer",
+        to: "client",
+        label: "Return Authorization Code",
+        description: "Redirect back with code parameter",
+        step: "authorization_code",
+        getInput: () => ({
+          label: "Authorization Code",
+          value: flowState.authorizationCode,
+          placeholder: "Paste the authorization code here",
+          onChange: handleAuthorizationCodeChange,
+          error: flowState.validationError,
+        }),
+        getError: () => flowState.latestError && currentStepIndex === 3 ? flowState.latestError.message : null,
+      },
+      {
+        id: "token-exchange",
+        from: "client",
+        to: "authServer",
+        label: "Token Exchange",
+        description: "POST to token_endpoint with code + PKCE verifier",
+        step: "token_request",
+        getError: () => flowState.latestError && currentStepIndex === 4 ? flowState.latestError.message : null,
+      },
+      {
+        id: "return-tokens",
+        from: "authServer",
+        to: "client",
+        label: "Return Tokens",
+        description: "Access token and refresh token",
+        step: "token_request",
+        getDetails: () => flowState.oauthTokens ? [
+          {
+            label: "Access Token",
+            value: truncateValue(flowState.oauthTokens.access_token),
+          },
+          flowState.oauthTokens.refresh_token ? {
+            label: "Refresh Token",
+            value: truncateValue(flowState.oauthTokens.refresh_token),
+          } : undefined,
+          flowState.oauthTokens.expires_in ? {
+            label: "Expires In",
+            value: `${flowState.oauthTokens.expires_in}s`,
+          } : undefined,
+        ].filter(Boolean) as Array<{ label: string; value: string }> : undefined,
+      },
+      {
+        id: "authenticated-request",
+        from: "client",
+        to: "mcpServer",
+        label: "Authenticated Request",
+        description: "Request with Bearer token in Authorization header",
+        step: "complete",
+      },
+      {
+        id: "return-data",
+        from: "mcpServer",
+        to: "client",
+        label: "Return Protected Data",
+        description: "Success response with MCP data",
+        step: "complete",
+      },
+    ];
+
+    return actions;
   }, [
-    flowState.authServerUrl,
-    flowState.authorizationCode,
-    flowState.authorizationUrl,
-    flowState.latestError,
-    flowState.oauthClientInfo,
     flowState.oauthMetadata,
-    flowState.oauthStep,
+    flowState.oauthClientInfo,
+    flowState.authorizationUrl,
+    flowState.authorizationCode,
     flowState.oauthTokens,
-    flowState.resource,
-    flowState.resourceMetadataError,
+    flowState.latestError,
     flowState.validationError,
-    handleAuthorizationCodeChange,
+    flowState.authServerUrl,
+    currentStepIndex,
     handleOpenAuthorization,
-    serverUrl,
-    statusForStep,
+    handleAuthorizationCodeChange,
   ]);
 
-  const edges: Array<Edge> = useMemo(
-    () =>
-      steps.slice(1).map((step, index) => {
-        const previous = steps[index];
-        const targetIndex = steps.indexOf(step);
-        const isComplete = targetIndex < currentStepIndex;
-        const isCurrent = targetIndex === currentStepIndex;
+  const nodes: Array<Node> = useMemo(() => {
+    // Actor positions (horizontal spacing)
+    const actorX = {
+      client: 100,
+      mcpServer: 550,
+      authServer: 1000,
+    };
 
-        // Determine edge color based on status
-        let strokeColor: string;
-        let markerColor: string;
+    // Generate segments for each actor based on actions
+    // Segments are positioned to align box centers with action Y positions for horizontal edges
+    const generateActorSegments = (actorKey: keyof typeof ACTORS) => {
+      const segments: ActorNodeData['segments'] = [];
+      let currentY = 50; // Start below label
 
-        if (isComplete) {
-          strokeColor = "rgba(16, 185, 129, 0.7)"; // Green for completed
-          markerColor = "rgb(16, 185, 129)";
-        } else if (isCurrent) {
-          strokeColor = "rgba(37, 99, 235, 0.7)"; // Blue for current
-          markerColor = "rgb(37, 99, 235)";
-        } else {
-          strokeColor = "#d4d4d8"; // Gray for pending
-          markerColor = "#94a3b8";
+      sequenceActions.forEach((action, index) => {
+        const actionY = START_Y + index * ACTION_SPACING;
+        const boxHeight = 80;
+        const boxCenter = actionY; // We want the box center to align with the action node
+        const boxTop = boxCenter - boxHeight / 2;
+
+        // Add line segment to reach the box top position
+        if (boxTop > currentY) {
+          segments.push({
+            id: `${actorKey}-line-before-${index}`,
+            type: 'line',
+            height: boxTop - currentY,
+          });
+          currentY = boxTop;
         }
 
-        return {
-          id: `${previous}-${step}`,
-          source: previous,
-          target: step,
-          type: "smoothstep",
-          animated: isComplete || isCurrent,
-          style: {
-            stroke: strokeColor,
-            strokeWidth: isComplete || isCurrent ? 2.5 : 2,
-          },
-          markerEnd: {
-            type: MarkerType.ArrowClosed,
-            color: markerColor,
-            width: 20,
-            height: 20,
-          },
-        };
-      }),
-    [currentStepIndex],
-  );
+        // Add box segment if this actor is involved in the action, otherwise add line
+        if (action.from === actorKey || action.to === actorKey) {
+          segments.push({
+            id: `${actorKey}-box-${index}`,
+            type: 'box',
+            height: boxHeight,
+            handleId: `${actorKey}-${action.id}`,
+          });
+        } else {
+          // Add line segment if actor is not involved
+          segments.push({
+            id: `${actorKey}-line-${index}`,
+            type: 'line',
+            height: boxHeight,
+          });
+        }
+        currentY += boxHeight;
+      });
+
+      // Add final line segment to extend the swimlane
+      segments.push({
+        id: `${actorKey}-line-final`,
+        type: 'line',
+        height: 100,
+      });
+
+      return segments;
+    };
+
+    const actorNodes: Array<Node<ActorNodeData>> = [
+      {
+        id: "actor-client",
+        type: "actor",
+        position: { x: actorX.client, y: 0 },
+        data: {
+          ...ACTORS.client,
+          segments: generateActorSegments('client'),
+        },
+        selectable: false,
+        draggable: false,
+      },
+      {
+        id: "actor-mcp-server",
+        type: "actor",
+        position: { x: actorX.mcpServer, y: 0 },
+        data: {
+          ...ACTORS.mcpServer,
+          segments: generateActorSegments('mcpServer'),
+        },
+        selectable: false,
+        draggable: false,
+      },
+      {
+        id: "actor-auth-server",
+        type: "actor",
+        position: { x: actorX.authServer, y: 0 },
+        data: {
+          ...ACTORS.authServer,
+          segments: generateActorSegments('authServer'),
+        },
+        selectable: false,
+        draggable: false,
+      },
+    ];
+
+    const actionNodes: Array<Node<ActionNodeData>> = sequenceActions.map((action, index) => {
+      const status = statusForStep(action.step);
+
+      // Calculate X position: midpoint between source and target actors
+      const fromX = actorX[action.from];
+      const toX = actorX[action.to];
+
+      // Position action box at midpoint
+      const midpoint = action.from === action.to ? fromX + 150 : (fromX + toX) / 2;
+      const x = midpoint - 170; // Center the action node
+
+      // Y position progresses downward with each action
+      const y = START_Y + index * ACTION_SPACING;
+
+      return {
+        id: action.id,
+        type: "action",
+        position: { x, y },
+        data: {
+          label: action.label,
+          description: action.description,
+          status,
+          direction: fromX < toX ? "request" : "response",
+          details: action.getDetails?.(),
+          input: action.getInput?.(),
+          secondaryAction: action.getSecondaryAction?.(),
+          error: action.getError?.(),
+        },
+        selectable: false,
+        draggable: false,
+      };
+    });
+
+    return [...actorNodes, ...actionNodes];
+  }, [sequenceActions, statusForStep]);
+
+  // Create edges connecting actor segments to action nodes
+  const edges: Array<Edge> = useMemo(() => {
+    return sequenceActions.map((action) => {
+      const fromActor = action.from;
+      const toActor = action.to;
+
+      return [
+        // Edge from source actor to action
+        {
+          id: `edge-${action.id}-from`,
+          source: `actor-${fromActor === 'mcpServer' ? 'mcp-server' : fromActor === 'authServer' ? 'auth-server' : fromActor}`,
+          sourceHandle: `${fromActor}-${action.id}-right`,
+          target: action.id,
+          targetHandle: undefined, // Connect to left handle of action
+          type: 'straight',
+          style: { stroke: ACTORS[fromActor].color, strokeWidth: 2 },
+        },
+        // Edge from action to target actor
+        {
+          id: `edge-${action.id}-to`,
+          source: action.id,
+          sourceHandle: undefined, // Connect from right handle of action
+          target: `actor-${toActor === 'mcpServer' ? 'mcp-server' : toActor === 'authServer' ? 'auth-server' : toActor}`,
+          targetHandle: `${toActor}-${action.id}-left`,
+          type: 'straight',
+          style: { stroke: ACTORS[toActor].color, strokeWidth: 2 },
+        },
+      ];
+    }).flat();
+  }, [sequenceActions]);
 
   const defaultEdgeOptions = useMemo(
     () => ({
-      type: "smoothstep" as const,
+      type: "straight" as const,
     }),
     [],
   );
@@ -591,14 +774,8 @@ export const OAuthFlowProgress = ({
     }
   }, [currentGuard, onGuardStateChange]);
 
-  // Debug edges
-  useEffect(() => {
-    console.log('Nodes:', nodes.length);
-    console.log('Edges:', edges);
-  }, [nodes, edges]);
-
   return (
-    <div className="h-full w-full">
+    <div className="h-full w-full relative bg-background">
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -612,10 +789,11 @@ export const OAuthFlowProgress = ({
         defaultEdgeOptions={defaultEdgeOptions}
         onInit={onInit}
         fitView
-        minZoom={0.1}
-        maxZoom={2}
+        minZoom={0.3}
+        maxZoom={1.5}
+        className="bg-transparent"
       >
-        <Background />
+        <Background gap={20} size={1} color="hsl(var(--border))" />
         <Controls showInteractive={false} />
       </ReactFlow>
     </div>

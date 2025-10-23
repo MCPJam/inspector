@@ -330,7 +330,6 @@ export const AuthTab = ({
       {/* Flow Visualization - Takes up all remaining space */}
       <div className="flex-1 overflow-hidden">
         <OAuthFlowProgress
-          serverUrl={authSettings.serverUrl}
           flowState={oauthFlowState}
           updateFlowState={updateOAuthFlowState}
           onGuardStateChange={setFlowGuard}
