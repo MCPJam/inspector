@@ -1,4 +1,5 @@
 import { ProviderTableRow } from "./ProviderTableRow";
+import { OpenRouterTableRow } from "./OpenRouterTableRow";
 import { OllamaTableRow } from "./OllamaTableRow";
 import { LiteLLMTableRow } from "./LiteLLMTableRow";
 
@@ -22,6 +23,8 @@ interface ProvidersTableProps {
   litellmBaseUrl: string;
   litellmModelAlias: string;
   onEditLiteLLM: () => void;
+  openRouterModelAlias: string;
+  onEditOpenRouter: () => void;
 }
 
 export function ProvidersTable({
@@ -34,6 +37,8 @@ export function ProvidersTable({
   litellmBaseUrl,
   litellmModelAlias,
   onEditLiteLLM,
+  openRouterModelAlias,
+  onEditOpenRouter,
 }: ProvidersTableProps) {
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -54,6 +59,11 @@ export function ProvidersTable({
         baseUrl={litellmBaseUrl}
         modelAlias={litellmModelAlias}
         onEdit={onEditLiteLLM}
+      />
+      <OpenRouterTableRow
+        modelAlias={openRouterModelAlias}
+        onEdit={onEditOpenRouter}
+        onDelete={() => onDeleteProvider("openrouter")}
       />
     </div>
   );
