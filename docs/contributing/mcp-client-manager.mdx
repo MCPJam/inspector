@@ -106,6 +106,8 @@ connecting → disconnected (on connection failure)
 connected → disconnected (on close/disconnect)
 ```
 
+**Connection Status Verification**: The manager verifies connection status by attempting a ping to the server each time `getConnectionStatusByAttemptingPing()` is called. This ensures the status reflects the actual server availability rather than cached state.
+
 ### 2. Transport Selection
 
 The manager automatically selects the appropriate transport:
