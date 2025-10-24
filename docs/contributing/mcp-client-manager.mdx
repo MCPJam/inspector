@@ -289,8 +289,8 @@ await mcpClientManager.connectToServer("filesystem", {
   env: { DEBUG: "1" },
 });
 
-// Check status
-const status = mcpClientManager.getConnectionStatus("filesystem");
+// Check status (verifies with ping)
+const status = mcpClientManager.getConnectionStatusByAttemptingPing("filesystem");
 // Returns: "connected" | "connecting" | "disconnected"
 
 // Get all servers
