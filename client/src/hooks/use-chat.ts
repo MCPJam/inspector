@@ -7,6 +7,7 @@ import {
   Model,
   ModelDefinition,
   SUPPORTED_MODELS,
+  ModelProvider,
   isMCPJamProvidedModel,
 } from "@/shared/types.js";
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
@@ -44,6 +45,7 @@ export function useChat(options: UseChatOptions = {}) {
     getOllamaBaseUrl,
     getLiteLLMBaseUrl,
     getLiteLLMModelAlias,
+    getOpenRouterSelectedModels,
   } = useAiProviderKeys();
   const posthog = usePostHog();
 
@@ -172,6 +174,7 @@ export function useChat(options: UseChatOptions = {}) {
       mistral: hasToken("mistral"),
       ollama: isOllamaRunning,
       litellm: Boolean(getLiteLLMBaseUrl() && getLiteLLMModelAlias()),
+      openrouter: Boolean(hasToken("openrouter") && getOpenRouterSelectedModels().length > 0),
       meta: false,
       "x-ai": false,
     } as const;
@@ -183,22 +186,36 @@ export function useChat(options: UseChatOptions = {}) {
       return providerHasKey[m.provider];
     });
 
+    const parseModelAliases = (
+      aliasString: string,
+      provider: ModelProvider,
+    ): ModelDefinition[] => {
+      return aliasString
+        .split(",")
+        .map((alias) => alias.trim())
+        .filter((alias) => alias.length > 0)
+        .map((alias) => ({
+          id: alias,
+          name: alias,
+          provider,
+        }));
+    };
+
     // Add user's configured LiteLLM models if configured
     const litellmModels: ModelDefinition[] = [];
     if (providerHasKey.litellm) {
       const modelAliasString = getLiteLLMModelAlias();
-      // Parse comma-separated model aliases
-      const modelAliases = modelAliasString
-        .split(",")
-        .map((alias) => alias.trim())
-        .filter((alias) => alias.length > 0);
+      litellmModels.push(...parseModelAliases(modelAliasString, "litellm"));
+    }
 
-      // Create a model definition for each alias
-      modelAliases.forEach((alias) => {
-        litellmModels.push({
-          id: alias,
-          name: alias,
-          provider: "litellm",
+    const openRouterModels: ModelDefinition[] = [];
+    if (providerHasKey.openrouter) {
+      const selectedModels = getOpenRouterSelectedModels();
+      selectedModels.forEach((modelId) => {
+        openRouterModels.push({
+          id: modelId,
+          name: modelId,
+          provider: "openrouter",
         });
       });
     }
@@ -211,6 +228,9 @@ export function useChat(options: UseChatOptions = {}) {
     if (litellmModels.length > 0) {
       allModels = allModels.concat(litellmModels);
     }
+    if (openRouterModels.length > 0) {
+      allModels = allModels.concat(openRouterModels);
+    }
     return allModels;
   }, [
     isOllamaRunning,
@@ -218,6 +238,7 @@ export function useChat(options: UseChatOptions = {}) {
     hasToken,
     getLiteLLMBaseUrl,
     getLiteLLMModelAlias,
+    getOpenRouterSelectedModels,
   ]);
 
   const applySseEvent = useCallback(
