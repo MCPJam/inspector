@@ -674,13 +674,13 @@ const manager = new MCPClientManager(
   <Card title="Connection Management" icon="plug">
     **DO**:
     - Use unique, descriptive server IDs
-    - Check connection status before operations
+    - Check connection status with ping verification before operations
     - Handle connection errors gracefully
     - Clean up connections when no longer needed
 
     **DON'T**:
     - Reuse server IDs without disconnecting first
-    - Assume connections are always ready
+    - Assume connections are always ready without verification
     - Leave connections open indefinitely
     - Ignore connection state changes
   </Card>
