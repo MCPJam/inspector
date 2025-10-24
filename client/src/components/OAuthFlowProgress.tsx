@@ -1,15 +1,19 @@
-import { useMemo, useCallback, memo, useEffect } from "react";
+import { useMemo, useCallback, memo, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import {
   Background,
   Controls,
   Edge,
+  EdgeProps,
   Handle,
   Node,
   NodeProps,
   OnInit,
   Position,
   ReactFlow,
+  getBezierPath,
+  EdgeLabelRenderer,
+  BaseEdge,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { Button } from "./ui/button";
@@ -31,6 +35,27 @@ interface ActorNodeData extends Record<string, unknown> {
     height: number;
     handleId?: string; // For boxes that need handles
   }>;
+}
+
+// Edge data for action labels
+interface ActionEdgeData extends Record<string, unknown> {
+  label: string;
+  description: string;
+  status: NodeStatus;
+  details?: Array<{ label: string; value: ReactNode }>;
+  error?: string | null;
+  input?: {
+    label: string;
+    value: string;
+    placeholder?: string;
+    onChange: (value: string) => void;
+    error?: string | null;
+  };
+  secondaryAction?: {
+    label: string;
+    onClick: () => void;
+    disabled?: boolean;
+  };
 }
 
 interface ActionNodeData extends Record<string, unknown> {
@@ -190,7 +215,187 @@ const ActorNode = memo((props: NodeProps<Node<ActorNodeData>>) => {
   );
 });
 
-// Action Node - Simple div with text and handles on left/right
+// Custom Edge with Minimal Label
+const CustomActionEdge = memo((props: EdgeProps<Edge<ActionEdgeData>>) => {
+  const {  sourceX, sourceY, targetX, targetY, data, style, id } = props;
+
+  if (!data) return null;
+
+  const statusColor = {
+    complete: "border-green-500/50 bg-card",
+    current: "border-blue-500/70 bg-blue-500/5",
+    pending: "border-border bg-muted/30",
+  }[data.status];
+
+  // Calculate label position (center of edge)
+  const labelX = (sourceX + targetX) / 2;
+  const labelY = (sourceY + targetY) / 2;
+
+  return (
+    <>
+      {/* The edge line */}
+      <BaseEdge
+        path={`M ${sourceX},${sourceY} L ${targetX},${targetY}`}
+        style={style}
+      />
+
+      {/* Minimal label - just action name and status */}
+      <EdgeLabelRenderer>
+        <div
+          style={{
+            position: 'absolute',
+            transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+            pointerEvents: 'all',
+          }}
+          className="nodrag nopan"
+        >
+          <div
+            className={cn(
+              "rounded-md border-2 bg-card shadow-sm px-3 py-1.5 cursor-pointer hover:shadow-md transition-shadow",
+              statusColor
+            )}
+            data-edge-id={id}
+          >
+            <div className="flex items-center gap-2">
+              <p className="text-xs font-medium text-foreground whitespace-nowrap">
+                {data.label}
+              </p>
+              {data.status !== "pending" && (
+                <Badge variant="outline" className={cn("shrink-0 text-[9px] py-0 px-1", STATUS_BADGE_CLASS[data.status])}>
+                  {STATUS_LABEL[data.status]}
+                </Badge>
+              )}
+            </div>
+          </div>
+        </div>
+      </EdgeLabelRenderer>
+    </>
+  );
+});
+
+CustomActionEdge.displayName = 'CustomActionEdge';
+
+// Side Panel for Step Details
+interface StepDetailsPanelProps {
+  action: {
+    id: string;
+    label: string;
+    description: string;
+    status: NodeStatus;
+    details?: Array<{ label: string; value: ReactNode }>;
+    input?: {
+      label: string;
+      value: string;
+      placeholder?: string;
+      onChange: (value: string) => void;
+      error?: string | null;
+    };
+    secondaryAction?: {
+      label: string;
+      onClick: () => void;
+      disabled?: boolean;
+    };
+    error?: string | null;
+  } | null;
+}
+
+const StepDetailsPanel = memo(({ action }: StepDetailsPanelProps) => {
+  if (!action) {
+    return (
+      <div className="w-96 border-l border-border bg-muted/30 p-6 flex items-center justify-center">
+        <p className="text-sm text-muted-foreground text-center">
+          Select a step to view details
+        </p>
+      </div>
+    );
+  }
+
+  const statusColor = {
+    complete: "border-green-500/50 bg-green-500/5 text-green-600",
+    current: "border-blue-500/70 bg-blue-500/5 text-blue-600",
+    pending: "border-border bg-muted/30 text-muted-foreground",
+  }[action.status];
+
+  return (
+    <div className="w-96 border-l border-border bg-card overflow-y-auto">
+      <div className="p-6 space-y-6">
+        {/* Header */}
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <h3 className="text-lg font-semibold text-foreground">{action.label}</h3>
+            <Badge variant="outline" className={cn("text-[10px] py-0.5 px-2", STATUS_BADGE_CLASS[action.status])}>
+              {STATUS_LABEL[action.status]}
+            </Badge>
+          </div>
+          <p className="text-sm text-muted-foreground">{action.description}</p>
+        </div>
+
+        {/* Error */}
+        {action.error && (
+          <div className="rounded-md border-2 border-destructive/40 bg-destructive/10 p-3">
+            <p className="text-xs font-medium text-destructive leading-relaxed">{action.error}</p>
+          </div>
+        )}
+
+        {/* Details */}
+        {action.details && action.details.length > 0 && (
+          <div className="space-y-4">
+            <h4 className="text-sm font-semibold text-foreground">Details</h4>
+            <div className="space-y-3">
+              {action.details.map((detail) => (
+                <div key={detail.label} className="space-y-1.5">
+                  <p className="text-xs font-medium text-muted-foreground">{detail.label}</p>
+                  <div className="text-xs leading-relaxed break-words text-foreground bg-muted/50 rounded-md p-2 font-mono">
+                    {detail.value ?? "—"}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Input */}
+        {action.input && (
+          <div className="space-y-2">
+            <Label htmlFor="step-input" className="text-xs font-medium">
+              {action.input.label}
+            </Label>
+            <Input
+              id="step-input"
+              value={action.input.value}
+              placeholder={action.input.placeholder}
+              onChange={(e) => action.input?.onChange(e.target.value)}
+              className={cn("text-sm", action.input.error ? "border-destructive" : undefined)}
+              autoComplete="off"
+            />
+            {action.input.error && (
+              <p className="text-xs text-destructive">{action.input.error}</p>
+            )}
+          </div>
+        )}
+
+        {/* Secondary Action */}
+        {action.secondaryAction && (
+          <div>
+            <Button
+              size="sm"
+              variant="default"
+              onClick={action.secondaryAction.onClick}
+              disabled={action.secondaryAction.disabled}
+              className="w-full"
+            >
+              {action.secondaryAction.label}
+            </Button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+});
+
+StepDetailsPanel.displayName = 'StepDetailsPanel';
+
+// Action Node - Simple div with text and handles on left/right (DEPRECATED - using edge labels now)
 const ActionNode = memo((props: NodeProps<Node<ActionNodeData>>) => {
   const { data } = props;
   const statusColor = {
@@ -327,7 +532,11 @@ const steps: Array<OAuthStep> = [
 
 const nodeTypes = {
   actor: ActorNode,
-  action: ActionNode,
+  action: ActionNode, // Deprecated - keeping for backwards compatibility
+};
+
+const edgeTypes = {
+  action: CustomActionEdge,
 };
 
 export const OAuthFlowProgress = ({
@@ -335,6 +544,8 @@ export const OAuthFlowProgress = ({
   updateFlowState,
   onGuardStateChange,
 }: OAuthFlowProgressProps) => {
+  const [selectedActionId, setSelectedActionId] = useState<string | null>(null);
+
   const currentStepIndex = Math.max(
     steps.findIndex((step) => step === flowState.oauthStep),
     0,
@@ -685,72 +896,45 @@ export const OAuthFlowProgress = ({
       },
     ];
 
-    const actionNodes: Array<Node<ActionNodeData>> = sequenceActions.map((action, index) => {
+    // No action nodes - actions are rendered as edge labels
+    return actorNodes;
+  }, [sequenceActions, statusForStep]);
+
+  // Create edges directly between actor segments with action data as labels
+  const edges: Array<Edge<ActionEdgeData>> = useMemo(() => {
+    return sequenceActions.map((action) => {
+      const fromActor = action.from;
+      const toActor = action.to;
       const status = statusForStep(action.step);
 
-      // Calculate X position: midpoint between source and target actors
-      const fromX = actorX[action.from];
-      const toX = actorX[action.to];
-
-      // Position action box at midpoint
-      const midpoint = action.from === action.to ? fromX + 150 : (fromX + toX) / 2;
-      const x = midpoint - 170; // Center the action node
-
-      // Y position progresses downward with each action
-      const y = START_Y + index * ACTION_SPACING;
+      // Convert actor key to node ID
+      const getActorNodeId = (actorKey: keyof typeof ACTORS) => {
+        return `actor-${actorKey === 'mcpServer' ? 'mcp-server' : actorKey === 'authServer' ? 'auth-server' : actorKey}`;
+      };
 
       return {
-        id: action.id,
-        type: "action",
-        position: { x, y },
+        id: `edge-${action.id}`,
+        source: getActorNodeId(fromActor),
+        sourceHandle: `${fromActor}-${action.id}-right`,
+        target: getActorNodeId(toActor),
+        targetHandle: `${toActor}-${action.id}-left`,
+        type: 'action', // Use our custom action edge type
+        style: {
+          stroke: ACTORS[fromActor].color,
+          strokeWidth: 2,
+        },
         data: {
           label: action.label,
           description: action.description,
           status,
-          direction: fromX < toX ? "request" : "response",
           details: action.getDetails?.(),
           input: action.getInput?.(),
           secondaryAction: action.getSecondaryAction?.(),
           error: action.getError?.(),
         },
-        selectable: false,
-        draggable: false,
       };
     });
-
-    return [...actorNodes, ...actionNodes];
   }, [sequenceActions, statusForStep]);
-
-  // Create edges connecting actor segments to action nodes
-  const edges: Array<Edge> = useMemo(() => {
-    return sequenceActions.map((action) => {
-      const fromActor = action.from;
-      const toActor = action.to;
-
-      return [
-        // Edge from source actor to action
-        {
-          id: `edge-${action.id}-from`,
-          source: `actor-${fromActor === 'mcpServer' ? 'mcp-server' : fromActor === 'authServer' ? 'auth-server' : fromActor}`,
-          sourceHandle: `${fromActor}-${action.id}-right`,
-          target: action.id,
-          targetHandle: undefined, // Connect to left handle of action
-          type: 'straight',
-          style: { stroke: ACTORS[fromActor].color, strokeWidth: 2 },
-        },
-        // Edge from action to target actor
-        {
-          id: `edge-${action.id}-to`,
-          source: action.id,
-          sourceHandle: undefined, // Connect from right handle of action
-          target: `actor-${toActor === 'mcpServer' ? 'mcp-server' : toActor === 'authServer' ? 'auth-server' : toActor}`,
-          targetHandle: `${toActor}-${action.id}-left`,
-          type: 'straight',
-          style: { stroke: ACTORS[toActor].color, strokeWidth: 2 },
-        },
-      ];
-    }).flat();
-  }, [sequenceActions]);
 
   const defaultEdgeOptions = useMemo(
     () => ({
@@ -765,6 +949,50 @@ export const OAuthFlowProgress = ({
 
   const currentGuard = stepGuards[flowState.oauthStep];
 
+  // Find the action to display in the side panel
+  const selectedAction = useMemo(() => {
+    // If an action is selected, use that
+    if (selectedActionId) {
+      const action = sequenceActions.find(a => a.id === selectedActionId);
+      if (action) {
+        return {
+          id: action.id,
+          label: action.label,
+          description: action.description,
+          status: statusForStep(action.step),
+          details: action.getDetails?.(),
+          input: action.getInput?.(),
+          secondaryAction: action.getSecondaryAction?.(),
+          error: action.getError?.(),
+        };
+      }
+    }
+
+    // Otherwise, show the current step
+    const currentAction = sequenceActions.find(a => statusForStep(a.step) === 'current');
+    if (currentAction) {
+      return {
+        id: currentAction.id,
+        label: currentAction.label,
+        description: currentAction.description,
+        status: statusForStep(currentAction.step),
+        details: currentAction.getDetails?.(),
+        input: currentAction.getInput?.(),
+        secondaryAction: currentAction.getSecondaryAction?.(),
+        error: currentAction.getError?.(),
+      };
+    }
+
+    return null;
+  }, [selectedActionId, sequenceActions, statusForStep]);
+
+  // Handle edge clicks
+  const handleEdgeClick = useCallback((event: React.MouseEvent, edge: Edge) => {
+    // Extract action ID from edge ID (format: "edge-{actionId}")
+    const actionId = edge.id.replace('edge-', '');
+    setSelectedActionId(actionId);
+  }, []);
+
   useEffect(() => {
     if (onGuardStateChange) {
       onGuardStateChange({
@@ -775,27 +1003,35 @@ export const OAuthFlowProgress = ({
   }, [currentGuard, onGuardStateChange]);
 
   return (
-    <div className="h-full w-full relative bg-background">
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        nodeTypes={nodeTypes}
-        nodesDraggable={false}
-        nodesConnectable={false}
-        elementsSelectable={false}
-        zoomOnDoubleClick={false}
-        zoomOnScroll={true}
-        panOnDrag={true}
-        defaultEdgeOptions={defaultEdgeOptions}
-        onInit={onInit}
-        fitView
-        minZoom={0.3}
-        maxZoom={1.5}
-        className="bg-transparent"
-      >
-        <Background gap={20} size={1} color="hsl(var(--border))" />
-        <Controls showInteractive={false} />
-      </ReactFlow>
+    <div className="h-full w-full flex bg-background">
+      {/* Sequence Diagram */}
+      <div className="flex-1 relative">
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
+          nodesDraggable={false}
+          nodesConnectable={false}
+          elementsSelectable={true}
+          zoomOnDoubleClick={false}
+          zoomOnScroll={true}
+          panOnDrag={true}
+          defaultEdgeOptions={defaultEdgeOptions}
+          onInit={onInit}
+          onEdgeClick={handleEdgeClick}
+          fitView
+          minZoom={0.3}
+          maxZoom={1.5}
+          className="bg-transparent"
+        >
+          <Background gap={20} size={1} color="hsl(var(--border))" />
+          <Controls showInteractive={false} />
+        </ReactFlow>
+      </div>
+
+      {/* Side Panel */}
+      <StepDetailsPanel action={selectedAction} />
     </div>
   );
 };
