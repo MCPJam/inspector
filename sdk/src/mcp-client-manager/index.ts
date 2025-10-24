@@ -301,7 +301,6 @@ export class MCPClientManager {
     if (connectionStatus !== "connected") {
       return;
     }
-    console.log("disconnecting server", serverId);
     const client = this.getClientById(serverId);
     try {
       await client.close();
