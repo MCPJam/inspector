@@ -9,6 +9,7 @@
     "start": "node ../dist/server/index.js"
   },
   "dependencies": {
+    "@ai-sdk/amazon-bedrock": "^2.2.12",
     "@ai-sdk/anthropic": "^2.0.17",
     "@ai-sdk/deepseek": "^1.0.5",
     "@ai-sdk/google": "^2.0.11",

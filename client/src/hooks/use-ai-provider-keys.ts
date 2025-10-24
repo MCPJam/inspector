@@ -6,6 +6,7 @@ export interface ProviderTokens {
   deepseek: string;
   google: string;
   mistral: string;
+  bedrock: string;
   ollama: string;
   ollamaBaseUrl: string;
   litellm: string;
@@ -36,6 +37,7 @@ const defaultTokens: ProviderTokens = {
   deepseek: "",
   google: "",
   mistral: "",
+  bedrock: "",
   ollama: "local", // Ollama runs locally, no API key needed
   ollamaBaseUrl: "http://localhost:11434/api",
   litellm: "", // LiteLLM API key (optional, depends on proxy setup)
@@ -54,7 +56,10 @@ export function useAiProviderKeys(): useAiProviderKeysReturn {
         const stored = localStorage.getItem(STORAGE_KEY);
         if (stored) {
           const parsedTokens = JSON.parse(stored) as ProviderTokens;
-          setTokens(parsedTokens);
+          setTokens({
+            ...defaultTokens,
+            ...parsedTokens,
+          });
         }
       } catch (error) {
         console.warn(

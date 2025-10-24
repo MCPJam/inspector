@@ -137,6 +137,10 @@ npx @mcpjam/inspector@latest
 
 In the UI "MCP Servers" tab, click add server, select HTTP, then paste in your server URL. Support for OAuth 2.0 testing.
 
+## Amazon Bedrock Support
+
+Connect MCPJam Inspector to Amazon Bedrock by adding your credentials in **Settings → LLM Provider API Keys**. Enter the values as `accessKeyId|secretAccessKey[|sessionToken]`; they are stored locally in your browser. Set the optional `AWS_BEDROCK_REGION` environment variable on the server to override the default `us-west-2` region. Once configured you can chat with Amazon Titan Text Lite, Claude 3.5 Sonnet (Bedrock), and Llama 3.3 70B Instruct.
+
 ## Requirements
 
 [![Node.js](https://img.shields.io/badge/Node.js-20+-green.svg?style=for-the-badge&logo=node.js)](https://nodejs.org/)

@@ -87,6 +87,17 @@ export function SettingsTab() {
       placeholder: "...",
       getApiKeyUrl: "https://console.mistral.ai/api-keys/",
     },
+    {
+      id: "bedrock",
+      name: "Amazon Bedrock",
+      logo: "/bedrock_logo.svg",
+      logoAlt: "Amazon Bedrock",
+      description:
+        "Amazon Titan, Claude 3.5 Sonnet (Bedrock), Llama 3.3 70B via AWS Bedrock.",
+      placeholder: "AKIA...|wJalrX...",
+      getApiKeyUrl:
+        "https://console.aws.amazon.com/iam/home#/security_credentials",
+    },
   ];
 
   const handleEdit = (providerId: string) => {

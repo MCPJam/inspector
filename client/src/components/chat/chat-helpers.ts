@@ -13,6 +13,7 @@ import litellmLogo from "/litellm_logo.png";
 import moonshotLightLogo from "/moonshot_light.png";
 import moonshotDarkLogo from "/moonshot_dark.png";
 import zAiLogo from "/z-ai.png";
+import bedrockLogo from "/bedrock_logo.svg";
 
 export const getProviderLogoFromProvider = (
   provider: string,
@@ -29,6 +30,8 @@ export const getProviderLogoFromProvider = (
       return googleLogo;
     case "mistral":
       return mistralLogo;
+    case "bedrock":
+      return bedrockLogo;
     case "ollama":
       // Return dark logo when in dark mode
       if (themeMode === "dark") {
@@ -89,6 +92,8 @@ export const getProviderColor = (provider: string) => {
       return "text-red-600 dark:text-red-400";
     case "mistral":
       return "text-orange-500 dark:text-orange-400";
+    case "bedrock":
+      return "text-amber-600 dark:text-amber-400";
     case "ollama":
       return "text-gray-600 dark:text-gray-400";
     case "x-ai":

@@ -119,6 +119,27 @@ export function ProviderConfigDialog({
               </AlertDescription>
             </Alert>
           )}
+          {provider?.id === "bedrock" && (
+            <Alert>
+              <AlertDescription>
+                <p>
+                  Enter your credentials as
+                  <code className="mx-1 rounded bg-muted px-1 py-[1px] text-xs">
+                    accessKeyId|secretAccessKey[|sessionToken]
+                  </code>
+                  . We store them locally in your browser. Optionally set the
+                  <code className="mx-1 rounded bg-muted px-1 py-[1px] text-xs">
+                    AWS_BEDROCK_REGION
+                  </code>
+                  environment variable on the server (defaults to
+                  <code className="mx-1 rounded bg-muted px-1 py-[1px] text-xs">
+                    us-west-2
+                  </code>
+                  ).
+                </p>
+              </AlertDescription>
+            </Alert>
+          )}
         </div>
 
         <DialogFooter>

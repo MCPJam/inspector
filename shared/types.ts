@@ -105,6 +105,7 @@ export type ModelProvider =
   | "google"
   | "meta"
   | "x-ai"
+  | "bedrock"
   | "litellm"
   | "mistral"
   | "moonshotai"
@@ -186,6 +187,10 @@ export enum Model {
   CODESTRAL_LATEST = "codestral-latest",
   MINISTRAL_8B_LATEST = "ministral-8b-latest",
   MINISTRAL_3B_LATEST = "ministral-3b-latest",
+  // Amazon Bedrock models
+  TITAN_TEXT_LITE_V1 = "amazon.titan-text-lite-v1",
+  CLAUDE_3_5_SONNET_20241022_V2 = "anthropic.claude-3-5-sonnet-20241022-v2:0",
+  LLAMA_3_3_70B_INSTRUCT_V1 = "meta.llama3-3-70b-instruct-v1:0",
 }
 
 export const SUPPORTED_MODELS: ModelDefinition[] = [
@@ -357,6 +362,22 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     id: Model.MINISTRAL_3B_LATEST,
     name: "Ministral 3B",
     provider: "mistral",
+  },
+  // Amazon Bedrock models
+  {
+    id: Model.TITAN_TEXT_LITE_V1,
+    name: "Amazon Titan Text Lite",
+    provider: "bedrock",
+  },
+  {
+    id: Model.CLAUDE_3_5_SONNET_20241022_V2,
+    name: "Claude 3.5 Sonnet (Bedrock)",
+    provider: "bedrock",
+  },
+  {
+    id: Model.LLAMA_3_3_70B_INSTRUCT_V1,
+    name: "Llama 3.3 70B Instruct (Bedrock)",
+    provider: "bedrock",
   },
 ];
 
