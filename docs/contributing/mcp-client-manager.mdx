@@ -287,8 +287,8 @@ await mcpClientManager.connectToServer("filesystem", {
   env: { DEBUG: "1" },
 });
 
-// Check status
-const status = mcpClientManager.getConnectionStatus("filesystem");
+// Check status (actively pings server to verify connection)
+const status = mcpClientManager.getConnectionStatusByAttemptingPing("filesystem");
 // Returns: "connected" | "connecting" | "disconnected"
 
 // Get all servers
@@ -344,10 +344,10 @@ await mcpClientManager.disconnectAllServers();
 </ResponseField>
 
 <ResponseField
-  name="getConnectionStatus"
+  name="getConnectionStatusByAttemptingPing"
   type="(serverId: string) => MCPConnectionStatus"
 >
-  Get connection status: `"connected"` | `"connecting"` | `"disconnected"`.
+  Get connection status by attempting to ping the server: `"connected"` | `"connecting"` | `"disconnected"`. This method actively verifies the connection is alive rather than relying on cached state.
 </ResponseField>
 
 <ResponseField
@@ -609,8 +609,8 @@ await manager.connectToServer("weather", {
 url: new URL("http://localhost:3000/mcp"),
 });
 
-// Check status
-if (manager.getConnectionStatus("weather") === "connected") {
+// Check status (actively pings server to verify connection)
+if (manager.getConnectionStatusByAttemptingPing("weather") === "connected") {
 const { resources } = await manager.listResources("weather");
 console.log(resources);
 }
