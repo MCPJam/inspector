@@ -520,8 +520,6 @@ export const Message = memo(PureMessage, (prevProps, nextProps) => {
     JSON.stringify(prevProps.message.toolCalls) ===
       JSON.stringify(nextProps.message.toolCalls) &&
     JSON.stringify(prevProps.message.toolResults) ===
-      JSON.stringify(nextProps.message.toolResults) &&
-    JSON.stringify(prevProps.message.contentBlocks) ===
-      JSON.stringify(nextProps.message.contentBlocks)
+      JSON.stringify(nextProps.message.toolResults)
   );
 });
