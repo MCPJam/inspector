@@ -136,14 +136,7 @@ servers.post("/reconnect", async (c) => {
       }
     }
 
-    try {
-      const client = mcpClientManager.getClient(serverId);
-      if (client) {
-        await mcpClientManager.disconnectServer(serverId);
-      }
-    } catch {
-      // Ignore disconnect errors prior to reconnect
-    }
+    await mcpClientManager.disconnectServer(serverId);
     await mcpClientManager.connectToServer(serverId, normalizedConfig);
 
     const status =
