@@ -43,7 +43,10 @@ async function collectToolsForServers(
 ): Promise<DiscoveredTool[]> {
   const perServerTools = await Promise.all(
     serverIds.map(async (serverId) => {
-      if (clientManager.getConnectionStatus(serverId) !== "connected") {
+      if (
+        clientManager.getConnectionStatusByAttemptingPing(serverId) !==
+        "connected"
+      ) {
         return [] as DiscoveredTool[];
       }
 
