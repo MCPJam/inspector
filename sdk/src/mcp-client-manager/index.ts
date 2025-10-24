@@ -189,13 +189,26 @@ export class MCPClientManager {
   getServerSummaries(): ServerSummary[] {
     return Array.from(this.clientStates.entries()).map(([serverId, state]) => ({
       id: serverId,
-      status: this.resolveConnectionStatus(state),
+      status: this.getConnectionStatusByAttemptingPing(serverId),
       config: state.config,
     }));
   }
 
-  getConnectionStatus(serverId: string): MCPConnectionStatus {
-    return this.resolveConnectionStatus(this.clientStates.get(serverId));
+  getConnectionStatusByAttemptingPing(serverId: string): MCPConnectionStatus {
+    const state = this.clientStates.get(serverId);
+    if (state?.promise) {
+      return "connecting";
+    }
+    const client = state?.client;
+    if (!client) {
+      return "disconnected";
+    }
+    try {
+      client.ping();
+      return "connected";
+    } catch (error) {
+      return "disconnected";
+    }
   }
 
   getServerConfig(serverId: string): MCPServerConfig | undefined {
@@ -206,22 +219,19 @@ export class MCPClientManager {
     serverId: string,
     config: MCPServerConfig,
   ): Promise<Client> {
-    if (this.clientStates.has(serverId)) {
+    const timeout = this.getTimeout(config);
+    const existingState = this.clientStates.get(serverId);
+    if (existingState?.client) {
       throw new Error(`MCP server "${serverId}" is already connected.`);
     }
-    const timeout = this.getTimeout(config);
-    const state = this.clientStates.get(serverId) ?? {
+
+    const state: ManagedClientState = existingState ?? {
       config,
       timeout,
     };
     // Update config/timeout on every call
     state.config = config;
     state.timeout = timeout;
-    // If already connected, return the client
-    if (state.client) {
-      this.clientStates.set(serverId, state);
-      return state.client;
-    }
     // If connection is in-flight, reuse the promise
     if (state.promise) {
       this.clientStates.set(serverId, state);
@@ -277,11 +287,7 @@ export class MCPClientManager {
 
       return client;
     })().catch((error) => {
-      // Clear pending but keep config so the server remains registered
-      state.promise = undefined;
-      state.client = undefined;
-      state.transport = undefined;
-      this.clientStates.set(serverId, state);
+      this.resetState(serverId);
       throw error;
     });
 
@@ -291,6 +297,10 @@ export class MCPClientManager {
   }
 
   async disconnectServer(serverId: string): Promise<void> {
+    const connectionStatus = this.getConnectionStatusByAttemptingPing(serverId);
+    if (connectionStatus !== "connected") {
+      return;
+    }
     const client = this.getClientById(serverId);
     try {
       await client.close();

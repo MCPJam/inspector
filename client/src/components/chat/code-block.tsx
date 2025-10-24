@@ -16,7 +16,7 @@ export function CodeBlock({
 
   // If it's single-line (no newlines), render it inline
   // Multi-line content (with \n) renders as block
-  const hasNewlines = content.includes('\n');
+  const hasNewlines = content.includes("\n");
 
   if (!inline && !hasNewlines) {
     // Single-line content renders as inline code

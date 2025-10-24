@@ -22,7 +22,7 @@ export function transformServerConfigsToEnvironment(
       throw new Error(`Server '${serverId}' not found`);
     }
 
-    const status = clientManager.getConnectionStatus(serverId);
+    const status = clientManager.getConnectionStatusByAttemptingPing(serverId);
     if (status !== "connected") {
       throw new Error(
         `Server '${serverId}' is not connected (status: ${status})`,
