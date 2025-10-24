@@ -21,14 +21,18 @@ export interface ParsedMessageContent {
  * Example: <|channel|>analysis<|message|>reasoning here<|end|><|start|>assistant<|channel|>final<|message|>response here
  */
 export function parseReasoningTags(text: string): ParsedMessageContent {
-  const reasoningMatch = text.match(/<\|channel\|>analysis<\|message\|>(.*?)(?:<\|end\|>|<\|start\|>)/s);
+  const reasoningMatch = text.match(
+    /<\|channel\|>analysis<\|message\|>(.*?)(?:<\|end\|>|<\|start\|>)/s,
+  );
   const finalMatch = text.match(/<\|channel\|>final<\|message\|>(.*?)$/s);
 
   // If we found structured content with tags
   if (reasoningMatch || finalMatch) {
     return {
       reasoning: reasoningMatch ? reasoningMatch[1].trim() : undefined,
-      content: finalMatch ? finalMatch[1].trim() : text.replace(/<\|[^|]+\|>/g, '').trim(),
+      content: finalMatch
+        ? finalMatch[1].trim()
+        : text.replace(/<\|[^|]+\|>/g, "").trim(),
     };
   }
 

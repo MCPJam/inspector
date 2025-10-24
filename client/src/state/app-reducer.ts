@@ -128,9 +128,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       const map = new Map(action.servers.map((s) => [s.id, s.status]));
       const updated: AppState["servers"] = {};
       for (const [name, server] of Object.entries(state.servers)) {
-        const inFlight =
-          server.connectionStatus === "connecting" ||
-          server.connectionStatus === "oauth-flow";
+        const inFlight = server.connectionStatus === "connecting";
         if (inFlight) {
           updated[name] = server;
           continue;

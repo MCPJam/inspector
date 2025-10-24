@@ -189,13 +189,26 @@ export class MCPClientManager {
   getServerSummaries(): ServerSummary[] {
     return Array.from(this.clientStates.entries()).map(([serverId, state]) => ({
       id: serverId,
-      status: this.resolveConnectionStatus(state),
+      status: this.getConnectionStatusByAttemptingPing(serverId),
       config: state.config,
     }));
   }
 
-  getConnectionStatus(serverId: string): MCPConnectionStatus {
-    return this.resolveConnectionStatus(this.clientStates.get(serverId));
+  getConnectionStatusByAttemptingPing(serverId: string): MCPConnectionStatus {
+    const state = this.clientStates.get(serverId);
+    const client = state?.client;
+    if (!client) {
+      return "disconnected";
+    }
+    if (state.promise) {
+      return "connecting";
+    }
+    try {
+      client.ping();
+      return "connected";
+    } catch (error) {
+      return "disconnected";
+    }
   }
 
   getServerConfig(serverId: string): MCPServerConfig | undefined {
