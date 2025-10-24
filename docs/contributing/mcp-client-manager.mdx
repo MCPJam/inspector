@@ -611,8 +611,8 @@ await manager.connectToServer("weather", {
 url: new URL("http://localhost:3000/mcp"),
 });
 
-// Check status
-if (manager.getConnectionStatus("weather") === "connected") {
+// Check status (verifies with ping)
+if (manager.getConnectionStatusByAttemptingPing("weather") === "connected") {
 const { resources } = await manager.listResources("weather");
 console.log(resources);
 }
