@@ -1,6 +1,11 @@
 import { memo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { formatTimestamp, sanitizeText, isImageFile, parseReasoningTags } from "@/lib/chat-utils";
+import {
+  formatTimestamp,
+  sanitizeText,
+  isImageFile,
+  parseReasoningTags,
+} from "@/lib/chat-utils";
 import { ChatMessage } from "@/lib/chat-types";
 import { Check, Copy, CopyIcon, RotateCcw } from "lucide-react";
 import { Markdown } from "./markdown";
@@ -223,10 +228,14 @@ const PureMessage = ({
                           transition={{ duration: 0.3, delay: index * 0.05 }}
                           className="space-y-3"
                         >
-                          {parsed.reasoning && <Reasoning content={parsed.reasoning} />}
+                          {parsed.reasoning && (
+                            <Reasoning content={parsed.reasoning} />
+                          )}
                           {parsed.content && (
                             <div className="prose prose-sm max-w-none dark:prose-invert prose-p:leading-relaxed prose-pre:bg-muted/50 prose-pre:border prose-pre:border-border/30 flex-1 min-w-0">
-                              <Markdown>{sanitizeText(parsed.content)}</Markdown>
+                              <Markdown>
+                                {sanitizeText(parsed.content)}
+                              </Markdown>
                             </div>
                           )}
                         </motion.div>
@@ -315,10 +324,14 @@ const PureMessage = ({
                       const parsed = parseReasoningTags(message.content);
                       return (
                         <div className="space-y-3">
-                          {parsed.reasoning && <Reasoning content={parsed.reasoning} />}
+                          {parsed.reasoning && (
+                            <Reasoning content={parsed.reasoning} />
+                          )}
                           {parsed.content && (
                             <div className="prose prose-sm max-w-none dark:prose-invert prose-p:leading-relaxed prose-pre:bg-muted/50 prose-pre:border prose-pre:border-border/30 flex-1 min-w-0">
-                              <Markdown>{sanitizeText(parsed.content)}</Markdown>
+                              <Markdown>
+                                {sanitizeText(parsed.content)}
+                              </Markdown>
                             </div>
                           )}
                         </div>
