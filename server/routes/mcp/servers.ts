@@ -38,7 +38,8 @@ servers.get("/status/:serverId", async (c) => {
   try {
     const serverId = c.req.param("serverId");
     const mcpClientManager = c.mcpClientManager;
-    const status = mcpClientManager.getConnectionStatus(serverId);
+    const status =
+      mcpClientManager.getConnectionStatusByAttemptingPing(serverId);
 
     return c.json({
       success: true,
@@ -145,7 +146,8 @@ servers.post("/reconnect", async (c) => {
     }
     await mcpClientManager.connectToServer(serverId, normalizedConfig);
 
-    const status = mcpClientManager.getConnectionStatus(serverId);
+    const status =
+      mcpClientManager.getConnectionStatusByAttemptingPing(serverId);
     const message =
       status === "connected"
         ? `Reconnected to server: ${serverId}`
