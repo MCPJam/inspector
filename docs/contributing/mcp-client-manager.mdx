@@ -344,10 +344,10 @@ await mcpClientManager.disconnectAllServers();
 </ResponseField>
 
 <ResponseField
-  name="getConnectionStatus"
+  name="getConnectionStatusByAttemptingPing"
   type="(serverId: string) => MCPConnectionStatus"
 >
-  Get connection status: `"connected"` | `"connecting"` | `"disconnected"`.
+  Get connection status by attempting to ping the server: `"connected"` | `"connecting"` | `"disconnected"`. This method actively verifies the connection is alive rather than relying on cached state.
 </ResponseField>
 
 <ResponseField
