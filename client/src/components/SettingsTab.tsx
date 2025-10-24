@@ -4,6 +4,7 @@ import { ProvidersTable } from "./setting/ProvidersTable";
 import { ProviderConfigDialog } from "./setting/ProviderConfigDialog";
 import { OllamaConfigDialog } from "./setting/OllamaConfigDialog";
 import { LiteLLMConfigDialog } from "./setting/LiteLLMConfigDialog";
+import { OpenRouterConfigDialog } from "./setting/OpenRouterConfigDialog";
 import { AccountApiKeySection } from "./setting/AccountApiKeySection";
 
 interface ProviderConfig {
@@ -28,6 +29,8 @@ export function SettingsTab() {
     setLiteLLMBaseUrl,
     getLiteLLMModelAlias,
     setLiteLLMModelAlias,
+    getOpenRouterSelectedModels,
+    setOpenRouterSelectedModels,
   } = useAiProviderKeys();
 
   const [editingValue, setEditingValue] = useState("");
@@ -40,6 +43,10 @@ export function SettingsTab() {
   const [litellmUrl, setLitellmUrl] = useState("");
   const [litellmApiKey, setLitellmApiKey] = useState("");
   const [litellmModelAlias, setLitellmModelAlias] = useState("");
+  const [openRouterDialogOpen, setOpenRouterDialogOpen] = useState(false);
+  const [openRouterApiKeyInput, setOpenRouterApiKeyInput] = useState("");
+  const [openRouterSelectedModelsInput, setOpenRouterSelectedModelsInput] =
+    useState<string[]>([]);
 
   const providerConfigs: ProviderConfig[] = [
     {
@@ -93,7 +100,8 @@ export function SettingsTab() {
     const provider = providerConfigs.find((p) => p.id === providerId);
     if (provider) {
       setSelectedProvider(provider);
-      setEditingValue(tokens[providerId as keyof typeof tokens] || "");
+      const tokenValue = tokens[providerId as keyof typeof tokens];
+      setEditingValue(Array.isArray(tokenValue) ? tokenValue.join(", ") : (tokenValue || ""));
       setDialogOpen(true);
     }
   };
@@ -115,6 +123,10 @@ export function SettingsTab() {
 
   const handleDelete = (providerId: string) => {
     clearToken(providerId as keyof typeof tokens);
+    // Also clear OpenRouter selected models if deleting OpenRouter provider
+    if (providerId === "openrouter") {
+      setOpenRouterSelectedModels([]);
+    }
   };
 
   const handleOllamaEdit = () => {
@@ -157,6 +169,29 @@ export function SettingsTab() {
     setLitellmModelAlias("");
   };
 
+  const handleOpenRouterEdit = () => {
+    const currentModels = getOpenRouterSelectedModels();
+    setOpenRouterApiKeyInput(tokens.openrouter || "");
+    setOpenRouterSelectedModelsInput(currentModels);
+    setOpenRouterDialogOpen(true);
+  };
+
+  const handleOpenRouterSave = (apiKey: string, selectedModels: string[]) => {
+    setToken("openrouter", apiKey);
+    setOpenRouterSelectedModels(selectedModels);
+    setOpenRouterDialogOpen(false);
+  };
+
+  const handleOpenRouterModelsChange = (models: string[]) => {
+    setOpenRouterSelectedModelsInput(models);
+  };
+
+  const handleOpenRouterCancel = () => {
+    setOpenRouterDialogOpen(false);
+    setOpenRouterApiKeyInput("");
+    setOpenRouterSelectedModelsInput([]);
+  };
+
   return (
     <div className="container mx-auto p-6 max-w-6xl space-y-8">
       <div className="flex items-center gap-3 mb-6">
@@ -180,6 +215,8 @@ export function SettingsTab() {
           litellmBaseUrl={getLiteLLMBaseUrl()}
           litellmModelAlias={getLiteLLMModelAlias()}
           onEditLiteLLM={handleLiteLLMEdit}
+          openRouterSelectedModels={getOpenRouterSelectedModels()}
+          onEditOpenRouter={handleOpenRouterEdit}
         />
       </div>
 
@@ -216,6 +253,18 @@ export function SettingsTab() {
         onModelAliasChange={setLitellmModelAlias}
         onSave={handleLiteLLMSave}
         onCancel={handleLiteLLMCancel}
+      />
+
+      {/* OpenRouter Configuration Dialog */}
+      <OpenRouterConfigDialog
+        open={openRouterDialogOpen}
+        onOpenChange={setOpenRouterDialogOpen}
+        apiKey={openRouterApiKeyInput}
+        selectedModels={openRouterSelectedModelsInput}
+        onApiKeyChange={setOpenRouterApiKeyInput}
+        onSelectedModelsChange={handleOpenRouterModelsChange}
+        onSave={handleOpenRouterSave}
+        onCancel={handleOpenRouterCancel}
       />
     </div>
   );
