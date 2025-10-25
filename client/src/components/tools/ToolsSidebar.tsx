@@ -57,7 +57,7 @@ export function ToolsSidebar({
           <div className="flex">
             <button
               onClick={() => onChangeTab("tools")}
-              className={`px-4 py-3 text-xs font-medium border-b-2 transition-colors ${
+              className={`px-4 py-3 text-xs font-medium border-b-2 transition-colors cursor-pointer ${
                 activeTab === "tools"
                   ? "border-primary text-primary"
                   : "border-transparent text-muted-foreground hover:text-foreground"
@@ -67,7 +67,7 @@ export function ToolsSidebar({
             </button>
             <button
               onClick={() => onChangeTab("saved")}
-              className={`px-4 py-3 text-xs font-medium border-b-2 transition-colors ${
+              className={`px-4 py-3 text-xs font-medium border-b-2 transition-colors cursor-pointer ${
                 activeTab === "saved"
                   ? "border-primary text-primary"
                   : "border-transparent text-muted-foreground hover:text-foreground"
