@@ -11,6 +11,7 @@ interface WidgetData {
   toolOutput: any;
   toolResponseMetadata?: Record<string, any> | null;
   toolId: string;
+  theme?: "light" | "dark";
   timestamp: number;
 }
 
@@ -105,6 +106,7 @@ resources.post("/widget/store", async (c) => {
       toolOutput,
       toolResponseMetadata,
       toolId,
+      theme,
     } = body;
 
     if (!serverId || !uri || !toolId) {
@@ -119,6 +121,7 @@ resources.post("/widget/store", async (c) => {
       toolOutput,
       toolResponseMetadata: toolResponseMetadata ?? null,
       toolId,
+      theme: theme ?? "dark",
       timestamp: Date.now(),
     });
 
@@ -192,7 +195,7 @@ resources.get("/widget-content/:toolId", async (c) => {
       );
     }
 
-    const { serverId, uri, toolInput, toolOutput, toolResponseMetadata } =
+    const { serverId, uri, toolInput, toolOutput, toolResponseMetadata, theme } =
       widgetData;
 
     const mcpClientManager = c.mcpClientManager;
@@ -268,10 +271,13 @@ resources.get("/widget-content/:toolId", async (c) => {
             toolResponseMetadata: ${JSON.stringify(toolResponseMetadata ?? null)},
             displayMode: 'inline',
             maxHeight: 600,
-            theme: 'dark',
+            theme: ${JSON.stringify(theme ?? "dark")},
             locale: 'en-US',
             safeArea: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },
-            userAgent: {},
+            userAgent: {
+              device: { type: 'desktop' },
+              capabilities: { hover: true, touch: false }
+            },
             widgetState: null,
 
             async setWidgetState(state) {
@@ -395,6 +401,28 @@ resources.get("/widget-content/:toolId", async (c) => {
               }
             } catch (err) {}
           }, 0);
+
+          // Listen for theme changes from parent
+          window.addEventListener('message', (event) => {
+            if (event.data.type === 'webplus:set_globals') {
+              const { globals } = event.data;
+
+              // Update theme if provided
+              if (globals?.theme && window.openai) {
+                window.openai.theme = globals.theme;
+
+                // Dispatch event for widgets that use useTheme() hook
+                try {
+                  const globalsEvent = new CustomEvent('webplus:set_globals', {
+                    detail: { globals: { theme: globals.theme } }
+                  });
+                  window.dispatchEvent(globalsEvent);
+                } catch (err) {
+                  console.error('[OpenAI Widget] Failed to dispatch theme change:', err);
+                }
+              }
+            }
+          });
         })();
       </script>
     `;
