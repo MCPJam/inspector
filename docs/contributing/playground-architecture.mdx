@@ -147,9 +147,11 @@ Used when the user selects models requiring their own API keys (OpenAI, Anthropi
 
 ---
 
-### 2. Backend Execution (Free Models via MCPJamBackend)
+### 2. Backend Execution (Free Models via MCPJam Backend)
 
 Used when the user selects MCPJam-provided models (identified by `isMCPJamProvidedModel()`).
+
+**V2 Architecture (chat-v2.ts)**: The v2 implementation uses AI SDK's `createUIMessageStream` for server-side tool execution loops, eliminating client-side auto-send for MCPJam models.
 
 **Flow**:
 
