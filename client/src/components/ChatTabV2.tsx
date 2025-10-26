@@ -1,21 +1,30 @@
 import { FormEvent, useMemo, useState, useEffect } from "react";
-import { useChat } from '@ai-sdk/react';
-import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls } from 'ai';
+import { useChat } from "@ai-sdk/react";
+import {
+  DefaultChatTransport,
+  lastAssistantMessageIsCompleteWithToolCalls,
+} from "ai";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ModelDefinition, SUPPORTED_MODELS } from "@/shared/types";
-import { ProviderTokens, useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
+import {
+  ProviderTokens,
+  useAiProviderKeys,
+} from "@/hooks/use-ai-provider-keys";
 import { ModelSelector } from "@/components/chat/model-selector";
+import { ElicitationDialog } from "@/components/ElicitationDialog";
+import type { DialogElicitation } from "@/components/ToolsTab";
 
 export function ChatTabV2() {
   const { hasToken, getToken } = useAiProviderKeys();
   const [input, setInput] = useState("");
-  const [selectedModel, setSelectedModel] = useState<ModelDefinition>(SUPPORTED_MODELS[0]);
-  const [elicitation, setElicitation] = useState<{
-    requestId: string;
-    message: string;
-    schema: any;
-  } | null>(null);
+  const [selectedModel, setSelectedModel] = useState<ModelDefinition>(
+    SUPPORTED_MODELS[0],
+  );
+  const [elicitation, setElicitation] = useState<DialogElicitation | null>(
+    null,
+  );
+  const [elicitationLoading, setElicitationLoading] = useState(false);
 
   const availableModels = useMemo(() => {
     return SUPPORTED_MODELS.filter((model) => {
@@ -34,17 +43,18 @@ export function ChatTabV2() {
 
   // Subscribe to elicitation SSE events (moved server endpoints under /api/mcp/elicitation)
   useEffect(() => {
-    const es = new EventSource('/api/mcp/elicitation/stream');
+    const es = new EventSource("/api/mcp/elicitation/stream");
     es.onmessage = (ev) => {
       try {
         const data = JSON.parse(ev.data);
-        if (data?.type === 'elicitation_request') {
+        if (data?.type === "elicitation_request") {
           setElicitation({
             requestId: data.requestId,
             message: data.message,
             schema: data.schema,
+            timestamp: data.timestamp || new Date().toISOString(),
           });
-        } else if (data?.type === 'elicitation_complete') {
+        } else if (data?.type === "elicitation_complete") {
           if (elicitation && data.requestId === elicitation.requestId) {
             setElicitation(null);
           }
@@ -61,7 +71,7 @@ export function ChatTabV2() {
     const apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
     console.log("[ChatTabV2] apiKey", apiKey);
     return new DefaultChatTransport({
-      api: '/api/mcp/chat-v2',
+      api: "/api/mcp/chat-v2",
       body: {
         modelId: selectedModel.id,
         apiKey: apiKey,
@@ -88,13 +98,35 @@ export function ChatTabV2() {
 
   console.log("[ChatTabV2] messages", messages);
 
-  const isLoading = status === 'streaming';
+  const isLoading = status === "streaming";
+
+  const handleElicitationResponse = async (
+    action: "accept" | "decline" | "cancel",
+    parameters?: Record<string, any>,
+  ) => {
+    if (!elicitation) return;
+    setElicitationLoading(true);
+    try {
+      await fetch("/api/mcp/elicitation/respond", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requestId: elicitation.requestId,
+          action,
+          content: parameters,
+        }),
+      });
+      setElicitation(null);
+    } finally {
+      setElicitationLoading(false);
+    }
+  };
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (input.trim() && status === 'ready') {
+    if (input.trim() && status === "ready") {
       sendMessage({ text: input });
-      setInput('');
+      setInput("");
     }
   };
 
@@ -110,22 +142,6 @@ export function ChatTabV2() {
         />
       </div>
       <div className="flex-1 space-y-4 overflow-y-auto px-6 py-4">
-        {elicitation && (
-          <div className="rounded-md border border-border p-3 text-sm">
-            <div className="font-medium mb-1">User input required</div>
-            <div className="opacity-80 mb-2">{elicitation.message}</div>
-            <details className="mb-2">
-              <summary className="cursor-pointer">Requested schema</summary>
-              <pre className="mt-1 whitespace-pre-wrap break-words opacity-80">
-{JSON.stringify(elicitation.schema, null, 2)}
-              </pre>
-            </details>
-            <ElicitationControls
-              requestId={elicitation.requestId}
-              onDone={() => setElicitation(null)}
-            />
-          </div>
-        )}
         {messages.map((message) => (
           <div
             key={message.id}
@@ -142,12 +158,12 @@ export function ChatTabV2() {
             >
               {message.parts.map((part, index) => {
                 // Text content
-                if (part.type === 'text') {
+                if (part.type === "text") {
                   return <span key={index}>{part.text}</span>;
                 }
 
                 // Step boundaries between tool calls
-                if (part.type === 'step-start') {
+                if (part.type === "step-start") {
                   return (
                     <div key={index} className="my-2 opacity-60">
                       <hr className="border-border" />
@@ -156,49 +172,60 @@ export function ChatTabV2() {
                 }
 
                 // Dynamic tools (unknown types at compile-time)
-                if (part.type === 'dynamic-tool') {
+                if (part.type === "dynamic-tool") {
                   const anyPart = part as any;
                   const state = anyPart.state as string | undefined;
                   return (
                     <div key={index} className="mt-2 text-xs">
-                      <div className="font-medium">🔧 Tool: {anyPart.toolName}</div>
-                      {state === 'input-streaming' || state === 'input-available' ? (
+                      <div className="font-medium">
+                        🔧 Tool: {anyPart.toolName}
+                      </div>
+                      {state === "input-streaming" ||
+                      state === "input-available" ? (
                         <pre className="mt-1 whitespace-pre-wrap break-words opacity-80">
-{JSON.stringify(anyPart.input, null, 2)}
+                          {JSON.stringify(anyPart.input, null, 2)}
                         </pre>
                       ) : null}
-                      {state === 'output-available' ? (
+                      {state === "output-available" ? (
                         <pre className="mt-1 whitespace-pre-wrap break-words">
-{JSON.stringify(anyPart.output, null, 2)}
+                          {JSON.stringify(anyPart.output, null, 2)}
                         </pre>
                       ) : null}
-                      {state === 'output-error' ? (
-                        <div className="mt-1 text-destructive">Error: {anyPart.errorText}</div>
+                      {state === "output-error" ? (
+                        <div className="mt-1 text-destructive">
+                          Error: {anyPart.errorText}
+                        </div>
                       ) : null}
                     </div>
                   );
                 }
 
                 // Statically-typed tools (tool-<name>)
-                if (typeof part.type === 'string' && part.type.startsWith('tool-')) {
+                if (
+                  typeof part.type === "string" &&
+                  part.type.startsWith("tool-")
+                ) {
                   const anyPart = part as any;
                   const toolName = (part.type as string).slice(5);
                   const state = anyPart.state as string | undefined;
                   return (
                     <div key={index} className="mt-2 text-xs">
                       <div className="font-medium">🔧 Tool: {toolName}</div>
-                      {state === 'input-streaming' || state === 'input-available' ? (
+                      {state === "input-streaming" ||
+                      state === "input-available" ? (
                         <pre className="mt-1 whitespace-pre-wrap break-words opacity-80">
-{JSON.stringify(anyPart.input, null, 2)}
+                          {JSON.stringify(anyPart.input, null, 2)}
                         </pre>
                       ) : null}
-                      {state === 'output-available' ? (
+                      {state === "output-available" ? (
                         <pre className="mt-1 whitespace-pre-wrap break-words">
-{JSON.stringify(anyPart.output, null, 2)}
+                          {JSON.stringify(anyPart.output, null, 2)}
                         </pre>
                       ) : null}
-                      {state === 'output-error' ? (
-                        <div className="mt-1 text-destructive">Error: {anyPart.errorText}</div>
+                      {state === "output-error" ? (
+                        <div className="mt-1 text-destructive">
+                          Error: {anyPart.errorText}
+                        </div>
                       ) : null}
                     </div>
                   );
@@ -210,7 +237,9 @@ export function ChatTabV2() {
           </div>
         ))}
         {isLoading && (
-          <div className="text-sm text-muted-foreground">Assistant is thinking…</div>
+          <div className="text-sm text-muted-foreground">
+            Assistant is thinking…
+          </div>
         )}
       </div>
       <form
@@ -222,7 +251,7 @@ export function ChatTabV2() {
           onChange={(e) => setInput(e.target.value)}
           placeholder="Ask something…"
           rows={4}
-          disabled={status !== 'ready'}
+          disabled={status !== "ready"}
           className="mb-2"
         />
         <div className="flex justify-end gap-2">
@@ -231,87 +260,16 @@ export function ChatTabV2() {
               Stop
             </Button>
           )}
-          <Button type="submit" disabled={!input.trim() || status !== 'ready'}>
+          <Button type="submit" disabled={!input.trim() || status !== "ready"}>
             Send
           </Button>
         </div>
       </form>
-      
-    </div>
-  );
-}
-
-function ElicitationControls(props: {
-  requestId: string;
-  onDone: () => void;
-}) {
-  const { requestId, onDone } = props;
-  const [jsonText, setJsonText] = useState<string>("{}");
-  const [submitting, setSubmitting] = useState(false);
-
-  const respond = async (
-    action: "accept" | "decline" | "cancel",
-    content?: Record<string, unknown>,
-  ) => {
-    setSubmitting(true);
-    try {
-    await fetch('/api/mcp/elicitation/respond', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requestId, action, content }),
-      });
-      onDone();
-    } catch {
-      // swallow for now; backend errors appear in console
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <div className="mt-2">
-      <textarea
-        className="w-full rounded-md border border-border p-2 text-xs"
-        rows={6}
-        value={jsonText}
-        onChange={(e) => setJsonText(e.target.value)}
-        placeholder="Provide JSON parameters matching the requested schema"
+      <ElicitationDialog
+        elicitationRequest={elicitation}
+        onResponse={handleElicitationResponse}
+        loading={elicitationLoading}
       />
-      <div className="mt-2 flex gap-2">
-        <Button
-          type="button"
-          variant="default"
-          disabled={submitting}
-          onClick={async () => {
-            let parsed: Record<string, unknown> | undefined = undefined;
-            try {
-              parsed = jsonText.trim() ? JSON.parse(jsonText) : {};
-            } catch {
-              // invalid JSON; treat as empty object
-              parsed = {};
-            }
-            await respond('accept', parsed);
-          }}
-        >
-          Accept
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          disabled={submitting}
-          onClick={() => respond('decline')}
-        >
-          Decline
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          disabled={submitting}
-          onClick={() => respond('cancel')}
-        >
-          Cancel
-        </Button>
-      </div>
     </div>
   );
 }
