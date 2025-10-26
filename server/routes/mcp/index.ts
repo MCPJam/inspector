@@ -11,6 +11,7 @@ import exporter from "./export";
 import interceptor from "./interceptor";
 import evals from "./evals";
 import { adapterHttp, managerHttp } from "./http-adapters";
+import elicitation from "./elicitation";
 
 const mcp = new Hono();
 
@@ -28,6 +29,9 @@ mcp.route("/chat", chat);
 
 // Chat v2 endpoint
 mcp.route("/chat-v2", chatV2);
+
+// Elicitation endpoints
+mcp.route("/elicitation", elicitation);
 
 // Connect endpoint - REAL IMPLEMENTATION
 mcp.route("/connect", connect);
