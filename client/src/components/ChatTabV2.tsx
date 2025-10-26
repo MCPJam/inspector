@@ -23,6 +23,7 @@ import {
   buildAvailableModels,
   getDefaultModel,
 } from "@/components/chat-v2/model-helpers";
+import { isMCPJamProvidedModel } from "@/shared/types";
 
 export function ChatTabV2() {
   const { getAccessToken } = useAuth();
@@ -107,11 +108,20 @@ export function ChatTabV2() {
     };
   }, [getAccessToken]);
 
+  const isMcpJamModel = useMemo(() => {
+    return effectiveModel?.id ? isMCPJamProvidedModel(String(effectiveModel.id)) : false;
+  }, [effectiveModel]);
+
   const { messages, sendMessage, status } = useChat({
     id: `chat-${effectiveModel.provider}-${effectiveModel.id}`,
     transport: transport!,
-    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+    // Disable client auto-send for MCPJam-provided models; server handles tool loop
+    sendAutomaticallyWhen: isMcpJamModel
+      ? undefined
+      : lastAssistantMessageIsCompleteWithToolCalls,
   });
+
+  console.log("messages", messages);
 
   const isLoading = status === "streaming";
 
