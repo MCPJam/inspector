@@ -11,6 +11,11 @@ export function ChatTabV2() {
   const { hasToken, getToken } = useAiProviderKeys();
   const [input, setInput] = useState("");
   const [selectedModel, setSelectedModel] = useState<ModelDefinition>(SUPPORTED_MODELS[0]);
+  const [elicitation, setElicitation] = useState<{
+    requestId: string;
+    message: string;
+    schema: any;
+  } | null>(null);
 
   const availableModels = useMemo(() => {
     return SUPPORTED_MODELS.filter((model) => {
@@ -26,6 +31,31 @@ export function ChatTabV2() {
       setSelectedModel(availableModels[0]);
     }
   }, [availableModels]);
+
+  // Subscribe to elicitation SSE events (moved server endpoints under /api/mcp/elicitation)
+  useEffect(() => {
+    const es = new EventSource('/api/mcp/elicitation/stream');
+    es.onmessage = (ev) => {
+      try {
+        const data = JSON.parse(ev.data);
+        if (data?.type === 'elicitation_request') {
+          setElicitation({
+            requestId: data.requestId,
+            message: data.message,
+            schema: data.schema,
+          });
+        } else if (data?.type === 'elicitation_complete') {
+          if (elicitation && data.requestId === elicitation.requestId) {
+            setElicitation(null);
+          }
+        }
+      } catch {}
+    };
+    es.onerror = () => {
+      // Allow browser to retry via SSE retry hint
+    };
+    return () => es.close();
+  }, [elicitation]);
 
   const transport = useMemo(() => {
     const apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
@@ -43,10 +73,7 @@ export function ChatTabV2() {
   const { messages, sendMessage, status, addToolResult } = useChat({
     id: `chat-${selectedModel.id}`, // Force re-initialization when model changes
     transport,
-    // Automatically submit when all tool results are available
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
-    // We don't auto-run any client tools here; MCP tools execute server-side.
-    // Keeping handler for future client tools (no-op for dynamic tools).
     async onToolCall({ toolCall }) {
       if (toolCall.dynamic) return;
       // Example placeholder for client tools if ever added:
@@ -83,6 +110,22 @@ export function ChatTabV2() {
         />
       </div>
       <div className="flex-1 space-y-4 overflow-y-auto px-6 py-4">
+        {elicitation && (
+          <div className="rounded-md border border-border p-3 text-sm">
+            <div className="font-medium mb-1">User input required</div>
+            <div className="opacity-80 mb-2">{elicitation.message}</div>
+            <details className="mb-2">
+              <summary className="cursor-pointer">Requested schema</summary>
+              <pre className="mt-1 whitespace-pre-wrap break-words opacity-80">
+{JSON.stringify(elicitation.schema, null, 2)}
+              </pre>
+            </details>
+            <ElicitationControls
+              requestId={elicitation.requestId}
+              onDone={() => setElicitation(null)}
+            />
+          </div>
+        )}
         {messages.map((message) => (
           <div
             key={message.id}
@@ -193,6 +236,82 @@ export function ChatTabV2() {
           </Button>
         </div>
       </form>
+      
+    </div>
+  );
+}
+
+function ElicitationControls(props: {
+  requestId: string;
+  onDone: () => void;
+}) {
+  const { requestId, onDone } = props;
+  const [jsonText, setJsonText] = useState<string>("{}");
+  const [submitting, setSubmitting] = useState(false);
+
+  const respond = async (
+    action: "accept" | "decline" | "cancel",
+    content?: Record<string, unknown>,
+  ) => {
+    setSubmitting(true);
+    try {
+    await fetch('/api/mcp/elicitation/respond', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestId, action, content }),
+      });
+      onDone();
+    } catch {
+      // swallow for now; backend errors appear in console
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="mt-2">
+      <textarea
+        className="w-full rounded-md border border-border p-2 text-xs"
+        rows={6}
+        value={jsonText}
+        onChange={(e) => setJsonText(e.target.value)}
+        placeholder="Provide JSON parameters matching the requested schema"
+      />
+      <div className="mt-2 flex gap-2">
+        <Button
+          type="button"
+          variant="default"
+          disabled={submitting}
+          onClick={async () => {
+            let parsed: Record<string, unknown> | undefined = undefined;
+            try {
+              parsed = jsonText.trim() ? JSON.parse(jsonText) : {};
+            } catch {
+              // invalid JSON; treat as empty object
+              parsed = {};
+            }
+            await respond('accept', parsed);
+          }}
+        >
+          Accept
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={submitting}
+          onClick={() => respond('decline')}
+        >
+          Decline
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          disabled={submitting}
+          onClick={() => respond('cancel')}
+        >
+          Cancel
+        </Button>
+      </div>
     </div>
   );
 }
