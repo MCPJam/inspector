@@ -36,7 +36,8 @@ export function OpenRouterConfigDialog({
   onCancel,
 }: OpenRouterConfigDialogProps) {
   const { models, loading, error } = useOpenRouterModels();
-  const [internalSelectedModels, setInternalSelectedModels] = useState<string[]>(selectedModels);
+  const [internalSelectedModels, setInternalSelectedModels] =
+    useState<string[]>(selectedModels);
 
   // Sync internal state with props when they change
   useEffect(() => {
@@ -164,7 +165,10 @@ export function OpenRouterConfigDialog({
           <Button variant="outline" onClick={onCancel}>
             Cancel
           </Button>
-          <Button onClick={handleSave} disabled={internalSelectedModels.length === 0}>
+          <Button
+            onClick={handleSave}
+            disabled={internalSelectedModels.length === 0}
+          >
             Save Configuration
           </Button>
         </DialogFooter>

@@ -127,5 +127,3 @@ elicitation.post("/respond", async (c) => {
 });
 
 export default elicitation;
-
-

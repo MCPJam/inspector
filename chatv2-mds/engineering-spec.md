@@ -1,11 +1,13 @@
 # Chat Playground V2 Engineering Spec
 
 ## Overview
+
 We will replace the legacy MCP Playground front-end and the bespoke `useChat` hook with a cleaner implementation based on the Vercel AI SDK primitives. The goal is to reach feature parity with today’s chat experience while unblocking MCP-UI tooling, OpenAI Apps SDK integration, elicitation prompts, and future multiple-session support. This document captures the architecture, data contracts, rollout plan, and concrete code changes required to implement the V2 experience.
 
 Target completion: end of next week.
 
 ## Requirements
+
 - Preserve existing chat functionality (streaming responses, tool calls, elicitation dialog, model selection, free chat).
 - Expose the new experience via a feature flag until QA is complete.
 - Adopt Vercel AI SDK `streamText` on the backend and `useChat` / Assistant UI helpers on the frontend; remove the custom `client/src/hooks/use-chat.ts` dependency.
@@ -15,6 +17,7 @@ Target completion: end of next week.
 ## Architecture & Implementation
 
 ### 1. Feature Flagging & Tab Wiring
+
 Introduce an opt-in flag that can be toggled independently in browser (Vite) and server environments. When enabled, we render `ChatTabV2` instead of `ChatTab` and expose a beta nav item.
 
 ```ts
@@ -22,7 +25,8 @@ Introduce an opt-in flag that can be toggled independently in browser (Vite) and
 export const featureFlags = {
   chatV2: import.meta.env.VITE_ENABLE_CHAT_V2 === "true",
   chatV2Sessions: import.meta.env.VITE_ENABLE_CHAT_V2_SESSIONS === "true",
-  chatV2AssistantUi: import.meta.env.VITE_ENABLE_CHAT_V2_ASSISTANT_UI === "true",
+  chatV2AssistantUi:
+    import.meta.env.VITE_ENABLE_CHAT_V2_ASSISTANT_UI === "true",
 };
 ```
 
@@ -62,6 +66,7 @@ import { featureFlags } from "@/config/feature-flags";
 ```
 
 ### 2. Backend Route (`server/routes/mcp/chat-v2.ts`)
+
 Create a parallel Hono route that uses `streamText` directly. Stream events are expressed using the AI SDK’s `DataStreamWriter` helper, yielding the same SSE protocol the frontend expects.
 
 ```ts
@@ -84,12 +89,13 @@ chatV2.post("/", async (c) => {
   const body = await c.req.json<ChatV2Request>();
   const sessionId = body.sessionId ?? crypto.randomUUID();
 
-  const provider = body.provider === "openai"
-    ? createOpenAI({ apiKey: body.apiKey ?? process.env.OPENAI_API_KEY })
-    : await createMcpRuntime({
-        selectedServers: body.selectedServers,
-        requestId: sessionId,
-      });
+  const provider =
+    body.provider === "openai"
+      ? createOpenAI({ apiKey: body.apiKey ?? process.env.OPENAI_API_KEY })
+      : await createMcpRuntime({
+          selectedServers: body.selectedServers,
+          requestId: sessionId,
+        });
 
   const toolset = await buildToolset({
     provider,
@@ -158,6 +164,7 @@ export async function buildToolset(options: BuildToolsetOptions) {
 ```
 
 ### 3. Shared Types & Data Contracts
+
 Define the request/response contract consumed by both client and server.
 
 ```ts
@@ -195,13 +202,20 @@ export interface ChatV2Request {
 
 export type ChatV2StreamEvent =
   | { type: "message"; message: ChatV2Message }
-  | { type: "tool_call"; toolCall: ChatV2Message["toolInvocation"] & { id: string } }
-  | { type: "tool_result"; toolResult: { id: string; result: unknown; error?: string } }
+  | {
+      type: "tool_call";
+      toolCall: ChatV2Message["toolInvocation"] & { id: string };
+    }
+  | {
+      type: "tool_result";
+      toolResult: { id: string; result: unknown; error?: string };
+    }
   | { type: "elicitation"; prompt: ChatV2Message }
   | { type: "done" };
 ```
 
 ### 4. Frontend Surface (`ChatTabV2.tsx`)
+
 Leverage `useChat` from `ai/react` with custom handlers for tool approvals and elicitation. The component renders the same layout as V1 but consumes the new SSE schema.
 
 ```tsx
@@ -243,14 +257,8 @@ export function ChatTabV2(props: ChatTabProps) {
     },
   });
 
-  const {
-    messages,
-    input,
-    handleInputChange,
-    handleSubmit,
-    isLoading,
-    stop,
-  } = chat;
+  const { messages, input, handleInputChange, handleSubmit, isLoading, stop } =
+    chat;
 
   return (
     <div className="flex flex-1 flex-col min-h-0">
@@ -284,6 +292,7 @@ export function ChatTabV2(props: ChatTabProps) {
 ```
 
 #### Assistant UI Spike
+
 Wrap the `useChat` runtime with `@assistant-ui/react` to evaluate richer UI components. The spike can live in `client/src/components/chat-v2/AssistantRuntimeProvider.tsx` behind a second flag (`VITE_ENABLE_CHAT_V2_ASSISTANT_UI`).
 
 ```tsx
@@ -294,13 +303,22 @@ import {
 } from "@assistant-ui/react";
 import { useChatRuntime } from "@assistant-ui/react-vercel";
 
-export function ChatV2RuntimeProvider({ children }: { children: React.ReactNode }) {
+export function ChatV2RuntimeProvider({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   const runtime = useChatRuntime({ api: "/mcp/chat-v2" });
-  return <AssistantRuntimeProvider runtime={runtime}>{children}</AssistantRuntimeProvider>;
+  return (
+    <AssistantRuntimeProvider runtime={runtime}>
+      {children}
+    </AssistantRuntimeProvider>
+  );
 }
 ```
 
 ### 5. Tool Approvals & MCP-UI Integration
+
 - Emit tool call events from the backend by implementing `buildToolset` (above) to wrap MCP tool invocations. When `serverFeatureFlags.chatV2Approvals` is true, set `status: "requires-approval"` and pause execution until the frontend responds with an approval payload.
 - Reuse existing MCP-UI components (`client/src/components/chat/tool-call-card.tsx`) by exporting them to `client/src/components/chat-v2/tool-call-card.tsx` and adapting props to the new schema.
 
@@ -326,6 +344,7 @@ export async function emitToolEvents(event: StepResult, sessionId: string) {
 ```
 
 ### 6. Multiple Sessions
+
 Persist session metadata locally (for initial release) with optional backing store later.
 
 ```ts
@@ -363,21 +382,25 @@ export const useChatSessionStore = create<SessionState>((set) => ({
 Hook into `onResponse` (above) to call `upsertSession` and render a session switcher sidebar when `featureFlags.chatV2Sessions` is true.
 
 ### 7. Analytics & Telemetry
+
 - Fire PostHog events on tab load and message send using the existing telemetry utilities.
 - Add backend logs (`logger.info({ sessionId, provider }, "chat-v2 request")`).
 - Surface `x-chat-session-id` header to correlate events between UI and server.
 
 ### 8. Error Handling
+
 - Return structured error events (`{ type: "message", role: "assistant", content: "..." }`) on recoverable failures.
 - For fatal errors, respond with HTTP 500 plus `X-Error-Code` header to help the UI differentiate network vs validation errors.
 
 ## Testing Plan
+
 - **Unit**: validate `mapClientMessageToAiSdk`, `buildToolset`, feature flag helpers, and `useChatSessionStore` with Vitest.
 - **Integration**: hit `/mcp/chat-v2` using mocked provider (use `@ai-sdk/provider-tools` mocks) to assert SSE stream shape.
 - **Component**: render `ChatTabV2` with React Testing Library, simulate streaming events, verify elicitation dialog flows.
 - **E2E**: add Playwright scenario with flag enabled via `VITE_ENABLE_CHAT_V2=true` to ensure streaming works end-to-end.
 
 ## Rollout
+
 1. Land backend + shared types + feature flag (flag disabled by default).
 2. Implement frontend UI, MCP/OpenAI wiring, and validation tests.
 3. Smoke test on staging with `ENABLE_CHAT_V2=true`.
@@ -385,10 +408,12 @@ Hook into `onResponse` (above) to call `upsertSession` and render a session swit
 5. Remove legacy tab once confidence is high; delete `client/src/hooks/use-chat.ts` and related dead code.
 
 ## Open Questions
+
 - Final decision on Assistant UI adoption vs custom components (needs spike Day 1).
 - Where to persist multiple-session metadata long term (Convex vs local storage).
 - Human approval UX – modal vs inline prompts; confirm desired blocking behavior with PM.
 
 ## Appendix
+
 - [Vercel AI SDK Hono examples](https://ai-sdk.dev/cookbook/api-servers/hono)
 - [Assistant UI Vercel integration](https://www.assistant-ui.com/docs/api-reference/integrations/vercel-ai-sdk)

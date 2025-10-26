@@ -17,7 +17,6 @@ import { MCPClientManager } from "@/sdk";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-
 // Utility function to create a boxed console output
 function logBox(content: string, title?: string) {
   const lines = content.split("\n");
@@ -182,7 +181,6 @@ app.use("*", async (c, next) => {
   c.mcpClientManager = mcpClientManager;
   await next();
 });
-
 
 // Middleware
 app.use("*", logger());
