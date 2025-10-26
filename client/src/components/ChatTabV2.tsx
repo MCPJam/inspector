@@ -277,11 +277,6 @@ export function ChatTabV2() {
             </div>
           </div>
         ))}
-        {isLoading && (
-          <div className="text-sm text-muted-foreground">
-            Assistant is thinking…
-          </div>
-        )}
       </div>
       <form
         onSubmit={onSubmit}
