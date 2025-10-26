@@ -4,6 +4,7 @@ import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
 import { PromptsTab } from "./components/PromptsTab";
 import { ChatTab } from "./components/ChatTab";
+import { ChatTabV2 } from "./components/ChatTabV2";
 import { EvalsResultsTab } from "./components/EvalsResultsTab";
 import { EvalsRunTab } from "./components/EvalsRunTab";
 import { SettingsTab } from "./components/SettingsTab";
@@ -93,7 +94,9 @@ export default function App() {
     const applyHash = () => {
       const hash = (window.location.hash || "#servers").replace("#", "");
       setActiveTab(hash);
-      if (hash === "chat") setSelectedMultipleServersToAllServers();
+      if (hash === "chat" || hash === "chat-v2") {
+        setSelectedMultipleServersToAllServers();
+      }
     };
     applyHash();
     window.addEventListener("hashchange", applyHash);
@@ -101,7 +104,7 @@ export default function App() {
   }, [setSelectedMultipleServersToAllServers]);
 
   const handleNavigate = (section: string) => {
-    if (section === "chat") {
+    if (section === "chat" || section === "chat-v2") {
       setSelectedMultipleServersToAllServers();
     }
     window.location.hash = section;
@@ -143,6 +146,7 @@ export default function App() {
             activeTab === "prompts" ||
             activeTab === "auth" ||
             activeTab === "chat" ||
+            activeTab === "chat-v2" ||
             activeTab === "interceptor") && (
             <ActiveServerSelector
               connectedServerConfigs={connectedServerConfigs}
@@ -203,6 +207,8 @@ export default function App() {
               connectedServerConfigs={connectedServerConfigs}
             />
           )}
+
+          {activeTab === "chat-v2" && <ChatTabV2 />}
 
           {activeTab === "interceptor" && (
             <InterceptorTab
