@@ -132,17 +132,21 @@ export function ChatTabV2() {
             timestamp: data.timestamp || new Date().toISOString(),
           });
         } else if (data?.type === "elicitation_complete") {
-          if (elicitation && data.requestId === elicitation.requestId) {
-            setElicitation(null);
-          }
+          setElicitation((prev) =>
+            prev?.requestId === data.requestId ? null : prev,
+          );
         }
-      } catch {}
+      } catch (error) {
+        console.warn("[ChatTabV2] Failed to parse elicitation event:", error);
+      }
     };
     es.onerror = () => {
-      // Allow browser to retry via SSE retry hint
+      console.warn(
+        "[ChatTabV2] Elicitation SSE connection error, browser will retry",
+      );
     };
     return () => es.close();
-  }, [elicitation]);
+  }, []);
 
   const handleElicitationResponse = async (
     action: "accept" | "decline" | "cancel",
