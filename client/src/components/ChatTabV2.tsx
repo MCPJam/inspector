@@ -55,29 +55,34 @@ export function ChatTabV2() {
     ollamaModels,
   ]);
 
-  const [selectedModel, setSelectedModel] = useState<ModelDefinition>(
-    getDefaultModel(availableModels),
-  );
+  const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
+  const effectiveModel = useMemo<ModelDefinition>(() => {
+    const fallback = getDefaultModel(availableModels);
+    if (!selectedModelId) return fallback;
+    const found = availableModels.find((m) => String(m.id) === selectedModelId);
+    return found ?? fallback;
+  }, [availableModels, selectedModelId]);
+
   const [elicitation, setElicitation] = useState<DialogElicitation | null>(
     null,
   );
   const [elicitationLoading, setElicitationLoading] = useState(false);
 
   const transport = useMemo(() => {
-    const apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
+    const apiKey = getToken(effectiveModel.provider as keyof ProviderTokens);
     return new DefaultChatTransport({
       api: "/api/mcp/chat-v2",
       body: {
-        model: selectedModel,
+        model: effectiveModel,
         apiKey: apiKey,
         temperature: 0.7,
       },
     });
-  }, [selectedModel, getToken]);
+  }, [effectiveModel, getToken]);
 
   const { messages, sendMessage, status } = useChat({
-    id: `chat-${selectedModel.provider}-${selectedModel.id}`,
-    transport,
+    id: `chat-${effectiveModel.provider}-${effectiveModel.id}`,
+    transport: transport!,
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
   });
 
@@ -112,9 +117,7 @@ export function ChatTabV2() {
     return () => clearInterval(interval);
   }, [getOllamaBaseUrl]);
 
-  useEffect(() => {
-    setSelectedModel(getDefaultModel(availableModels));
-  }, [availableModels]);
+  // selectedModelId defaults via effectiveModel; no effect needed
 
   useEffect(() => {
     const es = new EventSource("/api/mcp/elicitation/stream");
@@ -176,9 +179,9 @@ export function ChatTabV2() {
       <div className="border-b border-border bg-background px-6 py-3 flex items-center gap-2">
         <span className="text-sm text-muted-foreground">Model:</span>
         <ModelSelector
-          currentModel={selectedModel}
+          currentModel={effectiveModel}
           availableModels={availableModels}
-          onModelChange={setSelectedModel}
+          onModelChange={(m) => setSelectedModelId(String(m.id))}
           isLoading={isLoading}
         />
       </div>
