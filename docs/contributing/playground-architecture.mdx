@@ -17,11 +17,18 @@ The **Playground** (Chat Tab) is MCPJam Inspector's interactive testing environm
 - Interactive elicitation support (MCP servers requesting user input)
 - Multi-server MCP integration with automatic tool routing
 
+**Two Implementations**:
+
+1. **Playground (V1)** - Original implementation with custom streaming
+2. **Playground V2** - Experimental implementation using `@ai-sdk/react`
+
 **Location**:
 
-- Frontend: `client/src/components/ChatTab.tsx`
-- Backend: `server/routes/mcp/chat.ts`
-- Hook: `client/src/hooks/use-chat.ts`
+- Frontend V1: `client/src/components/ChatTab.tsx`
+- Frontend V2: `client/src/components/ChatTabV2.tsx`
+- Backend V1: `server/routes/mcp/chat.ts`
+- Backend V2: `server/routes/mcp/chat-v2.ts`
+- Hook V1: `client/src/hooks/use-chat.ts`
 
 ---
 
