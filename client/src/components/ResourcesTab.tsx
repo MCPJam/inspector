@@ -9,14 +9,14 @@ import {
 } from "./ui/resizable";
 import { FolderOpen, File, RefreshCw, ChevronRight, Eye } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
-import JsonView from "react18-json-view";
-import "react18-json-view/src/style.css";
+// json viewer removed from this file; results are shown in shared ResultsPanel
 import {
   MCPServerConfig,
   type MCPReadResourceResult,
   type MCPResource,
 } from "@/sdk";
 import { JsonRpcLoggerView } from "./logging/json-rpc-logger-view";
+import { ResultsPanel } from "./tools/ResultsPanel";
 
 interface ResourcesTabProps {
   serverConfig?: MCPServerConfig;
@@ -31,12 +31,29 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
   const [loading, setLoading] = useState(false);
   const [fetchingResources, setFetchingResources] = useState(false);
   const [error, setError] = useState<string>("");
+  const [showStructured, setShowStructured] = useState(false);
+  const [validationErrors, setValidationErrors] = useState<
+    any[] | null | undefined
+  >(undefined);
+  const [unstructuredValidationResult] = useState<
+    "not_applicable" | "valid" | "invalid_json" | "schema_mismatch"
+  >("not_applicable");
 
   const selectedResourceData = useMemo(() => {
     return (
       resources.find((resource) => resource.uri === selectedResource) ?? null
     );
   }, [resources, selectedResource]);
+
+  // Map resource read result to a shape consumable by ResultsPanel
+  const resourceResult = resourceContent
+    ? ({
+        id: `resource-${selectedResource}`,
+        content: resourceContent.contents ?? [],
+        resource: { uri: selectedResource },
+        timestamp: new Date().toISOString(),
+      } as any)
+    : null;
 
   useEffect(() => {
     if (serverConfig && serverName) {
@@ -275,78 +292,22 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
                       </div>
                     )}
 
-                    {/* Content Preview */}
+                    {/* Content Preview: resource read results are shown in the bottom Results panel for consistency with Tools tab */}
                     <div className="flex-1 overflow-hidden">
-                      <ScrollArea className="h-full">
-                        <div className="px-6 py-6">
-                          {!resourceContent ? (
-                            <div className="flex flex-col items-center justify-center py-16 text-center">
-                              <div className="w-10 h-10 bg-muted rounded-full flex items-center justify-center mb-3">
-                                <Eye className="h-4 w-4 text-muted-foreground" />
-                              </div>
-                              <p className="text-xs text-muted-foreground font-semibold mb-1">
-                                Ready to read resource
-                              </p>
-                              <p className="text-xs text-muted-foreground/70">
-                                Click the Read button to view resource content
-                              </p>
-                            </div>
-                          ) : (
-                            <div className="space-y-4">
-                              {resourceContent?.contents?.map(
-                                (content: any, index: number) => (
-                                  <div key={index} className="group">
-                                    <div className="flex items-center gap-3 mb-3">
-                                      <Badge
-                                        variant="secondary"
-                                        className="text-xs font-mono font-medium"
-                                      >
-                                        {content.type}
-                                      </Badge>
-                                      {content.mimeType && (
-                                        <Badge
-                                          variant="outline"
-                                          className="text-xs font-mono"
-                                        >
-                                          {content.mimeType}
-                                        </Badge>
-                                      )}
-                                    </div>
-                                    <div className="border border-border rounded-md overflow-hidden">
-                                      {content.type === "text" ? (
-                                        <pre className="text-xs font-mono whitespace-pre-wrap p-4 bg-background overflow-auto max-h-96">
-                                          {content.text}
-                                        </pre>
-                                      ) : (
-                                        <div className="p-4">
-                                          <JsonView
-                                            src={content}
-                                            dark={true}
-                                            theme="atom"
-                                            enableClipboard={true}
-                                            displaySize={false}
-                                            collapseStringsAfterLength={100}
-                                            style={{
-                                              fontSize: "12px",
-                                              fontFamily:
-                                                "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                                              backgroundColor:
-                                                "hsl(var(--background))",
-                                              padding: "0",
-                                              borderRadius: "0",
-                                              border: "none",
-                                            }}
-                                          />
-                                        </div>
-                                      )}
-                                    </div>
-                                  </div>
-                                ),
-                              )}
-                            </div>
-                          )}
+                      <div className="h-full flex items-center justify-center">
+                        <div className="text-center px-6 py-6">
+                          <div className="w-10 h-10 bg-muted rounded-full flex items-center justify-center mb-3">
+                            <Eye className="h-4 w-4 text-muted-foreground" />
+                          </div>
+                          <p className="text-xs text-muted-foreground font-semibold mb-1">
+                            Resource read results appear in the bottom panel
+                          </p>
+                          <p className="text-xs text-muted-foreground/70">
+                            Click the Read button to view resource content in
+                            the Results panel below
+                          </p>
                         </div>
-                      </ScrollArea>
+                      </div>
                     </div>
                   </>
                 ) : (
@@ -381,31 +342,29 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
             </ResizablePanel>
             <ResizableHandle withHandle />
             <ResizablePanel defaultSize={60} minSize={30}>
-              <div className="h-full flex flex-col border-t border-border bg-background">
-                {/* Header */}
-                <div className="flex items-center justify-between p-4 border-b border-border">
-                  <h2 className="text-xs font-semibold text-foreground">
-                    Status
-                  </h2>
-                </div>
-
-                {/* Content */}
-                <div className="flex-1 overflow-hidden">
-                  {error ? (
-                    <div className="p-4">
-                      <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
-                        {error}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex items-center justify-center h-full">
-                      <p className="text-xs text-muted-foreground font-medium">
-                        Resource operations status will appear here
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
+              <ResultsPanel
+                error={error}
+                showStructured={showStructured}
+                onToggleStructured={(v) => setShowStructured(v)}
+                structuredResult={null}
+                result={resourceResult}
+                validationErrors={validationErrors}
+                unstructuredValidationResult={unstructuredValidationResult}
+                onExecuteFromUI={async (
+                  _toolName: string,
+                  _params?: Record<string, unknown>
+                ) => {
+                  // Resource panel does not support executing tools from UI widgets in this context
+                  return { error: "not_supported" } as any;
+                }}
+                onHandleIntent={async (
+                  _intent: string,
+                  _params?: Record<string, unknown>
+                ) => {
+                  // No-op for resources
+                }}
+                serverId={serverName}
+              />
             </ResizablePanel>
           </ResizablePanelGroup>
         </ResizablePanel>
