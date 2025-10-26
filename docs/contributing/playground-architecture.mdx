@@ -873,7 +873,8 @@ body: JSON.stringify({
 
 ### Frontend
 
-- `client/src/components/ChatTab.tsx` - Main chat UI
+- `client/src/components/ChatTabV2.tsx` - Main chat UI (V2)
+- `client/src/components/ChatTab.tsx` - Main chat UI (V1)
 - `client/src/hooks/use-chat.ts` - Chat state management
 - `client/src/components/chat/message.tsx` - Message rendering
 - `client/src/components/chat/chat-input.tsx` - Input component
@@ -882,7 +883,8 @@ body: JSON.stringify({
 
 ### Backend
 
-- `server/routes/mcp/chat.ts` - Chat endpoint (593 lines)
+- `server/routes/mcp/chat-v2.ts` - Chat endpoint V2 with UIMessageStream
+- `server/routes/mcp/chat.ts` - Chat endpoint V1 with custom SSE
 - `server/utils/chat-helpers.ts` - LLM model creation
 
 ### Shared
