@@ -232,9 +232,11 @@ Used when the user selects MCPJam-provided models (identified by `isMCPJamProvid
 
 **Key Files**:
 
-- `server/routes/mcp/chat.ts:405-589` - `sendMessagesToBackend()`
-- `shared/backend-conversation.ts` - `runBackendConversation()`
+- `server/routes/mcp/chat-v2.ts:34-165` - V2 MCPJam model handler with UIMessageStream
+- `server/routes/mcp/chat.ts:405-589` - V1 `sendMessagesToBackend()`
+- `shared/backend-conversation.ts` - `runBackendConversation()` (V1)
 - `shared/http-tool-calls.ts` - `executeToolCallsFromMessages()`
+- `client/src/components/ChatTabV2.tsx:85-113` - V2 auth headers setup
 
 **MCPJam-Provided Models** (defined in `shared/types.ts:109-118`):
 
