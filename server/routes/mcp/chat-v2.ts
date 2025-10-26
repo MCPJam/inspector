@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { convertToModelMessages, streamText } from "ai";
+import { convertToModelMessages, streamText, stepCountIs } from "ai";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import {
   Model,
@@ -48,6 +48,7 @@ chatV2.post("/", async (c) => {
       messages: convertToModelMessages(messages),
       temperature: body.temperature ?? DEFAULT_TEMPERATURE,
       tools: await mcpClientManager.getToolsForAiSdk(),
+      stopWhen: stepCountIs(20),
     });
 
     return result.toUIMessageStreamResponse();
