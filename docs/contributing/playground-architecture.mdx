@@ -247,74 +247,127 @@ Used when the user selects MCPJam-provided models (identified by `isMCPJamProvid
 
 ---
 
-## Free Chat: MCPJamBackend Integration
+## Free Chat: MCPJam Backend Integration
 
-MCPJam Inspector offers **free chat** powered by MCPJamBackend at `CONVEX_HTTP_URL`.
+MCPJam Inspector offers **free chat** powered by MCPJam backend at `CONVEX_HTTP_URL`.
 
 ### How It Works
 
-**1. Model Selection**:
+**1. Model Selection (V2)**:
 
 ```typescript
-// client/src/hooks/use-chat.ts:128-130
-const apiKey = isMCPJamProvidedModel(model.id) ? "router" : getToken(provider);
+// client/src/components/ChatTabV2.tsx:111-114
+const isMcpJamModel = useMemo(() => {
+  return effectiveModel?.id
+    ? isMCPJamProvidedModel(String(effectiveModel.id))
+    : false;
+}, [effectiveModel]);
 ```
 
-**2. Authentication**:
+**2. Authentication (V2)**:
 
 ```typescript
-// client/src/hooks/use-chat.ts:348-361
-if (routeThroughBackend && getAccessToken) {
-  const token = await getAccessToken(); // WorkOS auth
-  authHeader = `Bearer ${token}`;
+// client/src/components/ChatTabV2.tsx:85-113
+useEffect(() => {
+  let active = true;
+  (async () => {
+    try {
+      const token = await getAccessToken?.(); // WorkOS auth
+      if (!active) return;
+      if (token) {
+        setAuthHeaders({ Authorization: `Bearer ${token}` });
+      } else {
+        setAuthHeaders(undefined);
+      }
+    } catch {
+      if (!active) return;
+      setAuthHeaders(undefined);
+    }
+  })();
+  return () => {
+    active = false;
+  };
+}, [getAccessToken]);
+```
+
+**3. Client-Side Auto-Send Disabled (V2)**:
+
+```typescript
+// client/src/components/ChatTabV2.tsx:117-122
+const { messages, sendMessage, status } = useChat({
+  id: `chat-${effectiveModel.provider}-${effectiveModel.id}`,
+  transport: transport!,
+  // Disable client auto-send for MCPJam-provided models; server handles tool loop
+  sendAutomaticallyWhen: isMcpJamModel
+    ? undefined
+    : lastAssistantMessageIsCompleteWithToolCalls,
+});
+```
+
+**4. Backend Routing (V2)**:
+
+```typescript
+// server/routes/mcp/chat-v2.ts:37-44
+if (modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id)) {
+  if (!process.env.CONVEX_HTTP_URL) {
+    return c.json(
+      { error: "Server missing CONVEX_HTTP_URL configuration" },
+      500,
+    );
+  }
+  // ... UIMessageStream implementation
 }
 ```
 
-**3. Backend Routing**:
+**5. MCPJam Backend Communication (V2)**:
 
 ```typescript
-// server/routes/mcp/chat.ts:649-652
-const sendToBackend =
-  model?.id &&
-  isMCPJamProvidedModel(model.id) &&
-  Boolean(requestData.sendMessagesToBackend);
+// server/routes/mcp/chat-v2.ts:107-125
+const res = await fetch(`${process.env.CONVEX_HTTP_URL}/stream`, {
+  method: "POST",
+  headers: {
+    "content-type": "application/json",
+    ...(authHeader ? { authorization: authHeader } : {}),
+  },
+  body: JSON.stringify({
+    mode: "step",
+    messages: JSON.stringify(messageHistory),
+    model: String(modelDefinition.id),
+    temperature: body.temperature ?? DEFAULT_TEMPERATURE,
+    tools: toolDefs,
+  }),
+});
 ```
 
-**4. MCPJamBackend Communication**:
+**6. Response Format (V2)**:
 
 ```typescript
-// server/routes/mcp/chat.ts:85-117
-const sendBackendRequest = async (baseUrl, authHeader, body, streamingContext) => {
-  const res = await fetch(`${baseUrl}/streaming`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      ...(authHeader ? { Authorization: authHeader } : {}),
-    },
-    body: JSON.stringify({
-      tools: [...], // JSON schemas
-      messages: "...", // Stringified messages
-      model: "meta-llama/llama-3.3-70b-instruct"
-    }),
-  });
-  return await res.json();
-};
-```
-
-**5. Response Format**:
-
-```typescript
-// shared/backend-conversation.ts:10-14
-type BackendFetchResponse = {
-  ok?: boolean;
-  messages?: ModelMessage[]; // AI SDK format
-};
+// server/routes/mcp/chat-v2.ts:127-131
+const json: any = await res.json();
+if (!json?.ok || !Array.isArray(json.messages)) {
+  break;
+}
+// Process messages and emit UIMessage chunks
 ```
 
 **Environment Variables**:
 
-- `CONVEX_HTTP_URL` - MCPJamBackend backend endpoint (required for free chat)
+- `CONVEX_HTTP_URL` - MCPJam backend endpoint (required for free chat)
 - Authenticated users get access via WorkOS tokens
+
+### V2 vs V1 Differences
+
+**V2 (chat-v2.ts)**:
+- Uses AI SDK's `createUIMessageStream` and `createUIMessageStreamResponse`
+- Server-side tool execution loop (client auto-send disabled)
+- Emits `text-start`, `text-delta`, `text-end`, `tool-input-available`, `tool-output-available` events
+- Compatible with `DefaultChatTransport` from AI SDK
+
+**V1 (chat.ts)**:
+- Uses custom SSE streaming with `sendMessagesToBackend()`
+- Client-side auto-send enabled
+- Emits custom SSE events (`text`, `tool_call`, `tool_result`)
+- Uses `runBackendConversation()` helper
 
 ---
 
