@@ -10,7 +10,10 @@ import type { ChatV2Request } from "@/shared/chat-v2";
 import { createLlmModel } from "../../utils/chat-helpers";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import zodToJsonSchema from "zod-to-json-schema";
-import { hasUnresolvedToolCalls, executeToolCallsFromMessages } from "@/shared/http-tool-calls";
+import {
+  hasUnresolvedToolCalls,
+  executeToolCallsFromMessages,
+} from "@/shared/http-tool-calls";
 
 const DEFAULT_TEMPERATURE = 0.7;
 
@@ -44,26 +47,50 @@ chatV2.post("/", async (c) => {
 
       // Build tool defs once from MCP tools
       const flattenedTools = mcpTools as Record<string, any>;
-      const toolDefs: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown> }>= [];
+      const toolDefs: Array<{
+        name: string;
+        description?: string;
+        inputSchema?: Record<string, unknown>;
+      }> = [];
       for (const [name, tool] of Object.entries(flattenedTools)) {
         if (!tool) continue;
         let serializedSchema: Record<string, unknown> | undefined;
         const schema = (tool as any).inputSchema;
         if (schema) {
-          if (typeof schema === "object" && schema !== null && "jsonSchema" in (schema as Record<string, unknown>)) {
-            serializedSchema = (schema as any).jsonSchema as Record<string, unknown>;
+          if (
+            typeof schema === "object" &&
+            schema !== null &&
+            "jsonSchema" in (schema as Record<string, unknown>)
+          ) {
+            serializedSchema = (schema as any).jsonSchema as Record<
+              string,
+              unknown
+            >;
           } else {
             try {
-              serializedSchema = zodToJsonSchema(schema) as Record<string, unknown>;
+              serializedSchema = zodToJsonSchema(schema) as Record<
+                string,
+                unknown
+              >;
             } catch {
-              serializedSchema = { type: "object", properties: {}, additionalProperties: false } as any;
+              serializedSchema = {
+                type: "object",
+                properties: {},
+                additionalProperties: false,
+              } as any;
             }
           }
         }
         toolDefs.push({
           name,
           description: (tool as any).description,
-          inputSchema: serializedSchema ?? ({ type: "object", properties: {}, additionalProperties: false } as any),
+          inputSchema:
+            serializedSchema ??
+            ({
+              type: "object",
+              properties: {},
+              additionalProperties: false,
+            } as any),
         });
       }
 
@@ -76,7 +103,6 @@ chatV2.post("/", async (c) => {
       const stream = createUIMessageStream({
         execute: async ({ writer }) => {
           const msgId = `asst_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-          writer.write({ type: "text-start", id: msgId } as any);
 
           while (steps < MAX_STEPS) {
             const res = await fetch(`${process.env.CONVEX_HTTP_URL}/stream`, {
@@ -109,11 +135,19 @@ chatV2.post("/", async (c) => {
               if (m?.role === "assistant" && Array.isArray(m.content)) {
                 for (const item of m.content) {
                   if (item?.type === "text" && typeof item.text === "string") {
-                    writer.write({ type: "text-delta", id: msgId, delta: item.text } as any);
+                    writer.write({ type: "text-start", id: msgId } as any);
+                    writer.write({
+                      type: "text-delta",
+                      id: msgId,
+                      delta: item.text,
+                    } as any);
+                    writer.write({ type: "text-end", id: msgId } as any);
                   } else if (item?.type === "tool-call") {
                     // Normalize tool-call
-                    if (item.input == null) item.input = item.parameters ?? item.args ?? {};
-                    if (!item.toolCallId) item.toolCallId = `tc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                    if (item.input == null)
+                      item.input = item.parameters ?? item.args ?? {};
+                    if (!item.toolCallId)
+                      item.toolCallId = `tc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
                     writer.write({
                       type: "tool-input-available",
                       toolCallId: item.toolCallId,
@@ -128,7 +162,9 @@ chatV2.post("/", async (c) => {
 
             const beforeLen = messageHistory.length;
             if (hasUnresolvedToolCalls(messageHistory as any)) {
-              await executeToolCallsFromMessages(messageHistory as any, { clientManager: mcpClientManager });
+              await executeToolCallsFromMessages(messageHistory as any, {
+                clientManager: mcpClientManager,
+              });
             }
             const newMessages = messageHistory.slice(beforeLen);
             for (const msg of newMessages) {
@@ -147,12 +183,10 @@ chatV2.post("/", async (c) => {
             steps++;
 
             const finishReason: string | undefined = json.finishReason;
-            if ((finishReason && finishReason !== 'tool-calls')) {
-              console.log("breaking");
+            if (finishReason && finishReason !== "tool-calls") {
               break;
             }
           }
-          writer.write({ type: "text-end", id: msgId } as any);
         },
       });
 
