@@ -153,7 +153,45 @@ Used when the user selects MCPJam-provided models (identified by `isMCPJamProvid
 
 **V2 Architecture (chat-v2.ts)**: The v2 implementation uses AI SDK's `createUIMessageStream` for server-side tool execution loops, eliminating client-side auto-send for MCPJam models.
 
-**Flow**:
+**Flow (V2 - chat-v2.ts)**:
+
+```typescript
+// server/routes/mcp/chat-v2.ts:34-165
+1. User sends message → useChat hook
+2. Hook posts to /api/mcp/chat-v2 with:
+   - model (MCPJam-provided)
+   - messages history
+   - Authorization header (from WorkOS auth)
+
+3. Backend detects MCPJam model (chat-v2.ts:40):
+   if (modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id))
+
+4. Server-side tool execution loop (chat-v2.ts:69-161):
+   a. Fetches tools from MCPClientManager
+   b. Converts tools to JSON schema format (zodToJsonSchema)
+   c. Creates UIMessageStream with execute() driver:
+      - Loops up to MAX_STEPS (20)
+      - Each iteration:
+        * Calls CONVEX_HTTP_URL/stream with mode: "step"
+        * Backend returns { ok: true, messages: [...] }
+        * Emits text-delta, tool-input-available events
+        * Executes tool calls via executeToolCallsFromMessages()
+        * Emits tool-output-available events
+        * Continues if finishReason === "tool-calls"
+   d. Returns createUIMessageStreamResponse({ stream })
+
+5. executeToolCallsFromMessages (shared/http-tool-calls.ts:68-193):
+   a. Builds tool index with serverId metadata
+   b. Finds unresolved tool calls in messages
+   c. Executes each via tool.execute(input)
+   d. Appends tool-result messages with:
+      - output, result (with _meta for Apps SDK)
+      - serverId (for OpenAI component resolution)
+
+6. Client receives AI SDK UIMessage chunks via DefaultChatTransport
+```
+
+**Flow (V1 - chat.ts)**:
 
 ```typescript
 // server/routes/mcp/chat.ts:405-589
