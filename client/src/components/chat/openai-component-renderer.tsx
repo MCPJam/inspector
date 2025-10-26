@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ToolCall, ToolResult } from "@/lib/chat-types";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
 interface OpenAIComponentRendererProps {
   componentUrl: string;
@@ -31,6 +32,9 @@ export function OpenAIComponentRenderer({
   const [isReady, setIsReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [widgetUrl, setWidgetUrl] = useState<string | null>(null);
+
+  // Get current theme from preferences store
+  const themeMode = usePreferencesStore((s) => s.themeMode);
 
   // Storage key for widget state
   const widgetStateKey = `openai-widget-state:${toolCall.name}:${toolCall.id}`;
@@ -90,6 +94,7 @@ export function OpenAIComponentRenderer({
               toolOutput: structuredContent,
               toolResponseMetadata: toolResponseMetadata,
               toolId: toolCall.id,
+              theme: themeMode,
             }),
           });
 
@@ -118,6 +123,7 @@ export function OpenAIComponentRenderer({
     toolCall.parameters,
     toolCall.id,
     toolResult?.result,
+    themeMode,
   ]);
 
   // Handle postMessage communication with iframe
@@ -201,6 +207,22 @@ export function OpenAIComponentRenderer({
       iframeRef.current?.removeEventListener("error", handleError as any);
     };
   }, [widgetUrl, widgetStateKey, onCallTool, onSendFollowup]);
+
+  // Handle theme changes - notify iframe when theme changes
+  useEffect(() => {
+    if (!isReady || !iframeRef.current?.contentWindow) return;
+
+    // Send theme update to iframe via webplus:set_globals event
+    iframeRef.current.contentWindow.postMessage(
+      {
+        type: "webplus:set_globals",
+        globals: {
+          theme: themeMode,
+        },
+      },
+      "*",
+    );
+  }, [themeMode, isReady]);
 
   return (
     <div className={className}>
