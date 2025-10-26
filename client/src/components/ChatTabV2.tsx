@@ -4,6 +4,7 @@ import {
   DefaultChatTransport,
   lastAssistantMessageIsCompleteWithToolCalls,
 } from "ai";
+import { useAuth } from "@workos-inc/authkit-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ModelDefinition } from "@/shared/types";
@@ -24,6 +25,7 @@ import {
 } from "@/components/chat-v2/model-helpers";
 
 export function ChatTabV2() {
+  const { getAccessToken } = useAuth();
   const {
     hasToken,
     getToken,
@@ -36,6 +38,9 @@ export function ChatTabV2() {
   const [input, setInput] = useState("");
   const [ollamaModels, setOllamaModels] = useState<ModelDefinition[]>([]);
   const [isOllamaRunning, setIsOllamaRunning] = useState(false);
+  const [authHeaders, setAuthHeaders] = useState<
+    Record<string, string> | undefined
+  >(undefined);
 
   const availableModels = useMemo(() => {
     return buildAvailableModels({
@@ -77,8 +82,30 @@ export function ChatTabV2() {
         apiKey: apiKey,
         temperature: 0.7,
       },
+      headers: authHeaders,
     });
-  }, [effectiveModel, getToken]);
+  }, [effectiveModel, getToken, authHeaders]);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const token = await getAccessToken?.();
+        if (!active) return;
+        if (token) {
+          setAuthHeaders({ Authorization: `Bearer ${token}` });
+        } else {
+          setAuthHeaders(undefined);
+        }
+      } catch {
+        if (!active) return;
+        setAuthHeaders(undefined);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [getAccessToken]);
 
   const { messages, sendMessage, status } = useChat({
     id: `chat-${effectiveModel.provider}-${effectiveModel.id}`,
