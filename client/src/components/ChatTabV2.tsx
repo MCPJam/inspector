@@ -109,7 +109,9 @@ export function ChatTabV2() {
   }, [getAccessToken]);
 
   const isMcpJamModel = useMemo(() => {
-    return effectiveModel?.id ? isMCPJamProvidedModel(String(effectiveModel.id)) : false;
+    return effectiveModel?.id
+      ? isMCPJamProvidedModel(String(effectiveModel.id))
+      : false;
   }, [effectiveModel]);
 
   const { messages, sendMessage, status } = useChat({
@@ -121,11 +123,8 @@ export function ChatTabV2() {
       : lastAssistantMessageIsCompleteWithToolCalls,
   });
 
-  console.log("messages", messages);
-
   const isLoading = status === "streaming";
 
-  // Detect Ollama availability & tool-capable models
   useEffect(() => {
     const checkOllama = async () => {
       const { isRunning, availableModels } =
