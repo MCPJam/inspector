@@ -904,10 +904,232 @@ const mcpClientManager = new MCPClientManager(
 - [Debugging](../inspector/debugging) - JSON-RPC logging
 - [LLM Playground](../inspector/llm-playground) - User guide
 
+---
+
+## Playground V2 Architecture (Experimental)
+
+**Playground V2** is an experimental implementation using Vercel AI SDK's `@ai-sdk/react` library for simplified streaming and tool execution.
+
+### Key Differences from V1
+
+| Feature | V1 (ChatTab) | V2 (ChatTabV2) |
+|---------|--------------|----------------|
+| **Streaming Library** | Custom SSE parsing | `@ai-sdk/react` `useChat` hook |
+| **Tool Execution** | Manual agent loop | Automatic via `sendAutomaticallyWhen` |
+| **Step Limiting** | `MAX_AGENT_STEPS = 10` | `stepCountIs(20)` |
+| **Elicitation** | Inline SSE events | Separate `/api/mcp/elicitation/stream` endpoint |
+| **Message Format** | Custom `ChatMessage` | AI SDK `UIMessage` |
+| **Backend** | `/api/mcp/chat` | `/api/mcp/chat-v2` |
+
+### Architecture
+
+```mermaid
+graph TB
+    subgraph Frontend["ChatTabV2 Frontend"]
+        ChatV2[ChatTabV2 Component]
+        UseAiChat["@ai-sdk/react useChat"]
+        Transport[DefaultChatTransport]
+        ElicitSSE[Elicitation SSE Stream]
+        
+        ChatV2 --> UseAiChat
+        UseAiChat --> Transport
+        ChatV2 --> ElicitSSE
+    end
+    
+    subgraph Backend["Chat V2 Backend"]
+        ChatV2Handler[chat-v2.ts POST /]
+        StreamText[AI SDK streamText]
+        ElicitHandler[elicitation.ts]
+        ElicitSSE2[SSE /stream]
+        ElicitRespond[POST /respond]
+        
+        ChatV2Handler --> StreamText
+        ElicitHandler --> ElicitSSE2
+        ElicitHandler --> ElicitRespond
+    end
+    
+    subgraph MCP["MCP Layer"]
+        Manager[MCPClientManager]
+        Tools[getToolsForAiSdk]
+        ElicitCallback[setElicitationCallback]
+        
+        Manager --> Tools
+        Manager --> ElicitCallback
+    end
+    
+    Transport --> ChatV2Handler
+    ElicitSSE --> ElicitSSE2
+    StreamText --> Tools
+    ElicitCallback --> ElicitSSE2
+    
+    classDef frontend fill:#e1f5ff,stroke:#0288d1
+    classDef backend fill:#fff3e0,stroke:#f57c00
+    classDef mcp fill:#e8f5e9,stroke:#388e3c
+    
+    class ChatV2,UseAiChat,Transport,ElicitSSE frontend
+    class ChatV2Handler,StreamText,ElicitHandler,ElicitSSE2,ElicitRespond backend
+    class Manager,Tools,ElicitCallback mcp
+```
+
+### Implementation Details
+
+**Frontend (`client/src/components/ChatTabV2.tsx`)**:
+
+```typescript
+import { useChat } from "@ai-sdk/react";
+import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls } from "ai";
+
+const transport = new DefaultChatTransport({
+  api: "/api/mcp/chat-v2",
+  body: {
+    model: effectiveModel,
+    apiKey: apiKey,
+    temperature: 0.7,
+  },
+});
+
+const { messages, sendMessage, status } = useChat({
+  id: `chat-${effectiveModel.provider}-${effectiveModel.id}`,
+  transport: transport,
+  sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+});
+```
+
+**Backend (`server/routes/mcp/chat-v2.ts`)**:
+
+```typescript
+const result = streamText({
+  model: llmModel,
+  messages: convertToModelMessages(messages),
+  temperature: body.temperature ?? 0.7,
+  tools: await mcpClientManager.getToolsForAiSdk(),
+  stopWhen: stepCountIs(20),
+});
+
+return result.toUIMessageStreamResponse();
+```
+
+### Elicitation System V2
+
+V2 uses a **separate SSE endpoint** for elicitation events instead of inline chat events.
+
+**SSE Stream (`server/routes/mcp/elicitation.ts`)**:
+
+```typescript
+// Client subscribes to elicitation events
+elicitation.get("/stream", async (c) => {
+  const stream = new ReadableStream({
+    start(controller) {
+      const subscriber = { send, close };
+      elicitationSubscribers.add(subscriber);
+      
+      // Broadcast events to all subscribers
+      broadcastElicitation({
+        type: "elicitation_request",
+        requestId,
+        message,
+        schema,
+      });
+    }
+  });
+  
+  return new Response(stream, {
+    headers: { "Content-Type": "text/event-stream" }
+  });
+});
+```
+
+**Response Endpoint**:
+
+```typescript
+elicitation.post("/respond", async (c) => {
+  const { requestId, action, content } = await c.req.json();
+  
+  const response: ElicitResult = 
+    action === "accept" 
+      ? { action: "accept", content: content ?? {} }
+      : { action };
+  
+  mcpClientManager.respondToElicitation(requestId, response);
+  broadcastElicitation({ type: "elicitation_complete", requestId });
+});
+```
+
+**Frontend Integration**:
+
+```typescript
+// Subscribe to elicitation events
+useEffect(() => {
+  const es = new EventSource("/api/mcp/elicitation/stream");
+  es.onmessage = (ev) => {
+    const data = JSON.parse(ev.data);
+    if (data?.type === "elicitation_request") {
+      setElicitation({
+        requestId: data.requestId,
+        message: data.message,
+        schema: data.schema,
+      });
+    }
+  };
+  return () => es.close();
+}, []);
+```
+
+### Model Helpers
+
+V2 introduces centralized model availability logic (`client/src/components/chat-v2/model-helpers.ts`):
+
+```typescript
+export function buildAvailableModels(params: {
+  hasToken: (provider: keyof ProviderTokens) => boolean;
+  getLiteLLMBaseUrl: () => string;
+  getLiteLLMModelAlias: () => string;
+  getOpenRouterSelectedModels: () => string[];
+  isOllamaRunning: boolean;
+  ollamaModels: ModelDefinition[];
+}): ModelDefinition[];
+
+export function getDefaultModel(
+  availableModels: ModelDefinition[]
+): ModelDefinition;
+```
+
+**Priority Order**:
+1. Claude 3.7 Sonnet
+2. GPT-4.1
+3. Gemini 2.5 Pro
+4. DeepSeek Chat
+5. Mistral Large
+
+### Benefits of V2
+
+- **Simplified Code**: `useChat` hook handles message state, streaming, and tool execution
+- **Automatic Tool Calls**: `sendAutomaticallyWhen` removes manual agent loop
+- **Better Type Safety**: AI SDK's `UIMessage` format with typed parts
+- **Cleaner Separation**: Elicitation events decoupled from chat stream
+- **Step Limiting**: Built-in `stepCountIs(20)` prevents infinite loops
+
+### Limitations
+
+- **No Backend Routing**: V2 currently only supports local execution (user API keys)
+- **No Free Models**: MCPJam-provided models not yet implemented
+- **Experimental**: API may change as `@ai-sdk/react` evolves
+
+### Migration Path
+
+V1 and V2 coexist to allow gradual migration:
+
+1. V2 validates the `@ai-sdk/react` approach
+2. Once stable, backend routing will be added
+3. V1 may be deprecated in future releases
+
+---
+
 ## External Links
 
 - [MCP Specification](https://spec.modelcontextprotocol.io/)
 - [Vercel AI SDK](https://sdk.vercel.ai/)
+- [AI SDK React](https://sdk.vercel.ai/docs/ai-sdk-ui/overview)
 - [MCPJamBackend Backend](https://convex.dev/)
 - [Server-Sent Events (MDN)](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events)
 - [OpenAI Apps SDK](https://openai.com/index/introducing-the-app-platform/)
