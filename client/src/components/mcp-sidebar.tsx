@@ -10,6 +10,7 @@ import {
   CirclePlayIcon,
   ListChecks,
   HandMetal,
+  Workflow,
 } from "lucide-react";
 
 import { NavMain } from "@/components/sidebar/nav-main";
@@ -64,6 +65,11 @@ const navigationSections = [
         title: "Auth",
         url: "#auth",
         icon: Signature,
+      },
+      {
+        title: "OAuth Flow",
+        url: "#oauth-flow",
+        icon: Workflow,
       },
     ],
   },
