@@ -1,3 +1,4 @@
+import { ProviderTokens } from "@/hooks/use-ai-provider-keys";
 import {
   SUPPORTED_MODELS,
   type ModelDefinition,
@@ -18,7 +19,7 @@ export function parseModelAliases(
 }
 
 export function buildAvailableModels(params: {
-  hasToken: (provider: any) => boolean;
+  hasToken: (provider: keyof ProviderTokens) => boolean;
   getLiteLLMBaseUrl: () => string;
   getLiteLLMModelAlias: () => string;
   getOpenRouterSelectedModels: () => string[];
@@ -84,10 +85,9 @@ export const getDefaultModel = (
     Model.DEEPSEEK_CHAT, // deepseek
     Model.MISTRAL_LARGE_LATEST, // mistral
   ];
-  console.log(availableModels);
+
   for (const id of modelIdsByPriority) {
     const found = availableModels.find((m) => m.id === id);
-    console.log("found", found);
     if (found) return found;
   }
   return availableModels[0];
