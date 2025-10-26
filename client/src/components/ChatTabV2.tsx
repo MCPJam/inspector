@@ -6,7 +6,7 @@ import {
 } from "ai";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { ModelDefinition, SUPPORTED_MODELS } from "@/shared/types";
+import { ModelDefinition } from "@/shared/types";
 import {
   ProviderTokens,
   useAiProviderKeys,
@@ -18,7 +18,10 @@ import {
   detectOllamaModels,
   detectOllamaToolCapableModels,
 } from "@/lib/ollama-utils";
-import { buildAvailableModels } from "@/components/chat-v2/model-helpers";
+import {
+  buildAvailableModels,
+  getDefaultModel,
+} from "@/components/chat-v2/model-helpers";
 
 export function ChatTabV2() {
   const {
@@ -29,16 +32,56 @@ export function ChatTabV2() {
     getOpenRouterSelectedModels,
     getOllamaBaseUrl,
   } = useAiProviderKeys();
+
   const [input, setInput] = useState("");
+  const [ollamaModels, setOllamaModels] = useState<ModelDefinition[]>([]);
+  const [isOllamaRunning, setIsOllamaRunning] = useState(false);
+
+  const availableModels = useMemo(() => {
+    return buildAvailableModels({
+      hasToken,
+      getLiteLLMBaseUrl,
+      getLiteLLMModelAlias,
+      getOpenRouterSelectedModels,
+      isOllamaRunning,
+      ollamaModels,
+    });
+  }, [
+    hasToken,
+    getLiteLLMBaseUrl,
+    getLiteLLMModelAlias,
+    getOpenRouterSelectedModels,
+    isOllamaRunning,
+    ollamaModels,
+  ]);
+
   const [selectedModel, setSelectedModel] = useState<ModelDefinition>(
-    SUPPORTED_MODELS[0],
+    getDefaultModel(availableModels),
   );
   const [elicitation, setElicitation] = useState<DialogElicitation | null>(
     null,
   );
   const [elicitationLoading, setElicitationLoading] = useState(false);
-  const [ollamaModels, setOllamaModels] = useState<ModelDefinition[]>([]);
-  const [isOllamaRunning, setIsOllamaRunning] = useState(false);
+
+  const transport = useMemo(() => {
+    const apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
+    return new DefaultChatTransport({
+      api: "/api/mcp/chat-v2",
+      body: {
+        model: selectedModel,
+        apiKey: apiKey,
+        temperature: 0.7,
+      },
+    });
+  }, [selectedModel, getToken]);
+
+  const { messages, sendMessage, status } = useChat({
+    id: `chat-${selectedModel.provider}-${selectedModel.id}`,
+    transport,
+    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+  });
+
+  const isLoading = status === "streaming";
 
   // Detect Ollama availability & tool-capable models
   useEffect(() => {
@@ -69,31 +112,10 @@ export function ChatTabV2() {
     return () => clearInterval(interval);
   }, [getOllamaBaseUrl]);
 
-  const availableModels = useMemo(() => {
-    return buildAvailableModels({
-      hasToken,
-      getLiteLLMBaseUrl,
-      getLiteLLMModelAlias,
-      getOpenRouterSelectedModels,
-      isOllamaRunning,
-      ollamaModels,
-    });
-  }, [
-    hasToken,
-    getLiteLLMBaseUrl,
-    getLiteLLMModelAlias,
-    getOpenRouterSelectedModels,
-    isOllamaRunning,
-    ollamaModels,
-  ]);
-
   useEffect(() => {
-    if (availableModels.length > 0) {
-      setSelectedModel(availableModels[0]);
-    }
+    setSelectedModel(getDefaultModel(availableModels));
   }, [availableModels]);
 
-  // Subscribe to elicitation SSE events (moved server endpoints under /api/mcp/elicitation)
   useEffect(() => {
     const es = new EventSource("/api/mcp/elicitation/stream");
     es.onmessage = (ev) => {
@@ -118,28 +140,6 @@ export function ChatTabV2() {
     };
     return () => es.close();
   }, [elicitation]);
-
-  const transport = useMemo(() => {
-    const apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
-    return new DefaultChatTransport({
-      api: "/api/mcp/chat-v2",
-      body: {
-        model: selectedModel,
-        apiKey: apiKey,
-        temperature: 0.7,
-      },
-    });
-  }, [selectedModel, getToken]);
-
-  const { messages, sendMessage, status } = useChat({
-    id: `chat-${selectedModel.provider}-${selectedModel.id}`, // Force re-initialization when model changes
-    transport,
-    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
-  });
-
-  console.log("[ChatTabV2] messages", messages);
-
-  const isLoading = status === "streaming";
 
   const handleElicitationResponse = async (
     action: "accept" | "decline" | "cancel",

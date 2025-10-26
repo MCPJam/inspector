@@ -3,6 +3,7 @@ import {
   type ModelDefinition,
   type ModelProvider,
   isMCPJamProvidedModel,
+  Model,
 } from "@/shared/types";
 
 export function parseModelAliases(
@@ -72,3 +73,22 @@ export function buildAvailableModels(params: {
   if (openRouterModels.length > 0) models = models.concat(openRouterModels);
   return models;
 }
+
+export const getDefaultModel = (
+  availableModels: ModelDefinition[],
+): ModelDefinition => {
+  const modelIdsByPriority: Array<Model> = [
+    Model.CLAUDE_3_7_SONNET_LATEST, // anthropic
+    Model.GPT_4_1, // openai
+    Model.GEMINI_2_5_PRO, // google
+    Model.DEEPSEEK_CHAT, // deepseek
+    Model.MISTRAL_LARGE_LATEST, // mistral
+  ];
+  console.log(availableModels);
+  for (const id of modelIdsByPriority) {
+    const found = availableModels.find((m) => m.id === id);
+    console.log("found", found);
+    if (found) return found;
+  }
+  return availableModels[0];
+};
