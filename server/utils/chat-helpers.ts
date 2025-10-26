@@ -18,7 +18,6 @@ export const createLlmModel = (
       `Invalid model definition: ${JSON.stringify(modelDefinition)}`,
     );
   }
-
   switch (modelDefinition.provider) {
     case "anthropic":
       return createAnthropic({ apiKey })(modelDefinition.id);

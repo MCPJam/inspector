@@ -14,9 +14,21 @@ import {
 import { ModelSelector } from "@/components/chat/model-selector";
 import { ElicitationDialog } from "@/components/ElicitationDialog";
 import type { DialogElicitation } from "@/components/ToolsTab";
+import {
+  detectOllamaModels,
+  detectOllamaToolCapableModels,
+} from "@/lib/ollama-utils";
+import { buildAvailableModels } from "@/components/chat-v2/model-helpers";
 
 export function ChatTabV2() {
-  const { hasToken, getToken } = useAiProviderKeys();
+  const {
+    hasToken,
+    getToken,
+    getLiteLLMBaseUrl,
+    getLiteLLMModelAlias,
+    getOpenRouterSelectedModels,
+    getOllamaBaseUrl,
+  } = useAiProviderKeys();
   const [input, setInput] = useState("");
   const [selectedModel, setSelectedModel] = useState<ModelDefinition>(
     SUPPORTED_MODELS[0],
@@ -25,15 +37,55 @@ export function ChatTabV2() {
     null,
   );
   const [elicitationLoading, setElicitationLoading] = useState(false);
+  const [ollamaModels, setOllamaModels] = useState<ModelDefinition[]>([]);
+  const [isOllamaRunning, setIsOllamaRunning] = useState(false);
+
+  // Detect Ollama availability & tool-capable models
+  useEffect(() => {
+    const checkOllama = async () => {
+      const { isRunning, availableModels } =
+        await detectOllamaModels(getOllamaBaseUrl());
+      setIsOllamaRunning(isRunning);
+
+      const toolCapable = isRunning
+        ? await detectOllamaToolCapableModels(getOllamaBaseUrl())
+        : [];
+      const toolCapableSet = new Set(toolCapable);
+      const ollamaDefs: ModelDefinition[] = availableModels.map(
+        (modelName) => ({
+          id: modelName,
+          name: modelName,
+          provider: "ollama" as const,
+          disabled: !toolCapableSet.has(modelName),
+          disabledReason: toolCapableSet.has(modelName)
+            ? undefined
+            : "Model does not support tool calling",
+        }),
+      );
+      setOllamaModels(ollamaDefs);
+    };
+    checkOllama();
+    const interval = setInterval(checkOllama, 30000);
+    return () => clearInterval(interval);
+  }, [getOllamaBaseUrl]);
 
   const availableModels = useMemo(() => {
-    return SUPPORTED_MODELS.filter((model) => {
-      if (hasToken(model.provider as keyof ProviderTokens)) {
-        return true;
-      }
-      return false;
+    return buildAvailableModels({
+      hasToken,
+      getLiteLLMBaseUrl,
+      getLiteLLMModelAlias,
+      getOpenRouterSelectedModels,
+      isOllamaRunning,
+      ollamaModels,
     });
-  }, [hasToken]);
+  }, [
+    hasToken,
+    getLiteLLMBaseUrl,
+    getLiteLLMModelAlias,
+    getOpenRouterSelectedModels,
+    isOllamaRunning,
+    ollamaModels,
+  ]);
 
   useEffect(() => {
     if (availableModels.length > 0) {
@@ -69,32 +121,21 @@ export function ChatTabV2() {
 
   const transport = useMemo(() => {
     const apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
-    console.log("[ChatTabV2] apiKey", apiKey);
     return new DefaultChatTransport({
       api: "/api/mcp/chat-v2",
       body: {
-        modelId: selectedModel.id,
+        model: selectedModel,
         apiKey: apiKey,
         temperature: 0.7,
       },
     });
   }, [selectedModel, getToken]);
 
-  const { messages, sendMessage, status, addToolResult } = useChat({
-    id: `chat-${selectedModel.id}`, // Force re-initialization when model changes
+  const { messages, sendMessage, status } = useChat({
+    id: `chat-${selectedModel.provider}-${selectedModel.id}`, // Force re-initialization when model changes
     transport,
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
-    async onToolCall({ toolCall }) {
-      if (toolCall.dynamic) return;
-      // Example placeholder for client tools if ever added:
-      // if (toolCall.toolName === 'someClientTool') {
-      //   addToolResult({ tool: 'someClientTool', toolCallId: toolCall.toolCallId, output: { ok: true } });
-      // }
-    },
   });
-
-  // Keep addToolResult available for future client-side tools
-  void addToolResult;
 
   console.log("[ChatTabV2] messages", messages);
 
