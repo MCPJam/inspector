@@ -224,7 +224,7 @@ export function OpenAIComponentRenderer({
         <iframe
           ref={iframeRef}
           src={widgetUrl}
-          className="w-full border rounded-md bg-white dark:bg-gray-900"
+          className="w-full border rounded-md bg-background"
           style={{
             minHeight: "400px",
             height: "600px",
