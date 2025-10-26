@@ -109,7 +109,10 @@ export function useAiProviderKeys(): useAiProviderKeysReturn {
       const value = tokens[provider];
       if (provider === "openrouter") {
         // For OpenRouter, check both API key and selected models
-        return Boolean(tokens.openrouter?.trim()) && tokens.openRouterSelectedModels.length > 0;
+        return (
+          Boolean(tokens.openrouter?.trim()) &&
+          tokens.openRouterSelectedModels.length > 0
+        );
       }
       if (Array.isArray(value)) {
         return value.length > 0;
@@ -164,7 +167,9 @@ export function useAiProviderKeys(): useAiProviderKeysReturn {
   }, []);
 
   const getOpenRouterSelectedModels = useCallback(() => {
-    return tokens.openRouterSelectedModels || defaultTokens.openRouterSelectedModels;
+    return (
+      tokens.openRouterSelectedModels || defaultTokens.openRouterSelectedModels
+    );
   }, [tokens.openRouterSelectedModels]);
 
   const setOpenRouterSelectedModels = useCallback((models: string[]) => {

@@ -101,7 +101,9 @@ export function SettingsTab() {
     if (provider) {
       setSelectedProvider(provider);
       const tokenValue = tokens[providerId as keyof typeof tokens];
-      setEditingValue(Array.isArray(tokenValue) ? tokenValue.join(", ") : (tokenValue || ""));
+      setEditingValue(
+        Array.isArray(tokenValue) ? tokenValue.join(", ") : tokenValue || "",
+      );
       setDialogOpen(true);
     }
   };

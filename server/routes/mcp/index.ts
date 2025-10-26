@@ -5,11 +5,13 @@ import tools from "./tools";
 import resources from "./resources";
 import prompts from "./prompts";
 import chat from "./chat";
+import chatV2 from "./chat-v2";
 import oauth from "./oauth";
 import exporter from "./export";
 import interceptor from "./interceptor";
 import evals from "./evals";
 import { adapterHttp, managerHttp } from "./http-adapters";
+import elicitation from "./elicitation";
 
 const mcp = new Hono();
 
@@ -24,6 +26,12 @@ mcp.get("/health", (c) => {
 
 // Chat endpoint - REAL IMPLEMENTATION
 mcp.route("/chat", chat);
+
+// Chat v2 endpoint
+mcp.route("/chat-v2", chatV2);
+
+// Elicitation endpoints
+mcp.route("/elicitation", elicitation);
 
 // Connect endpoint - REAL IMPLEMENTATION
 mcp.route("/connect", connect);
