@@ -437,7 +437,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   }
 
   return (
-    <div className="h-[calc(100vh-120px)] flex flex-col">
+    <div className="h-full flex flex-col">
       <ResizablePanelGroup direction="vertical" className="flex-1">
         <ResizablePanel defaultSize={70} minSize={30}>
           <ResizablePanelGroup direction="horizontal" className="h-full">

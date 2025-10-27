@@ -39,6 +39,16 @@ export function OpenAIComponentRenderer({
   // Storage key for widget state
   const widgetStateKey = `openai-widget-state:${toolCall.name}:${toolCall.id}`;
 
+  const setIframeDocumentTheme = (iframe) => {
+    try {
+      iframe.document.documentElement.classList.toggle("dark", themeMode === "dark");
+    } catch (err) {
+      console.debug("Unable to access iframe document (likely cross-origin):", err);
+    }
+  }
+
+  setIframeDocumentTheme(iframeRef.current?.contentWindow);
+
   // Store widget data server-side
   useEffect(() => {
     if (componentUrl.startsWith("ui://") && serverId) {
@@ -226,11 +236,7 @@ export function OpenAIComponentRenderer({
     );
 
     // Handle sending theme updates to the iframe document
-    try {
-      iframeWindow.document.documentElement.classList.toggle("dark", themeMode === "dark");
-    } catch (err) {
-      console.debug("Unable to access iframe document (likely cross-origin):", err);
-    }
+    setIframeDocumentTheme(iframeWindow);
   }, [themeMode, isReady]);
 
   return (
