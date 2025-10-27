@@ -5,14 +5,11 @@ import {
   lastAssistantMessageIsCompleteWithToolCalls,
 } from "ai";
 import { useAuth } from "@workos-inc/authkit-react";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { ModelDefinition } from "@/shared/types";
 import {
   ProviderTokens,
   useAiProviderKeys,
 } from "@/hooks/use-ai-provider-keys";
-import { ModelSelector } from "@/components/chat/model-selector";
 import { JsonRpcLoggerView } from "./logging/json-rpc-logger-view";
 import {
   ResizablePanelGroup,
@@ -30,6 +27,7 @@ import {
   getDefaultModel,
 } from "@/components/chat-v2/model-helpers";
 import { isMCPJamProvidedModel } from "@/shared/types";
+import { ChatInput } from "@/components/chat-v2/chat-input";
 
 export function ChatTabV2() {
   const { getAccessToken } = useAuth();
@@ -68,7 +66,7 @@ export function ChatTabV2() {
   ]);
 
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
-  const effectiveModel = useMemo<ModelDefinition>(() => {
+  const selectedModel = useMemo<ModelDefinition>(() => {
     const fallback = getDefaultModel(availableModels);
     if (!selectedModelId) return fallback;
     const found = availableModels.find((m) => String(m.id) === selectedModelId);
@@ -81,17 +79,17 @@ export function ChatTabV2() {
   const [elicitationLoading, setElicitationLoading] = useState(false);
 
   const transport = useMemo(() => {
-    const apiKey = getToken(effectiveModel.provider as keyof ProviderTokens);
+    const apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
     return new DefaultChatTransport({
       api: "/api/mcp/chat-v2",
       body: {
-        model: effectiveModel,
+        model: selectedModel,
         apiKey: apiKey,
         temperature: 0.7,
       },
       headers: authHeaders,
     });
-  }, [effectiveModel, getToken, authHeaders]);
+  }, [selectedModel, getToken, authHeaders]);
 
   useEffect(() => {
     let active = true;
@@ -115,13 +113,13 @@ export function ChatTabV2() {
   }, [getAccessToken]);
 
   const isMcpJamModel = useMemo(() => {
-    return effectiveModel?.id
-      ? isMCPJamProvidedModel(String(effectiveModel.id))
+    return selectedModel?.id
+      ? isMCPJamProvidedModel(String(selectedModel.id))
       : false;
-  }, [effectiveModel]);
+  }, [selectedModel]);
 
-  const { messages, sendMessage, status } = useChat({
-    id: `chat-${effectiveModel.provider}-${effectiveModel.id}`,
+  const { messages, sendMessage, stop, status } = useChat({
+    id: `chat-${selectedModel.provider}-${selectedModel.id}`,
     transport: transport!,
     // Disable client auto-send for MCPJam-provided models; server handles tool loop
     sendAutomaticallyWhen: isMcpJamModel
@@ -327,46 +325,20 @@ export function ChatTabV2() {
 
             <div className="border-t border-border/50 bg-background/80 backdrop-blur-sm flex-shrink-0">
               <div className="max-w-4xl mx-auto p-4">
-                <form onSubmit={onSubmit} className="">
-                  <Textarea
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    placeholder="Ask something…"
-                    rows={4}
-                    disabled={status !== "ready"}
-                    className="mb-2"
-                  />
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-muted-foreground">
-                        Model:
-                      </span>
-                      <ModelSelector
-                        currentModel={effectiveModel}
-                        availableModels={availableModels}
-                        onModelChange={(m) => setSelectedModelId(String(m.id))}
-                        isLoading={isLoading}
-                      />
-                    </div>
-                    <div className="flex justify-end gap-2">
-                      {isLoading && (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => {}}
-                        >
-                          Stop
-                        </Button>
-                      )}
-                      <Button
-                        type="submit"
-                        disabled={!input.trim() || status !== "ready"}
-                      >
-                        Send
-                      </Button>
-                    </div>
-                  </div>
-                </form>
+                <ChatInput
+                  value={input}
+                  onChange={setInput}
+                  onSubmit={onSubmit}
+                  stop={stop}
+                  disabled={status !== "ready"}
+                  isLoading={isLoading}
+                  placeholder="Ask something…"
+                  currentModel={selectedModel}
+                  availableModels={availableModels}
+                  onModelChange={(model) =>
+                    setSelectedModelId(String(model.id))
+                  }
+                />
               </div>
             </div>
 
