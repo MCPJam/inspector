@@ -9,18 +9,9 @@ export default function OAuthDebugCallback() {
   const callbackParams = parseOAuthCallbackParams(window.location.search);
   const [codeSent, setCodeSent] = useState(false);
 
-  // Debug: Log the URL and extracted code
-  useEffect(() => {
-    console.log("[Callback] Full URL:", window.location.href);
-    console.log("[Callback] Search params:", window.location.search);
-    console.log("[Callback] Parsed params:", callbackParams);
-  }, []);
-
   useEffect(() => {
     // If successful and we have a code, send it to the opener window
     if (callbackParams.successful && callbackParams.code) {
-      console.log("[Callback] ✅ Code extracted:", callbackParams.code);
-
       if (window.opener && !window.opener.closed) {
         try {
           const message = {
@@ -28,7 +19,6 @@ export default function OAuthDebugCallback() {
             code: callbackParams.code,
             state: (new URLSearchParams(window.location.search)).get("state"),
           };
-          console.log("[Callback] 📤 Sending message:", message);
           window.opener.postMessage(message, window.location.origin);
           setCodeSent(true);
 
@@ -37,10 +27,8 @@ export default function OAuthDebugCallback() {
             window.close();
           }, 3000);
         } catch (error) {
-          console.error("[Callback] ❌ Failed to send code:", error);
+          // Failed to send code
         }
-      } else {
-        console.warn("[Callback] ⚠️ No opener window available");
       }
     }
   }, [callbackParams]);

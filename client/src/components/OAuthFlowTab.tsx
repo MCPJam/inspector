@@ -115,7 +115,6 @@ export const OAuthFlowTab = ({
   );
 
   const resetOAuthFlow = useCallback(() => {
-    console.log("[OAuth Flow] 🔄 Resetting OAuth flow state");
     // Reset the flow state - clear everything
     updateOAuthFlowState({
       ...EMPTY_OAUTH_FLOW_STATE_V2,
@@ -183,22 +182,13 @@ export const OAuthFlowTab = ({
   // Listen for OAuth callback messages from the popup window
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
-      console.log("[OAuth Flow] 📨 Message received:", {
-        origin: event.origin,
-        type: event.data?.type,
-        hasCode: !!event.data?.code,
-      });
-
       // Verify origin matches our app
       if (event.origin !== window.location.origin) {
-        console.warn("[OAuth Flow] ⚠️ Origin mismatch, ignoring");
         return;
       }
 
       // Check if this is an OAuth callback message
       if (event.data?.type === "OAUTH_CALLBACK" && event.data?.code) {
-        console.log("[OAuth Flow] ✅ Authorization code received:", event.data.code);
-
         // Update state with the authorization code
         updateOAuthFlowState({
           authorizationCode: event.data.code,

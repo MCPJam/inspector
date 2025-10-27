@@ -227,7 +227,6 @@ export const createDebugOAuthStateMachine = (
     // Proceed to next step in the flow (matches SDK's actual approach)
     proceedToNextStep: async () => {
       const state = getCurrentState();
-      console.log("[Debug OAuth] Proceeding to next step from:", state.currentStep);
 
       updateState({ isInitiatingAuth: true });
 
@@ -235,8 +234,6 @@ export const createDebugOAuthStateMachine = (
         switch (state.currentStep) {
           case "idle":
             // Step 1: Make initial MCP request without token
-            console.log("[Debug OAuth] Making initial request to MCP server without token");
-
             const initialRequest = {
               method: "POST",
               url: serverUrl,
@@ -285,8 +282,6 @@ export const createDebugOAuthStateMachine = (
               throw new Error("No server URL available");
             }
 
-            console.log("[Debug OAuth] Requesting MCP server at:", state.serverUrl);
-
             try {
               // Use backend proxy to bypass CORS and capture all headers
               const response = await proxyFetch(state.serverUrl, {
@@ -309,8 +304,6 @@ export const createDebugOAuthStateMachine = (
               if (response.status === 401) {
                 // Expected 401 response with WWW-Authenticate header
                 const wwwAuthenticateHeader = response.headers["www-authenticate"];
-                console.log("[Debug OAuth] Received 401 Unauthorized");
-                console.log("[Debug OAuth] WWW-Authenticate header:", wwwAuthenticateHeader);
 
                 const responseData = {
                   status: response.status,
@@ -342,8 +335,6 @@ export const createDebugOAuthStateMachine = (
 
           case "received_401_unauthorized":
             // Step 3: Extract resource metadata URL and prepare request
-            console.log("[Debug OAuth] Extracting resource metadata URL from WWW-Authenticate header");
-
             let extractedResourceMetadataUrl: string | undefined;
 
             if (state.wwwAuthenticateHeader) {
@@ -352,21 +343,17 @@ export const createDebugOAuthStateMachine = (
               const resourceMetadataMatch = state.wwwAuthenticateHeader.match(/resource_metadata="([^"]+)"/);
               if (resourceMetadataMatch) {
                 extractedResourceMetadataUrl = resourceMetadataMatch[1];
-                console.log("[Debug OAuth] Extracted resource metadata URL:", extractedResourceMetadataUrl);
               }
             }
 
             // Fallback to building the URL if not found in header
             if (!extractedResourceMetadataUrl && state.serverUrl) {
               extractedResourceMetadataUrl = buildResourceMetadataUrl(state.serverUrl);
-              console.log("[Debug OAuth] Using fallback resource metadata URL:", extractedResourceMetadataUrl);
             }
 
             if (!extractedResourceMetadataUrl) {
               throw new Error("Could not determine resource metadata URL");
             }
-
-            console.log("[Debug OAuth] Proceeding to request resource metadata from:", extractedResourceMetadataUrl);
 
             const resourceMetadataRequest = {
               method: "GET",
@@ -402,8 +389,6 @@ export const createDebugOAuthStateMachine = (
               throw new Error("No resource metadata URL available");
             }
 
-            console.log("[Debug OAuth] Fetching resource metadata from:", state.resourceMetadataUrl);
-
             try {
               // Use backend proxy to bypass CORS
               const response = await proxyFetch(state.resourceMetadataUrl, {
@@ -437,11 +422,9 @@ export const createDebugOAuthStateMachine = (
               }
 
               const resourceMetadata = response.body;
-              console.log("[Debug OAuth] Received resource metadata:", resourceMetadata);
 
               // Extract authorization server URL (use first one if multiple, fallback to server URL)
               const authorizationServerUrl = resourceMetadata.authorization_servers?.[0] || serverUrl;
-              console.log("[Debug OAuth] Authorization server URL:", authorizationServerUrl);
 
               const successResponseData = {
                 status: response.status,
@@ -476,7 +459,6 @@ export const createDebugOAuthStateMachine = (
             }
 
             const authServerUrls = buildAuthServerMetadataUrls(state.authorizationServerUrl);
-            console.log("[Debug OAuth] Trying authorization server metadata URLs:", authServerUrls);
 
             const authServerRequest = {
               method: "GET",
@@ -521,7 +503,6 @@ export const createDebugOAuthStateMachine = (
 
             for (const url of urlsToTry) {
               try {
-                console.log("[Debug OAuth] Trying:", url);
                 const requestHeaders = {
                   "Accept": "application/json",
                 };
@@ -552,8 +533,6 @@ export const createDebugOAuthStateMachine = (
 
                 if (response.ok) {
                   authServerMetadata = response.body;
-                  console.log("[Debug OAuth] Found authorization server metadata at:", url);
-                  console.log("[Debug OAuth] Metadata:", authServerMetadata);
                   successUrl = url;
                   finalRequestHeaders = requestHeaders;
                   finalResponseHeaders = response.headers;
@@ -568,7 +547,6 @@ export const createDebugOAuthStateMachine = (
                   lastError = new Error(`HTTP ${response.status} from ${url}`);
                 }
               } catch (error) {
-                console.warn("[Debug OAuth] Failed to fetch from:", url, error);
                 lastError = error;
                 continue;
               }
@@ -607,8 +585,6 @@ export const createDebugOAuthStateMachine = (
             }
 
             if (state.authorizationServerMetadata.registration_endpoint) {
-              console.log("[Debug OAuth] Registration endpoint available, proceeding to client registration");
-
               // Prepare client metadata with scopes if available
               const scopesSupported =
                 state.resourceMetadata?.scopes_supported ||
@@ -656,9 +632,6 @@ export const createDebugOAuthStateMachine = (
               setTimeout(() => machine.proceedToNextStep(), 50);
               return;
             } else {
-              console.log("[Debug OAuth] No registration endpoint, skipping to PKCE generation");
-              console.log("[Debug OAuth] Note: In production, you would need to manually register and provide a client_id");
-
               // Skip to PKCE generation with a mock client ID
               updateState({
                 currentStep: "generate_pkce_parameters",
@@ -677,9 +650,6 @@ export const createDebugOAuthStateMachine = (
             if (!state.lastRequest?.body) {
               throw new Error("No client metadata in request");
             }
-
-            console.log("[Debug OAuth] Registering client with authorization server");
-            console.log("[Debug OAuth] Registration endpoint:", state.authorizationServerMetadata.registration_endpoint);
 
             try {
               // Make actual POST request to registration endpoint via backend proxy
@@ -710,7 +680,6 @@ export const createDebugOAuthStateMachine = (
 
               if (!response.ok) {
                 // Registration failed - could be server doesn't support DCR or request was invalid
-                console.warn("[Debug OAuth] Dynamic Client Registration failed:", response.status, response.body);
 
                 // Update state with error but continue with fallback
                 updateState({
@@ -721,7 +690,6 @@ export const createDebugOAuthStateMachine = (
 
                 // Fall back to mock client ID (simulating preregistered client)
                 const fallbackClientId = "preregistered-client-id";
-                console.log("[Debug OAuth] Using fallback client ID:", fallbackClientId);
 
                 updateState({
                   currentStep: "received_client_credentials",
@@ -732,7 +700,6 @@ export const createDebugOAuthStateMachine = (
               } else {
                 // Registration successful
                 const clientInfo = response.body;
-                console.log("[Debug OAuth] Client registration successful:", clientInfo);
 
                 updateState({
                   currentStep: "received_client_credentials",
@@ -745,8 +712,6 @@ export const createDebugOAuthStateMachine = (
                 });
               }
             } catch (error) {
-              console.error("[Debug OAuth] Client registration request failed:", error);
-
               // Capture the error but continue with fallback
               const errorResponse = {
                 status: 0,
@@ -768,7 +733,6 @@ export const createDebugOAuthStateMachine = (
 
               // Fall back to mock client ID
               const fallbackClientId = "preregistered-client-id";
-              console.log("[Debug OAuth] Using fallback client ID due to error:", fallbackClientId);
 
               updateState({
                 currentStep: "received_client_credentials",
@@ -781,7 +745,6 @@ export const createDebugOAuthStateMachine = (
 
           case "received_client_credentials":
             // Step 7: Generate PKCE parameters
-            console.log("[Debug OAuth] Generating PKCE parameters");
 
             // Generate PKCE parameters (simplified for demo)
             const codeVerifier = generateRandomString(43);
@@ -802,8 +765,6 @@ export const createDebugOAuthStateMachine = (
             if (!state.authorizationServerMetadata?.authorization_endpoint || !state.clientId) {
               throw new Error("Missing authorization endpoint or client ID");
             }
-
-            console.log("[Debug OAuth] Building authorization URL");
 
             const authUrl = new URL(state.authorizationServerMetadata.authorization_endpoint);
             authUrl.searchParams.set("response_type", "code");
@@ -828,9 +789,6 @@ export const createDebugOAuthStateMachine = (
 
           case "authorization_request":
             // Step 9: Authorization URL is ready - user should open it in browser
-            console.log("[Debug OAuth] Authorization request ready");
-            console.log("[Debug OAuth] User should open this URL in browser:", state.authorizationUrl);
-            console.log("[Debug OAuth] After authorization, user will receive a code to paste");
 
             // Move to the next step where user can enter the authorization code
             updateState({
@@ -841,8 +799,6 @@ export const createDebugOAuthStateMachine = (
 
           case "received_authorization_code":
             // Step 10: Validate authorization code and prepare for token exchange
-            console.log("[Debug OAuth] Validating authorization code");
-            console.log("[Debug OAuth] 📋 Current code in state:", state.authorizationCode);
 
             if (!state.authorizationCode || state.authorizationCode.trim() === "") {
               updateState({
@@ -855,8 +811,6 @@ export const createDebugOAuthStateMachine = (
             if (!state.authorizationServerMetadata?.token_endpoint) {
               throw new Error("Missing token endpoint");
             }
-
-            console.log("[Debug OAuth] Authorization code received, preparing token exchange");
 
             // Build the token request body as an object (will be shown in HTTP history)
             const tokenRequestBodyObj: Record<string, string> = {
@@ -916,10 +870,6 @@ export const createDebugOAuthStateMachine = (
               throw new Error("Missing authorization code");
             }
 
-            console.log("[Debug OAuth] Exchanging authorization code for access token");
-            console.log("[Debug OAuth] 🔑 Using authorization_code:", state.authorizationCode);
-            console.log("[Debug OAuth] 🔐 Using code_verifier:", state.codeVerifier?.substring(0, 20) + "...");
-
             if (!state.codeVerifier) {
               throw new Error("PKCE code_verifier is missing - cannot exchange token");
             }
@@ -967,7 +917,6 @@ export const createDebugOAuthStateMachine = (
 
               if (!response.ok) {
                 // Token request failed
-                console.error("[Debug OAuth] Token request failed:", response.status, response.body);
 
                 updateState({
                   lastResponse: tokenResponseData,
@@ -980,8 +929,6 @@ export const createDebugOAuthStateMachine = (
 
               // Token request successful
               const tokens = response.body;
-              console.log("[Debug OAuth] Token exchange successful!");
-              console.log("[Debug OAuth] Access token received (expires in", tokens.expires_in, "seconds)");
 
               updateState({
                 currentStep: "received_access_token",
@@ -995,8 +942,6 @@ export const createDebugOAuthStateMachine = (
                 isInitiatingAuth: false,
               });
             } catch (error) {
-              console.error("[Debug OAuth] Token request error:", error);
-
               // Capture the error
               const errorResponse = {
                 status: 0,
@@ -1024,8 +969,6 @@ export const createDebugOAuthStateMachine = (
             if (!state.serverUrl || !state.accessToken) {
               throw new Error("Missing server URL or access token");
             }
-
-            console.log("[Debug OAuth] Making authenticated MCP request");
 
             const authenticatedRequest = {
               method: "POST",
@@ -1064,8 +1007,6 @@ export const createDebugOAuthStateMachine = (
 
           case "authenticated_mcp_request":
             // Step 13: Complete flow
-            console.log("[Debug OAuth] OAuth flow complete!");
-            console.log("[Debug OAuth] MCP server would process authenticated request");
 
             // Simulate successful response
             const mcpResponseData = {
@@ -1091,17 +1032,14 @@ export const createDebugOAuthStateMachine = (
 
           case "complete":
             // Terminal state
-            console.log("[Debug OAuth] Flow is complete");
             updateState({ isInitiatingAuth: false });
             break;
 
           default:
-            console.warn("[Debug OAuth] Unknown step:", state.currentStep);
             updateState({ isInitiatingAuth: false });
             break;
         }
       } catch (error) {
-        console.error("[Debug OAuth] Error during step transition:", error);
         updateState({
           error: error instanceof Error ? error.message : String(error),
           isInitiatingAuth: false,
@@ -1111,7 +1049,6 @@ export const createDebugOAuthStateMachine = (
 
     // Start the guided flow from the beginning
     startGuidedFlow: async () => {
-      console.log("[Debug OAuth] Starting guided flow");
       updateState({
         currentStep: "idle",
         isInitiatingAuth: false,
@@ -1120,7 +1057,6 @@ export const createDebugOAuthStateMachine = (
 
     // Reset the flow to initial state
     resetFlow: () => {
-      console.log("[Debug OAuth] Resetting flow - clearing all state");
       updateState({
         ...EMPTY_OAUTH_FLOW_STATE_V2,
         lastRequest: undefined,
