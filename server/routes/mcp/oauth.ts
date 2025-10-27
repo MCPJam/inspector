@@ -121,12 +121,12 @@ oauth.get("/metadata", async (c) => {
       return c.json({ error: "Missing url parameter" }, 400);
     }
 
-    // Validate URL format and ensure it's HTTPS
+    // Validate URL format
     let metadataUrl: URL;
     try {
       metadataUrl = new URL(url);
-      if (metadataUrl.protocol !== "https:") {
-        return c.json({ error: "Only HTTPS URLs are allowed" }, 400);
+      if (!["https:", "http:"].includes(metadataUrl.protocol)) {
+        return c.json({ error: "Invalid protocol" }, 400);
       }
     } catch (error) {
       return c.json({ error: "Invalid URL format" }, 400);
