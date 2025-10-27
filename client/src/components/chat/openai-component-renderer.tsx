@@ -227,10 +227,7 @@ export function OpenAIComponentRenderer({
 
     // Handle sending theme updates to the iframe document
     try {
-      const htmlElement = iframeWindow.document.documentElement;
-      if (htmlElement) {
-        htmlElement.classList.toggle("dark", themeMode === "dark");
-      }
+      iframeWindow.document.documentElement.classList.toggle("dark", themeMode === "dark");
     } catch (err) {
       throw Error(`Cannot access iframe: ${err}`);
     }
