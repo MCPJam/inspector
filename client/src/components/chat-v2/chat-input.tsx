@@ -94,8 +94,8 @@ export function ChatInput({
                   <Button
                     type="button"
                     size="icon"
-                    variant="outline"
-                    className="size-[34px] rounded-full border-border/40 bg-muted text-muted-foreground transition-colors hover:border-border/60 hover:bg-muted"
+                    variant="destructive"
+                    className="size-[34px] rounded-full transition-colors bg-red-500 hover:bg-red-600"
                     onClick={() => stop()}
                   >
                     <Square size={16} />
