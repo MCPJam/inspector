@@ -56,7 +56,7 @@ export const OAuthAuthorizationModal = ({
       popupRef.current = window.open(
         authorizationUrl,
         uniqueWindowName,
-        `width=${width},height=${height},left=${left},top=${top},toolbar=no,location=no,status=no,menubar=no,scrollbars=yes,resizable=yes`
+        `width=${width},height=${height},left=${left},top=${top},toolbar=no,location=no,status=no,menubar=no,scrollbars=yes,resizable=yes`,
       );
 
       // Monitor popup closure

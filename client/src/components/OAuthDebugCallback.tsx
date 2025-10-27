@@ -20,7 +20,9 @@ export default function OAuthDebugCallback() {
     if (callbackParams.successful && callbackParams.code) {
       hasAttemptedSendRef.current = true;
       try {
-        const stateParam = new URLSearchParams(window.location.search).get("state");
+        const stateParam = new URLSearchParams(window.location.search).get(
+          "state",
+        );
         const message = {
           type: "OAUTH_CALLBACK",
           code: callbackParams.code,
@@ -60,7 +62,8 @@ export default function OAuthDebugCallback() {
                   </p>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  This window will close automatically. You can now continue in the OAuth Flow tab.
+                  This window will close automatically. You can now continue in
+                  the OAuth Flow tab.
                 </p>
               </div>
             ) : (

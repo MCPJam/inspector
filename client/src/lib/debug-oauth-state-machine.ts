@@ -550,8 +550,9 @@ export const createDebugOAuthStateMachine = (
                 "authorization-servers",
                 "Authorization Servers",
                 {
-                  "Resource": resourceMetadata.resource,
-                  "Authorization Servers": resourceMetadata.authorization_servers,
+                  Resource: resourceMetadata.resource,
+                  "Authorization Servers":
+                    resourceMetadata.authorization_servers,
                 },
               );
 
@@ -727,22 +728,27 @@ export const createDebugOAuthStateMachine = (
 
             // Add info log for Authorization Server Metadata
             const metadata: Record<string, any> = {
-              "Issuer": authServerMetadata.issuer,
-              "Authorization Endpoint": authServerMetadata.authorization_endpoint,
+              Issuer: authServerMetadata.issuer,
+              "Authorization Endpoint":
+                authServerMetadata.authorization_endpoint,
               "Token Endpoint": authServerMetadata.token_endpoint,
             };
 
             if (authServerMetadata.registration_endpoint) {
-              metadata["Registration Endpoint"] = authServerMetadata.registration_endpoint;
+              metadata["Registration Endpoint"] =
+                authServerMetadata.registration_endpoint;
             }
             if (authServerMetadata.code_challenge_methods_supported) {
-              metadata["PKCE Methods"] = authServerMetadata.code_challenge_methods_supported;
+              metadata["PKCE Methods"] =
+                authServerMetadata.code_challenge_methods_supported;
             }
             if (authServerMetadata.grant_types_supported) {
-              metadata["Grant Types"] = authServerMetadata.grant_types_supported;
+              metadata["Grant Types"] =
+                authServerMetadata.grant_types_supported;
             }
             if (authServerMetadata.response_types_supported) {
-              metadata["Response Types"] = authServerMetadata.response_types_supported;
+              metadata["Response Types"] =
+                authServerMetadata.response_types_supported;
             }
             if (authServerMetadata.scopes_supported) {
               metadata["Scopes"] = authServerMetadata.scopes_supported;
@@ -918,7 +924,8 @@ export const createDebugOAuthStateMachine = (
                 };
 
                 if (clientInfo.client_secret) {
-                  dcrInfo["Client Secret"] = clientInfo.client_secret.substring(0, 20) + "...";
+                  dcrInfo["Client Secret"] =
+                    clientInfo.client_secret.substring(0, 20) + "...";
                 }
 
                 const infoLogs = addInfoLog(
@@ -987,9 +994,9 @@ export const createDebugOAuthStateMachine = (
               "pkce-generation",
               "Generate PKCE Parameters",
               {
-                "code_challenge": codeChallenge,
-                "method": "S256",
-                "resource": state.serverUrl || "Unknown",
+                code_challenge: codeChallenge,
+                method: "S256",
+                resource: state.serverUrl || "Unknown",
               },
             );
 
@@ -1208,7 +1215,10 @@ export const createDebugOAuthStateMachine = (
               let tokenInfoLogs = getCurrentState().infoLogs || [];
 
               // Add Authorization Code log if not already added
-              if (state.authorizationCode && !tokenInfoLogs.find(log => log.id === "auth-code")) {
+              if (
+                state.authorizationCode &&
+                !tokenInfoLogs.find((log) => log.id === "auth-code")
+              ) {
                 tokenInfoLogs = addInfoLog(
                   { ...getCurrentState(), infoLogs: tokenInfoLogs },
                   "auth-code",
@@ -1220,7 +1230,10 @@ export const createDebugOAuthStateMachine = (
               }
 
               // Add refresh token log if present and not already added
-              if (tokens.refresh_token && !tokenInfoLogs.find(log => log.id === "refresh-token")) {
+              if (
+                tokens.refresh_token &&
+                !tokenInfoLogs.find((log) => log.id === "refresh-token")
+              ) {
                 tokenInfoLogs = [
                   ...tokenInfoLogs,
                   {
@@ -1235,7 +1248,10 @@ export const createDebugOAuthStateMachine = (
               }
 
               // Decode and add access token log if not already added
-              if (tokens.access_token && !tokenInfoLogs.find(log => log.id === "token")) {
+              if (
+                tokens.access_token &&
+                !tokenInfoLogs.find((log) => log.id === "token")
+              ) {
                 const decoded = decodeJWT(tokens.access_token);
                 if (decoded) {
                   const formatted = { ...decoded };
