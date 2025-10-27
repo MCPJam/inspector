@@ -394,23 +394,6 @@ export const OAuthFlowTab = ({
         {/* Side Panel with Details */}
         <div className="w-96 border-l border-border bg-muted/30 p-4 overflow-auto">
           <div className="space-y-4">
-            {/* Current Step Info */}
-            <div className="rounded-lg border border-border bg-card p-4">
-              <h3 className="text-sm font-semibold mb-3">Current Step</h3>
-              <div className="space-y-2">
-                <div className="font-mono text-xs bg-primary/10 px-2 py-1 rounded">
-                  {oauthFlowState.currentStep}
-                </div>
-                <div className={`text-xs px-2 py-1 rounded ${
-                  oauthFlowState.isInitiatingAuth
-                    ? "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
-                    : "bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300"
-                }`}>
-                  {oauthFlowState.isInitiatingAuth ? "Processing..." : "Ready"}
-                </div>
-              </div>
-            </div>
-
             {/* Authorization URL - Show when ready */}
             {oauthFlowState.currentStep === "authorization_request" && oauthFlowState.authorizationUrl && (
               <div className="rounded-lg border-2 border-blue-500/50 bg-blue-50 dark:bg-blue-950/20 p-4 animate-pulse">
