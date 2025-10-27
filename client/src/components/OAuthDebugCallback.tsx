@@ -19,28 +19,22 @@ export default function OAuthDebugCallback() {
           state: new URLSearchParams(window.location.search).get("state"),
         };
 
-        // Check if we're in an iframe or a popup window
-        const isInIframe = window.self !== window.top;
+        // Check if we're in a popup window
         const isInPopup = window.opener && !window.opener.closed;
 
-        if (isInIframe) {
-          // Send message to parent frame
-          window.parent.postMessage(message, window.location.origin);
-          setCodeSent(true);
-          console.log("[OAuth Callback] Sent code to parent frame (iframe)");
-        } else if (isInPopup) {
+        if (isInPopup) {
           // Send message to opener window
           window.opener.postMessage(message, window.location.origin);
           setCodeSent(true);
           console.log("[OAuth Callback] Sent code to opener window (popup)");
 
-          // Auto-close popup after 3 seconds
+          // Auto-close popup immediately (small delay to ensure message is sent)
           setTimeout(() => {
             window.close();
-          }, 3000);
+          }, 100);
         } else {
           console.warn(
-            "[OAuth Callback] Not in iframe or popup - code not sent",
+            "[OAuth Callback] Not in popup - code not sent",
           );
         }
       } catch (error) {
@@ -48,9 +42,6 @@ export default function OAuthDebugCallback() {
       }
     }
   }, [callbackParams]);
-
-  // Check if we're in an iframe
-  const isInIframe = window.self !== window.top;
 
   return (
     <div className="flex items-center justify-center min-h-[100vh] p-4">
@@ -66,9 +57,7 @@ export default function OAuthDebugCallback() {
                   </p>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  {isInIframe
-                    ? "The authorization modal will close automatically. You can now continue in the OAuth Flow tab."
-                    : "This window will close automatically. You can now continue in the OAuth Flow tab."}
+                  This window will close automatically. You can now continue in the OAuth Flow tab.
                 </p>
               </div>
             ) : (
