@@ -66,12 +66,17 @@ const ActorNode = memo((props: NodeProps<Node<ActorNodeData>>) => {
 
   return (
     <div className="flex flex-col items-center relative" style={{ width: 140 }}>
-      {/* Actor label at top */}
+      {/* Actor label at top - fixed height for consistent alignment */}
       <div
         className={cn(
-          "px-4 py-2 rounded-md font-semibold text-xs border-2 bg-card shadow-sm z-10 mb-2"
+          "px-4 py-2 rounded-md font-semibold text-xs border-2 bg-card shadow-sm z-10 mb-2 flex items-center justify-center text-center"
         )}
-        style={{ borderColor: data.color }}
+        style={{
+          borderColor: data.color,
+          height: '52px',
+          minHeight: '52px',
+          width: '130px',
+        }}
       >
         {data.label}
       </div>
@@ -146,12 +151,17 @@ const ActorNode = memo((props: NodeProps<Node<ActorNodeData>>) => {
         })}
       </div>
 
-      {/* Actor label at bottom */}
+      {/* Actor label at bottom - fixed height for consistent alignment */}
       <div
         className={cn(
-          "px-4 py-2 rounded-md font-semibold text-xs border-2 bg-card shadow-sm z-10 mt-2"
+          "px-4 py-2 rounded-md font-semibold text-xs border-2 bg-card shadow-sm z-10 mt-2 flex items-center justify-center text-center"
         )}
-        style={{ borderColor: data.color }}
+        style={{
+          borderColor: data.color,
+          height: '52px',
+          minHeight: '52px',
+          width: '130px',
+        }}
       >
         {data.label}
       </div>
