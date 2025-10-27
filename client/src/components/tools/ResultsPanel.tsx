@@ -367,7 +367,7 @@ export function ResultsPanel({
                       backgroundColor: "hsl(var(--background))",
                       padding: "16px",
                       borderRadius: "8px",
-                      border: "1px solid hsl(var(--border))"
+                      border: "1px solid hsl(var(--border))",
                     }}
                   />
                 </div>
