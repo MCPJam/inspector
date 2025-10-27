@@ -103,10 +103,11 @@ const ActorNode = memo((props: NodeProps<Node<ActorNodeData>>) => {
               >
                 {segment.handleId && (
                   <>
+                    {/* Right side handles - both source and target for bidirectional flow */}
                     <Handle
                       type="source"
                       position={Position.Right}
-                      id={`${segment.handleId}-right`}
+                      id={`${segment.handleId}-right-source`}
                       style={{
                         right: -4,
                         top: "50%",
@@ -118,8 +119,35 @@ const ActorNode = memo((props: NodeProps<Node<ActorNodeData>>) => {
                     />
                     <Handle
                       type="target"
+                      position={Position.Right}
+                      id={`${segment.handleId}-right-target`}
+                      style={{
+                        right: -4,
+                        top: "50%",
+                        background: data.color,
+                        width: 8,
+                        height: 8,
+                        border: "2px solid white",
+                      }}
+                    />
+                    {/* Left side handles - both source and target for bidirectional flow */}
+                    <Handle
+                      type="source"
                       position={Position.Left}
-                      id={`${segment.handleId}-left`}
+                      id={`${segment.handleId}-left-source`}
+                      style={{
+                        left: -4,
+                        top: "50%",
+                        background: data.color,
+                        width: 8,
+                        height: 8,
+                        border: "2px solid white",
+                      }}
+                    />
+                    <Handle
+                      type="target"
+                      position={Position.Left}
+                      id={`${segment.handleId}-left-target`}
                       style={{
                         left: -4,
                         top: "50%",
@@ -173,7 +201,7 @@ ActorNode.displayName = "ActorNode";
 
 // Custom Edge with Label
 const CustomActionEdge = memo((props: EdgeProps<Edge<ActionEdgeData>>) => {
-  const { sourceX, sourceY, targetX, targetY, data, style } = props;
+  const { sourceX, sourceY, targetX, targetY, data, style, markerEnd } = props;
 
   if (!data) return null;
 
@@ -188,7 +216,7 @@ const CustomActionEdge = memo((props: EdgeProps<Edge<ActionEdgeData>>) => {
 
   return (
     <>
-      <BaseEdge path={`M ${sourceX},${sourceY} L ${targetX},${targetY}`} style={style} />
+      <BaseEdge path={`M ${sourceX},${sourceY} L ${targetX},${targetY}`} style={style} markerEnd={markerEnd} />
       <EdgeLabelRenderer>
         <div
           style={{
@@ -639,13 +667,22 @@ export const OAuthSequenceDiagram = memo(({ flowState }: OAuthSequenceDiagramPro
       const status = getActionStatus(action.id, currentStep);
       const isComplete = status === "complete";
       const isCurrent = status === "current";
+      const isPending = status === "pending";
+
+      // Determine arrow color based on status
+      const arrowColor = isComplete ? "#10b981" : isCurrent ? "#3b82f6" : "#d1d5db";
+
+      // Determine handle positions based on flow direction
+      const sourceX = ACTOR_X_POSITIONS[action.from as keyof typeof ACTOR_X_POSITIONS];
+      const targetX = ACTOR_X_POSITIONS[action.to as keyof typeof ACTOR_X_POSITIONS];
+      const isLeftToRight = sourceX < targetX;
 
       return {
         id: `edge-${action.id}`,
         source: `actor-${action.from}`,
         target: `actor-${action.to}`,
-        sourceHandle: `${action.id}-right`,
-        targetHandle: `${action.id}-left`,
+        sourceHandle: isLeftToRight ? `${action.id}-right-source` : `${action.id}-left-source`,
+        targetHandle: isLeftToRight ? `${action.id}-left-target` : `${action.id}-right-target`,
         type: "actionEdge",
         data: {
           label: action.label,
@@ -653,11 +690,18 @@ export const OAuthSequenceDiagram = memo(({ flowState }: OAuthSequenceDiagramPro
           status,
           details: action.details,
         },
-        animated: isComplete || isCurrent,
+        animated: isCurrent, // Only animate current step
+        markerEnd: {
+          type: "arrowclosed" as const,
+          color: arrowColor,
+          width: 12,
+          height: 12,
+        },
         style: {
-          stroke: isComplete ? "#10b981" : isCurrent ? "#3b82f6" : "#d1d5db",
-          strokeWidth: isCurrent ? 3 : 2,
-          strokeDasharray: isCurrent ? "5,5" : undefined,
+          stroke: arrowColor,
+          strokeWidth: isCurrent ? 3 : isComplete ? 2 : 1.5,
+          strokeDasharray: isCurrent ? "5,5" : undefined, // Only current step is dashed
+          opacity: isPending ? 0.4 : 1, // Dim pending edges
         },
       };
     });
