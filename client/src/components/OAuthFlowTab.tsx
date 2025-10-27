@@ -38,7 +38,6 @@ import { DebugMCPOAuthClientProvider } from "../lib/debug-oauth-provider";
 import { OAuthSequenceDiagram } from "./OAuthSequenceDiagram";
 import { OAuthAuthorizationModal } from "./OAuthAuthorizationModal";
 import { MCPServerConfig } from "@/sdk";
-import { decodeJWT, formatJWTTimestamp } from "../lib/jwt-decoder";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import "react18-json-view/src/dark.css";
@@ -130,7 +129,7 @@ export const OAuthFlowTab = ({
 
   const clearInfoLogs = () => {
     // Clear all info logs by marking all as deleted
-    const allInfoLogIds = new Set<string>(['config', 'auth-url', 'auth-code', 'token', 'refresh-token']);
+    const allInfoLogIds = new Set<string>(['www-authenticate', 'authorization-servers', 'as-metadata', 'dcr', 'pkce-generation', 'auth-url', 'auth-code', 'token', 'refresh-token']);
     setDeletedInfoLogs(allInfoLogIds);
   };
 
@@ -462,19 +461,6 @@ export const OAuthFlowTab = ({
                 </button>
               </div>
               <div className="p-4 space-y-3">
-                {/* Authorization Button - Show when ready */}
-                {oauthFlowState.currentStep === "authorization_request" &&
-                  oauthFlowState.authorizationUrl && (
-                    <Button
-                      onClick={() => setIsAuthModalOpen(true)}
-                      className="w-full"
-                      size="sm"
-                    >
-                      <ExternalLink className="h-4 w-4 mr-2" />
-                      Authorize
-                    </Button>
-                  )}
-
                 {/* Error Display */}
                 {oauthFlowState.error && (
                   <Alert variant="destructive" className="py-2">
@@ -487,87 +473,10 @@ export const OAuthFlowTab = ({
 
                 {/* OAuth Flow Info Logs */}
                 {(() => {
-                  const infoLogs: Array<{
-                    id: string;
-                    label: string;
-                    data: any;
-                  }> = [];
+                  // Get logs from state
+                  const infoLogs = oauthFlowState.infoLogs || [];
 
-                  // Log 1: Flow Configuration
-                  if (authSettings.serverUrl && oauthFlowState.codeChallenge) {
-                    const provider = new DebugMCPOAuthClientProvider(authSettings.serverUrl);
-                    infoLogs.push({
-                      id: "config",
-                      label: "Flow Configuration",
-                      data: {
-                        "AS Server": authSettings.serverUrl,
-                        "Resource": authSettings.serverUrl,
-                        "Redirect URI": provider.redirectUrl,
-                        "PKCE": {
-                          method: "S256",
-                          challenge: oauthFlowState.codeChallenge,
-                        },
-                      },
-                    });
-                  }
-
-                  // Log 2: Authorization URL Generated
-                  if (oauthFlowState.authorizationUrl) {
-                    infoLogs.push({
-                      id: "auth-url",
-                      label: "Authorization URL",
-                      data: {
-                        url: oauthFlowState.authorizationUrl,
-                      },
-                    });
-                  }
-
-                  // Log 3: Authorization Code Received
-                  if (oauthFlowState.authorizationCode) {
-                    infoLogs.push({
-                      id: "auth-code",
-                      label: "Authorization Code",
-                      data: {
-                        code: oauthFlowState.authorizationCode,
-                      },
-                    });
-                  }
-
-                  // Log 4: Access Token Received (decoded JWT)
-                  if (oauthFlowState.accessToken) {
-                    const decoded = decodeJWT(oauthFlowState.accessToken);
-                    if (decoded) {
-                      const formatted = { ...decoded };
-                      if (formatted.exp) {
-                        formatted.exp = `${formatted.exp} (${formatJWTTimestamp(formatted.exp)})`;
-                      }
-                      if (formatted.iat) {
-                        formatted.iat = `${formatted.iat} (${formatJWTTimestamp(formatted.iat)})`;
-                      }
-                      if (formatted.nbf) {
-                        formatted.nbf = `${formatted.nbf} (${formatJWTTimestamp(formatted.nbf)})`;
-                      }
-
-                      infoLogs.push({
-                        id: "token",
-                        label: "Access Token (Decoded JWT)",
-                        data: formatted,
-                      });
-                    }
-                  }
-
-                  // Log 5: Refresh Token (if available)
-                  if (oauthFlowState.refreshToken) {
-                    infoLogs.push({
-                      id: "refresh-token",
-                      label: "Refresh Token",
-                      data: {
-                        token: oauthFlowState.refreshToken.substring(0, 50) + "...",
-                      },
-                    });
-                  }
-
-                  return infoLogs.reverse().filter(log => !deletedInfoLogs.has(log.id)).map((log) => {
+                  return infoLogs.slice().reverse().filter(log => !deletedInfoLogs.has(log.id)).map((log) => {
                     const isExpanded = expandedBlocks.has(log.id);
                     return (
                       <div

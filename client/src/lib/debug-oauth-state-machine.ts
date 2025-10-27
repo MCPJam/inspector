@@ -1,3 +1,5 @@
+import { decodeJWT, formatJWTTimestamp } from "./jwt-decoder";
+
 // OAuth flow steps based on MCP specification
 export type OAuthFlowStep =
   | "idle"
@@ -88,6 +90,13 @@ export interface OauthFlowStateJune2025 {
       body: any;
     };
   }>;
+  // Info logs for OAuth flow debugging
+  infoLogs?: Array<{
+    id: string;
+    label: string;
+    data: any;
+    timestamp: number;
+  }>;
   error?: string;
   // Add more state properties here as needed
 }
@@ -97,6 +106,7 @@ export const EMPTY_OAUTH_FLOW_STATE_V2: OauthFlowStateJune2025 = {
   isInitiatingAuth: false,
   currentStep: "idle",
   httpHistory: [],
+  infoLogs: [],
 };
 
 // State machine interface
@@ -368,11 +378,25 @@ export const createDebugOAuthStateMachine = (
                     responseData;
                 }
 
+                // Add info log for WWW-Authenticate header
+                const infoLogs = wwwAuthenticateHeader
+                  ? addInfoLog(
+                      state,
+                      "www-authenticate",
+                      "WWW-Authenticate Header",
+                      {
+                        header: wwwAuthenticateHeader,
+                        "Received from": state.serverUrl || "Unknown",
+                      },
+                    )
+                  : state.infoLogs;
+
                 updateState({
                   currentStep: "received_401_unauthorized",
                   wwwAuthenticateHeader: wwwAuthenticateHeader || undefined,
                   lastResponse: responseData,
                   httpHistory: updatedHistory,
+                  infoLogs,
                   isInitiatingAuth: false,
                 });
               } else {
@@ -520,12 +544,24 @@ export const createDebugOAuthStateMachine = (
                   successResponseData;
               }
 
+              // Add info log for Authorization Servers
+              const infoLogs = addInfoLog(
+                state,
+                "authorization-servers",
+                "Authorization Servers",
+                {
+                  "Resource": resourceMetadata.resource,
+                  "Authorization Servers": resourceMetadata.authorization_servers,
+                },
+              );
+
               updateState({
                 currentStep: "received_resource_metadata",
                 resourceMetadata,
                 authorizationServerUrl,
                 lastResponse: successResponseData,
                 httpHistory: updatedHistory,
+                infoLogs,
                 isInitiatingAuth: false,
               });
             } catch (error) {
@@ -688,6 +724,37 @@ export const createDebugOAuthStateMachine = (
             // Validate PKCE support
             const supportedMethods =
               authServerMetadata.code_challenge_methods_supported || [];
+
+            // Add info log for Authorization Server Metadata
+            const metadata: Record<string, any> = {
+              "Issuer": authServerMetadata.issuer,
+              "Authorization Endpoint": authServerMetadata.authorization_endpoint,
+              "Token Endpoint": authServerMetadata.token_endpoint,
+            };
+
+            if (authServerMetadata.registration_endpoint) {
+              metadata["Registration Endpoint"] = authServerMetadata.registration_endpoint;
+            }
+            if (authServerMetadata.code_challenge_methods_supported) {
+              metadata["PKCE Methods"] = authServerMetadata.code_challenge_methods_supported;
+            }
+            if (authServerMetadata.grant_types_supported) {
+              metadata["Grant Types"] = authServerMetadata.grant_types_supported;
+            }
+            if (authServerMetadata.response_types_supported) {
+              metadata["Response Types"] = authServerMetadata.response_types_supported;
+            }
+            if (authServerMetadata.scopes_supported) {
+              metadata["Scopes"] = authServerMetadata.scopes_supported;
+            }
+
+            const infoLogs = addInfoLog(
+              getCurrentState(),
+              "as-metadata",
+              "Authorization Server Metadata",
+              metadata,
+            );
+
             if (!supportedMethods.includes("S256")) {
               console.warn(
                 "Authorization server may not support S256 PKCE method. Supported methods:",
@@ -699,6 +766,7 @@ export const createDebugOAuthStateMachine = (
                 authorizationServerMetadata: authServerMetadata,
                 lastResponse: authServerResponseData,
                 httpHistory: updatedHistoryFinal,
+                infoLogs,
                 error:
                   "Warning: Authorization server may not support S256 PKCE method",
                 isInitiatingAuth: false,
@@ -709,6 +777,7 @@ export const createDebugOAuthStateMachine = (
                 authorizationServerMetadata: authServerMetadata,
                 lastResponse: authServerResponseData,
                 httpHistory: updatedHistoryFinal,
+                infoLogs,
                 isInitiatingAuth: false,
               });
             }
@@ -838,12 +907,34 @@ export const createDebugOAuthStateMachine = (
                 // Registration successful
                 const clientInfo = response.body;
 
+                // Add info log for DCR
+                const dcrInfo: Record<string, any> = {
+                  "Client ID": clientInfo.client_id,
+                  "Client Name": clientInfo.client_name,
+                  "Token Auth Method": clientInfo.token_endpoint_auth_method,
+                  "Redirect URIs": clientInfo.redirect_uris,
+                  "Grant Types": clientInfo.grant_types,
+                  "Response Types": clientInfo.response_types,
+                };
+
+                if (clientInfo.client_secret) {
+                  dcrInfo["Client Secret"] = clientInfo.client_secret.substring(0, 20) + "...";
+                }
+
+                const infoLogs = addInfoLog(
+                  getCurrentState(),
+                  "dcr",
+                  "Dynamic Client Registration",
+                  dcrInfo,
+                );
+
                 updateState({
                   currentStep: "received_client_credentials",
                   clientId: clientInfo.client_id,
                   clientSecret: clientInfo.client_secret,
                   lastResponse: registrationResponseData,
                   httpHistory: updatedHistoryReg,
+                  infoLogs,
                   error: undefined,
                   isInitiatingAuth: false,
                 });
@@ -890,12 +981,25 @@ export const createDebugOAuthStateMachine = (
             const codeVerifier = generateRandomString(43);
             const codeChallenge = await generateCodeChallenge(codeVerifier);
 
+            // Add info log for PKCE parameters
+            const pkceInfoLogs = addInfoLog(
+              getCurrentState(),
+              "pkce-generation",
+              "Generate PKCE Parameters",
+              {
+                "code_challenge": codeChallenge,
+                "method": "S256",
+                "resource": state.serverUrl || "Unknown",
+              },
+            );
+
             updateState({
               currentStep: "generate_pkce_parameters",
               codeVerifier,
               codeChallenge,
               codeChallengeMethod: "S256",
               state: generateRandomString(16),
+              infoLogs: pkceInfoLogs,
               isInitiatingAuth: false,
             });
             break;
@@ -925,12 +1029,23 @@ export const createDebugOAuthStateMachine = (
               authUrl.searchParams.set("resource", state.serverUrl);
             }
 
+            // Add info log for Authorization URL
+            const authUrlInfoLogs = addInfoLog(
+              getCurrentState(),
+              "auth-url",
+              "Authorization URL",
+              {
+                url: authUrl.toString(),
+              },
+            );
+
             updateState({
               currentStep: "authorization_request",
               authorizationUrl: authUrl.toString(),
               authorizationCode: undefined, // Clear any old authorization code
               accessToken: undefined, // Clear any old tokens
               refreshToken: undefined,
+              infoLogs: authUrlInfoLogs,
               isInitiatingAuth: false,
             });
             break;
@@ -1085,6 +1200,60 @@ export const createDebugOAuthStateMachine = (
               // Token request successful
               const tokens = response.body;
 
+              let tokenInfoLogs = getCurrentState().infoLogs || [];
+
+              // Add Authorization Code log if not already added
+              if (state.authorizationCode && !tokenInfoLogs.find(log => log.id === "auth-code")) {
+                tokenInfoLogs = addInfoLog(
+                  { ...getCurrentState(), infoLogs: tokenInfoLogs },
+                  "auth-code",
+                  "Authorization Code",
+                  {
+                    code: state.authorizationCode,
+                  },
+                );
+              }
+
+              // Add refresh token log if present and not already added
+              if (tokens.refresh_token && !tokenInfoLogs.find(log => log.id === "refresh-token")) {
+                tokenInfoLogs = [
+                  ...tokenInfoLogs,
+                  {
+                    id: "refresh-token",
+                    label: "Refresh Token",
+                    data: {
+                      token: tokens.refresh_token.substring(0, 50) + "...",
+                    },
+                    timestamp: Date.now(),
+                  },
+                ];
+              }
+
+              // Decode and add access token log if not already added
+              if (tokens.access_token && !tokenInfoLogs.find(log => log.id === "token")) {
+                const decoded = decodeJWT(tokens.access_token);
+                if (decoded) {
+                  const formatted = { ...decoded };
+                  // Format timestamp fields
+                  if (formatted.exp) {
+                    formatted.exp = `${formatted.exp} (${formatJWTTimestamp(formatted.exp)})`;
+                  }
+                  if (formatted.iat) {
+                    formatted.iat = `${formatted.iat} (${formatJWTTimestamp(formatted.iat)})`;
+                  }
+                  if (formatted.nbf) {
+                    formatted.nbf = `${formatted.nbf} (${formatJWTTimestamp(formatted.nbf)})`;
+                  }
+
+                  tokenInfoLogs = addInfoLog(
+                    { ...getCurrentState(), infoLogs: tokenInfoLogs },
+                    "token",
+                    "Access Token (Decoded JWT)",
+                    formatted,
+                  );
+                }
+              }
+
               updateState({
                 currentStep: "received_access_token",
                 accessToken: tokens.access_token,
@@ -1093,6 +1262,7 @@ export const createDebugOAuthStateMachine = (
                 expiresIn: tokens.expires_in,
                 lastResponse: tokenResponseData,
                 httpHistory: updatedHistoryToken,
+                infoLogs: tokenInfoLogs,
                 error: undefined,
                 isInitiatingAuth: false,
               });
@@ -1288,6 +1458,7 @@ export const createDebugOAuthStateMachine = (
         lastRequest: undefined,
         lastResponse: undefined,
         httpHistory: [],
+        infoLogs: [],
         authorizationCode: undefined,
         authorizationUrl: undefined,
         accessToken: undefined,
@@ -1301,6 +1472,24 @@ export const createDebugOAuthStateMachine = (
 
   return machine;
 };
+
+// Helper function to add an info log to the state
+function addInfoLog(
+  state: OauthFlowStateJune2025,
+  id: string,
+  label: string,
+  data: any,
+): Array<{ id: string; label: string; data: any; timestamp: number }> {
+  return [
+    ...(state.infoLogs || []),
+    {
+      id,
+      label,
+      data,
+      timestamp: Date.now(),
+    },
+  ];
+}
 
 // Helper function to generate random string for PKCE
 function generateRandomString(length: number): string {
