@@ -74,8 +74,6 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
         } else if (
           !serverResources.some((resource) => resource.uri === selectedResource)
         ) {
-          // TODO: Revisit NOT setting a default resource on load
-          // setSelectedResource(serverResources[0].uri);
           setResourceContent(null);
         }
       } else {
