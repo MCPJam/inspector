@@ -125,7 +125,7 @@ oauth.get("/metadata", async (c) => {
     let metadataUrl: URL;
     try {
       metadataUrl = new URL(url);
-      if (!["https:", "http:"].includes(metadataUrl.protocol)) {
+      if (metadataUrl.protocol !== "https:" && metadataUrl.protocol !== "http:") {
         return c.json({ error: "Invalid protocol" }, 400);
       }
     } catch (error) {
