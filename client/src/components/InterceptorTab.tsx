@@ -7,6 +7,7 @@ import "react18-json-view/src/dark.css";
 import { Copy, Check, Loader2 } from "lucide-react";
 import { Badge } from "./ui/badge";
 import { ServerWithName } from "@/hooks/use-app-state";
+import { appendProxyAuthToUrl, withProxyAuth } from "@/lib/proxy-auth";
 
 type InterceptorLog =
   | {
@@ -78,7 +79,7 @@ export function InterceptorTab({
       delete eventSourceRefs.current[serverId];
     }
 
-    const es = new EventSource(`${baseUrl}/${id}/stream`);
+    const es = new EventSource(appendProxyAuthToUrl(`${baseUrl}/${id}/stream`));
     es.onmessage = (ev) => {
       try {
         if (ev.data === "[DONE]") return;
@@ -143,7 +144,10 @@ export function InterceptorTab({
         await Promise.all(
           entries.map(async ([serverId, proxy]) => {
             try {
-              const res = await fetch(`${baseUrl}/${proxy.interceptorId}`);
+              const res = await fetch(
+                `${baseUrl}/${proxy.interceptorId}`,
+                withProxyAuth(),
+              );
               if (!cancelled && res.ok) {
                 validated[serverId] = proxy;
                 connectStream(proxy.interceptorId, serverId);
@@ -186,9 +190,12 @@ export function InterceptorTab({
 
         // Stop the proxy on server
         if (newProxies[serverId]?.interceptorId) {
-          fetch(`${baseUrl}/${newProxies[serverId].interceptorId}`, {
-            method: "DELETE",
-          }).catch(() => {});
+          fetch(
+            `${baseUrl}/${newProxies[serverId].interceptorId}`,
+            withProxyAuth({
+              method: "DELETE",
+            }),
+          ).catch(() => {});
         }
 
         // Close event source
@@ -224,11 +231,14 @@ export function InterceptorTab({
 
     setIsCreating(true);
     try {
-      const res = await fetch(`${baseUrl}/create`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ serverId }),
-      });
+      const res = await fetch(
+        `${baseUrl}/create`,
+        withProxyAuth({
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ serverId }),
+        }),
+      );
       const json = await res.json();
       if (!json.success) {
         alert(json.error || "Failed to create interceptor");
@@ -263,9 +273,12 @@ export function InterceptorTab({
     if (!selectedServer || selectedServer === "none" || !currentProxy) return;
     // Stop and delete the interceptor on the server
     try {
-      await fetch(`${baseUrl}/${currentProxy.interceptorId}`, {
-        method: "DELETE",
-      });
+      await fetch(
+        `${baseUrl}/${currentProxy.interceptorId}`,
+        withProxyAuth({
+          method: "DELETE",
+        }),
+      );
     } catch {}
 
     // Close the event source for this server
@@ -284,9 +297,12 @@ export function InterceptorTab({
     if (!selectedServer || selectedServer === "none" || !currentProxy) return;
 
     try {
-      await fetch(`${baseUrl}/${currentProxy.interceptorId}/clear`, {
-        method: "POST",
-      });
+      await fetch(
+        `${baseUrl}/${currentProxy.interceptorId}/clear`,
+        withProxyAuth({
+          method: "POST",
+        }),
+      );
     } catch {}
 
     // Clear logs in the UI

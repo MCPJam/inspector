@@ -53,6 +53,13 @@ Start up the MCPJam inspector:
 npx @mcpjam/inspector@latest
 ```
 
+## Security
+
+- **Per-session authentication** – The proxy now generates a random session token every time it starts. All `/api` and streaming requests must include this token via the UI's "Proxy Session Token" field or the `MCP_PROXY_AUTH_TOKEN` query parameter. Use the console link printed at startup to open the UI with the token prefilled. Disable only for trusted environments with `DANGEROUSLY_OMIT_AUTH=true`.
+- **Local-only by default** – The proxy binds to `127.0.0.1`. Set `HOST=0.0.0.0` only when you explicitly need remote access and trust the network.
+- **Origin validation** – Requests are accepted only from the inspector UI origin. Extend the allow-list with `ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173` (comma-separated) if you need a custom frontend.
+- **Safer auto-open behaviour** – The CLI skips auto-opening a browser window when authentication is required, preventing accidental exposure of the token.
+
 ## Key Features
 
 | Feature                        | Description                                                                                                                                             |

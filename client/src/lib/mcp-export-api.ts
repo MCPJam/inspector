@@ -1,9 +1,14 @@
+import { withProxyAuth } from "./proxy-auth";
+
 export async function exportServerApi(serverId: string) {
-  const res = await fetch("/api/mcp/export/server", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ serverId }),
-  });
+  const res = await fetch(
+    "/api/mcp/export/server",
+    withProxyAuth({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ serverId }),
+    }),
+  );
   if (!res.ok) {
     let message = `Export failed (${res.status})`;
     try {

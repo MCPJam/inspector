@@ -12,6 +12,7 @@ import "react18-json-view/src/style.css";
 import "react18-json-view/src/dark.css";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { appendProxyAuthToUrl } from "@/lib/proxy-auth";
 
 type RpcDirection = "in" | "out" | string;
 
@@ -68,7 +69,10 @@ export function JsonRpcLoggerView({ serverIds }: JsonRpcLoggerViewProps = {}) {
     try {
       const params = new URLSearchParams();
       params.set("replay", "0");
-      es = new EventSource(`/api/mcp/servers/rpc/stream?${params.toString()}`);
+      const streamUrl = appendProxyAuthToUrl(
+        `/api/mcp/servers/rpc/stream?${params.toString()}`,
+      );
+      es = new EventSource(streamUrl);
       es.onmessage = (evt) => {
         try {
           const data = JSON.parse(evt.data) as {

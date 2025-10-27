@@ -39,6 +39,10 @@ const colors = {
   bgCyan: "\x1b[46m",
 };
 
+const authDisabled = ["true", "1"].includes(
+  (process.env.DANGEROUSLY_OMIT_AUTH || "").toLowerCase(),
+);
+
 // Utility functions for beautiful output
 function log(message, color = colors.reset) {
   console.log(`${color}${message}${colors.reset}`);
@@ -615,20 +619,32 @@ async function main() {
     await delay(2000);
 
     if (!cancelled) {
-      // Open the browser automatically
-      // Use BASE_URL if set, otherwise construct from HOST and PORT
-      // Default: localhost in development, 127.0.0.1 in production
       const defaultHost =
         process.env.ENVIRONMENT === "dev" ? "localhost" : "127.0.0.1";
       const host = process.env.HOST || defaultHost;
       const url = process.env.BASE_URL || `http://${host}:${PORT}`;
 
-      try {
-        await open(url);
-        logSuccess(`🌐 Browser opened at ${url}`);
-      } catch (error) {
-        logWarning(
-          `Could not open browser automatically. Please visit ${url} manually.`,
+      const autoOpenEnabledEnv = process.env.MCP_AUTO_OPEN_ENABLED || "";
+      const forceAutoOpen = ["true", "1"].includes(
+        autoOpenEnabledEnv.toLowerCase(),
+      );
+      const disableAutoOpen = ["false", "0"].includes(
+        autoOpenEnabledEnv.toLowerCase(),
+      );
+      const shouldAutoOpen = authDisabled ? !disableAutoOpen : forceAutoOpen;
+
+      if (shouldAutoOpen) {
+        try {
+          await open(url);
+          logSuccess(`🌐 Browser opened at ${url}`);
+        } catch (error) {
+          logWarning(
+            `Could not open browser automatically. Please visit ${url} manually.`,
+          );
+        }
+      } else if (!authDisabled) {
+        logInfo(
+          "Authentication is enabled. Auto-open is disabled to avoid exposing the session token. Use the console URL with the pre-filled token.",
         );
       }
     }

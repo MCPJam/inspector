@@ -17,6 +17,7 @@ import {
 } from "@/lib/ollama-utils";
 import { SSEvent } from "@/shared/sse";
 import { parseSSEStream } from "@/lib/sse";
+import { withProxyAuth } from "@/lib/proxy-auth";
 
 interface ElicitationRequest {
   requestId: string;
@@ -447,27 +448,30 @@ export function useChat(options: UseChatOptions = {}) {
           }
         }
 
-        const response = await fetch("/api/mcp/chat", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "text/event-stream",
-            ...(authHeader ? { Authorization: authHeader } : {}),
-          },
-          body: JSON.stringify({
-            model: model!,
-            provider: model!.provider,
-            apiKey: currentApiKey,
-            systemPrompt,
-            temperature,
-            messages: messagesRef.current.concat(userMessage),
-            ollamaBaseUrl: getOllamaBaseUrl(),
-            litellmBaseUrl: getLiteLLMBaseUrl(),
-            sendMessagesToBackend: routeThroughBackend,
-            selectedServers,
+        const response = await fetch(
+          "/api/mcp/chat",
+          withProxyAuth({
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "text/event-stream",
+              ...(authHeader ? { Authorization: authHeader } : {}),
+            },
+            body: JSON.stringify({
+              model: model!,
+              provider: model!.provider,
+              apiKey: currentApiKey,
+              systemPrompt,
+              temperature,
+              messages: messagesRef.current.concat(userMessage),
+              ollamaBaseUrl: getOllamaBaseUrl(),
+              litellmBaseUrl: getLiteLLMBaseUrl(),
+              sendMessagesToBackend: routeThroughBackend,
+              selectedServers,
+            }),
+            signal: abortControllerRef.current?.signal,
           }),
-          signal: abortControllerRef.current?.signal,
-        });
+        );
 
         if (!response.ok) {
           const errorText = await response.text();
@@ -674,17 +678,20 @@ export function useChat(options: UseChatOptions = {}) {
           };
         }
 
-        const response = await fetch("/api/mcp/chat", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            action: "elicitation_response",
-            requestId: elicitationRequest.requestId,
-            response: responseData,
+        const response = await fetch(
+          "/api/mcp/chat",
+          withProxyAuth({
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              action: "elicitation_response",
+              requestId: elicitationRequest.requestId,
+              response: responseData,
+            }),
           }),
-        });
+        );
 
         if (!response.ok) {
           const errorMsg = `HTTP error! status: ${response.status}`;

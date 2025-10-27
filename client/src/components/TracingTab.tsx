@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { useLoggerState, LogLevel, useLogger } from "@/hooks/use-logger";
 import { LogCard } from "./logging/log-card";
 import { LogLevelBadge } from "./logging/log-level-badge";
+import { appendProxyAuthToUrl } from "@/lib/proxy-auth";
 
 const LOG_LEVEL_ORDER = ["error", "warn", "info", "debug", "trace"];
 
@@ -94,7 +95,10 @@ export function TracingTab() {
     try {
       const params = new URLSearchParams();
       params.set("replay", "200");
-      es = new EventSource(`/api/mcp/servers/rpc/stream?${params.toString()}`);
+      const streamUrl = appendProxyAuthToUrl(
+        `/api/mcp/servers/rpc/stream?${params.toString()}`,
+      );
+      es = new EventSource(streamUrl);
       es.onmessage = (evt) => {
         try {
           const data = JSON.parse(evt.data);

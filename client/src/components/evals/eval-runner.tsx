@@ -34,6 +34,7 @@ import { ModelSelector } from "@/components/chat/model-selector";
 import { cn } from "@/lib/utils";
 import { ModelDefinition, isMCPJamProvidedModel } from "@/shared/types";
 import { ServerSelectionCard } from "./ServerSelectionCard";
+import { withProxyAuth } from "@/lib/proxy-auth";
 
 interface TestCase {
   title: string;
@@ -344,14 +345,17 @@ export function EvalRunner({
     try {
       const accessToken = await getAccessToken();
 
-      const response = await fetch("/api/mcp/evals/generate-tests", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          serverIds: selectedServers,
-          convexAuthToken: accessToken,
+      const response = await fetch(
+        "/api/mcp/evals/generate-tests",
+        withProxyAuth({
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            serverIds: selectedServers,
+            convexAuthToken: accessToken,
+          }),
         }),
-      });
+      );
 
       const result = await response.json();
 
@@ -447,19 +451,22 @@ export function EvalRunner({
         provider: selectedModel.provider,
       }));
 
-      const response = await fetch("/api/mcp/evals/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          tests: testsWithModelInfo,
-          serverIds: selectedServers,
-          llmConfig: {
-            provider: selectedModel.provider,
-            apiKey: currentModelIsJam ? "router" : apiKey || "router",
-          },
-          convexAuthToken: accessToken,
+      const response = await fetch(
+        "/api/mcp/evals/run",
+        withProxyAuth({
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            tests: testsWithModelInfo,
+            serverIds: selectedServers,
+            llmConfig: {
+              provider: selectedModel.provider,
+              apiKey: currentModelIsJam ? "router" : apiKey || "router",
+            },
+            convexAuthToken: accessToken,
+          }),
         }),
-      });
+      );
 
       const result = await response.json();
 
