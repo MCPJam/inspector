@@ -1,8 +1,10 @@
 import { OAuthFlowState, OAuthStep } from "@/lib/oauth-flow-types";
-import { CheckCircle2, Circle } from "lucide-react";
-import { useEffect, useState } from "react";
+import { CheckCircle2, Circle, ExternalLink } from "lucide-react";
+import { useEffect, useState, useMemo } from "react";
 import { OAuthClientInformation } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { Button } from "./ui/button";
+import { DebugMCPOAuthClientProvider } from "@/lib/debug-oauth-provider";
+import { toast } from "sonner";
 
 interface OAuthStepProps {
   label: string;
@@ -40,8 +42,12 @@ const OAuthStepDetails = ({
       {/* Display error if current step and an error exists */}
       {isCurrent && error && (
         <div className="ml-7 mt-2 p-3 border border-red-300 bg-red-50 dark:bg-red-950/50 rounded-md">
-          <p className="text-sm font-medium text-red-700 dark:text-red-400">Error:</p>
-          <p className="text-xs text-red-600 dark:text-red-500 mt-1">{error.message}</p>
+          <p className="text-sm font-medium text-red-700 dark:text-red-400">
+            Error:
+          </p>
+          <p className="text-xs text-red-600 dark:text-red-500 mt-1">
+            {error.message}
+          </p>
         </div>
       )}
     </div>
@@ -70,6 +76,10 @@ export const OAuthFlowProgressSimple = ({
   updateFlowState,
   proceedToNextStep,
 }: OAuthFlowProgressSimpleProps) => {
+  const provider = useMemo(
+    () => new DebugMCPOAuthClientProvider(serverUrl),
+    [serverUrl],
+  );
   const [clientInfo, setClientInfo] = useState<OAuthClientInformation | null>(
     null,
   );
@@ -77,10 +87,25 @@ export const OAuthFlowProgressSimple = ({
   const currentStepIdx = steps.findIndex((s) => s === flowState.oauthStep);
 
   useEffect(() => {
-    if (flowState.oauthClientInfo) {
-      setClientInfo(flowState.oauthClientInfo);
+    const fetchClientInfo = async () => {
+      if (flowState.oauthClientInfo) {
+        setClientInfo(flowState.oauthClientInfo);
+      } else {
+        try {
+          const info = await provider.clientInformation();
+          if (info) {
+            setClientInfo(info);
+          }
+        } catch (error) {
+          console.error("Failed to fetch client information:", error);
+        }
+      }
+    };
+
+    if (currentStepIdx > steps.indexOf("client_registration")) {
+      fetchClientInfo();
     }
-  }, [flowState.oauthClientInfo]);
+  }, [provider, flowState.oauthStep, flowState.oauthClientInfo, currentStepIdx]);
 
   // Helper to get step props
   const getStepProps = (stepName: OAuthStep) => ({
@@ -154,12 +179,12 @@ export const OAuthFlowProgressSimple = ({
                   <p className="text-xs text-blue-600 dark:text-blue-500 mt-1">
                     Resource metadata was added in the{" "}
                     <a
-                      href="https://modelcontextprotocol.io/specification/draft/basic/authorization#2-3-1-authorization-server-location"
+                      href="https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization#authorization-server-location"
                       target="_blank"
                       rel="noopener noreferrer"
                       className="underline"
                     >
-                      2025-DRAFT-v2 specification update
+                      2025-06-18 specification update
                     </a>
                     <br />
                     {flowState.resourceMetadataError.message}
@@ -199,7 +224,7 @@ export const OAuthFlowProgressSimple = ({
           {clientInfo && (
             <details className="text-xs mt-2">
               <summary className="cursor-pointer text-muted-foreground font-medium">
-                Client Details
+                Registered Client Information
               </summary>
               <pre className="mt-2 p-2 bg-muted rounded-md overflow-auto max-h-[300px]">
                 {JSON.stringify(clientInfo, null, 2)}
@@ -209,31 +234,44 @@ export const OAuthFlowProgressSimple = ({
         </OAuthStepDetails>
 
         <OAuthStepDetails
-          label="Authorization Redirect"
+          label="Preparing Authorization"
           {...getStepProps("authorization_redirect")}
         >
           {flowState.authorizationUrl && (
-            <div className="text-xs mt-2 space-y-2">
-              <p className="text-muted-foreground">
-                User needs to visit the authorization URL:
+            <div className="mt-2 p-3 border rounded-md bg-muted">
+              <p className="font-medium mb-2 text-sm">Authorization URL:</p>
+              <div className="flex items-center gap-2">
+                <p className="text-xs break-all">
+                  {String(flowState.authorizationUrl)}
+                </p>
+                <button
+                  onClick={() => {
+                    window.open(
+                      flowState.authorizationUrl!,
+                      "_blank",
+                      "noopener noreferrer",
+                    );
+                  }}
+                  className="flex items-center text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                  aria-label="Open authorization URL in new tab"
+                  title="Open authorization URL"
+                >
+                  <ExternalLink className="h-4 w-4" />
+                </button>
+              </div>
+              <p className="text-xs text-muted-foreground mt-2">
+                Click the link to authorize in your browser. After
+                authorization, you'll be redirected back to continue the flow.
               </p>
-              <a
-                href={flowState.authorizationUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 underline break-all"
-              >
-                {flowState.authorizationUrl}
-              </a>
             </div>
           )}
         </OAuthStepDetails>
 
         <OAuthStepDetails
-          label="Capture Authorization Code"
+          label="Request Authorization and acquire authorization code"
           {...getStepProps("authorization_code")}
         >
-          <div className="mt-2">
+          <div className="mt-3">
             <label
               htmlFor="authCode"
               className="block text-sm font-medium mb-1"
@@ -257,7 +295,7 @@ export const OAuthFlowProgressSimple = ({
               />
             </div>
             {flowState.validationError && (
-              <p className="text-xs text-red-600 dark:text-red-500 mt-1">
+              <p className="text-xs text-red-600 mt-1">
                 {flowState.validationError}
               </p>
             )}
@@ -325,7 +363,9 @@ export const OAuthFlowProgressSimple = ({
           flowState.authorizationUrl && (
             <Button
               variant="outline"
-              onClick={() => window.open(flowState.authorizationUrl!, "_blank")}
+              onClick={() => {
+                window.open(flowState.authorizationUrl!, "_blank");
+              }}
             >
               Open in New Tab
             </Button>
