@@ -195,8 +195,14 @@ resources.get("/widget-content/:toolId", async (c) => {
       );
     }
 
-    const { serverId, uri, toolInput, toolOutput, toolResponseMetadata, theme } =
-      widgetData;
+    const {
+      serverId,
+      uri,
+      toolInput,
+      toolOutput,
+      toolResponseMetadata,
+      theme,
+    } = widgetData;
 
     const mcpClientManager = c.mcpClientManager;
     const availableServers = mcpClientManager
