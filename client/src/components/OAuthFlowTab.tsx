@@ -8,6 +8,8 @@ import {
   StatusMessage,
 } from "@/shared/types.js";
 import { Card, CardContent } from "./ui/card";
+import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
+import { Input } from "./ui/input";
 import { getStoredTokens } from "../lib/mcp-oauth";
 import { ServerWithName } from "../hooks/use-app-state";
 import {
@@ -396,14 +398,12 @@ export const OAuthFlowTab = ({
           <div className="space-y-4">
             {/* Authorization URL - Show when ready */}
             {oauthFlowState.currentStep === "authorization_request" && oauthFlowState.authorizationUrl && (
-              <div className="rounded-lg border-2 border-blue-500/50 bg-blue-50 dark:bg-blue-950/20 p-4 animate-pulse">
-                <h3 className="text-sm font-semibold mb-3 text-blue-700 dark:text-blue-300">
-                  🔐 Authorization Required
-                </h3>
-                <div className="space-y-3">
-                  <p className="text-xs text-blue-600 dark:text-blue-400 font-medium">
-                    Step 1: Click the button below to authorize in your browser
-                  </p>
+              <Alert className="border-2 border-blue-500/50 bg-blue-50 dark:bg-blue-950/20 animate-pulse">
+                <Shield className="h-4 w-4 text-blue-700 dark:text-blue-300" />
+                <AlertTitle className="text-blue-700 dark:text-blue-300">
+                  Ready to authorize
+                </AlertTitle>
+                <AlertDescription className="space-y-3 mt-3">
                   <Button
                     onClick={async () => {
                       window.open(oauthFlowState.authorizationUrl!, "_blank", "noopener,noreferrer");
@@ -417,76 +417,58 @@ export const OAuthFlowTab = ({
                     size="sm"
                   >
                     <ExternalLink className="h-4 w-4 mr-2" />
-                    Open Authorization URL
+                    Authorize
                   </Button>
-                  <p className="text-xs text-blue-600 dark:text-blue-400">
-                    Step 2: After authorizing, the code will be automatically captured and the flow will continue
-                  </p>
                   <div className="text-[10px] font-mono bg-muted p-2 rounded break-all text-muted-foreground">
                     {oauthFlowState.authorizationUrl}
                   </div>
-                </div>
-              </div>
+                </AlertDescription>
+              </Alert>
             )}
 
             {/* Authorization Code Input - Show when waiting for code */}
             {oauthFlowState.currentStep === "received_authorization_code" && (
-              <div className="rounded-lg border-2 border-green-500/50 bg-green-50 dark:bg-green-950/20 p-4">
-                <h3 className="text-sm font-semibold mb-3 text-green-700 dark:text-green-300">
-                  ⏳ Waiting for Authorization Code
-                </h3>
-                <div className="space-y-3">
+              <Alert className="border-2 border-green-500/50 bg-green-50 dark:bg-green-950/20">
+                {!oauthFlowState.authorizationCode ? (
+                  <RefreshCw className="h-4 w-4 text-green-700 dark:text-green-300 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="h-4 w-4 text-green-700 dark:text-green-300" />
+                )}
+                <AlertTitle className="text-green-700 dark:text-green-300">
+                  {oauthFlowState.authorizationCode ? "Code received" : "Waiting for code"}
+                </AlertTitle>
+                <AlertDescription className="space-y-3 mt-3">
                   {!oauthFlowState.authorizationCode ? (
-                    <>
-                      <div className="flex items-center gap-2 text-xs text-green-600 dark:text-green-400">
-                        <div className="h-2 w-2 bg-green-500 rounded-full animate-pulse" />
-                        <span>Waiting for authorization code from callback...</span>
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        If the code wasn't captured automatically, paste it manually below:
-                      </p>
-                      <input
-                        type="text"
-                        value={oauthFlowState.authorizationCode || ""}
-                        onChange={(e) => {
-                          updateOAuthFlowState({ authorizationCode: e.target.value, error: undefined });
-                        }}
-                        placeholder="Paste authorization code here"
-                        className="w-full px-3 py-2 text-sm border border-input rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-                      />
-                    </>
+                    <Input
+                      type="text"
+                      value={oauthFlowState.authorizationCode || ""}
+                      onChange={(e) => {
+                        updateOAuthFlowState({ authorizationCode: e.target.value, error: undefined });
+                      }}
+                      placeholder="Paste code if not auto-captured"
+                      className="text-xs"
+                    />
                   ) : (
-                    <>
-                      <div className="flex items-center gap-2 text-xs text-green-600 dark:text-green-400 font-medium">
-                        <CheckCircle2 className="h-4 w-4" />
-                        <span>Authorization code received!</span>
-                      </div>
-                      <div>
-                        <div className="text-xs font-semibold mb-1 text-green-700 dark:text-green-300">Code to exchange:</div>
-                        <div className="text-xs font-mono bg-muted p-2 rounded break-all border border-green-500/30">
-                          {oauthFlowState.authorizationCode}
-                        </div>
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        Click "Next Step" to exchange the code for an access token
-                      </p>
-                    </>
-                  )}
-                  {oauthFlowState.error && (
-                    <div className="mt-3 p-2 rounded-md border border-red-200 bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-400">
-                      <p className="text-xs">{oauthFlowState.error}</p>
+                    <div className="text-xs font-mono bg-muted p-2 rounded break-all">
+                      {oauthFlowState.authorizationCode}
                     </div>
                   )}
-                </div>
-              </div>
+                  {oauthFlowState.error && (
+                    <p className="text-xs text-red-600 dark:text-red-400">{oauthFlowState.error}</p>
+                  )}
+                </AlertDescription>
+              </Alert>
             )}
 
             {/* Error Display for other steps */}
             {oauthFlowState.error && oauthFlowState.currentStep !== "received_authorization_code" && (
-              <div className="rounded-lg border border-red-200 bg-red-50 dark:bg-red-950/50 p-4">
-                <h3 className="text-sm font-semibold text-red-700 dark:text-red-400 mb-2">Error</h3>
-                <p className="text-xs text-red-600 dark:text-red-500">{oauthFlowState.error}</p>
-              </div>
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>Error</AlertTitle>
+                <AlertDescription className="text-xs">
+                  {oauthFlowState.error}
+                </AlertDescription>
+              </Alert>
             )}
 
             {/* HTTP History - Show all request/response pairs */}
