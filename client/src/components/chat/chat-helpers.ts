@@ -10,6 +10,7 @@ import ollamaDarkLogo from "/ollama_dark.png";
 import grokLightLogo from "/grok_light.svg";
 import grokDarkLogo from "/grok_dark.png";
 import litellmLogo from "/litellm_logo.png";
+import openrouterLogo from "/openrouter_logo.png";
 import moonshotLightLogo from "/moonshot_light.png";
 import moonshotDarkLogo from "/moonshot_dark.png";
 import zAiLogo from "/z-ai.png";
@@ -54,6 +55,8 @@ export const getProviderLogoFromProvider = (
       return grokLightLogo;
     case "litellm":
       return litellmLogo;
+    case "openrouter":
+      return openrouterLogo;
     case "moonshotai":
       if (themeMode === "dark") {
         return moonshotDarkLogo;

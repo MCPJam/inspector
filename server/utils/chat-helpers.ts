@@ -4,6 +4,7 @@ import { createDeepSeek } from "@ai-sdk/deepseek";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createMistral } from "@ai-sdk/mistral";
 import { createOpenAI } from "@ai-sdk/openai";
+import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { createOllama } from "ollama-ai-provider-v2";
 
 export const createLlmModel = (
@@ -17,7 +18,6 @@ export const createLlmModel = (
       `Invalid model definition: ${JSON.stringify(modelDefinition)}`,
     );
   }
-
   switch (modelDefinition.provider) {
     case "anthropic":
       return createAnthropic({ apiKey })(modelDefinition.id);
@@ -46,6 +46,8 @@ export const createLlmModel = (
       // IMPORTANT: Use .chat() to use Chat Completions API instead of Responses API
       return openai.chat(modelDefinition.id);
     }
+    case "openrouter":
+      return createOpenRouter({ apiKey })(modelDefinition.id);
     default:
       throw new Error(
         `Unsupported provider: ${modelDefinition.provider} for model: ${modelDefinition.id}`,
