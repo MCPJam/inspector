@@ -66,7 +66,7 @@ export function ChatTabV2() {
   ]);
 
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
-  const effectiveModel = useMemo<ModelDefinition>(() => {
+  const selectedModel = useMemo<ModelDefinition>(() => {
     const fallback = getDefaultModel(availableModels);
     if (!selectedModelId) return fallback;
     const found = availableModels.find((m) => String(m.id) === selectedModelId);
@@ -79,17 +79,17 @@ export function ChatTabV2() {
   const [elicitationLoading, setElicitationLoading] = useState(false);
 
   const transport = useMemo(() => {
-    const apiKey = getToken(effectiveModel.provider as keyof ProviderTokens);
+    const apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
     return new DefaultChatTransport({
       api: "/api/mcp/chat-v2",
       body: {
-        model: effectiveModel,
+        model: selectedModel,
         apiKey: apiKey,
         temperature: 0.7,
       },
       headers: authHeaders,
     });
-  }, [effectiveModel, getToken, authHeaders]);
+  }, [selectedModel, getToken, authHeaders]);
 
   useEffect(() => {
     let active = true;
@@ -113,13 +113,13 @@ export function ChatTabV2() {
   }, [getAccessToken]);
 
   const isMcpJamModel = useMemo(() => {
-    return effectiveModel?.id
-      ? isMCPJamProvidedModel(String(effectiveModel.id))
+    return selectedModel?.id
+      ? isMCPJamProvidedModel(String(selectedModel.id))
       : false;
-  }, [effectiveModel]);
+  }, [selectedModel]);
 
   const { messages, sendMessage, stop, status } = useChat({
-    id: `chat-${effectiveModel.provider}-${effectiveModel.id}`,
+    id: `chat-${selectedModel.provider}-${selectedModel.id}`,
     transport: transport!,
     // Disable client auto-send for MCPJam-provided models; server handles tool loop
     sendAutomaticallyWhen: isMcpJamModel
@@ -333,7 +333,7 @@ export function ChatTabV2() {
                   disabled={status !== "ready"}
                   isLoading={isLoading}
                   placeholder="Ask something…"
-                  currentModel={effectiveModel}
+                  currentModel={selectedModel}
                   availableModels={availableModels}
                   onModelChange={(model) =>
                     setSelectedModelId(String(model.id))
