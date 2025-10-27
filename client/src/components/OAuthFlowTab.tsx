@@ -85,6 +85,12 @@ export const OAuthFlowTab = ({
   // Track which HTTP blocks are expanded
   const [expandedBlocks, setExpandedBlocks] = useState<Set<string>>(new Set());
 
+  // Use ref to always have access to the latest state
+  const oauthFlowStateRef = useRef(oauthFlowState);
+  useEffect(() => {
+    oauthFlowStateRef.current = oauthFlowState;
+  }, [oauthFlowState]);
+
   const toggleExpanded = (id: string) => {
     setExpandedBlocks((prev) => {
       const next = new Set(prev);
@@ -140,7 +146,8 @@ export const OAuthFlowTab = ({
     if (!serverConfig || !serverName || !authSettings.serverUrl) return null;
 
     return createDebugOAuthStateMachine({
-      state: oauthFlowState,
+      state: oauthFlowStateRef.current,
+      getState: () => oauthFlowStateRef.current,
       updateState: updateOAuthFlowState,
       serverUrl: authSettings.serverUrl,
       serverName,
@@ -149,7 +156,6 @@ export const OAuthFlowTab = ({
     serverConfig,
     serverName,
     authSettings.serverUrl,
-    oauthFlowState,
     updateOAuthFlowState,
   ]);
 
@@ -178,7 +184,8 @@ export const OAuthFlowTab = ({
     }, 100);
 
     return () => clearTimeout(timer);
-  }, [serverName, resetOAuthFlow, oauthStateMachine]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serverName, resetOAuthFlow]);
 
   // Check if server supports OAuth
   // Only HTTP servers support OAuth (STDIO servers use process-based auth)
