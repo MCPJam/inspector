@@ -3,7 +3,6 @@ export type OAuthFlowStep =
   | "idle"
   | "request_without_token"
   | "received_401_unauthorized"
-  | "extract_resource_metadata_url"
   | "request_resource_metadata"
   | "received_resource_metadata"
   | "request_authorization_server_metadata"
@@ -113,6 +112,7 @@ export interface DebugOAuthStateMachine {
 // Configuration for creating the state machine
 export interface DebugOAuthStateMachineConfig {
   state: OauthFlowStateJune2025;
+  getState?: () => OauthFlowStateJune2025; // Optional getter for always-fresh state
   updateState: (updates: Partial<OauthFlowStateJune2025>) => void;
   serverUrl: string;
   serverName: string;
@@ -189,14 +189,19 @@ async function proxyFetch(url: string, options: RequestInit = {}): Promise<{
 export const createDebugOAuthStateMachine = (
   config: DebugOAuthStateMachineConfig
 ): DebugOAuthStateMachine => {
-  const { state, updateState, serverUrl, serverName, fetchFn = fetch } = config;
+  const { state: initialState, getState, updateState, serverUrl, serverName, fetchFn = fetch } = config;
 
-  return {
-    state,
+  // Helper to get current state (use getState if provided, otherwise use initial state)
+  const getCurrentState = () => getState ? getState() : initialState;
+
+  // Create machine object that can reference itself
+  const machine: DebugOAuthStateMachine = {
+    state: initialState,
     updateState,
 
     // Proceed to next step in the flow (matches SDK's actual approach)
     proceedToNextStep: async () => {
+      const state = getCurrentState();
       console.log("[Debug OAuth] Proceeding to next step from:", state.currentStep);
 
       updateState({ isInitiatingAuth: true });
@@ -229,11 +234,12 @@ export const createDebugOAuthStateMachine = (
               },
             };
 
+            // Update state with the request
             updateState({
               currentStep: "request_without_token",
               serverUrl,
               lastRequest: initialRequest,
-              lastResponse: undefined, // Clear any previous response
+              lastResponse: undefined,
               httpHistory: [
                 ...(state.httpHistory || []),
                 {
@@ -243,7 +249,10 @@ export const createDebugOAuthStateMachine = (
               ],
               isInitiatingAuth: false,
             });
-            break;
+
+            // Automatically proceed to make the actual request
+            setTimeout(() => machine.proceedToNextStep(), 50);
+            return;
 
           case "request_without_token":
             // Step 2: Request MCP server and expect 401 Unauthorized via backend proxy
@@ -307,7 +316,7 @@ export const createDebugOAuthStateMachine = (
             break;
 
           case "received_401_unauthorized":
-            // Step 3: Extract resource metadata URL from WWW-Authenticate header
+            // Step 3: Extract resource metadata URL and prepare request
             console.log("[Debug OAuth] Extracting resource metadata URL from WWW-Authenticate header");
 
             let extractedResourceMetadataUrl: string | undefined;
@@ -332,33 +341,22 @@ export const createDebugOAuthStateMachine = (
               throw new Error("Could not determine resource metadata URL");
             }
 
-            updateState({
-              currentStep: "extract_resource_metadata_url",
-              resourceMetadataUrl: extractedResourceMetadataUrl,
-              isInitiatingAuth: false,
-            });
-            break;
-
-          case "extract_resource_metadata_url":
-            // Step 4: Transition to request resource metadata
-            if (!state.resourceMetadataUrl) {
-              throw new Error("No resource metadata URL available");
-            }
-
-            console.log("[Debug OAuth] Proceeding to request resource metadata from:", state.resourceMetadataUrl);
+            console.log("[Debug OAuth] Proceeding to request resource metadata from:", extractedResourceMetadataUrl);
 
             const resourceMetadataRequest = {
               method: "GET",
-              url: state.resourceMetadataUrl,
+              url: extractedResourceMetadataUrl,
               headers: {
                 "Accept": "application/json",
               },
             };
 
+            // Update state with the URL and request
             updateState({
               currentStep: "request_resource_metadata",
+              resourceMetadataUrl: extractedResourceMetadataUrl,
               lastRequest: resourceMetadataRequest,
-              lastResponse: undefined, // Clear previous response
+              lastResponse: undefined,
               httpHistory: [
                 ...(state.httpHistory || []),
                 {
@@ -368,7 +366,10 @@ export const createDebugOAuthStateMachine = (
               ],
               isInitiatingAuth: false,
             });
-            break;
+
+            // Automatically proceed to make the actual request
+            setTimeout(() => machine.proceedToNextStep(), 50);
+            return;
 
           case "request_resource_metadata":
             // Step 2: Fetch and parse resource metadata via backend proxy
@@ -460,10 +461,11 @@ export const createDebugOAuthStateMachine = (
               },
             };
 
+            // Update state with the request
             updateState({
               currentStep: "request_authorization_server_metadata",
               lastRequest: authServerRequest,
-              lastResponse: undefined, // Clear previous response
+              lastResponse: undefined,
               httpHistory: [
                 ...(state.httpHistory || []),
                 {
@@ -473,7 +475,10 @@ export const createDebugOAuthStateMachine = (
               ],
               isInitiatingAuth: false,
             });
-            break;
+
+            // Automatically proceed to make the actual request
+            setTimeout(() => machine.proceedToNextStep(), 50);
+            return;
 
           case "request_authorization_server_metadata":
             // Step 4: Fetch authorization server metadata (try multiple endpoints) via backend proxy
@@ -595,6 +600,7 @@ export const createDebugOAuthStateMachine = (
                 },
               };
 
+              // Update state with the request
               updateState({
                 currentStep: "request_client_registration",
                 lastRequest: registrationRequest,
@@ -608,6 +614,10 @@ export const createDebugOAuthStateMachine = (
                 ],
                 isInitiatingAuth: false,
               });
+
+              // Automatically proceed to make the actual request
+              setTimeout(() => machine.proceedToNextStep(), 50);
+              return;
             } else {
               console.log("[Debug OAuth] No registration endpoint, skipping to PKCE generation");
               console.log("[Debug OAuth] Note: In production, you would need to manually register and provide a client_id");
@@ -748,6 +758,7 @@ export const createDebugOAuthStateMachine = (
               },
             };
 
+            // Update state with the request
             updateState({
               currentStep: "token_request",
               lastRequest: tokenRequest,
@@ -761,7 +772,10 @@ export const createDebugOAuthStateMachine = (
               ],
               isInitiatingAuth: false,
             });
-            break;
+
+            // Automatically proceed to make the actual request
+            setTimeout(() => machine.proceedToNextStep(), 50);
+            return;
 
           case "token_request":
             // Step 11: Receive access token
@@ -824,6 +838,7 @@ export const createDebugOAuthStateMachine = (
               },
             };
 
+            // Update state with the request
             updateState({
               currentStep: "authenticated_mcp_request",
               lastRequest: authenticatedRequest,
@@ -837,7 +852,10 @@ export const createDebugOAuthStateMachine = (
               ],
               isInitiatingAuth: false,
             });
-            break;
+
+            // Automatically proceed to make the actual request
+            setTimeout(() => machine.proceedToNextStep(), 50);
+            return;
 
           case "authenticated_mcp_request":
             // Step 13: Complete flow
@@ -906,6 +924,8 @@ export const createDebugOAuthStateMachine = (
       });
     },
   };
+
+  return machine;
 };
 
 // Helper function to generate random string for PKCE
