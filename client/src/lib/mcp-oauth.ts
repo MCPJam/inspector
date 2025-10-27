@@ -7,6 +7,7 @@ import {
   OAuthClientProvider,
 } from "@modelcontextprotocol/sdk/client/auth.js";
 import { HttpServerDefinition } from "@/shared/types.js";
+import { mergeProxyAuthHeaders } from "./proxy-auth";
 
 // Store original fetch for restoration
 const originalFetch = window.fetch;
@@ -33,6 +34,7 @@ function createOAuthFetchInterceptor(): typeof fetch {
         const proxyUrl = `/api/mcp/oauth/metadata?url=${encodeURIComponent(url)}`;
         const response = await originalFetch(proxyUrl, {
           ...init,
+          headers: mergeProxyAuthHeaders(init?.headers),
           method: "GET", // Always GET for metadata
         });
 

@@ -1,11 +1,16 @@
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ProvidersTable } from "./setting/ProvidersTable";
 import { ProviderConfigDialog } from "./setting/ProviderConfigDialog";
 import { OllamaConfigDialog } from "./setting/OllamaConfigDialog";
 import { LiteLLMConfigDialog } from "./setting/LiteLLMConfigDialog";
 import { OpenRouterConfigDialog } from "./setting/OpenRouterConfigDialog";
 import { AccountApiKeySection } from "./setting/AccountApiKeySection";
+import { Input } from "./ui/input";
+import { Button } from "./ui/button";
+import { Badge } from "./ui/badge";
+import { useProxyAuthToken } from "@/hooks/use-proxy-auth-token";
+import { toast } from "sonner";
 
 interface ProviderConfig {
   id: string;
@@ -32,6 +37,33 @@ export function SettingsTab() {
     getOpenRouterSelectedModels,
     setOpenRouterSelectedModels,
   } = useAiProviderKeys();
+
+  const {
+    token: proxyAuthToken,
+    hasToken: hasProxyAuthToken,
+    setToken: setProxyAuthToken,
+    clearToken: clearProxyAuthToken,
+  } = useProxyAuthToken();
+
+  const [proxyTokenInput, setProxyTokenInput] = useState("");
+
+  useEffect(() => {
+    setProxyTokenInput(proxyAuthToken ?? "");
+  }, [proxyAuthToken]);
+
+  const handleProxyTokenSave = () => {
+    const normalized = proxyTokenInput.trim();
+    setProxyAuthToken(normalized || null);
+    toast.success(
+      normalized ? "Proxy session token saved" : "Proxy session token cleared",
+    );
+  };
+
+  const handleProxyTokenClear = () => {
+    clearProxyAuthToken();
+    setProxyTokenInput("");
+    toast.success("Proxy session token cleared");
+  };
 
   const [editingValue, setEditingValue] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -199,6 +231,44 @@ export function SettingsTab() {
       <div className="flex items-center gap-3 mb-6">
         <h1 className="text-2xl font-bold">Settings</h1>
       </div>
+
+      <section className="border rounded-lg bg-card p-6 space-y-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold">Proxy Session Token</h2>
+            <p className="text-sm text-muted-foreground">
+              Secure the MCP proxy by supplying the session token printed when
+              the inspector starts. All API and streaming requests must include
+              this token.
+            </p>
+          </div>
+          <Badge variant={hasProxyAuthToken ? "default" : "secondary"}>
+            {hasProxyAuthToken ? "Configured" : "Not set"}
+          </Badge>
+        </div>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <Input
+            type="password"
+            autoComplete="off"
+            value={proxyTokenInput}
+            onChange={(event) => setProxyTokenInput(event.target.value)}
+            placeholder="Paste session token from server console"
+            className="font-mono"
+          />
+          <div className="flex flex-col sm:flex-row gap-2 sm:justify-end">
+            <Button onClick={handleProxyTokenSave}>Save</Button>
+            {hasProxyAuthToken && (
+              <Button variant="outline" onClick={handleProxyTokenClear}>
+                Clear
+              </Button>
+            )}
+          </div>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Tip: The terminal prints a link with this token embedded. Open that
+          link to configure the UI automatically without copying it manually.
+        </p>
+      </section>
 
       <AccountApiKeySection />
 

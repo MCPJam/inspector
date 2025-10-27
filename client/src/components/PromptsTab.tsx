@@ -21,6 +21,7 @@ import { EmptyState } from "./ui/empty-state";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import { MCPServerConfig, type MCPPrompt } from "@/sdk";
+import { withProxyAuth } from "@/lib/proxy-auth";
 import { JsonRpcLoggerView } from "./logging/json-rpc-logger-view";
 
 interface PromptsTabProps {
@@ -75,11 +76,14 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
     setError("");
 
     try {
-      const response = await fetch("/api/mcp/prompts/list", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ serverId: serverName }),
-      });
+      const response = await fetch(
+        "/api/mcp/prompts/list",
+        withProxyAuth({
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ serverId: serverName }),
+        }),
+      );
 
       const data = await response.json();
 
@@ -170,15 +174,18 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
 
     try {
       const params = buildParameters();
-      const response = await fetch("/api/mcp/prompts/get", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          serverId: serverName,
-          name: selectedPrompt,
-          args: params,
+      const response = await fetch(
+        "/api/mcp/prompts/get",
+        withProxyAuth({
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            serverId: serverName,
+            name: selectedPrompt,
+            args: params,
+          }),
         }),
-      });
+      );
 
       const data = await response.json();
 

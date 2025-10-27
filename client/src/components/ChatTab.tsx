@@ -17,6 +17,7 @@ import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import { listTools } from "@/lib/mcp-tools-api";
+import { withProxyAuth } from "@/lib/proxy-auth";
 import { JsonRpcLoggerView } from "./logging/json-rpc-logger-view";
 import {
   ResizablePanelGroup,
@@ -190,20 +191,22 @@ export function ChatTab({
     params: Record<string, any>,
   ) => {
     try {
-      const response = await fetch("/api/mcp/tools/execute", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          toolName,
-          parameters: params,
-          // Pass serverId if only one server is connected
-          ...(selectedConnectedNames.length === 1
-            ? { serverId: selectedConnectedNames[0] }
-            : {}),
+      const response = await fetch(
+        "/api/mcp/tools/execute",
+        withProxyAuth({
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            toolName,
+            parameters: params,
+            ...(selectedConnectedNames.length === 1
+              ? { serverId: selectedConnectedNames[0] }
+              : {}),
+          }),
         }),
-      });
+      );
       const data = await response.json();
       return data.result;
     } catch (error) {

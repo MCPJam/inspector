@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ToolCall, ToolResult } from "@/lib/chat-types";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { appendProxyAuthToUrl, withProxyAuth } from "@/lib/proxy-auth";
 
 interface OpenAIComponentRendererProps {
   componentUrl: string;
@@ -98,24 +99,29 @@ export function OpenAIComponentRenderer({
       // Store widget data, then set URL once storage completes
       const storeAndSetUrl = async () => {
         try {
-          await fetch("/api/mcp/resources/widget/store", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              serverId,
-              uri: componentUrl,
-              toolInput: toolCall.parameters,
-              toolOutput: structuredContent,
-              toolResponseMetadata: toolResponseMetadata,
-              toolId: toolCall.id,
-              theme: themeMode,
+          await fetch(
+            "/api/mcp/resources/widget/store",
+            withProxyAuth({
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                serverId,
+                uri: componentUrl,
+                toolInput: toolCall.parameters,
+                toolOutput: structuredContent,
+                toolResponseMetadata: toolResponseMetadata,
+                toolId: toolCall.id,
+                theme: themeMode,
+              }),
             }),
-          });
+          );
 
           // Only set URL after data is stored
-          const url = `/api/mcp/resources/widget/${toolCall.id}`;
+          const url = appendProxyAuthToUrl(
+            `/api/mcp/resources/widget/${toolCall.id}`,
+          );
           setWidgetUrl(url);
         } catch (error) {
           console.error("Error storing widget data:", error);

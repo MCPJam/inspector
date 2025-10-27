@@ -4,7 +4,7 @@ import * as Sentry from "@sentry/node";
 import { serve } from "@hono/node-server";
 import dotenv from "dotenv";
 import fixPath from "fix-path";
-import { Hono } from "hono";
+import { Hono, type MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
@@ -13,36 +13,106 @@ import { readFileSync, existsSync } from "fs";
 import { join, dirname, resolve } from "path";
 import { fileURLToPath } from "url";
 import { MCPClientManager } from "@/sdk";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Utility function to create a boxed console output
-function logBox(content: string, title?: string) {
-  const lines = content.split("\n");
-  const maxLength = Math.max(...lines.map((line) => line.length));
-  const width = maxLength + 4;
+// Load environment variables early so route handlers can read CONVEX_HTTP_URL
+const envFile =
+  process.env.NODE_ENV === "production"
+    ? ".env.production"
+    : ".env.development";
 
-  console.log("┌" + "─".repeat(width) + "┐");
-  if (title) {
-    const titlePadding = Math.floor((width - title.length - 2) / 2);
-    console.log(
-      "│" +
-        " ".repeat(titlePadding) +
-        title +
-        " ".repeat(width - title.length - titlePadding) +
-        "│",
+// Determine where to look for .env file:
+// 1. Electron: Resources folder
+// 2. npm package: package root (two levels up from dist/server)
+// 3. Local dev: current working directory
+let envPath = envFile;
+if (
+  process.env.ELECTRON_APP === "true" &&
+  process.env.ELECTRON_RESOURCES_PATH
+) {
+  envPath = join(process.env.ELECTRON_RESOURCES_PATH, envFile);
+} else {
+  const packageRoot = resolve(__dirname, "..", "..");
+  const packageEnvPath = join(packageRoot, envFile);
+  if (existsSync(packageEnvPath)) {
+    envPath = packageEnvPath;
+  }
+}
+
+dotenv.config({ path: envPath });
+
+const sessionToken = randomBytes(32).toString("hex");
+const authDisabled = !!process.env.DANGEROUSLY_OMIT_AUTH;
+
+const clientPort = process.env.ENVIRONMENT === "dev" ? "3000" : "6274";
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+if (allowedOrigins.length === 0) {
+  allowedOrigins.push(`http://localhost:${clientPort}`);
+  allowedOrigins.push(`http://127.0.0.1:${clientPort}`);
+}
+
+const originValidationMiddleware: MiddlewareHandler = async (c, next) => {
+  const origin = c.req.header("origin");
+  if (origin && !allowedOrigins.includes(origin)) {
+    return c.json(
+      {
+        error: "Forbidden - invalid origin",
+        message:
+          "Request blocked to prevent DNS rebinding attacks. Configure allowed origins via the ALLOWED_ORIGINS environment variable.",
+      },
+      403,
     );
-    console.log("├" + "─".repeat(width) + "┤");
+  }
+  await next();
+};
+
+const unauthorizedResponse = (c: Parameters<MiddlewareHandler>[0]) =>
+  c.json(
+    {
+      error: "Unauthorized",
+      message:
+        "Authentication required. Use the session token shown in the console when starting the server.",
+    },
+    401,
+  );
+
+const authMiddleware: MiddlewareHandler = async (c, next) => {
+  if (authDisabled || c.req.method === "OPTIONS") {
+    await next();
+    return;
   }
 
-  lines.forEach((line) => {
-    const padding = width - line.length - 2;
-    console.log("│ " + line + " ".repeat(padding) + " │");
-  });
+  const authHeader = c.req.header("authorization");
+  console.log("authHeader", authHeader);
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return unauthorizedResponse(c);
+  }
 
-  console.log("└" + "─".repeat(width) + "┘");
-}
+  const providedToken = authHeader.slice("Bearer ".length);
+  const providedBuffer = Buffer.from(providedToken);
+  const expectedBuffer = Buffer.from(sessionToken);
+
+  if (providedBuffer.length !== expectedBuffer.length) {
+    return unauthorizedResponse(c);
+  }
+
+  try {
+    if (!timingSafeEqual(providedBuffer, expectedBuffer)) {
+      return unauthorizedResponse(c);
+    }
+  } catch {
+    return unauthorizedResponse(c);
+  }
+
+  await next();
+};
 
 // Import routes and services
 import mcpRoutes from "./routes/mcp/index";
@@ -129,32 +199,6 @@ const app = new Hono().onError((err, c) => {
   return c.json({ error: "Internal server error" }, 500);
 });
 
-// Load environment variables early so route handlers can read CONVEX_HTTP_URL
-const envFile =
-  process.env.NODE_ENV === "production"
-    ? ".env.production"
-    : ".env.development";
-
-// Determine where to look for .env file:
-// 1. Electron: Resources folder
-// 2. npm package: package root (two levels up from dist/server)
-// 3. Local dev: current working directory
-let envPath = envFile;
-if (
-  process.env.ELECTRON_APP === "true" &&
-  process.env.ELECTRON_RESOURCES_PATH
-) {
-  envPath = join(process.env.ELECTRON_RESOURCES_PATH, envFile);
-} else {
-  const packageRoot = resolve(__dirname, "..", "..");
-  const packageEnvPath = join(packageRoot, envFile);
-  if (existsSync(packageEnvPath)) {
-    envPath = packageEnvPath;
-  }
-}
-
-dotenv.config({ path: envPath });
-
 // Validate required env vars
 if (!process.env.CONVEX_HTTP_URL) {
   throw new Error(
@@ -184,20 +228,29 @@ app.use("*", async (c, next) => {
 
 // Middleware
 app.use("*", logger());
-// Dynamic CORS origin based on PORT environment variable
-const serverPort = process.env.PORT || "3001";
-const corsOrigins = [
-  `http://localhost:${serverPort}`,
-  "http://localhost:3000", // Keep for frontend development
-];
 
 app.use(
   "*",
   cors({
-    origin: corsOrigins,
+    origin: allowedOrigins,
+    allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowHeaders: [
+      "Authorization",
+      "Content-Type",
+      "Accept",
+      "Accept-Language",
+    ],
+    exposeHeaders: ["mcp-session-id"],
     credentials: true,
   }),
 );
+
+app.use("/api/*", originValidationMiddleware);
+app.use("/api/*", authMiddleware);
+app.use("/sse/*", originValidationMiddleware);
+app.use("/sse/*", authMiddleware);
+app.use("/sse/message", originValidationMiddleware);
+app.use("/sse/message", authMiddleware);
 
 // API Routes
 app.route("/api/mcp", mcpRoutes);
@@ -206,8 +259,14 @@ app.route("/api/mcp", mcpRoutes);
 // We resolve the upstream messages endpoint via sessionId and forward with any injected auth.
 // CORS preflight
 app.options("/sse/message", (c) => {
+  const originHeader = c.req.header("origin");
+  const fallbackOrigin = allowedOrigins[0] || `http://127.0.0.1:${clientPort}`;
+  const allowedOrigin =
+    originHeader && allowedOrigins.includes(originHeader)
+      ? originHeader
+      : fallbackOrigin;
   return c.body(null, 204, {
-    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Origin": allowedOrigin,
     "Access-Control-Allow-Methods": "POST,OPTIONS",
     "Access-Control-Allow-Headers":
       "Authorization, Content-Type, Accept, Accept-Language",
@@ -315,6 +374,9 @@ app.get("/api/mcp-cli-config", (c) => {
   return c.json({ config: mcpConfig });
 });
 
+const port = Number.parseInt(process.env.PORT || "3001", 10);
+const host = process.env.HOST || "127.0.0.1";
+
 // Static file serving (for production)
 if (process.env.NODE_ENV === "production") {
   // Serve public assets (logos, etc.) at root level
@@ -353,23 +415,28 @@ if (process.env.NODE_ENV === "production") {
     return c.json({
       message: "MCPJam API Server",
       environment: "development",
-      frontend: `http://localhost:${serverPort}`,
+      frontend: `http://localhost:${port}`,
     });
   });
 }
 
-const port = parseInt(process.env.PORT || "3001");
-
-// Default to localhost unless explicitly running in production
-const hostname = process.env.ENVIRONMENT === "dev" ? "localhost" : "127.0.0.1";
-logBox(`http://${hostname}:${port}`, "🚀 Inspector Launched");
-
-// Graceful shutdown handling
 const server = serve({
   fetch: app.fetch,
   port,
-  hostname: "0.0.0.0", // Bind to all interfaces for Docker
+  hostname: host,
 });
+
+console.log(`⚙️ Proxy server listening on ${host}:${port}`);
+
+if (!authDisabled) {
+  console.log(`🔑 Session token: ${sessionToken}`);
+  const clientUrl = `http://localhost:${clientPort}/?MCP_PROXY_AUTH_TOKEN=${sessionToken}`;
+  console.log(`\n🔗 Open inspector with token pre-filled:\n   ${clientUrl}\n`);
+} else {
+  console.log(
+    "⚠️  WARNING: Authentication is disabled. This is not recommended.",
+  );
+}
 
 // Handle graceful shutdown
 process.on("SIGINT", () => {

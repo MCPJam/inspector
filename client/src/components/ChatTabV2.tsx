@@ -30,6 +30,8 @@ import {
   getDefaultModel,
 } from "@/components/chat-v2/model-helpers";
 import { isMCPJamProvidedModel } from "@/shared/types";
+import { appendProxyAuthToUrl, withProxyAuth } from "@/lib/proxy-auth";
+import { useProxyAuthToken } from "@/hooks/use-proxy-auth-token";
 
 export function ChatTabV2() {
   const { getAccessToken } = useAuth();
@@ -79,9 +81,16 @@ export function ChatTabV2() {
     null,
   );
   const [elicitationLoading, setElicitationLoading] = useState(false);
+  const { token: proxyAuthToken } = useProxyAuthToken();
 
   const transport = useMemo(() => {
     const apiKey = getToken(effectiveModel.provider as keyof ProviderTokens);
+    const headers: Record<string, string> = authHeaders
+      ? { ...authHeaders }
+      : {};
+    if (proxyAuthToken) {
+      headers["X-MCP-Proxy-Authorization"] = `Bearer ${proxyAuthToken}`;
+    }
     return new DefaultChatTransport({
       api: "/api/mcp/chat-v2",
       body: {
@@ -89,9 +98,9 @@ export function ChatTabV2() {
         apiKey: apiKey,
         temperature: 0.7,
       },
-      headers: authHeaders,
+      headers,
     });
-  }, [effectiveModel, getToken, authHeaders]);
+  }, [effectiveModel, getToken, authHeaders, proxyAuthToken]);
 
   useEffect(() => {
     let active = true;
@@ -162,7 +171,9 @@ export function ChatTabV2() {
   // selectedModelId defaults via effectiveModel; no effect needed
 
   useEffect(() => {
-    const es = new EventSource("/api/mcp/elicitation/stream");
+    const es = new EventSource(
+      appendProxyAuthToUrl("/api/mcp/elicitation/stream"),
+    );
     es.onmessage = (ev) => {
       try {
         const data = JSON.parse(ev.data);
@@ -197,15 +208,18 @@ export function ChatTabV2() {
     if (!elicitation) return;
     setElicitationLoading(true);
     try {
-      await fetch("/api/mcp/elicitation/respond", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          requestId: elicitation.requestId,
-          action,
-          content: parameters,
+      await fetch(
+        "/api/mcp/elicitation/respond",
+        withProxyAuth({
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            requestId: elicitation.requestId,
+            action,
+            content: parameters,
+          }),
         }),
-      });
+      );
       setElicitation(null);
     } finally {
       setElicitationLoading(false);

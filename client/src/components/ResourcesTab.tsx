@@ -17,6 +17,7 @@ import {
   type MCPResource,
 } from "@/sdk";
 import { JsonRpcLoggerView } from "./logging/json-rpc-logger-view";
+import { withProxyAuth } from "@/lib/proxy-auth";
 
 interface ResourcesTabProps {
   serverConfig?: MCPServerConfig;
@@ -52,11 +53,14 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
     setResources([]);
 
     try {
-      const response = await fetch("/api/mcp/resources/list", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ serverId: serverName }),
-      });
+      const response = await fetch(
+        "/api/mcp/resources/list",
+        withProxyAuth({
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ serverId: serverName }),
+        }),
+      );
 
       const data = await response.json();
 
@@ -91,14 +95,17 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
     setError("");
 
     try {
-      const response = await fetch("/api/mcp/resources/read", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          serverId: serverName,
-          uri: uri,
+      const response = await fetch(
+        "/api/mcp/resources/read",
+        withProxyAuth({
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            serverId: serverName,
+            uri: uri,
+          }),
         }),
-      });
+      );
 
       const data = await response.json();
 

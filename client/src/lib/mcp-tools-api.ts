@@ -4,6 +4,7 @@ import type {
   ElicitResult,
   ListToolsResult,
 } from "@modelcontextprotocol/sdk/types.js";
+import { withProxyAuth } from "./proxy-auth";
 
 export type ListToolsResultWithMetadata = ListToolsResult & {
   toolsMetadata?: Record<string, Record<string, any>>;
@@ -28,11 +29,14 @@ export type ToolExecutionResponse =
 export async function listTools(
   serverId: string,
 ): Promise<ListToolsResultWithMetadata> {
-  const res = await fetch("/api/mcp/tools/list", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ serverId }),
-  });
+  const res = await fetch(
+    "/api/mcp/tools/list",
+    withProxyAuth({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ serverId }),
+    }),
+  );
   let body: any = null;
   try {
     body = await res.json();
@@ -49,11 +53,14 @@ export async function executeToolApi(
   toolName: string,
   parameters: Record<string, unknown>,
 ): Promise<ToolExecutionResponse> {
-  const res = await fetch("/api/mcp/tools/execute", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ serverId, toolName, parameters }),
-  });
+  const res = await fetch(
+    "/api/mcp/tools/execute",
+    withProxyAuth({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ serverId, toolName, parameters }),
+    }),
+  );
   let body: any = null;
   try {
     body = await res.json();
@@ -70,11 +77,14 @@ export async function respondToElicitationApi(
   requestId: string,
   response: ElicitResult,
 ): Promise<ToolExecutionResponse> {
-  const res = await fetch("/api/mcp/tools/respond", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ requestId, response }),
-  });
+  const res = await fetch(
+    "/api/mcp/tools/respond",
+    withProxyAuth({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ requestId, response }),
+    }),
+  );
   let body: any = null;
   try {
     body = await res.json();

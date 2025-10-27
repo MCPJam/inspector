@@ -14,6 +14,7 @@ import { MCPIcon } from "../ui/mcp-icon";
 import { UIResourceRenderer } from "@mcp-ui/client";
 import { MCPServerConfig } from "@/sdk";
 import { OpenAIComponentRenderer } from "./openai-component-renderer";
+import { withProxyAuth } from "@/lib/proxy-auth";
 
 interface ToolCallDisplayProps {
   toolCall: ToolCall;
@@ -452,19 +453,22 @@ export function ToolCallDisplay({
                                     return undefined;
                                   })();
 
-                                  fetch("/api/mcp/tools/execute", {
-                                    method: "POST",
-                                    headers: {
-                                      "Content-Type": "application/json",
-                                    },
-                                    body: JSON.stringify({
-                                      toolName: evt.payload.toolName,
-                                      parameters: evt.payload.params || {},
-                                      ...(serverIdToUse
-                                        ? { serverId: serverIdToUse }
-                                        : {}),
+                                  fetch(
+                                    "/api/mcp/tools/execute",
+                                    withProxyAuth({
+                                      method: "POST",
+                                      headers: {
+                                        "Content-Type": "application/json",
+                                      },
+                                      body: JSON.stringify({
+                                        toolName: evt.payload.toolName,
+                                        parameters: evt.payload.params || {},
+                                        ...(serverIdToUse
+                                          ? { serverId: serverIdToUse }
+                                          : {}),
+                                      }),
                                     }),
-                                  }).catch(() => {});
+                                  ).catch(() => {});
                                 } else if (
                                   evt.type === "link" &&
                                   evt.payload?.url
