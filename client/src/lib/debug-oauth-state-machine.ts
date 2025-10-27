@@ -487,6 +487,21 @@ export const createDebugOAuthStateMachine = (
 
               const resourceMetadata = response.body;
 
+              // Validate required fields per RFC 9728
+              if (!resourceMetadata.resource) {
+                throw new Error(
+                  "Resource metadata missing required 'resource' field",
+                );
+              }
+              if (
+                !resourceMetadata.authorization_servers ||
+                resourceMetadata.authorization_servers.length === 0
+              ) {
+                throw new Error(
+                  "Resource metadata missing 'authorization_servers'",
+                );
+              }
+
               // Extract authorization server URL (use first one if multiple, fallback to server URL)
               const authorizationServerUrl =
                 resourceMetadata.authorization_servers?.[0] || serverUrl;
@@ -632,6 +647,30 @@ export const createDebugOAuthStateMachine = (
               );
             }
 
+            // Validate required AS metadata fields per RFC 8414
+            if (!authServerMetadata.issuer) {
+              throw new Error(
+                "Authorization server metadata missing required 'issuer' field",
+              );
+            }
+            if (!authServerMetadata.authorization_endpoint) {
+              throw new Error(
+                "Authorization server metadata missing 'authorization_endpoint'",
+              );
+            }
+            if (!authServerMetadata.token_endpoint) {
+              throw new Error(
+                "Authorization server metadata missing 'token_endpoint'",
+              );
+            }
+            if (
+              !authServerMetadata.response_types_supported?.includes("code")
+            ) {
+              throw new Error(
+                "Authorization server does not support 'code' response type",
+              );
+            }
+
             const authServerResponseData = {
               status: finalResponseData.status,
               statusText: finalResponseData.statusText,
@@ -646,13 +685,33 @@ export const createDebugOAuthStateMachine = (
                 authServerResponseData;
             }
 
-            updateState({
-              currentStep: "received_authorization_server_metadata",
-              authorizationServerMetadata: authServerMetadata,
-              lastResponse: authServerResponseData,
-              httpHistory: updatedHistoryFinal,
-              isInitiatingAuth: false,
-            });
+            // Validate PKCE support
+            const supportedMethods =
+              authServerMetadata.code_challenge_methods_supported || [];
+            if (!supportedMethods.includes("S256")) {
+              console.warn(
+                "Authorization server may not support S256 PKCE method. Supported methods:",
+                supportedMethods,
+              );
+              // Add warning to state but continue
+              updateState({
+                currentStep: "received_authorization_server_metadata",
+                authorizationServerMetadata: authServerMetadata,
+                lastResponse: authServerResponseData,
+                httpHistory: updatedHistoryFinal,
+                error:
+                  "Warning: Authorization server may not support S256 PKCE method",
+                isInitiatingAuth: false,
+              });
+            } else {
+              updateState({
+                currentStep: "received_authorization_server_metadata",
+                authorizationServerMetadata: authServerMetadata,
+                lastResponse: authServerResponseData,
+                httpHistory: updatedHistoryFinal,
+                isInitiatingAuth: false,
+              });
+            }
             break;
 
           case "received_authorization_server_metadata":
@@ -1064,7 +1123,7 @@ export const createDebugOAuthStateMachine = (
             break;
 
           case "received_access_token":
-            // Step 12: Make authenticated MCP request
+            // Step 12: Make authenticated MCP request (initialize to establish session)
             if (!state.serverUrl || !state.accessToken) {
               throw new Error("Missing server URL or access token");
             }
@@ -1075,12 +1134,19 @@ export const createDebugOAuthStateMachine = (
               headers: {
                 Authorization: `Bearer ${state.accessToken}`,
                 "Content-Type": "application/json",
-                Accept: "application/json",
+                Accept: "application/json, text/event-stream",
               },
               body: {
                 jsonrpc: "2.0",
-                method: "tools/list",
-                params: {},
+                method: "initialize",
+                params: {
+                  protocolVersion: "2024-11-05",
+                  capabilities: {},
+                  clientInfo: {
+                    name: "MCP Inspector",
+                    version: "1.0.0",
+                  },
+                },
                 id: 2,
               },
             };
@@ -1105,29 +1171,89 @@ export const createDebugOAuthStateMachine = (
             return;
 
           case "authenticated_mcp_request":
-            // Step 13: Complete flow
-
-            // Simulate successful response
-            const mcpResponseData = {
-              status: 200,
-              statusText: "OK",
-              headers: { "content-type": "application/json" },
-              body: { message: "Authenticated MCP request successful" },
-            };
-
-            // Update the last history entry with the response
-            const updatedHistoryMcp = [...(state.httpHistory || [])];
-            if (updatedHistoryMcp.length > 0) {
-              updatedHistoryMcp[updatedHistoryMcp.length - 1].response =
-                mcpResponseData;
+            // Step 13: Make actual authenticated request to verify token (initialize with auth)
+            if (!state.serverUrl || !state.accessToken) {
+              throw new Error("Missing server URL or access token");
             }
 
-            updateState({
-              currentStep: "complete",
-              lastResponse: mcpResponseData,
-              httpHistory: updatedHistoryMcp,
-              isInitiatingAuth: false,
-            });
+            try {
+              const response = await proxyFetch(state.serverUrl, {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${state.accessToken}`,
+                  "Content-Type": "application/json",
+                  Accept: "application/json, text/event-stream",
+                },
+                body: JSON.stringify({
+                  jsonrpc: "2.0",
+                  method: "initialize",
+                  params: {
+                    protocolVersion: "2024-11-05",
+                    capabilities: {},
+                    clientInfo: {
+                      name: "MCP Inspector",
+                      version: "1.0.0",
+                    },
+                  },
+                  id: 2,
+                }),
+              });
+
+              const mcpResponseData = {
+                status: response.status,
+                statusText: response.statusText,
+                headers: response.headers,
+                body: response.body,
+              };
+
+              // Update the last history entry with the response
+              const updatedHistoryMcp = [...(state.httpHistory || [])];
+              if (updatedHistoryMcp.length > 0) {
+                updatedHistoryMcp[updatedHistoryMcp.length - 1].response =
+                  mcpResponseData;
+              }
+
+              if (!response.ok) {
+                updateState({
+                  lastResponse: mcpResponseData,
+                  httpHistory: updatedHistoryMcp,
+                  error: `Authenticated request failed: ${response.status} ${response.statusText}`,
+                  isInitiatingAuth: false,
+                });
+                return;
+              }
+
+              updateState({
+                currentStep: "complete",
+                lastResponse: mcpResponseData,
+                httpHistory: updatedHistoryMcp,
+                error: undefined,
+                isInitiatingAuth: false,
+              });
+            } catch (error) {
+              // Capture the error
+              const errorResponse = {
+                status: 0,
+                statusText: "Network Error",
+                headers: {},
+                body: {
+                  error: error instanceof Error ? error.message : String(error),
+                },
+              };
+
+              const updatedHistoryError = [...(state.httpHistory || [])];
+              if (updatedHistoryError.length > 0) {
+                updatedHistoryError[updatedHistoryError.length - 1].response =
+                  errorResponse;
+              }
+
+              updateState({
+                lastResponse: errorResponse,
+                httpHistory: updatedHistoryError,
+                error: `Authenticated MCP request failed: ${error instanceof Error ? error.message : String(error)}`,
+                isInitiatingAuth: false,
+              });
+            }
             break;
 
           case "complete":
