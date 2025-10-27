@@ -133,3 +133,15 @@ You can configure the system prompt and temperature, just like you would buildin
 ## Elicitation support
 
 MCPJam has elicitation support in the LLM playground. Any elicitation requests will be shown as a popup modal.
+
+## Playground V2 (Experimental)
+
+An experimental version of the playground is available at **Playground V2** in the sidebar. This version uses the `@ai-sdk/react` library for improved streaming and tool execution.
+
+**Key differences:**
+- Built on Vercel AI SDK's React hooks (`useChat`)
+- Automatic tool execution with `stepCountIs` limits
+- Separate SSE-based elicitation system
+- Simplified message streaming architecture
+
+Both playgrounds support the same models and features. V2 is under active development and may have different behavior or limitations.
