@@ -153,6 +153,38 @@ function buildAuthServerMetadataUrls(authServerUrl: string): string[] {
   return urls;
 }
 
+// Helper function to make requests via backend proxy (bypasses CORS)
+async function proxyFetch(url: string, options: RequestInit = {}): Promise<{
+  status: number;
+  statusText: string;
+  headers: Record<string, string>;
+  body: any;
+  ok: boolean;
+}> {
+  const response = await fetch("/api/mcp/oauth/proxy", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      url,
+      method: options.method || "GET",
+      body: options.body ? JSON.parse(options.body as string) : undefined,
+      headers: options.headers,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Backend proxy error: ${response.status} ${response.statusText}`);
+  }
+
+  const data = await response.json();
+  return {
+    ...data,
+    ok: data.status >= 200 && data.status < 300,
+  };
+}
+
 // Factory function to create the state machine
 export const createDebugOAuthStateMachine = (
   config: DebugOAuthStateMachineConfig
@@ -176,10 +208,24 @@ export const createDebugOAuthStateMachine = (
             console.log("[Debug OAuth] Making initial request to MCP server without token");
 
             const initialRequest = {
-              method: "GET",
+              method: "POST",
               url: serverUrl,
               headers: {
+                "Content-Type": "application/json",
                 "Accept": "application/json",
+              },
+              body: {
+                jsonrpc: "2.0",
+                method: "initialize",
+                params: {
+                  protocolVersion: "2024-11-05",
+                  capabilities: {},
+                  clientInfo: {
+                    name: "MCP Inspector",
+                    version: "1.0.0",
+                  },
+                },
+                id: 1,
               },
             };
 
@@ -200,7 +246,7 @@ export const createDebugOAuthStateMachine = (
             break;
 
           case "request_without_token":
-            // Step 2: Request MCP server and expect 401 Unauthorized
+            // Step 2: Request MCP server and expect 401 Unauthorized via backend proxy
             if (!state.serverUrl) {
               throw new Error("No server URL available");
             }
@@ -208,32 +254,35 @@ export const createDebugOAuthStateMachine = (
             console.log("[Debug OAuth] Requesting MCP server at:", state.serverUrl);
 
             try {
-              const requestHeaders = {
-                "Accept": "application/json",
-              };
-
-              const response = await fetchFn(state.serverUrl, {
-                method: "GET",
-                headers: requestHeaders,
-              });
-
-              // Capture response headers
-              const responseHeaders: Record<string, string> = {};
-              response.headers.forEach((value, key) => {
-                responseHeaders[key] = value;
+              // Use backend proxy to bypass CORS and capture all headers
+              const response = await proxyFetch(state.serverUrl, {
+                method: "POST",
+                body: JSON.stringify({
+                  jsonrpc: "2.0",
+                  method: "initialize",
+                  params: {
+                    protocolVersion: "2024-11-05",
+                    capabilities: {},
+                    clientInfo: {
+                      name: "MCP Inspector",
+                      version: "1.0.0",
+                    },
+                  },
+                  id: 1,
+                }),
               });
 
               if (response.status === 401) {
                 // Expected 401 response with WWW-Authenticate header
-                const wwwAuthenticateHeader = response.headers.get("WWW-Authenticate");
+                const wwwAuthenticateHeader = response.headers["www-authenticate"];
                 console.log("[Debug OAuth] Received 401 Unauthorized");
                 console.log("[Debug OAuth] WWW-Authenticate header:", wwwAuthenticateHeader);
 
                 const responseData = {
                   status: response.status,
                   statusText: response.statusText,
-                  headers: responseHeaders,
-                  body: null,
+                  headers: response.headers,
+                  body: response.body,
                 };
 
                 // Update the last history entry with the response
@@ -322,7 +371,7 @@ export const createDebugOAuthStateMachine = (
             break;
 
           case "request_resource_metadata":
-            // Step 2: Fetch and parse resource metadata
+            // Step 2: Fetch and parse resource metadata via backend proxy
             if (!state.resourceMetadataUrl) {
               throw new Error("No resource metadata URL available");
             }
@@ -330,19 +379,9 @@ export const createDebugOAuthStateMachine = (
             console.log("[Debug OAuth] Fetching resource metadata from:", state.resourceMetadataUrl);
 
             try {
-              const requestHeaders = {
-                "Accept": "application/json",
-              };
-
-              const response = await fetchFn(state.resourceMetadataUrl, {
+              // Use backend proxy to bypass CORS
+              const response = await proxyFetch(state.resourceMetadataUrl, {
                 method: "GET",
-                headers: requestHeaders,
-              });
-
-              // Capture response headers
-              const responseHeaders: Record<string, string> = {};
-              response.headers.forEach((value, key) => {
-                responseHeaders[key] = value;
               });
 
               if (!response.ok) {
@@ -350,8 +389,8 @@ export const createDebugOAuthStateMachine = (
                 const failedResponseData = {
                   status: response.status,
                   statusText: response.statusText,
-                  headers: responseHeaders,
-                  body: null,
+                  headers: response.headers,
+                  body: response.body,
                 };
 
                 // Update the last history entry with the failed response
@@ -371,7 +410,7 @@ export const createDebugOAuthStateMachine = (
                 throw new Error(`Failed to fetch resource metadata: HTTP ${response.status}`);
               }
 
-              const resourceMetadata = await response.json();
+              const resourceMetadata = response.body;
               console.log("[Debug OAuth] Received resource metadata:", resourceMetadata);
 
               // Extract authorization server URL (use first one if multiple, fallback to server URL)
@@ -381,7 +420,7 @@ export const createDebugOAuthStateMachine = (
               const successResponseData = {
                 status: response.status,
                 statusText: response.statusText,
-                headers: responseHeaders,
+                headers: response.headers,
                 body: resourceMetadata,
               };
 
@@ -437,7 +476,7 @@ export const createDebugOAuthStateMachine = (
             break;
 
           case "request_authorization_server_metadata":
-            // Step 4: Fetch authorization server metadata (try multiple endpoints)
+            // Step 4: Fetch authorization server metadata (try multiple endpoints) via backend proxy
             if (!state.authorizationServerUrl) {
               throw new Error("No authorization server URL available");
             }
@@ -448,7 +487,7 @@ export const createDebugOAuthStateMachine = (
             let successUrl = "";
             let finalRequestHeaders = {};
             let finalResponseHeaders: Record<string, string> = {};
-            let finalResponse: Response | null = null;
+            let finalResponseData: any = null;
 
             for (const url of urlsToTry) {
               try {
@@ -476,23 +515,19 @@ export const createDebugOAuthStateMachine = (
                   httpHistory: updatedHistoryForRetry,
                 });
 
-                const response = await fetchFn(url, {
+                // Use backend proxy to bypass CORS
+                const response = await proxyFetch(url, {
                   method: "GET",
-                  headers: requestHeaders,
                 });
 
                 if (response.ok) {
-                  authServerMetadata = await response.json();
+                  authServerMetadata = response.body;
                   console.log("[Debug OAuth] Found authorization server metadata at:", url);
                   console.log("[Debug OAuth] Metadata:", authServerMetadata);
                   successUrl = url;
                   finalRequestHeaders = requestHeaders;
-                  finalResponse = response;
-
-                  // Capture response headers
-                  response.headers.forEach((value, key) => {
-                    finalResponseHeaders[key] = value;
-                  });
+                  finalResponseHeaders = response.headers;
+                  finalResponseData = response;
 
                   break;
                 } else if (response.status >= 400 && response.status < 500) {
@@ -509,13 +544,13 @@ export const createDebugOAuthStateMachine = (
               }
             }
 
-            if (!authServerMetadata || !finalResponse) {
+            if (!authServerMetadata || !finalResponseData) {
               throw new Error(`Could not discover authorization server metadata. Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
             }
 
             const authServerResponseData = {
-              status: finalResponse.status,
-              statusText: finalResponse.statusText,
+              status: finalResponseData.status,
+              statusText: finalResponseData.statusText,
               headers: finalResponseHeaders,
               body: authServerMetadata,
             };
@@ -774,11 +809,18 @@ export const createDebugOAuthStateMachine = (
             console.log("[Debug OAuth] Making authenticated MCP request");
 
             const authenticatedRequest = {
-              method: "GET",
+              method: "POST",
               url: state.serverUrl,
               headers: {
                 "Authorization": `Bearer ${state.accessToken}`,
+                "Content-Type": "application/json",
                 "Accept": "application/json",
+              },
+              body: {
+                jsonrpc: "2.0",
+                method: "tools/list",
+                params: {},
+                id: 2,
               },
             };
 
