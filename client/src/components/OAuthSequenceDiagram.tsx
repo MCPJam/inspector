@@ -254,7 +254,7 @@ export const OAuthSequenceDiagram = memo(({ flowState }: OAuthSequenceDiagramPro
         from: "client",
         to: "mcpServer",
         details: flowState.serverUrl
-          ? [{ label: "GET", value: flowState.serverUrl }]
+          ? [{ label: "POST", value: flowState.serverUrl }, { label: "method", value: "initialize" }]
           : undefined,
       },
       {
@@ -397,7 +397,10 @@ export const OAuthSequenceDiagram = memo(({ flowState }: OAuthSequenceDiagramPro
         from: "client",
         to: "mcpServer",
         details: flowState.accessToken
-          ? [{ label: "Authorization", value: "Bearer " + flowState.accessToken.substring(0, 15) + "..." }]
+          ? [
+              { label: "POST", value: "tools/list" },
+              { label: "Authorization", value: "Bearer " + flowState.accessToken.substring(0, 15) + "..." }
+            ]
           : undefined,
       },
     ];
