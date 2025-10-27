@@ -34,7 +34,11 @@ oauth.post("/proxy", async (c) => {
       ...customHeaders,
     };
 
-    if (method === "POST" && body) {
+    // Determine content type from custom headers or default to JSON
+    const contentType = customHeaders?.["Content-Type"] || customHeaders?.["content-type"];
+    const isFormUrlEncoded = contentType?.includes("application/x-www-form-urlencoded");
+
+    if (method === "POST" && body && !contentType) {
       requestHeaders["Content-Type"] = "application/json";
     }
 
@@ -45,7 +49,17 @@ oauth.post("/proxy", async (c) => {
     };
 
     if (method === "POST" && body) {
-      fetchOptions.body = JSON.stringify(body);
+      if (isFormUrlEncoded && typeof body === "object") {
+        // Convert object to URL-encoded string
+        const params = new URLSearchParams();
+        for (const [key, value] of Object.entries(body)) {
+          params.append(key, String(value));
+        }
+        fetchOptions.body = params.toString();
+      } else {
+        // Default to JSON
+        fetchOptions.body = JSON.stringify(body);
+      }
     }
 
     const response = await fetch(targetUrl.toString(), fetchOptions);

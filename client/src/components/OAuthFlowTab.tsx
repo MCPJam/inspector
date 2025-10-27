@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { Button } from "@/components/ui/button";
-import { AlertCircle, RefreshCw, Shield, Workflow, ChevronDown, ChevronRight, ArrowDownToLine, ArrowUpFromLine, ExternalLink } from "lucide-react";
+import { AlertCircle, RefreshCw, Shield, Workflow, ChevronDown, ChevronRight, ArrowDownToLine, ArrowUpFromLine, ExternalLink, CheckCircle2 } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import {
   AuthSettings,
@@ -113,11 +113,19 @@ export const OAuthFlowTab = ({
   );
 
   const resetOAuthFlow = useCallback(() => {
-    // Reset the flow state
+    console.log("[OAuth Flow] 🔄 Resetting OAuth flow state");
+    // Reset the flow state - clear everything
     updateOAuthFlowState({
       ...EMPTY_OAUTH_FLOW_STATE_V2,
       lastRequest: undefined,
       lastResponse: undefined,
+      authorizationCode: undefined,
+      authorizationUrl: undefined,
+      accessToken: undefined,
+      refreshToken: undefined,
+      codeVerifier: undefined,
+      codeChallenge: undefined,
+      error: undefined,
     });
     initializedServerRef.current = null;
     setExpandedBlocks(new Set());
@@ -169,6 +177,46 @@ export const OAuthFlowTab = ({
       await oauthStateMachine.proceedToNextStep();
     }
   }, [oauthStateMachine]);
+
+  // Listen for OAuth callback messages from the popup window
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      console.log("[OAuth Flow] 📨 Message received:", {
+        origin: event.origin,
+        type: event.data?.type,
+        hasCode: !!event.data?.code,
+      });
+
+      // Verify origin matches our app
+      if (event.origin !== window.location.origin) {
+        console.warn("[OAuth Flow] ⚠️ Origin mismatch, ignoring");
+        return;
+      }
+
+      // Check if this is an OAuth callback message
+      if (event.data?.type === "OAUTH_CALLBACK" && event.data?.code) {
+        console.log("[OAuth Flow] ✅ Authorization code received:", event.data.code);
+
+        // Update state with the authorization code
+        updateOAuthFlowState({
+          authorizationCode: event.data.code,
+          error: undefined,
+        });
+
+        console.log("[OAuth Flow] 🔄 State updated, proceeding to next step in 500ms");
+
+        // Automatically proceed to the next step after a brief delay
+        setTimeout(() => {
+          if (oauthStateMachine) {
+            oauthStateMachine.proceedToNextStep();
+          }
+        }, 500);
+      }
+    };
+
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [oauthStateMachine, updateOAuthFlowState]);
 
   // Initialize OAuth flow when component mounts or server changes
   useEffect(() => {
@@ -304,7 +352,12 @@ export const OAuthFlowTab = ({
           <Button
             variant="outline"
             onClick={() => {
-              oauthStateMachine?.resetFlow();
+              console.log("[OAuth Flow] 🔄 Reset button clicked - clearing all state");
+              if (oauthStateMachine) {
+                oauthStateMachine.resetFlow();
+              }
+              // Also reset the initialized server ref to allow restarting
+              initializedServerRef.current = null;
             }}
             disabled={oauthFlowState.isInitiatingAuth}
           >
@@ -360,48 +413,88 @@ export const OAuthFlowTab = ({
 
             {/* Authorization URL - Show when ready */}
             {oauthFlowState.currentStep === "authorization_request" && oauthFlowState.authorizationUrl && (
-              <div className="rounded-lg border border-border bg-card p-4">
-                <h3 className="text-sm font-semibold mb-3">Authorization Required</h3>
-                <p className="text-xs text-muted-foreground mb-3">
-                  Click the button below to open the authorization URL in your browser. After authorizing, you'll receive a code to paste below.
-                </p>
-                <Button
-                  onClick={() => {
-                    window.open(oauthFlowState.authorizationUrl!, "_blank", "noopener,noreferrer");
-                  }}
-                  className="w-full mb-3"
-                  size="sm"
-                >
-                  <ExternalLink className="h-4 w-4 mr-2" />
-                  Open Authorization URL
-                </Button>
-                <div className="text-xs font-mono bg-muted p-2 rounded break-all">
-                  {oauthFlowState.authorizationUrl}
+              <div className="rounded-lg border-2 border-blue-500/50 bg-blue-50 dark:bg-blue-950/20 p-4 animate-pulse">
+                <h3 className="text-sm font-semibold mb-3 text-blue-700 dark:text-blue-300">
+                  🔐 Authorization Required
+                </h3>
+                <div className="space-y-3">
+                  <p className="text-xs text-blue-600 dark:text-blue-400 font-medium">
+                    Step 1: Click the button below to authorize in your browser
+                  </p>
+                  <Button
+                    onClick={async () => {
+                      window.open(oauthFlowState.authorizationUrl!, "_blank", "noopener,noreferrer");
+
+                      // Automatically move to the next step (waiting for code)
+                      setTimeout(() => {
+                        proceedToNextStep();
+                      }, 500);
+                    }}
+                    className="w-full"
+                    size="sm"
+                  >
+                    <ExternalLink className="h-4 w-4 mr-2" />
+                    Open Authorization URL
+                  </Button>
+                  <p className="text-xs text-blue-600 dark:text-blue-400">
+                    Step 2: After authorizing, the code will be automatically captured and the flow will continue
+                  </p>
+                  <div className="text-[10px] font-mono bg-muted p-2 rounded break-all text-muted-foreground">
+                    {oauthFlowState.authorizationUrl}
+                  </div>
                 </div>
               </div>
             )}
 
             {/* Authorization Code Input - Show when waiting for code */}
             {oauthFlowState.currentStep === "received_authorization_code" && (
-              <div className="rounded-lg border border-border bg-card p-4">
-                <h3 className="text-sm font-semibold mb-3">Enter Authorization Code</h3>
-                <p className="text-xs text-muted-foreground mb-3">
-                  Paste the authorization code you received after authorizing in your browser.
-                </p>
-                <input
-                  type="text"
-                  value={oauthFlowState.authorizationCode || ""}
-                  onChange={(e) => {
-                    updateOAuthFlowState({ authorizationCode: e.target.value, error: undefined });
-                  }}
-                  placeholder="Paste authorization code here"
-                  className="w-full px-3 py-2 text-sm border border-input rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-                />
-                {oauthFlowState.error && (
-                  <div className="mt-3 p-2 rounded-md border border-red-200 bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-400">
-                    <p className="text-xs">{oauthFlowState.error}</p>
-                  </div>
-                )}
+              <div className="rounded-lg border-2 border-green-500/50 bg-green-50 dark:bg-green-950/20 p-4">
+                <h3 className="text-sm font-semibold mb-3 text-green-700 dark:text-green-300">
+                  ⏳ Waiting for Authorization Code
+                </h3>
+                <div className="space-y-3">
+                  {!oauthFlowState.authorizationCode ? (
+                    <>
+                      <div className="flex items-center gap-2 text-xs text-green-600 dark:text-green-400">
+                        <div className="h-2 w-2 bg-green-500 rounded-full animate-pulse" />
+                        <span>Waiting for authorization code from callback...</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        If the code wasn't captured automatically, paste it manually below:
+                      </p>
+                      <input
+                        type="text"
+                        value={oauthFlowState.authorizationCode || ""}
+                        onChange={(e) => {
+                          updateOAuthFlowState({ authorizationCode: e.target.value, error: undefined });
+                        }}
+                        placeholder="Paste authorization code here"
+                        className="w-full px-3 py-2 text-sm border border-input rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex items-center gap-2 text-xs text-green-600 dark:text-green-400 font-medium">
+                        <CheckCircle2 className="h-4 w-4" />
+                        <span>Authorization code received!</span>
+                      </div>
+                      <div>
+                        <div className="text-xs font-semibold mb-1 text-green-700 dark:text-green-300">Code to exchange:</div>
+                        <div className="text-xs font-mono bg-muted p-2 rounded break-all border border-green-500/30">
+                          {oauthFlowState.authorizationCode}
+                        </div>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Click "Next Step" to exchange the code for an access token
+                      </p>
+                    </>
+                  )}
+                  {oauthFlowState.error && (
+                    <div className="mt-3 p-2 rounded-md border border-red-200 bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-400">
+                      <p className="text-xs">{oauthFlowState.error}</p>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
