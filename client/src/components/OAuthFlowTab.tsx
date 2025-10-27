@@ -9,14 +9,13 @@ import {
 } from "@/shared/types.js";
 import { Card, CardContent } from "./ui/card";
 import { getStoredTokens } from "../lib/mcp-oauth";
-import { DebugMCPOAuthClientProvider } from "../lib/debug-oauth-provider";
 import { ServerWithName } from "../hooks/use-app-state";
 import {
-  OAuthFlowState,
-  EMPTY_OAUTH_FLOW_STATE,
-} from "../lib/oauth-flow-types";
-import { OAuthFlowProgress } from "./OAuthFlowProgress";
-import { OAuthStateMachine } from "../lib/oauth-state-machine";
+  OauthFlowStateNovember2025,
+  EMPTY_OAUTH_FLOW_STATE_V2,
+  createDebugOAuthStateMachine,
+} from "../lib/debug-oauth-state-machine";
+import { OAuthSequenceDiagram } from "./OAuthSequenceDiagram";
 import { MCPServerConfig } from "@/sdk";
 
 interface StatusMessageProps {
@@ -73,13 +72,9 @@ export const OAuthFlowTab = ({
   const [authSettings, setAuthSettings] = useState<AuthSettings>(
     DEFAULT_AUTH_SETTINGS,
   );
-  const [oauthFlowState, setOAuthFlowState] = useState<OAuthFlowState>(
-    EMPTY_OAUTH_FLOW_STATE,
+  const [oauthFlowState, setOAuthFlowState] = useState<OauthFlowStateNovember2025>(
+    EMPTY_OAUTH_FLOW_STATE_V2,
   );
-  const [flowGuard, setFlowGuard] = useState<{
-    canProceed: boolean;
-    reason?: string;
-  }>({ canProceed: false, reason: undefined });
 
   // Track if we've initialized the flow for the current server
   const initializedServerRef = useRef<string | null>(null);
@@ -89,7 +84,7 @@ export const OAuthFlowTab = ({
   }, []);
 
   const updateOAuthFlowState = useCallback(
-    (updates: Partial<OAuthFlowState>) => {
+    (updates: Partial<OauthFlowStateNovember2025>) => {
       setOAuthFlowState((prev) => ({ ...prev, ...updates }));
     },
     [],
@@ -97,22 +92,9 @@ export const OAuthFlowTab = ({
 
   const resetOAuthFlow = useCallback(() => {
     // Reset the flow state
-    updateOAuthFlowState(EMPTY_OAUTH_FLOW_STATE);
-    setFlowGuard({ canProceed: false, reason: undefined });
+    updateOAuthFlowState(EMPTY_OAUTH_FLOW_STATE_V2);
     initializedServerRef.current = null;
-
-    // Clear any debug OAuth artifacts to avoid stale client info/scope
-    if (authSettings.serverUrl) {
-      try {
-        const provider = new DebugMCPOAuthClientProvider(
-          authSettings.serverUrl,
-        );
-        provider.clear();
-      } catch (e) {
-        console.warn("Failed to clear debug OAuth provider state:", e);
-      }
-    }
-  }, [authSettings.serverUrl, updateOAuthFlowState]);
+  }, [updateOAuthFlowState]);
 
   // Update auth settings when server config changes
   useEffect(() => {
@@ -133,17 +115,15 @@ export const OAuthFlowTab = ({
     }
   }, [serverConfig, serverName, updateAuthSettings]);
 
-  // Initialize OAuth state machine
+  // Initialize Debug OAuth state machine
   const oauthStateMachine = useMemo(() => {
     if (!serverConfig || !serverName || !authSettings.serverUrl) return null;
 
-    const provider = new DebugMCPOAuthClientProvider(authSettings.serverUrl);
-    return new OAuthStateMachine({
+    return createDebugOAuthStateMachine({
       state: oauthFlowState,
+      updateState: updateOAuthFlowState,
       serverUrl: authSettings.serverUrl,
       serverName,
-      provider,
-      updateState: updateOAuthFlowState,
     });
   }, [
     serverConfig,
@@ -285,30 +265,25 @@ export const OAuthFlowTab = ({
             onClick={() => {
               void proceedToNextStep();
             }}
-            disabled={
-              oauthFlowState.isInitiatingAuth || !flowGuard.canProceed
-            }
+            disabled={oauthFlowState.isInitiatingAuth}
           >
-            {oauthFlowState.isInitiatingAuth ? "Processing..." : "Continue"}
+            {oauthFlowState.isInitiatingAuth ? "Processing..." : "Next Step"}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => {
+              oauthStateMachine?.resetFlow();
+            }}
+            disabled={oauthFlowState.isInitiatingAuth}
+          >
+            Reset
           </Button>
         </div>
       </div>
 
       {/* Status Messages */}
-      {(!oauthFlowState.isInitiatingAuth &&
-        !flowGuard.canProceed &&
-        flowGuard.reason) ||
-      authSettings.statusMessage ||
-      authSettings.error ? (
+      {authSettings.statusMessage || authSettings.error ? (
         <div className="px-6 py-3 border-b border-border bg-background space-y-2">
-          {!oauthFlowState.isInitiatingAuth &&
-            !flowGuard.canProceed &&
-            flowGuard.reason && (
-              <p className="text-xs text-muted-foreground">
-                {flowGuard.reason}
-              </p>
-            )}
-
           {authSettings.statusMessage && (
             <StatusMessageComponent message={authSettings.statusMessage} />
           )}
@@ -325,12 +300,89 @@ export const OAuthFlowTab = ({
       ) : null}
 
       {/* Flow Visualization - Takes up all remaining space */}
-      <div className="flex-1 overflow-hidden">
-        <OAuthFlowProgress
-          flowState={oauthFlowState}
-          updateFlowState={updateOAuthFlowState}
-          onGuardStateChange={setFlowGuard}
-        />
+      <div className="flex-1 overflow-hidden flex">
+        {/* ReactFlow Sequence Diagram */}
+        <div className="flex-1">
+          <OAuthSequenceDiagram flowState={oauthFlowState} />
+        </div>
+
+        {/* Side Panel with Details */}
+        <div className="w-80 border-l border-border bg-muted/30 p-4 overflow-auto">
+          <div className="space-y-4">
+            {/* Current Step Info */}
+            <div className="rounded-lg border border-border bg-card p-4">
+              <h3 className="text-sm font-semibold mb-3">Current Step</h3>
+              <div className="space-y-2">
+                <div className="font-mono text-xs bg-primary/10 px-2 py-1 rounded">
+                  {oauthFlowState.currentStep}
+                </div>
+                <div className={`text-xs px-2 py-1 rounded ${
+                  oauthFlowState.isInitiatingAuth
+                    ? "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
+                    : "bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300"
+                }`}>
+                  {oauthFlowState.isInitiatingAuth ? "Processing..." : "Ready"}
+                </div>
+              </div>
+            </div>
+
+            {/* Step Details */}
+            <div className="rounded-lg border border-border bg-card p-4">
+              <h3 className="text-sm font-semibold mb-3">Details</h3>
+              <div className="space-y-3 text-xs">
+                {oauthFlowState.currentStep === "idle" && (
+                  <div className="text-muted-foreground">
+                    Ready to begin OAuth flow. Click "Next Step" to send an unauthenticated request.
+                  </div>
+                )}
+
+                {oauthFlowState.currentStep === "sent_unauthenticated_request" && (
+                  <div className="space-y-2">
+                    <div className="text-muted-foreground">
+                      Sent unauthenticated request to the server.
+                    </div>
+                    {oauthFlowState.serverUrl && (
+                      <div className="bg-muted p-2 rounded font-mono text-xs">
+                        <div className="text-muted-foreground mb-1">Server:</div>
+                        <div className="break-all">{oauthFlowState.serverUrl}</div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {oauthFlowState.currentStep === "received_401_www_authenticate" && (
+                  <div className="space-y-2">
+                    <div className="text-muted-foreground">
+                      Received 401 response with WWW-Authenticate header.
+                    </div>
+                    {oauthFlowState.wwwAuthenticateHeader && (
+                      <div className="bg-muted p-2 rounded font-mono text-xs space-y-2">
+                        <div>
+                          <div className="text-muted-foreground mb-1">WWW-Authenticate:</div>
+                          <div className="break-all">{oauthFlowState.wwwAuthenticateHeader}</div>
+                        </div>
+                      </div>
+                    )}
+                    {oauthFlowState.authorizationServer && (
+                      <div className="bg-muted p-2 rounded font-mono text-xs">
+                        <div className="text-muted-foreground mb-1">Auth Server:</div>
+                        <div className="break-all">{oauthFlowState.authorizationServer}</div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {oauthFlowState.error && (
+                  <div className="bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 p-2 rounded">
+                    <div className="text-xs font-medium text-red-700 dark:text-red-400">
+                      Error: {oauthFlowState.error}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
