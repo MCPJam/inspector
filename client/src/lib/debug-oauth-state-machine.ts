@@ -162,6 +162,27 @@ async function proxyFetch(url: string, options: RequestInit = {}): Promise<{
   body: any;
   ok: boolean;
 }> {
+  // Determine if body is JSON or form-urlencoded
+  let bodyToSend: any = undefined;
+  if (options.body) {
+    const contentType = (options.headers as Record<string, string>)?.[Object.keys(options.headers as Record<string, string> || {}).find(k => k.toLowerCase() === 'content-type') || ''];
+
+    if (contentType?.includes('application/x-www-form-urlencoded')) {
+      // For form-urlencoded, convert to object
+      const params = new URLSearchParams(options.body as string);
+      bodyToSend = Object.fromEntries(params.entries());
+    } else if (typeof options.body === 'string') {
+      // Try to parse as JSON
+      try {
+        bodyToSend = JSON.parse(options.body);
+      } catch {
+        bodyToSend = options.body;
+      }
+    } else {
+      bodyToSend = options.body;
+    }
+  }
+
   const response = await fetch("/api/mcp/oauth/proxy", {
     method: "POST",
     headers: {
@@ -170,7 +191,7 @@ async function proxyFetch(url: string, options: RequestInit = {}): Promise<{
     body: JSON.stringify({
       url,
       method: options.method || "GET",
-      body: options.body ? JSON.parse(options.body as string) : undefined,
+      body: bodyToSend,
       headers: options.headers,
     }),
   });
@@ -798,6 +819,9 @@ export const createDebugOAuthStateMachine = (
             updateState({
               currentStep: "authorization_request",
               authorizationUrl: authUrl.toString(),
+              authorizationCode: undefined, // Clear any old authorization code
+              accessToken: undefined, // Clear any old tokens
+              refreshToken: undefined,
               isInitiatingAuth: false,
             });
             break;
@@ -818,6 +842,7 @@ export const createDebugOAuthStateMachine = (
           case "received_authorization_code":
             // Step 10: Validate authorization code and prepare for token exchange
             console.log("[Debug OAuth] Validating authorization code");
+            console.log("[Debug OAuth] 📋 Current code in state:", state.authorizationCode);
 
             if (!state.authorizationCode || state.authorizationCode.trim() === "") {
               updateState({
@@ -833,6 +858,25 @@ export const createDebugOAuthStateMachine = (
 
             console.log("[Debug OAuth] Authorization code received, preparing token exchange");
 
+            // Build the token request body as an object (will be shown in HTTP history)
+            const tokenRequestBodyObj: Record<string, string> = {
+              grant_type: "authorization_code",
+              code: state.authorizationCode,
+              redirect_uri: redirectUri,
+            };
+
+            if (state.clientId) {
+              tokenRequestBodyObj.client_id = state.clientId;
+            }
+
+            if (state.codeVerifier) {
+              tokenRequestBodyObj.code_verifier = state.codeVerifier;
+            }
+
+            if (state.serverUrl) {
+              tokenRequestBodyObj.resource = state.serverUrl;
+            }
+
             const tokenRequest = {
               method: "POST",
               url: state.authorizationServerMetadata.token_endpoint,
@@ -840,14 +884,7 @@ export const createDebugOAuthStateMachine = (
                 "Content-Type": "application/x-www-form-urlencoded",
                 "Accept": "application/json",
               },
-              body: {
-                grant_type: "authorization_code",
-                code: state.authorizationCode,
-                redirect_uri: redirectUri,
-                client_id: state.clientId,
-                code_verifier: state.codeVerifier,
-                resource: state.serverUrl,
-              },
+              body: tokenRequestBodyObj,
             };
 
             // Update state with the request
@@ -870,40 +907,116 @@ export const createDebugOAuthStateMachine = (
             return;
 
           case "token_request":
-            // Step 11: Receive access token
-            console.log("[Debug OAuth] Receiving access token");
-
-            // Simulate token response
-            const mockTokens = {
-              access_token: "mock-access-token-" + Math.random().toString(36).substring(7),
-              token_type: "Bearer",
-              expires_in: 3600,
-              refresh_token: "mock-refresh-token-" + Math.random().toString(36).substring(7),
-            };
-
-            const tokenResponseData = {
-              status: 200,
-              statusText: "OK",
-              headers: { "content-type": "application/json" },
-              body: mockTokens,
-            };
-
-            // Update the last history entry with the response
-            const updatedHistoryToken = [...(state.httpHistory || [])];
-            if (updatedHistoryToken.length > 0) {
-              updatedHistoryToken[updatedHistoryToken.length - 1].response = tokenResponseData;
+            // Step 11: Exchange authorization code for access token
+            if (!state.authorizationServerMetadata?.token_endpoint) {
+              throw new Error("Missing token endpoint");
             }
 
-            updateState({
-              currentStep: "received_access_token",
-              accessToken: mockTokens.access_token,
-              refreshToken: mockTokens.refresh_token,
-              tokenType: mockTokens.token_type,
-              expiresIn: mockTokens.expires_in,
-              lastResponse: tokenResponseData,
-              httpHistory: updatedHistoryToken,
-              isInitiatingAuth: false,
-            });
+            if (!state.authorizationCode) {
+              throw new Error("Missing authorization code");
+            }
+
+            console.log("[Debug OAuth] Exchanging authorization code for access token");
+            console.log("[Debug OAuth] 🔑 Using authorization_code:", state.authorizationCode);
+            console.log("[Debug OAuth] 🔐 Using code_verifier:", state.codeVerifier?.substring(0, 20) + "...");
+
+            if (!state.codeVerifier) {
+              throw new Error("PKCE code_verifier is missing - cannot exchange token");
+            }
+
+            try {
+              // Prepare token request body (form-urlencoded)
+              const tokenRequestBody = new URLSearchParams({
+                grant_type: "authorization_code",
+                code: state.authorizationCode,
+                redirect_uri: redirectUri,
+                client_id: state.clientId || "",
+                code_verifier: state.codeVerifier || "",
+              });
+
+              // Add resource parameter if available
+              if (state.serverUrl) {
+                tokenRequestBody.set("resource", state.serverUrl);
+              }
+
+              // Make the token request via backend proxy
+              const response = await proxyFetch(
+                state.authorizationServerMetadata.token_endpoint,
+                {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
+                  },
+                  body: tokenRequestBody.toString(),
+                }
+              );
+
+              const tokenResponseData = {
+                status: response.status,
+                statusText: response.statusText,
+                headers: response.headers,
+                body: response.body,
+              };
+
+              // Update the last history entry with the response
+              const updatedHistoryToken = [...(state.httpHistory || [])];
+              if (updatedHistoryToken.length > 0) {
+                updatedHistoryToken[updatedHistoryToken.length - 1].response = tokenResponseData;
+              }
+
+              if (!response.ok) {
+                // Token request failed
+                console.error("[Debug OAuth] Token request failed:", response.status, response.body);
+
+                updateState({
+                  lastResponse: tokenResponseData,
+                  httpHistory: updatedHistoryToken,
+                  error: `Token request failed: ${response.body?.error || response.statusText} - ${response.body?.error_description || "Unknown error"}`,
+                  isInitiatingAuth: false,
+                });
+                return;
+              }
+
+              // Token request successful
+              const tokens = response.body;
+              console.log("[Debug OAuth] Token exchange successful!");
+              console.log("[Debug OAuth] Access token received (expires in", tokens.expires_in, "seconds)");
+
+              updateState({
+                currentStep: "received_access_token",
+                accessToken: tokens.access_token,
+                refreshToken: tokens.refresh_token,
+                tokenType: tokens.token_type || "Bearer",
+                expiresIn: tokens.expires_in,
+                lastResponse: tokenResponseData,
+                httpHistory: updatedHistoryToken,
+                error: undefined,
+                isInitiatingAuth: false,
+              });
+            } catch (error) {
+              console.error("[Debug OAuth] Token request error:", error);
+
+              // Capture the error
+              const errorResponse = {
+                status: 0,
+                statusText: "Network Error",
+                headers: {},
+                body: { error: error instanceof Error ? error.message : String(error) },
+              };
+
+              const updatedHistoryError = [...(state.httpHistory || [])];
+              if (updatedHistoryError.length > 0) {
+                updatedHistoryError[updatedHistoryError.length - 1].response = errorResponse;
+              }
+
+              updateState({
+                lastResponse: errorResponse,
+                httpHistory: updatedHistoryError,
+                error: `Token exchange failed: ${error instanceof Error ? error.message : String(error)}`,
+                isInitiatingAuth: false,
+              });
+            }
             break;
 
           case "received_access_token":
@@ -1007,12 +1120,19 @@ export const createDebugOAuthStateMachine = (
 
     // Reset the flow to initial state
     resetFlow: () => {
-      console.log("[Debug OAuth] Resetting flow");
+      console.log("[Debug OAuth] Resetting flow - clearing all state");
       updateState({
         ...EMPTY_OAUTH_FLOW_STATE_V2,
         lastRequest: undefined,
         lastResponse: undefined,
         httpHistory: [],
+        authorizationCode: undefined,
+        authorizationUrl: undefined,
+        accessToken: undefined,
+        refreshToken: undefined,
+        codeVerifier: undefined,
+        codeChallenge: undefined,
+        error: undefined,
       });
     },
   };

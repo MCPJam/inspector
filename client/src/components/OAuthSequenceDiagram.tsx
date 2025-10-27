@@ -157,8 +157,8 @@ const CustomActionEdge = memo((props: EdgeProps<Edge<ActionEdgeData>>) => {
   if (!data) return null;
 
   const statusColor = {
-    complete: "border-green-500/50 bg-card",
-    current: "border-blue-500/70 bg-blue-500/5",
+    complete: "border-green-500/50 bg-green-50 dark:bg-green-950/20",
+    current: "border-blue-500 bg-blue-100 dark:bg-blue-950/30 shadow-lg shadow-blue-500/20 animate-pulse",
     pending: "border-border bg-muted/30",
   }[data.status];
 
@@ -611,6 +611,7 @@ export const OAuthSequenceDiagram = memo(({ flowState }: OAuthSequenceDiagramPro
     const edges: Edge[] = actions.map((action, index) => {
       const status = getActionStatus(action.id, currentStep);
       const isComplete = status === "complete";
+      const isCurrent = status === "current";
 
       // For self-referencing actions (client to client), use special handles
       const isSelfReferencing = action.from === action.to;
@@ -628,10 +629,11 @@ export const OAuthSequenceDiagram = memo(({ flowState }: OAuthSequenceDiagramPro
           status,
           details: action.details,
         },
-        animated: isComplete,
+        animated: isComplete || isCurrent,
         style: {
-          stroke: isComplete ? "#10b981" : status === "current" ? "#3b82f6" : "#d1d5db",
-          strokeWidth: 2,
+          stroke: isComplete ? "#10b981" : isCurrent ? "#3b82f6" : "#d1d5db",
+          strokeWidth: isCurrent ? 3 : 2,
+          strokeDasharray: isCurrent ? "5,5" : undefined,
         },
       };
     });
