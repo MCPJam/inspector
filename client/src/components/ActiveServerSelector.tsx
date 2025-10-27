@@ -14,6 +14,7 @@ interface ActiveServerSelectorProps {
   onServerChange: (server: string) => void;
   onMultiServerToggle: (server: string) => void;
   onConnect: (formData: ServerFormData) => void;
+  showOnlyOAuthServers?: boolean; // Only show servers that use OAuth
 }
 
 function getStatusColor(status: string): string {
@@ -54,14 +55,29 @@ export function ActiveServerSelector({
   onServerChange,
   onMultiServerToggle,
   onConnect,
-  showAllServers = false,
+  showOnlyOAuthServers = false,
 }: ActiveServerSelectorProps) {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const posthog = usePostHog();
+
+  // Helper function to check if a server uses OAuth
+  const isOAuthServer = (server: ServerWithName): boolean => {
+    const isHttpServer = "url" in server.config;
+    if (!isHttpServer) return false;
+
+    // Check if server has OAuth tokens or auth provider configured
+    return !!(server.oauthTokens || (server.config as any).authProvider);
+  };
+
   const servers = Object.entries(connectedServerConfigs).filter(
-    ([, server]) =>
-      server.enabled !== false &&
-      (showAllServers || server.connectionStatus === "connected"),
+    ([, server]) => {
+      if (server.enabled === false) return false;
+
+      // If we only want OAuth servers, filter for those
+      if (showOnlyOAuthServers && !isOAuthServer(server)) return false;
+
+      return true; // Show all servers (connected and disconnected) when filtering for OAuth
+    },
   );
 
   return (

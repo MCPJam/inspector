@@ -154,7 +154,7 @@ export default function App() {
               isMultiSelectEnabled={activeTab === "chat"}
               onMultiServerToggle={toggleServerSelection}
               selectedMultipleServers={appState.selectedMultipleServers}
-              showAllServers={activeTab === "oauth-flow"}
+              showOnlyOAuthServers={activeTab === "oauth-flow"}
             />
           )}
 
