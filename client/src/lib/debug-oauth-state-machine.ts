@@ -9,7 +9,7 @@ export type OAuthFlowStep =
   ;
 
 // State interface for OAuth flow
-export interface OauthFlowStateNovember2025 {
+export interface OauthFlowStateJune2025 {
   isInitiatingAuth: boolean;
   currentStep: OAuthFlowStep;
   // Data collected during the flow
@@ -33,20 +33,32 @@ export interface OauthFlowStateNovember2025 {
     grant_types_supported?: string[];
     code_challenge_methods_supported?: string[];
   };
+  // Raw request/response data for debugging
+  lastRequest?: {
+    method: string;
+    url: string;
+    headers: Record<string, string>;
+  };
+  lastResponse?: {
+    status: number;
+    statusText: string;
+    headers: Record<string, string>;
+    body: any; // JSON response body
+  };
   error?: string;
   // Add more state properties here as needed
 }
 
 // Initial empty state
-export const EMPTY_OAUTH_FLOW_STATE_V2: OauthFlowStateNovember2025 = {
+export const EMPTY_OAUTH_FLOW_STATE_V2: OauthFlowStateJune2025 = {
   isInitiatingAuth: false,
   currentStep: "idle",
 };
 
 // State machine interface
 export interface DebugOAuthStateMachine {
-  state: OauthFlowStateNovember2025;
-  updateState: (updates: Partial<OauthFlowStateNovember2025>) => void;
+  state: OauthFlowStateJune2025;
+  updateState: (updates: Partial<OauthFlowStateJune2025>) => void;
   proceedToNextStep: () => Promise<void>;
   startGuidedFlow: () => Promise<void>;
   resetFlow: () => void;
@@ -54,8 +66,8 @@ export interface DebugOAuthStateMachine {
 
 // Configuration for creating the state machine
 export interface DebugOAuthStateMachineConfig {
-  state: OauthFlowStateNovember2025;
-  updateState: (updates: Partial<OauthFlowStateNovember2025>) => void;
+  state: OauthFlowStateJune2025;
+  updateState: (updates: Partial<OauthFlowStateJune2025>) => void;
   serverUrl: string;
   serverName: string;
   fetchFn?: typeof fetch; // Optional fetch function for testing
@@ -136,14 +148,37 @@ export const createDebugOAuthStateMachine = (
             console.log("[Debug OAuth] Fetching resource metadata from:", state.resourceMetadataUrl);
 
             try {
+              const requestHeaders = {
+                "Accept": "application/json",
+              };
+
               const response = await fetchFn(state.resourceMetadataUrl, {
                 method: "GET",
-                headers: {
-                  "Accept": "application/json",
-                },
+                headers: requestHeaders,
+              });
+
+              // Capture response headers
+              const responseHeaders: Record<string, string> = {};
+              response.headers.forEach((value, key) => {
+                responseHeaders[key] = value;
               });
 
               if (!response.ok) {
+                // Capture failed response
+                updateState({
+                  lastRequest: {
+                    method: "GET",
+                    url: state.resourceMetadataUrl,
+                    headers: requestHeaders,
+                  },
+                  lastResponse: {
+                    status: response.status,
+                    statusText: response.statusText,
+                    headers: responseHeaders,
+                    body: null,
+                  },
+                });
+
                 if (response.status === 404) {
                   throw new Error("Server does not implement OAuth 2.0 Protected Resource Metadata (404)");
                 }
@@ -161,6 +196,17 @@ export const createDebugOAuthStateMachine = (
                 currentStep: "received_resource_metadata",
                 resourceMetadata,
                 authorizationServerUrl,
+                lastRequest: {
+                  method: "GET",
+                  url: state.resourceMetadataUrl,
+                  headers: requestHeaders,
+                },
+                lastResponse: {
+                  status: response.status,
+                  statusText: response.statusText,
+                  headers: responseHeaders,
+                  body: resourceMetadata,
+                },
                 isInitiatingAuth: false,
               });
             } catch (error) {
@@ -192,21 +238,36 @@ export const createDebugOAuthStateMachine = (
             const urlsToTry = buildAuthServerMetadataUrls(state.authorizationServerUrl);
             let authServerMetadata = null;
             let lastError = null;
+            let successUrl = "";
+            let finalRequestHeaders = {};
+            let finalResponseHeaders: Record<string, string> = {};
+            let finalResponse: Response | null = null;
 
             for (const url of urlsToTry) {
               try {
                 console.log("[Debug OAuth] Trying:", url);
+                const requestHeaders = {
+                  "Accept": "application/json",
+                };
+
                 const response = await fetchFn(url, {
                   method: "GET",
-                  headers: {
-                    "Accept": "application/json",
-                  },
+                  headers: requestHeaders,
                 });
 
                 if (response.ok) {
                   authServerMetadata = await response.json();
                   console.log("[Debug OAuth] Found authorization server metadata at:", url);
                   console.log("[Debug OAuth] Metadata:", authServerMetadata);
+                  successUrl = url;
+                  finalRequestHeaders = requestHeaders;
+                  finalResponse = response;
+
+                  // Capture response headers
+                  response.headers.forEach((value, key) => {
+                    finalResponseHeaders[key] = value;
+                  });
+
                   break;
                 } else if (response.status >= 400 && response.status < 500) {
                   // Client error, try next URL
@@ -222,13 +283,24 @@ export const createDebugOAuthStateMachine = (
               }
             }
 
-            if (!authServerMetadata) {
+            if (!authServerMetadata || !finalResponse) {
               throw new Error(`Could not discover authorization server metadata. Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
             }
 
             updateState({
               currentStep: "received_authorization_server_metadata",
               authorizationServerMetadata: authServerMetadata,
+              lastRequest: {
+                method: "GET",
+                url: successUrl,
+                headers: finalRequestHeaders,
+              },
+              lastResponse: {
+                status: finalResponse.status,
+                statusText: finalResponse.statusText,
+                headers: finalResponseHeaders,
+                body: authServerMetadata,
+              },
               isInitiatingAuth: false,
             });
             break;
@@ -268,6 +340,8 @@ export const createDebugOAuthStateMachine = (
       console.log("[Debug OAuth] Resetting flow");
       updateState({
         ...EMPTY_OAUTH_FLOW_STATE_V2,
+        lastRequest: undefined,
+        lastResponse: undefined,
       });
     },
   };
