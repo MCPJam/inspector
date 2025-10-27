@@ -11,6 +11,7 @@ import { SettingsTab } from "./components/SettingsTab";
 import { TracingTab } from "./components/TracingTab";
 import { InterceptorTab } from "./components/InterceptorTab";
 import { AuthTab } from "./components/AuthTab";
+import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import OAuthDebugCallback from "./components/OAuthDebugCallback";
 import { MCPSidebar } from "./components/mcp-sidebar";
 import { ActiveServerSelector } from "./components/ActiveServerSelector";
@@ -140,11 +141,12 @@ export default function App() {
       <SidebarInset className="flex flex-col min-h-0">
         <Header />
         <div className="flex flex-1 min-h-0 flex-col overflow-hidden h-full">
-          {/* Active Server Selector - Only show on Tools, Resources, Prompts, Auth, and Interceptor pages */}
+          {/* Active Server Selector - Only show on Tools, Resources, Prompts, Auth, OAuth Flow, and Interceptor pages */}
           {(activeTab === "tools" ||
             activeTab === "resources" ||
             activeTab === "prompts" ||
             activeTab === "auth" ||
+            activeTab === "oauth-flow" ||
             activeTab === "chat" ||
             activeTab === "chat-v2" ||
             activeTab === "interceptor") && (
@@ -156,6 +158,7 @@ export default function App() {
               isMultiSelectEnabled={activeTab === "chat"}
               onMultiServerToggle={toggleServerSelection}
               selectedMultipleServers={appState.selectedMultipleServers}
+              showOnlyOAuthServers={activeTab === "oauth-flow"}
             />
           )}
 
@@ -195,6 +198,14 @@ export default function App() {
 
           {activeTab === "auth" && (
             <AuthTab
+              serverConfig={selectedMCPConfig}
+              serverEntry={appState.servers[appState.selectedServer]}
+              serverName={appState.selectedServer}
+            />
+          )}
+
+          {activeTab === "oauth-flow" && (
+            <OAuthFlowTab
               serverConfig={selectedMCPConfig}
               serverEntry={appState.servers[appState.selectedServer]}
               serverName={appState.selectedServer}
