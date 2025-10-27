@@ -11,6 +11,7 @@ import {
   ArrowUpFromLine,
   ExternalLink,
   CheckCircle2,
+  Trash2,
 } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import {
@@ -21,6 +22,11 @@ import {
 import { Card, CardContent } from "./ui/card";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { Input } from "./ui/input";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "./ui/resizable";
 import { getStoredTokens } from "../lib/mcp-oauth";
 import { ServerWithName } from "../hooks/use-app-state";
 import {
@@ -101,6 +107,9 @@ export const OAuthFlowTab = ({
   // Track which HTTP blocks are expanded
   const [expandedBlocks, setExpandedBlocks] = useState<Set<string>>(new Set());
 
+  // Track which info logs have been deleted
+  const [deletedInfoLogs, setDeletedInfoLogs] = useState<Set<string>>(new Set());
+
   // Track if authorization modal is open
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
@@ -117,6 +126,16 @@ export const OAuthFlowTab = ({
       else next.add(id);
       return next;
     });
+  };
+
+  const clearInfoLogs = () => {
+    // Clear all info logs by marking all as deleted
+    const allInfoLogIds = new Set<string>(['config', 'auth-url', 'auth-code', 'token', 'refresh-token']);
+    setDeletedInfoLogs(allInfoLogIds);
+  };
+
+  const clearHttpHistory = () => {
+    updateOAuthFlowState({ httpHistory: [] });
   };
 
   const updateAuthSettings = useCallback((updates: Partial<AuthSettings>) => {
@@ -146,6 +165,7 @@ export const OAuthFlowTab = ({
     });
     initializedServerRef.current = null;
     setExpandedBlocks(new Set());
+    setDeletedInfoLogs(new Set());
   }, [updateOAuthFlowState]);
 
   // Update auth settings when server config changes
@@ -419,159 +439,215 @@ export const OAuthFlowTab = ({
       ) : null}
 
       {/* Flow Visualization - Takes up all remaining space */}
-      <div className="flex-1 overflow-hidden flex">
+      <div className="flex-1 overflow-hidden flex flex-row">
         {/* ReactFlow Sequence Diagram */}
         <div className="flex-1">
           <OAuthSequenceDiagram flowState={oauthFlowState} />
         </div>
 
-        {/* Side Panel with Details */}
-        <div className="w-96 border-l border-border bg-muted/30 p-4 overflow-auto">
-          <div className="space-y-4">
-            {/* Authorization URL - Show when ready */}
-            {oauthFlowState.currentStep === "authorization_request" &&
-              oauthFlowState.authorizationUrl && (
-                <Alert className="border-2 border-blue-500/50 bg-blue-50 dark:bg-blue-950/20 animate-pulse">
-                  <Shield className="h-4 w-4 text-blue-700 dark:text-blue-300" />
-                  <AlertTitle className="text-blue-700 dark:text-blue-300">
-                    Ready to authorize
-                  </AlertTitle>
-                  <AlertDescription className="space-y-3 mt-3">
+        {/* Side Panel with Details - Split into two resizable sections */}
+        <div className="w-96 border-l border-border flex flex-col">
+          <ResizablePanelGroup direction="vertical" className="flex-1">
+          {/* Top Panel - Info */}
+          <ResizablePanel defaultSize={40} minSize={20} maxSize={80}>
+            <div className="h-full bg-muted/30 overflow-auto">
+              <div className="sticky top-0 z-10 bg-muted/30 backdrop-blur-sm border-b border-border px-4 py-3 flex items-center justify-between">
+                <h3 className="text-sm font-semibold">Info</h3>
+                <button
+                  onClick={clearInfoLogs}
+                  className="p-1 hover:bg-muted rounded transition-colors"
+                  title="Clear all logs"
+                >
+                  <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive transition-colors" />
+                </button>
+              </div>
+              <div className="p-4 space-y-3">
+                {/* Authorization Button - Show when ready */}
+                {oauthFlowState.currentStep === "authorization_request" &&
+                  oauthFlowState.authorizationUrl && (
                     <Button
-                      onClick={async () => {
-                        // Open the authorization modal (popup)
-                        setIsAuthModalOpen(true);
-                        // Note: Don't call proceedToNextStep here - it will be called
-                        // automatically when the OAuth callback message is received
-                      }}
+                      onClick={() => setIsAuthModalOpen(true)}
                       className="w-full"
                       size="sm"
                     >
                       <ExternalLink className="h-4 w-4 mr-2" />
                       Authorize
                     </Button>
-                    <div className="text-[10px] font-mono bg-muted p-2 rounded break-all text-muted-foreground">
-                      {oauthFlowState.authorizationUrl}
-                    </div>
-                  </AlertDescription>
-                </Alert>
-              )}
-
-            {/* Authorization Code Input - Show when waiting for code */}
-            {oauthFlowState.currentStep === "received_authorization_code" && (
-              <Alert className="border-2 border-green-500/50 bg-green-50 dark:bg-green-950/20">
-                {!oauthFlowState.authorizationCode ? (
-                  <RefreshCw className="h-4 w-4 text-green-700 dark:text-green-300 animate-spin" />
-                ) : (
-                  <CheckCircle2 className="h-4 w-4 text-green-700 dark:text-green-300" />
-                )}
-                <AlertTitle className="text-green-700 dark:text-green-300">
-                  {oauthFlowState.authorizationCode
-                    ? "Code received"
-                    : "Waiting for code"}
-                </AlertTitle>
-                <AlertDescription className="space-y-3 mt-3">
-                  {!oauthFlowState.authorizationCode ? (
-                    <Input
-                      type="text"
-                      value={oauthFlowState.authorizationCode || ""}
-                      onChange={(e) => {
-                        updateOAuthFlowState({
-                          authorizationCode: e.target.value,
-                          error: undefined,
-                        });
-                      }}
-                      placeholder="Paste code"
-                      className="text-xs"
-                    />
-                  ) : (
-                    <div className="text-xs font-mono bg-muted p-2 rounded break-all">
-                      {oauthFlowState.authorizationCode}
-                    </div>
                   )}
-                  {oauthFlowState.error && (
-                    <p className="text-xs text-red-600 dark:text-red-400">
+
+                {/* Error Display */}
+                {oauthFlowState.error && (
+                  <Alert variant="destructive" className="py-2">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription className="text-xs">
                       {oauthFlowState.error}
-                    </p>
-                  )}
-                </AlertDescription>
-              </Alert>
-            )}
+                    </AlertDescription>
+                  </Alert>
+                )}
 
-            {/* Error Display for other steps */}
-            {oauthFlowState.error &&
-              oauthFlowState.currentStep !== "received_authorization_code" && (
-                <Alert variant="destructive">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertTitle>Error</AlertTitle>
-                  <AlertDescription className="text-xs">
-                    {oauthFlowState.error}
-                  </AlertDescription>
-                </Alert>
-              )}
+                {/* OAuth Flow Info Logs */}
+                {(() => {
+                  const infoLogs: Array<{
+                    id: string;
+                    label: string;
+                    data: any;
+                  }> = [];
 
-            {/* Decoded Access Token - Show when we have tokens */}
-            {oauthFlowState.accessToken && (
-              (() => {
-                const decoded = decodeJWT(oauthFlowState.accessToken!);
-                if (!decoded) {
-                  return (
-                    <Alert variant="destructive">
-                      <AlertCircle className="h-4 w-4" />
-                      <AlertDescription className="text-xs">
-                        Failed to decode token
-                      </AlertDescription>
-                    </Alert>
-                  );
-                }
+                  // Log 1: Flow Configuration
+                  if (authSettings.serverUrl && oauthFlowState.codeChallenge) {
+                    const provider = new DebugMCPOAuthClientProvider(authSettings.serverUrl);
+                    infoLogs.push({
+                      id: "config",
+                      label: "Flow Configuration",
+                      data: {
+                        "AS Server": authSettings.serverUrl,
+                        "Resource": authSettings.serverUrl,
+                        "Redirect URI": provider.redirectUrl,
+                        "PKCE": {
+                          method: "S256",
+                          challenge: oauthFlowState.codeChallenge,
+                        },
+                      },
+                    });
+                  }
 
-                // Format timestamps
-                const formatted = { ...decoded };
-                if (formatted.exp) {
-                  formatted.exp = `${formatted.exp} (${formatJWTTimestamp(formatted.exp)})`;
-                }
-                if (formatted.iat) {
-                  formatted.iat = `${formatted.iat} (${formatJWTTimestamp(formatted.iat)})`;
-                }
-                if (formatted.nbf) {
-                  formatted.nbf = `${formatted.nbf} (${formatJWTTimestamp(formatted.nbf)})`;
-                }
+                  // Log 2: Authorization URL Generated
+                  if (oauthFlowState.authorizationUrl) {
+                    infoLogs.push({
+                      id: "auth-url",
+                      label: "Authorization URL",
+                      data: {
+                        url: oauthFlowState.authorizationUrl,
+                      },
+                    });
+                  }
 
-                return (
-                  <div className="space-y-2">
-                    <h3 className="text-xs font-medium text-muted-foreground px-1">
-                      Decoded JWT
-                    </h3>
-                    <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2 border border-border">
-                      <JsonView
-                        src={formatted}
-                        dark={true}
-                        theme="atom"
-                        enableClipboard={true}
-                        displaySize={false}
-                        collapsed={1}
-                        style={{
-                          fontSize: "11px",
-                          fontFamily:
-                            "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                          backgroundColor: "transparent",
-                          padding: "0",
-                          borderRadius: "0",
-                          border: "none",
-                        }}
-                      />
-                    </div>
+                  // Log 3: Authorization Code Received
+                  if (oauthFlowState.authorizationCode) {
+                    infoLogs.push({
+                      id: "auth-code",
+                      label: "Authorization Code",
+                      data: {
+                        code: oauthFlowState.authorizationCode,
+                      },
+                    });
+                  }
+
+                  // Log 4: Access Token Received (decoded JWT)
+                  if (oauthFlowState.accessToken) {
+                    const decoded = decodeJWT(oauthFlowState.accessToken);
+                    if (decoded) {
+                      const formatted = { ...decoded };
+                      if (formatted.exp) {
+                        formatted.exp = `${formatted.exp} (${formatJWTTimestamp(formatted.exp)})`;
+                      }
+                      if (formatted.iat) {
+                        formatted.iat = `${formatted.iat} (${formatJWTTimestamp(formatted.iat)})`;
+                      }
+                      if (formatted.nbf) {
+                        formatted.nbf = `${formatted.nbf} (${formatJWTTimestamp(formatted.nbf)})`;
+                      }
+
+                      infoLogs.push({
+                        id: "token",
+                        label: "Access Token (Decoded JWT)",
+                        data: formatted,
+                      });
+                    }
+                  }
+
+                  // Log 5: Refresh Token (if available)
+                  if (oauthFlowState.refreshToken) {
+                    infoLogs.push({
+                      id: "refresh-token",
+                      label: "Refresh Token",
+                      data: {
+                        token: oauthFlowState.refreshToken.substring(0, 50) + "...",
+                      },
+                    });
+                  }
+
+                  return infoLogs.reverse().filter(log => !deletedInfoLogs.has(log.id)).map((log) => {
+                    const isExpanded = expandedBlocks.has(log.id);
+                    return (
+                      <div
+                        key={log.id}
+                        className="group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card"
+                      >
+                        <div
+                          className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
+                          onClick={() => toggleExpanded(log.id)}
+                        >
+                          <div className="flex-shrink-0">
+                            {isExpanded ? (
+                              <ChevronDown className="h-3 w-3 text-muted-foreground transition-transform" />
+                            ) : (
+                              <ChevronRight className="h-3 w-3 text-muted-foreground transition-transform" />
+                            )}
+                          </div>
+                          <span className="text-xs font-medium text-foreground">
+                            {log.label}
+                          </span>
+                        </div>
+                        {isExpanded && (
+                          <div className="border-t bg-muted/20">
+                            <div className="p-3">
+                              <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
+                                <JsonView
+                                  src={log.data}
+                                  dark={true}
+                                  theme="atom"
+                                  enableClipboard={true}
+                                  displaySize={false}
+                                  collapsed={false}
+                                  style={{
+                                    fontSize: "11px",
+                                    fontFamily:
+                                      "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                                    backgroundColor: "transparent",
+                                    padding: "0",
+                                    borderRadius: "0",
+                                    border: "none",
+                                  }}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  });
+                })()}
+
+                {/* Empty state when no logs */}
+                {!oauthFlowState.codeChallenge && (
+                  <div className="text-center py-8 text-muted-foreground text-sm">
+                    No flow information yet
                   </div>
-                );
-              })()
-            )}
+                )}
+              </div>
+            </div>
+          </ResizablePanel>
 
-            {/* HTTP History - Show all request/response pairs */}
-            {oauthFlowState.httpHistory &&
-              oauthFlowState.httpHistory.length > 0 && (
-                <div className="space-y-3">
-                  <h3 className="text-sm font-semibold px-1">HTTP History</h3>
-                  {(() => {
+          <ResizableHandle withHandle />
+
+          {/* Bottom Panel - HTTP History */}
+          <ResizablePanel defaultSize={60} minSize={20}>
+            <div className="h-full bg-muted/30 overflow-auto">
+              <div className="sticky top-0 z-10 bg-muted/30 backdrop-blur-sm border-b border-border px-4 py-3 flex items-center justify-between">
+                <h3 className="text-sm font-semibold">HTTP History</h3>
+                <button
+                  onClick={clearHttpHistory}
+                  className="p-1 hover:bg-muted rounded transition-colors"
+                  title="Clear all history"
+                >
+                  <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive transition-colors" />
+                </button>
+              </div>
+              <div className="p-4 space-y-3">
+                {oauthFlowState.httpHistory &&
+                oauthFlowState.httpHistory.length > 0 ? (
+                  (() => {
                     // Flatten entries into individual messages and reverse
                     const messages: Array<{
                       type: "request" | "response";
@@ -734,10 +810,16 @@ export const OAuthFlowTab = ({
                         );
                       }
                     });
-                  })()}
-                </div>
-              )}
-          </div>
+                  })()
+                ) : (
+                  <div className="text-center py-8 text-muted-foreground text-sm">
+                    No HTTP requests yet
+                  </div>
+                )}
+              </div>
+            </div>
+          </ResizablePanel>
+          </ResizablePanelGroup>
         </div>
       </div>
 
