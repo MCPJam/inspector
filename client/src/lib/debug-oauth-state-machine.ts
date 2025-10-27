@@ -1,6 +1,9 @@
 // OAuth flow steps based on MCP specification
 export type OAuthFlowStep =
   | "idle"
+  | "request_without_token"
+  | "received_401_unauthorized"
+  | "extract_resource_metadata_url"
   | "request_resource_metadata"
   | "received_resource_metadata"
   | "request_authorization_server_metadata"
@@ -14,6 +17,7 @@ export interface OauthFlowStateJune2025 {
   currentStep: OAuthFlowStep;
   // Data collected during the flow
   serverUrl?: string;
+  wwwAuthenticateHeader?: string;
   resourceMetadataUrl?: string;
   resourceMetadata?: {
     resource: string;
@@ -126,15 +130,113 @@ export const createDebugOAuthStateMachine = (
       try {
         switch (state.currentStep) {
           case "idle":
-            // Step 1: Request Protected Resource Metadata directly
-            // (SDK skips the 401 response and goes straight to well-known URI)
-            const resourceMetadataUrl = buildResourceMetadataUrl(serverUrl);
-            console.log("[Debug OAuth] Requesting resource metadata from:", resourceMetadataUrl);
+            // Step 1: Make initial MCP request without token
+            console.log("[Debug OAuth] Making initial request to MCP server without token");
+
+            updateState({
+              currentStep: "request_without_token",
+              serverUrl,
+              isInitiatingAuth: false,
+            });
+            break;
+
+          case "request_without_token":
+            // Step 2: Request MCP server and expect 401 Unauthorized
+            if (!state.serverUrl) {
+              throw new Error("No server URL available");
+            }
+
+            console.log("[Debug OAuth] Requesting MCP server at:", state.serverUrl);
+
+            try {
+              const requestHeaders = {
+                "Accept": "application/json",
+              };
+
+              const response = await fetchFn(state.serverUrl, {
+                method: "GET",
+                headers: requestHeaders,
+              });
+
+              // Capture response headers
+              const responseHeaders: Record<string, string> = {};
+              response.headers.forEach((value, key) => {
+                responseHeaders[key] = value;
+              });
+
+              if (response.status === 401) {
+                // Expected 401 response with WWW-Authenticate header
+                const wwwAuthenticateHeader = response.headers.get("WWW-Authenticate");
+                console.log("[Debug OAuth] Received 401 Unauthorized");
+                console.log("[Debug OAuth] WWW-Authenticate header:", wwwAuthenticateHeader);
+
+                updateState({
+                  currentStep: "received_401_unauthorized",
+                  wwwAuthenticateHeader: wwwAuthenticateHeader || undefined,
+                  lastRequest: {
+                    method: "GET",
+                    url: state.serverUrl,
+                    headers: requestHeaders,
+                  },
+                  lastResponse: {
+                    status: response.status,
+                    statusText: response.statusText,
+                    headers: responseHeaders,
+                    body: null,
+                  },
+                  isInitiatingAuth: false,
+                });
+              } else {
+                throw new Error(`Expected 401 Unauthorized but got HTTP ${response.status}`);
+              }
+            } catch (error) {
+              throw new Error(`Failed to request MCP server: ${error instanceof Error ? error.message : String(error)}`);
+            }
+            break;
+
+          case "received_401_unauthorized":
+            // Step 3: Extract resource metadata URL from WWW-Authenticate header
+            console.log("[Debug OAuth] Extracting resource metadata URL from WWW-Authenticate header");
+
+            let extractedResourceMetadataUrl: string | undefined;
+
+            if (state.wwwAuthenticateHeader) {
+              // Parse WWW-Authenticate header to extract resource_metadata URL
+              // Format: Bearer resource_metadata="https://example.com/.well-known/oauth-protected-resource"
+              const resourceMetadataMatch = state.wwwAuthenticateHeader.match(/resource_metadata="([^"]+)"/);
+              if (resourceMetadataMatch) {
+                extractedResourceMetadataUrl = resourceMetadataMatch[1];
+                console.log("[Debug OAuth] Extracted resource metadata URL:", extractedResourceMetadataUrl);
+              }
+            }
+
+            // Fallback to building the URL if not found in header
+            if (!extractedResourceMetadataUrl && state.serverUrl) {
+              extractedResourceMetadataUrl = buildResourceMetadataUrl(state.serverUrl);
+              console.log("[Debug OAuth] Using fallback resource metadata URL:", extractedResourceMetadataUrl);
+            }
+
+            if (!extractedResourceMetadataUrl) {
+              throw new Error("Could not determine resource metadata URL");
+            }
+
+            updateState({
+              currentStep: "extract_resource_metadata_url",
+              resourceMetadataUrl: extractedResourceMetadataUrl,
+              isInitiatingAuth: false,
+            });
+            break;
+
+          case "extract_resource_metadata_url":
+            // Step 4: Transition to request resource metadata
+            if (!state.resourceMetadataUrl) {
+              throw new Error("No resource metadata URL available");
+            }
+
+            console.log("[Debug OAuth] Proceeding to request resource metadata from:", state.resourceMetadataUrl);
 
             updateState({
               currentStep: "request_resource_metadata",
-              serverUrl,
-              resourceMetadataUrl,
               isInitiatingAuth: false,
             });
             break;

@@ -15,7 +15,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { cn } from "@/lib/utils";
-import { OauthFlowStateNovember2025, OAuthFlowStep } from "@/lib/debug-oauth-state-machine";
+import { OauthFlowStateJune2025, OAuthFlowStep } from "@/lib/debug-oauth-state-machine";
 
 type NodeStatus = "complete" | "current" | "pending";
 
@@ -206,13 +206,16 @@ const edgeTypes = {
 };
 
 interface OAuthSequenceDiagramProps {
-  flowState: OauthFlowStateNovember2025;
+  flowState: OauthFlowStateJune2025;
 }
 
 // Helper to determine status based on current step
 const getActionStatus = (actionStep: OAuthFlowStep, currentStep: OAuthFlowStep): NodeStatus => {
   const stepOrder: OAuthFlowStep[] = [
     "idle",
+    "request_without_token",
+    "received_401_unauthorized",
+    "extract_resource_metadata_url",
     "request_resource_metadata",
     "received_resource_metadata",
     "request_authorization_server_metadata",
@@ -231,11 +234,33 @@ export const OAuthSequenceDiagram = memo(({ flowState }: OAuthSequenceDiagramPro
   const { nodes, edges } = useMemo(() => {
     const currentStep = flowState.currentStep;
 
-    // Define actions in the sequence (matches SDK's actual OAuth flow)
+    // Define actions in the sequence (matches MCP OAuth spec)
     const actions = [
       {
+        id: "request_without_token",
+        label: "MCP request without token",
+        description: "Client makes initial request without authorization",
+        from: "client",
+        to: "mcpServer",
+        details: flowState.serverUrl
+          ? [{ label: "GET", value: flowState.serverUrl }]
+          : undefined,
+      },
+      {
+        id: "received_401_unauthorized",
+        label: "HTTP 401 Unauthorized with WWW-Authenticate header",
+        description: "Server returns 401 with resource metadata location",
+        from: "mcpServer",
+        to: "client",
+        details: flowState.resourceMetadataUrl
+          ? [
+              { label: "Note", value: "Extract resource_metadata URL from WWW-Authenticate" },
+            ]
+          : undefined,
+      },
+      {
         id: "request_resource_metadata",
-        label: "GET Protected Resource Metadata",
+        label: "Request Protected Resource Metadata",
         description: "Client requests metadata from well-known URI",
         from: "client",
         to: "mcpServer",
