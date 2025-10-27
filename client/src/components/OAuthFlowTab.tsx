@@ -350,78 +350,44 @@ export const OAuthFlowTab = ({
             {oauthFlowState.httpHistory && oauthFlowState.httpHistory.length > 0 && (
               <div className="space-y-3">
                 <h3 className="text-sm font-semibold px-1">HTTP History</h3>
-                {oauthFlowState.httpHistory.map((entry, index) => {
-                  const requestId = `request-${index}`;
-                  const responseId = `response-${index}`;
-                  const isRequestExpanded = expandedBlocks.has(requestId);
-                  const isResponseExpanded = expandedBlocks.has(responseId);
+                {(() => {
+                  // Flatten entries into individual messages and reverse
+                  const messages: Array<{
+                    type: "request" | "response";
+                    data: any;
+                    id: string;
+                  }> = [];
 
-                  return (
-                    <div key={index} className="space-y-2">
-                      {/* Request Block */}
-                      <div className="group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card">
-                        <div
-                          className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
-                          onClick={() => toggleExpanded(requestId)}
-                        >
-                          <div className="flex-shrink-0">
-                            {isRequestExpanded ? (
-                              <ChevronDown className="h-3 w-3 text-muted-foreground transition-transform" />
-                            ) : (
-                              <ChevronRight className="h-3 w-3 text-muted-foreground transition-transform" />
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2 flex-1 min-w-0">
-                            <span
-                              className="flex items-center justify-center px-1 py-0.5 rounded bg-green-500/10 text-green-600 dark:text-green-400"
-                              title="Outgoing"
-                            >
-                              <ArrowUpFromLine className="h-3 w-3" />
-                            </span>
-                            <span className="text-xs font-mono text-foreground truncate">
-                              {entry.request.method} {entry.request.url}
-                            </span>
-                          </div>
-                        </div>
-                        {isRequestExpanded && (
-                          <div className="border-t bg-muted/20">
-                            <div className="p-3">
-                              <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
-                                <JsonView
-                                  src={{
-                                    method: entry.request.method,
-                                    url: entry.request.url,
-                                    headers: entry.request.headers,
-                                  }}
-                                  dark={true}
-                                  theme="atom"
-                                  enableClipboard={true}
-                                  displaySize={false}
-                                  collapseStringsAfterLength={100}
-                                  style={{
-                                    fontSize: "11px",
-                                    fontFamily: "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                                    backgroundColor: "transparent",
-                                    padding: "0",
-                                    borderRadius: "0",
-                                    border: "none",
-                                  }}
-                                />
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </div>
+                  oauthFlowState.httpHistory.forEach((entry, entryIndex) => {
+                    if (entry.request) {
+                      messages.push({
+                        type: "request",
+                        data: entry.request,
+                        id: `request-${entryIndex}`,
+                      });
+                    }
+                    if (entry.response) {
+                      messages.push({
+                        type: "response",
+                        data: entry.response,
+                        id: `response-${entryIndex}`,
+                      });
+                    }
+                  });
 
-                      {/* Response Block */}
-                      {entry.response && (
-                        <div className="group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card">
+                  return messages.reverse().map((message) => {
+                    const isExpanded = expandedBlocks.has(message.id);
+
+                    if (message.type === "request") {
+                      const request = message.data;
+                      return (
+                        <div key={message.id} className="group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card">
                           <div
                             className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
-                            onClick={() => toggleExpanded(responseId)}
+                            onClick={() => toggleExpanded(message.id)}
                           >
                             <div className="flex-shrink-0">
-                              {isResponseExpanded ? (
+                              {isExpanded ? (
                                 <ChevronDown className="h-3 w-3 text-muted-foreground transition-transform" />
                               ) : (
                                 <ChevronRight className="h-3 w-3 text-muted-foreground transition-transform" />
@@ -429,33 +395,25 @@ export const OAuthFlowTab = ({
                             </div>
                             <div className="flex items-center gap-2 flex-1 min-w-0">
                               <span
-                                className="flex items-center justify-center px-1 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400"
-                                title="Incoming"
+                                className="flex items-center justify-center px-1 py-0.5 rounded bg-green-500/10 text-green-600 dark:text-green-400"
+                                title="Outgoing"
                               >
-                                <ArrowDownToLine className="h-3 w-3" />
-                              </span>
-                              <span className={`text-xs px-1.5 py-0.5 rounded font-mono flex-shrink-0 ${
-                                entry.response.status >= 200 && entry.response.status < 300
-                                  ? "bg-green-500/10 text-green-600 dark:text-green-400"
-                                  : "bg-red-500/10 text-red-600 dark:text-red-400"
-                              }`}>
-                                {entry.response.status}
+                                <ArrowUpFromLine className="h-3 w-3" />
                               </span>
                               <span className="text-xs font-mono text-foreground truncate">
-                                {entry.response.statusText}
+                                {request.method} {request.url}
                               </span>
                             </div>
                           </div>
-                          {isResponseExpanded && (
+                          {isExpanded && (
                             <div className="border-t bg-muted/20">
                               <div className="p-3">
                                 <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
                                   <JsonView
                                     src={{
-                                      status: entry.response.status,
-                                      statusText: entry.response.statusText,
-                                      headers: entry.response.headers,
-                                      body: entry.response.body,
+                                      method: request.method,
+                                      url: request.url,
+                                      headers: request.headers,
                                     }}
                                     dark={true}
                                     theme="atom"
@@ -476,10 +434,75 @@ export const OAuthFlowTab = ({
                             </div>
                           )}
                         </div>
-                      )}
-                    </div>
-                  );
-                })}
+                      );
+                    } else {
+                      const response = message.data;
+                      return (
+                        <div key={message.id} className="group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card">
+                          <div
+                            className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
+                            onClick={() => toggleExpanded(message.id)}
+                          >
+                            <div className="flex-shrink-0">
+                              {isExpanded ? (
+                                <ChevronDown className="h-3 w-3 text-muted-foreground transition-transform" />
+                              ) : (
+                                <ChevronRight className="h-3 w-3 text-muted-foreground transition-transform" />
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 flex-1 min-w-0">
+                              <span
+                                className="flex items-center justify-center px-1 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400"
+                                title="Incoming"
+                              >
+                                <ArrowDownToLine className="h-3 w-3" />
+                              </span>
+                              <span className={`text-xs px-1.5 py-0.5 rounded font-mono flex-shrink-0 ${
+                                response.status >= 200 && response.status < 300
+                                  ? "bg-green-500/10 text-green-600 dark:text-green-400"
+                                  : "bg-red-500/10 text-red-600 dark:text-red-400"
+                              }`}>
+                                {response.status}
+                              </span>
+                              <span className="text-xs font-mono text-foreground truncate">
+                                {response.statusText}
+                              </span>
+                            </div>
+                          </div>
+                          {isExpanded && (
+                            <div className="border-t bg-muted/20">
+                              <div className="p-3">
+                                <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
+                                  <JsonView
+                                    src={{
+                                      status: response.status,
+                                      statusText: response.statusText,
+                                      headers: response.headers,
+                                      body: response.body,
+                                    }}
+                                    dark={true}
+                                    theme="atom"
+                                    enableClipboard={true}
+                                    displaySize={false}
+                                    collapseStringsAfterLength={100}
+                                    style={{
+                                      fontSize: "11px",
+                                      fontFamily: "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                                      backgroundColor: "transparent",
+                                      padding: "0",
+                                      borderRadius: "0",
+                                      border: "none",
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    }
+                  });
+                })()}
               </div>
             )}
 
