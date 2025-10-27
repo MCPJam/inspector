@@ -10,7 +10,12 @@ const oauth = new Hono();
  */
 oauth.post("/proxy", async (c) => {
   try {
-    const { url, method = "GET", body, headers: customHeaders } = await c.req.json();
+    const {
+      url,
+      method = "GET",
+      body,
+      headers: customHeaders,
+    } = await c.req.json();
 
     if (!url) {
       return c.json({ error: "Missing url parameter" }, 400);
@@ -35,8 +40,11 @@ oauth.post("/proxy", async (c) => {
     };
 
     // Determine content type from custom headers or default to JSON
-    const contentType = customHeaders?.["Content-Type"] || customHeaders?.["content-type"];
-    const isFormUrlEncoded = contentType?.includes("application/x-www-form-urlencoded");
+    const contentType =
+      customHeaders?.["Content-Type"] || customHeaders?.["content-type"];
+    const isFormUrlEncoded = contentType?.includes(
+      "application/x-www-form-urlencoded",
+    );
 
     if (method === "POST" && body && !contentType) {
       requestHeaders["Content-Type"] = "application/json";

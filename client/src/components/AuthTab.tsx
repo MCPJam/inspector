@@ -319,11 +319,7 @@ export const AuthTab = ({
     if (oauthStateMachine) {
       oauthStateMachine.proceedToNextStep();
     }
-  }, [
-    oauthStateMachine,
-    updateOAuthFlowState,
-    resetOAuthFlow,
-  ]);
+  }, [oauthStateMachine, updateOAuthFlowState, resetOAuthFlow]);
 
   const proceedToNextStep = useCallback(async () => {
     if (oauthStateMachine) {

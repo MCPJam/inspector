@@ -1,6 +1,17 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { Button } from "@/components/ui/button";
-import { AlertCircle, RefreshCw, Shield, Workflow, ChevronDown, ChevronRight, ArrowDownToLine, ArrowUpFromLine, ExternalLink, CheckCircle2 } from "lucide-react";
+import {
+  AlertCircle,
+  RefreshCw,
+  Shield,
+  Workflow,
+  ChevronDown,
+  ChevronRight,
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  ExternalLink,
+  CheckCircle2,
+} from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import {
   AuthSettings,
@@ -166,12 +177,7 @@ export const OAuthFlowTab = ({
       serverName,
       redirectUrl: provider.redirectUrl,
     });
-  }, [
-    serverConfig,
-    serverName,
-    authSettings.serverUrl,
-    updateOAuthFlowState,
-  ]);
+  }, [serverConfig, serverName, authSettings.serverUrl, updateOAuthFlowState]);
 
   const proceedToNextStep = useCallback(async () => {
     if (oauthStateMachine) {
@@ -195,7 +201,9 @@ export const OAuthFlowTab = ({
           error: undefined,
         });
 
-        console.log("[OAuth Flow] 🔄 State updated, proceeding to next step in 500ms");
+        console.log(
+          "[OAuth Flow] 🔄 State updated, proceeding to next step in 500ms",
+        );
 
         // Automatically proceed to the next step after a brief delay
         setTimeout(() => {
@@ -217,7 +225,10 @@ export const OAuthFlowTab = ({
       return;
     }
 
-    console.log("[OAuth Flow] 🔄 Server changed, resetting flow for:", serverName);
+    console.log(
+      "[OAuth Flow] 🔄 Server changed, resetting flow for:",
+      serverName,
+    );
 
     // Reset the initialized ref to allow reinitialization
     initializedServerRef.current = null;
@@ -317,7 +328,8 @@ export const OAuthFlowTab = ({
                       {isHttpServer && (
                         <p className="text-xs text-muted-foreground max-w-md mx-auto mt-2">
                           If this server supports OAuth, you can reconnect it
-                          with OAuth enabled from the Servers tab, or use the Auth tab to configure it.
+                          with OAuth enabled from the Servers tab, or use the
+                          Auth tab to configure it.
                         </p>
                       )}
                     </div>
@@ -341,7 +353,8 @@ export const OAuthFlowTab = ({
             <h3 className="text-lg font-medium">OAuth Authentication Flow</h3>
           </div>
           <p className="text-sm text-muted-foreground">
-            {serverEntry?.name || "Unknown Server"} • {isHttpServer && (serverConfig as any).url.toString()}
+            {serverEntry?.name || "Unknown Server"} •{" "}
+            {isHttpServer && (serverConfig as any).url.toString()}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -356,7 +369,9 @@ export const OAuthFlowTab = ({
           <Button
             variant="outline"
             onClick={() => {
-              console.log("[OAuth Flow] 🔄 Reset button clicked - clearing all state");
+              console.log(
+                "[OAuth Flow] 🔄 Reset button clicked - clearing all state",
+              );
               if (oauthStateMachine) {
                 oauthStateMachine.resetFlow();
               }
@@ -399,34 +414,39 @@ export const OAuthFlowTab = ({
         <div className="w-96 border-l border-border bg-muted/30 p-4 overflow-auto">
           <div className="space-y-4">
             {/* Authorization URL - Show when ready */}
-            {oauthFlowState.currentStep === "authorization_request" && oauthFlowState.authorizationUrl && (
-              <Alert className="border-2 border-blue-500/50 bg-blue-50 dark:bg-blue-950/20 animate-pulse">
-                <Shield className="h-4 w-4 text-blue-700 dark:text-blue-300" />
-                <AlertTitle className="text-blue-700 dark:text-blue-300">
-                  Ready to authorize
-                </AlertTitle>
-                <AlertDescription className="space-y-3 mt-3">
-                  <Button
-                    onClick={async () => {
-                      window.open(oauthFlowState.authorizationUrl!, "_blank", "noopener,noreferrer");
+            {oauthFlowState.currentStep === "authorization_request" &&
+              oauthFlowState.authorizationUrl && (
+                <Alert className="border-2 border-blue-500/50 bg-blue-50 dark:bg-blue-950/20 animate-pulse">
+                  <Shield className="h-4 w-4 text-blue-700 dark:text-blue-300" />
+                  <AlertTitle className="text-blue-700 dark:text-blue-300">
+                    Ready to authorize
+                  </AlertTitle>
+                  <AlertDescription className="space-y-3 mt-3">
+                    <Button
+                      onClick={async () => {
+                        window.open(
+                          oauthFlowState.authorizationUrl!,
+                          "_blank",
+                          "noopener,noreferrer",
+                        );
 
-                      // Automatically move to the next step (waiting for code)
-                      setTimeout(() => {
-                        proceedToNextStep();
-                      }, 500);
-                    }}
-                    className="w-full"
-                    size="sm"
-                  >
-                    <ExternalLink className="h-4 w-4 mr-2" />
-                    Authorize
-                  </Button>
-                  <div className="text-[10px] font-mono bg-muted p-2 rounded break-all text-muted-foreground">
-                    {oauthFlowState.authorizationUrl}
-                  </div>
-                </AlertDescription>
-              </Alert>
-            )}
+                        // Automatically move to the next step (waiting for code)
+                        setTimeout(() => {
+                          proceedToNextStep();
+                        }, 500);
+                      }}
+                      className="w-full"
+                      size="sm"
+                    >
+                      <ExternalLink className="h-4 w-4 mr-2" />
+                      Authorize
+                    </Button>
+                    <div className="text-[10px] font-mono bg-muted p-2 rounded break-all text-muted-foreground">
+                      {oauthFlowState.authorizationUrl}
+                    </div>
+                  </AlertDescription>
+                </Alert>
+              )}
 
             {/* Authorization Code Input - Show when waiting for code */}
             {oauthFlowState.currentStep === "received_authorization_code" && (
@@ -437,7 +457,9 @@ export const OAuthFlowTab = ({
                   <CheckCircle2 className="h-4 w-4 text-green-700 dark:text-green-300" />
                 )}
                 <AlertTitle className="text-green-700 dark:text-green-300">
-                  {oauthFlowState.authorizationCode ? "Code received" : "Waiting for code"}
+                  {oauthFlowState.authorizationCode
+                    ? "Code received"
+                    : "Waiting for code"}
                 </AlertTitle>
                 <AlertDescription className="space-y-3 mt-3">
                   {!oauthFlowState.authorizationCode ? (
@@ -445,7 +467,10 @@ export const OAuthFlowTab = ({
                       type="text"
                       value={oauthFlowState.authorizationCode || ""}
                       onChange={(e) => {
-                        updateOAuthFlowState({ authorizationCode: e.target.value, error: undefined });
+                        updateOAuthFlowState({
+                          authorizationCode: e.target.value,
+                          error: undefined,
+                        });
                       }}
                       placeholder="Paste code"
                       className="text-xs"
@@ -456,183 +481,197 @@ export const OAuthFlowTab = ({
                     </div>
                   )}
                   {oauthFlowState.error && (
-                    <p className="text-xs text-red-600 dark:text-red-400">{oauthFlowState.error}</p>
+                    <p className="text-xs text-red-600 dark:text-red-400">
+                      {oauthFlowState.error}
+                    </p>
                   )}
                 </AlertDescription>
               </Alert>
             )}
 
             {/* Error Display for other steps */}
-            {oauthFlowState.error && oauthFlowState.currentStep !== "received_authorization_code" && (
-              <Alert variant="destructive">
-                <AlertCircle className="h-4 w-4" />
-                <AlertTitle>Error</AlertTitle>
-                <AlertDescription className="text-xs">
-                  {oauthFlowState.error}
-                </AlertDescription>
-              </Alert>
-            )}
+            {oauthFlowState.error &&
+              oauthFlowState.currentStep !== "received_authorization_code" && (
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle>Error</AlertTitle>
+                  <AlertDescription className="text-xs">
+                    {oauthFlowState.error}
+                  </AlertDescription>
+                </Alert>
+              )}
 
             {/* HTTP History - Show all request/response pairs */}
-            {oauthFlowState.httpHistory && oauthFlowState.httpHistory.length > 0 && (
-              <div className="space-y-3">
-                <h3 className="text-sm font-semibold px-1">HTTP History</h3>
-                {(() => {
-                  // Flatten entries into individual messages and reverse
-                  const messages: Array<{
-                    type: "request" | "response";
-                    data: any;
-                    id: string;
-                  }> = [];
+            {oauthFlowState.httpHistory &&
+              oauthFlowState.httpHistory.length > 0 && (
+                <div className="space-y-3">
+                  <h3 className="text-sm font-semibold px-1">HTTP History</h3>
+                  {(() => {
+                    // Flatten entries into individual messages and reverse
+                    const messages: Array<{
+                      type: "request" | "response";
+                      data: any;
+                      id: string;
+                    }> = [];
 
-                  oauthFlowState.httpHistory.forEach((entry, entryIndex) => {
-                    if (entry.request) {
-                      messages.push({
-                        type: "request",
-                        data: entry.request,
-                        id: `request-${entryIndex}`,
-                      });
-                    }
-                    if (entry.response) {
-                      messages.push({
-                        type: "response",
-                        data: entry.response,
-                        id: `response-${entryIndex}`,
-                      });
-                    }
-                  });
+                    oauthFlowState.httpHistory.forEach((entry, entryIndex) => {
+                      if (entry.request) {
+                        messages.push({
+                          type: "request",
+                          data: entry.request,
+                          id: `request-${entryIndex}`,
+                        });
+                      }
+                      if (entry.response) {
+                        messages.push({
+                          type: "response",
+                          data: entry.response,
+                          id: `response-${entryIndex}`,
+                        });
+                      }
+                    });
 
-                  return messages.reverse().map((message) => {
-                    const isExpanded = expandedBlocks.has(message.id);
+                    return messages.reverse().map((message) => {
+                      const isExpanded = expandedBlocks.has(message.id);
 
-                    if (message.type === "request") {
-                      const request = message.data;
-                      return (
-                        <div key={message.id} className="group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card">
+                      if (message.type === "request") {
+                        const request = message.data;
+                        return (
                           <div
-                            className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
-                            onClick={() => toggleExpanded(message.id)}
+                            key={message.id}
+                            className="group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card"
                           >
-                            <div className="flex-shrink-0">
-                              {isExpanded ? (
-                                <ChevronDown className="h-3 w-3 text-muted-foreground transition-transform" />
-                              ) : (
-                                <ChevronRight className="h-3 w-3 text-muted-foreground transition-transform" />
-                              )}
-                            </div>
-                            <div className="flex items-center gap-2 flex-1 min-w-0">
-                              <span
-                                className="flex items-center justify-center px-1 py-0.5 rounded bg-green-500/10 text-green-600 dark:text-green-400"
-                                title="Outgoing"
-                              >
-                                <ArrowUpFromLine className="h-3 w-3" />
-                              </span>
-                              <span className="text-xs font-mono text-foreground truncate">
-                                {request.method} {request.url}
-                              </span>
-                            </div>
-                          </div>
-                          {isExpanded && (
-                            <div className="border-t bg-muted/20">
-                              <div className="p-3">
-                                <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
-                                  <JsonView
-                                    src={{
-                                      method: request.method,
-                                      url: request.url,
-                                      headers: request.headers,
-                                    }}
-                                    dark={true}
-                                    theme="atom"
-                                    enableClipboard={true}
-                                    displaySize={false}
-                                    collapseStringsAfterLength={100}
-                                    style={{
-                                      fontSize: "11px",
-                                      fontFamily: "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                                      backgroundColor: "transparent",
-                                      padding: "0",
-                                      borderRadius: "0",
-                                      border: "none",
-                                    }}
-                                  />
-                                </div>
+                            <div
+                              className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
+                              onClick={() => toggleExpanded(message.id)}
+                            >
+                              <div className="flex-shrink-0">
+                                {isExpanded ? (
+                                  <ChevronDown className="h-3 w-3 text-muted-foreground transition-transform" />
+                                ) : (
+                                  <ChevronRight className="h-3 w-3 text-muted-foreground transition-transform" />
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2 flex-1 min-w-0">
+                                <span
+                                  className="flex items-center justify-center px-1 py-0.5 rounded bg-green-500/10 text-green-600 dark:text-green-400"
+                                  title="Outgoing"
+                                >
+                                  <ArrowUpFromLine className="h-3 w-3" />
+                                </span>
+                                <span className="text-xs font-mono text-foreground truncate">
+                                  {request.method} {request.url}
+                                </span>
                               </div>
                             </div>
-                          )}
-                        </div>
-                      );
-                    } else {
-                      const response = message.data;
-                      return (
-                        <div key={message.id} className="group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card">
-                          <div
-                            className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
-                            onClick={() => toggleExpanded(message.id)}
-                          >
-                            <div className="flex-shrink-0">
-                              {isExpanded ? (
-                                <ChevronDown className="h-3 w-3 text-muted-foreground transition-transform" />
-                              ) : (
-                                <ChevronRight className="h-3 w-3 text-muted-foreground transition-transform" />
-                              )}
-                            </div>
-                            <div className="flex items-center gap-2 flex-1 min-w-0">
-                              <span
-                                className="flex items-center justify-center px-1 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400"
-                                title="Incoming"
-                              >
-                                <ArrowDownToLine className="h-3 w-3" />
-                              </span>
-                              <span className={`text-xs px-1.5 py-0.5 rounded font-mono flex-shrink-0 ${
-                                response.status >= 200 && response.status < 300
-                                  ? "bg-green-500/10 text-green-600 dark:text-green-400"
-                                  : "bg-red-500/10 text-red-600 dark:text-red-400"
-                              }`}>
-                                {response.status}
-                              </span>
-                              <span className="text-xs font-mono text-foreground truncate">
-                                {response.statusText}
-                              </span>
-                            </div>
-                          </div>
-                          {isExpanded && (
-                            <div className="border-t bg-muted/20">
-                              <div className="p-3">
-                                <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
-                                  <JsonView
-                                    src={{
-                                      status: response.status,
-                                      statusText: response.statusText,
-                                      headers: response.headers,
-                                      body: response.body,
-                                    }}
-                                    dark={true}
-                                    theme="atom"
-                                    enableClipboard={true}
-                                    displaySize={false}
-                                    collapseStringsAfterLength={100}
-                                    style={{
-                                      fontSize: "11px",
-                                      fontFamily: "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                                      backgroundColor: "transparent",
-                                      padding: "0",
-                                      borderRadius: "0",
-                                      border: "none",
-                                    }}
-                                  />
+                            {isExpanded && (
+                              <div className="border-t bg-muted/20">
+                                <div className="p-3">
+                                  <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
+                                    <JsonView
+                                      src={{
+                                        method: request.method,
+                                        url: request.url,
+                                        headers: request.headers,
+                                      }}
+                                      dark={true}
+                                      theme="atom"
+                                      enableClipboard={true}
+                                      displaySize={false}
+                                      collapseStringsAfterLength={100}
+                                      style={{
+                                        fontSize: "11px",
+                                        fontFamily:
+                                          "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                                        backgroundColor: "transparent",
+                                        padding: "0",
+                                        borderRadius: "0",
+                                        border: "none",
+                                      }}
+                                    />
+                                  </div>
                                 </div>
                               </div>
+                            )}
+                          </div>
+                        );
+                      } else {
+                        const response = message.data;
+                        return (
+                          <div
+                            key={message.id}
+                            className="group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card"
+                          >
+                            <div
+                              className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
+                              onClick={() => toggleExpanded(message.id)}
+                            >
+                              <div className="flex-shrink-0">
+                                {isExpanded ? (
+                                  <ChevronDown className="h-3 w-3 text-muted-foreground transition-transform" />
+                                ) : (
+                                  <ChevronRight className="h-3 w-3 text-muted-foreground transition-transform" />
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2 flex-1 min-w-0">
+                                <span
+                                  className="flex items-center justify-center px-1 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400"
+                                  title="Incoming"
+                                >
+                                  <ArrowDownToLine className="h-3 w-3" />
+                                </span>
+                                <span
+                                  className={`text-xs px-1.5 py-0.5 rounded font-mono flex-shrink-0 ${
+                                    response.status >= 200 &&
+                                    response.status < 300
+                                      ? "bg-green-500/10 text-green-600 dark:text-green-400"
+                                      : "bg-red-500/10 text-red-600 dark:text-red-400"
+                                  }`}
+                                >
+                                  {response.status}
+                                </span>
+                                <span className="text-xs font-mono text-foreground truncate">
+                                  {response.statusText}
+                                </span>
+                              </div>
                             </div>
-                          )}
-                        </div>
-                      );
-                    }
-                  });
-                })()}
-              </div>
-            )}
-
+                            {isExpanded && (
+                              <div className="border-t bg-muted/20">
+                                <div className="p-3">
+                                  <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
+                                    <JsonView
+                                      src={{
+                                        status: response.status,
+                                        statusText: response.statusText,
+                                        headers: response.headers,
+                                        body: response.body,
+                                      }}
+                                      dark={true}
+                                      theme="atom"
+                                      enableClipboard={true}
+                                      displaySize={false}
+                                      collapseStringsAfterLength={100}
+                                      style={{
+                                        fontSize: "11px",
+                                        fontFamily:
+                                          "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                                        backgroundColor: "transparent",
+                                        padding: "0",
+                                        borderRadius: "0",
+                                        border: "none",
+                                      }}
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      }
+                    });
+                  })()}
+                </div>
+              )}
           </div>
         </div>
       </div>

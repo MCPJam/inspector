@@ -143,7 +143,9 @@ const handleAgentStepFinish = (
           if (!streamingContext.toolNameToCallIds.has(toolName)) {
             streamingContext.toolNameToCallIds.set(toolName, []);
           }
-          streamingContext.toolNameToCallIds.get(toolName)!.push(currentToolCallId);
+          streamingContext.toolNameToCallIds
+            .get(toolName)!
+            .push(currentToolCallId);
 
           if (streamingContext.controller && streamingContext.encoder) {
             sendSseEvent(
@@ -324,7 +326,9 @@ const createStreamingResponse = async (
               if (!streamingContext.toolNameToCallIds.has(name)) {
                 streamingContext.toolNameToCallIds.set(name, []);
               }
-              streamingContext.toolNameToCallIds.get(name)!.push(currentToolCallId);
+              streamingContext.toolNameToCallIds
+                .get(name)!
+                .push(currentToolCallId);
 
               iterationToolCalls.push({ name, params: parameters });
               sendSseEvent(
@@ -362,7 +366,10 @@ const createStreamingResponse = async (
                 }
               }
 
-              if (!currentToolCallId && streamingContext.lastEmittedToolCallId) {
+              if (
+                !currentToolCallId &&
+                streamingContext.lastEmittedToolCallId
+              ) {
                 currentToolCallId = streamingContext.lastEmittedToolCallId;
               }
 
@@ -373,7 +380,10 @@ const createStreamingResponse = async (
               }
 
               // If the provider sends an explicit ID, ensure it is removed from the queue.
-              if (toolName && streamingContext.toolNameToCallIds.has(toolName)) {
+              if (
+                toolName &&
+                streamingContext.toolNameToCallIds.has(toolName)
+              ) {
                 const queue = streamingContext.toolNameToCallIds.get(toolName)!;
                 const index = queue.indexOf(currentToolCallId);
                 if (index !== -1) {
@@ -518,8 +528,11 @@ const createStreamingResponse = async (
 
           // Look up serverId from tool metadata
           const toolNameForLookup =
-            toolName || streamingContext.toolCallIdToName.get(currentToolCallId);
-          const serverId = toolNameForLookup ? extractServerId(toolNameForLookup) : undefined;
+            toolName ||
+            streamingContext.toolCallIdToName.get(currentToolCallId);
+          const serverId = toolNameForLookup
+            ? extractServerId(toolNameForLookup)
+            : undefined;
 
           iterationToolResults.push({ result: value });
           sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
