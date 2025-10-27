@@ -42,15 +42,17 @@ interface ActionEdgeData extends Record<string, unknown> {
 // Actor configuration
 const ACTORS = {
   client: { label: "Client", color: "#10b981" }, // Green
-  mcpServer: { label: "MCP Server", color: "#f59e0b" }, // Orange
+  browser: { label: "User-Agent (Browser)", color: "#8b5cf6" }, // Purple
+  mcpServer: { label: "MCP Server (Resource Server)", color: "#f59e0b" }, // Orange
   authServer: { label: "Authorization Server", color: "#3b82f6" }, // Blue
 };
 
 // Layout constants
 const ACTOR_X_POSITIONS = {
-  client: 150,
-  mcpServer: 450,
-  authServer: 750,
+  browser: 100,
+  client: 350,
+  mcpServer: 650,
+  authServer: 950,
 };
 const ACTION_SPACING = 180; // Vertical space between actions
 const START_Y = 120; // Initial Y position for first action
@@ -212,12 +214,11 @@ interface OAuthSequenceDiagramProps {
 }
 
 // Helper to determine status based on current step
-const getActionStatus = (actionStep: OAuthFlowStep, currentStep: OAuthFlowStep): NodeStatus => {
-  const stepOrder: OAuthFlowStep[] = [
+const getActionStatus = (actionStep: OAuthFlowStep | string, currentStep: OAuthFlowStep): NodeStatus => {
+  const stepOrder: (OAuthFlowStep | string)[] = [
     "idle",
     "request_without_token",
     "received_401_unauthorized",
-    "extract_resource_metadata_url",
     "request_resource_metadata",
     "received_resource_metadata",
     "request_authorization_server_metadata",
@@ -226,6 +227,8 @@ const getActionStatus = (actionStep: OAuthFlowStep, currentStep: OAuthFlowStep):
     "received_client_credentials",
     "generate_pkce_parameters",
     "authorization_request",
+    "browser_to_auth_server",
+    "auth_redirect_to_browser",
     "received_authorization_code",
     "token_request",
     "received_access_token",
@@ -343,22 +346,44 @@ export const OAuthSequenceDiagram = memo(({ flowState }: OAuthSequenceDiagramPro
       },
       {
         id: "authorization_request",
-        label: "Authorization request (Browser)",
-        description: "User authorizes via browser redirect",
+        label: "Open browser with authorization URL",
+        description: "Client opens browser with authorization URL + code_challenge + resource",
         from: "client",
-        to: "authServer",
+        to: "browser",
         details: flowState.authorizationUrl
           ? [
-              { label: "Note", value: "User authorizes in browser" },
+              { label: "code_challenge", value: flowState.codeChallenge?.substring(0, 12) + "..." || "S256" },
               { label: "resource", value: flowState.serverUrl || "" },
             ]
           : undefined,
       },
       {
+        id: "browser_to_auth_server",
+        label: "Authorization request with resource parameter",
+        description: "Browser navigates to authorization endpoint",
+        from: "browser",
+        to: "authServer",
+        details: flowState.authorizationUrl
+          ? [
+              { label: "Note", value: "User authorizes in browser" },
+            ]
+          : undefined,
+      },
+      {
+        id: "auth_redirect_to_browser",
+        label: "Redirect to callback with authorization code",
+        description: "Authorization Server redirects browser back to callback URL",
+        from: "authServer",
+        to: "browser",
+        details: flowState.authorizationCode
+          ? [{ label: "code", value: flowState.authorizationCode.substring(0, 20) + "..." }]
+          : undefined,
+      },
+      {
         id: "received_authorization_code",
         label: "Authorization code callback",
-        description: "Browser redirects back with authorization code",
-        from: "authServer",
+        description: "Browser redirects back to client with authorization code",
+        from: "browser",
         to: "client",
         details: flowState.authorizationCode
           ? [{ label: "code", value: flowState.authorizationCode.substring(0, 20) + "..." }]
@@ -409,7 +434,8 @@ export const OAuthSequenceDiagram = memo(({ flowState }: OAuthSequenceDiagramPro
     const totalActions = actions.length;
     const totalHeight = START_Y + totalActions * ACTION_SPACING;
 
-    // Create segments for each actor
+    // Create segments for each actor (order: Browser, Client, MCP Server, Auth Server)
+    const browserSegments: ActorNodeData["segments"] = [];
     const clientSegments: ActorNodeData["segments"] = [];
     const mcpServerSegments: ActorNodeData["segments"] = [];
     const authServerSegments: ActorNodeData["segments"] = [];
@@ -421,6 +447,11 @@ export const OAuthSequenceDiagram = memo(({ flowState }: OAuthSequenceDiagramPro
 
       // Add line segments before the action
       if (currentY < actionY) {
+        browserSegments.push({
+          id: `browser-line-${index}`,
+          type: "line",
+          height: actionY - currentY,
+        });
         clientSegments.push({
           id: `client-line-${index}`,
           type: "line",
@@ -440,6 +471,21 @@ export const OAuthSequenceDiagram = memo(({ flowState }: OAuthSequenceDiagramPro
       }
 
       // Add box segments for the actors involved in this action
+      if (action.from === "browser" || action.to === "browser") {
+        browserSegments.push({
+          id: `browser-box-${action.id}`,
+          type: "box",
+          height: SEGMENT_HEIGHT,
+          handleId: action.id,
+        });
+      } else {
+        browserSegments.push({
+          id: `browser-line-action-${index}`,
+          type: "line",
+          height: SEGMENT_HEIGHT,
+        });
+      }
+
       if (action.from === "client" || action.to === "client") {
         clientSegments.push({
           id: `client-box-${action.id}`,
@@ -491,6 +537,11 @@ export const OAuthSequenceDiagram = memo(({ flowState }: OAuthSequenceDiagramPro
     // Add final line segments
     const remainingHeight = totalHeight - currentY;
     if (remainingHeight > 0) {
+      browserSegments.push({
+        id: "browser-line-end",
+        type: "line",
+        height: remainingHeight,
+      });
       clientSegments.push({
         id: "client-line-end",
         type: "line",
@@ -508,8 +559,19 @@ export const OAuthSequenceDiagram = memo(({ flowState }: OAuthSequenceDiagramPro
       });
     }
 
-    // Create actor nodes
+    // Create actor nodes (left to right: Browser, Client, MCP Server, Auth Server)
     const nodes: Node[] = [
+      {
+        id: "actor-browser",
+        type: "actor",
+        position: { x: ACTOR_X_POSITIONS.browser, y: 0 },
+        data: {
+          label: ACTORS.browser.label,
+          color: ACTORS.browser.color,
+          segments: browserSegments,
+        },
+        draggable: false,
+      },
       {
         id: "actor-client",
         type: "actor",
@@ -547,7 +609,7 @@ export const OAuthSequenceDiagram = memo(({ flowState }: OAuthSequenceDiagramPro
 
     // Create action edges
     const edges: Edge[] = actions.map((action, index) => {
-      const status = getActionStatus(action.id as OAuthFlowStep, currentStep);
+      const status = getActionStatus(action.id, currentStep);
       const isComplete = status === "complete";
 
       // For self-referencing actions (client to client), use special handles
