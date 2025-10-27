@@ -50,6 +50,8 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
     setFetchingResources(true);
     setError("");
     setResources([]);
+    setSelectedResource("");
+    setResourceContent(null);
 
     try {
       const response = await fetch("/api/mcp/resources/list", {
@@ -72,7 +74,6 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
         } else if (
           !serverResources.some((resource) => resource.uri === selectedResource)
         ) {
-          setSelectedResource(serverResources[0].uri);
           setResourceContent(null);
         }
       } else {
@@ -203,17 +204,6 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
                                       {resource.description}
                                     </p>
                                   )}
-                                  <p className="text-xs text-muted-foreground/70 mt-1 font-mono truncate">
-                                    {resource.uri}
-                                  </p>
-                                  {resource.mimeType && (
-                                    <Badge
-                                      variant="outline"
-                                      className="text-xs mt-2 font-mono"
-                                    >
-                                      {resource.mimeType}
-                                    </Badge>
-                                  )}
                                 </div>
                                 <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0 mt-1" />
                               </div>
@@ -237,14 +227,24 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
                     {/* Header */}
                     <div className="flex items-center justify-between px-6 py-5 border-b border-border bg-background">
                       <div className="space-y-2">
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-1">
                           <code className="font-mono font-semibold text-foreground bg-muted px-2 py-1 rounded-md border border-border text-xs">
                             {selectedResourceData?.name || selectedResource}
                           </code>
+                          &bull;
+                          <p className="text-xs text-muted-foreground font-mono truncate max-w-md">
+                            {selectedResource}
+                          </p>
                         </div>
-                        <p className="text-xs text-muted-foreground font-mono truncate max-w-md">
-                          {selectedResource}
-                        </p>
+
+                        {selectedResourceData?.mimeType && (
+                          <Badge
+                            variant="outline"
+                            className="text-xs font-mono"
+                          >
+                            {selectedResourceData.mimeType}
+                          </Badge>
+                        )}
                       </div>
                       <Button
                         onClick={() => readResource(selectedResource)}
@@ -274,11 +274,59 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
                         </p>
                       </div>
                     )}
+                  </>
+                ) : (
+                  <div className="h-full flex items-center justify-center">
+                    <div className="text-center">
+                      <div className="w-12 h-12 bg-muted rounded-full flex items-center justify-center mx-auto mb-3">
+                        <FolderOpen className="h-5 w-5 text-muted-foreground" />
+                      </div>
+                      <p className="text-xs font-semibold text-foreground mb-1">
+                        Select a resource
+                      </p>
+                      <p className="text-xs text-muted-foreground font-medium">
+                        Choose a resource from the left to preview its content
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        </ResizablePanel>
 
-                    {/* Content Preview */}
+        <ResizableHandle withHandle />
+
+        {/* Bottom Panel - JSON-RPC Logger and Status */}
+        <ResizablePanel defaultSize={30} minSize={15} maxSize={70}>
+          <ResizablePanelGroup direction="horizontal" className="h-full">
+            <ResizablePanel defaultSize={40} minSize={10}>
+              <JsonRpcLoggerView
+                serverIds={serverName ? [serverName] : undefined}
+              />
+            </ResizablePanel>
+            <ResizableHandle withHandle />
+            <ResizablePanel defaultSize={60} minSize={30}>
+              <div className="h-full flex flex-col border-t border-border bg-background break-all">
+                {/* Header */}
+                <div className="flex items-center justify-between p-4 border-b border-border">
+                  <h2 className="text-xs font-semibold text-foreground">
+                    Response
+                  </h2>
+                </div>
+
+                {/* Content */}
+                <div className="flex-1 overflow-hidden">
+                  {error ? (
+                    <div className="p-4">
+                      <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
+                        {error}
+                      </div>
+                    </div>
+                  ) : (
                     <div className="flex-1 overflow-hidden">
                       <ScrollArea className="h-full">
-                        <div className="px-6 py-6">
+                        <div className="p-4">
                           {!resourceContent ? (
                             <div className="flex flex-col items-center justify-center py-16 text-center">
                               <div className="w-10 h-10 bg-muted rounded-full flex items-center justify-center mb-3">
@@ -296,23 +344,7 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
                               {resourceContent?.contents?.map(
                                 (content: any, index: number) => (
                                   <div key={index} className="group">
-                                    <div className="flex items-center gap-3 mb-3">
-                                      <Badge
-                                        variant="secondary"
-                                        className="text-xs font-mono font-medium"
-                                      >
-                                        {content.type}
-                                      </Badge>
-                                      {content.mimeType && (
-                                        <Badge
-                                          variant="outline"
-                                          className="text-xs font-mono"
-                                        >
-                                          {content.mimeType}
-                                        </Badge>
-                                      )}
-                                    </div>
-                                    <div className="border border-border rounded-md overflow-hidden">
+                                    <div className="overflow-hidden">
                                       {content.type === "text" ? (
                                         <pre className="text-xs font-mono whitespace-pre-wrap p-4 bg-background overflow-auto max-h-96">
                                           {content.text}
@@ -347,61 +379,6 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
                           )}
                         </div>
                       </ScrollArea>
-                    </div>
-                  </>
-                ) : (
-                  <div className="h-full flex items-center justify-center">
-                    <div className="text-center">
-                      <div className="w-12 h-12 bg-muted rounded-full flex items-center justify-center mx-auto mb-3">
-                        <FolderOpen className="h-5 w-5 text-muted-foreground" />
-                      </div>
-                      <p className="text-xs font-semibold text-foreground mb-1">
-                        Select a resource
-                      </p>
-                      <p className="text-xs text-muted-foreground font-medium">
-                        Choose a resource from the left to preview its content
-                      </p>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </ResizablePanel>
-          </ResizablePanelGroup>
-        </ResizablePanel>
-
-        <ResizableHandle withHandle />
-
-        {/* Bottom Panel - JSON-RPC Logger and Status */}
-        <ResizablePanel defaultSize={30} minSize={15} maxSize={70}>
-          <ResizablePanelGroup direction="horizontal" className="h-full">
-            <ResizablePanel defaultSize={40} minSize={10}>
-              <JsonRpcLoggerView
-                serverIds={serverName ? [serverName] : undefined}
-              />
-            </ResizablePanel>
-            <ResizableHandle withHandle />
-            <ResizablePanel defaultSize={60} minSize={30}>
-              <div className="h-full flex flex-col border-t border-border bg-background">
-                {/* Header */}
-                <div className="flex items-center justify-between p-4 border-b border-border">
-                  <h2 className="text-xs font-semibold text-foreground">
-                    Status
-                  </h2>
-                </div>
-
-                {/* Content */}
-                <div className="flex-1 overflow-hidden">
-                  {error ? (
-                    <div className="p-4">
-                      <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
-                        {error}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex items-center justify-center h-full">
-                      <p className="text-xs text-muted-foreground font-medium">
-                        Resource operations status will appear here
-                      </p>
                     </div>
                   )}
                 </div>

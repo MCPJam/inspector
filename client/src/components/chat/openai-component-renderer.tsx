@@ -85,11 +85,6 @@ export function OpenAIComponentRenderer({
           }
         }
 
-        // Fallback to entire result if nothing else found
-        if (!structuredContent) {
-          structuredContent = result;
-        }
-
         // Extract _meta field (toolResponseMetadata)
         // _meta is delivered only to the component (hidden from model)
         toolResponseMetadata = result._meta ?? null;
