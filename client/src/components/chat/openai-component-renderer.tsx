@@ -212,8 +212,10 @@ export function OpenAIComponentRenderer({
   useEffect(() => {
     if (!isReady || !iframeRef.current?.contentWindow) return;
 
+    const iframeWindow = iframeRef.current.contentWindow;
+
     // Send theme update to iframe via webplus:set_globals event
-    iframeRef.current.contentWindow.postMessage(
+    iframeWindow.postMessage(
       {
         type: "webplus:set_globals",
         globals: {
@@ -222,6 +224,16 @@ export function OpenAIComponentRenderer({
       },
       "*",
     );
+
+    // Handle sending theme updates to the iframe document
+    try {
+      const htmlElement = iframeWindow.document.documentElement;
+      if (htmlElement) {
+        htmlElement.classList.toggle("dark", themeMode === "dark");
+      }
+    } catch (err) {
+      throw Error(`Cannot access iframe: ${err}`);
+    }
   }, [themeMode, isReady]);
 
   return (
