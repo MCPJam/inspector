@@ -66,9 +66,6 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
             try {
               authServerUrl = new URL(authServerUrlString);
             } catch (e) {
-              console.warn(
-                `Invalid authorization server URL: ${authServerUrlString}, using default`,
-              );
               // Keep the default authServerUrl
             }
           }
@@ -92,7 +89,6 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
           resource = selected ?? null;
         } catch (e) {
           // Non-fatal; continue without resource
-          console.warn("selectResourceURL failed or not provided:", e);
         }
 
         context.updateState({
@@ -106,11 +102,6 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
       } catch (error) {
         const errorObj =
           error instanceof Error ? error : new Error(String(error));
-        console.error("Metadata discovery error:", {
-          error: errorObj,
-          serverUrl: context.serverUrl,
-          serverName: context.serverName,
-        });
         context.updateState({
           latestError: errorObj,
           statusMessage: {
@@ -158,11 +149,6 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
             }
           }
         } catch (registrationError) {
-          console.warn(
-            "Dynamic client registration failed, using static client metadata:",
-            registrationError,
-          );
-
           // Fallback to using static client metadata if dynamic registration fails
           const existingClientInfo = await context.provider.clientInformation();
           if (existingClientInfo) {
@@ -188,15 +174,6 @@ export const oauthTransitions: Record<OAuthStep, StateTransition> = {
       } catch (error) {
         const errorObj =
           error instanceof Error ? error : new Error(String(error));
-        console.error("Client registration error:", {
-          error: errorObj,
-          serverUrl: context.serverUrl,
-          serverName: context.serverName,
-          hasOAuthMetadata: !!context.state.oauthMetadata,
-          oauthMetadata: context.state.oauthMetadata,
-          providerRedirectUrl: context.provider.redirectUrl,
-          providerClientMetadata: context.provider.clientMetadata,
-        });
         context.updateState({
           latestError: errorObj,
           statusMessage: {
@@ -358,7 +335,6 @@ export class OAuthStateMachine {
     const transition = oauthTransitions[currentStep];
 
     if (!transition) {
-      console.error("No transition found for step:", currentStep);
       return false;
     }
 
@@ -367,14 +343,12 @@ export class OAuthStateMachine {
 
       const canTransition = await transition.canTransition(this.context);
       if (!canTransition) {
-        console.warn("Cannot transition from step:", currentStep);
         return false;
       }
 
       await transition.execute(this.context);
       return true;
     } catch (error) {
-      console.error("Error during state transition:", error);
       const errorObj =
         error instanceof Error ? error : new Error(String(error));
       this.context.updateState({

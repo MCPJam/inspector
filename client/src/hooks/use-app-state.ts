@@ -167,6 +167,12 @@ export function useAppState() {
 
   // Check for OAuth callback completion on mount
   useEffect(() => {
+    // Skip OAuth callback handling if we're on the debug callback page
+    // The debug callback page handles its own OAuth flow visualization
+    if (window.location.pathname.startsWith("/oauth/callback/debug")) {
+      return;
+    }
+
     if (!isLoading) {
       const urlParams = new URLSearchParams(window.location.search);
       const code = urlParams.get("code");
