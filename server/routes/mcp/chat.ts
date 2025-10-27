@@ -36,8 +36,6 @@ interface StreamingContext {
   stepIndex: number;
   // Map tool call ID to tool name for serverId lookup
   toolCallIdToName: Map<string, string>;
-  // Queue of tool call IDs for each tool name (for matching results in order)
-  toolNameToCallIds: Map<string, string[]>;
 }
 
 interface ChatRequest {
@@ -138,14 +136,6 @@ const handleAgentStepFinish = (
 
           // Store tool name for serverId lookup later
           streamingContext.toolCallIdToName.set(currentToolCallId, toolName);
-
-          // Add to queue for this tool name (for matching results in order)
-          if (!streamingContext.toolNameToCallIds.has(toolName)) {
-            streamingContext.toolNameToCallIds.set(toolName, []);
-          }
-          streamingContext.toolNameToCallIds
-            .get(toolName)!
-            .push(currentToolCallId);
 
           if (streamingContext.controller && streamingContext.encoder) {
             sendSseEvent(
@@ -322,14 +312,6 @@ const createStreamingResponse = async (
               // Store tool name for serverId lookup later
               streamingContext.toolCallIdToName.set(currentToolCallId, name);
 
-              // Add to queue for this tool name (for matching results in order)
-              if (!streamingContext.toolNameToCallIds.has(name)) {
-                streamingContext.toolNameToCallIds.set(name, []);
-              }
-              streamingContext.toolNameToCallIds
-                .get(name)!
-                .push(currentToolCallId);
-
               iterationToolCalls.push({ name, params: parameters });
               sendSseEvent(
                 streamingContext.controller,
@@ -352,61 +334,14 @@ const createStreamingResponse = async (
                 (chunk.chunk as any).output ??
                 (chunk.chunk as any).result ??
                 (chunk.chunk as any).value;
-              const toolName =
-                (chunk.chunk as any).toolName ||
-                (chunk.chunk as any).name ||
-                null;
-              let currentToolCallId =
-                (chunk.chunk as any).toolCallId || undefined;
-
-              if (!currentToolCallId && toolName) {
-                const queue = streamingContext.toolNameToCallIds.get(toolName);
-                if (queue && queue.length > 0) {
-                  currentToolCallId = queue.shift();
-                }
-              }
-
-              if (
-                !currentToolCallId &&
-                streamingContext.lastEmittedToolCallId
-              ) {
-                currentToolCallId = streamingContext.lastEmittedToolCallId;
-              }
-
-              if (!currentToolCallId) {
-                currentToolCallId = `tc_${Date.now()}_${Math.random()
-                  .toString(36)
-                  .substr(2, 9)}`;
-              }
-
-              // If the provider sends an explicit ID, ensure it is removed from the queue.
-              if (
-                toolName &&
-                streamingContext.toolNameToCallIds.has(toolName)
-              ) {
-                const queue = streamingContext.toolNameToCallIds.get(toolName)!;
-                const index = queue.indexOf(currentToolCallId);
-                if (index !== -1) {
-                  queue.splice(index, 1);
-                }
-              }
-
-              streamingContext.lastEmittedToolCallId = currentToolCallId;
-
-              if (toolName) {
-                streamingContext.toolCallIdToName.set(
-                  currentToolCallId,
-                  toolName,
-                );
-              }
+              const currentToolCallId =
+                streamingContext.lastEmittedToolCallId ??
+                `tc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
               // Look up serverId from tool metadata
-              const toolNameForLookup =
-                toolName ||
+              const toolName =
                 streamingContext.toolCallIdToName.get(currentToolCallId);
-              const serverId = toolNameForLookup
-                ? extractServerId(toolNameForLookup)
-                : undefined;
+              const serverId = toolName ? extractServerId(toolName) : undefined;
 
               iterationToolResults.push({ result });
               sendSseEvent(
@@ -502,37 +437,16 @@ const createStreamingResponse = async (
       // in the response rather than streaming a tool-result chunk.
       for (const m of responseMessages) {
         if ((m as any).role === "tool") {
+          const currentToolCallId =
+            streamingContext.lastEmittedToolCallId != null
+              ? streamingContext.lastEmittedToolCallId
+              : `tc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
           const value = (m as any).content;
 
-          // Try to get tool name from the message
-          const toolName = (m as any).toolName || (m as any).name;
-          let currentToolCallId: string;
-
-          // If we have a tool name, pop from the queue
-          if (toolName && streamingContext.toolNameToCallIds.has(toolName)) {
-            const queue = streamingContext.toolNameToCallIds.get(toolName)!;
-            if (queue.length > 0) {
-              currentToolCallId = queue.shift()!; // FIFO: take first in queue
-            } else {
-              // Fallback if queue is empty
-              currentToolCallId =
-                streamingContext.lastEmittedToolCallId ??
-                `tc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-            }
-          } else {
-            // Fallback if no tool name
-            currentToolCallId =
-              streamingContext.lastEmittedToolCallId ??
-              `tc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-          }
-
           // Look up serverId from tool metadata
-          const toolNameForLookup =
-            toolName ||
+          const toolName =
             streamingContext.toolCallIdToName.get(currentToolCallId);
-          const serverId = toolNameForLookup
-            ? extractServerId(toolNameForLookup)
-            : undefined;
+          const serverId = toolName ? extractServerId(toolName) : undefined;
 
           iterationToolResults.push({ result: value });
           sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
@@ -669,12 +583,6 @@ const sendMessagesToBackend = async (
     // Store tool name for serverId lookup later
     streamingContext.toolCallIdToName.set(currentToolCallId, call.name);
 
-    // Add to queue for this tool name (for matching results in order)
-    if (!streamingContext.toolNameToCallIds.has(call.name)) {
-      streamingContext.toolNameToCallIds.set(call.name, []);
-    }
-    streamingContext.toolNameToCallIds.get(call.name)!.push(currentToolCallId);
-
     sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
       type: "tool_call",
       toolCall: {
@@ -688,27 +596,10 @@ const sendMessagesToBackend = async (
   };
 
   const emitToolResult = (result: BackendToolResultEvent) => {
-    // Pop the first tool call ID from the queue for this tool name
-    const toolName = result.toolName;
-    let currentToolCallId: string;
-
-    if (toolName && streamingContext.toolNameToCallIds.has(toolName)) {
-      const queue = streamingContext.toolNameToCallIds.get(toolName)!;
-      if (queue.length > 0) {
-        currentToolCallId = queue.shift()!; // FIFO: take first in queue
-      } else {
-        // Fallback if queue is empty
-        currentToolCallId =
-          streamingContext.lastEmittedToolCallId ??
-          `tc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      }
-    } else {
-      // Fallback if no tool name or no queue
-      currentToolCallId =
-        streamingContext.lastEmittedToolCallId ??
-        `tc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    }
-
+    const currentToolCallId =
+      streamingContext.lastEmittedToolCallId != null
+        ? streamingContext.lastEmittedToolCallId
+        : `tc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     sendSseEvent(streamingContext.controller, streamingContext.encoder!, {
       type: "tool_result",
       toolResult: {
@@ -879,7 +770,6 @@ chat.post("/", async (c) => {
           lastEmittedToolCallId: null,
           stepIndex: 0,
           toolCallIdToName: new Map(),
-          toolNameToCallIds: new Map(),
         };
 
         mcpClientManager.setElicitationCallback(async (request) => {

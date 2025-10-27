@@ -108,6 +108,7 @@ export type ModelProvider =
   | "litellm"
   | "mistral"
   | "moonshotai"
+  | "openrouter"
   | "z-ai";
 
 const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
@@ -217,7 +218,6 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
   { id: Model.GPT_5, name: "GPT-5", provider: "openai" },
   { id: Model.GPT_5_MINI, name: "GPT-5 Mini", provider: "openai" },
   { id: Model.GPT_5_NANO, name: "GPT-5 Nano", provider: "openai" },
-  { id: Model.GPT_5_CHAT_LATEST, name: "GPT-5 Chat", provider: "openai" },
   { id: Model.GPT_5_PRO, name: "GPT-5 Pro", provider: "openai" },
   { id: Model.GPT_5_CODEX, name: "GPT-5 Codex", provider: "openai" },
   { id: Model.GPT_4_1, name: "GPT-4.1", provider: "openai" },

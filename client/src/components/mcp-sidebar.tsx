@@ -41,6 +41,11 @@ const navigationSections = [
         url: "#chat",
         icon: MessageCircle,
       },
+      {
+        title: "Playground V2",
+        url: "#chat-v2",
+        icon: MessageCircle,
+      },
     ],
   },
   {

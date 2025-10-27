@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ToolCall, ToolResult } from "@/lib/chat-types";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
 interface OpenAIComponentRendererProps {
   componentUrl: string;
@@ -32,8 +33,27 @@ export function OpenAIComponentRenderer({
   const [error, setError] = useState<string | null>(null);
   const [widgetUrl, setWidgetUrl] = useState<string | null>(null);
 
+  // Get current theme from preferences store
+  const themeMode = usePreferencesStore((s) => s.themeMode);
+
   // Storage key for widget state
   const widgetStateKey = `openai-widget-state:${toolCall.name}:${toolCall.id}`;
+
+  const setIframeDocumentTheme = (iframe) => {
+    try {
+      iframe.document.documentElement.classList.toggle(
+        "dark",
+        themeMode === "dark",
+      );
+    } catch (err) {
+      console.debug(
+        "Unable to access iframe document (likely cross-origin):",
+        err,
+      );
+    }
+  };
+
+  setIframeDocumentTheme(iframeRef.current?.contentWindow);
 
   // Store widget data server-side
   useEffect(() => {
@@ -42,6 +62,7 @@ export function OpenAIComponentRenderer({
       // 1. Backend flow: toolResult.result.structuredContent
       // 2. Local AI SDK flow: toolResult.result[0].output.value.structuredContent
       let structuredContent = null;
+      let toolResponseMetadata = null;
 
       if (toolResult?.result) {
         const result = toolResult.result;
@@ -68,6 +89,10 @@ export function OpenAIComponentRenderer({
         if (!structuredContent) {
           structuredContent = result;
         }
+
+        // Extract _meta field (toolResponseMetadata)
+        // _meta is delivered only to the component (hidden from model)
+        toolResponseMetadata = result._meta ?? null;
       }
 
       // Store widget data, then set URL once storage completes
@@ -83,7 +108,9 @@ export function OpenAIComponentRenderer({
               uri: componentUrl,
               toolInput: toolCall.parameters,
               toolOutput: structuredContent,
+              toolResponseMetadata: toolResponseMetadata,
               toolId: toolCall.id,
+              theme: themeMode,
             }),
           });
 
@@ -112,6 +139,7 @@ export function OpenAIComponentRenderer({
     toolCall.parameters,
     toolCall.id,
     toolResult?.result,
+    themeMode,
   ]);
 
   // Handle postMessage communication with iframe
@@ -196,6 +224,27 @@ export function OpenAIComponentRenderer({
     };
   }, [widgetUrl, widgetStateKey, onCallTool, onSendFollowup]);
 
+  // Handle theme changes - notify iframe when theme changes
+  useEffect(() => {
+    if (!isReady || !iframeRef.current?.contentWindow) return;
+
+    const iframeWindow = iframeRef.current.contentWindow;
+
+    // Send theme update to iframe via webplus:set_globals event
+    iframeWindow.postMessage(
+      {
+        type: "webplus:set_globals",
+        globals: {
+          theme: themeMode,
+        },
+      },
+      "*",
+    );
+
+    // Handle sending theme updates to the iframe document
+    setIframeDocumentTheme(iframeWindow);
+  }, [themeMode, isReady]);
+
   return (
     <div className={className}>
       {error && (
@@ -218,7 +267,7 @@ export function OpenAIComponentRenderer({
         <iframe
           ref={iframeRef}
           src={widgetUrl}
-          className="w-full border rounded-md bg-white dark:bg-gray-900"
+          className="w-full border rounded-md bg-background"
           style={{
             minHeight: "400px",
             height: "600px",

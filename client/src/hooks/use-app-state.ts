@@ -29,7 +29,6 @@ export function useAppState() {
 
   const [appState, dispatch] = useReducer(appReducer, initialAppState);
   const [isLoading, setIsLoading] = useState(true);
-
   // Operation guard to avoid races
   const opTokenRef = useRef<Map<string, number>>(new Map());
   const nextOpToken = (name: string) => {
