@@ -23,6 +23,7 @@ type NodeStatus = "complete" | "current" | "pending";
 interface ActorNodeData extends Record<string, unknown> {
   label: string;
   color: string;
+  totalHeight: number; // Total height for alignment
   segments: Array<{
     id: string;
     type: "box" | "line";
@@ -76,7 +77,7 @@ const ActorNode = memo((props: NodeProps<Node<ActorNodeData>>) => {
       </div>
 
       {/* Segmented vertical line */}
-      <div className="relative" style={{ width: 2 }}>
+      <div className="relative" style={{ width: 2, height: data.totalHeight }}>
         {data.segments.map((segment) => {
           const segmentY = currentY;
           currentY += segment.height;
@@ -143,6 +144,16 @@ const ActorNode = memo((props: NodeProps<Node<ActorNodeData>>) => {
             );
           }
         })}
+      </div>
+
+      {/* Actor label at bottom */}
+      <div
+        className={cn(
+          "px-4 py-2 rounded-md font-semibold text-xs border-2 bg-card shadow-sm z-10 mt-2"
+        )}
+        style={{ borderColor: data.color }}
+      >
+        {data.label}
       </div>
     </div>
   );
@@ -431,9 +442,10 @@ export const OAuthSequenceDiagram = memo(({ flowState }: OAuthSequenceDiagramPro
       },
     ];
 
-    // Calculate total height needed
+    // Calculate total height needed for segments
     const totalActions = actions.length;
-    const totalHeight = START_Y + totalActions * ACTION_SPACING;
+    // Total segment height: space for all actions + a final buffer
+    const totalSegmentHeight = totalActions * ACTION_SPACING + 100;
 
     // Create segments for each actor (order: Browser, Client, MCP Server, Auth Server)
     const browserSegments: ActorNodeData["segments"] = [];
@@ -444,7 +456,7 @@ export const OAuthSequenceDiagram = memo(({ flowState }: OAuthSequenceDiagramPro
     let currentY = 0;
 
     actions.forEach((action, index) => {
-      const actionY = START_Y + index * ACTION_SPACING - START_Y;
+      const actionY = index * ACTION_SPACING;
 
       // Add line segments before the action
       if (currentY < actionY) {
@@ -535,8 +547,8 @@ export const OAuthSequenceDiagram = memo(({ flowState }: OAuthSequenceDiagramPro
       currentY += SEGMENT_HEIGHT;
     });
 
-    // Add final line segments
-    const remainingHeight = totalHeight - currentY;
+    // Add final line segments to reach the same total height for all actors
+    const remainingHeight = totalSegmentHeight - currentY;
     if (remainingHeight > 0) {
       browserSegments.push({
         id: "browser-line-end",
@@ -569,6 +581,7 @@ export const OAuthSequenceDiagram = memo(({ flowState }: OAuthSequenceDiagramPro
         data: {
           label: ACTORS.browser.label,
           color: ACTORS.browser.color,
+          totalHeight: totalSegmentHeight,
           segments: browserSegments,
         },
         draggable: false,
@@ -580,6 +593,7 @@ export const OAuthSequenceDiagram = memo(({ flowState }: OAuthSequenceDiagramPro
         data: {
           label: ACTORS.client.label,
           color: ACTORS.client.color,
+          totalHeight: totalSegmentHeight,
           segments: clientSegments,
         },
         draggable: false,
@@ -591,6 +605,7 @@ export const OAuthSequenceDiagram = memo(({ flowState }: OAuthSequenceDiagramPro
         data: {
           label: ACTORS.mcpServer.label,
           color: ACTORS.mcpServer.color,
+          totalHeight: totalSegmentHeight,
           segments: mcpServerSegments,
         },
         draggable: false,
@@ -602,6 +617,7 @@ export const OAuthSequenceDiagram = memo(({ flowState }: OAuthSequenceDiagramPro
         data: {
           label: ACTORS.authServer.label,
           color: ACTORS.authServer.color,
+          totalHeight: totalSegmentHeight,
           segments: authServerSegments,
         },
         draggable: false,
