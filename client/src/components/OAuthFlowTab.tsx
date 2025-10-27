@@ -227,20 +227,32 @@ export const OAuthFlowTab = ({
       return;
     }
 
-    // Reset and start the flow when switching to a new server
-    resetOAuthFlow();
+    console.log("[OAuth Flow] 🔄 Server changed, resetting flow for:", serverName);
+
+    // Reset the initialized ref to allow reinitialization
+    initializedServerRef.current = null;
+
+    // Reset using the state machine if available
+    if (oauthStateMachine) {
+      oauthStateMachine.resetFlow();
+    } else {
+      resetOAuthFlow();
+    }
+
+    // Mark this server as initialized
     initializedServerRef.current = serverName;
 
-    // Start the flow automatically (use a slight delay to ensure state machine is ready)
+    // Start the flow automatically (use a longer delay to ensure state machine is ready with new settings)
     const timer = setTimeout(() => {
       if (oauthStateMachine) {
+        console.log("[OAuth Flow] ▶️ Auto-starting flow for:", serverName);
         oauthStateMachine.proceedToNextStep();
       }
-    }, 100);
+    }, 200);
 
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serverName, resetOAuthFlow]);
+  }, [serverName, oauthStateMachine]);
 
   // Check if server supports OAuth
   // Only HTTP servers support OAuth (STDIO servers use process-based auth)
@@ -445,7 +457,7 @@ export const OAuthFlowTab = ({
                       onChange={(e) => {
                         updateOAuthFlowState({ authorizationCode: e.target.value, error: undefined });
                       }}
-                      placeholder="Paste code if not auto-captured"
+                      placeholder="Paste code"
                       className="text-xs"
                     />
                   ) : (
