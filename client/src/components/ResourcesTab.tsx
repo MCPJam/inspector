@@ -50,6 +50,8 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
     setFetchingResources(true);
     setError("");
     setResources([]);
+    setSelectedResource("");
+    setResourceContent(null);
 
     try {
       const response = await fetch("/api/mcp/resources/list", {
@@ -72,7 +74,6 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
         } else if (
           !serverResources.some((resource) => resource.uri === selectedResource)
         ) {
-          setSelectedResource(serverResources[0].uri);
           setResourceContent(null);
         }
       } else {
@@ -203,17 +204,6 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
                                       {resource.description}
                                     </p>
                                   )}
-                                  <p className="text-xs text-muted-foreground/70 mt-1 font-mono truncate">
-                                    {resource.uri}
-                                  </p>
-                                  {resource.mimeType && (
-                                    <Badge
-                                      variant="outline"
-                                      className="text-xs mt-2 font-mono"
-                                    >
-                                      {resource.mimeType}
-                                    </Badge>
-                                  )}
                                 </div>
                                 <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0 mt-1" />
                               </div>
@@ -237,14 +227,24 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
                     {/* Header */}
                     <div className="flex items-center justify-between px-6 py-5 border-b border-border bg-background">
                       <div className="space-y-2">
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-1">
                           <code className="font-mono font-semibold text-foreground bg-muted px-2 py-1 rounded-md border border-border text-xs">
                             {selectedResourceData?.name || selectedResource}
                           </code>
+                          &bull;
+                          <p className="text-xs text-muted-foreground font-mono truncate max-w-md">
+                            {selectedResource}
+                          </p>
                         </div>
-                        <p className="text-xs text-muted-foreground font-mono truncate max-w-md">
-                          {selectedResource}
-                        </p>
+
+                        {selectedResourceData?.mimeType && (
+                          <Badge
+                            variant="outline"
+                            className="text-xs font-mono"
+                          >
+                            {selectedResourceData.mimeType}
+                          </Badge>
+                        )}
                       </div>
                       <Button
                         onClick={() => readResource(selectedResource)}
@@ -274,80 +274,6 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
                         </p>
                       </div>
                     )}
-
-                    {/* Content Preview */}
-                    <div className="flex-1 overflow-hidden">
-                      <ScrollArea className="h-full">
-                        <div className="px-6 py-6">
-                          {!resourceContent ? (
-                            <div className="flex flex-col items-center justify-center py-16 text-center">
-                              <div className="w-10 h-10 bg-muted rounded-full flex items-center justify-center mb-3">
-                                <Eye className="h-4 w-4 text-muted-foreground" />
-                              </div>
-                              <p className="text-xs text-muted-foreground font-semibold mb-1">
-                                Ready to read resource
-                              </p>
-                              <p className="text-xs text-muted-foreground/70">
-                                Click the Read button to view resource content
-                              </p>
-                            </div>
-                          ) : (
-                            <div className="space-y-4">
-                              {resourceContent?.contents?.map(
-                                (content: any, index: number) => (
-                                  <div key={index} className="group">
-                                    <div className="flex items-center gap-3 mb-3">
-                                      <Badge
-                                        variant="secondary"
-                                        className="text-xs font-mono font-medium"
-                                      >
-                                        {content.type}
-                                      </Badge>
-                                      {content.mimeType && (
-                                        <Badge
-                                          variant="outline"
-                                          className="text-xs font-mono"
-                                        >
-                                          {content.mimeType}
-                                        </Badge>
-                                      )}
-                                    </div>
-                                    <div className="border border-border rounded-md overflow-hidden">
-                                      {content.type === "text" ? (
-                                        <pre className="text-xs font-mono whitespace-pre-wrap p-4 bg-background overflow-auto max-h-96">
-                                          {content.text}
-                                        </pre>
-                                      ) : (
-                                        <div className="p-4">
-                                          <JsonView
-                                            src={content}
-                                            dark={true}
-                                            theme="atom"
-                                            enableClipboard={true}
-                                            displaySize={false}
-                                            collapseStringsAfterLength={100}
-                                            style={{
-                                              fontSize: "12px",
-                                              fontFamily:
-                                                "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                                              backgroundColor:
-                                                "hsl(var(--background))",
-                                              padding: "0",
-                                              borderRadius: "0",
-                                              border: "none",
-                                            }}
-                                          />
-                                        </div>
-                                      )}
-                                    </div>
-                                  </div>
-                                ),
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </ScrollArea>
-                    </div>
                   </>
                 ) : (
                   <div className="h-full flex items-center justify-center">
@@ -385,7 +311,7 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
                 {/* Header */}
                 <div className="flex items-center justify-between p-4 border-b border-border">
                   <h2 className="text-xs font-semibold text-foreground">
-                    Status
+                    Response
                   </h2>
                 </div>
 
@@ -398,10 +324,61 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
                       </div>
                     </div>
                   ) : (
-                    <div className="flex items-center justify-center h-full">
-                      <p className="text-xs text-muted-foreground font-medium">
-                        Resource operations status will appear here
-                      </p>
+                    <div className="flex-1 overflow-hidden">
+                      <ScrollArea className="h-full">
+                        <div className="p-4">
+                          {!resourceContent ? (
+                            <div className="flex flex-col items-center justify-center py-16 text-center">
+                              <div className="w-10 h-10 bg-muted rounded-full flex items-center justify-center mb-3">
+                                <Eye className="h-4 w-4 text-muted-foreground" />
+                              </div>
+                              <p className="text-xs text-muted-foreground font-semibold mb-1">
+                                Ready to read resource
+                              </p>
+                              <p className="text-xs text-muted-foreground/70">
+                                Click the Read button to view resource content
+                              </p>
+                            </div>
+                          ) : (
+                            <div className="space-y-4">
+                              {resourceContent?.contents?.map(
+                                (content: any, index: number) => (
+                                  <div key={index} className="group">
+                                    <div className="overflow-hidden">
+                                      {content.type === "text" ? (
+                                        <pre className="text-xs font-mono whitespace-pre-wrap p-4 bg-background overflow-auto max-h-96">
+                                          {content.text}
+                                        </pre>
+                                      ) : (
+                                        <div className="p-4">
+                                          <JsonView
+                                            src={content}
+                                            dark={true}
+                                            theme="atom"
+                                            enableClipboard={true}
+                                            displaySize={false}
+                                            collapseStringsAfterLength={100}
+                                            style={{
+                                              fontSize: "12px",
+                                              fontFamily:
+                                                "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                                              backgroundColor:
+                                                "hsl(var(--background))",
+                                              padding: "0",
+                                              borderRadius: "0",
+                                              border: "none",
+                                            }}
+                                          />
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                ),
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </ScrollArea>
                     </div>
                   )}
                 </div>
