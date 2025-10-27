@@ -116,6 +116,7 @@ export interface DebugOAuthStateMachineConfig {
   updateState: (updates: Partial<OauthFlowStateJune2025>) => void;
   serverUrl: string;
   serverName: string;
+  redirectUrl?: string; // Redirect URL for OAuth callback
   fetchFn?: typeof fetch; // Optional fetch function for testing
 }
 
@@ -189,7 +190,10 @@ async function proxyFetch(url: string, options: RequestInit = {}): Promise<{
 export const createDebugOAuthStateMachine = (
   config: DebugOAuthStateMachineConfig
 ): DebugOAuthStateMachine => {
-  const { state: initialState, getState, updateState, serverUrl, serverName, fetchFn = fetch } = config;
+  const { state: initialState, getState, updateState, serverUrl, serverName, redirectUrl, fetchFn = fetch } = config;
+
+  // Use provided redirectUrl or default to the origin + /oauth/callback/debug
+  const redirectUri = redirectUrl || `${window.location.origin}/oauth/callback/debug`;
 
   // Helper to get current state (use getState if provided, otherwise use initial state)
   const getCurrentState = () => getState ? getState() : initialState;
@@ -591,7 +595,7 @@ export const createDebugOAuthStateMachine = (
 
               const clientMetadata: Record<string, any> = {
                 client_name: "MCP Inspector Debug Client",
-                redirect_uris: ["http://localhost:3000/oauth/callback"],
+                redirect_uris: [redirectUri],
                 grant_types: ["authorization_code", "refresh_token"],
                 response_types: ["code"],
                 token_endpoint_auth_method: "none", // Public client (no client secret)
@@ -783,7 +787,7 @@ export const createDebugOAuthStateMachine = (
             const authUrl = new URL(state.authorizationServerMetadata.authorization_endpoint);
             authUrl.searchParams.set("response_type", "code");
             authUrl.searchParams.set("client_id", state.clientId);
-            authUrl.searchParams.set("redirect_uri", "http://localhost:3000/oauth/callback");
+            authUrl.searchParams.set("redirect_uri", redirectUri);
             authUrl.searchParams.set("code_challenge", state.codeChallenge || "");
             authUrl.searchParams.set("code_challenge_method", "S256");
             authUrl.searchParams.set("state", state.state || "");
@@ -799,28 +803,35 @@ export const createDebugOAuthStateMachine = (
             break;
 
           case "authorization_request":
-            // Step 9: Simulate authorization code callback
+            // Step 9: Authorization URL is ready - user should open it in browser
             console.log("[Debug OAuth] Authorization request ready");
-            console.log("[Debug OAuth] In production: Browser would redirect to:", state.authorizationUrl);
-            console.log("[Debug OAuth] Simulating authorization code callback...");
+            console.log("[Debug OAuth] User should open this URL in browser:", state.authorizationUrl);
+            console.log("[Debug OAuth] After authorization, user will receive a code to paste");
 
-            // Simulate receiving auth code
-            const mockAuthCode = "mock-auth-code-" + Math.random().toString(36).substring(7);
-
+            // Move to the next step where user can enter the authorization code
             updateState({
               currentStep: "received_authorization_code",
-              authorizationCode: mockAuthCode,
               isInitiatingAuth: false,
             });
             break;
 
           case "received_authorization_code":
-            // Step 10: Exchange authorization code for tokens
-            if (!state.authorizationServerMetadata?.token_endpoint || !state.authorizationCode) {
-              throw new Error("Missing token endpoint or authorization code");
+            // Step 10: Validate authorization code and prepare for token exchange
+            console.log("[Debug OAuth] Validating authorization code");
+
+            if (!state.authorizationCode || state.authorizationCode.trim() === "") {
+              updateState({
+                error: "Authorization code is required. Please paste the code you received from the authorization server.",
+                isInitiatingAuth: false,
+              });
+              return;
             }
 
-            console.log("[Debug OAuth] Exchanging authorization code for access token");
+            if (!state.authorizationServerMetadata?.token_endpoint) {
+              throw new Error("Missing token endpoint");
+            }
+
+            console.log("[Debug OAuth] Authorization code received, preparing token exchange");
 
             const tokenRequest = {
               method: "POST",
@@ -832,7 +843,7 @@ export const createDebugOAuthStateMachine = (
               body: {
                 grant_type: "authorization_code",
                 code: state.authorizationCode,
-                redirect_uri: "http://localhost:3000/oauth/callback",
+                redirect_uri: redirectUri,
                 client_id: state.clientId,
                 code_verifier: state.codeVerifier,
                 resource: state.serverUrl,
