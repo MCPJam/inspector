@@ -333,14 +333,15 @@ export const OAuthSequenceDiagram = memo(({ flowState }: OAuthSequenceDiagramPro
       },
       {
         id: "generate_pkce_parameters",
-        label: "Generate PKCE parameters",
-        description: "Client generates code verifier and challenge",
+        label: "Generate PKCE parameters\nInclude resource parameter",
+        description: "Client generates code verifier and challenge, includes resource parameter",
         from: "client",
         to: "client",
         details: flowState.codeChallenge
           ? [
               { label: "code_challenge", value: flowState.codeChallenge.substring(0, 15) + "..." },
               { label: "method", value: flowState.codeChallengeMethod || "S256" },
+              { label: "resource", value: flowState.serverUrl || "—" },
             ]
           : undefined,
       },
@@ -613,15 +614,12 @@ export const OAuthSequenceDiagram = memo(({ flowState }: OAuthSequenceDiagramPro
       const isComplete = status === "complete";
       const isCurrent = status === "current";
 
-      // For self-referencing actions (client to client), use special handles
-      const isSelfReferencing = action.from === action.to;
-
       return {
         id: `edge-${action.id}`,
         source: `actor-${action.from}`,
         target: `actor-${action.to}`,
-        sourceHandle: isSelfReferencing ? `${action.id}-right` : `${action.id}-right`,
-        targetHandle: isSelfReferencing ? `${action.id}-right` : `${action.id}-left`,
+        sourceHandle: `${action.id}-right`,
+        targetHandle: `${action.id}-left`,
         type: "actionEdge",
         data: {
           label: action.label,
