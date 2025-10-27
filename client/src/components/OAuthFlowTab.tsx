@@ -30,6 +30,7 @@ import {
 } from "../lib/debug-oauth-state-machine";
 import { DebugMCPOAuthClientProvider } from "../lib/debug-oauth-provider";
 import { OAuthSequenceDiagram } from "./OAuthSequenceDiagram";
+import { OAuthAuthorizationModal } from "./OAuthAuthorizationModal";
 import { MCPServerConfig } from "@/sdk";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
@@ -98,6 +99,9 @@ export const OAuthFlowTab = ({
 
   // Track which HTTP blocks are expanded
   const [expandedBlocks, setExpandedBlocks] = useState<Set<string>>(new Set());
+
+  // Track if authorization modal is open
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
   // Use ref to always have access to the latest state
   const oauthFlowStateRef = useRef(oauthFlowState);
@@ -424,16 +428,10 @@ export const OAuthFlowTab = ({
                   <AlertDescription className="space-y-3 mt-3">
                     <Button
                       onClick={async () => {
-                        window.open(
-                          oauthFlowState.authorizationUrl!,
-                          "_blank",
-                          "noopener,noreferrer",
-                        );
-
-                        // Automatically move to the next step (waiting for code)
-                        setTimeout(() => {
-                          proceedToNextStep();
-                        }, 500);
+                        // Open the authorization modal (popup)
+                        setIsAuthModalOpen(true);
+                        // Note: Don't call proceedToNextStep here - it will be called
+                        // automatically when the OAuth callback message is received
                       }}
                       className="w-full"
                       size="sm"
@@ -675,6 +673,15 @@ export const OAuthFlowTab = ({
           </div>
         </div>
       </div>
+
+      {/* OAuth Authorization Modal */}
+      {oauthFlowState.authorizationUrl && (
+        <OAuthAuthorizationModal
+          open={isAuthModalOpen}
+          onOpenChange={setIsAuthModalOpen}
+          authorizationUrl={oauthFlowState.authorizationUrl}
+        />
+      )}
     </div>
   );
 };

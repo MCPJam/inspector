@@ -10,28 +10,47 @@ export default function OAuthDebugCallback() {
   const [codeSent, setCodeSent] = useState(false);
 
   useEffect(() => {
-    // If successful and we have a code, send it to the opener window
+    // If successful and we have a code, send it to the parent window
     if (callbackParams.successful && callbackParams.code) {
-      if (window.opener && !window.opener.closed) {
-        try {
-          const message = {
-            type: "OAUTH_CALLBACK",
-            code: callbackParams.code,
-            state: new URLSearchParams(window.location.search).get("state"),
-          };
+      try {
+        const message = {
+          type: "OAUTH_CALLBACK",
+          code: callbackParams.code,
+          state: new URLSearchParams(window.location.search).get("state"),
+        };
+
+        // Check if we're in an iframe or a popup window
+        const isInIframe = window.self !== window.top;
+        const isInPopup = window.opener && !window.opener.closed;
+
+        if (isInIframe) {
+          // Send message to parent frame
+          window.parent.postMessage(message, window.location.origin);
+          setCodeSent(true);
+          console.log("[OAuth Callback] Sent code to parent frame (iframe)");
+        } else if (isInPopup) {
+          // Send message to opener window
           window.opener.postMessage(message, window.location.origin);
           setCodeSent(true);
+          console.log("[OAuth Callback] Sent code to opener window (popup)");
 
-          // Auto-close after 3 seconds
+          // Auto-close popup after 3 seconds
           setTimeout(() => {
             window.close();
           }, 3000);
-        } catch (error) {
-          // Failed to send code
+        } else {
+          console.warn(
+            "[OAuth Callback] Not in iframe or popup - code not sent",
+          );
         }
+      } catch (error) {
+        console.error("[OAuth Callback] Failed to send code:", error);
       }
     }
   }, [callbackParams]);
+
+  // Check if we're in an iframe
+  const isInIframe = window.self !== window.top;
 
   return (
     <div className="flex items-center justify-center min-h-[100vh] p-4">
@@ -47,8 +66,9 @@ export default function OAuthDebugCallback() {
                   </p>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  This window will close automatically. You can now continue in
-                  the OAuth Flow tab.
+                  {isInIframe
+                    ? "The authorization modal will close automatically. You can now continue in the OAuth Flow tab."
+                    : "This window will close automatically. You can now continue in the OAuth Flow tab."}
                 </p>
               </div>
             ) : (

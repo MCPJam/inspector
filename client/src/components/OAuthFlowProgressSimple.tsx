@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo } from "react";
 import { OAuthClientInformation } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { Button } from "./ui/button";
 import { DebugMCPOAuthClientProvider } from "@/lib/debug-oauth-provider";
+import { OAuthAuthorizationModal } from "./OAuthAuthorizationModal";
 import { toast } from "sonner";
 
 interface OAuthStepProps {
@@ -83,6 +84,9 @@ export const OAuthFlowProgressSimple = ({
   const [clientInfo, setClientInfo] = useState<OAuthClientInformation | null>(
     null,
   );
+
+  // Track if authorization modal is open
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
   const currentStepIdx = steps.findIndex((s) => s === flowState.oauthStep);
 
@@ -251,14 +255,10 @@ export const OAuthFlowProgressSimple = ({
                 </p>
                 <button
                   onClick={() => {
-                    window.open(
-                      flowState.authorizationUrl!,
-                      "_blank",
-                      "noopener noreferrer",
-                    );
+                    setIsAuthModalOpen(true);
                   }}
                   className="flex items-center text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
-                  aria-label="Open authorization URL in new tab"
+                  aria-label="Open authorization URL"
                   title="Open authorization URL"
                 >
                   <ExternalLink className="h-4 w-4" />
@@ -369,13 +369,22 @@ export const OAuthFlowProgressSimple = ({
             <Button
               variant="outline"
               onClick={() => {
-                window.open(flowState.authorizationUrl!, "_blank");
+                setIsAuthModalOpen(true);
               }}
             >
-              Open in New Tab
+              Authorize
             </Button>
           )}
       </div>
+
+      {/* OAuth Authorization Modal */}
+      {flowState.authorizationUrl && (
+        <OAuthAuthorizationModal
+          open={isAuthModalOpen}
+          onOpenChange={setIsAuthModalOpen}
+          authorizationUrl={String(flowState.authorizationUrl)}
+        />
+      )}
     </div>
   );
 };
