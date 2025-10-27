@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { Button } from "@/components/ui/button";
-import { AlertCircle, RefreshCw, Shield, Workflow, ChevronDown, ChevronRight } from "lucide-react";
+import { AlertCircle, RefreshCw, Shield, Workflow, ChevronDown, ChevronRight, ArrowDownToLine, ArrowUpFromLine } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import {
   AuthSettings,
@@ -82,8 +82,17 @@ export const OAuthFlowTab = ({
   // Track if we've initialized the flow for the current server
   const initializedServerRef = useRef<string | null>(null);
 
-  // Track if HTTP details are expanded
-  const [httpExpanded, setHttpExpanded] = useState(true);
+  // Track which HTTP blocks are expanded
+  const [expandedBlocks, setExpandedBlocks] = useState<Set<string>>(new Set());
+
+  const toggleExpanded = (id: string) => {
+    setExpandedBlocks((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   const updateAuthSettings = useCallback((updates: Partial<AuthSettings>) => {
     setAuthSettings((prev) => ({ ...prev, ...updates }));
@@ -104,8 +113,7 @@ export const OAuthFlowTab = ({
       lastResponse: undefined,
     });
     initializedServerRef.current = null;
-    // Reset UI state
-    setHttpExpanded(true);
+    setExpandedBlocks(new Set());
   }, [updateOAuthFlowState]);
 
   // Update auth settings when server config changes
@@ -319,7 +327,7 @@ export const OAuthFlowTab = ({
         </div>
 
         {/* Side Panel with Details */}
-        <div className="w-80 border-l border-border bg-muted/30 p-4 overflow-auto">
+        <div className="w-96 border-l border-border bg-muted/30 p-4 overflow-auto">
           <div className="space-y-4">
             {/* Current Step Info */}
             <div className="rounded-lg border border-border bg-card p-4">
@@ -338,248 +346,143 @@ export const OAuthFlowTab = ({
               </div>
             </div>
 
-            {/* HTTP Request/Response */}
-            {(oauthFlowState.lastRequest || oauthFlowState.lastResponse) && (
-              <div className="group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card">
-                <div
-                  className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
-                  onClick={() => setHttpExpanded(!httpExpanded)}
-                >
-                  <div className="flex-shrink-0">
-                    {httpExpanded ? (
-                      <ChevronDown className="h-3 w-3 text-muted-foreground transition-transform" />
-                    ) : (
-                      <ChevronRight className="h-3 w-3 text-muted-foreground transition-transform" />
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2 flex-1 min-w-0">
-                    <span className="text-xs font-mono text-foreground truncate">
-                      {oauthFlowState.lastRequest?.method || 'GET'} {oauthFlowState.lastRequest?.url || ''}
-                    </span>
-                    {oauthFlowState.lastResponse && (
-                      <span className={`text-xs px-1.5 py-0.5 rounded font-mono ${
-                        oauthFlowState.lastResponse.status >= 200 && oauthFlowState.lastResponse.status < 300
-                          ? "bg-green-500/10 text-green-600 dark:text-green-400"
-                          : "bg-red-500/10 text-red-600 dark:text-red-400"
-                      }`}>
-                        {oauthFlowState.lastResponse.status}
-                      </span>
-                    )}
-                  </div>
-                </div>
-                {httpExpanded && (
-                  <div className="border-t bg-muted/20">
-                    <div className="p-3">
-                      <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
-                        <JsonView
-                          src={{
-                            request: {
-                              method: oauthFlowState.lastRequest?.method,
-                              url: oauthFlowState.lastRequest?.url,
-                              headers: oauthFlowState.lastRequest?.headers,
-                            },
-                            response: {
-                              status: oauthFlowState.lastResponse?.status,
-                              statusText: oauthFlowState.lastResponse?.statusText,
-                              headers: oauthFlowState.lastResponse?.headers,
-                              body: oauthFlowState.lastResponse?.body,
-                            },
-                          }}
-                          dark={true}
-                          theme="atom"
-                          enableClipboard={true}
-                          displaySize={false}
-                          collapseStringsAfterLength={100}
-                          style={{
-                            fontSize: "11px",
-                            fontFamily: "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                            backgroundColor: "transparent",
-                            padding: "0",
-                            borderRadius: "0",
-                            border: "none",
-                          }}
-                        />
+            {/* HTTP History - Show all request/response pairs */}
+            {oauthFlowState.httpHistory && oauthFlowState.httpHistory.length > 0 && (
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold px-1">HTTP History</h3>
+                {oauthFlowState.httpHistory.map((entry, index) => {
+                  const requestId = `request-${index}`;
+                  const responseId = `response-${index}`;
+                  const isRequestExpanded = expandedBlocks.has(requestId);
+                  const isResponseExpanded = expandedBlocks.has(responseId);
+
+                  return (
+                    <div key={index} className="space-y-2">
+                      {/* Request Block */}
+                      <div className="group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card">
+                        <div
+                          className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
+                          onClick={() => toggleExpanded(requestId)}
+                        >
+                          <div className="flex-shrink-0">
+                            {isRequestExpanded ? (
+                              <ChevronDown className="h-3 w-3 text-muted-foreground transition-transform" />
+                            ) : (
+                              <ChevronRight className="h-3 w-3 text-muted-foreground transition-transform" />
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 flex-1 min-w-0">
+                            <span
+                              className="flex items-center justify-center px-1 py-0.5 rounded bg-green-500/10 text-green-600 dark:text-green-400"
+                              title="Outgoing"
+                            >
+                              <ArrowUpFromLine className="h-3 w-3" />
+                            </span>
+                            <span className="text-xs font-mono text-foreground truncate">
+                              {entry.request.method} {entry.request.url}
+                            </span>
+                          </div>
+                        </div>
+                        {isRequestExpanded && (
+                          <div className="border-t bg-muted/20">
+                            <div className="p-3">
+                              <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
+                                <JsonView
+                                  src={{
+                                    method: entry.request.method,
+                                    url: entry.request.url,
+                                    headers: entry.request.headers,
+                                  }}
+                                  dark={true}
+                                  theme="atom"
+                                  enableClipboard={true}
+                                  displaySize={false}
+                                  collapseStringsAfterLength={100}
+                                  style={{
+                                    fontSize: "11px",
+                                    fontFamily: "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                                    backgroundColor: "transparent",
+                                    padding: "0",
+                                    borderRadius: "0",
+                                    border: "none",
+                                  }}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        )}
                       </div>
+
+                      {/* Response Block */}
+                      {entry.response && (
+                        <div className="group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card">
+                          <div
+                            className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
+                            onClick={() => toggleExpanded(responseId)}
+                          >
+                            <div className="flex-shrink-0">
+                              {isResponseExpanded ? (
+                                <ChevronDown className="h-3 w-3 text-muted-foreground transition-transform" />
+                              ) : (
+                                <ChevronRight className="h-3 w-3 text-muted-foreground transition-transform" />
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 flex-1 min-w-0">
+                              <span
+                                className="flex items-center justify-center px-1 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400"
+                                title="Incoming"
+                              >
+                                <ArrowDownToLine className="h-3 w-3" />
+                              </span>
+                              <span className={`text-xs px-1.5 py-0.5 rounded font-mono flex-shrink-0 ${
+                                entry.response.status >= 200 && entry.response.status < 300
+                                  ? "bg-green-500/10 text-green-600 dark:text-green-400"
+                                  : "bg-red-500/10 text-red-600 dark:text-red-400"
+                              }`}>
+                                {entry.response.status}
+                              </span>
+                              <span className="text-xs font-mono text-foreground truncate">
+                                {entry.response.statusText}
+                              </span>
+                            </div>
+                          </div>
+                          {isResponseExpanded && (
+                            <div className="border-t bg-muted/20">
+                              <div className="p-3">
+                                <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
+                                  <JsonView
+                                    src={{
+                                      status: entry.response.status,
+                                      statusText: entry.response.statusText,
+                                      headers: entry.response.headers,
+                                      body: entry.response.body,
+                                    }}
+                                    dark={true}
+                                    theme="atom"
+                                    enableClipboard={true}
+                                    displaySize={false}
+                                    collapseStringsAfterLength={100}
+                                    style={{
+                                      fontSize: "11px",
+                                      fontFamily: "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                                      backgroundColor: "transparent",
+                                      padding: "0",
+                                      borderRadius: "0",
+                                      border: "none",
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                )}
+                  );
+                })}
               </div>
             )}
 
-            {/* Step Details */}
-            <div className="rounded-lg border border-border bg-card p-4">
-              <h3 className="text-sm font-semibold mb-3">Step Info</h3>
-              <div className="space-y-3 text-xs">
-                {oauthFlowState.currentStep === "idle" && (
-                  <div className="text-muted-foreground">
-                    Ready to begin OAuth discovery flow. Click "Next Step" to make an initial request to the MCP server.
-                  </div>
-                )}
-
-                {oauthFlowState.currentStep === "request_without_token" && (
-                  <div className="space-y-2">
-                    <div className="text-muted-foreground">
-                      Making initial request to MCP server without authorization token...
-                    </div>
-                    {oauthFlowState.serverUrl && (
-                      <div className="bg-muted p-2 rounded font-mono text-xs">
-                        <div className="text-muted-foreground mb-1">GET Request:</div>
-                        <div className="break-all">{oauthFlowState.serverUrl}</div>
-                      </div>
-                    )}
-                    <div className="bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 p-2 rounded text-[10px]">
-                      <div className="text-blue-700 dark:text-blue-400">
-                        Per MCP OAuth specification, clients first attempt to access the server without credentials to trigger authentication discovery.
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {oauthFlowState.currentStep === "received_401_unauthorized" && (
-                  <div className="space-y-2">
-                    <div className="text-muted-foreground">
-                      Received 401 Unauthorized response with WWW-Authenticate header.
-                    </div>
-                    {oauthFlowState.wwwAuthenticateHeader && (
-                      <div className="bg-muted p-2 rounded font-mono text-xs">
-                        <div className="text-muted-foreground mb-1">WWW-Authenticate Header:</div>
-                        <div className="break-all">{oauthFlowState.wwwAuthenticateHeader}</div>
-                      </div>
-                    )}
-                    <div className="bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 p-2 rounded text-[10px]">
-                      <div className="text-blue-700 dark:text-blue-400">
-                        Per RFC 9728, the WWW-Authenticate header indicates the location of the protected resource metadata.
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {oauthFlowState.currentStep === "extract_resource_metadata_url" && (
-                  <div className="space-y-2">
-                    <div className="text-muted-foreground">
-                      Extracting resource metadata URL from WWW-Authenticate header...
-                    </div>
-                    {oauthFlowState.resourceMetadataUrl && (
-                      <div className="bg-muted p-2 rounded font-mono text-xs">
-                        <div className="text-muted-foreground mb-1">Resource Metadata URL:</div>
-                        <div className="break-all">{oauthFlowState.resourceMetadataUrl}</div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {oauthFlowState.currentStep === "request_resource_metadata" && (
-                  <div className="space-y-2">
-                    <div className="text-muted-foreground">
-                      Requesting protected resource metadata from well-known URI...
-                    </div>
-                    {oauthFlowState.resourceMetadataUrl && (
-                      <div className="bg-muted p-2 rounded font-mono text-xs">
-                        <div className="text-muted-foreground mb-1">GET Request:</div>
-                        <div className="break-all">{oauthFlowState.resourceMetadataUrl}</div>
-                      </div>
-                    )}
-                    <div className="bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 p-2 rounded text-[10px]">
-                      <div className="text-blue-700 dark:text-blue-400">
-                        Per RFC 9728, clients should use well-known URIs for discovery rather than relying on WWW-Authenticate headers.
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {oauthFlowState.currentStep === "received_resource_metadata" && (
-                  <div className="space-y-2">
-                    <div className="text-muted-foreground">
-                      Received resource metadata successfully.
-                    </div>
-                    {oauthFlowState.resourceMetadata && (
-                      <div className="bg-muted p-2 rounded font-mono text-xs space-y-2">
-                        <div>
-                          <div className="text-muted-foreground mb-1">Resource:</div>
-                          <div className="break-all">{oauthFlowState.resourceMetadata.resource}</div>
-                        </div>
-                        {oauthFlowState.resourceMetadata.authorization_servers && (
-                          <div>
-                            <div className="text-muted-foreground mb-1">Authorization Servers:</div>
-                            {oauthFlowState.resourceMetadata.authorization_servers.map((server, i) => (
-                              <div key={i} className="break-all">{server}</div>
-                            ))}
-                          </div>
-                        )}
-                        {oauthFlowState.resourceMetadata.scopes_supported && (
-                          <div>
-                            <div className="text-muted-foreground mb-1">Scopes Supported:</div>
-                            <div className="break-all">{oauthFlowState.resourceMetadata.scopes_supported.join(", ")}</div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {oauthFlowState.currentStep === "request_authorization_server_metadata" && (
-                  <div className="space-y-2">
-                    <div className="text-muted-foreground">
-                      Requesting authorization server metadata...
-                    </div>
-                    {oauthFlowState.authorizationServerUrl && (
-                      <div className="bg-muted p-2 rounded font-mono text-xs">
-                        <div className="text-muted-foreground mb-1">Authorization Server:</div>
-                        <div className="break-all">{oauthFlowState.authorizationServerUrl}</div>
-                      </div>
-                    )}
-                    <div className="bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 p-2 rounded text-[10px]">
-                      <div className="text-blue-700 dark:text-blue-400">
-                        Trying multiple discovery endpoints: OAuth 2.0 Authorization Server Metadata (RFC 8414) and OpenID Connect Discovery.
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {oauthFlowState.currentStep === "received_authorization_server_metadata" && (
-                  <div className="space-y-2">
-                    <div className="text-muted-foreground">
-                      Received authorization server metadata successfully.
-                    </div>
-                    {oauthFlowState.authorizationServerMetadata && (
-                      <div className="bg-muted p-2 rounded font-mono text-xs space-y-2">
-                        <div>
-                          <div className="text-muted-foreground mb-1">Issuer:</div>
-                          <div className="break-all">{oauthFlowState.authorizationServerMetadata.issuer}</div>
-                        </div>
-                        <div>
-                          <div className="text-muted-foreground mb-1">Token Endpoint:</div>
-                          <div className="break-all">{oauthFlowState.authorizationServerMetadata.token_endpoint}</div>
-                        </div>
-                        <div>
-                          <div className="text-muted-foreground mb-1">Authorization Endpoint:</div>
-                          <div className="break-all">{oauthFlowState.authorizationServerMetadata.authorization_endpoint}</div>
-                        </div>
-                        {oauthFlowState.authorizationServerMetadata.registration_endpoint && (
-                          <div>
-                            <div className="text-muted-foreground mb-1">Registration Endpoint:</div>
-                            <div className="break-all">{oauthFlowState.authorizationServerMetadata.registration_endpoint}</div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    <div className="bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800 p-2 rounded text-[10px]">
-                      <div className="text-green-700 dark:text-green-400">
-                        Discovery complete! Next steps: Client registration → Authorization redirect → Token exchange
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {oauthFlowState.error && (
-                  <div className="bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 p-2 rounded">
-                    <div className="text-xs font-medium text-red-700 dark:text-red-400">
-                      Error: {oauthFlowState.error}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
           </div>
         </div>
       </div>
