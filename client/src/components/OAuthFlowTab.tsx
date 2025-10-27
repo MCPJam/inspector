@@ -365,11 +365,21 @@ export const OAuthFlowTab = ({
         <div className="flex items-center gap-2">
           <Button
             onClick={() => {
-              void proceedToNextStep();
+              // If we're at authorization step, open the popup
+              if (oauthFlowState.currentStep === "authorization_request") {
+                setIsAuthModalOpen(true);
+              } else {
+                // Otherwise proceed to next step
+                void proceedToNextStep();
+              }
             }}
             disabled={oauthFlowState.isInitiatingAuth}
           >
-            {oauthFlowState.isInitiatingAuth ? "Processing..." : "Next Step"}
+            {oauthFlowState.isInitiatingAuth
+              ? "Processing..."
+              : oauthFlowState.currentStep === "authorization_request"
+                ? "Ready to authorize"
+                : "Next Step"}
           </Button>
           <Button
             variant="outline"
