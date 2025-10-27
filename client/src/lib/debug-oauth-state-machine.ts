@@ -584,6 +584,24 @@ export const createDebugOAuthStateMachine = (
             if (state.authorizationServerMetadata.registration_endpoint) {
               console.log("[Debug OAuth] Registration endpoint available, proceeding to client registration");
 
+              // Prepare client metadata with scopes if available
+              const scopesSupported =
+                state.resourceMetadata?.scopes_supported ||
+                state.authorizationServerMetadata.scopes_supported;
+
+              const clientMetadata: Record<string, any> = {
+                client_name: "MCP Inspector Debug Client",
+                redirect_uris: ["http://localhost:3000/oauth/callback"],
+                grant_types: ["authorization_code", "refresh_token"],
+                response_types: ["code"],
+                token_endpoint_auth_method: "none", // Public client (no client secret)
+              };
+
+              // Include scopes if supported by the server
+              if (scopesSupported && scopesSupported.length > 0) {
+                clientMetadata.scope = scopesSupported.join(" ");
+              }
+
               const registrationRequest = {
                 method: "POST",
                 url: state.authorizationServerMetadata.registration_endpoint,
@@ -591,13 +609,7 @@ export const createDebugOAuthStateMachine = (
                   "Content-Type": "application/json",
                   "Accept": "application/json",
                 },
-                body: {
-                  client_name: "MCP Inspector Debug Client",
-                  redirect_uris: ["http://localhost:3000/oauth/callback"],
-                  grant_types: ["authorization_code", "refresh_token"],
-                  response_types: ["code"],
-                  token_endpoint_auth_method: "none", // Public client
-                },
+                body: clientMetadata,
               };
 
               // Update state with the request
@@ -632,45 +644,114 @@ export const createDebugOAuthStateMachine = (
             break;
 
           case "request_client_registration":
-            // Step 6: Fetch client credentials
+            // Step 6: Dynamic Client Registration (RFC 7591)
             if (!state.authorizationServerMetadata?.registration_endpoint) {
               throw new Error("No registration endpoint available");
             }
 
-            console.log("[Debug OAuth] Registering client with authorization server");
-
-            // In a real implementation, this would make an actual POST request
-            // For demo purposes, we'll simulate the response
-            console.log("[Debug OAuth] Note: In actual implementation, POST to registration endpoint");
-
-            const mockClientCredentials = {
-              client_id: "demo-client-" + Math.random().toString(36).substring(7),
-              client_secret: undefined, // Public client
-              redirect_uris: ["http://localhost:3000/oauth/callback"],
-              grant_types: ["authorization_code", "refresh_token"],
-            };
-
-            const registrationResponseData = {
-              status: 201,
-              statusText: "Created",
-              headers: { "content-type": "application/json" },
-              body: mockClientCredentials,
-            };
-
-            // Update the last history entry with the response
-            const updatedHistoryReg = [...(state.httpHistory || [])];
-            if (updatedHistoryReg.length > 0) {
-              updatedHistoryReg[updatedHistoryReg.length - 1].response = registrationResponseData;
+            if (!state.lastRequest?.body) {
+              throw new Error("No client metadata in request");
             }
 
-            updateState({
-              currentStep: "received_client_credentials",
-              clientId: mockClientCredentials.client_id,
-              clientSecret: mockClientCredentials.client_secret,
-              lastResponse: registrationResponseData,
-              httpHistory: updatedHistoryReg,
-              isInitiatingAuth: false,
-            });
+            console.log("[Debug OAuth] Registering client with authorization server");
+            console.log("[Debug OAuth] Registration endpoint:", state.authorizationServerMetadata.registration_endpoint);
+
+            try {
+              // Make actual POST request to registration endpoint via backend proxy
+              const response = await proxyFetch(
+                state.authorizationServerMetadata.registration_endpoint,
+                {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                  },
+                  body: JSON.stringify(state.lastRequest.body),
+                }
+              );
+
+              const registrationResponseData = {
+                status: response.status,
+                statusText: response.statusText,
+                headers: response.headers,
+                body: response.body,
+              };
+
+              // Update the last history entry with the response
+              const updatedHistoryReg = [...(state.httpHistory || [])];
+              if (updatedHistoryReg.length > 0) {
+                updatedHistoryReg[updatedHistoryReg.length - 1].response = registrationResponseData;
+              }
+
+              if (!response.ok) {
+                // Registration failed - could be server doesn't support DCR or request was invalid
+                console.warn("[Debug OAuth] Dynamic Client Registration failed:", response.status, response.body);
+
+                // Update state with error but continue with fallback
+                updateState({
+                  lastResponse: registrationResponseData,
+                  httpHistory: updatedHistoryReg,
+                  error: `Dynamic Client Registration failed (${response.status}). Using fallback client ID.`,
+                });
+
+                // Fall back to mock client ID (simulating preregistered client)
+                const fallbackClientId = "preregistered-client-id";
+                console.log("[Debug OAuth] Using fallback client ID:", fallbackClientId);
+
+                updateState({
+                  currentStep: "received_client_credentials",
+                  clientId: fallbackClientId,
+                  clientSecret: undefined,
+                  isInitiatingAuth: false,
+                });
+              } else {
+                // Registration successful
+                const clientInfo = response.body;
+                console.log("[Debug OAuth] Client registration successful:", clientInfo);
+
+                updateState({
+                  currentStep: "received_client_credentials",
+                  clientId: clientInfo.client_id,
+                  clientSecret: clientInfo.client_secret,
+                  lastResponse: registrationResponseData,
+                  httpHistory: updatedHistoryReg,
+                  error: undefined,
+                  isInitiatingAuth: false,
+                });
+              }
+            } catch (error) {
+              console.error("[Debug OAuth] Client registration request failed:", error);
+
+              // Capture the error but continue with fallback
+              const errorResponse = {
+                status: 0,
+                statusText: "Network Error",
+                headers: {},
+                body: { error: error instanceof Error ? error.message : String(error) },
+              };
+
+              const updatedHistoryError = [...(state.httpHistory || [])];
+              if (updatedHistoryError.length > 0) {
+                updatedHistoryError[updatedHistoryError.length - 1].response = errorResponse;
+              }
+
+              updateState({
+                lastResponse: errorResponse,
+                httpHistory: updatedHistoryError,
+                error: `Client registration failed: ${error instanceof Error ? error.message : String(error)}. Using fallback.`,
+              });
+
+              // Fall back to mock client ID
+              const fallbackClientId = "preregistered-client-id";
+              console.log("[Debug OAuth] Using fallback client ID due to error:", fallbackClientId);
+
+              updateState({
+                currentStep: "received_client_credentials",
+                clientId: fallbackClientId,
+                clientSecret: undefined,
+                isInitiatingAuth: false,
+              });
+            }
             break;
 
           case "received_client_credentials":
