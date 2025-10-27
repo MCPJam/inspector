@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { Button } from "@/components/ui/button";
-import { AlertCircle, RefreshCw, Shield, Workflow } from "lucide-react";
+import { AlertCircle, RefreshCw, Shield, Workflow, ChevronDown, ChevronRight } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import {
   AuthSettings,
@@ -11,12 +11,15 @@ import { Card, CardContent } from "./ui/card";
 import { getStoredTokens } from "../lib/mcp-oauth";
 import { ServerWithName } from "../hooks/use-app-state";
 import {
-  OauthFlowStateNovember2025,
+  OauthFlowStateJune2025,
   EMPTY_OAUTH_FLOW_STATE_V2,
   createDebugOAuthStateMachine,
 } from "../lib/debug-oauth-state-machine";
 import { OAuthSequenceDiagram } from "./OAuthSequenceDiagram";
 import { MCPServerConfig } from "@/sdk";
+import JsonView from "react18-json-view";
+import "react18-json-view/src/style.css";
+import "react18-json-view/src/dark.css";
 
 interface StatusMessageProps {
   message: StatusMessage;
@@ -72,19 +75,22 @@ export const OAuthFlowTab = ({
   const [authSettings, setAuthSettings] = useState<AuthSettings>(
     DEFAULT_AUTH_SETTINGS,
   );
-  const [oauthFlowState, setOAuthFlowState] = useState<OauthFlowStateNovember2025>(
+  const [oauthFlowState, setOAuthFlowState] = useState<OauthFlowStateJune2025>(
     EMPTY_OAUTH_FLOW_STATE_V2,
   );
 
   // Track if we've initialized the flow for the current server
   const initializedServerRef = useRef<string | null>(null);
 
+  // Track if HTTP details are expanded
+  const [httpExpanded, setHttpExpanded] = useState(true);
+
   const updateAuthSettings = useCallback((updates: Partial<AuthSettings>) => {
     setAuthSettings((prev) => ({ ...prev, ...updates }));
   }, []);
 
   const updateOAuthFlowState = useCallback(
-    (updates: Partial<OauthFlowStateNovember2025>) => {
+    (updates: Partial<OauthFlowStateJune2025>) => {
       setOAuthFlowState((prev) => ({ ...prev, ...updates }));
     },
     [],
@@ -92,8 +98,14 @@ export const OAuthFlowTab = ({
 
   const resetOAuthFlow = useCallback(() => {
     // Reset the flow state
-    updateOAuthFlowState(EMPTY_OAUTH_FLOW_STATE_V2);
+    updateOAuthFlowState({
+      ...EMPTY_OAUTH_FLOW_STATE_V2,
+      lastRequest: undefined,
+      lastResponse: undefined,
+    });
     initializedServerRef.current = null;
+    // Reset UI state
+    setHttpExpanded(true);
   }, [updateOAuthFlowState]);
 
   // Update auth settings when server config changes
@@ -326,9 +338,77 @@ export const OAuthFlowTab = ({
               </div>
             </div>
 
+            {/* HTTP Request/Response */}
+            {(oauthFlowState.lastRequest || oauthFlowState.lastResponse) && (
+              <div className="group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card">
+                <div
+                  className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
+                  onClick={() => setHttpExpanded(!httpExpanded)}
+                >
+                  <div className="flex-shrink-0">
+                    {httpExpanded ? (
+                      <ChevronDown className="h-3 w-3 text-muted-foreground transition-transform" />
+                    ) : (
+                      <ChevronRight className="h-3 w-3 text-muted-foreground transition-transform" />
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                    <span className="text-xs font-mono text-foreground truncate">
+                      {oauthFlowState.lastRequest?.method || 'GET'} {oauthFlowState.lastRequest?.url || ''}
+                    </span>
+                    {oauthFlowState.lastResponse && (
+                      <span className={`text-xs px-1.5 py-0.5 rounded font-mono ${
+                        oauthFlowState.lastResponse.status >= 200 && oauthFlowState.lastResponse.status < 300
+                          ? "bg-green-500/10 text-green-600 dark:text-green-400"
+                          : "bg-red-500/10 text-red-600 dark:text-red-400"
+                      }`}>
+                        {oauthFlowState.lastResponse.status}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {httpExpanded && (
+                  <div className="border-t bg-muted/20">
+                    <div className="p-3">
+                      <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
+                        <JsonView
+                          src={{
+                            request: {
+                              method: oauthFlowState.lastRequest?.method,
+                              url: oauthFlowState.lastRequest?.url,
+                              headers: oauthFlowState.lastRequest?.headers,
+                            },
+                            response: {
+                              status: oauthFlowState.lastResponse?.status,
+                              statusText: oauthFlowState.lastResponse?.statusText,
+                              headers: oauthFlowState.lastResponse?.headers,
+                              body: oauthFlowState.lastResponse?.body,
+                            },
+                          }}
+                          dark={true}
+                          theme="atom"
+                          enableClipboard={true}
+                          displaySize={false}
+                          collapseStringsAfterLength={100}
+                          style={{
+                            fontSize: "11px",
+                            fontFamily: "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                            backgroundColor: "transparent",
+                            padding: "0",
+                            borderRadius: "0",
+                            border: "none",
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Step Details */}
             <div className="rounded-lg border border-border bg-card p-4">
-              <h3 className="text-sm font-semibold mb-3">Details</h3>
+              <h3 className="text-sm font-semibold mb-3">Step Info</h3>
               <div className="space-y-3 text-xs">
                 {oauthFlowState.currentStep === "idle" && (
                   <div className="text-muted-foreground">
