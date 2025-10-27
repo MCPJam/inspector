@@ -54,12 +54,14 @@ export function ActiveServerSelector({
   onServerChange,
   onMultiServerToggle,
   onConnect,
+  showAllServers = false,
 }: ActiveServerSelectorProps) {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const posthog = usePostHog();
   const servers = Object.entries(connectedServerConfigs).filter(
     ([, server]) =>
-      server.enabled !== false && server.connectionStatus === "connected",
+      server.enabled !== false &&
+      (showAllServers || server.connectionStatus === "connected"),
   );
 
   return (
