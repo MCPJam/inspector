@@ -21,7 +21,7 @@ import {
   OAuthFlowState,
   EMPTY_OAUTH_FLOW_STATE,
 } from "../lib/oauth-flow-types";
-import { OAuthFlowProgress } from "./OAuthFlowProgress";
+import { OAuthFlowProgressSimple } from "./OAuthFlowProgressSimple";
 import { OAuthStateMachine } from "../lib/oauth-state-machine";
 import { MCPServerConfig } from "@/sdk";
 
@@ -322,9 +322,6 @@ export const AuthTab = ({
   }, [
     oauthStateMachine,
     updateOAuthFlowState,
-    authSettings.serverUrl,
-    serverName,
-    serverConfig,
     resetOAuthFlow,
   ]);
 
@@ -650,7 +647,7 @@ export const AuthTab = ({
 
               {/* OAuth Flow Progress */}
               {showGuidedFlow && authSettings.serverUrl && (
-                <OAuthFlowProgress
+                <OAuthFlowProgressSimple
                   serverUrl={authSettings.serverUrl}
                   flowState={oauthFlowState}
                   updateFlowState={updateOAuthFlowState}
