@@ -412,7 +412,59 @@ export const OAuthFlowTab = ({
               <div className="space-y-3 text-xs">
                 {oauthFlowState.currentStep === "idle" && (
                   <div className="text-muted-foreground">
-                    Ready to begin OAuth discovery flow. Click "Next Step" to request protected resource metadata.
+                    Ready to begin OAuth discovery flow. Click "Next Step" to make an initial request to the MCP server.
+                  </div>
+                )}
+
+                {oauthFlowState.currentStep === "request_without_token" && (
+                  <div className="space-y-2">
+                    <div className="text-muted-foreground">
+                      Making initial request to MCP server without authorization token...
+                    </div>
+                    {oauthFlowState.serverUrl && (
+                      <div className="bg-muted p-2 rounded font-mono text-xs">
+                        <div className="text-muted-foreground mb-1">GET Request:</div>
+                        <div className="break-all">{oauthFlowState.serverUrl}</div>
+                      </div>
+                    )}
+                    <div className="bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 p-2 rounded text-[10px]">
+                      <div className="text-blue-700 dark:text-blue-400">
+                        Per MCP OAuth specification, clients first attempt to access the server without credentials to trigger authentication discovery.
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {oauthFlowState.currentStep === "received_401_unauthorized" && (
+                  <div className="space-y-2">
+                    <div className="text-muted-foreground">
+                      Received 401 Unauthorized response with WWW-Authenticate header.
+                    </div>
+                    {oauthFlowState.wwwAuthenticateHeader && (
+                      <div className="bg-muted p-2 rounded font-mono text-xs">
+                        <div className="text-muted-foreground mb-1">WWW-Authenticate Header:</div>
+                        <div className="break-all">{oauthFlowState.wwwAuthenticateHeader}</div>
+                      </div>
+                    )}
+                    <div className="bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 p-2 rounded text-[10px]">
+                      <div className="text-blue-700 dark:text-blue-400">
+                        Per RFC 9728, the WWW-Authenticate header indicates the location of the protected resource metadata.
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {oauthFlowState.currentStep === "extract_resource_metadata_url" && (
+                  <div className="space-y-2">
+                    <div className="text-muted-foreground">
+                      Extracting resource metadata URL from WWW-Authenticate header...
+                    </div>
+                    {oauthFlowState.resourceMetadataUrl && (
+                      <div className="bg-muted p-2 rounded font-mono text-xs">
+                        <div className="text-muted-foreground mb-1">Resource Metadata URL:</div>
+                        <div className="break-all">{oauthFlowState.resourceMetadataUrl}</div>
+                      </div>
+                    )}
                   </div>
                 )}
 
