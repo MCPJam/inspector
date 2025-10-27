@@ -49,6 +49,21 @@ export interface OauthFlowStateJune2025 {
     headers: Record<string, string>;
     body: any; // JSON response body
   };
+  // History of all request/response pairs
+  httpHistory?: Array<{
+    step: OAuthFlowStep;
+    request: {
+      method: string;
+      url: string;
+      headers: Record<string, string>;
+    };
+    response?: {
+      status: number;
+      statusText: string;
+      headers: Record<string, string>;
+      body: any;
+    };
+  }>;
   error?: string;
   // Add more state properties here as needed
 }
@@ -57,6 +72,7 @@ export interface OauthFlowStateJune2025 {
 export const EMPTY_OAUTH_FLOW_STATE_V2: OauthFlowStateJune2025 = {
   isInitiatingAuth: false,
   currentStep: "idle",
+  httpHistory: [],
 };
 
 // State machine interface
@@ -133,9 +149,26 @@ export const createDebugOAuthStateMachine = (
             // Step 1: Make initial MCP request without token
             console.log("[Debug OAuth] Making initial request to MCP server without token");
 
+            const initialRequest = {
+              method: "GET",
+              url: serverUrl,
+              headers: {
+                "Accept": "application/json",
+              },
+            };
+
             updateState({
               currentStep: "request_without_token",
               serverUrl,
+              lastRequest: initialRequest,
+              lastResponse: undefined, // Clear any previous response
+              httpHistory: [
+                ...(state.httpHistory || []),
+                {
+                  step: "request_without_token",
+                  request: initialRequest,
+                },
+              ],
               isInitiatingAuth: false,
             });
             break;
@@ -170,20 +203,24 @@ export const createDebugOAuthStateMachine = (
                 console.log("[Debug OAuth] Received 401 Unauthorized");
                 console.log("[Debug OAuth] WWW-Authenticate header:", wwwAuthenticateHeader);
 
+                const responseData = {
+                  status: response.status,
+                  statusText: response.statusText,
+                  headers: responseHeaders,
+                  body: null,
+                };
+
+                // Update the last history entry with the response
+                const updatedHistory = [...(state.httpHistory || [])];
+                if (updatedHistory.length > 0) {
+                  updatedHistory[updatedHistory.length - 1].response = responseData;
+                }
+
                 updateState({
                   currentStep: "received_401_unauthorized",
                   wwwAuthenticateHeader: wwwAuthenticateHeader || undefined,
-                  lastRequest: {
-                    method: "GET",
-                    url: state.serverUrl,
-                    headers: requestHeaders,
-                  },
-                  lastResponse: {
-                    status: response.status,
-                    statusText: response.statusText,
-                    headers: responseHeaders,
-                    body: null,
-                  },
+                  lastResponse: responseData,
+                  httpHistory: updatedHistory,
                   isInitiatingAuth: false,
                 });
               } else {
@@ -235,8 +272,25 @@ export const createDebugOAuthStateMachine = (
 
             console.log("[Debug OAuth] Proceeding to request resource metadata from:", state.resourceMetadataUrl);
 
+            const resourceMetadataRequest = {
+              method: "GET",
+              url: state.resourceMetadataUrl,
+              headers: {
+                "Accept": "application/json",
+              },
+            };
+
             updateState({
               currentStep: "request_resource_metadata",
+              lastRequest: resourceMetadataRequest,
+              lastResponse: undefined, // Clear previous response
+              httpHistory: [
+                ...(state.httpHistory || []),
+                {
+                  step: "request_resource_metadata",
+                  request: resourceMetadataRequest,
+                },
+              ],
               isInitiatingAuth: false,
             });
             break;
@@ -267,18 +321,22 @@ export const createDebugOAuthStateMachine = (
 
               if (!response.ok) {
                 // Capture failed response
+                const failedResponseData = {
+                  status: response.status,
+                  statusText: response.statusText,
+                  headers: responseHeaders,
+                  body: null,
+                };
+
+                // Update the last history entry with the failed response
+                const updatedHistoryFailed = [...(state.httpHistory || [])];
+                if (updatedHistoryFailed.length > 0) {
+                  updatedHistoryFailed[updatedHistoryFailed.length - 1].response = failedResponseData;
+                }
+
                 updateState({
-                  lastRequest: {
-                    method: "GET",
-                    url: state.resourceMetadataUrl,
-                    headers: requestHeaders,
-                  },
-                  lastResponse: {
-                    status: response.status,
-                    statusText: response.statusText,
-                    headers: responseHeaders,
-                    body: null,
-                  },
+                  lastResponse: failedResponseData,
+                  httpHistory: updatedHistoryFailed,
                 });
 
                 if (response.status === 404) {
@@ -294,21 +352,25 @@ export const createDebugOAuthStateMachine = (
               const authorizationServerUrl = resourceMetadata.authorization_servers?.[0] || serverUrl;
               console.log("[Debug OAuth] Authorization server URL:", authorizationServerUrl);
 
+              const successResponseData = {
+                status: response.status,
+                statusText: response.statusText,
+                headers: responseHeaders,
+                body: resourceMetadata,
+              };
+
+              // Update the last history entry with the response
+              const updatedHistory = [...(state.httpHistory || [])];
+              if (updatedHistory.length > 0) {
+                updatedHistory[updatedHistory.length - 1].response = successResponseData;
+              }
+
               updateState({
                 currentStep: "received_resource_metadata",
                 resourceMetadata,
                 authorizationServerUrl,
-                lastRequest: {
-                  method: "GET",
-                  url: state.resourceMetadataUrl,
-                  headers: requestHeaders,
-                },
-                lastResponse: {
-                  status: response.status,
-                  statusText: response.statusText,
-                  headers: responseHeaders,
-                  body: resourceMetadata,
-                },
+                lastResponse: successResponseData,
+                httpHistory: updatedHistory,
                 isInitiatingAuth: false,
               });
             } catch (error) {
@@ -325,8 +387,25 @@ export const createDebugOAuthStateMachine = (
             const authServerUrls = buildAuthServerMetadataUrls(state.authorizationServerUrl);
             console.log("[Debug OAuth] Trying authorization server metadata URLs:", authServerUrls);
 
+            const authServerRequest = {
+              method: "GET",
+              url: authServerUrls[0], // Show the first URL we'll try
+              headers: {
+                "Accept": "application/json",
+              },
+            };
+
             updateState({
               currentStep: "request_authorization_server_metadata",
+              lastRequest: authServerRequest,
+              lastResponse: undefined, // Clear previous response
+              httpHistory: [
+                ...(state.httpHistory || []),
+                {
+                  step: "request_authorization_server_metadata",
+                  request: authServerRequest,
+                },
+              ],
               isInitiatingAuth: false,
             });
             break;
@@ -351,6 +430,25 @@ export const createDebugOAuthStateMachine = (
                 const requestHeaders = {
                   "Accept": "application/json",
                 };
+
+                // Update request URL as we try different endpoints
+                const updatedHistoryForRetry = [...(state.httpHistory || [])];
+                if (updatedHistoryForRetry.length > 0) {
+                  updatedHistoryForRetry[updatedHistoryForRetry.length - 1].request = {
+                    method: "GET",
+                    url: url,
+                    headers: requestHeaders,
+                  };
+                }
+
+                updateState({
+                  lastRequest: {
+                    method: "GET",
+                    url: url,
+                    headers: requestHeaders,
+                  },
+                  httpHistory: updatedHistoryForRetry,
+                });
 
                 const response = await fetchFn(url, {
                   method: "GET",
@@ -389,20 +487,24 @@ export const createDebugOAuthStateMachine = (
               throw new Error(`Could not discover authorization server metadata. Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
             }
 
+            const authServerResponseData = {
+              status: finalResponse.status,
+              statusText: finalResponse.statusText,
+              headers: finalResponseHeaders,
+              body: authServerMetadata,
+            };
+
+            // Update the last history entry with the response
+            const updatedHistoryFinal = [...(state.httpHistory || [])];
+            if (updatedHistoryFinal.length > 0) {
+              updatedHistoryFinal[updatedHistoryFinal.length - 1].response = authServerResponseData;
+            }
+
             updateState({
               currentStep: "received_authorization_server_metadata",
               authorizationServerMetadata: authServerMetadata,
-              lastRequest: {
-                method: "GET",
-                url: successUrl,
-                headers: finalRequestHeaders,
-              },
-              lastResponse: {
-                status: finalResponse.status,
-                statusText: finalResponse.statusText,
-                headers: finalResponseHeaders,
-                body: authServerMetadata,
-              },
+              lastResponse: authServerResponseData,
+              httpHistory: updatedHistoryFinal,
               isInitiatingAuth: false,
             });
             break;
@@ -444,6 +546,7 @@ export const createDebugOAuthStateMachine = (
         ...EMPTY_OAUTH_FLOW_STATE_V2,
         lastRequest: undefined,
         lastResponse: undefined,
+        httpHistory: [],
       });
     },
   };
