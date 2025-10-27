@@ -332,43 +332,110 @@ export const OAuthFlowTab = ({
               <div className="space-y-3 text-xs">
                 {oauthFlowState.currentStep === "idle" && (
                   <div className="text-muted-foreground">
-                    Ready to begin OAuth flow. Click "Next Step" to send an unauthenticated request.
+                    Ready to begin OAuth discovery flow. Click "Next Step" to request protected resource metadata.
                   </div>
                 )}
 
-                {oauthFlowState.currentStep === "sent_unauthenticated_request" && (
+                {oauthFlowState.currentStep === "request_resource_metadata" && (
                   <div className="space-y-2">
                     <div className="text-muted-foreground">
-                      Sent unauthenticated request to the server.
+                      Requesting protected resource metadata from well-known URI...
                     </div>
-                    {oauthFlowState.serverUrl && (
+                    {oauthFlowState.resourceMetadataUrl && (
                       <div className="bg-muted p-2 rounded font-mono text-xs">
-                        <div className="text-muted-foreground mb-1">Server:</div>
-                        <div className="break-all">{oauthFlowState.serverUrl}</div>
+                        <div className="text-muted-foreground mb-1">GET Request:</div>
+                        <div className="break-all">{oauthFlowState.resourceMetadataUrl}</div>
                       </div>
                     )}
+                    <div className="bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 p-2 rounded text-[10px]">
+                      <div className="text-blue-700 dark:text-blue-400">
+                        Per RFC 9728, clients should use well-known URIs for discovery rather than relying on WWW-Authenticate headers.
+                      </div>
+                    </div>
                   </div>
                 )}
 
-                {oauthFlowState.currentStep === "received_401_www_authenticate" && (
+                {oauthFlowState.currentStep === "received_resource_metadata" && (
                   <div className="space-y-2">
                     <div className="text-muted-foreground">
-                      Received 401 response with WWW-Authenticate header.
+                      Received resource metadata successfully.
                     </div>
-                    {oauthFlowState.wwwAuthenticateHeader && (
+                    {oauthFlowState.resourceMetadata && (
                       <div className="bg-muted p-2 rounded font-mono text-xs space-y-2">
                         <div>
-                          <div className="text-muted-foreground mb-1">WWW-Authenticate:</div>
-                          <div className="break-all">{oauthFlowState.wwwAuthenticateHeader}</div>
+                          <div className="text-muted-foreground mb-1">Resource:</div>
+                          <div className="break-all">{oauthFlowState.resourceMetadata.resource}</div>
                         </div>
+                        {oauthFlowState.resourceMetadata.authorization_servers && (
+                          <div>
+                            <div className="text-muted-foreground mb-1">Authorization Servers:</div>
+                            {oauthFlowState.resourceMetadata.authorization_servers.map((server, i) => (
+                              <div key={i} className="break-all">{server}</div>
+                            ))}
+                          </div>
+                        )}
+                        {oauthFlowState.resourceMetadata.scopes_supported && (
+                          <div>
+                            <div className="text-muted-foreground mb-1">Scopes Supported:</div>
+                            <div className="break-all">{oauthFlowState.resourceMetadata.scopes_supported.join(", ")}</div>
+                          </div>
+                        )}
                       </div>
                     )}
-                    {oauthFlowState.authorizationServer && (
+                  </div>
+                )}
+
+                {oauthFlowState.currentStep === "request_authorization_server_metadata" && (
+                  <div className="space-y-2">
+                    <div className="text-muted-foreground">
+                      Requesting authorization server metadata...
+                    </div>
+                    {oauthFlowState.authorizationServerUrl && (
                       <div className="bg-muted p-2 rounded font-mono text-xs">
-                        <div className="text-muted-foreground mb-1">Auth Server:</div>
-                        <div className="break-all">{oauthFlowState.authorizationServer}</div>
+                        <div className="text-muted-foreground mb-1">Authorization Server:</div>
+                        <div className="break-all">{oauthFlowState.authorizationServerUrl}</div>
                       </div>
                     )}
+                    <div className="bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 p-2 rounded text-[10px]">
+                      <div className="text-blue-700 dark:text-blue-400">
+                        Trying multiple discovery endpoints: OAuth 2.0 Authorization Server Metadata (RFC 8414) and OpenID Connect Discovery.
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {oauthFlowState.currentStep === "received_authorization_server_metadata" && (
+                  <div className="space-y-2">
+                    <div className="text-muted-foreground">
+                      Received authorization server metadata successfully.
+                    </div>
+                    {oauthFlowState.authorizationServerMetadata && (
+                      <div className="bg-muted p-2 rounded font-mono text-xs space-y-2">
+                        <div>
+                          <div className="text-muted-foreground mb-1">Issuer:</div>
+                          <div className="break-all">{oauthFlowState.authorizationServerMetadata.issuer}</div>
+                        </div>
+                        <div>
+                          <div className="text-muted-foreground mb-1">Token Endpoint:</div>
+                          <div className="break-all">{oauthFlowState.authorizationServerMetadata.token_endpoint}</div>
+                        </div>
+                        <div>
+                          <div className="text-muted-foreground mb-1">Authorization Endpoint:</div>
+                          <div className="break-all">{oauthFlowState.authorizationServerMetadata.authorization_endpoint}</div>
+                        </div>
+                        {oauthFlowState.authorizationServerMetadata.registration_endpoint && (
+                          <div>
+                            <div className="text-muted-foreground mb-1">Registration Endpoint:</div>
+                            <div className="break-all">{oauthFlowState.authorizationServerMetadata.registration_endpoint}</div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    <div className="bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800 p-2 rounded text-[10px]">
+                      <div className="text-green-700 dark:text-green-400">
+                        Discovery complete! Next steps: Client registration → Authorization redirect → Token exchange
+                      </div>
+                    </div>
                   </div>
                 )}
 
