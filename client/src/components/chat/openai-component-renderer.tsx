@@ -41,11 +41,17 @@ export function OpenAIComponentRenderer({
 
   const setIframeDocumentTheme = (iframe) => {
     try {
-      iframe.document.documentElement.classList.toggle("dark", themeMode === "dark");
+      iframe.document.documentElement.classList.toggle(
+        "dark",
+        themeMode === "dark",
+      );
     } catch (err) {
-      console.debug("Unable to access iframe document (likely cross-origin):", err);
+      console.debug(
+        "Unable to access iframe document (likely cross-origin):",
+        err,
+      );
     }
-  }
+  };
 
   setIframeDocumentTheme(iframeRef.current?.contentWindow);
 
