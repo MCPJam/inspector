@@ -1045,6 +1045,8 @@ export const createDebugOAuthStateMachine = (
               authorizationCode: undefined, // Clear any old authorization code
               accessToken: undefined, // Clear any old tokens
               refreshToken: undefined,
+              tokenType: undefined,
+              expiresIn: undefined,
               infoLogs: authUrlInfoLogs,
               isInitiatingAuth: false,
             });
@@ -1108,11 +1110,13 @@ export const createDebugOAuthStateMachine = (
               body: tokenRequestBodyObj,
             };
 
-            // Update state with the request
+            // Update state with the request (clear old tokens)
             updateState({
               currentStep: "token_request",
               lastRequest: tokenRequest,
               lastResponse: undefined,
+              accessToken: undefined, // Clear old token
+              refreshToken: undefined, // Clear old refresh token
               httpHistory: [
                 ...(state.httpHistory || []),
                 {
@@ -1187,10 +1191,11 @@ export const createDebugOAuthStateMachine = (
 
               if (!response.ok) {
                 // Token request failed
-
                 updateState({
                   lastResponse: tokenResponseData,
                   httpHistory: updatedHistoryToken,
+                  // Clear the authorization code so it won't be retried
+                  authorizationCode: undefined,
                   error: `Token request failed: ${response.body?.error || response.statusText} - ${response.body?.error_description || "Unknown error"}`,
                   isInitiatingAuth: false,
                 });

@@ -50,9 +50,12 @@ export const OAuthAuthorizationModal = ({
       const left = window.screenX + (window.outerWidth - width) / 2;
       const top = window.screenY + (window.outerHeight - height) / 2;
 
+      // Use unique window name each time to prevent reusing old popup with stale auth code
+      const uniqueWindowName = `oauth_authorization_${Date.now()}`;
+
       popupRef.current = window.open(
         authorizationUrl,
-        "oauth_authorization",
+        uniqueWindowName,
         `width=${width},height=${height},left=${left},top=${top},toolbar=no,location=no,status=no,menubar=no,scrollbars=yes,resizable=yes`
       );
 
