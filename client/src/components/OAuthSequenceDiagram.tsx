@@ -43,12 +43,14 @@ interface ActionEdgeData extends Record<string, unknown> {
 const ACTORS = {
   client: { label: "Client", color: "#10b981" }, // Green
   mcpServer: { label: "MCP Server", color: "#f59e0b" }, // Orange
+  authServer: { label: "Authorization Server", color: "#3b82f6" }, // Blue
 };
 
 // Layout constants
 const ACTOR_X_POSITIONS = {
-  client: 200,
-  mcpServer: 600,
+  client: 150,
+  mcpServer: 450,
+  authServer: 750,
 };
 const ACTION_SPACING = 180; // Vertical space between actions
 const START_Y = 120; // Initial Y position for first action
@@ -220,6 +222,15 @@ const getActionStatus = (actionStep: OAuthFlowStep, currentStep: OAuthFlowStep):
     "received_resource_metadata",
     "request_authorization_server_metadata",
     "received_authorization_server_metadata",
+    "request_client_registration",
+    "received_client_credentials",
+    "generate_pkce_parameters",
+    "authorization_request",
+    "received_authorization_code",
+    "token_request",
+    "received_access_token",
+    "authenticated_mcp_request",
+    "complete",
   ];
 
   const actionIndex = stepOrder.indexOf(actionStep);
@@ -248,14 +259,12 @@ export const OAuthSequenceDiagram = memo(({ flowState }: OAuthSequenceDiagramPro
       },
       {
         id: "received_401_unauthorized",
-        label: "HTTP 401 Unauthorized with WWW-Authenticate header",
-        description: "Server returns 401 with resource metadata location",
+        label: "HTTP 401 Unauthorized",
+        description: "Server returns 401 with WWW-Authenticate header",
         from: "mcpServer",
         to: "client",
         details: flowState.resourceMetadataUrl
-          ? [
-              { label: "Note", value: "Extract resource_metadata URL from WWW-Authenticate" },
-            ]
+          ? [{ label: "Note", value: "Extract resource_metadata URL" }]
           : undefined,
       },
       {
@@ -265,45 +274,130 @@ export const OAuthSequenceDiagram = memo(({ flowState }: OAuthSequenceDiagramPro
         from: "client",
         to: "mcpServer",
         details: flowState.resourceMetadataUrl
-          ? [{ label: "GET", value: flowState.resourceMetadataUrl }]
+          ? [{ label: "GET", value: new URL(flowState.resourceMetadataUrl).pathname }]
           : undefined,
       },
       {
         id: "received_resource_metadata",
-        label: "Return Resource Metadata",
+        label: "Return metadata",
         description: "Server returns OAuth protected resource metadata",
         from: "mcpServer",
         to: "client",
-        details: flowState.resourceMetadata
-          ? [
-              { label: "Resource", value: flowState.resourceMetadata.resource },
-              ...(flowState.resourceMetadata.authorization_servers
-                ? [{ label: "Auth Server", value: flowState.resourceMetadata.authorization_servers[0] }]
-                : [])
-            ]
+        details: flowState.resourceMetadata?.authorization_servers
+          ? [{ label: "Auth Server", value: flowState.resourceMetadata.authorization_servers[0] }]
           : undefined,
       },
       {
         id: "request_authorization_server_metadata",
-        label: "GET Authorization Server Metadata",
-        description: "Client requests OAuth/OIDC metadata",
+        label: "GET /.well-known/oauth-authorization-server",
+        description: "Client requests OAuth/OIDC metadata from Authorization Server",
         from: "client",
-        to: "mcpServer",
+        to: "authServer",
         details: flowState.authorizationServerUrl
-          ? [{ label: "Auth Server", value: flowState.authorizationServerUrl }]
+          ? [{ label: "URL", value: flowState.authorizationServerUrl }]
           : undefined,
       },
       {
         id: "received_authorization_server_metadata",
-        label: "Return Authorization Metadata",
-        description: "Server returns OAuth authorization server metadata",
-        from: "mcpServer",
+        label: "Authorization server metadata response",
+        description: "Authorization Server returns metadata",
+        from: "authServer",
         to: "client",
         details: flowState.authorizationServerMetadata
           ? [
-              { label: "Token Endpoint", value: new URL(flowState.authorizationServerMetadata.token_endpoint).pathname },
-              { label: "Auth Endpoint", value: new URL(flowState.authorizationServerMetadata.authorization_endpoint).pathname },
+              { label: "Token", value: new URL(flowState.authorizationServerMetadata.token_endpoint).pathname },
+              { label: "Auth", value: new URL(flowState.authorizationServerMetadata.authorization_endpoint).pathname },
             ]
+          : undefined,
+      },
+      {
+        id: "request_client_registration",
+        label: "POST /register",
+        description: "Client registers dynamically with Authorization Server",
+        from: "client",
+        to: "authServer",
+        details: [{ label: "Note", value: "Dynamic client registration" }],
+      },
+      {
+        id: "received_client_credentials",
+        label: "Client Credentials",
+        description: "Authorization Server returns client ID and credentials",
+        from: "authServer",
+        to: "client",
+        details: flowState.clientId
+          ? [{ label: "client_id", value: flowState.clientId.substring(0, 20) + "..." }]
+          : undefined,
+      },
+      {
+        id: "generate_pkce_parameters",
+        label: "Generate PKCE parameters",
+        description: "Client generates code verifier and challenge",
+        from: "client",
+        to: "client",
+        details: flowState.codeChallenge
+          ? [
+              { label: "code_challenge", value: flowState.codeChallenge.substring(0, 15) + "..." },
+              { label: "method", value: flowState.codeChallengeMethod || "S256" },
+            ]
+          : undefined,
+      },
+      {
+        id: "authorization_request",
+        label: "Authorization request (Browser)",
+        description: "User authorizes via browser redirect",
+        from: "client",
+        to: "authServer",
+        details: flowState.authorizationUrl
+          ? [
+              { label: "Note", value: "User authorizes in browser" },
+              { label: "resource", value: flowState.serverUrl || "" },
+            ]
+          : undefined,
+      },
+      {
+        id: "received_authorization_code",
+        label: "Authorization code callback",
+        description: "Browser redirects back with authorization code",
+        from: "authServer",
+        to: "client",
+        details: flowState.authorizationCode
+          ? [{ label: "code", value: flowState.authorizationCode.substring(0, 20) + "..." }]
+          : undefined,
+      },
+      {
+        id: "token_request",
+        label: "Token request + code_verifier + resource",
+        description: "Client exchanges authorization code for access token",
+        from: "client",
+        to: "authServer",
+        details: flowState.codeVerifier
+          ? [
+              { label: "grant_type", value: "authorization_code" },
+              { label: "resource", value: flowState.serverUrl || "" },
+            ]
+          : undefined,
+      },
+      {
+        id: "received_access_token",
+        label: "Access token (+ refresh token)",
+        description: "Authorization Server returns access token",
+        from: "authServer",
+        to: "client",
+        details: flowState.accessToken
+          ? [
+              { label: "token_type", value: flowState.tokenType || "Bearer" },
+              { label: "expires_in", value: flowState.expiresIn?.toString() || "3600" },
+            ]
+          : undefined,
+      },
+      {
+        id: "authenticated_mcp_request",
+        label: "MCP request with access token",
+        description: "Client makes authenticated request to MCP server",
+        from: "client",
+        to: "mcpServer",
+        details: flowState.accessToken
+          ? [{ label: "Authorization", value: "Bearer " + flowState.accessToken.substring(0, 15) + "..." }]
           : undefined,
       },
     ];
@@ -315,6 +409,7 @@ export const OAuthSequenceDiagram = memo(({ flowState }: OAuthSequenceDiagramPro
     // Create segments for each actor
     const clientSegments: ActorNodeData["segments"] = [];
     const mcpServerSegments: ActorNodeData["segments"] = [];
+    const authServerSegments: ActorNodeData["segments"] = [];
 
     let currentY = 0;
 
@@ -330,6 +425,11 @@ export const OAuthSequenceDiagram = memo(({ flowState }: OAuthSequenceDiagramPro
         });
         mcpServerSegments.push({
           id: `mcp-line-${index}`,
+          type: "line",
+          height: actionY - currentY,
+        });
+        authServerSegments.push({
+          id: `auth-line-${index}`,
           type: "line",
           height: actionY - currentY,
         });
@@ -367,6 +467,21 @@ export const OAuthSequenceDiagram = memo(({ flowState }: OAuthSequenceDiagramPro
         });
       }
 
+      if (action.from === "authServer" || action.to === "authServer") {
+        authServerSegments.push({
+          id: `auth-box-${action.id}`,
+          type: "box",
+          height: SEGMENT_HEIGHT,
+          handleId: action.id,
+        });
+      } else {
+        authServerSegments.push({
+          id: `auth-line-action-${index}`,
+          type: "line",
+          height: SEGMENT_HEIGHT,
+        });
+      }
+
       currentY += SEGMENT_HEIGHT;
     });
 
@@ -380,6 +495,11 @@ export const OAuthSequenceDiagram = memo(({ flowState }: OAuthSequenceDiagramPro
       });
       mcpServerSegments.push({
         id: "mcp-line-end",
+        type: "line",
+        height: remainingHeight,
+      });
+      authServerSegments.push({
+        id: "auth-line-end",
         type: "line",
         height: remainingHeight,
       });
@@ -409,6 +529,17 @@ export const OAuthSequenceDiagram = memo(({ flowState }: OAuthSequenceDiagramPro
         },
         draggable: false,
       },
+      {
+        id: "actor-authServer",
+        type: "actor",
+        position: { x: ACTOR_X_POSITIONS.authServer, y: 0 },
+        data: {
+          label: ACTORS.authServer.label,
+          color: ACTORS.authServer.color,
+          segments: authServerSegments,
+        },
+        draggable: false,
+      },
     ];
 
     // Create action edges
@@ -416,12 +547,15 @@ export const OAuthSequenceDiagram = memo(({ flowState }: OAuthSequenceDiagramPro
       const status = getActionStatus(action.id as OAuthFlowStep, currentStep);
       const isComplete = status === "complete";
 
+      // For self-referencing actions (client to client), use special handles
+      const isSelfReferencing = action.from === action.to;
+
       return {
         id: `edge-${action.id}`,
         source: `actor-${action.from}`,
         target: `actor-${action.to}`,
-        sourceHandle: `${action.id}-right`,
-        targetHandle: `${action.id}-left`,
+        sourceHandle: isSelfReferencing ? `${action.id}-right` : `${action.id}-right`,
+        targetHandle: isSelfReferencing ? `${action.id}-right` : `${action.id}-left`,
         type: "actionEdge",
         data: {
           label: action.label,
