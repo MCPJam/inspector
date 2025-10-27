@@ -103,6 +103,9 @@ export const OAuthFlowTab = ({
   // Track if we've initialized the flow for the current server
   const initializedServerRef = useRef<string | null>(null);
 
+  // Track if user manually reset (don't auto-restart in this case)
+  const manualResetRef = useRef(false);
+
   // Track which HTTP blocks are expanded
   const [expandedBlocks, setExpandedBlocks] = useState<Set<string>>(new Set());
 
@@ -163,6 +166,11 @@ export const OAuthFlowTab = ({
       error: undefined,
     });
     initializedServerRef.current = null;
+    processedCodeRef.current = null; // Clear processed code tracker
+    if (exchangeTimeoutRef.current) {
+      clearTimeout(exchangeTimeoutRef.current); // Clear any pending exchange
+      exchangeTimeoutRef.current = null;
+    }
     setExpandedBlocks(new Set());
     setDeletedInfoLogs(new Set());
   }, [updateOAuthFlowState]);
@@ -205,9 +213,17 @@ export const OAuthFlowTab = ({
 
   const proceedToNextStep = useCallback(async () => {
     if (oauthStateMachine) {
+      // Clear manual reset flag when user manually starts the flow
+      if (oauthFlowState.currentStep === "idle") {
+        manualResetRef.current = false;
+      }
       await oauthStateMachine.proceedToNextStep();
     }
-  }, [oauthStateMachine]);
+  }, [oauthStateMachine, oauthFlowState.currentStep]);
+
+  // Track if we've already processed a code for this flow (prevent duplicates)
+  const processedCodeRef = useRef<string | null>(null);
+  const exchangeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Listen for OAuth callback messages from the popup window
   useEffect(() => {
@@ -219,21 +235,59 @@ export const OAuthFlowTab = ({
 
       // Check if this is an OAuth callback message
       if (event.data?.type === "OAUTH_CALLBACK" && event.data?.code) {
+        const receivedCode = event.data.code;
+
+        // Check if we've already processed this exact code (prevent duplicate exchanges)
+        if (processedCodeRef.current === receivedCode) {
+          return;
+        }
+
+        // Validate state parameter to prevent accepting stale authorization codes
+        const receivedState = event.data.state;
+        const expectedState = oauthFlowStateRef.current.state;
+
+        // Only accept the code if we're at the right step AND state matches
+        const currentStep = oauthFlowStateRef.current.currentStep;
+        const isWaitingForCode = currentStep === "received_authorization_code" || currentStep === "authorization_request";
+
+        if (!isWaitingForCode) {
+          return;
+        }
+
+        if (!expectedState) {
+          updateOAuthFlowState({
+            error: "Flow was reset. Please start a new authorization by clicking 'Next Step'.",
+          });
+          return;
+        }
+
+        if (receivedState !== expectedState) {
+          updateOAuthFlowState({
+            error: "Invalid state parameter - this authorization code is from a previous flow. Please try again.",
+          });
+          return;
+        }
+
+        // Mark this code as processed to prevent duplicate exchanges
+        processedCodeRef.current = receivedCode;
+
+        // Clear any pending exchange timeout
+        if (exchangeTimeoutRef.current) {
+          clearTimeout(exchangeTimeoutRef.current);
+        }
+
         // Update state with the authorization code
         updateOAuthFlowState({
-          authorizationCode: event.data.code,
+          authorizationCode: receivedCode,
           error: undefined,
         });
 
-        console.log(
-          "[OAuth Flow] 🔄 State updated, proceeding to next step in 500ms",
-        );
-
-        // Automatically proceed to the next step after a brief delay
-        setTimeout(() => {
+        // Automatically proceed to the next step after a brief delay (store timeout ref)
+        exchangeTimeoutRef.current = setTimeout(() => {
           if (oauthStateMachine) {
             oauthStateMachine.proceedToNextStep();
           }
+          exchangeTimeoutRef.current = null;
         }, 500);
       }
     };
@@ -249,11 +303,6 @@ export const OAuthFlowTab = ({
       return;
     }
 
-    console.log(
-      "[OAuth Flow] 🔄 Server changed, resetting flow for:",
-      serverName,
-    );
-
     // Reset the initialized ref to allow reinitialization
     initializedServerRef.current = null;
 
@@ -267,15 +316,20 @@ export const OAuthFlowTab = ({
     // Mark this server as initialized
     initializedServerRef.current = serverName;
 
-    // Start the flow automatically (use a longer delay to ensure state machine is ready with new settings)
-    const timer = setTimeout(() => {
-      if (oauthStateMachine) {
-        console.log("[OAuth Flow] ▶️ Auto-starting flow for:", serverName);
-        oauthStateMachine.proceedToNextStep();
-      }
-    }, 200);
+    // Only auto-start if this is NOT a manual reset
+    if (!manualResetRef.current) {
+      // Start the flow automatically (use a longer delay to ensure state machine is ready with new settings)
+      const timer = setTimeout(() => {
+        if (oauthStateMachine) {
+          oauthStateMachine.proceedToNextStep();
+        }
+      }, 200);
 
-    return () => clearTimeout(timer);
+      return () => clearTimeout(timer);
+    } else {
+      // Clear the manual reset flag for next time
+      manualResetRef.current = false;
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverName, oauthStateMachine]);
 
@@ -403,14 +457,22 @@ export const OAuthFlowTab = ({
           <Button
             variant="outline"
             onClick={() => {
-              console.log(
-                "[OAuth Flow] 🔄 Reset button clicked - clearing all state",
-              );
+              // Mark this as a manual reset (don't auto-restart)
+              manualResetRef.current = true;
+
               if (oauthStateMachine) {
                 oauthStateMachine.resetFlow();
               }
-              // Also reset the initialized server ref to allow restarting
+
+              // Reset the initialized server ref to allow manual restart
               initializedServerRef.current = null;
+
+              // Clear processed code tracker and any pending exchanges
+              processedCodeRef.current = null;
+              if (exchangeTimeoutRef.current) {
+                clearTimeout(exchangeTimeoutRef.current);
+                exchangeTimeoutRef.current = null;
+              }
             }}
             disabled={oauthFlowState.isInitiatingAuth}
           >

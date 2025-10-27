@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import {
   parseOAuthCallbackParams,
   generateOAuthErrorDescription,
@@ -8,15 +8,23 @@ import { CheckCircle2, XCircle } from "lucide-react";
 export default function OAuthDebugCallback() {
   const callbackParams = parseOAuthCallbackParams(window.location.search);
   const [codeSent, setCodeSent] = useState(false);
+  const hasAttemptedSendRef = useRef(false);
 
   useEffect(() => {
+    // Prevent multiple sends (this useEffect might run multiple times in React 18 StrictMode)
+    if (hasAttemptedSendRef.current) {
+      return;
+    }
+
     // If successful and we have a code, send it to the parent window
     if (callbackParams.successful && callbackParams.code) {
+      hasAttemptedSendRef.current = true;
       try {
+        const stateParam = new URLSearchParams(window.location.search).get("state");
         const message = {
           type: "OAUTH_CALLBACK",
           code: callbackParams.code,
-          state: new URLSearchParams(window.location.search).get("state"),
+          state: stateParam,
         };
 
         // Check if we're in a popup window
@@ -26,16 +34,11 @@ export default function OAuthDebugCallback() {
           // Send message to opener window
           window.opener.postMessage(message, window.location.origin);
           setCodeSent(true);
-          console.log("[OAuth Callback] Sent code to opener window (popup)");
 
           // Auto-close popup immediately (small delay to ensure message is sent)
           setTimeout(() => {
             window.close();
           }, 100);
-        } else {
-          console.warn(
-            "[OAuth Callback] Not in popup - code not sent",
-          );
         }
       } catch (error) {
         console.error("[OAuth Callback] Failed to send code:", error);
