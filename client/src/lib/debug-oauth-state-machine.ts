@@ -1036,6 +1036,27 @@ export const createDebugOAuthStateMachine = (
               authUrl.searchParams.set("resource", state.serverUrl);
             }
 
+            // Add scopes to request refresh tokens and other capabilities
+            const scopesSupported =
+              state.resourceMetadata?.scopes_supported ||
+              state.authorizationServerMetadata.scopes_supported;
+
+            // Build scope string, always including offline_access for refresh tokens
+            const scopes = new Set<string>();
+
+            // Add server-supported scopes if available
+            if (scopesSupported && scopesSupported.length > 0) {
+              scopesSupported.forEach((scope) => scopes.add(scope));
+            }
+
+            // Always request offline_access for refresh tokens (if not already included)
+            scopes.add("offline_access");
+
+            // Set scope parameter if we have any scopes
+            if (scopes.size > 0) {
+              authUrl.searchParams.set("scope", Array.from(scopes).join(" "));
+            }
+
             // Add info log for Authorization URL
             const authUrlInfoLogs = addInfoLog(
               getCurrentState(),
@@ -1212,46 +1233,57 @@ export const createDebugOAuthStateMachine = (
               // Token request successful
               const tokens = response.body;
 
-              let tokenInfoLogs = getCurrentState().infoLogs || [];
+              // Start with existing logs, filtering out any token-related logs we're about to add
+              // to prevent duplicates
+              const existingLogs = (getCurrentState().infoLogs || []).filter(
+                (log) =>
+                  log.id !== "auth-code" &&
+                  log.id !== "oauth-tokens" &&
+                  log.id !== "token",
+              );
 
-              // Add Authorization Code log if not already added
-              if (
-                state.authorizationCode &&
-                !tokenInfoLogs.find((log) => log.id === "auth-code")
-              ) {
-                tokenInfoLogs = addInfoLog(
-                  { ...getCurrentState(), infoLogs: tokenInfoLogs },
-                  "auth-code",
-                  "Authorization Code",
-                  {
-                    code: state.authorizationCode,
-                  },
-                );
-              }
+              let tokenInfoLogs = existingLogs;
 
-              // Add refresh token log if present and not already added
-              if (
-                tokens.refresh_token &&
-                !tokenInfoLogs.find((log) => log.id === "refresh-token")
-              ) {
+              // Add Authorization Code log
+              if (state.authorizationCode) {
                 tokenInfoLogs = [
                   ...tokenInfoLogs,
                   {
-                    id: "refresh-token",
-                    label: "Refresh Token",
+                    id: "auth-code",
+                    label: "Authorization Code",
                     data: {
-                      token: tokens.refresh_token.substring(0, 50) + "...",
+                      code: state.authorizationCode,
                     },
                     timestamp: Date.now(),
                   },
                 ];
               }
 
-              // Decode and add access token log if not already added
-              if (
-                tokens.access_token &&
-                !tokenInfoLogs.find((log) => log.id === "token")
-              ) {
+              // Add combined OAuth tokens log (access token + refresh token)
+              if (tokens.access_token) {
+                const tokenData: Record<string, any> = {
+                  access_token: tokens.access_token.substring(0, 50) + "...",
+                  access_token_full: tokens.access_token,
+                };
+
+                if (tokens.refresh_token) {
+                  tokenData.refresh_token = tokens.refresh_token.substring(0, 50) + "...",
+                  tokenData.refresh_token_full = tokens.refresh_token;
+                }
+
+                tokenInfoLogs = [
+                  ...tokenInfoLogs,
+                  {
+                    id: "oauth-tokens",
+                    label: "OAuth Tokens",
+                    data: tokenData,
+                    timestamp: Date.now(),
+                  },
+                ];
+              }
+
+              // Decode and add access token JWT log
+              if (tokens.access_token) {
                 const decoded = decodeJWT(tokens.access_token);
                 if (decoded) {
                   const formatted = { ...decoded };
@@ -1266,12 +1298,15 @@ export const createDebugOAuthStateMachine = (
                     formatted.nbf = `${formatted.nbf} (${formatJWTTimestamp(formatted.nbf)})`;
                   }
 
-                  tokenInfoLogs = addInfoLog(
-                    { ...getCurrentState(), infoLogs: tokenInfoLogs },
-                    "token",
-                    "Access Token (Decoded JWT)",
-                    formatted,
-                  );
+                  tokenInfoLogs = [
+                    ...tokenInfoLogs,
+                    {
+                      id: "token",
+                      label: "Access Token (Decoded JWT)",
+                      data: formatted,
+                      timestamp: Date.now(),
+                    },
+                  ];
                 }
               }
 
