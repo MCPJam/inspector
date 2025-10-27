@@ -40,12 +40,12 @@ interface ActionEdgeData extends Record<string, unknown> {
   details?: Array<{ label: string; value: ReactNode }>;
 }
 
-// Actor configuration - using CSS variables from theme
+// Actor configuration
 const ACTORS = {
-  client: { label: "Client", color: "hsl(var(--chart-1))" }, // Green
-  browser: { label: "User-Agent (Browser)", color: "hsl(var(--chart-2))" }, // Purple
-  mcpServer: { label: "MCP Server (Resource Server)", color: "hsl(var(--chart-5))" }, // Orange
-  authServer: { label: "Authorization Server", color: "hsl(var(--primary))" }, // Blue
+  client: { label: "Client", color: "#10b981" }, // Green
+  browser: { label: "User-Agent (Browser)", color: "#8b5cf6" }, // Purple
+  mcpServer: { label: "MCP Server (Resource Server)", color: "#f59e0b" }, // Orange
+  authServer: { label: "Authorization Server", color: "#3b82f6" }, // Blue
 };
 
 // Layout constants
@@ -206,8 +206,8 @@ const CustomActionEdge = memo((props: EdgeProps<Edge<ActionEdgeData>>) => {
   if (!data) return null;
 
   const statusColor = {
-    complete: "border-chart-1/50 bg-chart-1/10",
-    current: "border-primary bg-primary/10 shadow-lg shadow-primary/20 animate-pulse",
+    complete: "border-green-500/50 bg-green-50 dark:bg-green-950/20",
+    current: "border-blue-500 bg-blue-100 dark:bg-blue-950/30 shadow-lg shadow-blue-500/20 animate-pulse",
     pending: "border-border bg-muted/30",
   }[data.status];
 
@@ -670,14 +670,7 @@ export const OAuthSequenceDiagram = memo(({ flowState }: OAuthSequenceDiagramPro
       const isPending = status === "pending";
 
       // Determine arrow color based on status
-      // Using hex colors for markerEnd (SVG doesn't support CSS variables well)
-      // But use CSS variables for stroke in style object
-      const arrowColorHex = isComplete ? "#10b981" : isCurrent ? "#3b82f6" : "#d1d5db";
-      const strokeColor = isComplete
-        ? "hsl(var(--chart-1))"
-        : isCurrent
-        ? "hsl(var(--primary))"
-        : "hsl(var(--border))";
+      const arrowColor = isComplete ? "#10b981" : isCurrent ? "#3b82f6" : "#d1d5db";
 
       // Determine handle positions based on flow direction
       const sourceX = ACTOR_X_POSITIONS[action.from as keyof typeof ACTOR_X_POSITIONS];
@@ -700,12 +693,12 @@ export const OAuthSequenceDiagram = memo(({ flowState }: OAuthSequenceDiagramPro
         animated: isCurrent, // Only animate current step
         markerEnd: {
           type: "arrowclosed" as const,
-          color: arrowColorHex, // SVG markers need hex colors
+          color: arrowColor,
           width: 12,
           height: 12,
         },
         style: {
-          stroke: strokeColor, // Can use CSS variables here
+          stroke: arrowColor,
           strokeWidth: isCurrent ? 3 : isComplete ? 2 : 1.5,
           strokeDasharray: isCurrent ? "5,5" : undefined, // Only current step is dashed
           opacity: isPending ? 0.4 : 1, // Dim pending edges
