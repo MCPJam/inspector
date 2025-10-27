@@ -213,8 +213,10 @@ interface OAuthSequenceDiagramProps {
 const getActionStatus = (actionStep: OAuthFlowStep, currentStep: OAuthFlowStep): NodeStatus => {
   const stepOrder: OAuthFlowStep[] = [
     "idle",
-    "sent_unauthenticated_request",
-    "received_401_www_authenticate",
+    "request_resource_metadata",
+    "received_resource_metadata",
+    "request_authorization_server_metadata",
+    "received_authorization_server_metadata",
   ];
 
   const actionIndex = stepOrder.indexOf(actionStep);
@@ -229,26 +231,54 @@ export const OAuthSequenceDiagram = memo(({ flowState }: OAuthSequenceDiagramPro
   const { nodes, edges } = useMemo(() => {
     const currentStep = flowState.currentStep;
 
-    // Define actions in the sequence
+    // Define actions in the sequence (matches SDK's actual OAuth flow)
     const actions = [
       {
-        id: "sent_unauthenticated_request",
-        label: "MCP request without token",
-        description: "Client sends request to MCP Server without authentication",
+        id: "request_resource_metadata",
+        label: "GET Protected Resource Metadata",
+        description: "Client requests metadata from well-known URI",
         from: "client",
         to: "mcpServer",
-        details: flowState.serverUrl
-          ? [{ label: "Server", value: flowState.serverUrl }]
+        details: flowState.resourceMetadataUrl
+          ? [{ label: "GET", value: flowState.resourceMetadataUrl }]
           : undefined,
       },
       {
-        id: "received_401_www_authenticate",
-        label: "HTTP 401 with WWW-Authenticate",
-        description: "Server responds with 401 and WWW-Authenticate header",
+        id: "received_resource_metadata",
+        label: "Return Resource Metadata",
+        description: "Server returns OAuth protected resource metadata",
         from: "mcpServer",
         to: "client",
-        details: flowState.authorizationServer
-          ? [{ label: "Auth Server", value: flowState.authorizationServer }]
+        details: flowState.resourceMetadata
+          ? [
+              { label: "Resource", value: flowState.resourceMetadata.resource },
+              ...(flowState.resourceMetadata.authorization_servers
+                ? [{ label: "Auth Server", value: flowState.resourceMetadata.authorization_servers[0] }]
+                : [])
+            ]
+          : undefined,
+      },
+      {
+        id: "request_authorization_server_metadata",
+        label: "GET Authorization Server Metadata",
+        description: "Client requests OAuth/OIDC metadata",
+        from: "client",
+        to: "mcpServer",
+        details: flowState.authorizationServerUrl
+          ? [{ label: "Auth Server", value: flowState.authorizationServerUrl }]
+          : undefined,
+      },
+      {
+        id: "received_authorization_server_metadata",
+        label: "Return Authorization Metadata",
+        description: "Server returns OAuth authorization server metadata",
+        from: "mcpServer",
+        to: "client",
+        details: flowState.authorizationServerMetadata
+          ? [
+              { label: "Token Endpoint", value: new URL(flowState.authorizationServerMetadata.token_endpoint).pathname },
+              { label: "Auth Endpoint", value: new URL(flowState.authorizationServerMetadata.authorization_endpoint).pathname },
+            ]
           : undefined,
       },
     ];
