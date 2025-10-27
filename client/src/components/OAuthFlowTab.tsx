@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { Button } from "@/components/ui/button";
-import { AlertCircle, RefreshCw, Shield, Workflow, ChevronDown, ChevronRight, ArrowDownToLine, ArrowUpFromLine } from "lucide-react";
+import { AlertCircle, RefreshCw, Shield, Workflow, ChevronDown, ChevronRight, ArrowDownToLine, ArrowUpFromLine, ExternalLink } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import {
   AuthSettings,
@@ -15,6 +15,7 @@ import {
   EMPTY_OAUTH_FLOW_STATE_V2,
   createDebugOAuthStateMachine,
 } from "../lib/debug-oauth-state-machine";
+import { DebugMCPOAuthClientProvider } from "../lib/debug-oauth-provider";
 import { OAuthSequenceDiagram } from "./OAuthSequenceDiagram";
 import { MCPServerConfig } from "@/sdk";
 import JsonView from "react18-json-view";
@@ -145,12 +146,16 @@ export const OAuthFlowTab = ({
   const oauthStateMachine = useMemo(() => {
     if (!serverConfig || !serverName || !authSettings.serverUrl) return null;
 
+    // Create provider to get redirect URL
+    const provider = new DebugMCPOAuthClientProvider(authSettings.serverUrl);
+
     return createDebugOAuthStateMachine({
       state: oauthFlowStateRef.current,
       getState: () => oauthFlowStateRef.current,
       updateState: updateOAuthFlowState,
       serverUrl: authSettings.serverUrl,
       serverName,
+      redirectUrl: provider.redirectUrl,
     });
   }, [
     serverConfig,
@@ -352,6 +357,61 @@ export const OAuthFlowTab = ({
                 </div>
               </div>
             </div>
+
+            {/* Authorization URL - Show when ready */}
+            {oauthFlowState.currentStep === "authorization_request" && oauthFlowState.authorizationUrl && (
+              <div className="rounded-lg border border-border bg-card p-4">
+                <h3 className="text-sm font-semibold mb-3">Authorization Required</h3>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Click the button below to open the authorization URL in your browser. After authorizing, you'll receive a code to paste below.
+                </p>
+                <Button
+                  onClick={() => {
+                    window.open(oauthFlowState.authorizationUrl!, "_blank", "noopener,noreferrer");
+                  }}
+                  className="w-full mb-3"
+                  size="sm"
+                >
+                  <ExternalLink className="h-4 w-4 mr-2" />
+                  Open Authorization URL
+                </Button>
+                <div className="text-xs font-mono bg-muted p-2 rounded break-all">
+                  {oauthFlowState.authorizationUrl}
+                </div>
+              </div>
+            )}
+
+            {/* Authorization Code Input - Show when waiting for code */}
+            {oauthFlowState.currentStep === "received_authorization_code" && (
+              <div className="rounded-lg border border-border bg-card p-4">
+                <h3 className="text-sm font-semibold mb-3">Enter Authorization Code</h3>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Paste the authorization code you received after authorizing in your browser.
+                </p>
+                <input
+                  type="text"
+                  value={oauthFlowState.authorizationCode || ""}
+                  onChange={(e) => {
+                    updateOAuthFlowState({ authorizationCode: e.target.value, error: undefined });
+                  }}
+                  placeholder="Paste authorization code here"
+                  className="w-full px-3 py-2 text-sm border border-input rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+                {oauthFlowState.error && (
+                  <div className="mt-3 p-2 rounded-md border border-red-200 bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-400">
+                    <p className="text-xs">{oauthFlowState.error}</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Error Display for other steps */}
+            {oauthFlowState.error && oauthFlowState.currentStep !== "received_authorization_code" && (
+              <div className="rounded-lg border border-red-200 bg-red-50 dark:bg-red-950/50 p-4">
+                <h3 className="text-sm font-semibold text-red-700 dark:text-red-400 mb-2">Error</h3>
+                <p className="text-xs text-red-600 dark:text-red-500">{oauthFlowState.error}</p>
+              </div>
+            )}
 
             {/* HTTP History - Show all request/response pairs */}
             {oauthFlowState.httpHistory && oauthFlowState.httpHistory.length > 0 && (
