@@ -104,7 +104,7 @@ export function ResultsPanel({
   const uiResource = resolveUIResource(result);
 
   return (
-    <div className="h-full flex flex-col border-t border-border bg-background">
+    <div className="h-full flex flex-col border-t border-border bg-background break-all">
       <div className="flex items-center justify-between p-4 border-b border-border">
         <div className="flex items-center gap-4">
           <h2 className="text-xs font-semibold text-foreground">Response</h2>
@@ -327,49 +327,51 @@ export function ResultsPanel({
             }
 
             return (
-              <div className="p-4">
-                {unstructuredValidationResult === "valid" && (
-                  <Badge
-                    variant="default"
-                    className="bg-green-600 hover:bg-green-700 mb-4"
-                  >
-                    <CheckCircle className="h-3 w-3 mr-1.5" />
-                    Success: Content matches the output schema.
-                  </Badge>
-                )}
-                {unstructuredValidationResult === "schema_mismatch" && (
-                  <Badge variant="destructive" className="mb-4">
-                    <XCircle className="h-3 w-3 mr-1.5" />
-                    Error: Content does not match the output schema.
-                  </Badge>
-                )}
-                {unstructuredValidationResult === "invalid_json" && (
-                  <Badge
-                    variant="destructive"
-                    className="bg-amber-600 hover:bg-amber-700 mb-4"
-                  >
-                    <XCircle className="h-3 w-3 mr-1.5" />
-                    Warning: Output schema provided by the tool is invalid.
-                  </Badge>
-                )}
-                <JsonView
-                  src={rawResult}
-                  dark={true}
-                  theme="atom"
-                  enableClipboard={true}
-                  displaySize={false}
-                  collapseStringsAfterLength={100}
-                  style={{
-                    fontSize: "12px",
-                    fontFamily:
-                      "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                    backgroundColor: "hsl(var(--background))",
-                    padding: "16px",
-                    borderRadius: "8px",
-                    border: "1px solid hsl(var(--border))",
-                  }}
-                />
-              </div>
+              <ScrollArea className="h-full">
+                <div className="p-4">
+                  {unstructuredValidationResult === "valid" && (
+                    <Badge
+                      variant="default"
+                      className="bg-green-600 hover:bg-green-700 mb-4"
+                    >
+                      <CheckCircle className="h-3 w-3 mr-1.5" />
+                      Success: Content matches the output schema.
+                    </Badge>
+                  )}
+                  {unstructuredValidationResult === "schema_mismatch" && (
+                    <Badge variant="destructive" className="mb-4">
+                      <XCircle className="h-3 w-3 mr-1.5" />
+                      Error: Content does not match the output schema.
+                    </Badge>
+                  )}
+                  {unstructuredValidationResult === "invalid_json" && (
+                    <Badge
+                      variant="destructive"
+                      className="bg-amber-600 hover:bg-amber-700 mb-4"
+                    >
+                      <XCircle className="h-3 w-3 mr-1.5" />
+                      Warning: Output schema provided by the tool is invalid.
+                    </Badge>
+                  )}
+                  <JsonView
+                    src={rawResult}
+                    dark={true}
+                    theme="atom"
+                    enableClipboard={true}
+                    displaySize={false}
+                    collapseStringsAfterLength={100}
+                    style={{
+                      fontSize: "12px",
+                      fontFamily:
+                        "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                      backgroundColor: "hsl(var(--background))",
+                      padding: "16px",
+                      borderRadius: "8px",
+                      border: "1px solid hsl(var(--border))",
+                    }}
+                  />
+                </div>
+              </ScrollArea>
             );
           })()
         ) : (
