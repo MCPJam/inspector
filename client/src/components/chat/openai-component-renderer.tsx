@@ -229,7 +229,7 @@ export function OpenAIComponentRenderer({
     try {
       iframeWindow.document.documentElement.classList.toggle("dark", themeMode === "dark");
     } catch (err) {
-      throw Error(`Cannot access iframe: ${err}`);
+      console.debug("Unable to access iframe document (likely cross-origin):", err);
     }
   }, [themeMode, isReady]);
 
