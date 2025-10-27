@@ -381,7 +381,7 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
             </ResizablePanel>
             <ResizableHandle withHandle />
             <ResizablePanel defaultSize={60} minSize={30}>
-              <div className="h-full flex flex-col border-t border-border bg-background">
+              <div className="h-full flex flex-col border-t border-border bg-background break-all">
                 {/* Header */}
                 <div className="flex items-center justify-between p-4 border-b border-border">
                   <h2 className="text-xs font-semibold text-foreground">
