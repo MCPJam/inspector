@@ -32,6 +32,7 @@ import { DebugMCPOAuthClientProvider } from "../lib/debug-oauth-provider";
 import { OAuthSequenceDiagram } from "./OAuthSequenceDiagram";
 import { OAuthAuthorizationModal } from "./OAuthAuthorizationModal";
 import { MCPServerConfig } from "@/sdk";
+import { decodeJWT, formatJWTTimestamp } from "../lib/jwt-decoder";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import "react18-json-view/src/dark.css";
@@ -498,6 +499,62 @@ export const OAuthFlowTab = ({
                   </AlertDescription>
                 </Alert>
               )}
+
+            {/* Decoded Access Token - Show when we have tokens */}
+            {oauthFlowState.accessToken && (
+              (() => {
+                const decoded = decodeJWT(oauthFlowState.accessToken!);
+                if (!decoded) {
+                  return (
+                    <Alert variant="destructive">
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertDescription className="text-xs">
+                        Failed to decode token
+                      </AlertDescription>
+                    </Alert>
+                  );
+                }
+
+                // Format timestamps
+                const formatted = { ...decoded };
+                if (formatted.exp) {
+                  formatted.exp = `${formatted.exp} (${formatJWTTimestamp(formatted.exp)})`;
+                }
+                if (formatted.iat) {
+                  formatted.iat = `${formatted.iat} (${formatJWTTimestamp(formatted.iat)})`;
+                }
+                if (formatted.nbf) {
+                  formatted.nbf = `${formatted.nbf} (${formatJWTTimestamp(formatted.nbf)})`;
+                }
+
+                return (
+                  <div className="space-y-2">
+                    <h3 className="text-xs font-medium text-muted-foreground px-1">
+                      Decoded JWT
+                    </h3>
+                    <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2 border border-border">
+                      <JsonView
+                        src={formatted}
+                        dark={true}
+                        theme="atom"
+                        enableClipboard={true}
+                        displaySize={false}
+                        collapsed={1}
+                        style={{
+                          fontSize: "11px",
+                          fontFamily:
+                            "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                          backgroundColor: "transparent",
+                          padding: "0",
+                          borderRadius: "0",
+                          border: "none",
+                        }}
+                      />
+                    </div>
+                  </div>
+                );
+              })()
+            )}
 
             {/* HTTP History - Show all request/response pairs */}
             {oauthFlowState.httpHistory &&
