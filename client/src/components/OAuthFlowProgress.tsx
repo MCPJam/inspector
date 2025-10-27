@@ -31,7 +31,7 @@ interface ActorNodeData extends Record<string, unknown> {
   color: string;
   segments: Array<{
     id: string;
-    type: 'box' | 'line';
+    type: "box" | "line";
     height: number;
     handleId?: string; // For boxes that need handles
   }>;
@@ -132,7 +132,7 @@ const ActorNode = memo((props: NodeProps<Node<ActorNodeData>>) => {
       {/* Actor label at top */}
       <div
         className={cn(
-          "px-4 py-2 rounded-md font-semibold text-xs border-2 bg-card shadow-sm z-10 mb-2"
+          "px-4 py-2 rounded-md font-semibold text-xs border-2 bg-card shadow-sm z-10 mb-2",
         )}
         style={{ borderColor: data.color }}
       >
@@ -145,7 +145,7 @@ const ActorNode = memo((props: NodeProps<Node<ActorNodeData>>) => {
           const segmentY = currentY;
           currentY += segment.height;
 
-          if (segment.type === 'box') {
+          if (segment.type === "box") {
             // Colored box segment with handles
             return (
               <div
@@ -169,11 +169,11 @@ const ActorNode = memo((props: NodeProps<Node<ActorNodeData>>) => {
                       id={`${segment.handleId}-right`}
                       style={{
                         right: -4,
-                        top: '50%',
+                        top: "50%",
                         background: data.color,
                         width: 8,
                         height: 8,
-                        border: '2px solid white',
+                        border: "2px solid white",
                       }}
                     />
                     <Handle
@@ -182,11 +182,11 @@ const ActorNode = memo((props: NodeProps<Node<ActorNodeData>>) => {
                       id={`${segment.handleId}-left`}
                       style={{
                         left: -4,
-                        top: '50%',
+                        top: "50%",
                         background: data.color,
                         width: 8,
                         height: 8,
-                        border: '2px solid white',
+                        border: "2px solid white",
                       }}
                     />
                   </>
@@ -217,7 +217,7 @@ const ActorNode = memo((props: NodeProps<Node<ActorNodeData>>) => {
 
 // Custom Edge with Minimal Label
 const CustomActionEdge = memo((props: EdgeProps<Edge<ActionEdgeData>>) => {
-  const {  sourceX, sourceY, targetX, targetY, data, style, id } = props;
+  const { sourceX, sourceY, targetX, targetY, data, style, id } = props;
 
   if (!data) return null;
 
@@ -243,16 +243,16 @@ const CustomActionEdge = memo((props: EdgeProps<Edge<ActionEdgeData>>) => {
       <EdgeLabelRenderer>
         <div
           style={{
-            position: 'absolute',
+            position: "absolute",
             transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
-            pointerEvents: 'all',
+            pointerEvents: "all",
           }}
           className="nodrag nopan"
         >
           <div
             className={cn(
               "rounded-md border-2 bg-card shadow-sm px-3 py-1.5 cursor-pointer hover:shadow-md transition-shadow",
-              statusColor
+              statusColor,
             )}
             data-edge-id={id}
           >
@@ -261,7 +261,13 @@ const CustomActionEdge = memo((props: EdgeProps<Edge<ActionEdgeData>>) => {
                 {data.label}
               </p>
               {data.status !== "pending" && (
-                <Badge variant="outline" className={cn("shrink-0 text-[9px] py-0 px-1", STATUS_BADGE_CLASS[data.status])}>
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    "shrink-0 text-[9px] py-0 px-1",
+                    STATUS_BADGE_CLASS[data.status],
+                  )}
+                >
                   {STATUS_LABEL[data.status]}
                 </Badge>
               )}
@@ -273,7 +279,7 @@ const CustomActionEdge = memo((props: EdgeProps<Edge<ActionEdgeData>>) => {
   );
 });
 
-CustomActionEdge.displayName = 'CustomActionEdge';
+CustomActionEdge.displayName = "CustomActionEdge";
 
 // Side Panel for Step Details
 interface StepDetailsPanelProps {
@@ -322,8 +328,16 @@ const StepDetailsPanel = memo(({ action }: StepDetailsPanelProps) => {
         {/* Header */}
         <div>
           <div className="flex items-center gap-2 mb-2">
-            <h3 className="text-lg font-semibold text-foreground">{action.label}</h3>
-            <Badge variant="outline" className={cn("text-[10px] py-0.5 px-2", STATUS_BADGE_CLASS[action.status])}>
+            <h3 className="text-lg font-semibold text-foreground">
+              {action.label}
+            </h3>
+            <Badge
+              variant="outline"
+              className={cn(
+                "text-[10px] py-0.5 px-2",
+                STATUS_BADGE_CLASS[action.status],
+              )}
+            >
               {STATUS_LABEL[action.status]}
             </Badge>
           </div>
@@ -333,7 +347,9 @@ const StepDetailsPanel = memo(({ action }: StepDetailsPanelProps) => {
         {/* Error */}
         {action.error && (
           <div className="rounded-md border-2 border-destructive/40 bg-destructive/10 p-3">
-            <p className="text-xs font-medium text-destructive leading-relaxed">{action.error}</p>
+            <p className="text-xs font-medium text-destructive leading-relaxed">
+              {action.error}
+            </p>
           </div>
         )}
 
@@ -344,7 +360,9 @@ const StepDetailsPanel = memo(({ action }: StepDetailsPanelProps) => {
             <div className="space-y-3">
               {action.details.map((detail) => (
                 <div key={detail.label} className="space-y-1.5">
-                  <p className="text-xs font-medium text-muted-foreground">{detail.label}</p>
+                  <p className="text-xs font-medium text-muted-foreground">
+                    {detail.label}
+                  </p>
                   <div className="text-xs leading-relaxed break-words text-foreground bg-muted/50 rounded-md p-2 font-mono">
                     {detail.value ?? "—"}
                   </div>
@@ -365,7 +383,10 @@ const StepDetailsPanel = memo(({ action }: StepDetailsPanelProps) => {
               value={action.input.value}
               placeholder={action.input.placeholder}
               onChange={(e) => action.input?.onChange(e.target.value)}
-              className={cn("text-sm", action.input.error ? "border-destructive" : undefined)}
+              className={cn(
+                "text-sm",
+                action.input.error ? "border-destructive" : undefined,
+              )}
               autoComplete="off"
             />
             {action.input.error && (
@@ -393,7 +414,7 @@ const StepDetailsPanel = memo(({ action }: StepDetailsPanelProps) => {
   );
 });
 
-StepDetailsPanel.displayName = 'StepDetailsPanel';
+StepDetailsPanel.displayName = "StepDetailsPanel";
 
 // Action Node - Simple div with text and handles on left/right (DEPRECATED - using edge labels now)
 const ActionNode = memo((props: NodeProps<Node<ActionNodeData>>) => {
@@ -404,7 +425,8 @@ const ActionNode = memo((props: NodeProps<Node<ActionNodeData>>) => {
     pending: "border-border bg-muted/30",
   }[data.status];
 
-  const isExpanded = data.details || data.input || data.error || data.secondaryAction;
+  const isExpanded =
+    data.details || data.input || data.error || data.secondaryAction;
 
   return (
     <>
@@ -424,20 +446,30 @@ const ActionNode = memo((props: NodeProps<Node<ActionNodeData>>) => {
       <div
         className={cn(
           "rounded-md border-2 bg-card shadow-md",
-          isExpanded ? "min-w-[320px] max-w-[380px] p-3" : "min-w-[280px] max-w-[340px] px-4 py-2.5",
-          statusColor
+          isExpanded
+            ? "min-w-[320px] max-w-[380px] p-3"
+            : "min-w-[280px] max-w-[340px] px-4 py-2.5",
+          statusColor,
         )}
       >
         {/* Header */}
         <div className="flex items-center justify-between gap-2">
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-foreground truncate">{data.label}</p>
+            <p className="text-sm font-semibold text-foreground truncate">
+              {data.label}
+            </p>
             <p className="text-[10px] text-muted-foreground mt-0.5 leading-tight">
               {data.description}
             </p>
           </div>
           {data.status !== "pending" && (
-            <Badge variant="outline" className={cn("shrink-0 text-[10px] py-0 px-1.5", STATUS_BADGE_CLASS[data.status])}>
+            <Badge
+              variant="outline"
+              className={cn(
+                "shrink-0 text-[10px] py-0 px-1.5",
+                STATUS_BADGE_CLASS[data.status],
+              )}
+            >
               {STATUS_LABEL[data.status]}
             </Badge>
           )}
@@ -467,18 +499,25 @@ const ActionNode = memo((props: NodeProps<Node<ActionNodeData>>) => {
                   value={data.input.value}
                   placeholder={data.input.placeholder}
                   onChange={(event) => data.input?.onChange(event.target.value)}
-                  className={cn("text-xs h-8", data.input.error ? "border-destructive" : undefined)}
+                  className={cn(
+                    "text-xs h-8",
+                    data.input.error ? "border-destructive" : undefined,
+                  )}
                   autoComplete="off"
                 />
                 {data.input.error && (
-                  <p className="text-[10px] text-destructive">{data.input.error}</p>
+                  <p className="text-[10px] text-destructive">
+                    {data.input.error}
+                  </p>
                 )}
               </div>
             )}
 
             {data.error && (
               <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2">
-                <p className="text-[10px] font-medium text-destructive">{data.error}</p>
+                <p className="text-[10px] font-medium text-destructive">
+                  {data.error}
+                </p>
               </div>
             )}
 
@@ -518,7 +557,10 @@ const ActionNode = memo((props: NodeProps<Node<ActionNodeData>>) => {
 interface OAuthFlowProgressProps {
   flowState: OAuthFlowState;
   updateFlowState: (updates: Partial<OAuthFlowState>) => void;
-  onGuardStateChange?: (guard: { canProceed: boolean; reason?: string }) => void;
+  onGuardStateChange?: (guard: {
+    canProceed: boolean;
+    reason?: string;
+  }) => void;
 }
 
 const steps: Array<OAuthStep> = [
@@ -561,7 +603,9 @@ export const OAuthFlowProgress = ({
     [currentStepIndex],
   );
 
-  const stepGuards = useMemo<Record<OAuthStep, { canProceed: boolean; reason?: string }>>(
+  const stepGuards = useMemo<
+    Record<OAuthStep, { canProceed: boolean; reason?: string }>
+  >(
     () => ({
       metadata_discovery: { canProceed: true },
       client_registration: {
@@ -571,8 +615,7 @@ export const OAuthFlowProgress = ({
           : "Waiting for OAuth metadata from the server.",
       },
       authorization_redirect: {
-        canProceed:
-          !!flowState.oauthClientInfo && !!flowState.oauthMetadata,
+        canProceed: !!flowState.oauthClientInfo && !!flowState.oauthMetadata,
         reason:
           flowState.oauthClientInfo && flowState.oauthMetadata
             ? undefined
@@ -639,25 +682,31 @@ export const OAuthFlowProgress = ({
         label: "Discover Metadata",
         description: "GET /.well-known/oauth-protected-resource",
         step: "metadata_discovery",
-        getDetails: () => flowState.oauthMetadata ? [
-          {
-            label: "Authorization Server",
-            value: flowState.authServerUrl?.toString() ?? "—",
-          },
-          {
-            label: "Authorization Endpoint",
-            value: flowState.oauthMetadata.authorization_endpoint,
-          },
-          {
-            label: "Token Endpoint",
-            value: flowState.oauthMetadata.token_endpoint,
-          },
-          {
-            label: "Supported Scopes",
-            value: formatList(flowState.oauthMetadata.scopes_supported),
-          },
-        ] : undefined,
-        getError: () => flowState.latestError && currentStepIndex === 0 ? flowState.latestError.message : null,
+        getDetails: () =>
+          flowState.oauthMetadata
+            ? [
+                {
+                  label: "Authorization Server",
+                  value: flowState.authServerUrl?.toString() ?? "—",
+                },
+                {
+                  label: "Authorization Endpoint",
+                  value: flowState.oauthMetadata.authorization_endpoint,
+                },
+                {
+                  label: "Token Endpoint",
+                  value: flowState.oauthMetadata.token_endpoint,
+                },
+                {
+                  label: "Supported Scopes",
+                  value: formatList(flowState.oauthMetadata.scopes_supported),
+                },
+              ]
+            : undefined,
+        getError: () =>
+          flowState.latestError && currentStepIndex === 0
+            ? flowState.latestError.message
+            : null,
       },
       {
         id: "return-metadata",
@@ -674,17 +723,30 @@ export const OAuthFlowProgress = ({
         label: "Register Client",
         description: "POST to registration_endpoint",
         step: "client_registration",
-        getDetails: () => flowState.oauthClientInfo ? [
-          {
-            label: "Client ID",
-            value: truncateValue(flowState.oauthClientInfo.client_id),
-          },
-          ...("redirect_uris" in flowState.oauthClientInfo && flowState.oauthClientInfo.redirect_uris ? [{
-            label: "Redirect URIs",
-            value: formatList(flowState.oauthClientInfo.redirect_uris),
-          }] : []),
-        ] : undefined,
-        getError: () => flowState.latestError && currentStepIndex === 1 ? flowState.latestError.message : null,
+        getDetails: () =>
+          flowState.oauthClientInfo
+            ? [
+                {
+                  label: "Client ID",
+                  value: truncateValue(flowState.oauthClientInfo.client_id),
+                },
+                ...("redirect_uris" in flowState.oauthClientInfo &&
+                flowState.oauthClientInfo.redirect_uris
+                  ? [
+                      {
+                        label: "Redirect URIs",
+                        value: formatList(
+                          flowState.oauthClientInfo.redirect_uris,
+                        ),
+                      },
+                    ]
+                  : []),
+              ]
+            : undefined,
+        getError: () =>
+          flowState.latestError && currentStepIndex === 1
+            ? flowState.latestError.message
+            : null,
       },
       {
         id: "return-credentials",
@@ -701,17 +763,30 @@ export const OAuthFlowProgress = ({
         label: "Authorization Redirect",
         description: "Redirect user to authorization_endpoint with PKCE",
         step: "authorization_redirect",
-        getDetails: () => flowState.authorizationUrl ? [
-          {
-            label: "Authorization URL",
-            value: <span className="break-all">{flowState.authorizationUrl}</span>,
-          },
-        ] : undefined,
-        getSecondaryAction: () => flowState.authorizationUrl ? {
-          label: "Open in Browser",
-          onClick: handleOpenAuthorization,
-        } : undefined,
-        getError: () => flowState.latestError && currentStepIndex === 2 ? flowState.latestError.message : null,
+        getDetails: () =>
+          flowState.authorizationUrl
+            ? [
+                {
+                  label: "Authorization URL",
+                  value: (
+                    <span className="break-all">
+                      {flowState.authorizationUrl}
+                    </span>
+                  ),
+                },
+              ]
+            : undefined,
+        getSecondaryAction: () =>
+          flowState.authorizationUrl
+            ? {
+                label: "Open in Browser",
+                onClick: handleOpenAuthorization,
+              }
+            : undefined,
+        getError: () =>
+          flowState.latestError && currentStepIndex === 2
+            ? flowState.latestError.message
+            : null,
       },
       {
         id: "user-consent",
@@ -735,7 +810,10 @@ export const OAuthFlowProgress = ({
           onChange: handleAuthorizationCodeChange,
           error: flowState.validationError,
         }),
-        getError: () => flowState.latestError && currentStepIndex === 3 ? flowState.latestError.message : null,
+        getError: () =>
+          flowState.latestError && currentStepIndex === 3
+            ? flowState.latestError.message
+            : null,
       },
       {
         id: "token-exchange",
@@ -744,7 +822,10 @@ export const OAuthFlowProgress = ({
         label: "Token Exchange",
         description: "POST to token_endpoint with code + PKCE verifier",
         step: "token_request",
-        getError: () => flowState.latestError && currentStepIndex === 4 ? flowState.latestError.message : null,
+        getError: () =>
+          flowState.latestError && currentStepIndex === 4
+            ? flowState.latestError.message
+            : null,
       },
       {
         id: "return-tokens",
@@ -753,20 +834,27 @@ export const OAuthFlowProgress = ({
         label: "Return Tokens",
         description: "Access token and refresh token",
         step: "token_request",
-        getDetails: () => flowState.oauthTokens ? [
-          {
-            label: "Access Token",
-            value: truncateValue(flowState.oauthTokens.access_token),
-          },
-          flowState.oauthTokens.refresh_token ? {
-            label: "Refresh Token",
-            value: truncateValue(flowState.oauthTokens.refresh_token),
-          } : undefined,
-          flowState.oauthTokens.expires_in ? {
-            label: "Expires In",
-            value: `${flowState.oauthTokens.expires_in}s`,
-          } : undefined,
-        ].filter(Boolean) as Array<{ label: string; value: string }> : undefined,
+        getDetails: () =>
+          flowState.oauthTokens
+            ? ([
+                {
+                  label: "Access Token",
+                  value: truncateValue(flowState.oauthTokens.access_token),
+                },
+                flowState.oauthTokens.refresh_token
+                  ? {
+                      label: "Refresh Token",
+                      value: truncateValue(flowState.oauthTokens.refresh_token),
+                    }
+                  : undefined,
+                flowState.oauthTokens.expires_in
+                  ? {
+                      label: "Expires In",
+                      value: `${flowState.oauthTokens.expires_in}s`,
+                    }
+                  : undefined,
+              ].filter(Boolean) as Array<{ label: string; value: string }>)
+            : undefined,
       },
       {
         id: "authenticated-request",
@@ -812,7 +900,7 @@ export const OAuthFlowProgress = ({
     // Generate segments for each actor based on actions
     // Segments are positioned to align box centers with action Y positions for horizontal edges
     const generateActorSegments = (actorKey: keyof typeof ACTORS) => {
-      const segments: ActorNodeData['segments'] = [];
+      const segments: ActorNodeData["segments"] = [];
       let currentY = 50; // Start below label
 
       sequenceActions.forEach((action, index) => {
@@ -825,7 +913,7 @@ export const OAuthFlowProgress = ({
         if (boxTop > currentY) {
           segments.push({
             id: `${actorKey}-line-before-${index}`,
-            type: 'line',
+            type: "line",
             height: boxTop - currentY,
           });
           currentY = boxTop;
@@ -835,7 +923,7 @@ export const OAuthFlowProgress = ({
         if (action.from === actorKey || action.to === actorKey) {
           segments.push({
             id: `${actorKey}-box-${index}`,
-            type: 'box',
+            type: "box",
             height: boxHeight,
             handleId: `${actorKey}-${action.id}`,
           });
@@ -843,7 +931,7 @@ export const OAuthFlowProgress = ({
           // Add line segment if actor is not involved
           segments.push({
             id: `${actorKey}-line-${index}`,
-            type: 'line',
+            type: "line",
             height: boxHeight,
           });
         }
@@ -853,7 +941,7 @@ export const OAuthFlowProgress = ({
       // Add final line segment to extend the swimlane
       segments.push({
         id: `${actorKey}-line-final`,
-        type: 'line',
+        type: "line",
         height: 100,
       });
 
@@ -867,7 +955,7 @@ export const OAuthFlowProgress = ({
         position: { x: actorX.client, y: 0 },
         data: {
           ...ACTORS.client,
-          segments: generateActorSegments('client'),
+          segments: generateActorSegments("client"),
         },
         selectable: false,
         draggable: false,
@@ -878,7 +966,7 @@ export const OAuthFlowProgress = ({
         position: { x: actorX.mcpServer, y: 0 },
         data: {
           ...ACTORS.mcpServer,
-          segments: generateActorSegments('mcpServer'),
+          segments: generateActorSegments("mcpServer"),
         },
         selectable: false,
         draggable: false,
@@ -889,7 +977,7 @@ export const OAuthFlowProgress = ({
         position: { x: actorX.authServer, y: 0 },
         data: {
           ...ACTORS.authServer,
-          segments: generateActorSegments('authServer'),
+          segments: generateActorSegments("authServer"),
         },
         selectable: false,
         draggable: false,
@@ -909,7 +997,7 @@ export const OAuthFlowProgress = ({
 
       // Convert actor key to node ID
       const getActorNodeId = (actorKey: keyof typeof ACTORS) => {
-        return `actor-${actorKey === 'mcpServer' ? 'mcp-server' : actorKey === 'authServer' ? 'auth-server' : actorKey}`;
+        return `actor-${actorKey === "mcpServer" ? "mcp-server" : actorKey === "authServer" ? "auth-server" : actorKey}`;
       };
 
       return {
@@ -918,7 +1006,7 @@ export const OAuthFlowProgress = ({
         sourceHandle: `${fromActor}-${action.id}-right`,
         target: getActorNodeId(toActor),
         targetHandle: `${toActor}-${action.id}-left`,
-        type: 'action', // Use our custom action edge type
+        type: "action", // Use our custom action edge type
         style: {
           stroke: ACTORS[fromActor].color,
           strokeWidth: 2,
@@ -953,7 +1041,7 @@ export const OAuthFlowProgress = ({
   const selectedAction = useMemo(() => {
     // If an action is selected, use that
     if (selectedActionId) {
-      const action = sequenceActions.find(a => a.id === selectedActionId);
+      const action = sequenceActions.find((a) => a.id === selectedActionId);
       if (action) {
         return {
           id: action.id,
@@ -969,7 +1057,9 @@ export const OAuthFlowProgress = ({
     }
 
     // Otherwise, show the current step
-    const currentAction = sequenceActions.find(a => statusForStep(a.step) === 'current');
+    const currentAction = sequenceActions.find(
+      (a) => statusForStep(a.step) === "current",
+    );
     if (currentAction) {
       return {
         id: currentAction.id,
@@ -989,7 +1079,7 @@ export const OAuthFlowProgress = ({
   // Handle edge clicks
   const handleEdgeClick = useCallback((event: React.MouseEvent, edge: Edge) => {
     // Extract action ID from edge ID (format: "edge-{actionId}")
-    const actionId = edge.id.replace('edge-', '');
+    const actionId = edge.id.replace("edge-", "");
     setSelectedActionId(actionId);
   }, []);
 

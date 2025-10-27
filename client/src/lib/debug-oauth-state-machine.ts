@@ -15,8 +15,7 @@ export type OAuthFlowStep =
   | "token_request"
   | "received_access_token"
   | "authenticated_mcp_request"
-  | "complete"
-  ;
+  | "complete";
 
 // State interface for OAuth flow
 export interface OauthFlowStateJune2025 {
@@ -125,12 +124,20 @@ export interface DebugOAuthStateMachineConfig {
 function buildResourceMetadataUrl(serverUrl: string): string {
   const url = new URL(serverUrl);
   // Try path-aware discovery first (if server has a path)
-  if (url.pathname !== '/' && url.pathname !== '') {
-    const pathname = url.pathname.endsWith('/') ? url.pathname.slice(0, -1) : url.pathname;
-    return new URL(`/.well-known/oauth-protected-resource${pathname}`, url.origin).toString();
+  if (url.pathname !== "/" && url.pathname !== "") {
+    const pathname = url.pathname.endsWith("/")
+      ? url.pathname.slice(0, -1)
+      : url.pathname;
+    return new URL(
+      `/.well-known/oauth-protected-resource${pathname}`,
+      url.origin,
+    ).toString();
   }
   // Otherwise use root discovery
-  return new URL("/.well-known/oauth-protected-resource", url.origin).toString();
+  return new URL(
+    "/.well-known/oauth-protected-resource",
+    url.origin,
+  ).toString();
 }
 
 // Helper: Build authorization server metadata URLs to try (RFC 8414 + OIDC Discovery)
@@ -138,24 +145,50 @@ function buildAuthServerMetadataUrls(authServerUrl: string): string[] {
   const url = new URL(authServerUrl);
   const urls: string[] = [];
 
-  if (url.pathname === '/' || url.pathname === '') {
+  if (url.pathname === "/" || url.pathname === "") {
     // Root path
-    urls.push(new URL('/.well-known/oauth-authorization-server', url.origin).toString());
-    urls.push(new URL('/.well-known/openid-configuration', url.origin).toString());
+    urls.push(
+      new URL("/.well-known/oauth-authorization-server", url.origin).toString(),
+    );
+    urls.push(
+      new URL("/.well-known/openid-configuration", url.origin).toString(),
+    );
   } else {
     // Path-aware discovery
-    const pathname = url.pathname.endsWith('/') ? url.pathname.slice(0, -1) : url.pathname;
-    urls.push(new URL(`/.well-known/oauth-authorization-server${pathname}`, url.origin).toString());
-    urls.push(new URL('/.well-known/oauth-authorization-server', url.origin).toString());
-    urls.push(new URL(`/.well-known/openid-configuration${pathname}`, url.origin).toString());
-    urls.push(new URL(`${pathname}/.well-known/openid-configuration`, url.origin).toString());
+    const pathname = url.pathname.endsWith("/")
+      ? url.pathname.slice(0, -1)
+      : url.pathname;
+    urls.push(
+      new URL(
+        `/.well-known/oauth-authorization-server${pathname}`,
+        url.origin,
+      ).toString(),
+    );
+    urls.push(
+      new URL("/.well-known/oauth-authorization-server", url.origin).toString(),
+    );
+    urls.push(
+      new URL(
+        `/.well-known/openid-configuration${pathname}`,
+        url.origin,
+      ).toString(),
+    );
+    urls.push(
+      new URL(
+        `${pathname}/.well-known/openid-configuration`,
+        url.origin,
+      ).toString(),
+    );
   }
 
   return urls;
 }
 
 // Helper function to make requests via backend proxy (bypasses CORS)
-async function proxyFetch(url: string, options: RequestInit = {}): Promise<{
+async function proxyFetch(
+  url: string,
+  options: RequestInit = {},
+): Promise<{
   status: number;
   statusText: string;
   headers: Record<string, string>;
@@ -165,13 +198,17 @@ async function proxyFetch(url: string, options: RequestInit = {}): Promise<{
   // Determine if body is JSON or form-urlencoded
   let bodyToSend: any = undefined;
   if (options.body) {
-    const contentType = (options.headers as Record<string, string>)?.[Object.keys(options.headers as Record<string, string> || {}).find(k => k.toLowerCase() === 'content-type') || ''];
+    const contentType = (options.headers as Record<string, string>)?.[
+      Object.keys((options.headers as Record<string, string>) || {}).find(
+        (k) => k.toLowerCase() === "content-type",
+      ) || ""
+    ];
 
-    if (contentType?.includes('application/x-www-form-urlencoded')) {
+    if (contentType?.includes("application/x-www-form-urlencoded")) {
       // For form-urlencoded, convert to object
       const params = new URLSearchParams(options.body as string);
       bodyToSend = Object.fromEntries(params.entries());
-    } else if (typeof options.body === 'string') {
+    } else if (typeof options.body === "string") {
       // Try to parse as JSON
       try {
         bodyToSend = JSON.parse(options.body);
@@ -197,7 +234,9 @@ async function proxyFetch(url: string, options: RequestInit = {}): Promise<{
   });
 
   if (!response.ok) {
-    throw new Error(`Backend proxy error: ${response.status} ${response.statusText}`);
+    throw new Error(
+      `Backend proxy error: ${response.status} ${response.statusText}`,
+    );
   }
 
   const data = await response.json();
@@ -209,15 +248,24 @@ async function proxyFetch(url: string, options: RequestInit = {}): Promise<{
 
 // Factory function to create the state machine
 export const createDebugOAuthStateMachine = (
-  config: DebugOAuthStateMachineConfig
+  config: DebugOAuthStateMachineConfig,
 ): DebugOAuthStateMachine => {
-  const { state: initialState, getState, updateState, serverUrl, serverName, redirectUrl, fetchFn = fetch } = config;
+  const {
+    state: initialState,
+    getState,
+    updateState,
+    serverUrl,
+    serverName,
+    redirectUrl,
+    fetchFn = fetch,
+  } = config;
 
   // Use provided redirectUrl or default to the origin + /oauth/callback/debug
-  const redirectUri = redirectUrl || `${window.location.origin}/oauth/callback/debug`;
+  const redirectUri =
+    redirectUrl || `${window.location.origin}/oauth/callback/debug`;
 
   // Helper to get current state (use getState if provided, otherwise use initial state)
-  const getCurrentState = () => getState ? getState() : initialState;
+  const getCurrentState = () => (getState ? getState() : initialState);
 
   // Create machine object that can reference itself
   const machine: DebugOAuthStateMachine = {
@@ -239,7 +287,7 @@ export const createDebugOAuthStateMachine = (
               url: serverUrl,
               headers: {
                 "Content-Type": "application/json",
-                "Accept": "application/json",
+                Accept: "application/json",
               },
               body: {
                 jsonrpc: "2.0",
@@ -303,7 +351,8 @@ export const createDebugOAuthStateMachine = (
 
               if (response.status === 401) {
                 // Expected 401 response with WWW-Authenticate header
-                const wwwAuthenticateHeader = response.headers["www-authenticate"];
+                const wwwAuthenticateHeader =
+                  response.headers["www-authenticate"];
 
                 const responseData = {
                   status: response.status,
@@ -315,7 +364,8 @@ export const createDebugOAuthStateMachine = (
                 // Update the last history entry with the response
                 const updatedHistory = [...(state.httpHistory || [])];
                 if (updatedHistory.length > 0) {
-                  updatedHistory[updatedHistory.length - 1].response = responseData;
+                  updatedHistory[updatedHistory.length - 1].response =
+                    responseData;
                 }
 
                 updateState({
@@ -326,10 +376,14 @@ export const createDebugOAuthStateMachine = (
                   isInitiatingAuth: false,
                 });
               } else {
-                throw new Error(`Expected 401 Unauthorized but got HTTP ${response.status}`);
+                throw new Error(
+                  `Expected 401 Unauthorized but got HTTP ${response.status}`,
+                );
               }
             } catch (error) {
-              throw new Error(`Failed to request MCP server: ${error instanceof Error ? error.message : String(error)}`);
+              throw new Error(
+                `Failed to request MCP server: ${error instanceof Error ? error.message : String(error)}`,
+              );
             }
             break;
 
@@ -340,7 +394,9 @@ export const createDebugOAuthStateMachine = (
             if (state.wwwAuthenticateHeader) {
               // Parse WWW-Authenticate header to extract resource_metadata URL
               // Format: Bearer resource_metadata="https://example.com/.well-known/oauth-protected-resource"
-              const resourceMetadataMatch = state.wwwAuthenticateHeader.match(/resource_metadata="([^"]+)"/);
+              const resourceMetadataMatch = state.wwwAuthenticateHeader.match(
+                /resource_metadata="([^"]+)"/,
+              );
               if (resourceMetadataMatch) {
                 extractedResourceMetadataUrl = resourceMetadataMatch[1];
               }
@@ -348,7 +404,9 @@ export const createDebugOAuthStateMachine = (
 
             // Fallback to building the URL if not found in header
             if (!extractedResourceMetadataUrl && state.serverUrl) {
-              extractedResourceMetadataUrl = buildResourceMetadataUrl(state.serverUrl);
+              extractedResourceMetadataUrl = buildResourceMetadataUrl(
+                state.serverUrl,
+              );
             }
 
             if (!extractedResourceMetadataUrl) {
@@ -359,7 +417,7 @@ export const createDebugOAuthStateMachine = (
               method: "GET",
               url: extractedResourceMetadataUrl,
               headers: {
-                "Accept": "application/json",
+                Accept: "application/json",
               },
             };
 
@@ -407,7 +465,9 @@ export const createDebugOAuthStateMachine = (
                 // Update the last history entry with the failed response
                 const updatedHistoryFailed = [...(state.httpHistory || [])];
                 if (updatedHistoryFailed.length > 0) {
-                  updatedHistoryFailed[updatedHistoryFailed.length - 1].response = failedResponseData;
+                  updatedHistoryFailed[
+                    updatedHistoryFailed.length - 1
+                  ].response = failedResponseData;
                 }
 
                 updateState({
@@ -416,15 +476,20 @@ export const createDebugOAuthStateMachine = (
                 });
 
                 if (response.status === 404) {
-                  throw new Error("Server does not implement OAuth 2.0 Protected Resource Metadata (404)");
+                  throw new Error(
+                    "Server does not implement OAuth 2.0 Protected Resource Metadata (404)",
+                  );
                 }
-                throw new Error(`Failed to fetch resource metadata: HTTP ${response.status}`);
+                throw new Error(
+                  `Failed to fetch resource metadata: HTTP ${response.status}`,
+                );
               }
 
               const resourceMetadata = response.body;
 
               // Extract authorization server URL (use first one if multiple, fallback to server URL)
-              const authorizationServerUrl = resourceMetadata.authorization_servers?.[0] || serverUrl;
+              const authorizationServerUrl =
+                resourceMetadata.authorization_servers?.[0] || serverUrl;
 
               const successResponseData = {
                 status: response.status,
@@ -436,7 +501,8 @@ export const createDebugOAuthStateMachine = (
               // Update the last history entry with the response
               const updatedHistory = [...(state.httpHistory || [])];
               if (updatedHistory.length > 0) {
-                updatedHistory[updatedHistory.length - 1].response = successResponseData;
+                updatedHistory[updatedHistory.length - 1].response =
+                  successResponseData;
               }
 
               updateState({
@@ -448,7 +514,9 @@ export const createDebugOAuthStateMachine = (
                 isInitiatingAuth: false,
               });
             } catch (error) {
-              throw new Error(`Failed to request resource metadata: ${error instanceof Error ? error.message : String(error)}`);
+              throw new Error(
+                `Failed to request resource metadata: ${error instanceof Error ? error.message : String(error)}`,
+              );
             }
             break;
 
@@ -458,13 +526,15 @@ export const createDebugOAuthStateMachine = (
               throw new Error("No authorization server URL available");
             }
 
-            const authServerUrls = buildAuthServerMetadataUrls(state.authorizationServerUrl);
+            const authServerUrls = buildAuthServerMetadataUrls(
+              state.authorizationServerUrl,
+            );
 
             const authServerRequest = {
               method: "GET",
               url: authServerUrls[0], // Show the first URL we'll try
               headers: {
-                "Accept": "application/json",
+                Accept: "application/json",
               },
             };
 
@@ -493,7 +563,9 @@ export const createDebugOAuthStateMachine = (
               throw new Error("No authorization server URL available");
             }
 
-            const urlsToTry = buildAuthServerMetadataUrls(state.authorizationServerUrl);
+            const urlsToTry = buildAuthServerMetadataUrls(
+              state.authorizationServerUrl,
+            );
             let authServerMetadata = null;
             let lastError = null;
             let successUrl = "";
@@ -504,13 +576,15 @@ export const createDebugOAuthStateMachine = (
             for (const url of urlsToTry) {
               try {
                 const requestHeaders = {
-                  "Accept": "application/json",
+                  Accept: "application/json",
                 };
 
                 // Update request URL as we try different endpoints
                 const updatedHistoryForRetry = [...(state.httpHistory || [])];
                 if (updatedHistoryForRetry.length > 0) {
-                  updatedHistoryForRetry[updatedHistoryForRetry.length - 1].request = {
+                  updatedHistoryForRetry[
+                    updatedHistoryForRetry.length - 1
+                  ].request = {
                     method: "GET",
                     url: url,
                     headers: requestHeaders,
@@ -553,7 +627,9 @@ export const createDebugOAuthStateMachine = (
             }
 
             if (!authServerMetadata || !finalResponseData) {
-              throw new Error(`Could not discover authorization server metadata. Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
+              throw new Error(
+                `Could not discover authorization server metadata. Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+              );
             }
 
             const authServerResponseData = {
@@ -566,7 +642,8 @@ export const createDebugOAuthStateMachine = (
             // Update the last history entry with the response
             const updatedHistoryFinal = [...(state.httpHistory || [])];
             if (updatedHistoryFinal.length > 0) {
-              updatedHistoryFinal[updatedHistoryFinal.length - 1].response = authServerResponseData;
+              updatedHistoryFinal[updatedHistoryFinal.length - 1].response =
+                authServerResponseData;
             }
 
             updateState({
@@ -608,7 +685,7 @@ export const createDebugOAuthStateMachine = (
                 url: state.authorizationServerMetadata.registration_endpoint,
                 headers: {
                   "Content-Type": "application/json",
-                  "Accept": "application/json",
+                  Accept: "application/json",
                 },
                 body: clientMetadata,
               };
@@ -659,10 +736,10 @@ export const createDebugOAuthStateMachine = (
                   method: "POST",
                   headers: {
                     "Content-Type": "application/json",
-                    "Accept": "application/json",
+                    Accept: "application/json",
                   },
                   body: JSON.stringify(state.lastRequest.body),
-                }
+                },
               );
 
               const registrationResponseData = {
@@ -675,7 +752,8 @@ export const createDebugOAuthStateMachine = (
               // Update the last history entry with the response
               const updatedHistoryReg = [...(state.httpHistory || [])];
               if (updatedHistoryReg.length > 0) {
-                updatedHistoryReg[updatedHistoryReg.length - 1].response = registrationResponseData;
+                updatedHistoryReg[updatedHistoryReg.length - 1].response =
+                  registrationResponseData;
               }
 
               if (!response.ok) {
@@ -717,12 +795,15 @@ export const createDebugOAuthStateMachine = (
                 status: 0,
                 statusText: "Network Error",
                 headers: {},
-                body: { error: error instanceof Error ? error.message : String(error) },
+                body: {
+                  error: error instanceof Error ? error.message : String(error),
+                },
               };
 
               const updatedHistoryError = [...(state.httpHistory || [])];
               if (updatedHistoryError.length > 0) {
-                updatedHistoryError[updatedHistoryError.length - 1].response = errorResponse;
+                updatedHistoryError[updatedHistoryError.length - 1].response =
+                  errorResponse;
               }
 
               updateState({
@@ -762,15 +843,23 @@ export const createDebugOAuthStateMachine = (
 
           case "generate_pkce_parameters":
             // Step 8: Build authorization URL
-            if (!state.authorizationServerMetadata?.authorization_endpoint || !state.clientId) {
+            if (
+              !state.authorizationServerMetadata?.authorization_endpoint ||
+              !state.clientId
+            ) {
               throw new Error("Missing authorization endpoint or client ID");
             }
 
-            const authUrl = new URL(state.authorizationServerMetadata.authorization_endpoint);
+            const authUrl = new URL(
+              state.authorizationServerMetadata.authorization_endpoint,
+            );
             authUrl.searchParams.set("response_type", "code");
             authUrl.searchParams.set("client_id", state.clientId);
             authUrl.searchParams.set("redirect_uri", redirectUri);
-            authUrl.searchParams.set("code_challenge", state.codeChallenge || "");
+            authUrl.searchParams.set(
+              "code_challenge",
+              state.codeChallenge || "",
+            );
             authUrl.searchParams.set("code_challenge_method", "S256");
             authUrl.searchParams.set("state", state.state || "");
             if (state.serverUrl) {
@@ -800,9 +889,13 @@ export const createDebugOAuthStateMachine = (
           case "received_authorization_code":
             // Step 10: Validate authorization code and prepare for token exchange
 
-            if (!state.authorizationCode || state.authorizationCode.trim() === "") {
+            if (
+              !state.authorizationCode ||
+              state.authorizationCode.trim() === ""
+            ) {
               updateState({
-                error: "Authorization code is required. Please paste the code you received from the authorization server.",
+                error:
+                  "Authorization code is required. Please paste the code you received from the authorization server.",
                 isInitiatingAuth: false,
               });
               return;
@@ -836,7 +929,7 @@ export const createDebugOAuthStateMachine = (
               url: state.authorizationServerMetadata.token_endpoint,
               headers: {
                 "Content-Type": "application/x-www-form-urlencoded",
-                "Accept": "application/json",
+                Accept: "application/json",
               },
               body: tokenRequestBodyObj,
             };
@@ -871,7 +964,9 @@ export const createDebugOAuthStateMachine = (
             }
 
             if (!state.codeVerifier) {
-              throw new Error("PKCE code_verifier is missing - cannot exchange token");
+              throw new Error(
+                "PKCE code_verifier is missing - cannot exchange token",
+              );
             }
 
             try {
@@ -896,10 +991,10 @@ export const createDebugOAuthStateMachine = (
                   method: "POST",
                   headers: {
                     "Content-Type": "application/x-www-form-urlencoded",
-                    "Accept": "application/json",
+                    Accept: "application/json",
                   },
                   body: tokenRequestBody.toString(),
-                }
+                },
               );
 
               const tokenResponseData = {
@@ -912,7 +1007,8 @@ export const createDebugOAuthStateMachine = (
               // Update the last history entry with the response
               const updatedHistoryToken = [...(state.httpHistory || [])];
               if (updatedHistoryToken.length > 0) {
-                updatedHistoryToken[updatedHistoryToken.length - 1].response = tokenResponseData;
+                updatedHistoryToken[updatedHistoryToken.length - 1].response =
+                  tokenResponseData;
               }
 
               if (!response.ok) {
@@ -947,12 +1043,15 @@ export const createDebugOAuthStateMachine = (
                 status: 0,
                 statusText: "Network Error",
                 headers: {},
-                body: { error: error instanceof Error ? error.message : String(error) },
+                body: {
+                  error: error instanceof Error ? error.message : String(error),
+                },
               };
 
               const updatedHistoryError = [...(state.httpHistory || [])];
               if (updatedHistoryError.length > 0) {
-                updatedHistoryError[updatedHistoryError.length - 1].response = errorResponse;
+                updatedHistoryError[updatedHistoryError.length - 1].response =
+                  errorResponse;
               }
 
               updateState({
@@ -974,9 +1073,9 @@ export const createDebugOAuthStateMachine = (
               method: "POST",
               url: state.serverUrl,
               headers: {
-                "Authorization": `Bearer ${state.accessToken}`,
+                Authorization: `Bearer ${state.accessToken}`,
                 "Content-Type": "application/json",
-                "Accept": "application/json",
+                Accept: "application/json",
               },
               body: {
                 jsonrpc: "2.0",
@@ -1019,7 +1118,8 @@ export const createDebugOAuthStateMachine = (
             // Update the last history entry with the response
             const updatedHistoryMcp = [...(state.httpHistory || [])];
             if (updatedHistoryMcp.length > 0) {
-              updatedHistoryMcp[updatedHistoryMcp.length - 1].response = mcpResponseData;
+              updatedHistoryMcp[updatedHistoryMcp.length - 1].response =
+                mcpResponseData;
             }
 
             updateState({
@@ -1078,10 +1178,14 @@ export const createDebugOAuthStateMachine = (
 
 // Helper function to generate random string for PKCE
 function generateRandomString(length: number): string {
-  const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+  const charset =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
   const randomValues = new Uint8Array(length);
   crypto.getRandomValues(randomValues);
-  return Array.from(randomValues, (byte) => charset[byte % charset.length]).join("");
+  return Array.from(
+    randomValues,
+    (byte) => charset[byte % charset.length],
+  ).join("");
 }
 
 // Helper function to generate code challenge from verifier
@@ -1092,4 +1196,3 @@ async function generateCodeChallenge(verifier: string): Promise<string> {
   const base64 = btoa(String.fromCharCode(...new Uint8Array(hash)));
   return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
 }
-

@@ -17,7 +17,7 @@ export default function OAuthDebugCallback() {
           const message = {
             type: "OAUTH_CALLBACK",
             code: callbackParams.code,
-            state: (new URLSearchParams(window.location.search)).get("state"),
+            state: new URLSearchParams(window.location.search).get("state"),
           };
           window.opener.postMessage(message, window.location.origin);
           setCodeSent(true);
@@ -47,7 +47,8 @@ export default function OAuthDebugCallback() {
                   </p>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  This window will close automatically. You can now continue in the OAuth Flow tab.
+                  This window will close automatically. You can now continue in
+                  the OAuth Flow tab.
                 </p>
               </div>
             ) : (

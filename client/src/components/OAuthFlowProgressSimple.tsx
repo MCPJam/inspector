@@ -105,7 +105,12 @@ export const OAuthFlowProgressSimple = ({
     if (currentStepIdx > steps.indexOf("client_registration")) {
       fetchClientInfo();
     }
-  }, [provider, flowState.oauthStep, flowState.oauthClientInfo, currentStepIdx]);
+  }, [
+    provider,
+    flowState.oauthStep,
+    flowState.oauthClientInfo,
+    currentStepIdx,
+  ]);
 
   // Helper to get step props
   const getStepProps = (stepName: OAuthStep) => ({
