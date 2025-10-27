@@ -8,7 +8,15 @@ export type OAuthFlowStep =
   | "received_resource_metadata"
   | "request_authorization_server_metadata"
   | "received_authorization_server_metadata"
-  // Add more steps here as needed
+  | "request_client_registration"
+  | "received_client_credentials"
+  | "generate_pkce_parameters"
+  | "authorization_request"
+  | "received_authorization_code"
+  | "token_request"
+  | "received_access_token"
+  | "authenticated_mcp_request"
+  | "complete"
   ;
 
 // State interface for OAuth flow
@@ -37,11 +45,28 @@ export interface OauthFlowStateJune2025 {
     grant_types_supported?: string[];
     code_challenge_methods_supported?: string[];
   };
+  // Client Registration
+  clientId?: string;
+  clientSecret?: string;
+  // PKCE Parameters
+  codeVerifier?: string;
+  codeChallenge?: string;
+  codeChallengeMethod?: string;
+  // Authorization
+  authorizationUrl?: string;
+  authorizationCode?: string;
+  state?: string;
+  // Tokens
+  accessToken?: string;
+  refreshToken?: string;
+  tokenType?: string;
+  expiresIn?: number;
   // Raw request/response data for debugging
   lastRequest?: {
     method: string;
     url: string;
     headers: Record<string, string>;
+    body?: any;
   };
   lastResponse?: {
     status: number;
@@ -56,6 +81,7 @@ export interface OauthFlowStateJune2025 {
       method: string;
       url: string;
       headers: Record<string, string>;
+      body?: any;
     };
     response?: {
       status: number;
@@ -510,9 +536,297 @@ export const createDebugOAuthStateMachine = (
             break;
 
           case "received_authorization_server_metadata":
-            // Terminal state for now
-            console.log("[Debug OAuth] OAuth flow discovery complete!");
-            console.log("[Debug OAuth] Next steps: Client registration, authorization redirect, token exchange");
+            // Step 5: Dynamic Client Registration (if registration_endpoint exists)
+            if (!state.authorizationServerMetadata) {
+              throw new Error("No authorization server metadata available");
+            }
+
+            if (state.authorizationServerMetadata.registration_endpoint) {
+              console.log("[Debug OAuth] Registration endpoint available, proceeding to client registration");
+
+              const registrationRequest = {
+                method: "POST",
+                url: state.authorizationServerMetadata.registration_endpoint,
+                headers: {
+                  "Content-Type": "application/json",
+                  "Accept": "application/json",
+                },
+                body: {
+                  client_name: "MCP Inspector Debug Client",
+                  redirect_uris: ["http://localhost:3000/oauth/callback"],
+                  grant_types: ["authorization_code", "refresh_token"],
+                  response_types: ["code"],
+                  token_endpoint_auth_method: "none", // Public client
+                },
+              };
+
+              updateState({
+                currentStep: "request_client_registration",
+                lastRequest: registrationRequest,
+                lastResponse: undefined,
+                httpHistory: [
+                  ...(state.httpHistory || []),
+                  {
+                    step: "request_client_registration",
+                    request: registrationRequest,
+                  },
+                ],
+                isInitiatingAuth: false,
+              });
+            } else {
+              console.log("[Debug OAuth] No registration endpoint, skipping to PKCE generation");
+              console.log("[Debug OAuth] Note: In production, you would need to manually register and provide a client_id");
+
+              // Skip to PKCE generation with a mock client ID
+              updateState({
+                currentStep: "generate_pkce_parameters",
+                clientId: "mock-client-id-for-demo",
+                isInitiatingAuth: false,
+              });
+            }
+            break;
+
+          case "request_client_registration":
+            // Step 6: Fetch client credentials
+            if (!state.authorizationServerMetadata?.registration_endpoint) {
+              throw new Error("No registration endpoint available");
+            }
+
+            console.log("[Debug OAuth] Registering client with authorization server");
+
+            // In a real implementation, this would make an actual POST request
+            // For demo purposes, we'll simulate the response
+            console.log("[Debug OAuth] Note: In actual implementation, POST to registration endpoint");
+
+            const mockClientCredentials = {
+              client_id: "demo-client-" + Math.random().toString(36).substring(7),
+              client_secret: undefined, // Public client
+              redirect_uris: ["http://localhost:3000/oauth/callback"],
+              grant_types: ["authorization_code", "refresh_token"],
+            };
+
+            const registrationResponseData = {
+              status: 201,
+              statusText: "Created",
+              headers: { "content-type": "application/json" },
+              body: mockClientCredentials,
+            };
+
+            // Update the last history entry with the response
+            const updatedHistoryReg = [...(state.httpHistory || [])];
+            if (updatedHistoryReg.length > 0) {
+              updatedHistoryReg[updatedHistoryReg.length - 1].response = registrationResponseData;
+            }
+
+            updateState({
+              currentStep: "received_client_credentials",
+              clientId: mockClientCredentials.client_id,
+              clientSecret: mockClientCredentials.client_secret,
+              lastResponse: registrationResponseData,
+              httpHistory: updatedHistoryReg,
+              isInitiatingAuth: false,
+            });
+            break;
+
+          case "received_client_credentials":
+            // Step 7: Generate PKCE parameters
+            console.log("[Debug OAuth] Generating PKCE parameters");
+
+            // Generate PKCE parameters (simplified for demo)
+            const codeVerifier = generateRandomString(43);
+            const codeChallenge = await generateCodeChallenge(codeVerifier);
+
+            updateState({
+              currentStep: "generate_pkce_parameters",
+              codeVerifier,
+              codeChallenge,
+              codeChallengeMethod: "S256",
+              state: generateRandomString(16),
+              isInitiatingAuth: false,
+            });
+            break;
+
+          case "generate_pkce_parameters":
+            // Step 8: Build authorization URL
+            if (!state.authorizationServerMetadata?.authorization_endpoint || !state.clientId) {
+              throw new Error("Missing authorization endpoint or client ID");
+            }
+
+            console.log("[Debug OAuth] Building authorization URL");
+
+            const authUrl = new URL(state.authorizationServerMetadata.authorization_endpoint);
+            authUrl.searchParams.set("response_type", "code");
+            authUrl.searchParams.set("client_id", state.clientId);
+            authUrl.searchParams.set("redirect_uri", "http://localhost:3000/oauth/callback");
+            authUrl.searchParams.set("code_challenge", state.codeChallenge || "");
+            authUrl.searchParams.set("code_challenge_method", "S256");
+            authUrl.searchParams.set("state", state.state || "");
+            if (state.serverUrl) {
+              authUrl.searchParams.set("resource", state.serverUrl);
+            }
+
+            updateState({
+              currentStep: "authorization_request",
+              authorizationUrl: authUrl.toString(),
+              isInitiatingAuth: false,
+            });
+            break;
+
+          case "authorization_request":
+            // Step 9: Simulate authorization code callback
+            console.log("[Debug OAuth] Authorization request ready");
+            console.log("[Debug OAuth] In production: Browser would redirect to:", state.authorizationUrl);
+            console.log("[Debug OAuth] Simulating authorization code callback...");
+
+            // Simulate receiving auth code
+            const mockAuthCode = "mock-auth-code-" + Math.random().toString(36).substring(7);
+
+            updateState({
+              currentStep: "received_authorization_code",
+              authorizationCode: mockAuthCode,
+              isInitiatingAuth: false,
+            });
+            break;
+
+          case "received_authorization_code":
+            // Step 10: Exchange authorization code for tokens
+            if (!state.authorizationServerMetadata?.token_endpoint || !state.authorizationCode) {
+              throw new Error("Missing token endpoint or authorization code");
+            }
+
+            console.log("[Debug OAuth] Exchanging authorization code for access token");
+
+            const tokenRequest = {
+              method: "POST",
+              url: state.authorizationServerMetadata.token_endpoint,
+              headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": "application/json",
+              },
+              body: {
+                grant_type: "authorization_code",
+                code: state.authorizationCode,
+                redirect_uri: "http://localhost:3000/oauth/callback",
+                client_id: state.clientId,
+                code_verifier: state.codeVerifier,
+                resource: state.serverUrl,
+              },
+            };
+
+            updateState({
+              currentStep: "token_request",
+              lastRequest: tokenRequest,
+              lastResponse: undefined,
+              httpHistory: [
+                ...(state.httpHistory || []),
+                {
+                  step: "token_request",
+                  request: tokenRequest,
+                },
+              ],
+              isInitiatingAuth: false,
+            });
+            break;
+
+          case "token_request":
+            // Step 11: Receive access token
+            console.log("[Debug OAuth] Receiving access token");
+
+            // Simulate token response
+            const mockTokens = {
+              access_token: "mock-access-token-" + Math.random().toString(36).substring(7),
+              token_type: "Bearer",
+              expires_in: 3600,
+              refresh_token: "mock-refresh-token-" + Math.random().toString(36).substring(7),
+            };
+
+            const tokenResponseData = {
+              status: 200,
+              statusText: "OK",
+              headers: { "content-type": "application/json" },
+              body: mockTokens,
+            };
+
+            // Update the last history entry with the response
+            const updatedHistoryToken = [...(state.httpHistory || [])];
+            if (updatedHistoryToken.length > 0) {
+              updatedHistoryToken[updatedHistoryToken.length - 1].response = tokenResponseData;
+            }
+
+            updateState({
+              currentStep: "received_access_token",
+              accessToken: mockTokens.access_token,
+              refreshToken: mockTokens.refresh_token,
+              tokenType: mockTokens.token_type,
+              expiresIn: mockTokens.expires_in,
+              lastResponse: tokenResponseData,
+              httpHistory: updatedHistoryToken,
+              isInitiatingAuth: false,
+            });
+            break;
+
+          case "received_access_token":
+            // Step 12: Make authenticated MCP request
+            if (!state.serverUrl || !state.accessToken) {
+              throw new Error("Missing server URL or access token");
+            }
+
+            console.log("[Debug OAuth] Making authenticated MCP request");
+
+            const authenticatedRequest = {
+              method: "GET",
+              url: state.serverUrl,
+              headers: {
+                "Authorization": `Bearer ${state.accessToken}`,
+                "Accept": "application/json",
+              },
+            };
+
+            updateState({
+              currentStep: "authenticated_mcp_request",
+              lastRequest: authenticatedRequest,
+              lastResponse: undefined,
+              httpHistory: [
+                ...(state.httpHistory || []),
+                {
+                  step: "authenticated_mcp_request",
+                  request: authenticatedRequest,
+                },
+              ],
+              isInitiatingAuth: false,
+            });
+            break;
+
+          case "authenticated_mcp_request":
+            // Step 13: Complete flow
+            console.log("[Debug OAuth] OAuth flow complete!");
+            console.log("[Debug OAuth] MCP server would process authenticated request");
+
+            // Simulate successful response
+            const mcpResponseData = {
+              status: 200,
+              statusText: "OK",
+              headers: { "content-type": "application/json" },
+              body: { message: "Authenticated MCP request successful" },
+            };
+
+            // Update the last history entry with the response
+            const updatedHistoryMcp = [...(state.httpHistory || [])];
+            if (updatedHistoryMcp.length > 0) {
+              updatedHistoryMcp[updatedHistoryMcp.length - 1].response = mcpResponseData;
+            }
+
+            updateState({
+              currentStep: "complete",
+              lastResponse: mcpResponseData,
+              httpHistory: updatedHistoryMcp,
+              isInitiatingAuth: false,
+            });
+            break;
+
+          case "complete":
+            // Terminal state
+            console.log("[Debug OAuth] Flow is complete");
             updateState({ isInitiatingAuth: false });
             break;
 
@@ -552,4 +866,20 @@ export const createDebugOAuthStateMachine = (
   };
 };
 
+// Helper function to generate random string for PKCE
+function generateRandomString(length: number): string {
+  const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+  const randomValues = new Uint8Array(length);
+  crypto.getRandomValues(randomValues);
+  return Array.from(randomValues, (byte) => charset[byte % charset.length]).join("");
+}
+
+// Helper function to generate code challenge from verifier
+async function generateCodeChallenge(verifier: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(verifier);
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  const base64 = btoa(String.fromCharCode(...new Uint8Array(hash)));
+  return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+}
 
