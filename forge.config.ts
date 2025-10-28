@@ -71,6 +71,13 @@ const config: ForgeConfig = {
       resolve(__dirname, ".env.production"),
       resolve(__dirname, "sdk", "dist"),
     ],
+    // Register custom protocol for OAuth callbacks
+    protocols: [
+      {
+        name: "MCPJam Protocol",
+        schemes: ["mcpjam"],
+      },
+    ],
     osxSign: osxSignOptions,
     osxNotarize: osxNotarizeOptions,
   },

@@ -27,16 +27,31 @@ if (process.platform === "win32") {
   app.setAppUserModelId("com.mcpjam.inspector");
 }
 
-// Register custom protocol for OAuth callbacks
-if (!app.isDefaultProtocolClient("mcpjam")) {
-  app.setAsDefaultProtocolClient("mcpjam");
-}
-
 let mainWindow: BrowserWindow | null = null;
 let server: any = null;
 let serverPort: number = 0;
 
 const isDev = process.env.NODE_ENV === "development";
+
+// Register custom protocol for OAuth callbacks
+// In development, we need to pass the electron executable path
+if (isDev) {
+  log.info("Registering mcpjam:// protocol for development");
+  // For macOS/Linux development, we need to pass the electron path
+  // For Windows, we also need to pass the entry point
+  const result = app.setAsDefaultProtocolClient("mcpjam", process.execPath, [
+    path.resolve(process.argv[1] || "."),
+  ]);
+  log.info(`Protocol registration result: ${result}`);
+  log.info(`Is default protocol client: ${app.isDefaultProtocolClient("mcpjam")}`);
+} else {
+  // For production, simple registration works
+  if (!app.isDefaultProtocolClient("mcpjam")) {
+    const result = app.setAsDefaultProtocolClient("mcpjam");
+    log.info(`Protocol registration result: ${result}`);
+  }
+  log.info(`Is default protocol client: ${app.isDefaultProtocolClient("mcpjam")}`);
+}
 
 async function findAvailablePort(startPort = 3000): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -107,6 +122,17 @@ function createMainWindow(serverUrl: string): BrowserWindow {
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     show: false, // Don't show until ready
   });
+
+  // Intercept navigation to WorkOS/AuthKit URLs and open in external browser
+  window.webContents.on("will-navigate", (event, url) => {
+    if (url.includes("api.workos.com") || url.includes("workos.com")) {
+      event.preventDefault();
+      log.info("Intercepting navigation to WorkOS, opening in external browser:", url);
+      shell.openExternal(url);
+    }
+  });
+
+  // Note: setWindowOpenHandler is set globally in web-contents-created event
 
   // Load the app
   window.loadURL(isDev ? MAIN_WINDOW_VITE_DEV_SERVER_URL : serverUrl);
@@ -272,9 +298,15 @@ app.on("activate", async () => {
 // Handle OAuth callback URLs
 app.on("open-url", (event, url) => {
   event.preventDefault();
-  log.info("OAuth callback received:", url);
+  log.info("==== OAuth callback received ====");
+  log.info("URL:", url);
+  log.info("Event:", event);
 
-  if (!url.startsWith("mcpjam://oauth/callback")) {
+  // Check if it's an AuthKit callback (uses different protocol)
+  const isAuthKitCallback = url.startsWith("mcpjam://authkit/callback");
+  const isMcpCallback = url.startsWith("mcpjam://oauth/callback");
+
+  if (!isAuthKitCallback && !isMcpCallback) {
     return;
   }
 
@@ -288,7 +320,15 @@ app.on("open-url", (event, url) => {
       ? MAIN_WINDOW_VITE_DEV_SERVER_URL
       : `http://127.0.0.1:${serverPort}`;
 
-    const callbackUrl = new URL("/callback", baseUrl);
+    let callbackUrl: URL;
+    if (isMcpCallback) {
+      // MCP OAuth callback - route to /oauth/callback
+      callbackUrl = new URL("/oauth/callback", baseUrl);
+    } else {
+      // AuthKit callback - route to /callback
+      callbackUrl = new URL("/callback", baseUrl);
+    }
+
     if (code) callbackUrl.searchParams.set("code", code);
     if (state) callbackUrl.searchParams.set("state", state);
 
@@ -298,8 +338,8 @@ app.on("open-url", (event, url) => {
     }
     mainWindow.loadURL(callbackUrl.toString());
 
-    // Still emit the event for any listeners
-    if (mainWindow && mainWindow.webContents) {
+    // Still emit the event for any listeners (needed for MCP OAuth)
+    if (mainWindow && mainWindow.webContents && isMcpCallback) {
       mainWindow.webContents.send("oauth-callback", url);
     }
 
@@ -312,9 +352,11 @@ app.on("open-url", (event, url) => {
   }
 });
 
-// Security: Prevent new window creation
+// Security: Prevent new window creation and handle external URLs
 app.on("web-contents-created", (_, contents) => {
   contents.setWindowOpenHandler(({ url }) => {
+    // All external URLs should open in the system browser
+    log.info("Opening external URL:", url);
     shell.openExternal(url);
     return { action: "deny" };
   });

@@ -34,6 +34,7 @@ interface ElectronAPI {
   oauth: {
     onCallback: (callback: (url: string) => void) => void;
     removeCallback: () => void;
+    openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
   };
 }
 
@@ -70,6 +71,8 @@ const electronAPI: ElectronAPI = {
     removeCallback: () => {
       ipcRenderer.removeAllListeners("oauth-callback");
     },
+    openExternal: (url: string) =>
+      ipcRenderer.invoke("oauth:openExternal", url),
   },
 };
 

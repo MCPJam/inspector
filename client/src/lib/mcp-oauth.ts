@@ -115,7 +115,10 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     customClientSecret?: string,
   ) {
     this.serverName = serverName;
-    this.redirectUri = `${window.location.origin}/oauth/callback`;
+    // Use custom protocol for Electron, otherwise use web URL
+    this.redirectUri = window.isElectron
+      ? "mcpjam://oauth/callback"
+      : `${window.location.origin}/oauth/callback`;
     this.customClientId = customClientId;
     this.customClientSecret = customClientSecret;
   }
@@ -187,9 +190,28 @@ export class MCPOAuthProvider implements OAuthClientProvider {
 
   async redirectToAuthorization(authorizationUrl: URL) {
     // Store server name for callback recovery
-
     localStorage.setItem("mcp-oauth-pending", this.serverName);
-    window.location.href = authorizationUrl.toString();
+
+    // If running in Electron, open the OAuth URL in external browser
+    if (window.isElectron && window.electronAPI?.oauth.openExternal) {
+      try {
+        const result = await window.electronAPI.oauth.openExternal(
+          authorizationUrl.toString(),
+        );
+        if (!result.success) {
+          console.error("Failed to open OAuth URL in external browser:", result.error);
+          // Fallback to in-app navigation if external browser fails
+          window.location.href = authorizationUrl.toString();
+        }
+      } catch (error) {
+        console.error("Error opening OAuth URL in external browser:", error);
+        // Fallback to in-app navigation
+        window.location.href = authorizationUrl.toString();
+      }
+    } else {
+      // Web mode: navigate in-app
+      window.location.href = authorizationUrl.toString();
+    }
   }
 
   async saveCodeVerifier(codeVerifier: string) {

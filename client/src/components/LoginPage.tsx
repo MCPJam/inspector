@@ -1,4 +1,3 @@
-import { useAuth } from "@workos-inc/authkit-react";
 import { usePostHog } from "posthog-js/react";
 import { X } from "lucide-react";
 
@@ -7,9 +6,10 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import { useLoginPage } from "@/hooks/use-log-in-page";
 import { useEffect } from "react";
+import { useElectronAuth } from "@/hooks/useElectronAuth";
 
 export default function LoginPage() {
-  const { signUp, signIn } = useAuth();
+  const { signUp, signIn } = useElectronAuth();
   const posthog = usePostHog();
   const themeMode = usePreferencesStore((state) => state.themeMode);
   const { hideLoginPage } = useLoginPage();

@@ -23,15 +23,32 @@ const workosClientId = import.meta.env.VITE_WORKOS_CLIENT_ID as string;
 const workosRedirectUri = (() => {
   const envRedirect =
     (import.meta.env.VITE_WORKOS_REDIRECT_URI as string) || undefined;
-  if (typeof window === "undefined") return envRedirect ?? "/callback";
+
+  // If explicitly set in env, use that
+  if (envRedirect) return envRedirect;
+
+  if (typeof window === "undefined") return "/callback";
+
+  // Check if running in Electron - this is set by preload.ts
+  // IMPORTANT: Must check this before checking HTTP protocol
+  if ((window as any)?.isElectron) {
+    console.log("Detected Electron environment, using custom protocol");
+    return "mcpjam://authkit/callback";
+  }
+
+  // For web browsers
   const isBrowserHttp =
     window.location.protocol === "http:" ||
     window.location.protocol === "https:";
-  if (isBrowserHttp) return `${window.location.origin}/callback`;
-  if (envRedirect) return envRedirect;
-  if ((window as any)?.isElectron) return "mcpjam://oauth/callback";
+  if (isBrowserHttp) {
+    console.log("Detected web browser, using web callback");
+    return `${window.location.origin}/callback`;
+  }
+
   return `${window.location.origin}/callback`;
 })();
+
+console.log("WorkOS Redirect URI:", workosRedirectUri);
 
 // Warn if critical env vars are missing
 if (!convexUrl) {
