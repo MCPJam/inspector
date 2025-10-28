@@ -35,7 +35,8 @@ export const OAuthAdvancedConfigModal = ({
   onCustomHeadersChange,
 }: OAuthAdvancedConfigModalProps) => {
   const [localScopes, setLocalScopes] = useState(customScopes);
-  const [localHeaders, setLocalHeaders] = useState<CustomHeader[]>(customHeaders);
+  const [localHeaders, setLocalHeaders] =
+    useState<CustomHeader[]>(customHeaders);
 
   // Sync with prop when modal opens
   useEffect(() => {
@@ -47,7 +48,7 @@ export const OAuthAdvancedConfigModal = ({
 
   const handleSave = () => {
     onCustomScopesChange(localScopes);
-    onCustomHeadersChange(localHeaders.filter(h => h.key.trim() !== ""));
+    onCustomHeadersChange(localHeaders.filter((h) => h.key.trim() !== ""));
     onOpenChange(false);
   };
 
@@ -66,7 +67,11 @@ export const OAuthAdvancedConfigModal = ({
     setLocalHeaders([...localHeaders, { key: "", value: "" }]);
   };
 
-  const updateHeader = (index: number, field: "key" | "value", value: string) => {
+  const updateHeader = (
+    index: number,
+    field: "key" | "value",
+    value: string,
+  ) => {
     const updated = [...localHeaders];
     updated[index][field] = value;
     setLocalHeaders(updated);
@@ -125,8 +130,9 @@ export const OAuthAdvancedConfigModal = ({
 
             {localHeaders.length === 0 ? (
               <p className="text-xs text-muted-foreground">
-                Add custom HTTP headers for OAuth flow requests (e.g., API-Key, X-Custom-Header).
-                Headers from your server configuration are automatically included.
+                Add custom HTTP headers for OAuth flow requests (e.g., API-Key,
+                X-Custom-Header). Headers from your server configuration are
+                automatically included.
               </p>
             ) : (
               <div className="space-y-2">
@@ -137,14 +143,18 @@ export const OAuthAdvancedConfigModal = ({
                         type="text"
                         placeholder="Header name"
                         value={header.key}
-                        onChange={(e) => updateHeader(index, "key", e.target.value)}
+                        onChange={(e) =>
+                          updateHeader(index, "key", e.target.value)
+                        }
                         className="font-mono text-xs"
                       />
                       <Input
                         type="text"
                         placeholder="Header value"
                         value={header.value}
-                        onChange={(e) => updateHeader(index, "value", e.target.value)}
+                        onChange={(e) =>
+                          updateHeader(index, "value", e.target.value)
+                        }
                         className="font-mono text-xs"
                       />
                     </div>
@@ -160,7 +170,8 @@ export const OAuthAdvancedConfigModal = ({
                   </div>
                 ))}
                 <p className="text-xs text-muted-foreground mt-2">
-                  These headers will be sent with OAuth flow requests. Pre-populated from your server configuration.
+                  These headers will be sent with OAuth flow requests.
+                  Pre-populated from your server configuration.
                 </p>
               </div>
             )}
