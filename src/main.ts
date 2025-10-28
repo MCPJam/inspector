@@ -125,6 +125,12 @@ function createMainWindow(serverUrl: string): BrowserWindow {
 
   // Intercept navigation to WorkOS/AuthKit URLs and open in external browser
   window.webContents.on("will-navigate", (event, url) => {
+    // Allow logout to happen in-app, but open other WorkOS URLs in external browser
+    if (url.includes("/auth/logout") || url.includes("/signout")) {
+      log.info("Allowing WorkOS logout to happen in-app:", url);
+      return; // Don't prevent, let it navigate in-app
+    }
+
     if (url.includes("api.workos.com") || url.includes("workos.com")) {
       event.preventDefault();
       log.info("Intercepting navigation to WorkOS, opening in external browser:", url);
