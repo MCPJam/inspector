@@ -338,6 +338,7 @@ export function ChatTabV2() {
                   onModelChange={(model) =>
                     setSelectedModelId(String(model.id))
                   }
+                  hasMessages={messages.length > 0}
                 />
               </div>
             </div>
