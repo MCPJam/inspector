@@ -1455,10 +1455,10 @@ export const createDebugOAuthStateMachine = (
               "authenticated-init",
               "Authenticated MCP Initialize Request",
               {
-                "Request": "MCP initialize with OAuth bearer token",
+                Request: "MCP initialize with OAuth bearer token",
                 "Protocol Version": "2025-06-18",
-                "Client": "MCP Inspector v1.0.0",
-                "Endpoint": state.serverUrl,
+                Client: "MCP Inspector v1.0.0",
+                Endpoint: state.serverUrl,
               },
             );
 
@@ -1554,20 +1554,23 @@ export const createDebugOAuthStateMachine = (
               if (isSSE && mcpResponse?.result?.protocolVersion) {
                 // SSE streaming response with parsed MCP response
                 const protocolInfo: Record<string, any> = {
-                  "Transport": "Streamable HTTP",
+                  Transport: "Streamable HTTP",
                   "Response Format": "Server-Sent Events (streaming)",
                   "Protocol Version": mcpResponse.result.protocolVersion,
                 };
 
                 // Include server info if available
                 if (mcpResponse.result.serverInfo) {
-                  protocolInfo["Server Name"] = mcpResponse.result.serverInfo.name;
-                  protocolInfo["Server Version"] = mcpResponse.result.serverInfo.version;
+                  protocolInfo["Server Name"] =
+                    mcpResponse.result.serverInfo.name;
+                  protocolInfo["Server Version"] =
+                    mcpResponse.result.serverInfo.version;
                 }
 
                 // Include capabilities if available
                 if (mcpResponse.result.capabilities) {
-                  protocolInfo["Capabilities"] = mcpResponse.result.capabilities;
+                  protocolInfo["Capabilities"] =
+                    mcpResponse.result.capabilities;
                 }
 
                 mcpInfoLogs = addInfoLog(
@@ -1583,30 +1586,35 @@ export const createDebugOAuthStateMachine = (
                   "mcp-transport",
                   "MCP Transport Detected",
                   {
-                    "Transport": "Streamable HTTP",
+                    Transport: "Streamable HTTP",
                     "Response Format": "Server-Sent Events (streaming)",
                     "Content-Type": contentType,
                     Note: "Server returned streaming response. Initialize response delivered via SSE stream.",
-                    Events: response.body?.events ? `${response.body.events.length} events parsed` : "No events parsed",
+                    Events: response.body?.events
+                      ? `${response.body.events.length} events parsed`
+                      : "No events parsed",
                   },
                 );
               } else if (mcpResponse?.result?.protocolVersion) {
                 // JSON response - extract protocol version from response body
                 const protocolInfo: Record<string, any> = {
-                  "Transport": "Streamable HTTP",
+                  Transport: "Streamable HTTP",
                   "Response Format": "JSON",
                   "Protocol Version": mcpResponse.result.protocolVersion,
                 };
 
                 // Include server info if available
                 if (mcpResponse.result.serverInfo) {
-                  protocolInfo["Server Name"] = mcpResponse.result.serverInfo.name;
-                  protocolInfo["Server Version"] = mcpResponse.result.serverInfo.version;
+                  protocolInfo["Server Name"] =
+                    mcpResponse.result.serverInfo.name;
+                  protocolInfo["Server Version"] =
+                    mcpResponse.result.serverInfo.version;
                 }
 
                 // Include capabilities if available
                 if (mcpResponse.result.capabilities) {
-                  protocolInfo["Capabilities"] = mcpResponse.result.capabilities;
+                  protocolInfo["Capabilities"] =
+                    mcpResponse.result.capabilities;
                 }
 
                 mcpInfoLogs = addInfoLog(
