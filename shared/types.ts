@@ -416,6 +416,7 @@ export interface ServerFormData {
   oauthScopes?: string[];
   clientId?: string;
   clientSecret?: string;
+  requestTimeout?: number;
 }
 
 export interface OauthTokens {

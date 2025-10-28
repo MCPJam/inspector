@@ -10,6 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
+import { ChevronDown, ChevronRight, Settings } from "lucide-react";
 import { ServerFormData } from "@/shared/types.js";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { getStoredTokens, hasOAuthConfig } from "@/lib/mcp-oauth";
@@ -61,6 +62,8 @@ export function ServerModal({
   const [customHeaders, setCustomHeaders] = useState<
     Array<{ key: string; value: string }>
   >([]);
+  const [requestTimeout, setRequestTimeout] = useState<string>("10000");
+  const [showConfiguration, setShowConfiguration] = useState<boolean>(false);
 
   // Convert ServerWithName to ServerFormData format
   const convertServerConfig = (server: ServerWithName): ServerFormData => {
@@ -120,6 +123,7 @@ export function ServerModal({
               ? config.clientSecret
               : ""
             : clientInfo?.client_secret || "",
+        requestTimeout: config.timeout || 10000,
       };
     } else {
       return {
@@ -128,6 +132,7 @@ export function ServerModal({
         command: config.command || "",
         args: config.args || [],
         env: config.env || {},
+        requestTimeout: config.timeout || 10000,
       };
     }
   };
@@ -147,6 +152,7 @@ export function ServerModal({
       useOAuth: true,
       oauthScopes: [],
       clientId: "",
+      requestTimeout: 10000,
     };
   };
 
@@ -154,6 +160,9 @@ export function ServerModal({
     if (isOpen) {
       const formData = getInitialFormData();
       setServerFormData(formData);
+
+      // Set timeout value
+      setRequestTimeout(String(formData.requestTimeout || 10000));
 
       // Set additional form state
       if (formData.type === "stdio") {
@@ -275,6 +284,13 @@ export function ServerModal({
     if (serverFormData.name) {
       let finalFormData = { ...serverFormData };
 
+      // Add timeout configuration
+      const reqTimeout = parseInt(requestTimeout) || 10000;
+      finalFormData = {
+        ...finalFormData,
+        requestTimeout: reqTimeout,
+      };
+
       if (serverFormData.type === "stdio" && commandInput) {
         const parts = commandInput.split(" ").filter((part) => part.trim());
         const command = parts[0] || "";
@@ -382,6 +398,8 @@ export function ServerModal({
     setClientSecretError(null);
     setEnvVars([]);
     setCustomHeaders([]);
+    setRequestTimeout("10000");
+    setShowConfiguration(false);
   };
 
   const addEnvVar = () => {
@@ -789,6 +807,52 @@ export function ServerModal({
               </div>
             </div>
           )}
+
+          {/* Configuration Section */}
+          <div className="border border-border rounded-lg overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setShowConfiguration(!showConfiguration)}
+              className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                {showConfiguration ? (
+                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                ) : (
+                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                )}
+                <Settings className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm font-medium text-foreground">
+                  Configuration
+                </span>
+              </div>
+            </button>
+
+            {showConfiguration && (
+              <div className="p-4 space-y-4 border-t border-border bg-muted/30">
+                {/* Request Timeout */}
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-foreground">
+                    Request Timeout
+                  </label>
+                  <Input
+                    type="number"
+                    value={requestTimeout}
+                    onChange={(e) => setRequestTimeout(e.target.value)}
+                    placeholder="10000"
+                    className="h-10"
+                    min="1000"
+                    max="600000"
+                    step="1000"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Timeout in milliseconds for individual MCP requests
+                    (default: 10000ms, min: 1000ms, max: 600000ms)
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
 
           <div className="flex justify-end space-x-2 pt-4">
             <Button
