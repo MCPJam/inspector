@@ -12,7 +12,7 @@ import { HttpServerDefinition } from "@/shared/types.js";
 const originalFetch = window.fetch;
 
 /**
- * Custom fetch interceptor that proxies OAuth metadata requests through our server
+ * Custom fetch interceptor that proxies OAuth requests through our server to avoid CORS
  */
 function createOAuthFetchInterceptor(): typeof fetch {
   return async function interceptedFetch(
@@ -26,30 +26,64 @@ function createOAuthFetchInterceptor(): typeof fetch {
           ? input.toString()
           : input.url;
 
-    // Check if this is an OAuth metadata request
-    if (url.includes("/.well-known/oauth-authorization-server")) {
-      try {
-        // Proxy through our server to avoid CORS
-        const proxyUrl = `/api/mcp/oauth/metadata?url=${encodeURIComponent(url)}`;
-        const response = await originalFetch(proxyUrl, {
-          ...init,
-          method: "GET", // Always GET for metadata
-        });
+    // Check if this is an OAuth-related request that needs CORS bypass
+    const isOAuthRequest =
+      url.includes("/.well-known/") ||
+      url.match(/\/(register|token|authorize)$/);
 
-        return response;
-      } catch (error) {
-        console.error(
-          "OAuth metadata proxy failed, falling back to direct fetch:",
-          error,
-        );
-        // Fallback to original fetch if proxy fails
-        return await originalFetch(input, init);
-      }
+    if (!isOAuthRequest) {
+      return await originalFetch(input, init);
     }
 
-    // For all other requests, use original fetch
-    return await originalFetch(input, init);
+    // Proxy OAuth requests through our server
+    try {
+      const isMetadata = url.includes("/.well-known/");
+      const proxyUrl = isMetadata
+        ? `/api/mcp/oauth/metadata?url=${encodeURIComponent(url)}`
+        : `/api/mcp/oauth/proxy`;
+
+      if (isMetadata) {
+        return await originalFetch(proxyUrl, { ...init, method: "GET" });
+      }
+
+      // For OAuth endpoints, serialize and proxy the full request
+      const body = init?.body ? await serializeBody(init.body) : undefined;
+      const response = await originalFetch(proxyUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url,
+          method: init?.method || "POST",
+          headers: init?.headers
+            ? Object.fromEntries(new Headers(init.headers as HeadersInit))
+            : {},
+          body,
+        }),
+      });
+
+      const data = await response.json();
+      return new Response(JSON.stringify(data.body), {
+        status: data.status,
+        statusText: data.statusText,
+        headers: new Headers(data.headers),
+      });
+    } catch (error) {
+      console.error("OAuth proxy failed, falling back to direct fetch:", error);
+      return await originalFetch(input, init);
+    }
   };
+}
+
+/**
+ * Serialize request body for proxying
+ */
+async function serializeBody(body: BodyInit): Promise<any> {
+  if (typeof body === "string") return body;
+  if (body instanceof URLSearchParams || body instanceof FormData) {
+    return Object.fromEntries(body.entries());
+  }
+  if (body instanceof Blob) return await body.text();
+  return body;
 }
 
 export interface MCPOAuthOptions {
@@ -570,6 +604,10 @@ function createServerConfig(
 ): HttpServerDefinition {
   // Preserve full URL including query and hash to support servers configured with query params
   const fullUrl = new URL(serverUrl);
+
+  // Note: We don't include authProvider in the config because it can't be serialized
+  // when sent to the backend via JSON. The backend will use the Authorization header instead.
+  // Token refresh should be handled separately if the token expires.
 
   return {
     url: fullUrl,
