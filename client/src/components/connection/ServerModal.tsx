@@ -813,7 +813,7 @@ export function ServerModal({
             <button
               type="button"
               onClick={() => setShowConfiguration(!showConfiguration)}
-              className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors"
+              className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors cursor-pointer"
             >
               <div className="flex items-center gap-2">
                 {showConfiguration ? (
@@ -821,9 +821,8 @@ export function ServerModal({
                 ) : (
                   <ChevronRight className="h-4 w-4 text-muted-foreground" />
                 )}
-                <Settings className="h-4 w-4 text-muted-foreground" />
                 <span className="text-sm font-medium text-foreground">
-                  Configuration
+                  Additional Configuration
                 </span>
               </div>
             </button>
@@ -846,8 +845,7 @@ export function ServerModal({
                     step="1000"
                   />
                   <p className="text-xs text-muted-foreground">
-                    Timeout in milliseconds for individual MCP requests
-                    (default: 10000ms, min: 1000ms, max: 600000ms)
+                    Timeout in ms (default: 10000ms, min: 1000ms, max: 600000ms)
                   </p>
                 </div>
               </div>
