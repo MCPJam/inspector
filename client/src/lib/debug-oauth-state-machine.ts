@@ -128,6 +128,7 @@ export interface DebugOAuthStateMachineConfig {
   redirectUrl?: string; // Redirect URL for OAuth callback
   fetchFn?: typeof fetch; // Optional fetch function for testing
   customScopes?: string; // Optional custom scopes override (space-separated)
+  customHeaders?: Record<string, string>; // Optional custom HTTP headers
 }
 
 // Helper: Build well-known resource metadata URL from server URL
@@ -270,11 +271,20 @@ export const createDebugOAuthStateMachine = (
     redirectUrl,
     fetchFn = fetch,
     customScopes,
+    customHeaders,
   } = config;
 
   // Use provided redirectUrl or default to the origin + /oauth/callback/debug
   const redirectUri =
     redirectUrl || `${window.location.origin}/oauth/callback/debug`;
+
+  // Helper to merge custom headers with request headers
+  const mergeHeaders = (requestHeaders: Record<string, string> = {}) => {
+    return {
+      ...customHeaders,
+      ...requestHeaders, // Request headers override custom headers
+    };
+  };
 
   // Helper to get current state (use getState if provided, otherwise use initial state)
   const getCurrentState = () => (getState ? getState() : initialState);
@@ -294,13 +304,15 @@ export const createDebugOAuthStateMachine = (
         switch (state.currentStep) {
           case "idle":
             // Step 1: Make initial MCP request without token
+            const initialRequestHeaders = mergeHeaders({
+              "Content-Type": "application/json",
+              Accept: "application/json",
+            });
+
             const initialRequest = {
               method: "POST",
               url: serverUrl,
-              headers: {
-                "Content-Type": "application/json",
-                Accept: "application/json",
-              },
+              headers: initialRequestHeaders,
               body: {
                 jsonrpc: "2.0",
                 method: "initialize",
@@ -346,6 +358,9 @@ export const createDebugOAuthStateMachine = (
               // Use backend proxy to bypass CORS and capture all headers
               const response = await proxyFetch(state.serverUrl, {
                 method: "POST",
+                headers: mergeHeaders({
+                  "Content-Type": "application/json",
+                }),
                 body: JSON.stringify({
                   jsonrpc: "2.0",
                   method: "initialize",
@@ -442,9 +457,9 @@ export const createDebugOAuthStateMachine = (
             const resourceMetadataRequest = {
               method: "GET",
               url: extractedResourceMetadataUrl,
-              headers: {
+              headers: mergeHeaders({
                 Accept: "application/json",
-              },
+              }),
             };
 
             // Update state with the URL and request
@@ -477,6 +492,9 @@ export const createDebugOAuthStateMachine = (
               // Use backend proxy to bypass CORS
               const response = await proxyFetch(state.resourceMetadataUrl, {
                 method: "GET",
+                headers: mergeHeaders({
+                  Accept: "application/json",
+                }),
               });
 
               if (!response.ok) {
@@ -587,9 +605,9 @@ export const createDebugOAuthStateMachine = (
             const authServerRequest = {
               method: "GET",
               url: authServerUrls[0], // Show the first URL we'll try
-              headers: {
+              headers: mergeHeaders({
                 Accept: "application/json",
-              },
+              }),
             };
 
             // Update state with the request
@@ -629,9 +647,9 @@ export const createDebugOAuthStateMachine = (
 
             for (const url of urlsToTry) {
               try {
-                const requestHeaders = {
+                const requestHeaders = mergeHeaders({
                   Accept: "application/json",
-                };
+                });
 
                 // Update request URL as we try different endpoints
                 const updatedHistoryForRetry = [...(state.httpHistory || [])];
@@ -657,6 +675,9 @@ export const createDebugOAuthStateMachine = (
                 // Use backend proxy to bypass CORS
                 const response = await proxyFetch(url, {
                   method: "GET",
+                  headers: mergeHeaders({
+                    Accept: "application/json",
+                  }),
                 });
 
                 if (response.ok) {
@@ -819,10 +840,10 @@ export const createDebugOAuthStateMachine = (
               const registrationRequest = {
                 method: "POST",
                 url: state.authorizationServerMetadata.registration_endpoint,
-                headers: {
+                headers: mergeHeaders({
                   "Content-Type": "application/json",
                   Accept: "application/json",
-                },
+                }),
                 body: clientMetadata,
               };
 
@@ -870,10 +891,10 @@ export const createDebugOAuthStateMachine = (
                 state.authorizationServerMetadata.registration_endpoint,
                 {
                   method: "POST",
-                  headers: {
+                  headers: mergeHeaders({
                     "Content-Type": "application/json",
                     Accept: "application/json",
-                  },
+                  }),
                   body: JSON.stringify(state.lastRequest.body),
                 },
               );
@@ -1145,10 +1166,10 @@ export const createDebugOAuthStateMachine = (
             const tokenRequest = {
               method: "POST",
               url: state.authorizationServerMetadata.token_endpoint,
-              headers: {
+              headers: mergeHeaders({
                 "Content-Type": "application/x-www-form-urlencoded",
                 Accept: "application/json",
-              },
+              }),
               body: tokenRequestBodyObj,
             };
 
@@ -1209,10 +1230,10 @@ export const createDebugOAuthStateMachine = (
                 state.authorizationServerMetadata.token_endpoint,
                 {
                   method: "POST",
-                  headers: {
+                  headers: mergeHeaders({
                     "Content-Type": "application/x-www-form-urlencoded",
                     Accept: "application/json",
-                  },
+                  }),
                   body: tokenRequestBody.toString(),
                 },
               );
@@ -1368,11 +1389,11 @@ export const createDebugOAuthStateMachine = (
             const authenticatedRequest = {
               method: "POST",
               url: state.serverUrl,
-              headers: {
+              headers: mergeHeaders({
                 Authorization: `Bearer ${state.accessToken}`,
                 "Content-Type": "application/json",
                 Accept: "application/json, text/event-stream",
-              },
+              }),
               body: {
                 jsonrpc: "2.0",
                 method: "initialize",
@@ -1416,11 +1437,11 @@ export const createDebugOAuthStateMachine = (
             try {
               const response = await proxyFetch(state.serverUrl, {
                 method: "POST",
-                headers: {
+                headers: mergeHeaders({
                   Authorization: `Bearer ${state.accessToken}`,
                   "Content-Type": "application/json",
                   Accept: "application/json, text/event-stream",
-                },
+                }),
                 body: JSON.stringify({
                   jsonrpc: "2.0",
                   method: "initialize",
