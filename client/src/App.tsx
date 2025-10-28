@@ -74,6 +74,16 @@ export default function App() {
     [],
   );
 
+  // Also check if we're on a regular callback with MCP OAuth params (safety check)
+  const isMcpCallbackOnWrongPath = useMemo(() => {
+    if (!window.location.pathname.startsWith("/callback")) return false;
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get("code");
+    const mcpPending = localStorage.getItem("mcp-oauth-pending");
+    // If we have a code and an MCP OAuth pending, this is likely an MCP callback on the wrong path
+    return !!(code && mcpPending);
+  }, []);
+
   const {
     appState,
     isLoading,
@@ -114,6 +124,28 @@ export default function App() {
 
   if (isDebugCallback) {
     return <OAuthDebugCallback />;
+  }
+
+  // Handle MCP OAuth callback on wrong path - redirect to correct path
+  if (isMcpCallbackOnWrongPath) {
+    useEffect(() => {
+      console.warn("MCP OAuth callback detected on /callback instead of /oauth/callback");
+      console.log("Redirecting to correct path...");
+      // Redirect to the correct MCP OAuth callback path
+      window.location.pathname = "/oauth/callback";
+    }, []);
+
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-background">
+        <div className="text-center space-y-4 p-8">
+          <div className="text-6xl">⚠️</div>
+          <h1 className="text-2xl font-semibold">Redirecting OAuth Callback</h1>
+          <p className="text-muted-foreground">
+            Redirecting to the correct OAuth callback path...
+          </p>
+        </div>
+      </div>
+    );
   }
 
   if (isOAuthCallback) {

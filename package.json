@@ -80,6 +80,7 @@
     "@hookform/resolvers": "^3.10.0",
     "@mastra/core": "0.18.0",
     "@mastra/mcp": "0.13.1",
+    "@mcpjam/inspector": "^1.0.21",
     "@modelcontextprotocol/sdk": "^1.20.2",
     "@openrouter/ai-sdk-provider": "^1.2.0",
     "@sentry/electron": "^5.10.0",
