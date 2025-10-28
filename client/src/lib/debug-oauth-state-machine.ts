@@ -48,6 +48,7 @@ export interface OauthFlowStateJune2025 {
   // Client Registration
   clientId?: string;
   clientSecret?: string;
+  tokenEndpointAuthMethod?: string; // How to authenticate at token endpoint
   // PKCE Parameters
   codeVerifier?: string;
   codeChallenge?: string;
@@ -107,6 +108,7 @@ export const EMPTY_OAUTH_FLOW_STATE_V2: OauthFlowStateJune2025 = {
   currentStep: "idle",
   httpHistory: [],
   infoLogs: [],
+  tokenEndpointAuthMethod: undefined,
 };
 
 // State machine interface
@@ -907,6 +909,7 @@ export const createDebugOAuthStateMachine = (
               updateState({
                 currentStep: "generate_pkce_parameters",
                 clientId: "mock-client-id-for-demo",
+                tokenEndpointAuthMethod: "none", // Public client
                 isInitiatingAuth: false,
               });
             }
@@ -966,6 +969,7 @@ export const createDebugOAuthStateMachine = (
                   currentStep: "received_client_credentials",
                   clientId: fallbackClientId,
                   clientSecret: undefined,
+                  tokenEndpointAuthMethod: "none", // Assume public client
                   isInitiatingAuth: false,
                 });
               } else {
@@ -976,7 +980,8 @@ export const createDebugOAuthStateMachine = (
                 const dcrInfo: Record<string, any> = {
                   "Client ID": clientInfo.client_id,
                   "Client Name": clientInfo.client_name,
-                  "Token Auth Method": clientInfo.token_endpoint_auth_method,
+                  "Token Auth Method":
+                    clientInfo.token_endpoint_auth_method || "none",
                   "Redirect URIs": clientInfo.redirect_uris,
                   "Grant Types": clientInfo.grant_types,
                   "Response Types": clientInfo.response_types,
@@ -985,6 +990,8 @@ export const createDebugOAuthStateMachine = (
                 if (clientInfo.client_secret) {
                   dcrInfo["Client Secret"] =
                     clientInfo.client_secret.substring(0, 20) + "...";
+                  dcrInfo["Note"] =
+                    "Server issued client_secret - this will be used in token requests";
                 }
 
                 const infoLogs = addInfoLog(
@@ -998,6 +1005,8 @@ export const createDebugOAuthStateMachine = (
                   currentStep: "received_client_credentials",
                   clientId: clientInfo.client_id,
                   clientSecret: clientInfo.client_secret,
+                  tokenEndpointAuthMethod:
+                    clientInfo.token_endpoint_auth_method || "none",
                   lastResponse: registrationResponseData,
                   httpHistory: updatedHistoryReg,
                   infoLogs,
@@ -1035,6 +1044,7 @@ export const createDebugOAuthStateMachine = (
                 currentStep: "received_client_credentials",
                 clientId: fallbackClientId,
                 clientSecret: undefined,
+                tokenEndpointAuthMethod: "none", // Assume public client
                 isInitiatingAuth: false,
               });
             }
@@ -1197,6 +1207,10 @@ export const createDebugOAuthStateMachine = (
               tokenRequestBodyObj.client_id = state.clientId;
             }
 
+            if (state.clientSecret) {
+              tokenRequestBodyObj.client_secret = state.clientSecret;
+            }
+
             if (state.codeVerifier) {
               tokenRequestBodyObj.code_verifier = state.codeVerifier;
             }
@@ -1260,6 +1274,11 @@ export const createDebugOAuthStateMachine = (
                 client_id: state.clientId || "",
                 code_verifier: state.codeVerifier || "",
               });
+
+              // Add client_secret if available (for confidential clients)
+              if (state.clientSecret) {
+                tokenRequestBody.set("client_secret", state.clientSecret);
+              }
 
               // Add resource parameter if available
               if (state.serverUrl) {
