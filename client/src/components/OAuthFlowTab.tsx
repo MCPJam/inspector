@@ -501,66 +501,69 @@ export const OAuthFlowTab = ({
             </p>
           </div>
           <div className="flex items-center gap-2">
-          <p className="text-xs text-muted-foreground pr-4">
-            Protocol Revision: 2025-06-18
-          </p>
-          <Button
-            variant="outline"
-            onClick={() => {
-              // Mark this as a manual reset (don't auto-restart)
-              manualResetRef.current = true;
+            <p className="text-xs text-muted-foreground pr-4">
+              Protocol Revision: 2025-06-18
+            </p>
+            <Button
+              variant="outline"
+              onClick={() => setIsAdvancedConfigOpen(true)}
+              disabled={oauthFlowState.isInitiatingAuth}
+            >
+              Advanced
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                // Mark this as a manual reset (don't auto-restart)
+                manualResetRef.current = true;
 
-              if (oauthStateMachine) {
-                oauthStateMachine.resetFlow();
-              }
+                if (oauthStateMachine) {
+                  oauthStateMachine.resetFlow();
+                }
 
-              // Reset the initialized server ref to allow manual restart
-              initializedServerRef.current = null;
+                // Reset the initialized server ref to allow manual restart
+                initializedServerRef.current = null;
 
-              // Clear processed code tracker and any pending exchanges
-              processedCodeRef.current = null;
-              if (exchangeTimeoutRef.current) {
-                clearTimeout(exchangeTimeoutRef.current);
-                exchangeTimeoutRef.current = null;
+                // Clear processed code tracker and any pending exchanges
+                processedCodeRef.current = null;
+                if (exchangeTimeoutRef.current) {
+                  clearTimeout(exchangeTimeoutRef.current);
+                  exchangeTimeoutRef.current = null;
+                }
+              }}
+              disabled={oauthFlowState.isInitiatingAuth}
+            >
+              Reset
+            </Button>
+            <Button
+              onClick={() => {
+                // If we're at authorization step, open the popup
+                if (oauthFlowState.currentStep === "authorization_request") {
+                  setIsAuthModalOpen(true);
+                } else {
+                  // Otherwise proceed to next step
+                  void proceedToNextStep();
+                }
+              }}
+              disabled={
+                oauthFlowState.isInitiatingAuth ||
+                oauthFlowState.currentStep === "complete"
               }
-            }}
-            disabled={oauthFlowState.isInitiatingAuth}
-          >
-            Reset
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => setIsAdvancedConfigOpen(true)}
-            disabled={oauthFlowState.isInitiatingAuth}
-          >
-            Advanced
-          </Button>
-          <Button
-            onClick={() => {
-              // If we're at authorization step, open the popup
-              if (oauthFlowState.currentStep === "authorization_request") {
-                setIsAuthModalOpen(true);
-              } else {
-                // Otherwise proceed to next step
-                void proceedToNextStep();
-              }
-            }}
-            disabled={oauthFlowState.isInitiatingAuth || oauthFlowState.currentStep === "complete"}
-            className={`min-w-[180px] ${oauthFlowState.currentStep === "complete" ? "bg-green-600 hover:bg-green-600" : ""}`}
-          >
-            {oauthFlowState.currentStep === "complete" ? (
-              <>
-                <CheckCircle2 className="mr-2 h-4 w-4" />
-                Flow Complete
-              </>
-            ) : oauthFlowState.isInitiatingAuth ? (
-              "Processing..."
-            ) : oauthFlowState.currentStep === "authorization_request" ? (
-              "Ready to authorize"
-            ) : (
-              "Next Step"
-            )}
-          </Button>
+              className={`min-w-[180px] ${oauthFlowState.currentStep === "complete" ? "bg-green-600 hover:bg-green-600" : ""}`}
+            >
+              {oauthFlowState.currentStep === "complete" ? (
+                <>
+                  <CheckCircle2 className="mr-2 h-4 w-4" />
+                  Flow Complete
+                </>
+              ) : oauthFlowState.isInitiatingAuth ? (
+                "Processing..."
+              ) : oauthFlowState.currentStep === "authorization_request" ? (
+                "Ready to authorize"
+              ) : (
+                "Next Step"
+              )}
+            </Button>
           </div>
         </div>
       </div>
