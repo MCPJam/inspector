@@ -91,14 +91,59 @@ oauth.post("/debug/proxy", async (c) => {
     });
 
     let responseBody: any = null;
-    try {
-      responseBody = await response.json();
-    } catch {
-      // Response might not be JSON
+    const contentTypeHeader = headers["content-type"] || "";
+
+    // Handle SSE (Server-Sent Events) response
+    if (contentTypeHeader.includes("text/event-stream")) {
       try {
-        responseBody = await response.text();
+        const text = await response.text();
+        // Parse SSE events
+        const events: any[] = [];
+        const lines = text.split("\n");
+        let currentEvent: any = {};
+
+        for (const line of lines) {
+          if (line.startsWith("event:")) {
+            currentEvent.event = line.substring(6).trim();
+          } else if (line.startsWith("data:")) {
+            const data = line.substring(5).trim();
+            try {
+              currentEvent.data = JSON.parse(data);
+            } catch {
+              currentEvent.data = data;
+            }
+          } else if (line.startsWith("id:")) {
+            currentEvent.id = line.substring(3).trim();
+          } else if (line === "") {
+            // Empty line indicates end of event
+            if (Object.keys(currentEvent).length > 0) {
+              events.push(currentEvent);
+              currentEvent = {};
+            }
+          }
+        }
+
+        // If we parsed events, return them. Otherwise return the raw text.
+        responseBody = events.length > 0 ? {
+          events,
+          // If there's a "message" event with MCP response, extract it
+          mcpResponse: events.find(e => e.event === "message" || !e.event)?.data || null
+        } : { raw: text };
+      } catch (error) {
+        console.error("Failed to parse SSE response:", error);
+        responseBody = { error: "Failed to parse SSE stream" };
+      }
+    } else {
+      // Handle JSON or text response
+      try {
+        responseBody = await response.json();
       } catch {
-        responseBody = null;
+        // Response might not be JSON
+        try {
+          responseBody = await response.text();
+        } catch {
+          responseBody = null;
+        }
       }
     }
 
