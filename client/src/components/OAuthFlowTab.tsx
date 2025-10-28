@@ -37,6 +37,10 @@ import {
 import { DebugMCPOAuthClientProvider } from "../lib/debug-oauth-provider";
 import { OAuthSequenceDiagram } from "./OAuthSequenceDiagram";
 import { OAuthAuthorizationModal } from "./OAuthAuthorizationModal";
+import {
+  OAuthAdvancedConfigModal,
+  CustomHeader,
+} from "./OAuthAdvancedConfigModal";
 import { MCPServerConfig } from "@/sdk";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
@@ -117,6 +121,15 @@ export const OAuthFlowTab = ({
   // Track if authorization modal is open
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
+  // Track if advanced config modal is open
+  const [isAdvancedConfigOpen, setIsAdvancedConfigOpen] = useState(false);
+
+  // Track custom scopes input
+  const [customScopes, setCustomScopes] = useState("");
+
+  // Track custom headers
+  const [customHeaders, setCustomHeaders] = useState<CustomHeader[]>([]);
+
   // Use ref to always have access to the latest state
   const oauthFlowStateRef = useRef(oauthFlowState);
   useEffect(() => {
@@ -142,8 +155,8 @@ export const OAuthFlowTab = ({
       "pkce-generation",
       "auth-url",
       "auth-code",
+      "oauth-tokens",
       "token",
-      "refresh-token",
     ]);
     setDeletedInfoLogs(allInfoLogIds);
   };
@@ -185,6 +198,8 @@ export const OAuthFlowTab = ({
     }
     setExpandedBlocks(new Set());
     setDeletedInfoLogs(new Set());
+    setCustomScopes(""); // Clear custom scopes
+    // Headers will remain from server config (not cleared on reset)
   }, [updateOAuthFlowState]);
 
   // Update auth settings when server config changes
@@ -201,6 +216,23 @@ export const OAuthFlowTab = ({
         error: null,
         statusMessage: null,
       });
+
+      // Pre-populate custom headers from server config (if any)
+      if ("url" in serverConfig) {
+        if (serverConfig.requestInit?.headers) {
+          const headers = serverConfig.requestInit.headers as Record<
+            string,
+            string
+          >;
+          const headerEntries = Object.entries(headers)
+            .filter(([key]) => key.toLowerCase() !== "authorization") // Exclude auth header
+            .map(([key, value]) => ({ key, value }));
+          setCustomHeaders(headerEntries);
+        } else {
+          // No headers configured for this server
+          setCustomHeaders([]);
+        }
+      }
     } else {
       updateAuthSettings(DEFAULT_AUTH_SETTINGS);
     }
@@ -220,8 +252,20 @@ export const OAuthFlowTab = ({
       serverUrl: authSettings.serverUrl,
       serverName,
       redirectUrl: provider.redirectUrl,
+      customScopes: customScopes.trim() || undefined,
+      customHeaders:
+        customHeaders.length > 0
+          ? Object.fromEntries(customHeaders.map((h) => [h.key, h.value]))
+          : undefined,
     });
-  }, [serverConfig, serverName, authSettings.serverUrl, updateOAuthFlowState]);
+  }, [
+    serverConfig,
+    serverName,
+    authSettings.serverUrl,
+    updateOAuthFlowState,
+    customScopes,
+    customHeaders,
+  ]);
 
   const proceedToNextStep = useCallback(async () => {
     if (oauthStateMachine) {
@@ -321,6 +365,10 @@ export const OAuthFlowTab = ({
 
     // Reset the initialized ref to allow reinitialization
     initializedServerRef.current = null;
+
+    // Clear custom scopes when switching servers
+    // (headers will be auto-populated from new server config)
+    setCustomScopes("");
 
     // Reset using the state machine if available
     if (oauthStateMachine) {
@@ -440,60 +488,83 @@ export const OAuthFlowTab = ({
   return (
     <div className="h-[calc(100vh-120px)] flex flex-col bg-background">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-background">
-        <div>
-          <div className="flex items-center gap-2">
-            <Workflow className="h-5 w-5" />
-            <h3 className="text-lg font-medium">OAuth Authentication Flow</h3>
+      <div className="px-6 py-4 border-b border-border bg-background">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <Workflow className="h-5 w-5" />
+              <h3 className="text-lg font-medium">OAuth Authentication Flow</h3>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              {serverEntry?.name || "Unknown Server"} •{" "}
+              {isHttpServer && (serverConfig as any).url.toString()}
+            </p>
           </div>
-          <p className="text-sm text-muted-foreground">
-            {serverEntry?.name || "Unknown Server"} •{" "}
-            {isHttpServer && (serverConfig as any).url.toString()}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            onClick={() => {
-              // If we're at authorization step, open the popup
-              if (oauthFlowState.currentStep === "authorization_request") {
-                setIsAuthModalOpen(true);
-              } else {
-                // Otherwise proceed to next step
-                void proceedToNextStep();
-              }
-            }}
-            disabled={oauthFlowState.isInitiatingAuth}
-          >
-            {oauthFlowState.isInitiatingAuth
-              ? "Processing..."
-              : oauthFlowState.currentStep === "authorization_request"
-                ? "Ready to authorize"
-                : "Next Step"}
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => {
-              // Mark this as a manual reset (don't auto-restart)
-              manualResetRef.current = true;
+          <div className="flex items-center gap-2">
+            <p className="text-xs text-muted-foreground pr-4">
+              Protocol Revision: 2025-06-18
+            </p>
+            <Button
+              variant="outline"
+              onClick={() => setIsAdvancedConfigOpen(true)}
+              disabled={oauthFlowState.isInitiatingAuth}
+            >
+              Advanced
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                // Mark this as a manual reset (don't auto-restart)
+                manualResetRef.current = true;
 
-              if (oauthStateMachine) {
-                oauthStateMachine.resetFlow();
-              }
+                if (oauthStateMachine) {
+                  oauthStateMachine.resetFlow();
+                }
 
-              // Reset the initialized server ref to allow manual restart
-              initializedServerRef.current = null;
+                // Reset the initialized server ref to allow manual restart
+                initializedServerRef.current = null;
 
-              // Clear processed code tracker and any pending exchanges
-              processedCodeRef.current = null;
-              if (exchangeTimeoutRef.current) {
-                clearTimeout(exchangeTimeoutRef.current);
-                exchangeTimeoutRef.current = null;
+                // Clear processed code tracker and any pending exchanges
+                processedCodeRef.current = null;
+                if (exchangeTimeoutRef.current) {
+                  clearTimeout(exchangeTimeoutRef.current);
+                  exchangeTimeoutRef.current = null;
+                }
+              }}
+              disabled={oauthFlowState.isInitiatingAuth}
+            >
+              Reset
+            </Button>
+            <Button
+              onClick={() => {
+                // If we're at authorization step, open the popup
+                if (oauthFlowState.currentStep === "authorization_request") {
+                  setIsAuthModalOpen(true);
+                } else {
+                  // Otherwise proceed to next step
+                  void proceedToNextStep();
+                }
+              }}
+              disabled={
+                oauthFlowState.isInitiatingAuth ||
+                oauthFlowState.currentStep === "complete"
               }
-            }}
-            disabled={oauthFlowState.isInitiatingAuth}
-          >
-            Reset
-          </Button>
+              className={`min-w-[180px] ${oauthFlowState.currentStep === "complete" ? "bg-green-600 hover:bg-green-600" : ""}`}
+            >
+              {oauthFlowState.currentStep === "complete" ? (
+                <>
+                  <CheckCircle2 className="mr-2 h-4 w-4" />
+                  Flow Complete
+                </>
+              ) : oauthFlowState.isInitiatingAuth ? (
+                "Processing..."
+              ) : oauthFlowState.currentStep === "authorization_request" ? (
+                "Ready to authorize"
+              ) : (
+                "Next Step"
+              )}
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -824,6 +895,16 @@ export const OAuthFlowTab = ({
           authorizationUrl={oauthFlowState.authorizationUrl}
         />
       )}
+
+      {/* Advanced Config Modal */}
+      <OAuthAdvancedConfigModal
+        open={isAdvancedConfigOpen}
+        onOpenChange={setIsAdvancedConfigOpen}
+        customScopes={customScopes}
+        onCustomScopesChange={setCustomScopes}
+        customHeaders={customHeaders}
+        onCustomHeadersChange={setCustomHeaders}
+      />
     </div>
   );
 };
