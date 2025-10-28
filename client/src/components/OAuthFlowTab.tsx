@@ -37,7 +37,10 @@ import {
 import { DebugMCPOAuthClientProvider } from "../lib/debug-oauth-provider";
 import { OAuthSequenceDiagram } from "./OAuthSequenceDiagram";
 import { OAuthAuthorizationModal } from "./OAuthAuthorizationModal";
-import { OAuthAdvancedConfigModal } from "./OAuthAdvancedConfigModal";
+import {
+  OAuthAdvancedConfigModal,
+  CustomHeader,
+} from "./OAuthAdvancedConfigModal";
 import { MCPServerConfig } from "@/sdk";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
@@ -124,6 +127,9 @@ export const OAuthFlowTab = ({
   // Track custom scopes input
   const [customScopes, setCustomScopes] = useState("");
 
+  // Track custom headers
+  const [customHeaders, setCustomHeaders] = useState<CustomHeader[]>([]);
+
   // Use ref to always have access to the latest state
   const oauthFlowStateRef = useRef(oauthFlowState);
   useEffect(() => {
@@ -193,6 +199,7 @@ export const OAuthFlowTab = ({
     setExpandedBlocks(new Set());
     setDeletedInfoLogs(new Set());
     setCustomScopes(""); // Clear custom scopes
+    // Headers will remain from server config (not cleared on reset)
   }, [updateOAuthFlowState]);
 
   // Update auth settings when server config changes
@@ -209,6 +216,23 @@ export const OAuthFlowTab = ({
         error: null,
         statusMessage: null,
       });
+
+      // Pre-populate custom headers from server config (if any)
+      if ("url" in serverConfig) {
+        if (serverConfig.requestInit?.headers) {
+          const headers = serverConfig.requestInit.headers as Record<
+            string,
+            string
+          >;
+          const headerEntries = Object.entries(headers)
+            .filter(([key]) => key.toLowerCase() !== "authorization") // Exclude auth header
+            .map(([key, value]) => ({ key, value }));
+          setCustomHeaders(headerEntries);
+        } else {
+          // No headers configured for this server
+          setCustomHeaders([]);
+        }
+      }
     } else {
       updateAuthSettings(DEFAULT_AUTH_SETTINGS);
     }
@@ -229,6 +253,10 @@ export const OAuthFlowTab = ({
       serverName,
       redirectUrl: provider.redirectUrl,
       customScopes: customScopes.trim() || undefined,
+      customHeaders:
+        customHeaders.length > 0
+          ? Object.fromEntries(customHeaders.map((h) => [h.key, h.value]))
+          : undefined,
     });
   }, [
     serverConfig,
@@ -236,6 +264,7 @@ export const OAuthFlowTab = ({
     authSettings.serverUrl,
     updateOAuthFlowState,
     customScopes,
+    customHeaders,
   ]);
 
   const proceedToNextStep = useCallback(async () => {
@@ -338,6 +367,7 @@ export const OAuthFlowTab = ({
     initializedServerRef.current = null;
 
     // Clear custom scopes when switching servers
+    // (headers will be auto-populated from new server config)
     setCustomScopes("");
 
     // Reset using the state machine if available
@@ -491,13 +521,6 @@ export const OAuthFlowTab = ({
           </Button>
           <Button
             variant="outline"
-            onClick={() => setIsAdvancedConfigOpen(true)}
-            disabled={oauthFlowState.isInitiatingAuth}
-          >
-            Advanced
-          </Button>
-          <Button
-            variant="outline"
             onClick={() => {
               // Mark this as a manual reset (don't auto-restart)
               manualResetRef.current = true;
@@ -519,6 +542,13 @@ export const OAuthFlowTab = ({
             disabled={oauthFlowState.isInitiatingAuth}
           >
             Reset
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => setIsAdvancedConfigOpen(true)}
+            disabled={oauthFlowState.isInitiatingAuth}
+          >
+            Advanced
           </Button>
           </div>
         </div>
@@ -858,6 +888,8 @@ export const OAuthFlowTab = ({
         onOpenChange={setIsAdvancedConfigOpen}
         customScopes={customScopes}
         onCustomScopesChange={setCustomScopes}
+        customHeaders={customHeaders}
+        onCustomHeadersChange={setCustomHeaders}
       />
     </div>
   );
