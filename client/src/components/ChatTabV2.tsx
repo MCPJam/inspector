@@ -227,6 +227,7 @@ export function ChatTabV2() {
           <div className="flex flex-col bg-background h-full min-h-0 overflow-hidden">
             <Thread
               messages={messages}
+              sendFollowUpMessage={(text: string) => sendMessage({ text })}
               model={selectedModel}
               isLoading={status === "submitted"}
             />
