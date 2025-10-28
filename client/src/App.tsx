@@ -129,8 +129,6 @@ export default function App() {
   // Handle MCP OAuth callback on wrong path - redirect to correct path
   if (isMcpCallbackOnWrongPath) {
     useEffect(() => {
-      console.warn("MCP OAuth callback detected on /callback instead of /oauth/callback");
-      console.log("Redirecting to correct path...");
       // Redirect to the correct MCP OAuth callback path
       window.location.pathname = "/oauth/callback";
     }, []);
@@ -139,7 +137,7 @@ export default function App() {
       <div className="flex items-center justify-center min-h-screen bg-background">
         <div className="text-center space-y-4 p-8">
           <div className="text-6xl">⚠️</div>
-          <h1 className="text-2xl font-semibold">Redirecting OAuth Callback</h1>
+          <h1 className="text-2xl font-semibold">Redirecting...</h1>
           <p className="text-muted-foreground">
             Redirecting to the correct OAuth callback path...
           </p>

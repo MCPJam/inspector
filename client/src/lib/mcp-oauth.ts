@@ -191,11 +191,6 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     // Store server name for callback recovery
     localStorage.setItem("mcp-oauth-pending", this.serverName);
 
-    console.log("=== OAuth Authorization ===");
-    console.log("Server:", this.serverName);
-    console.log("Redirect URI:", this.redirectUri);
-    console.log("Authorization URL:", authorizationUrl.toString());
-
     // If running in Electron, open the OAuth URL in external browser
     if (window.isElectron && window.electronAPI?.oauth.openExternal) {
       try {
