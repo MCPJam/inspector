@@ -218,7 +218,9 @@ function ToolPart({ part }: { part: ToolUIPart<UITools> | DynamicToolUIPart }) {
           )}
 
           {!hasInput && !hasOutput && !hasError && (
-            <div className="text-muted-foreground/70">No tool details available.</div>
+            <div className="text-muted-foreground/70">
+              No tool details available.
+            </div>
           )}
         </div>
       )}
