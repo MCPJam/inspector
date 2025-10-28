@@ -173,6 +173,12 @@ export function useAppState() {
       return;
     }
 
+    // Only process MCP OAuth callbacks (not WorkOS AuthKit callbacks)
+    // WorkOS uses /callback, MCP OAuth uses /oauth/callback
+    if (!window.location.pathname.startsWith("/oauth/callback")) {
+      return;
+    }
+
     if (!isLoading) {
       const urlParams = new URLSearchParams(window.location.search);
       const code = urlParams.get("code");
