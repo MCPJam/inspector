@@ -5,7 +5,7 @@ import { Button } from "../ui/button";
 import { TextareaAutosize } from "../ui/textarea-autosize";
 import { ArrowUp, Square } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
-import { ModelSelector } from "../chat/model-selector";
+import { ModelSelector } from "./model-selector";
 import { ModelDefinition } from "@/shared/types";
 
 interface ChatInputProps {
