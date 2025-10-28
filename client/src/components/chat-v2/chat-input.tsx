@@ -7,6 +7,7 @@ import { ArrowUp, Square } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { ModelSelector } from "./model-selector";
 import { ModelDefinition } from "@/shared/types";
+import { SystemPromptSelector } from "./system-prompt-selector";
 
 interface ChatInputProps {
   value: string;
@@ -20,6 +21,10 @@ interface ChatInputProps {
   currentModel: ModelDefinition;
   availableModels: ModelDefinition[];
   onModelChange: (model: ModelDefinition) => void;
+  systemPrompt: string;
+  onSystemPromptChange: (prompt: string) => void;
+  temperature: number;
+  onTemperatureChange: (temperature: number) => void;
   hasMessages?: boolean;
 }
 
@@ -35,6 +40,10 @@ export function ChatInput({
   currentModel,
   availableModels,
   onModelChange,
+  systemPrompt,
+  onSystemPromptChange,
+  temperature,
+  onTemperatureChange,
   hasMessages = false,
 }: ChatInputProps) {
   const formRef = useRef<HTMLFormElement>(null);
@@ -80,13 +89,24 @@ export function ChatInput({
         />
 
         <div className="flex items-center justify-between gap-2 px-2">
-          <div className="flex items-center">
+          <div className="flex items-center gap-1">
             <ModelSelector
               currentModel={currentModel}
               availableModels={availableModels}
               onModelChange={onModelChange}
               isLoading={isLoading || disabled}
               hasMessages={hasMessages}
+            />
+            <SystemPromptSelector
+              systemPrompt={
+                systemPrompt ||
+                "You are a helpful assistant with access to MCP tools."
+              }
+              onSystemPromptChange={onSystemPromptChange}
+              temperature={temperature}
+              onTemperatureChange={onTemperatureChange}
+              disabled={disabled}
+              isLoading={isLoading}
             />
           </div>
 
