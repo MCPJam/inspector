@@ -301,7 +301,11 @@ export function ChatTabV2() {
       >
         <ResizablePanel defaultSize={70} minSize={40} className="min-w-0">
           <div className="flex flex-col bg-background h-full min-h-0 overflow-hidden">
-            <Thread messages={messages} model={selectedModel} />
+            <Thread
+              messages={messages}
+              model={selectedModel}
+              isLoading={status === "submitted"}
+            />
             <div className="bg-background/80 backdrop-blur-sm flex-shrink-0">
               <div className="max-w-4xl mx-auto p-4">
                 <ChatInput
@@ -310,7 +314,7 @@ export function ChatTabV2() {
                   onSubmit={onSubmit}
                   stop={stop}
                   disabled={status !== "ready"}
-                  isLoading={isLoading}
+                  isLoading={status === "streaming" || status === "submitted"}
                   placeholder="Ask something…"
                   currentModel={selectedModel}
                   availableModels={availableModels}
