@@ -23,7 +23,7 @@ chatV2.post("/", async (c) => {
   try {
     const body = (await c.req.json()) as ChatV2Request;
     const mcpClientManager = c.mcpClientManager;
-    const { messages, apiKey, model } = body;
+    const { messages, apiKey, model, systemPrompt, temperature } = body;
 
     if (!Array.isArray(messages) || messages.length === 0) {
       return c.json({ error: "messages are required" }, 400);
@@ -115,7 +115,7 @@ chatV2.post("/", async (c) => {
                 mode: "step",
                 messages: JSON.stringify(messageHistory),
                 model: String(modelDefinition.id),
-                temperature: body.temperature ?? DEFAULT_TEMPERATURE,
+                temperature: temperature ?? DEFAULT_TEMPERATURE,
                 tools: toolDefs,
               }),
             });
@@ -203,7 +203,8 @@ chatV2.post("/", async (c) => {
     const result = streamText({
       model: llmModel,
       messages: convertToModelMessages(messages),
-      temperature: body.temperature ?? DEFAULT_TEMPERATURE,
+      temperature: temperature ?? DEFAULT_TEMPERATURE,
+      system: systemPrompt,
       tools: mcpTools,
       stopWhen: stepCountIs(20),
     });
