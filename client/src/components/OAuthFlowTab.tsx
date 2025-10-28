@@ -283,6 +283,66 @@ export const OAuthFlowTab = ({
 
   // Listen for OAuth callback messages from the popup window
   useEffect(() => {
+    // Helper function to process OAuth callback (shared by both methods)
+    const processOAuthCallback = (code: string, state: string | undefined) => {
+      // Check if we've already processed this exact code (prevent duplicate exchanges)
+      if (processedCodeRef.current === code) {
+        return;
+      }
+
+      // Validate state parameter to prevent accepting stale authorization codes
+      const expectedState = oauthFlowStateRef.current.state;
+
+      // Only accept the code if we're at the right step AND state matches
+      const currentStep = oauthFlowStateRef.current.currentStep;
+      const isWaitingForCode =
+        currentStep === "received_authorization_code" ||
+        currentStep === "authorization_request";
+
+      if (!isWaitingForCode) {
+        return;
+      }
+
+      if (!expectedState) {
+        updateOAuthFlowState({
+          error:
+            "Flow was reset. Please start a new authorization by clicking 'Next Step'.",
+        });
+        return;
+      }
+
+      if (state !== expectedState) {
+        updateOAuthFlowState({
+          error:
+            "Invalid state parameter - this authorization code is from a previous flow. Please try again.",
+        });
+        return;
+      }
+
+      // Mark this code as processed to prevent duplicate exchanges
+      processedCodeRef.current = code;
+
+      // Clear any pending exchange timeout
+      if (exchangeTimeoutRef.current) {
+        clearTimeout(exchangeTimeoutRef.current);
+      }
+
+      // Update state with the authorization code
+      updateOAuthFlowState({
+        authorizationCode: code,
+        error: undefined,
+      });
+
+      // Automatically proceed to the next step after a brief delay (store timeout ref)
+      exchangeTimeoutRef.current = setTimeout(() => {
+        if (oauthStateMachine) {
+          oauthStateMachine.proceedToNextStep();
+        }
+        exchangeTimeoutRef.current = null;
+      }, 500);
+    };
+
+    // Method 1: Listen via window.postMessage (standard approach)
     const handleMessage = (event: MessageEvent) => {
       // Verify origin matches our app
       if (event.origin !== window.location.origin) {
@@ -291,69 +351,28 @@ export const OAuthFlowTab = ({
 
       // Check if this is an OAuth callback message
       if (event.data?.type === "OAUTH_CALLBACK" && event.data?.code) {
-        const receivedCode = event.data.code;
-
-        // Check if we've already processed this exact code (prevent duplicate exchanges)
-        if (processedCodeRef.current === receivedCode) {
-          return;
-        }
-
-        // Validate state parameter to prevent accepting stale authorization codes
-        const receivedState = event.data.state;
-        const expectedState = oauthFlowStateRef.current.state;
-
-        // Only accept the code if we're at the right step AND state matches
-        const currentStep = oauthFlowStateRef.current.currentStep;
-        const isWaitingForCode =
-          currentStep === "received_authorization_code" ||
-          currentStep === "authorization_request";
-
-        if (!isWaitingForCode) {
-          return;
-        }
-
-        if (!expectedState) {
-          updateOAuthFlowState({
-            error:
-              "Flow was reset. Please start a new authorization by clicking 'Next Step'.",
-          });
-          return;
-        }
-
-        if (receivedState !== expectedState) {
-          updateOAuthFlowState({
-            error:
-              "Invalid state parameter - this authorization code is from a previous flow. Please try again.",
-          });
-          return;
-        }
-
-        // Mark this code as processed to prevent duplicate exchanges
-        processedCodeRef.current = receivedCode;
-
-        // Clear any pending exchange timeout
-        if (exchangeTimeoutRef.current) {
-          clearTimeout(exchangeTimeoutRef.current);
-        }
-
-        // Update state with the authorization code
-        updateOAuthFlowState({
-          authorizationCode: receivedCode,
-          error: undefined,
-        });
-
-        // Automatically proceed to the next step after a brief delay (store timeout ref)
-        exchangeTimeoutRef.current = setTimeout(() => {
-          if (oauthStateMachine) {
-            oauthStateMachine.proceedToNextStep();
-          }
-          exchangeTimeoutRef.current = null;
-        }, 500);
+        processOAuthCallback(event.data.code, event.data.state);
       }
     };
 
+    // Method 2: Listen via BroadcastChannel (fallback for COOP-protected OAuth servers)
+    let channel: BroadcastChannel | null = null;
+    try {
+      channel = new BroadcastChannel("oauth_callback_channel");
+      channel.onmessage = (event) => {
+        if (event.data?.type === "OAUTH_CALLBACK" && event.data?.code) {
+          processOAuthCallback(event.data.code, event.data.state);
+        }
+      };
+    } catch (error) {
+      // BroadcastChannel not supported in this browser
+    }
+
     window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
+    return () => {
+      window.removeEventListener("message", handleMessage);
+      channel?.close();
+    };
   }, [oauthStateMachine, updateOAuthFlowState]);
 
   // Initialize OAuth flow when component mounts or server changes

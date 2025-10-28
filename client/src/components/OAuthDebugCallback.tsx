@@ -32,8 +32,8 @@ export default function OAuthDebugCallback() {
         // Check if we're in a popup window
         const isInPopup = window.opener && !window.opener.closed;
 
+        // Method 1: Try window.opener (works most of the time)
         if (isInPopup) {
-          // Send message to opener window
           window.opener.postMessage(message, window.location.origin);
           setCodeSent(true);
 
@@ -41,6 +41,23 @@ export default function OAuthDebugCallback() {
           setTimeout(() => {
             window.close();
           }, 100);
+        } else {
+          // Method 2: Fallback to BroadcastChannel (works when window.opener is broken)
+          // This handles OAuth servers that use Cross-Origin-Opener-Policy headers
+          try {
+            const channel = new BroadcastChannel("oauth_callback_channel");
+            channel.postMessage(message);
+            channel.close();
+            setCodeSent(true);
+
+            // Auto-close popup after sending
+            setTimeout(() => {
+              window.close();
+            }, 500);
+          } catch (broadcastError) {
+            console.error("[OAuth Callback] BroadcastChannel failed:", broadcastError);
+            // Show manual copy UI (already rendered by default)
+          }
         }
       } catch (error) {
         console.error("[OAuth Callback] Failed to send code:", error);

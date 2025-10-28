@@ -259,11 +259,6 @@ async function proxyFetch(
     headers: mergedHeaders,
   };
 
-  console.log(
-    "proxyFetch sending to backend:",
-    JSON.stringify(proxyPayload, null, 2),
-  );
-
   const response = await fetch("/api/mcp/oauth/debug/proxy", {
     method: "POST",
     headers: {
@@ -1113,21 +1108,27 @@ export const createDebugOAuthStateMachine = (
               // Build scope string following OAuth 2.1 and OIDC best practices
               const scopes = new Set<string>();
 
-              // 1. Standard OIDC scopes (if this is an OIDC provider)
-              // These are commonly supported and provide user information
-              const standardScopes = ["openid", "profile", "email"];
-              standardScopes.forEach((scope) => scopes.add(scope));
-
-              // 2. Add server-advertised scopes (MCP-specific like tasks.read, tasks.write)
+              // 1. Add server-advertised scopes first (MCP-specific like tasks.read, read-mcp, etc.)
               if (scopesSupported && scopesSupported.length > 0) {
                 scopesSupported.forEach((scope) => scopes.add(scope));
               }
 
-              // 3. Always request offline_access for refresh tokens
-              // This is required to get refresh tokens per OAuth 2.1
-              scopes.add("offline_access");
+              // 2. Add standard OIDC scopes only if server supports them
+              // (Some servers like Hugging Face advertise these in scopes_supported)
+              const standardScopes = ["openid", "profile", "email"];
+              standardScopes.forEach((scope) => {
+                if (!scopesSupported || scopesSupported.includes(scope)) {
+                  scopes.add(scope);
+                }
+              });
 
-              // Set scope parameter - order doesn't matter but standard scopes first is conventional
+              // 3. Request offline_access for refresh tokens ONLY if server supports it
+              // Per OAuth 2.1, this is required to get refresh tokens
+              if (scopesSupported?.includes("offline_access")) {
+                scopes.add("offline_access");
+              }
+
+              // Set scope parameter - use only scopes the server actually supports
               if (scopes.size > 0) {
                 authUrl.searchParams.set("scope", Array.from(scopes).join(" "));
               }
