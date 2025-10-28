@@ -22,7 +22,7 @@ export function createHonoApp() {
   const envFile =
     process.env.NODE_ENV === "production"
       ? ".env.production"
-      : ".env.development";
+      : ".env.local";
 
   // Determine where to look for .env file:
   // 1. Electron packaged: use process.resourcesPath directly
