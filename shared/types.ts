@@ -397,6 +397,8 @@ export type HttpServerDefinition = BaseServerOptions & {
   env?: never;
   requestInit?: StreamableHTTPClientTransportOptions["requestInit"];
   eventSourceInit?: SSEClientTransportOptions["eventSourceInit"];
+  // Note: authProvider is intentionally not included because it can't be serialized
+  // when sending configs over HTTP. OAuth tokens should be in requestInit headers.
   reconnectionOptions?: StreamableHTTPClientTransportOptions["reconnectionOptions"];
   sessionId?: StreamableHTTPClientTransportOptions["sessionId"];
   oauth?: any;
