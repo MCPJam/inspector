@@ -202,8 +202,6 @@ export function ChatTabV2() {
     setInput("");
   };
 
-  const isLoading = status === "streaming";
-
   useEffect(() => {
     const checkOllama = async () => {
       const { isRunning, availableModels } =
