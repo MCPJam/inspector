@@ -127,6 +127,8 @@ export interface DebugOAuthStateMachineConfig {
   serverName: string;
   redirectUrl?: string; // Redirect URL for OAuth callback
   fetchFn?: typeof fetch; // Optional fetch function for testing
+  customScopes?: string; // Optional custom scopes override (space-separated)
+  customHeaders?: Record<string, string>; // Optional custom HTTP headers
 }
 
 // Helper: Build well-known resource metadata URL from server URL
@@ -194,7 +196,15 @@ function buildAuthServerMetadataUrls(authServerUrl: string): string[] {
   return urls;
 }
 
-// Helper function to make requests via backend proxy (bypasses CORS)
+/**
+ * Helper function to make requests via backend debug proxy (bypasses CORS)
+ *
+ * Uses the debug-specific proxy endpoint for OAuth flow visualization.
+ * Automatically adds MCP-required headers so you don't have to remember them:
+ * - Accept: "application/json, text/event-stream" (required by MCP HTTP transport spec)
+ *
+ * You can still override these by passing custom headers in options.headers
+ */
 async function proxyFetch(
   url: string,
   options: RequestInit = {},
@@ -205,14 +215,26 @@ async function proxyFetch(
   body: any;
   ok: boolean;
 }> {
+  // Merge headers with MCP-required defaults
+  // Per MCP spec: HTTP clients MUST include both application/json and text/event-stream
+  const defaultHeaders: Record<string, string> = {
+    Accept: "application/json, text/event-stream",
+  };
+
+  const mergedHeaders = {
+    ...defaultHeaders,
+    ...((options.headers as Record<string, string>) || {}),
+  };
+
   // Determine if body is JSON or form-urlencoded
   let bodyToSend: any = undefined;
   if (options.body) {
-    const contentType = (options.headers as Record<string, string>)?.[
-      Object.keys((options.headers as Record<string, string>) || {}).find(
-        (k) => k.toLowerCase() === "content-type",
-      ) || ""
-    ];
+    const contentType =
+      mergedHeaders[
+        Object.keys(mergedHeaders).find(
+          (k) => k.toLowerCase() === "content-type",
+        ) || ""
+      ];
 
     if (contentType?.includes("application/x-www-form-urlencoded")) {
       // For form-urlencoded, convert to object
@@ -230,22 +252,29 @@ async function proxyFetch(
     }
   }
 
-  const response = await fetch("/api/mcp/oauth/proxy", {
+  const proxyPayload = {
+    url,
+    method: options.method || "GET",
+    body: bodyToSend,
+    headers: mergedHeaders,
+  };
+
+  console.log(
+    "proxyFetch sending to backend:",
+    JSON.stringify(proxyPayload, null, 2),
+  );
+
+  const response = await fetch("/api/mcp/oauth/debug/proxy", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      url,
-      method: options.method || "GET",
-      body: bodyToSend,
-      headers: options.headers,
-    }),
+    body: JSON.stringify(proxyPayload),
   });
 
   if (!response.ok) {
     throw new Error(
-      `Backend proxy error: ${response.status} ${response.statusText}`,
+      `Backend debug proxy error: ${response.status} ${response.statusText}`,
     );
   }
 
@@ -268,11 +297,21 @@ export const createDebugOAuthStateMachine = (
     serverName,
     redirectUrl,
     fetchFn = fetch,
+    customScopes,
+    customHeaders,
   } = config;
 
   // Use provided redirectUrl or default to the origin + /oauth/callback/debug
   const redirectUri =
     redirectUrl || `${window.location.origin}/oauth/callback/debug`;
+
+  // Helper to merge custom headers with request headers
+  const mergeHeaders = (requestHeaders: Record<string, string> = {}) => {
+    return {
+      ...customHeaders,
+      ...requestHeaders, // Request headers override custom headers
+    };
+  };
 
   // Helper to get current state (use getState if provided, otherwise use initial state)
   const getCurrentState = () => (getState ? getState() : initialState);
@@ -292,13 +331,14 @@ export const createDebugOAuthStateMachine = (
         switch (state.currentStep) {
           case "idle":
             // Step 1: Make initial MCP request without token
+            const initialRequestHeaders = mergeHeaders({
+              "Content-Type": "application/json",
+            });
+
             const initialRequest = {
               method: "POST",
               url: serverUrl,
-              headers: {
-                "Content-Type": "application/json",
-                Accept: "application/json",
-              },
+              headers: initialRequestHeaders,
               body: {
                 jsonrpc: "2.0",
                 method: "initialize",
@@ -344,6 +384,9 @@ export const createDebugOAuthStateMachine = (
               // Use backend proxy to bypass CORS and capture all headers
               const response = await proxyFetch(state.serverUrl, {
                 method: "POST",
+                headers: mergeHeaders({
+                  "Content-Type": "application/json",
+                }),
                 body: JSON.stringify({
                   jsonrpc: "2.0",
                   method: "initialize",
@@ -359,24 +402,25 @@ export const createDebugOAuthStateMachine = (
                 }),
               });
 
+              // Capture response data for all status codes
+              const responseData = {
+                status: response.status,
+                statusText: response.statusText,
+                headers: response.headers,
+                body: response.body,
+              };
+
+              // Update the last history entry with the response
+              const updatedHistory = [...(state.httpHistory || [])];
+              if (updatedHistory.length > 0) {
+                updatedHistory[updatedHistory.length - 1].response =
+                  responseData;
+              }
+
               if (response.status === 401) {
                 // Expected 401 response with WWW-Authenticate header
                 const wwwAuthenticateHeader =
                   response.headers["www-authenticate"];
-
-                const responseData = {
-                  status: response.status,
-                  statusText: response.statusText,
-                  headers: response.headers,
-                  body: response.body,
-                };
-
-                // Update the last history entry with the response
-                const updatedHistory = [...(state.httpHistory || [])];
-                if (updatedHistory.length > 0) {
-                  updatedHistory[updatedHistory.length - 1].response =
-                    responseData;
-                }
 
                 // Add info log for WWW-Authenticate header
                 const infoLogs = wwwAuthenticateHeader
@@ -399,9 +443,35 @@ export const createDebugOAuthStateMachine = (
                   infoLogs,
                   isInitiatingAuth: false,
                 });
+              } else if (response.status === 200) {
+                // Server allows anonymous access - try proactive OAuth discovery
+                // Add info log explaining optional auth
+                const infoLogs = addInfoLog(
+                  state,
+                  "optional-auth",
+                  "Optional Authentication Detected",
+                  {
+                    message: "Server allows anonymous access",
+                    note: "Proceeding with OAuth discovery for authenticated features",
+                  },
+                );
+
+                updateState({
+                  currentStep: "received_401_unauthorized", // Reuse the same flow
+                  wwwAuthenticateHeader: undefined, // No WWW-Authenticate header
+                  lastResponse: responseData,
+                  httpHistory: updatedHistory,
+                  infoLogs,
+                  isInitiatingAuth: false,
+                });
               } else {
+                // Unexpected status code - capture response and throw error
+                updateState({
+                  lastResponse: responseData,
+                  httpHistory: updatedHistory,
+                });
                 throw new Error(
-                  `Expected 401 Unauthorized but got HTTP ${response.status}`,
+                  `Expected 401 Unauthorized but got HTTP ${response.status}: ${response.body?.error?.message || response.statusText}`,
                 );
               }
             } catch (error) {
@@ -440,9 +510,7 @@ export const createDebugOAuthStateMachine = (
             const resourceMetadataRequest = {
               method: "GET",
               url: extractedResourceMetadataUrl,
-              headers: {
-                Accept: "application/json",
-              },
+              headers: mergeHeaders({}),
             };
 
             // Update state with the URL and request
@@ -475,6 +543,7 @@ export const createDebugOAuthStateMachine = (
               // Use backend proxy to bypass CORS
               const response = await proxyFetch(state.resourceMetadataUrl, {
                 method: "GET",
+                headers: mergeHeaders({}),
               });
 
               if (!response.ok) {
@@ -585,9 +654,7 @@ export const createDebugOAuthStateMachine = (
             const authServerRequest = {
               method: "GET",
               url: authServerUrls[0], // Show the first URL we'll try
-              headers: {
-                Accept: "application/json",
-              },
+              headers: mergeHeaders({}),
             };
 
             // Update state with the request
@@ -627,9 +694,7 @@ export const createDebugOAuthStateMachine = (
 
             for (const url of urlsToTry) {
               try {
-                const requestHeaders = {
-                  Accept: "application/json",
-                };
+                const requestHeaders = mergeHeaders({});
 
                 // Update request URL as we try different endpoints
                 const updatedHistoryForRetry = [...(state.httpHistory || [])];
@@ -655,6 +720,7 @@ export const createDebugOAuthStateMachine = (
                 // Use backend proxy to bypass CORS
                 const response = await proxyFetch(url, {
                   method: "GET",
+                  headers: mergeHeaders({}),
                 });
 
                 if (response.ok) {
@@ -817,10 +883,9 @@ export const createDebugOAuthStateMachine = (
               const registrationRequest = {
                 method: "POST",
                 url: state.authorizationServerMetadata.registration_endpoint,
-                headers: {
+                headers: mergeHeaders({
                   "Content-Type": "application/json",
-                  Accept: "application/json",
-                },
+                }),
                 body: clientMetadata,
               };
 
@@ -868,10 +933,9 @@ export const createDebugOAuthStateMachine = (
                 state.authorizationServerMetadata.registration_endpoint,
                 {
                   method: "POST",
-                  headers: {
+                  headers: mergeHeaders({
                     "Content-Type": "application/json",
-                    Accept: "application/json",
-                  },
+                  }),
                   body: JSON.stringify(state.lastRequest.body),
                 },
               );
@@ -1037,24 +1101,36 @@ export const createDebugOAuthStateMachine = (
             }
 
             // Add scopes to request refresh tokens and other capabilities
-            const scopesSupported =
-              state.resourceMetadata?.scopes_supported ||
-              state.authorizationServerMetadata.scopes_supported;
+            // If custom scopes are provided, use them exclusively
+            if (customScopes) {
+              authUrl.searchParams.set("scope", customScopes);
+            } else {
+              // Otherwise, use automatic scope discovery
+              const scopesSupported =
+                state.resourceMetadata?.scopes_supported ||
+                state.authorizationServerMetadata.scopes_supported;
 
-            // Build scope string, always including offline_access for refresh tokens
-            const scopes = new Set<string>();
+              // Build scope string following OAuth 2.1 and OIDC best practices
+              const scopes = new Set<string>();
 
-            // Add server-supported scopes if available
-            if (scopesSupported && scopesSupported.length > 0) {
-              scopesSupported.forEach((scope) => scopes.add(scope));
-            }
+              // 1. Standard OIDC scopes (if this is an OIDC provider)
+              // These are commonly supported and provide user information
+              const standardScopes = ["openid", "profile", "email"];
+              standardScopes.forEach((scope) => scopes.add(scope));
 
-            // Always request offline_access for refresh tokens (if not already included)
-            scopes.add("offline_access");
+              // 2. Add server-advertised scopes (MCP-specific like tasks.read, tasks.write)
+              if (scopesSupported && scopesSupported.length > 0) {
+                scopesSupported.forEach((scope) => scopes.add(scope));
+              }
 
-            // Set scope parameter if we have any scopes
-            if (scopes.size > 0) {
-              authUrl.searchParams.set("scope", Array.from(scopes).join(" "));
+              // 3. Always request offline_access for refresh tokens
+              // This is required to get refresh tokens per OAuth 2.1
+              scopes.add("offline_access");
+
+              // Set scope parameter - order doesn't matter but standard scopes first is conventional
+              if (scopes.size > 0) {
+                authUrl.searchParams.set("scope", Array.from(scopes).join(" "));
+              }
             }
 
             // Add info log for Authorization URL
@@ -1131,10 +1207,9 @@ export const createDebugOAuthStateMachine = (
             const tokenRequest = {
               method: "POST",
               url: state.authorizationServerMetadata.token_endpoint,
-              headers: {
+              headers: mergeHeaders({
                 "Content-Type": "application/x-www-form-urlencoded",
-                Accept: "application/json",
-              },
+              }),
               body: tokenRequestBodyObj,
             };
 
@@ -1195,10 +1270,9 @@ export const createDebugOAuthStateMachine = (
                 state.authorizationServerMetadata.token_endpoint,
                 {
                   method: "POST",
-                  headers: {
+                  headers: mergeHeaders({
                     "Content-Type": "application/x-www-form-urlencoded",
-                    Accept: "application/json",
-                  },
+                  }),
                   body: tokenRequestBody.toString(),
                 },
               );
@@ -1259,17 +1333,13 @@ export const createDebugOAuthStateMachine = (
                 ];
               }
 
-              // Add combined OAuth tokens log (access token + refresh token)
               if (tokens.access_token) {
                 const tokenData: Record<string, any> = {
-                  access_token: tokens.access_token.substring(0, 50) + "...",
-                  access_token_full: tokens.access_token,
+                  access_token: tokens.access_token,
                 };
 
                 if (tokens.refresh_token) {
-                  ((tokenData.refresh_token =
-                    tokens.refresh_token.substring(0, 50) + "..."),
-                    (tokenData.refresh_token_full = tokens.refresh_token));
+                  tokenData.refresh_token = tokens.refresh_token;
                 }
 
                 tokenInfoLogs = [
@@ -1358,11 +1428,10 @@ export const createDebugOAuthStateMachine = (
             const authenticatedRequest = {
               method: "POST",
               url: state.serverUrl,
-              headers: {
+              headers: mergeHeaders({
                 Authorization: `Bearer ${state.accessToken}`,
                 "Content-Type": "application/json",
-                Accept: "application/json, text/event-stream",
-              },
+              }),
               body: {
                 jsonrpc: "2.0",
                 method: "initialize",
@@ -1406,11 +1475,10 @@ export const createDebugOAuthStateMachine = (
             try {
               const response = await proxyFetch(state.serverUrl, {
                 method: "POST",
-                headers: {
+                headers: mergeHeaders({
                   Authorization: `Bearer ${state.accessToken}`,
                   "Content-Type": "application/json",
-                  Accept: "application/json, text/event-stream",
-                },
+                }),
                 body: JSON.stringify({
                   jsonrpc: "2.0",
                   method: "initialize",
