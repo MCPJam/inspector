@@ -72,7 +72,19 @@ export function AuthUpperArea() {
       isElectron && import.meta.env.DEV
         ? "http://localhost:8080/callback"
         : normalizedOrigin;
+
     signOut({ returnTo });
+
+    // In Electron, the logout happens in-app and WorkOS will redirect back
+    // If for some reason the redirect doesn't work, reload after a delay
+    if (isElectron) {
+      setTimeout(() => {
+        // Only reload if still on a non-login page (logout didn't redirect)
+        if (!window.location.pathname.includes("callback")) {
+          window.location.href = origin;
+        }
+      }, 2000);
+    }
   };
 
   const avatarUrl = user.profilePictureUrl || undefined;
