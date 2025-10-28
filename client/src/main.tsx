@@ -71,11 +71,6 @@ const isMcpCallbackInBrowser =
   window.location.pathname.startsWith("/oauth/callback") &&
   !(window as any).isElectron;
 
-console.log("=== OAuth Callback Detection ===");
-console.log("pathname:", window.location.pathname);
-console.log("isElectron:", (window as any).isElectron);
-console.log("isMcpCallbackInBrowser:", isMcpCallbackInBrowser);
-
 if (isMcpCallbackInBrowser) {
   // Extract OAuth params
   const urlParams = new URLSearchParams(window.location.search);
@@ -83,20 +78,12 @@ if (isMcpCallbackInBrowser) {
   const state = urlParams.get("state");
   const error = urlParams.get("error");
 
-  console.log("=== MCP OAuth Callback in Browser ===");
-  console.log("code:", code);
-  console.log("state:", state);
-  console.log("error:", error);
-
   if (code || error) {
     // Build the custom protocol URL
     const protocolUrl = new URL("mcpjam://oauth/callback");
     if (code) protocolUrl.searchParams.set("code", code);
     if (state) protocolUrl.searchParams.set("state", state);
     if (error) protocolUrl.searchParams.set("error", error);
-
-    console.log("=== Redirecting to Electron ===");
-    console.log("Protocol URL:", protocolUrl.toString());
 
     // Show redirect message
     root.render(
@@ -111,19 +98,13 @@ if (isMcpCallbackInBrowser) {
             <p className="text-sm text-muted-foreground">
               If the app doesn't open automatically, please return to it manually.
             </p>
-            <p className="text-xs text-muted-foreground font-mono mt-4">
-              {protocolUrl.toString()}
-            </p>
           </div>
         </div>
       </StrictMode>
     );
 
-    // Redirect immediately
-    console.log("Attempting redirect to:", protocolUrl.toString());
+    // Redirect to custom protocol - this will trigger Electron's open-url handler
     window.location.href = protocolUrl.toString();
-  } else {
-    console.warn("No code or error in OAuth callback, not redirecting");
   }
 } else {
   // Normal app flow

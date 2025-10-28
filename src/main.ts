@@ -311,17 +311,11 @@ app.on("activate", async () => {
 // Handle OAuth callback URLs
 app.on("open-url", (event, url) => {
   event.preventDefault();
-  log.info("==== OAuth callback received ====");
-  log.info("URL:", url);
-  log.info("Event:", event);
+  log.info("OAuth callback received:", url);
 
   // Check if it's an AuthKit callback (uses different protocol)
   const isAuthKitCallback = url.startsWith("mcpjam://authkit/callback");
   const isMcpCallback = url.startsWith("mcpjam://oauth/callback");
-
-  log.info("Callback type detection:");
-  log.info("- isAuthKitCallback:", isAuthKitCallback);
-  log.info("- isMcpCallback:", isMcpCallback);
 
   if (!isAuthKitCallback && !isMcpCallback) {
     log.warn("Unknown callback type, ignoring");
