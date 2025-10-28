@@ -31,8 +31,8 @@ export function ConfirmModelChangeDialog({
           <AlertDialogTitle>Change model?</AlertDialogTitle>
           <AlertDialogDescription>
             Changing from <strong>{currentModelName}</strong> to{" "}
-            <strong>{newModelName}</strong> will clear your current
-            conversation thread. This action cannot be undone.
+            <strong>{newModelName}</strong> will clear your current conversation
+            thread. This action cannot be undone.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -45,4 +45,3 @@ export function ConfirmModelChangeDialog({
     </AlertDialog>
   );
 }
-
