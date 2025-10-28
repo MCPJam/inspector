@@ -1,3 +1,4 @@
+import { ModelDefinition } from "@/shared/types";
 import { UIMessage } from "@ai-sdk/react";
 import {
   UIDataTypes,
@@ -7,57 +8,83 @@ import {
   DynamicToolUIPart,
 } from "ai";
 import type { ReactNode } from "react";
+import { MessageCircle } from "lucide-react";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { getProviderLogoFromModel } from "../chat/chat-helpers";
 
 type AnyPart = UIMessagePart<UIDataTypes, UITools>;
 
 interface ThreadProps {
   messages: UIMessage[];
+  model: ModelDefinition;
 }
 
-export function Thread({ messages }: ThreadProps) {
+export function Thread({ messages, model }: ThreadProps) {
   return (
     <div className="flex-1 overflow-y-auto pb-4">
       <div className="max-w-4xl mx-auto px-4 pt-8 pb-8 space-y-4">
         {messages.map((message, idx) => (
-          <MessageView key={idx} message={message} />
+          <MessageView key={idx} message={message} model={model} />
         ))}
       </div>
     </div>
   );
 }
 
-function MessageView({ message }: { message: UIMessage }) {
+function MessageView({
+  message,
+  model,
+}: {
+  message: UIMessage;
+  model: ModelDefinition;
+}) {
+  const themeMode = usePreferencesStore((s) => s.themeMode);
+  const logoSrc = getProviderLogoFromModel(model, themeMode);
   const role = message.role;
   if (role !== "user" && role !== "assistant") return null;
 
-  // User: single bubble.
-  if (role === "user") {
-    return (
-      <Bubble align="right" variant="primary">
-        <div className="space-y-2">
-          {message.parts?.map((part, i) => (
-            <PartSwitch key={i} part={part} role={role} />
-          ))}
-        </div>
-      </Bubble>
-    );
-  }
-
-  // Assistant: group parts into steps, each step gets its own bubble.
-  const steps = groupAssistantPartsIntoSteps(message.parts ?? []);
-  return (
-    <div className="space-y-2">
-      {steps.map((stepParts, sIdx) => (
-        <Bubble key={sIdx} align="left" variant="muted">
+  switch (role) {
+    case "user":
+      return (
+        <Bubble align="right" variant="primary">
           <div className="space-y-2">
-            {stepParts.map((part, pIdx) => (
-              <PartSwitch key={`${sIdx}-${pIdx}`} part={part} role={role} />
+            {message.parts?.map((part, i) => (
+              <PartSwitch key={i} part={part} role={role} />
             ))}
           </div>
         </Bubble>
-      ))}
-    </div>
-  );
+      );
+    case "assistant":
+      return (
+        <div className="flex gap-4 w-full">
+          <div className="size-8 flex items-center rounded-full justify-center shrink-0 bg-muted/50">
+            {logoSrc ? (
+              <img
+                src={logoSrc}
+                alt={`${model.id} logo`}
+                className="h-4 w-4 object-contain"
+              />
+            ) : (
+              <MessageCircle className="h-4 w-4 text-muted-foreground" />
+            )}
+          </div>
+          <div className="flex-1 min-w-0 space-y-2">
+            {message.parts?.map((part, i) => {
+              if (part.type === "step-start") return null;
+              return (
+                <Bubble key={i} align="left" variant="muted">
+                  <div className="space-y-2">
+                    <PartSwitch part={part} role={role} />
+                  </div>
+                </Bubble>
+              );
+            })}
+          </div>
+        </div>
+      );
+    default:
+      return null;
+  }
 }
 
 function PartSwitch({
@@ -190,24 +217,6 @@ function SourceDocumentPart({
       </pre>
     </div>
   );
-}
-
-// Groups assistant parts into steps delimited by 'step-start'.
-function groupAssistantPartsIntoSteps(parts: AnyPart[]): AnyPart[][] {
-  const groups: AnyPart[][] = [];
-  let current: AnyPart[] = [];
-  for (const part of parts) {
-    if ((part as any).type === "step-start") {
-      if (current.length > 0) groups.push(current);
-      current = [];
-      continue; // do not include the step-start part itself
-    }
-    current.push(part);
-  }
-  if (current.length > 0) groups.push(current);
-  return groups.length > 0
-    ? groups
-    : [parts.filter((p) => (p as any).type !== "step-start")];
 }
 
 function JsonPart({ label, value }: { label: string; value: unknown }) {
