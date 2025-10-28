@@ -115,10 +115,9 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     customClientSecret?: string,
   ) {
     this.serverName = serverName;
-    // Use custom protocol for Electron, otherwise use web URL
-    this.redirectUri = window.isElectron
-      ? "mcpjam://oauth/callback"
-      : `${window.location.origin}/oauth/callback`;
+    // Use local HTTP server URL for redirect URI (works in both web and Electron)
+    // The local server will handle the callback and the app will process it
+    this.redirectUri = `${window.location.origin}/oauth/callback`;
     this.customClientId = customClientId;
     this.customClientSecret = customClientSecret;
   }
