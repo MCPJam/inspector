@@ -1432,12 +1432,13 @@ export const createDebugOAuthStateMachine = (
               headers: mergeHeaders({
                 Authorization: `Bearer ${state.accessToken}`,
                 "Content-Type": "application/json",
+                "MCP-Protocol-Version": "2025-06-18",
               }),
               body: {
                 jsonrpc: "2.0",
                 method: "initialize",
                 params: {
-                  protocolVersion: "2024-11-05",
+                  protocolVersion: "2025-06-18",
                   capabilities: {},
                   clientInfo: {
                     name: "MCP Inspector",
@@ -1447,6 +1448,19 @@ export const createDebugOAuthStateMachine = (
                 id: 2,
               },
             };
+
+            // Add info log for authenticated initialize request
+            const authenticatedRequestInfoLogs = addInfoLog(
+              getCurrentState(),
+              "authenticated-init",
+              "Authenticated MCP Initialize Request",
+              {
+                "Request": "MCP initialize with OAuth bearer token",
+                "Protocol Version": "2025-06-18",
+                "Client": "MCP Inspector v1.0.0",
+                "Endpoint": state.serverUrl,
+              },
+            );
 
             // Update state with the request
             updateState({
@@ -1460,6 +1474,7 @@ export const createDebugOAuthStateMachine = (
                   request: authenticatedRequest,
                 },
               ],
+              infoLogs: authenticatedRequestInfoLogs,
               isInitiatingAuth: false,
             });
 
@@ -1519,10 +1534,94 @@ export const createDebugOAuthStateMachine = (
                 return;
               }
 
+              // Add info log for MCP protocol version
+              let mcpInfoLogs = getCurrentState().infoLogs || [];
+
+              // Check if response is SSE (Streamable HTTP transport)
+              const contentType = response.headers["content-type"] || "";
+              const isSSE = contentType.includes("text/event-stream");
+
+              // Extract MCP response from body (could be direct JSON or parsed SSE)
+              let mcpResponse = null;
+              if (isSSE && response.body?.mcpResponse) {
+                // SSE response - extract MCP response from parsed events
+                mcpResponse = response.body.mcpResponse;
+              } else {
+                // Direct JSON response
+                mcpResponse = response.body;
+              }
+
+              if (isSSE && mcpResponse?.result?.protocolVersion) {
+                // SSE streaming response with parsed MCP response
+                const protocolInfo: Record<string, any> = {
+                  "Transport": "Streamable HTTP",
+                  "Response Format": "Server-Sent Events (streaming)",
+                  "Protocol Version": mcpResponse.result.protocolVersion,
+                };
+
+                // Include server info if available
+                if (mcpResponse.result.serverInfo) {
+                  protocolInfo["Server Name"] = mcpResponse.result.serverInfo.name;
+                  protocolInfo["Server Version"] = mcpResponse.result.serverInfo.version;
+                }
+
+                // Include capabilities if available
+                if (mcpResponse.result.capabilities) {
+                  protocolInfo["Capabilities"] = mcpResponse.result.capabilities;
+                }
+
+                mcpInfoLogs = addInfoLog(
+                  getCurrentState(),
+                  "mcp-protocol",
+                  "MCP Server Information",
+                  protocolInfo,
+                );
+              } else if (isSSE) {
+                // SSE streaming response but no MCP response parsed yet
+                mcpInfoLogs = addInfoLog(
+                  getCurrentState(),
+                  "mcp-transport",
+                  "MCP Transport Detected",
+                  {
+                    "Transport": "Streamable HTTP",
+                    "Response Format": "Server-Sent Events (streaming)",
+                    "Content-Type": contentType,
+                    Note: "Server returned streaming response. Initialize response delivered via SSE stream.",
+                    Events: response.body?.events ? `${response.body.events.length} events parsed` : "No events parsed",
+                  },
+                );
+              } else if (mcpResponse?.result?.protocolVersion) {
+                // JSON response - extract protocol version from response body
+                const protocolInfo: Record<string, any> = {
+                  "Transport": "Streamable HTTP",
+                  "Response Format": "JSON",
+                  "Protocol Version": mcpResponse.result.protocolVersion,
+                };
+
+                // Include server info if available
+                if (mcpResponse.result.serverInfo) {
+                  protocolInfo["Server Name"] = mcpResponse.result.serverInfo.name;
+                  protocolInfo["Server Version"] = mcpResponse.result.serverInfo.version;
+                }
+
+                // Include capabilities if available
+                if (mcpResponse.result.capabilities) {
+                  protocolInfo["Capabilities"] = mcpResponse.result.capabilities;
+                }
+
+                mcpInfoLogs = addInfoLog(
+                  getCurrentState(),
+                  "mcp-protocol",
+                  "MCP Server Information",
+                  protocolInfo,
+                );
+              }
+
               updateState({
                 currentStep: "complete",
                 lastResponse: mcpResponseData,
                 httpHistory: updatedHistoryMcp,
+                infoLogs: mcpInfoLogs,
                 error: undefined,
                 isInitiatingAuth: false,
               });
