@@ -26,7 +26,6 @@ export function OpenAIComponentRenderer({
   className,
   serverId,
 }: OpenAIComponentRendererProps) {
-  console.log("OpenAIComponentRenderer", componentUrl, toolCall, toolResult);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [isReady, setIsReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
