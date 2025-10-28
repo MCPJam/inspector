@@ -28,6 +28,7 @@ import {
 } from "@/components/chat-v2/model-helpers";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import { ChatInput } from "@/components/chat-v2/chat-input";
+import { Thread } from "@/components/chat-v2/thread";
 
 export function ChatTabV2() {
   const { getAccessToken } = useAuth();
@@ -226,104 +227,8 @@ export function ChatTabV2() {
       >
         <ResizablePanel defaultSize={70} minSize={40} className="min-w-0">
           <div className="flex flex-col bg-background h-full min-h-0 overflow-hidden">
-            <div className="flex-1 overflow-y-auto pb-4">
-              <div className="max-w-4xl mx-auto px-4 pt-8 pb-8 space-y-4">
-                {messages.map((message) => (
-                  <div
-                    key={message.id}
-                    className={`flex w-full ${
-                      message.role === "user" ? "justify-end" : "justify-start"
-                    }`}
-                  >
-                    <div
-                      className={`max-w-xl rounded-lg px-3 py-2 text-sm ${
-                        message.role === "user"
-                          ? "bg-primary text-primary-foreground"
-                          : "bg-muted text-foreground"
-                      }`}
-                    >
-                      {message.parts.map((part, index) => {
-                        if (part.type === "text") {
-                          return <span key={index}>{part.text}</span>;
-                        }
-
-                        if (part.type === "step-start") {
-                          return (
-                            <div key={index} className="my-2 opacity-60">
-                              <hr className="border-border" />
-                            </div>
-                          );
-                        }
-
-                        if (part.type === "dynamic-tool") {
-                          const anyPart = part as any;
-                          const state = anyPart.state as string | undefined;
-                          return (
-                            <div key={index} className="mt-2 text-xs">
-                              <div className="font-medium">
-                                🔧 Tool: {anyPart.toolName}
-                              </div>
-                              {state === "input-streaming" ||
-                              state === "input-available" ? (
-                                <pre className="mt-1 whitespace-pre-wrap break-words opacity-80">
-                                  {JSON.stringify(anyPart.input, null, 2)}
-                                </pre>
-                              ) : null}
-                              {state === "output-available" ? (
-                                <pre className="mt-1 whitespace-pre-wrap break-words">
-                                  {JSON.stringify(anyPart.output, null, 2)}
-                                </pre>
-                              ) : null}
-                              {state === "output-error" ? (
-                                <div className="mt-1 text-destructive">
-                                  Error: {anyPart.errorText}
-                                </div>
-                              ) : null}
-                            </div>
-                          );
-                        }
-
-                        if (
-                          typeof part.type === "string" &&
-                          part.type.startsWith("tool-")
-                        ) {
-                          const anyPart = part as any;
-                          const toolName = (part.type as string).slice(5);
-                          const state = anyPart.state as string | undefined;
-                          return (
-                            <div key={index} className="mt-2 text-xs">
-                              <div className="font-medium">
-                                🔧 Tool: {toolName}
-                              </div>
-                              {state === "input-streaming" ||
-                              state === "input-available" ? (
-                                <pre className="mt-1 whitespace-pre-wrap break-words opacity-80">
-                                  {JSON.stringify(anyPart.input, null, 2)}
-                                </pre>
-                              ) : null}
-                              {state === "output-available" ? (
-                                <pre className="mt-1 whitespace-pre-wrap break-words">
-                                  {JSON.stringify(anyPart.output, null, 2)}
-                                </pre>
-                              ) : null}
-                              {state === "output-error" ? (
-                                <div className="mt-1 text-destructive">
-                                  Error: {anyPart.errorText}
-                                </div>
-                              ) : null}
-                            </div>
-                          );
-                        }
-
-                        return null;
-                      })}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="border-t border-border/50 bg-background/80 backdrop-blur-sm flex-shrink-0">
+            <Thread messages={messages} />
+            <div className="bg-background/80 backdrop-blur-sm flex-shrink-0">
               <div className="max-w-4xl mx-auto p-4">
                 <ChatInput
                   value={input}

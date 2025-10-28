@@ -1267,8 +1267,9 @@ export const createDebugOAuthStateMachine = (
                 };
 
                 if (tokens.refresh_token) {
-                  tokenData.refresh_token = tokens.refresh_token.substring(0, 50) + "...",
-                  tokenData.refresh_token_full = tokens.refresh_token;
+                  ((tokenData.refresh_token =
+                    tokens.refresh_token.substring(0, 50) + "..."),
+                    (tokenData.refresh_token_full = tokens.refresh_token));
                 }
 
                 tokenInfoLogs = [
