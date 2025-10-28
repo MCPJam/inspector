@@ -20,6 +20,7 @@ interface ChatInputProps {
   currentModel: ModelDefinition;
   availableModels: ModelDefinition[];
   onModelChange: (model: ModelDefinition) => void;
+  hasMessages?: boolean;
 }
 
 export function ChatInput({
@@ -34,6 +35,7 @@ export function ChatInput({
   currentModel,
   availableModels,
   onModelChange,
+  hasMessages = false,
 }: ChatInputProps) {
   const formRef = useRef<HTMLFormElement>(null);
 
@@ -84,6 +86,7 @@ export function ChatInput({
               availableModels={availableModels}
               onModelChange={onModelChange}
               isLoading={isLoading || disabled}
+              hasMessages={hasMessages}
             />
           </div>
 
