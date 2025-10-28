@@ -797,6 +797,7 @@ export const OAuthFlowTab = ({
                                           method: request.method,
                                           url: request.url,
                                           headers: request.headers,
+                                          body: request.body,
                                         }}
                                         dark={true}
                                         theme="atom"
