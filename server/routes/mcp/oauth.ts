@@ -124,11 +124,16 @@ oauth.post("/debug/proxy", async (c) => {
         }
 
         // If we parsed events, return them. Otherwise return the raw text.
-        responseBody = events.length > 0 ? {
-          events,
-          // If there's a "message" event with MCP response, extract it
-          mcpResponse: events.find(e => e.event === "message" || !e.event)?.data || null
-        } : { raw: text };
+        responseBody =
+          events.length > 0
+            ? {
+                events,
+                // If there's a "message" event with MCP response, extract it
+                mcpResponse:
+                  events.find((e) => e.event === "message" || !e.event)?.data ||
+                  null,
+              }
+            : { raw: text };
       } catch (error) {
         console.error("Failed to parse SSE response:", error);
         responseBody = { error: "Failed to parse SSE stream" };
