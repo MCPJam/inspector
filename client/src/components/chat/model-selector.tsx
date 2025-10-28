@@ -17,6 +17,7 @@ import {
 import { ProviderLogo } from "./provider-logo";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { useConvexAuth } from "convex/react";
+import { ConfirmModelChangeDialog } from "./confirm-model-change-dialog";
 
 interface ModelSelectorProps {
   currentModel: ModelDefinition;
@@ -25,6 +26,7 @@ interface ModelSelectorProps {
   disabled?: boolean;
   isLoading?: boolean;
   hideProvidedModels?: boolean;
+  hasMessages?: boolean;
 }
 
 // Helper function to group models by provider
@@ -78,8 +80,13 @@ export function ModelSelector({
   disabled,
   isLoading,
   hideProvidedModels = false,
+  hasMessages = false,
 }: ModelSelectorProps) {
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false);
+  const [pendingModel, setPendingModel] = useState<ModelDefinition | null>(
+    null,
+  );
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const currentModelData = currentModel;
   const { isAuthenticated } = useConvexAuth();
   const groupedModels = groupModelsByProvider(availableModels);
@@ -97,7 +104,35 @@ export function ModelSelector({
     return models.some((m) => !isMCPJamProvidedModel(m.id));
   });
 
+  const handleModelSelect = (model: ModelDefinition) => {
+    // If there are no messages or the model is the same, change immediately
+    if (!hasMessages || model.id === currentModel.id) {
+      onModelChange(model);
+      setIsModelSelectorOpen(false);
+      return;
+    }
+
+    // Show confirmation dialog
+    setPendingModel(model);
+    setShowConfirmDialog(true);
+    setIsModelSelectorOpen(false);
+  };
+
+  const handleConfirmModelChange = () => {
+    if (pendingModel) {
+      onModelChange(pendingModel);
+      setPendingModel(null);
+    }
+    setShowConfirmDialog(false);
+  };
+
+  const handleCancelModelChange = () => {
+    setPendingModel(null);
+    setShowConfirmDialog(false);
+  };
+
   return (
+    <>
     <DropdownMenu
       open={isModelSelectorOpen}
       onOpenChange={setIsModelSelectorOpen}
@@ -161,10 +196,7 @@ export function ModelSelector({
                   const item = (
                     <DropdownMenuItem
                       key={model.id}
-                      onSelect={() => {
-                        onModelChange(model);
-                        setIsModelSelectorOpen(false);
-                      }}
+                      onSelect={() => handleModelSelect(model)}
                       className="flex items-center gap-3 text-sm cursor-pointer"
                       disabled={isDisabled}
                     >
@@ -234,10 +266,7 @@ export function ModelSelector({
                   const item = (
                     <DropdownMenuItem
                       key={model.id}
-                      onSelect={() => {
-                        onModelChange(model);
-                        setIsModelSelectorOpen(false);
-                      }}
+                      onSelect={() => handleModelSelect(model)}
                       className="flex items-center gap-3 text-sm cursor-pointer"
                       disabled={isDisabled}
                     >
@@ -269,5 +298,14 @@ export function ModelSelector({
         })}
       </DropdownMenuContent>
     </DropdownMenu>
+
+    <ConfirmModelChangeDialog
+      open={showConfirmDialog}
+      onConfirm={handleConfirmModelChange}
+      onCancel={handleCancelModelChange}
+      currentModelName={currentModel.name}
+      newModelName={pendingModel?.name || ""}
+    />
+    </>
   );
 }
