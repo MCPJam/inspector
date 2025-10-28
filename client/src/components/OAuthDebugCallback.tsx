@@ -55,7 +55,10 @@ export default function OAuthDebugCallback() {
               window.close();
             }, 500);
           } catch (broadcastError) {
-            console.error("[OAuth Callback] BroadcastChannel failed:", broadcastError);
+            console.error(
+              "[OAuth Callback] BroadcastChannel failed:",
+              broadcastError,
+            );
             // Show manual copy UI (already rendered by default)
           }
         }
