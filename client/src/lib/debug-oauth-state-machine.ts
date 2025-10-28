@@ -127,6 +127,7 @@ export interface DebugOAuthStateMachineConfig {
   serverName: string;
   redirectUrl?: string; // Redirect URL for OAuth callback
   fetchFn?: typeof fetch; // Optional fetch function for testing
+  customScopes?: string; // Optional custom scopes override (space-separated)
 }
 
 // Helper: Build well-known resource metadata URL from server URL
@@ -268,6 +269,7 @@ export const createDebugOAuthStateMachine = (
     serverName,
     redirectUrl,
     fetchFn = fetch,
+    customScopes,
   } = config;
 
   // Use provided redirectUrl or default to the origin + /oauth/callback/debug
@@ -1037,24 +1039,36 @@ export const createDebugOAuthStateMachine = (
             }
 
             // Add scopes to request refresh tokens and other capabilities
-            const scopesSupported =
-              state.resourceMetadata?.scopes_supported ||
-              state.authorizationServerMetadata.scopes_supported;
+            // If custom scopes are provided, use them exclusively
+            if (customScopes) {
+              authUrl.searchParams.set("scope", customScopes);
+            } else {
+              // Otherwise, use automatic scope discovery
+              const scopesSupported =
+                state.resourceMetadata?.scopes_supported ||
+                state.authorizationServerMetadata.scopes_supported;
 
-            // Build scope string, always including offline_access for refresh tokens
-            const scopes = new Set<string>();
+              // Build scope string following OAuth 2.1 and OIDC best practices
+              const scopes = new Set<string>();
 
-            // Add server-supported scopes if available
-            if (scopesSupported && scopesSupported.length > 0) {
-              scopesSupported.forEach((scope) => scopes.add(scope));
-            }
+              // 1. Standard OIDC scopes (if this is an OIDC provider)
+              // These are commonly supported and provide user information
+              const standardScopes = ["openid", "profile", "email"];
+              standardScopes.forEach((scope) => scopes.add(scope));
 
-            // Always request offline_access for refresh tokens (if not already included)
-            scopes.add("offline_access");
+              // 2. Add server-advertised scopes (MCP-specific like tasks.read, tasks.write)
+              if (scopesSupported && scopesSupported.length > 0) {
+                scopesSupported.forEach((scope) => scopes.add(scope));
+              }
 
-            // Set scope parameter if we have any scopes
-            if (scopes.size > 0) {
-              authUrl.searchParams.set("scope", Array.from(scopes).join(" "));
+              // 3. Always request offline_access for refresh tokens
+              // This is required to get refresh tokens per OAuth 2.1
+              scopes.add("offline_access");
+
+              // Set scope parameter - order doesn't matter but standard scopes first is conventional
+              if (scopes.size > 0) {
+                authUrl.searchParams.set("scope", Array.from(scopes).join(" "));
+              }
             }
 
             // Add info log for Authorization URL
@@ -1259,16 +1273,13 @@ export const createDebugOAuthStateMachine = (
                 ];
               }
 
-              // Add combined OAuth tokens log (access token + refresh token)
               if (tokens.access_token) {
                 const tokenData: Record<string, any> = {
-                  access_token: tokens.access_token.substring(0, 50) + "...",
-                  access_token_full: tokens.access_token,
+                  access_token: tokens.access_token,
                 };
 
                 if (tokens.refresh_token) {
-                  tokenData.refresh_token = tokens.refresh_token.substring(0, 50) + "...",
-                  tokenData.refresh_token_full = tokens.refresh_token;
+                  tokenData.refresh_token = tokens.refresh_token;
                 }
 
                 tokenInfoLogs = [

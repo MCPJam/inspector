@@ -37,6 +37,7 @@ import {
 import { DebugMCPOAuthClientProvider } from "../lib/debug-oauth-provider";
 import { OAuthSequenceDiagram } from "./OAuthSequenceDiagram";
 import { OAuthAuthorizationModal } from "./OAuthAuthorizationModal";
+import { OAuthAdvancedConfigModal } from "./OAuthAdvancedConfigModal";
 import { MCPServerConfig } from "@/sdk";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
@@ -117,6 +118,12 @@ export const OAuthFlowTab = ({
   // Track if authorization modal is open
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
+  // Track if advanced config modal is open
+  const [isAdvancedConfigOpen, setIsAdvancedConfigOpen] = useState(false);
+
+  // Track custom scopes input
+  const [customScopes, setCustomScopes] = useState("");
+
   // Use ref to always have access to the latest state
   const oauthFlowStateRef = useRef(oauthFlowState);
   useEffect(() => {
@@ -142,8 +149,8 @@ export const OAuthFlowTab = ({
       "pkce-generation",
       "auth-url",
       "auth-code",
+      "oauth-tokens",
       "token",
-      "refresh-token",
     ]);
     setDeletedInfoLogs(allInfoLogIds);
   };
@@ -185,6 +192,7 @@ export const OAuthFlowTab = ({
     }
     setExpandedBlocks(new Set());
     setDeletedInfoLogs(new Set());
+    setCustomScopes(""); // Clear custom scopes
   }, [updateOAuthFlowState]);
 
   // Update auth settings when server config changes
@@ -220,8 +228,15 @@ export const OAuthFlowTab = ({
       serverUrl: authSettings.serverUrl,
       serverName,
       redirectUrl: provider.redirectUrl,
+      customScopes: customScopes.trim() || undefined,
     });
-  }, [serverConfig, serverName, authSettings.serverUrl, updateOAuthFlowState]);
+  }, [
+    serverConfig,
+    serverName,
+    authSettings.serverUrl,
+    updateOAuthFlowState,
+    customScopes,
+  ]);
 
   const proceedToNextStep = useCallback(async () => {
     if (oauthStateMachine) {
@@ -321,6 +336,9 @@ export const OAuthFlowTab = ({
 
     // Reset the initialized ref to allow reinitialization
     initializedServerRef.current = null;
+
+    // Clear custom scopes when switching servers
+    setCustomScopes("");
 
     // Reset using the state machine if available
     if (oauthStateMachine) {
@@ -440,18 +458,19 @@ export const OAuthFlowTab = ({
   return (
     <div className="h-[calc(100vh-120px)] flex flex-col bg-background">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-background">
-        <div>
-          <div className="flex items-center gap-2">
-            <Workflow className="h-5 w-5" />
-            <h3 className="text-lg font-medium">OAuth Authentication Flow</h3>
+      <div className="px-6 py-4 border-b border-border bg-background">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <Workflow className="h-5 w-5" />
+              <h3 className="text-lg font-medium">OAuth Authentication Flow</h3>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              {serverEntry?.name || "Unknown Server"} •{" "}
+              {isHttpServer && (serverConfig as any).url.toString()}
+            </p>
           </div>
-          <p className="text-sm text-muted-foreground">
-            {serverEntry?.name || "Unknown Server"} •{" "}
-            {isHttpServer && (serverConfig as any).url.toString()}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2">
           <Button
             onClick={() => {
               // If we're at authorization step, open the popup
@@ -469,6 +488,13 @@ export const OAuthFlowTab = ({
               : oauthFlowState.currentStep === "authorization_request"
                 ? "Ready to authorize"
                 : "Next Step"}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => setIsAdvancedConfigOpen(true)}
+            disabled={oauthFlowState.isInitiatingAuth}
+          >
+            Advanced
           </Button>
           <Button
             variant="outline"
@@ -494,6 +520,7 @@ export const OAuthFlowTab = ({
           >
             Reset
           </Button>
+          </div>
         </div>
       </div>
 
@@ -824,6 +851,14 @@ export const OAuthFlowTab = ({
           authorizationUrl={oauthFlowState.authorizationUrl}
         />
       )}
+
+      {/* Advanced Config Modal */}
+      <OAuthAdvancedConfigModal
+        open={isAdvancedConfigOpen}
+        onOpenChange={setIsAdvancedConfigOpen}
+        customScopes={customScopes}
+        onCustomScopesChange={setCustomScopes}
+      />
     </div>
   );
 };
