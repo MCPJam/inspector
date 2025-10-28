@@ -62,28 +62,20 @@ export function AuthUpperArea() {
   const email = user.email;
   const initials = getInitials(displayName);
 
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
     const isElectron = (window as any).isElectron;
     const origin = window.location.origin;
-    const normalizedOrigin = origin.includes("://localhost")
-      ? origin.replace("://localhost", "://127.0.0.1")
-      : origin;
-    const returnTo =
-      isElectron && import.meta.env.DEV
-        ? "http://localhost:8080/callback"
-        : normalizedOrigin;
 
-    signOut({ returnTo });
-
-    // In Electron, the logout happens in-app and WorkOS will redirect back
-    // If for some reason the redirect doesn't work, reload after a delay
     if (isElectron) {
-      setTimeout(() => {
-        // Only reload if still on a non-login page (logout didn't redirect)
-        if (!window.location.pathname.includes("callback")) {
-          window.location.href = origin;
-        }
-      }, 2000);
+      // In Electron, use origin directly (no 127.0.0.1 replacement needed)
+      // The logout will happen in-app since will-navigate allows /logout URLs
+      signOut({ returnTo: origin });
+    } else {
+      // In web browser, normalize localhost to 127.0.0.1 if needed
+      const normalizedOrigin = origin.includes("://localhost")
+        ? origin.replace("://localhost", "://127.0.0.1")
+        : origin;
+      signOut({ returnTo: normalizedOrigin });
     }
   };
 
