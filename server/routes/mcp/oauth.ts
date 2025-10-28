@@ -235,8 +235,11 @@ oauth.post("/proxy", async (c) => {
           params.append(key, String(value));
         }
         fetchOptions.body = params.toString();
+      } else if (typeof body === "string") {
+        // Body is already a JSON string from frontend serialization, use as-is
+        fetchOptions.body = body;
       } else {
-        // Default to JSON
+        // Body is an object, stringify it
         fetchOptions.body = JSON.stringify(body);
       }
     }
