@@ -319,7 +319,12 @@ app.on("open-url", (event, url) => {
   const isAuthKitCallback = url.startsWith("mcpjam://authkit/callback");
   const isMcpCallback = url.startsWith("mcpjam://oauth/callback");
 
+  log.info("Callback type detection:");
+  log.info("- isAuthKitCallback:", isAuthKitCallback);
+  log.info("- isMcpCallback:", isMcpCallback);
+
   if (!isAuthKitCallback && !isMcpCallback) {
+    log.warn("Unknown callback type, ignoring");
     return;
   }
 

@@ -197,6 +197,38 @@ export function useAppState() {
     }
   }, [isLoading, handleOAuthCallbackComplete]);
 
+  // Set up IPC listener for MCP OAuth callbacks in Electron
+  useEffect(() => {
+    if (!window.isElectron || !window.electronAPI?.oauth?.onCallback) {
+      return;
+    }
+
+    const handleElectronOAuthCallback = (url: string) => {
+      try {
+        const parsed = new URL(url);
+        const code = parsed.searchParams.get("code");
+        const error = parsed.searchParams.get("error");
+
+        if (code) {
+          handleOAuthCallbackComplete(code);
+        } else if (error) {
+          toast.error(`OAuth authorization failed: ${error}`);
+          localStorage.removeItem("mcp-oauth-pending");
+        }
+      } catch (e) {
+        logger.error("Failed to parse OAuth callback URL from IPC", { url, error: e });
+      }
+    };
+
+    // Register the IPC listener
+    window.electronAPI.oauth.onCallback(handleElectronOAuthCallback);
+
+    // Cleanup on unmount
+    return () => {
+      window.electronAPI?.oauth?.removeCallback();
+    };
+  }, [handleOAuthCallbackComplete, logger]);
+
   const handleConnect = useCallback(
     async (formData: ServerFormData) => {
       const validationError = validateForm(formData);
