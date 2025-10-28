@@ -48,6 +48,7 @@ export interface OauthFlowStateJune2025 {
   // Client Registration
   clientId?: string;
   clientSecret?: string;
+  tokenEndpointAuthMethod?: string; // How to authenticate at token endpoint
   // PKCE Parameters
   codeVerifier?: string;
   codeChallenge?: string;
@@ -107,6 +108,7 @@ export const EMPTY_OAUTH_FLOW_STATE_V2: OauthFlowStateJune2025 = {
   currentStep: "idle",
   httpHistory: [],
   infoLogs: [],
+  tokenEndpointAuthMethod: undefined,
 };
 
 // State machine interface
@@ -128,7 +130,8 @@ export interface DebugOAuthStateMachineConfig {
   redirectUrl?: string; // Redirect URL for OAuth callback
   fetchFn?: typeof fetch; // Optional fetch function for testing
   customScopes?: string; // Optional custom scopes override (space-separated)
-  customHeaders?: Record<string, string>; // Optional custom HTTP headers
+  customHeaders?: Record<string, string>; // Optional custom HTTP headers from server config
+  registrationStrategy?: "dcr" | "preregistered"; // Client registration strategy
 }
 
 // Helper: Build well-known resource metadata URL from server URL
@@ -196,6 +199,27 @@ function buildAuthServerMetadataUrls(authServerUrl: string): string[] {
   return urls;
 }
 
+// Helper: Load pre-registered OAuth credentials from localStorage
+function loadPreregisteredCredentials(serverName: string): {
+  clientId?: string;
+  clientSecret?: string;
+} {
+  try {
+    // Try to load from mcp-client-{serverName} (where ServerModal stores them)
+    const storedClientInfo = localStorage.getItem(`mcp-client-${serverName}`);
+    if (storedClientInfo) {
+      const parsed = JSON.parse(storedClientInfo);
+      return {
+        clientId: parsed.client_id || undefined,
+        clientSecret: parsed.client_secret || undefined,
+      };
+    }
+  } catch (e) {
+    console.error("Failed to load pre-registered credentials:", e);
+  }
+  return {};
+}
+
 /**
  * Helper function to make requests via backend debug proxy (bypasses CORS)
  *
@@ -259,11 +283,6 @@ async function proxyFetch(
     headers: mergedHeaders,
   };
 
-  console.log(
-    "proxyFetch sending to backend:",
-    JSON.stringify(proxyPayload, null, 2),
-  );
-
   const response = await fetch("/api/mcp/oauth/debug/proxy", {
     method: "POST",
     headers: {
@@ -299,6 +318,7 @@ export const createDebugOAuthStateMachine = (
     fetchFn = fetch,
     customScopes,
     customHeaders,
+    registrationStrategy = "dcr",
   } = config;
 
   // Use provided redirectUrl or default to the origin + /oauth/callback/debug
@@ -861,7 +881,54 @@ export const createDebugOAuthStateMachine = (
               throw new Error("No authorization server metadata available");
             }
 
-            if (state.authorizationServerMetadata.registration_endpoint) {
+            // Check registration strategy
+            if (registrationStrategy === "preregistered") {
+              // Skip DCR - load pre-registered client credentials from localStorage
+              const { clientId, clientSecret } =
+                loadPreregisteredCredentials(serverName);
+
+              if (!clientId) {
+                updateState({
+                  error:
+                    "Pre-registered client ID is required. Please configure OAuth credentials in the server settings.",
+                  isInitiatingAuth: false,
+                });
+                return;
+              }
+
+              // Add info log for pre-registered client
+              const preregInfo: Record<string, any> = {
+                "Client ID": clientId,
+                "Client Secret": clientSecret
+                  ? "Configured"
+                  : "Not provided (public client)",
+                "Token Auth Method": clientSecret
+                  ? "client_secret_post"
+                  : "none",
+                Note: "Using pre-registered client credentials from server config (skipped DCR)",
+              };
+
+              const infoLogs = addInfoLog(
+                getCurrentState(),
+                "dcr",
+                "Pre-registered Client",
+                preregInfo,
+              );
+
+              updateState({
+                currentStep: "received_client_credentials",
+                clientId,
+                clientSecret: clientSecret || undefined,
+                tokenEndpointAuthMethod: clientSecret
+                  ? "client_secret_post"
+                  : "none",
+                infoLogs,
+                isInitiatingAuth: false,
+              });
+            } else if (
+              state.authorizationServerMetadata.registration_endpoint
+            ) {
+              // Dynamic Client Registration (DCR)
               // Prepare client metadata with scopes if available
               const scopesSupported =
                 state.resourceMetadata?.scopes_supported ||
@@ -908,10 +975,11 @@ export const createDebugOAuthStateMachine = (
               setTimeout(() => machine.proceedToNextStep(), 50);
               return;
             } else {
-              // Skip to PKCE generation with a mock client ID
+              // No registration endpoint and DCR strategy - skip to PKCE generation with a mock client ID
               updateState({
                 currentStep: "generate_pkce_parameters",
                 clientId: "mock-client-id-for-demo",
+                tokenEndpointAuthMethod: "none", // Public client
                 isInitiatingAuth: false,
               });
             }
@@ -933,9 +1001,9 @@ export const createDebugOAuthStateMachine = (
                 state.authorizationServerMetadata.registration_endpoint,
                 {
                   method: "POST",
-                  headers: mergeHeaders({
+                  headers: {
                     "Content-Type": "application/json",
-                  }),
+                  },
                   body: JSON.stringify(state.lastRequest.body),
                 },
               );
@@ -971,6 +1039,7 @@ export const createDebugOAuthStateMachine = (
                   currentStep: "received_client_credentials",
                   clientId: fallbackClientId,
                   clientSecret: undefined,
+                  tokenEndpointAuthMethod: "none", // Assume public client
                   isInitiatingAuth: false,
                 });
               } else {
@@ -981,7 +1050,8 @@ export const createDebugOAuthStateMachine = (
                 const dcrInfo: Record<string, any> = {
                   "Client ID": clientInfo.client_id,
                   "Client Name": clientInfo.client_name,
-                  "Token Auth Method": clientInfo.token_endpoint_auth_method,
+                  "Token Auth Method":
+                    clientInfo.token_endpoint_auth_method || "none",
                   "Redirect URIs": clientInfo.redirect_uris,
                   "Grant Types": clientInfo.grant_types,
                   "Response Types": clientInfo.response_types,
@@ -990,6 +1060,8 @@ export const createDebugOAuthStateMachine = (
                 if (clientInfo.client_secret) {
                   dcrInfo["Client Secret"] =
                     clientInfo.client_secret.substring(0, 20) + "...";
+                  dcrInfo["Note"] =
+                    "Server issued client_secret - this will be used in token requests";
                 }
 
                 const infoLogs = addInfoLog(
@@ -1003,6 +1075,8 @@ export const createDebugOAuthStateMachine = (
                   currentStep: "received_client_credentials",
                   clientId: clientInfo.client_id,
                   clientSecret: clientInfo.client_secret,
+                  tokenEndpointAuthMethod:
+                    clientInfo.token_endpoint_auth_method || "none",
                   lastResponse: registrationResponseData,
                   httpHistory: updatedHistoryReg,
                   infoLogs,
@@ -1015,7 +1089,7 @@ export const createDebugOAuthStateMachine = (
               const errorResponse = {
                 status: 0,
                 statusText: "Network Error",
-                headers: {},
+                headers: mergeHeaders({}),
                 body: {
                   error: error instanceof Error ? error.message : String(error),
                 },
@@ -1040,6 +1114,7 @@ export const createDebugOAuthStateMachine = (
                 currentStep: "received_client_credentials",
                 clientId: fallbackClientId,
                 clientSecret: undefined,
+                tokenEndpointAuthMethod: "none", // Assume public client
                 isInitiatingAuth: false,
               });
             }
@@ -1113,21 +1188,27 @@ export const createDebugOAuthStateMachine = (
               // Build scope string following OAuth 2.1 and OIDC best practices
               const scopes = new Set<string>();
 
-              // 1. Standard OIDC scopes (if this is an OIDC provider)
-              // These are commonly supported and provide user information
-              const standardScopes = ["openid", "profile", "email"];
-              standardScopes.forEach((scope) => scopes.add(scope));
-
-              // 2. Add server-advertised scopes (MCP-specific like tasks.read, tasks.write)
+              // 1. Add server-advertised scopes first (MCP-specific like tasks.read, read-mcp, etc.)
               if (scopesSupported && scopesSupported.length > 0) {
                 scopesSupported.forEach((scope) => scopes.add(scope));
               }
 
-              // 3. Always request offline_access for refresh tokens
-              // This is required to get refresh tokens per OAuth 2.1
-              scopes.add("offline_access");
+              // 2. Add standard OIDC scopes only if server supports them
+              // (Some servers like Hugging Face advertise these in scopes_supported)
+              const standardScopes = ["openid", "profile", "email"];
+              standardScopes.forEach((scope) => {
+                if (!scopesSupported || scopesSupported.includes(scope)) {
+                  scopes.add(scope);
+                }
+              });
 
-              // Set scope parameter - order doesn't matter but standard scopes first is conventional
+              // 3. Request offline_access for refresh tokens ONLY if server supports it
+              // Per OAuth 2.1, this is required to get refresh tokens
+              if (scopesSupported?.includes("offline_access")) {
+                scopes.add("offline_access");
+              }
+
+              // Set scope parameter - use only scopes the server actually supports
               if (scopes.size > 0) {
                 authUrl.searchParams.set("scope", Array.from(scopes).join(" "));
               }
@@ -1196,6 +1277,10 @@ export const createDebugOAuthStateMachine = (
               tokenRequestBodyObj.client_id = state.clientId;
             }
 
+            if (state.clientSecret) {
+              tokenRequestBodyObj.client_secret = state.clientSecret;
+            }
+
             if (state.codeVerifier) {
               tokenRequestBodyObj.code_verifier = state.codeVerifier;
             }
@@ -1207,9 +1292,9 @@ export const createDebugOAuthStateMachine = (
             const tokenRequest = {
               method: "POST",
               url: state.authorizationServerMetadata.token_endpoint,
-              headers: mergeHeaders({
+              headers: {
                 "Content-Type": "application/x-www-form-urlencoded",
-              }),
+              },
               body: tokenRequestBodyObj,
             };
 
@@ -1260,6 +1345,11 @@ export const createDebugOAuthStateMachine = (
                 code_verifier: state.codeVerifier || "",
               });
 
+              // Add client_secret if available (for confidential clients)
+              if (state.clientSecret) {
+                tokenRequestBody.set("client_secret", state.clientSecret);
+              }
+
               // Add resource parameter if available
               if (state.serverUrl) {
                 tokenRequestBody.set("resource", state.serverUrl);
@@ -1270,9 +1360,9 @@ export const createDebugOAuthStateMachine = (
                 state.authorizationServerMetadata.token_endpoint,
                 {
                   method: "POST",
-                  headers: mergeHeaders({
+                  headers: {
                     "Content-Type": "application/x-www-form-urlencoded",
-                  }),
+                  },
                   body: tokenRequestBody.toString(),
                 },
               );
@@ -1398,7 +1488,7 @@ export const createDebugOAuthStateMachine = (
               const errorResponse = {
                 status: 0,
                 statusText: "Network Error",
-                headers: {},
+                headers: mergeHeaders({}),
                 body: {
                   error: error instanceof Error ? error.message : String(error),
                 },
@@ -1428,15 +1518,16 @@ export const createDebugOAuthStateMachine = (
             const authenticatedRequest = {
               method: "POST",
               url: state.serverUrl,
-              headers: mergeHeaders({
+              headers: {
                 Authorization: `Bearer ${state.accessToken}`,
                 "Content-Type": "application/json",
-              }),
+                "MCP-Protocol-Version": "2025-06-18",
+              },
               body: {
                 jsonrpc: "2.0",
                 method: "initialize",
                 params: {
-                  protocolVersion: "2024-11-05",
+                  protocolVersion: "2025-06-18",
                   capabilities: {},
                   clientInfo: {
                     name: "MCP Inspector",
@@ -1446,6 +1537,19 @@ export const createDebugOAuthStateMachine = (
                 id: 2,
               },
             };
+
+            // Add info log for authenticated initialize request
+            const authenticatedRequestInfoLogs = addInfoLog(
+              getCurrentState(),
+              "authenticated-init",
+              "Authenticated MCP Initialize Request",
+              {
+                Request: "MCP initialize with OAuth bearer token",
+                "Protocol Version": "2025-06-18",
+                Client: "MCP Inspector v1.0.0",
+                Endpoint: state.serverUrl,
+              },
+            );
 
             // Update state with the request
             updateState({
@@ -1459,6 +1563,7 @@ export const createDebugOAuthStateMachine = (
                   request: authenticatedRequest,
                 },
               ],
+              infoLogs: authenticatedRequestInfoLogs,
               isInitiatingAuth: false,
             });
 
@@ -1475,10 +1580,10 @@ export const createDebugOAuthStateMachine = (
             try {
               const response = await proxyFetch(state.serverUrl, {
                 method: "POST",
-                headers: mergeHeaders({
+                headers: {
                   Authorization: `Bearer ${state.accessToken}`,
                   "Content-Type": "application/json",
-                }),
+                },
                 body: JSON.stringify({
                   jsonrpc: "2.0",
                   method: "initialize",
@@ -1518,10 +1623,102 @@ export const createDebugOAuthStateMachine = (
                 return;
               }
 
+              // Add info log for MCP protocol version
+              let mcpInfoLogs = getCurrentState().infoLogs || [];
+
+              // Check if response is SSE (Streamable HTTP transport)
+              const contentType = response.headers["content-type"] || "";
+              const isSSE = contentType.includes("text/event-stream");
+
+              // Extract MCP response from body (could be direct JSON or parsed SSE)
+              let mcpResponse = null;
+              if (isSSE && response.body?.mcpResponse) {
+                // SSE response - extract MCP response from parsed events
+                mcpResponse = response.body.mcpResponse;
+              } else {
+                // Direct JSON response
+                mcpResponse = response.body;
+              }
+
+              if (isSSE && mcpResponse?.result?.protocolVersion) {
+                // SSE streaming response with parsed MCP response
+                const protocolInfo: Record<string, any> = {
+                  Transport: "Streamable HTTP",
+                  "Response Format": "Server-Sent Events (streaming)",
+                  "Protocol Version": mcpResponse.result.protocolVersion,
+                };
+
+                // Include server info if available
+                if (mcpResponse.result.serverInfo) {
+                  protocolInfo["Server Name"] =
+                    mcpResponse.result.serverInfo.name;
+                  protocolInfo["Server Version"] =
+                    mcpResponse.result.serverInfo.version;
+                }
+
+                // Include capabilities if available
+                if (mcpResponse.result.capabilities) {
+                  protocolInfo["Capabilities"] =
+                    mcpResponse.result.capabilities;
+                }
+
+                mcpInfoLogs = addInfoLog(
+                  getCurrentState(),
+                  "mcp-protocol",
+                  "MCP Server Information",
+                  protocolInfo,
+                );
+              } else if (isSSE) {
+                // SSE streaming response but no MCP response parsed yet
+                mcpInfoLogs = addInfoLog(
+                  getCurrentState(),
+                  "mcp-transport",
+                  "MCP Transport Detected",
+                  {
+                    Transport: "Streamable HTTP",
+                    "Response Format": "Server-Sent Events (streaming)",
+                    "Content-Type": contentType,
+                    Note: "Server returned streaming response. Initialize response delivered via SSE stream.",
+                    Events: response.body?.events
+                      ? `${response.body.events.length} events parsed`
+                      : "No events parsed",
+                  },
+                );
+              } else if (mcpResponse?.result?.protocolVersion) {
+                // JSON response - extract protocol version from response body
+                const protocolInfo: Record<string, any> = {
+                  Transport: "Streamable HTTP",
+                  "Response Format": "JSON",
+                  "Protocol Version": mcpResponse.result.protocolVersion,
+                };
+
+                // Include server info if available
+                if (mcpResponse.result.serverInfo) {
+                  protocolInfo["Server Name"] =
+                    mcpResponse.result.serverInfo.name;
+                  protocolInfo["Server Version"] =
+                    mcpResponse.result.serverInfo.version;
+                }
+
+                // Include capabilities if available
+                if (mcpResponse.result.capabilities) {
+                  protocolInfo["Capabilities"] =
+                    mcpResponse.result.capabilities;
+                }
+
+                mcpInfoLogs = addInfoLog(
+                  getCurrentState(),
+                  "mcp-protocol",
+                  "MCP Server Information",
+                  protocolInfo,
+                );
+              }
+
               updateState({
                 currentStep: "complete",
                 lastResponse: mcpResponseData,
                 httpHistory: updatedHistoryMcp,
+                infoLogs: mcpInfoLogs,
                 error: undefined,
                 isInitiatingAuth: false,
               });
@@ -1530,7 +1727,7 @@ export const createDebugOAuthStateMachine = (
               const errorResponse = {
                 status: 0,
                 statusText: "Network Error",
-                headers: {},
+                headers: mergeHeaders({}),
                 body: {
                   error: error instanceof Error ? error.message : String(error),
                 },

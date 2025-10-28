@@ -275,7 +275,6 @@ export function ResultsPanel({
                         meta: {},
                       };
                     }
-
                     // Elicitation not supported in widgets yet
                     return {
                       isError: true,
@@ -284,7 +283,6 @@ export function ResultsPanel({
                   }}
                   onSendFollowup={onSendFollowup}
                   serverId={serverId}
-                  toolMeta={toolMeta}
                 />
               );
             }

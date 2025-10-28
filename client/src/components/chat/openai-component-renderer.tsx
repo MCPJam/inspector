@@ -11,7 +11,6 @@ interface OpenAIComponentRendererProps {
   className?: string;
   uiResourceBlob?: string; // HTML blob for ui:// URIs
   serverId?: string; // Server ID for fetching ui:// resources
-  toolMeta?: Record<string, any>; // Tool metadata from tool definition (includes openai/outputTemplate)
 }
 
 /**
@@ -26,7 +25,6 @@ export function OpenAIComponentRenderer({
   onSendFollowup,
   className,
   serverId,
-  toolMeta,
 }: OpenAIComponentRendererProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [isReady, setIsReady] = useState(false);
@@ -39,7 +37,8 @@ export function OpenAIComponentRenderer({
   // Storage key for widget state
   const widgetStateKey = `openai-widget-state:${toolCall.name}:${toolCall.id}`;
 
-  const setIframeDocumentTheme = (iframe) => {
+  const setIframeDocumentTheme = (iframe: Window | null | undefined) => {
+    if (!iframe) return;
     try {
       iframe.document.documentElement.classList.toggle(
         "dark",

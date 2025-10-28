@@ -417,7 +417,6 @@ export function ToolCallDisplay({
                               onCallTool={onCallTool}
                               onSendFollowup={onSendFollowup}
                               serverId={serverId}
-                              toolMeta={toolMeta}
                             />
                           );
                         }

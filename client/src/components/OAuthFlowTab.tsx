@@ -27,6 +27,13 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "./ui/resizable";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
 import { getStoredTokens } from "../lib/mcp-oauth";
 import { ServerWithName } from "../hooks/use-app-state";
 import {
@@ -37,10 +44,8 @@ import {
 import { DebugMCPOAuthClientProvider } from "../lib/debug-oauth-provider";
 import { OAuthSequenceDiagram } from "./OAuthSequenceDiagram";
 import { OAuthAuthorizationModal } from "./OAuthAuthorizationModal";
-import {
-  OAuthAdvancedConfigModal,
-  CustomHeader,
-} from "./OAuthAdvancedConfigModal";
+import { ServerModal } from "./connection/ServerModal";
+import { ServerFormData } from "@/shared/types";
 import { MCPServerConfig } from "@/sdk";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
@@ -90,12 +95,14 @@ interface OAuthFlowTabProps {
   serverConfig?: MCPServerConfig;
   serverEntry?: ServerWithName;
   serverName?: string;
+  onUpdate?: (originalServerName: string, formData: ServerFormData) => void;
 }
 
 export const OAuthFlowTab = ({
   serverConfig,
   serverEntry,
   serverName,
+  onUpdate,
 }: OAuthFlowTabProps) => {
   const [authSettings, setAuthSettings] = useState<AuthSettings>(
     DEFAULT_AUTH_SETTINGS,
@@ -121,14 +128,16 @@ export const OAuthFlowTab = ({
   // Track if authorization modal is open
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
-  // Track if advanced config modal is open
-  const [isAdvancedConfigOpen, setIsAdvancedConfigOpen] = useState(false);
+  // Track if server edit modal is open
+  const [isEditingServer, setIsEditingServer] = useState(false);
 
   // Track custom scopes input
   const [customScopes, setCustomScopes] = useState("");
 
-  // Track custom headers
-  const [customHeaders, setCustomHeaders] = useState<CustomHeader[]>([]);
+  // Track client registration strategy
+  type RegistrationStrategy = "dcr" | "preregistered";
+  const [registrationStrategy, setRegistrationStrategy] =
+    useState<RegistrationStrategy>("dcr");
 
   // Use ref to always have access to the latest state
   const oauthFlowStateRef = useRef(oauthFlowState);
@@ -217,26 +226,46 @@ export const OAuthFlowTab = ({
         statusMessage: null,
       });
 
-      // Pre-populate custom headers from server config (if any)
-      if ("url" in serverConfig) {
-        if (serverConfig.requestInit?.headers) {
-          const headers = serverConfig.requestInit.headers as Record<
-            string,
-            string
-          >;
-          const headerEntries = Object.entries(headers)
-            .filter(([key]) => key.toLowerCase() !== "authorization") // Exclude auth header
-            .map(([key, value]) => ({ key, value }));
-          setCustomHeaders(headerEntries);
-        } else {
-          // No headers configured for this server
-          setCustomHeaders([]);
+      // Load OAuth scopes from server config or stored tokens
+      // Priority: stored tokens > server config
+      let scopes = "";
+
+      // Try to get scopes from stored tokens (space-separated string)
+      if (existingTokens?.scope) {
+        scopes = existingTokens.scope;
+      }
+      // Fall back to server config (array of strings)
+      else if (
+        (serverConfig as any).oauthScopes &&
+        Array.isArray((serverConfig as any).oauthScopes)
+      ) {
+        scopes = (serverConfig as any).oauthScopes.join(" ");
+      }
+      // Try localStorage OAuth config as last resort
+      else {
+        try {
+          const storedOAuthConfig = localStorage.getItem(
+            `mcp-oauth-config-${serverName}`,
+          );
+          if (storedOAuthConfig) {
+            const parsed = JSON.parse(storedOAuthConfig);
+            if (parsed.scopes && Array.isArray(parsed.scopes)) {
+              scopes = parsed.scopes.join(" ");
+            }
+          }
+        } catch (e) {
+          console.error("Failed to load OAuth scopes from localStorage:", e);
         }
+      }
+
+      // Set custom scopes if we found any
+      if (scopes && customScopes !== scopes) {
+        setCustomScopes(scopes);
       }
     } else {
       updateAuthSettings(DEFAULT_AUTH_SETTINGS);
     }
-  }, [serverConfig, serverName, updateAuthSettings]);
+  }, [serverConfig, serverName, updateAuthSettings, customScopes]);
 
   // Initialize Debug OAuth state machine
   const oauthStateMachine = useMemo(() => {
@@ -244,6 +273,21 @@ export const OAuthFlowTab = ({
 
     // Create provider to get redirect URL
     const provider = new DebugMCPOAuthClientProvider(authSettings.serverUrl);
+
+    // Extract custom headers from server config (if HTTP server)
+    let customHeaders: Record<string, string> | undefined;
+    if ("url" in serverConfig && serverConfig.requestInit?.headers) {
+      const headers = serverConfig.requestInit.headers as Record<
+        string,
+        string
+      >;
+      // Filter out Authorization header - OAuth flow will add its own
+      customHeaders = Object.fromEntries(
+        Object.entries(headers).filter(
+          ([key]) => key.toLowerCase() !== "authorization",
+        ),
+      );
+    }
 
     return createDebugOAuthStateMachine({
       state: oauthFlowStateRef.current,
@@ -253,10 +297,8 @@ export const OAuthFlowTab = ({
       serverName,
       redirectUrl: provider.redirectUrl,
       customScopes: customScopes.trim() || undefined,
-      customHeaders:
-        customHeaders.length > 0
-          ? Object.fromEntries(customHeaders.map((h) => [h.key, h.value]))
-          : undefined,
+      customHeaders,
+      registrationStrategy,
     });
   }, [
     serverConfig,
@@ -264,7 +306,7 @@ export const OAuthFlowTab = ({
     authSettings.serverUrl,
     updateOAuthFlowState,
     customScopes,
-    customHeaders,
+    registrationStrategy,
   ]);
 
   const proceedToNextStep = useCallback(async () => {
@@ -283,6 +325,66 @@ export const OAuthFlowTab = ({
 
   // Listen for OAuth callback messages from the popup window
   useEffect(() => {
+    // Helper function to process OAuth callback (shared by both methods)
+    const processOAuthCallback = (code: string, state: string | undefined) => {
+      // Check if we've already processed this exact code (prevent duplicate exchanges)
+      if (processedCodeRef.current === code) {
+        return;
+      }
+
+      // Validate state parameter to prevent accepting stale authorization codes
+      const expectedState = oauthFlowStateRef.current.state;
+
+      // Only accept the code if we're at the right step AND state matches
+      const currentStep = oauthFlowStateRef.current.currentStep;
+      const isWaitingForCode =
+        currentStep === "received_authorization_code" ||
+        currentStep === "authorization_request";
+
+      if (!isWaitingForCode) {
+        return;
+      }
+
+      if (!expectedState) {
+        updateOAuthFlowState({
+          error:
+            "Flow was reset. Please start a new authorization by clicking 'Next Step'.",
+        });
+        return;
+      }
+
+      if (state !== expectedState) {
+        updateOAuthFlowState({
+          error:
+            "Invalid state parameter - this authorization code is from a previous flow. Please try again.",
+        });
+        return;
+      }
+
+      // Mark this code as processed to prevent duplicate exchanges
+      processedCodeRef.current = code;
+
+      // Clear any pending exchange timeout
+      if (exchangeTimeoutRef.current) {
+        clearTimeout(exchangeTimeoutRef.current);
+      }
+
+      // Update state with the authorization code
+      updateOAuthFlowState({
+        authorizationCode: code,
+        error: undefined,
+      });
+
+      // Automatically proceed to the next step after a brief delay (store timeout ref)
+      exchangeTimeoutRef.current = setTimeout(() => {
+        if (oauthStateMachine) {
+          oauthStateMachine.proceedToNextStep();
+        }
+        exchangeTimeoutRef.current = null;
+      }, 500);
+    };
+
+    // Method 1: Listen via window.postMessage (standard approach)
     const handleMessage = (event: MessageEvent) => {
       // Verify origin matches our app
       if (event.origin !== window.location.origin) {
@@ -291,69 +393,28 @@ export const OAuthFlowTab = ({
 
       // Check if this is an OAuth callback message
       if (event.data?.type === "OAUTH_CALLBACK" && event.data?.code) {
-        const receivedCode = event.data.code;
-
-        // Check if we've already processed this exact code (prevent duplicate exchanges)
-        if (processedCodeRef.current === receivedCode) {
-          return;
-        }
-
-        // Validate state parameter to prevent accepting stale authorization codes
-        const receivedState = event.data.state;
-        const expectedState = oauthFlowStateRef.current.state;
-
-        // Only accept the code if we're at the right step AND state matches
-        const currentStep = oauthFlowStateRef.current.currentStep;
-        const isWaitingForCode =
-          currentStep === "received_authorization_code" ||
-          currentStep === "authorization_request";
-
-        if (!isWaitingForCode) {
-          return;
-        }
-
-        if (!expectedState) {
-          updateOAuthFlowState({
-            error:
-              "Flow was reset. Please start a new authorization by clicking 'Next Step'.",
-          });
-          return;
-        }
-
-        if (receivedState !== expectedState) {
-          updateOAuthFlowState({
-            error:
-              "Invalid state parameter - this authorization code is from a previous flow. Please try again.",
-          });
-          return;
-        }
-
-        // Mark this code as processed to prevent duplicate exchanges
-        processedCodeRef.current = receivedCode;
-
-        // Clear any pending exchange timeout
-        if (exchangeTimeoutRef.current) {
-          clearTimeout(exchangeTimeoutRef.current);
-        }
-
-        // Update state with the authorization code
-        updateOAuthFlowState({
-          authorizationCode: receivedCode,
-          error: undefined,
-        });
-
-        // Automatically proceed to the next step after a brief delay (store timeout ref)
-        exchangeTimeoutRef.current = setTimeout(() => {
-          if (oauthStateMachine) {
-            oauthStateMachine.proceedToNextStep();
-          }
-          exchangeTimeoutRef.current = null;
-        }, 500);
+        processOAuthCallback(event.data.code, event.data.state);
       }
     };
 
+    // Method 2: Listen via BroadcastChannel (fallback for COOP-protected OAuth servers)
+    let channel: BroadcastChannel | null = null;
+    try {
+      channel = new BroadcastChannel("oauth_callback_channel");
+      channel.onmessage = (event) => {
+        if (event.data?.type === "OAUTH_CALLBACK" && event.data?.code) {
+          processOAuthCallback(event.data.code, event.data.state);
+        }
+      };
+    } catch (error) {
+      // BroadcastChannel not supported in this browser
+    }
+
     window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
+    return () => {
+      window.removeEventListener("message", handleMessage);
+      channel?.close();
+    };
   }, [oauthStateMachine, updateOAuthFlowState]);
 
   // Initialize OAuth flow when component mounts or server changes
@@ -494,6 +555,9 @@ export const OAuthFlowTab = ({
             <div className="flex items-center gap-2">
               <Workflow className="h-5 w-5" />
               <h3 className="text-lg font-medium">OAuth Authentication Flow</h3>
+              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
+                BETA
+              </span>
             </div>
             <p className="text-sm text-muted-foreground">
               {serverEntry?.name || "Unknown Server"} •{" "}
@@ -501,16 +565,48 @@ export const OAuthFlowTab = ({
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <p className="text-xs text-muted-foreground pr-4">
+            <div className="flex items-center gap-2 border-r border-border pr-4">
+              <label
+                htmlFor="registration-strategy"
+                className="text-xs text-muted-foreground whitespace-nowrap"
+              >
+                Registration:
+              </label>
+              <Select
+                value={registrationStrategy}
+                onValueChange={(value: RegistrationStrategy) =>
+                  setRegistrationStrategy(value)
+                }
+                disabled={oauthFlowState.isInitiatingAuth}
+              >
+                <SelectTrigger
+                  id="registration-strategy"
+                  className="w-[180px] h-9 text-xs"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="dcr" className="text-xs">
+                    Dynamic (DCR)
+                  </SelectItem>
+                  <SelectItem value="preregistered" className="text-xs">
+                    Pre-registered
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <p className="text-xs text-muted-foreground">
               Protocol Revision: 2025-06-18
             </p>
-            <Button
-              variant="outline"
-              onClick={() => setIsAdvancedConfigOpen(true)}
-              disabled={oauthFlowState.isInitiatingAuth}
-            >
-              Advanced
-            </Button>
+            {serverEntry && (
+              <Button
+                variant="outline"
+                onClick={() => setIsEditingServer(true)}
+                disabled={oauthFlowState.isInitiatingAuth}
+              >
+                Edit Config
+              </Button>
+            )}
             <Button
               variant="outline"
               onClick={() => {
@@ -590,7 +686,10 @@ export const OAuthFlowTab = ({
       <div className="flex-1 overflow-hidden flex flex-row">
         {/* ReactFlow Sequence Diagram */}
         <div className="flex-1">
-          <OAuthSequenceDiagram flowState={oauthFlowState} />
+          <OAuthSequenceDiagram
+            flowState={oauthFlowState}
+            registrationStrategy={registrationStrategy}
+          />
         </div>
 
         {/* Side Panel with Details - Split into two resizable sections */}
@@ -778,6 +877,7 @@ export const OAuthFlowTab = ({
                                           method: request.method,
                                           url: request.url,
                                           headers: request.headers,
+                                          body: request.body,
                                         }}
                                         dark={true}
                                         theme="atom"
@@ -896,15 +996,18 @@ export const OAuthFlowTab = ({
         />
       )}
 
-      {/* Advanced Config Modal */}
-      <OAuthAdvancedConfigModal
-        open={isAdvancedConfigOpen}
-        onOpenChange={setIsAdvancedConfigOpen}
-        customScopes={customScopes}
-        onCustomScopesChange={setCustomScopes}
-        customHeaders={customHeaders}
-        onCustomHeadersChange={setCustomHeaders}
-      />
+      {/* Edit Server Modal */}
+      {serverEntry && onUpdate && (
+        <ServerModal
+          mode="edit"
+          isOpen={isEditingServer}
+          onClose={() => setIsEditingServer(false)}
+          onSubmit={(formData, originalName) =>
+            onUpdate(originalName!, formData)
+          }
+          server={serverEntry}
+        />
+      )}
     </div>
   );
 };

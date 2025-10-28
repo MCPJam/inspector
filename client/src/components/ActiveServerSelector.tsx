@@ -6,6 +6,7 @@ import { ServerFormData } from "@/shared/types.js";
 import { Check } from "lucide-react";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
+import { hasOAuthConfig } from "@/lib/mcp-oauth";
 interface ActiveServerSelectorProps {
   connectedServerConfigs: Record<string, ServerWithName>;
   selectedServer: string;
@@ -65,8 +66,12 @@ export function ActiveServerSelector({
     const isHttpServer = "url" in server.config;
     if (!isHttpServer) return false;
 
-    // Check if server has OAuth tokens or auth provider configured
-    return !!(server.oauthTokens || (server.config as any).authProvider);
+    // Check if server has OAuth tokens, OAuth config in localStorage, or is in oauth-flow state
+    return !!(
+      server.oauthTokens ||
+      hasOAuthConfig(server.name) ||
+      server.connectionStatus === "oauth-flow"
+    );
   };
 
   const servers = Object.entries(connectedServerConfigs).filter(

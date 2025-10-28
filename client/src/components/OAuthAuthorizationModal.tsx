@@ -18,6 +18,7 @@ export const OAuthAuthorizationModal = ({
 
   // Listen for OAuth callback messages from popup
   useEffect(() => {
+    // Method 1: Listen via window.postMessage (standard approach)
     const handleMessage = (event: MessageEvent) => {
       // Verify origin matches our app
       if (event.origin !== window.location.origin) {
@@ -26,7 +27,6 @@ export const OAuthAuthorizationModal = ({
 
       // Check if this is an OAuth callback message
       if (event.data?.type === "OAUTH_CALLBACK" && event.data?.code) {
-        console.log("[OAuth Popup] Received OAuth callback");
         // Notify parent component
         onAuthorizationComplete?.();
         // Close our "modal" state
@@ -35,15 +35,34 @@ export const OAuthAuthorizationModal = ({
       }
     };
 
+    // Method 2: Listen via BroadcastChannel (fallback for COOP-protected OAuth servers)
+    let channel: BroadcastChannel | null = null;
+    try {
+      channel = new BroadcastChannel("oauth_callback_channel");
+      channel.onmessage = (event) => {
+        if (event.data?.type === "OAUTH_CALLBACK" && event.data?.code) {
+          // Notify parent component
+          onAuthorizationComplete?.();
+          // Close our "modal" state
+          onOpenChange(false);
+          hasOpenedRef.current = false;
+        }
+      };
+    } catch (error) {
+      console.warn("[OAuth Popup] BroadcastChannel not supported:", error);
+    }
+
     window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
+    return () => {
+      window.removeEventListener("message", handleMessage);
+      channel?.close();
+    };
   }, [onOpenChange, onAuthorizationComplete]);
 
   // Open popup when modal opens
   useEffect(() => {
     if (open && !hasOpenedRef.current) {
       hasOpenedRef.current = true;
-      console.log("[OAuth Popup] Opening authorization in popup window");
 
       const width = 600;
       const height = 700;
@@ -62,7 +81,6 @@ export const OAuthAuthorizationModal = ({
       // Monitor popup closure
       const checkPopupClosed = setInterval(() => {
         if (popupRef.current?.closed) {
-          console.log("[OAuth Popup] Popup was closed");
           clearInterval(checkPopupClosed);
           onOpenChange(false);
           hasOpenedRef.current = false;
