@@ -511,13 +511,21 @@ export const OAuthFlowTab = ({
                 void proceedToNextStep();
               }
             }}
-            disabled={oauthFlowState.isInitiatingAuth}
+            disabled={oauthFlowState.isInitiatingAuth || oauthFlowState.currentStep === "complete"}
+            className={oauthFlowState.currentStep === "complete" ? "bg-green-600 hover:bg-green-600" : ""}
           >
-            {oauthFlowState.isInitiatingAuth
-              ? "Processing..."
-              : oauthFlowState.currentStep === "authorization_request"
-                ? "Ready to authorize"
-                : "Next Step"}
+            {oauthFlowState.currentStep === "complete" ? (
+              <>
+                <CheckCircle2 className="mr-2 h-4 w-4" />
+                Flow Complete
+              </>
+            ) : oauthFlowState.isInitiatingAuth ? (
+              "Processing..."
+            ) : oauthFlowState.currentStep === "authorization_request" ? (
+              "Ready to authorize"
+            ) : (
+              "Next Step"
+            )}
           </Button>
           <Button
             variant="outline"
