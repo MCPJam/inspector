@@ -26,6 +26,7 @@ interface ChatInputProps {
   temperature: number;
   onTemperatureChange: (temperature: number) => void;
   hasMessages?: boolean;
+  onResetChat?: () => void;
 }
 
 export function ChatInput({
@@ -44,6 +45,7 @@ export function ChatInput({
   onSystemPromptChange,
   temperature,
   onTemperatureChange,
+  onResetChat,
   hasMessages = false,
 }: ChatInputProps) {
   const formRef = useRef<HTMLFormElement>(null);
@@ -107,6 +109,8 @@ export function ChatInput({
               onTemperatureChange={onTemperatureChange}
               disabled={disabled}
               isLoading={isLoading}
+              hasMessages={hasMessages}
+              onResetChat={onResetChat}
             />
           </div>
 

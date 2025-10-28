@@ -9,8 +9,9 @@ import {
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Slider } from "@/components/ui/slider";
-import { Settings2 } from "lucide-react";
+import { AlertTriangle, Settings2 } from "lucide-react";
 import { toast } from "sonner";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 interface SystemPromptSelectorProps {
   systemPrompt: string;
@@ -19,6 +20,8 @@ interface SystemPromptSelectorProps {
   onTemperatureChange: (temperature: number) => void;
   disabled?: boolean;
   isLoading?: boolean;
+  hasMessages?: boolean;
+  onResetChat?: () => void;
 }
 
 export function SystemPromptSelector({
@@ -28,10 +31,13 @@ export function SystemPromptSelector({
   onTemperatureChange,
   disabled,
   isLoading,
+  hasMessages,
+  onResetChat,
 }: SystemPromptSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [draftPrompt, setDraftPrompt] = useState(systemPrompt);
   const [draftTemperature, setDraftTemperature] = useState(temperature);
+  const [confirmReset, setConfirmReset] = useState(false);
 
   const handleOpenChange = (open: boolean) => {
     setIsOpen(open);
@@ -39,18 +45,31 @@ export function SystemPromptSelector({
       setDraftPrompt(systemPrompt);
       setDraftTemperature(temperature);
     }
+    setConfirmReset(false);
   };
 
   const handleSave = () => {
+    const promptChanged = draftPrompt !== systemPrompt;
+    const temperatureChanged = draftTemperature !== temperature;
+    if (hasMessages && (promptChanged || temperatureChanged) && !confirmReset) {
+      setConfirmReset(true);
+      return;
+    }
+
     onSystemPromptChange(draftPrompt);
     onTemperatureChange(draftTemperature);
+    if (promptChanged || temperatureChanged) {
+      onResetChat?.();
+    }
     setIsOpen(false);
+    setConfirmReset(false);
     toast.success("System prompt and temperature updated");
   };
 
   const handleCancel = () => {
     setDraftPrompt(systemPrompt);
     setDraftTemperature(temperature);
+    setConfirmReset(false);
     setIsOpen(false);
   };
 
@@ -78,7 +97,10 @@ export function SystemPromptSelector({
             <label className="text-sm font-medium">System Prompt</label>
             <Textarea
               value={draftPrompt}
-              onChange={(e) => setDraftPrompt(e.target.value)}
+              onChange={(e) => {
+                setDraftPrompt(e.target.value);
+                setConfirmReset(false);
+              }}
               placeholder="You are a helpful assistant with access to MCP tools."
               className="h-[140px] resize-none"
             />
@@ -93,7 +115,10 @@ export function SystemPromptSelector({
             </div>
             <Slider
               value={[draftTemperature]}
-              onValueChange={(value) => setDraftTemperature(value[0])}
+              onValueChange={(value) => {
+                setDraftTemperature(value[0]);
+                setConfirmReset(false);
+              }}
               min={0}
               max={2}
               step={0.1}
@@ -105,6 +130,20 @@ export function SystemPromptSelector({
             </p>
           </div>
 
+          {confirmReset && (
+            <Alert
+              variant="destructive"
+              className="bg-destructive/10 border-destructive/40"
+            >
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Confirm reset</AlertTitle>
+              <AlertDescription>
+                Changing the system prompt or temperature will clear the current
+                chat session. Press save again to continue.
+              </AlertDescription>
+            </Alert>
+          )}
+
           <div className="flex justify-end gap-2">
             <Button
               variant="ghost"
@@ -113,8 +152,12 @@ export function SystemPromptSelector({
             >
               Cancel
             </Button>
-            <Button onClick={handleSave} className="cursor-pointer">
-              Save
+            <Button
+              onClick={handleSave}
+              className="cursor-pointer"
+              variant={confirmReset ? "destructive" : "default"}
+            >
+              {confirmReset ? "Confirm & Reset" : "Save"}
             </Button>
           </div>
         </div>

@@ -3,6 +3,7 @@ import { useChat } from "@ai-sdk/react";
 import {
   DefaultChatTransport,
   lastAssistantMessageIsCompleteWithToolCalls,
+  generateId,
 } from "ai";
 import { useAuth } from "@workos-inc/authkit-react";
 import { ModelDefinition } from "@/shared/types";
@@ -54,6 +55,7 @@ export function ChatTabV2() {
   >(undefined);
   const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
   const [temperature, setTemperature] = useState(0.7);
+  const [chatSessionId, setChatSessionId] = useState(() => generateId());
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -149,7 +151,14 @@ export function ChatTabV2() {
       },
       headers: authHeaders,
     });
-  }, [selectedModel, getToken, authHeaders, temperature, systemPrompt]);
+  }, [
+    selectedModel,
+    getToken,
+    authHeaders,
+    temperature,
+    systemPrompt,
+    chatSessionId,
+  ]);
 
   useEffect(() => {
     let active = true;
@@ -178,14 +187,20 @@ export function ChatTabV2() {
       : false;
   }, [selectedModel]);
 
-  const { messages, sendMessage, stop, status } = useChat({
-    id: `chat-${selectedModel.provider}-${selectedModel.id}`,
+  const { messages, sendMessage, stop, status, setMessages } = useChat({
+    id: chatSessionId,
     transport: transport!,
     // Disable client auto-send for MCPJam-provided models; server handles tool loop
     sendAutomaticallyWhen: isMcpJamModel
       ? undefined
       : lastAssistantMessageIsCompleteWithToolCalls,
   });
+
+  const resetChat = () => {
+    setChatSessionId(generateId());
+    setMessages([]);
+    setInput("");
+  };
 
   const isLoading = status === "streaming";
 
@@ -299,14 +314,16 @@ export function ChatTabV2() {
                   placeholder="Ask something…"
                   currentModel={selectedModel}
                   availableModels={availableModels}
-                  onModelChange={(model) =>
-                    setSelectedModelId(String(model.id))
-                  }
+                  onModelChange={(model) => {
+                    setSelectedModelId(String(model.id));
+                    resetChat();
+                  }}
                   systemPrompt={systemPrompt}
                   onSystemPromptChange={setSystemPrompt}
                   temperature={temperature}
                   onTemperatureChange={setTemperature}
                   hasMessages={messages.length > 0}
+                  onResetChat={resetChat}
                 />
               </div>
             </div>
