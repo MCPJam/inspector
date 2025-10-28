@@ -211,6 +211,7 @@ export default function App() {
               serverConfig={selectedMCPConfig}
               serverEntry={appState.servers[appState.selectedServer]}
               serverName={appState.selectedServer}
+              onUpdate={handleUpdate}
             />
           )}
 

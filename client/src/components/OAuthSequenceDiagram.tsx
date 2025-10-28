@@ -268,6 +268,7 @@ const edgeTypes = {
 
 interface OAuthSequenceDiagramProps {
   flowState: OauthFlowStateJune2025;
+  registrationStrategy?: "dcr" | "preregistered";
 }
 
 // Helper to determine status based on current step
@@ -305,7 +306,7 @@ const getActionStatus = (
 };
 
 export const OAuthSequenceDiagram = memo(
-  ({ flowState }: OAuthSequenceDiagramProps) => {
+  ({ flowState, registrationStrategy = "dcr" }: OAuthSequenceDiagramProps) => {
     const { nodes, edges } = useMemo(() => {
       const currentStep = flowState.currentStep;
 
@@ -398,29 +399,64 @@ export const OAuthSequenceDiagram = memo(
               ]
             : undefined,
         },
-        {
-          id: "request_client_registration",
-          label: "POST /register",
-          description: "Client registers dynamically with Authorization Server",
-          from: "client",
-          to: "authServer",
-          details: [{ label: "Note", value: "Dynamic client registration" }],
-        },
-        {
-          id: "received_client_credentials",
-          label: "Client Credentials",
-          description: "Authorization Server returns client ID and credentials",
-          from: "authServer",
-          to: "client",
-          details: flowState.clientId
-            ? [
-                {
-                  label: "client_id",
-                  value: flowState.clientId.substring(0, 20) + "...",
-                },
-              ]
-            : undefined,
-        },
+        // DCR steps - conditionally included based on registration strategy
+        ...(registrationStrategy === "dcr"
+          ? [
+              {
+                id: "request_client_registration",
+                label: "POST /register",
+                description:
+                  "Client registers dynamically with Authorization Server",
+                from: "client",
+                to: "authServer",
+                details: [
+                  { label: "Note", value: "Dynamic client registration" },
+                ],
+              },
+              {
+                id: "received_client_credentials",
+                label: "Client Credentials",
+                description:
+                  "Authorization Server returns client ID and credentials",
+                from: "authServer",
+                to: "client",
+                details: flowState.clientId
+                  ? [
+                      {
+                        label: "client_id",
+                        value: flowState.clientId.substring(0, 20) + "...",
+                      },
+                    ]
+                  : undefined,
+              },
+            ]
+          : [
+              {
+                id: "received_client_credentials",
+                label: "Use Pre-registered Client",
+                description:
+                  "Client uses pre-configured credentials (skipped DCR)",
+                from: "client",
+                to: "client",
+                details: flowState.clientId
+                  ? [
+                      {
+                        label: "client_id",
+                        value: flowState.clientId.substring(0, 20) + "...",
+                      },
+                      {
+                        label: "Note",
+                        value: "Pre-registered (no DCR needed)",
+                      },
+                    ]
+                  : [
+                      {
+                        label: "Note",
+                        value: "Pre-registered client credentials",
+                      },
+                    ],
+              },
+            ]),
         {
           id: "generate_pkce_parameters",
           label: "Generate PKCE parameters\nInclude resource parameter",
@@ -787,7 +823,7 @@ export const OAuthSequenceDiagram = memo(
       });
 
       return { nodes, edges };
-    }, [flowState]);
+    }, [flowState, registrationStrategy]);
 
     return (
       <div className="w-full h-full">

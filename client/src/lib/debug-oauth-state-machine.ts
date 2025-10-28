@@ -130,7 +130,8 @@ export interface DebugOAuthStateMachineConfig {
   redirectUrl?: string; // Redirect URL for OAuth callback
   fetchFn?: typeof fetch; // Optional fetch function for testing
   customScopes?: string; // Optional custom scopes override (space-separated)
-  customHeaders?: Record<string, string>; // Optional custom HTTP headers
+  customHeaders?: Record<string, string>; // Optional custom HTTP headers from server config
+  registrationStrategy?: "dcr" | "preregistered"; // Client registration strategy
 }
 
 // Helper: Build well-known resource metadata URL from server URL
@@ -196,6 +197,27 @@ function buildAuthServerMetadataUrls(authServerUrl: string): string[] {
   }
 
   return urls;
+}
+
+// Helper: Load pre-registered OAuth credentials from localStorage
+function loadPreregisteredCredentials(serverName: string): {
+  clientId?: string;
+  clientSecret?: string;
+} {
+  try {
+    // Try to load from mcp-client-{serverName} (where ServerModal stores them)
+    const storedClientInfo = localStorage.getItem(`mcp-client-${serverName}`);
+    if (storedClientInfo) {
+      const parsed = JSON.parse(storedClientInfo);
+      return {
+        clientId: parsed.client_id || undefined,
+        clientSecret: parsed.client_secret || undefined,
+      };
+    }
+  } catch (e) {
+    console.error("Failed to load pre-registered credentials:", e);
+  }
+  return {};
 }
 
 /**
@@ -296,6 +318,7 @@ export const createDebugOAuthStateMachine = (
     fetchFn = fetch,
     customScopes,
     customHeaders,
+    registrationStrategy = "dcr",
   } = config;
 
   // Use provided redirectUrl or default to the origin + /oauth/callback/debug
@@ -858,7 +881,54 @@ export const createDebugOAuthStateMachine = (
               throw new Error("No authorization server metadata available");
             }
 
-            if (state.authorizationServerMetadata.registration_endpoint) {
+            // Check registration strategy
+            if (registrationStrategy === "preregistered") {
+              // Skip DCR - load pre-registered client credentials from localStorage
+              const { clientId, clientSecret } =
+                loadPreregisteredCredentials(serverName);
+
+              if (!clientId) {
+                updateState({
+                  error:
+                    "Pre-registered client ID is required. Please configure OAuth credentials in the server settings.",
+                  isInitiatingAuth: false,
+                });
+                return;
+              }
+
+              // Add info log for pre-registered client
+              const preregInfo: Record<string, any> = {
+                "Client ID": clientId,
+                "Client Secret": clientSecret
+                  ? "Configured"
+                  : "Not provided (public client)",
+                "Token Auth Method": clientSecret
+                  ? "client_secret_post"
+                  : "none",
+                Note: "Using pre-registered client credentials from server config (skipped DCR)",
+              };
+
+              const infoLogs = addInfoLog(
+                getCurrentState(),
+                "dcr",
+                "Pre-registered Client",
+                preregInfo,
+              );
+
+              updateState({
+                currentStep: "received_client_credentials",
+                clientId,
+                clientSecret: clientSecret || undefined,
+                tokenEndpointAuthMethod: clientSecret
+                  ? "client_secret_post"
+                  : "none",
+                infoLogs,
+                isInitiatingAuth: false,
+              });
+            } else if (
+              state.authorizationServerMetadata.registration_endpoint
+            ) {
+              // Dynamic Client Registration (DCR)
               // Prepare client metadata with scopes if available
               const scopesSupported =
                 state.resourceMetadata?.scopes_supported ||
@@ -905,7 +975,7 @@ export const createDebugOAuthStateMachine = (
               setTimeout(() => machine.proceedToNextStep(), 50);
               return;
             } else {
-              // Skip to PKCE generation with a mock client ID
+              // No registration endpoint and DCR strategy - skip to PKCE generation with a mock client ID
               updateState({
                 currentStep: "generate_pkce_parameters",
                 clientId: "mock-client-id-for-demo",
@@ -931,9 +1001,9 @@ export const createDebugOAuthStateMachine = (
                 state.authorizationServerMetadata.registration_endpoint,
                 {
                   method: "POST",
-                  headers: mergeHeaders({
+                  headers: {
                     "Content-Type": "application/json",
-                  }),
+                  },
                   body: JSON.stringify(state.lastRequest.body),
                 },
               );
@@ -1019,7 +1089,7 @@ export const createDebugOAuthStateMachine = (
               const errorResponse = {
                 status: 0,
                 statusText: "Network Error",
-                headers: {},
+                headers: mergeHeaders({}),
                 body: {
                   error: error instanceof Error ? error.message : String(error),
                 },
@@ -1222,9 +1292,9 @@ export const createDebugOAuthStateMachine = (
             const tokenRequest = {
               method: "POST",
               url: state.authorizationServerMetadata.token_endpoint,
-              headers: mergeHeaders({
+              headers: {
                 "Content-Type": "application/x-www-form-urlencoded",
-              }),
+              },
               body: tokenRequestBodyObj,
             };
 
@@ -1290,9 +1360,9 @@ export const createDebugOAuthStateMachine = (
                 state.authorizationServerMetadata.token_endpoint,
                 {
                   method: "POST",
-                  headers: mergeHeaders({
+                  headers: {
                     "Content-Type": "application/x-www-form-urlencoded",
-                  }),
+                  },
                   body: tokenRequestBody.toString(),
                 },
               );
@@ -1418,7 +1488,7 @@ export const createDebugOAuthStateMachine = (
               const errorResponse = {
                 status: 0,
                 statusText: "Network Error",
-                headers: {},
+                headers: mergeHeaders({}),
                 body: {
                   error: error instanceof Error ? error.message : String(error),
                 },
@@ -1448,11 +1518,11 @@ export const createDebugOAuthStateMachine = (
             const authenticatedRequest = {
               method: "POST",
               url: state.serverUrl,
-              headers: mergeHeaders({
+              headers: {
                 Authorization: `Bearer ${state.accessToken}`,
                 "Content-Type": "application/json",
                 "MCP-Protocol-Version": "2025-06-18",
-              }),
+              },
               body: {
                 jsonrpc: "2.0",
                 method: "initialize",
@@ -1510,10 +1580,10 @@ export const createDebugOAuthStateMachine = (
             try {
               const response = await proxyFetch(state.serverUrl, {
                 method: "POST",
-                headers: mergeHeaders({
+                headers: {
                   Authorization: `Bearer ${state.accessToken}`,
                   "Content-Type": "application/json",
-                }),
+                },
                 body: JSON.stringify({
                   jsonrpc: "2.0",
                   method: "initialize",
@@ -1657,7 +1727,7 @@ export const createDebugOAuthStateMachine = (
               const errorResponse = {
                 status: 0,
                 statusText: "Network Error",
-                headers: {},
+                headers: mergeHeaders({}),
                 body: {
                   error: error instanceof Error ? error.message : String(error),
                 },
