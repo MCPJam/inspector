@@ -3,6 +3,7 @@ import { useChat } from "@ai-sdk/react";
 import {
   DefaultChatTransport,
   lastAssistantMessageIsCompleteWithToolCalls,
+  generateId,
 } from "ai";
 import { useAuth } from "@workos-inc/authkit-react";
 import { ModelDefinition } from "@/shared/types";
@@ -30,6 +31,11 @@ import { isMCPJamProvidedModel } from "@/shared/types";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { Thread } from "@/components/chat-v2/thread";
 
+const DEFAULT_SYSTEM_PROMPT =
+  "You are a helpful assistant with access to MCP tools.";
+const SYSTEM_PROMPT_STORAGE_KEY = "chat-v2-system-prompt";
+const TEMPERATURE_STORAGE_KEY = "chat-v2-temperature";
+
 export function ChatTabV2() {
   const { getAccessToken } = useAuth();
   const {
@@ -47,6 +53,60 @@ export function ChatTabV2() {
   const [authHeaders, setAuthHeaders] = useState<
     Record<string, string> | undefined
   >(undefined);
+  const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
+  const [temperature, setTemperature] = useState(0.7);
+  const [chatSessionId, setChatSessionId] = useState(() => generateId());
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const storedPrompt = window.localStorage.getItem(
+        SYSTEM_PROMPT_STORAGE_KEY,
+      );
+      if (storedPrompt) {
+        setSystemPrompt(storedPrompt);
+      }
+      const storedTemp = window.localStorage.getItem(TEMPERATURE_STORAGE_KEY);
+      if (storedTemp) {
+        const parsed = parseFloat(storedTemp);
+        if (!Number.isNaN(parsed)) {
+          setTemperature(Math.min(2, Math.max(0, parsed)));
+        }
+      }
+    } catch (error) {
+      console.warn(
+        "[ChatTabV2] Failed to load settings from localStorage",
+        error,
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        SYSTEM_PROMPT_STORAGE_KEY,
+        systemPrompt || DEFAULT_SYSTEM_PROMPT,
+      );
+    } catch (error) {
+      console.warn(
+        "[ChatTabV2] Failed to persist system prompt to localStorage",
+        error,
+      );
+    }
+  }, [systemPrompt]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(TEMPERATURE_STORAGE_KEY, String(temperature));
+    } catch (error) {
+      console.warn(
+        "[ChatTabV2] Failed to persist temperature to localStorage",
+        error,
+      );
+    }
+  }, [temperature]);
 
   const availableModels = useMemo(() => {
     return buildAvailableModels({
@@ -86,11 +146,19 @@ export function ChatTabV2() {
       body: {
         model: selectedModel,
         apiKey: apiKey,
-        temperature: 0.7,
+        temperature,
+        systemPrompt,
       },
       headers: authHeaders,
     });
-  }, [selectedModel, getToken, authHeaders]);
+  }, [
+    selectedModel,
+    getToken,
+    authHeaders,
+    temperature,
+    systemPrompt,
+    chatSessionId,
+  ]);
 
   useEffect(() => {
     let active = true;
@@ -119,14 +187,20 @@ export function ChatTabV2() {
       : false;
   }, [selectedModel]);
 
-  const { messages, sendMessage, stop, status } = useChat({
-    id: `chat-${selectedModel.provider}-${selectedModel.id}`,
+  const { messages, sendMessage, stop, status, setMessages } = useChat({
+    id: chatSessionId,
     transport: transport!,
     // Disable client auto-send for MCPJam-provided models; server handles tool loop
     sendAutomaticallyWhen: isMcpJamModel
       ? undefined
       : lastAssistantMessageIsCompleteWithToolCalls,
   });
+
+  const resetChat = () => {
+    setChatSessionId(generateId());
+    setMessages([]);
+    setInput("");
+  };
 
   useEffect(() => {
     const checkOllama = async () => {
@@ -243,10 +317,16 @@ export function ChatTabV2() {
                   placeholder="Ask something…"
                   currentModel={selectedModel}
                   availableModels={availableModels}
-                  onModelChange={(model) =>
-                    setSelectedModelId(String(model.id))
-                  }
+                  onModelChange={(model) => {
+                    setSelectedModelId(String(model.id));
+                    resetChat();
+                  }}
+                  systemPrompt={systemPrompt}
+                  onSystemPromptChange={setSystemPrompt}
+                  temperature={temperature}
+                  onTemperatureChange={setTemperature}
                   hasMessages={messages.length > 0}
+                  onResetChat={resetChat}
                 />
               </div>
             </div>
