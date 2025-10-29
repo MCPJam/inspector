@@ -142,11 +142,9 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     // In Electron: this is the Vite dev server (localhost:8080)
     // In Web: this is the actual web URL (localhost:5173 or production)
     // The React app handles the /oauth/callback route directly
-    // Add platform=electron param so external browser knows to redirect back
-    const baseUri = `${window.location.origin}/oauth/callback`;
-    this.redirectUri = window.isElectron
-      ? `${baseUri}?platform=electron`
-      : baseUri;
+    // Note: We use the OAuth state parameter to pass platform info, not query params
+    // (some OAuth providers like Vercel reject redirect URIs with query params)
+    this.redirectUri = `${window.location.origin}/oauth/callback`;
     console.log('[MCP OAuth Provider] Using redirect URI:', this.redirectUri);
 
     this.customClientId = customClientId;
