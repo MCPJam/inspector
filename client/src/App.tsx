@@ -161,43 +161,6 @@ export default function App() {
     return <CompletingSignInLoading />;
   }
 
-  // Handle MCP OAuth callback in external browser
-  if (isOAuthCallbackComplete && !window.isElectron) {
-    // Automatically redirect to custom protocol so Electron app receives the callback
-    useEffect(() => {
-      const urlParams = new URLSearchParams(window.location.search);
-      const code = urlParams.get("code");
-      const state = urlParams.get("state");
-      const error = urlParams.get("error");
-
-      if (code || error) {
-        // Build the custom protocol URL
-        const protocolUrl = new URL("mcpjam://oauth/callback");
-        if (code) protocolUrl.searchParams.set("code", code);
-        if (state) protocolUrl.searchParams.set("state", state);
-        if (error) protocolUrl.searchParams.set("error", error);
-
-        // Redirect to custom protocol - this will open the Electron app
-        window.location.href = protocolUrl.toString();
-      }
-    }, []);
-
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-background">
-        <div className="text-center space-y-4 p-8">
-          <div className="text-6xl">✓</div>
-          <h1 className="text-2xl font-semibold">Authentication Complete</h1>
-          <p className="text-muted-foreground">
-            Redirecting to MCPJam Inspector...
-          </p>
-          <p className="text-sm text-muted-foreground">
-            If the app doesn't open automatically, please return to it manually.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
   if (isLoading) {
     return <LoadingScreen />;
   }

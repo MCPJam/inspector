@@ -187,8 +187,11 @@ app.use("*", logger());
 // Dynamic CORS origin based on PORT environment variable
 const serverPort = process.env.PORT || "3001";
 const corsOrigins = [
-  `http://localhost:${serverPort}`,
-  "http://localhost:3000", // Keep for frontend development
+  `http://localhost:${serverPort}`,  // Backend server itself
+  "http://localhost:5173",            // Vite dev server (npm run dev)
+  "http://127.0.0.1:5173",            // Vite dev server with 127.0.0.1
+  "http://localhost:8080",            // Electron dev mode (Vite dev server for Electron)
+  "http://127.0.0.1:8080",            // Electron dev mode with 127.0.0.1
 ];
 
 app.use(
@@ -313,6 +316,84 @@ app.get("/health", (c) => {
 app.get("/api/mcp-cli-config", (c) => {
   const mcpConfig = getMCPConfigFromEnv();
   return c.json({ config: mcpConfig });
+});
+
+// MCP OAuth callback handler
+// This handles OAuth callbacks in external browsers during Electron MCP OAuth flows
+app.get("/oauth/callback", (c) => {
+  const code = c.req.query("code");
+  const state = c.req.query("state");
+  const error = c.req.query("error");
+
+  // Check if we're running in Electron mode
+  const isElectron = process.env.ELECTRON_APP === "true";
+
+  if (isElectron) {
+    // In Electron, redirect to custom protocol so the app can handle it
+    const protocolUrl = new URL("mcpjam://oauth/callback");
+    if (code) protocolUrl.searchParams.set("code", code);
+    if (state) protocolUrl.searchParams.set("state", state);
+    if (error) protocolUrl.searchParams.set("error", error);
+
+    // Serve HTML that redirects to custom protocol
+    return c.html(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <title>OAuth Callback</title>
+          <style>
+            body {
+              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              min-height: 100vh;
+              margin: 0;
+              background: #f5f5f5;
+            }
+            .container {
+              text-align: center;
+              padding: 2rem;
+              background: white;
+              border-radius: 8px;
+              box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            }
+            .icon { font-size: 48px; margin-bottom: 1rem; }
+            h1 { margin: 0 0 0.5rem 0; font-size: 24px; }
+            p { color: #666; margin: 0; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="icon">✓</div>
+            <h1>Authentication Complete</h1>
+            <p>Redirecting to MCPJam Inspector...</p>
+          </div>
+          <script>
+            // Redirect to custom protocol - this will trigger Electron's open-url handler
+            window.location.href = "${protocolUrl.toString()}";
+
+            // Fallback: close window after 3 seconds if redirect doesn't work
+            setTimeout(() => {
+              window.close();
+            }, 3000);
+          </script>
+        </body>
+      </html>
+    `);
+  } else {
+    // In web mode, serve the frontend which will handle the callback
+    // The frontend routing will detect we're on /oauth/callback and process it
+    const indexPath = join(__dirname, "../client/dist/index.html");
+    if (existsSync(indexPath)) {
+      const html = readFileSync(indexPath, "utf-8");
+      return c.html(html);
+    }
+
+    // Fallback if index.html not found (dev mode with Vite)
+    return c.redirect(`/?oauth_code=${code || ""}&oauth_error=${error || ""}`);
+  }
 });
 
 // Static file serving (for production)

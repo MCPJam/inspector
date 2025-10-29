@@ -26,12 +26,22 @@ export interface ElectronAPI {
     disconnect: (id: string) => Promise<void>;
     listServers: () => Promise<any[]>;
   };
+
+  // OAuth operations
+  oauth: {
+    onCallback: (callback: (url: string) => void) => void;
+    removeCallback: () => void;
+    openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
+  };
 }
 
 declare global {
   interface Window {
     electronAPI?: ElectronAPI;
     isElectron?: boolean;
+    __ELECTRON_BACKEND_PORT__?: number;
+    __ELECTRON_BACKEND_URL__?: string;
+    electronBackendUrl?: () => string;
   }
 }
 

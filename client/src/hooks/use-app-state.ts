@@ -87,7 +87,9 @@ export function useAppState() {
   // OAuth callback finish handler
   const handleOAuthCallbackComplete = useCallback(
     async (code: string) => {
+      // Clear the OAuth callback from the URL (remove query params)
       window.history.replaceState({}, document.title, window.location.pathname);
+
       try {
         const result = await handleOAuthCallback(code);
         if (result.success && result.serverConfig && result.serverName) {
@@ -118,6 +120,9 @@ export function useAppState() {
               toast.success(
                 `OAuth connection successful! Connected to ${serverName}.`,
               );
+
+              // Redirect back to servers tab after successful OAuth
+              window.location.hash = "#servers";
             } else {
               dispatch({
                 type: "CONNECT_FAILURE",
@@ -133,6 +138,9 @@ export function useAppState() {
               toast.error(
                 `OAuth succeeded but connection test failed: ${connectionResult.error}`,
               );
+
+              // Still redirect back to servers tab even on failure
+              window.location.hash = "#servers";
             }
           } catch (connectionError) {
             const errorMessage =
@@ -151,6 +159,9 @@ export function useAppState() {
             toast.error(
               `OAuth succeeded but connection test failed: ${errorMessage}`,
             );
+
+            // Still redirect back to servers tab even on error
+            window.location.hash = "#servers";
           }
         } else {
           throw new Error(result.error || "OAuth callback failed");
@@ -160,10 +171,29 @@ export function useAppState() {
           error instanceof Error ? error.message : "Unknown error";
         toast.error(`Error completing OAuth flow: ${errorMessage}`);
         logger.error("OAuth callback failed", { error: errorMessage });
+
+        // Redirect back to servers tab even on OAuth failure
+        window.location.hash = "#servers";
       }
     },
     [logger],
   );
+
+  // Clean up stale MCP OAuth state on app mount (if not on callback page AND no code in URL)
+  useEffect(() => {
+    // If we're not on an MCP OAuth callback page and we have pending OAuth state,
+    // AND there's no code parameter anywhere, it's stale from a previous session - clear it
+    const isOnCallbackPage = window.location.pathname.startsWith("/oauth/callback");
+    const hasCodeParam = new URLSearchParams(window.location.search).has("code");
+
+    if (!isOnCallbackPage && !hasCodeParam) {
+      const stalePending = localStorage.getItem("mcp-oauth-pending");
+      if (stalePending) {
+        logger.info("Clearing stale MCP OAuth state from previous session", { server: stalePending });
+        localStorage.removeItem("mcp-oauth-pending");
+      }
+    }
+  }, [logger]); // Run once on mount (logger is stable)
 
   // Check for OAuth callback completion on mount
   useEffect(() => {
@@ -173,8 +203,10 @@ export function useAppState() {
       return;
     }
 
-    // Only process MCP OAuth callbacks (not WorkOS AuthKit callbacks)
-    // WorkOS uses /callback, MCP OAuth uses /oauth/callback
+    // IMPORTANT: Only process MCP OAuth callbacks (not WorkOS AuthKit callbacks)
+    // WorkOS AuthKit uses /callback, MCP OAuth uses /oauth/callback
+    // This check MUST happen BEFORE checking for pending OAuth state to avoid
+    // processing AuthKit callbacks with stale MCP OAuth state
     if (!window.location.pathname.startsWith("/oauth/callback")) {
       return;
     }
@@ -183,9 +215,14 @@ export function useAppState() {
       const urlParams = new URLSearchParams(window.location.search);
       const code = urlParams.get("code");
       const error = urlParams.get("error");
-      if (code) {
+
+      // Only process if we have a code or error parameter
+      // and there's actually a pending OAuth flow
+      const hasPendingOAuth = localStorage.getItem("mcp-oauth-pending");
+
+      if (code && hasPendingOAuth) {
         handleOAuthCallbackComplete(code);
-      } else if (error) {
+      } else if (error && hasPendingOAuth) {
         toast.error(`OAuth authorization failed: ${error}`);
         localStorage.removeItem("mcp-oauth-pending");
         window.history.replaceState(
@@ -193,9 +230,19 @@ export function useAppState() {
           document.title,
           window.location.pathname,
         );
+      } else if (code && !hasPendingOAuth) {
+        // We have a code but no pending OAuth - try to process it anyway
+        // The pending state might have been cleared by the cleanup logic
+        logger.warn("MCP OAuth callback received without pending state - attempting to process anyway");
+        handleOAuthCallbackComplete(code);
+      } else if (!code && !error) {
+        // We're on the callback page but there's no code/error - redirect to home
+        logger.warn("OAuth callback page accessed without code or error, redirecting to home");
+        window.history.replaceState({}, document.title, "/");
+        window.location.href = "/";
       }
     }
-  }, [isLoading, handleOAuthCallbackComplete]);
+  }, [isLoading, handleOAuthCallbackComplete, logger]);
 
   // Set up IPC listener for MCP OAuth callbacks in Electron
   useEffect(() => {

@@ -38,9 +38,31 @@ function createOAuthFetchInterceptor(): typeof fetch {
     // Proxy OAuth requests through our server
     try {
       const isMetadata = url.includes("/.well-known/");
+
+      // In Electron, use the backend server URL instead of relative paths
+      // because we need to explicitly target the backend server.
+      // In web mode, use empty string to make relative URLs (Vite proxy handles routing).
+      const electronBackendUrl = (window as any).__ELECTRON_BACKEND_URL__;
+      const backendUrl = window.isElectron
+        ? electronBackendUrl || window.location.origin
+        : '';
+
+      // Debug logging to help diagnose issues
+      console.log('[MCP OAuth Interceptor] Environment:', {
+        isElectron: window.isElectron,
+        electronBackendUrl,
+        locationOrigin: window.location.origin,
+        usingBackendUrl: backendUrl,
+        targetUrl: url
+      });
+
+      if (window.isElectron && !electronBackendUrl) {
+        console.warn('[MCP OAuth] Running in Electron but __ELECTRON_BACKEND_URL__ not set! Falling back to:', window.location.origin);
+      }
+
       const proxyUrl = isMetadata
-        ? `/api/mcp/oauth/metadata?url=${encodeURIComponent(url)}`
-        : `/api/mcp/oauth/proxy`;
+        ? `${backendUrl}/api/mcp/oauth/metadata?url=${encodeURIComponent(url)}`
+        : `${backendUrl}/api/mcp/oauth/proxy`;
 
       if (isMetadata) {
         return await originalFetch(proxyUrl, { ...init, method: "GET" });
@@ -115,9 +137,18 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     customClientSecret?: string,
   ) {
     this.serverName = serverName;
-    // Use local HTTP server URL for redirect URI (works in both web and Electron)
-    // The local server will handle the callback and the app will process it
-    this.redirectUri = `${window.location.origin}/oauth/callback`;
+
+    // Set redirect URI - always use window.location.origin
+    // In Electron: this is the Vite dev server (localhost:8080)
+    // In Web: this is the actual web URL (localhost:5173 or production)
+    // The React app handles the /oauth/callback route directly
+    // Add platform=electron param so external browser knows to redirect back
+    const baseUri = `${window.location.origin}/oauth/callback`;
+    this.redirectUri = window.isElectron
+      ? `${baseUri}?platform=electron`
+      : baseUri;
+    console.log('[MCP OAuth Provider] Using redirect URI:', this.redirectUri);
+
     this.customClientId = customClientId;
     this.customClientSecret = customClientSecret;
   }
@@ -367,6 +398,11 @@ export async function initiateOAuth(
 export async function handleOAuthCallback(
   authorizationCode: string,
 ): Promise<OAuthResult & { serverName?: string }> {
+  // Validate authorization code format (basic check)
+  if (!authorizationCode || authorizationCode.length < 10) {
+    throw new Error("Invalid authorization code format");
+  }
+
   // Install fetch interceptor for OAuth metadata requests
   const interceptedFetch = createOAuthFetchInterceptor();
   window.fetch = interceptedFetch;
@@ -375,13 +411,15 @@ export async function handleOAuthCallback(
     // Get pending server name from localStorage
     const serverName = localStorage.getItem("mcp-oauth-pending");
     if (!serverName) {
-      throw new Error("No pending OAuth flow found");
+      throw new Error("No pending MCP OAuth flow found. If you're trying to log in, please use the login button.");
     }
 
     // Get server URL
     const serverUrl = localStorage.getItem(`mcp-serverUrl-${serverName}`);
     if (!serverUrl) {
-      throw new Error("Server URL not found for OAuth callback");
+      // Clear stale state
+      localStorage.removeItem("mcp-oauth-pending");
+      throw new Error("Server URL not found for OAuth callback. Clearing stale OAuth state.");
     }
 
     // Get stored client credentials if any
@@ -614,6 +652,32 @@ export function clearOAuthData(serverName: string): void {
   localStorage.removeItem(`mcp-verifier-${serverName}`);
   localStorage.removeItem(`mcp-serverUrl-${serverName}`);
   localStorage.removeItem(`mcp-oauth-config-${serverName}`);
+}
+
+/**
+ * Clears any stale OAuth state from localStorage
+ * Useful when OAuth flows get interrupted or corrupted
+ */
+export function clearStaleOAuthState(): void {
+  const pendingServer = localStorage.getItem("mcp-oauth-pending");
+
+  if (pendingServer) {
+    console.log(`Clearing stale OAuth state for server: ${pendingServer}`);
+    clearOAuthData(pendingServer);
+    localStorage.removeItem("mcp-oauth-pending");
+  }
+
+  // Also check for any orphaned OAuth data
+  const keys = Object.keys(localStorage);
+  const oauthKeys = keys.filter(k =>
+    k.startsWith("mcp-tokens-") ||
+    k.startsWith("mcp-client-") ||
+    k.startsWith("mcp-verifier-") ||
+    k.startsWith("mcp-serverUrl-") ||
+    k.startsWith("mcp-oauth-config-")
+  );
+
+  console.log(`Found ${oauthKeys.length} OAuth-related keys in localStorage`);
 }
 
 /**

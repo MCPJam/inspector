@@ -81,3 +81,14 @@ contextBridge.exposeInMainWorld("electronAPI", electronAPI);
 
 // Also expose a flag to indicate we're running in Electron
 contextBridge.exposeInMainWorld("isElectron", true);
+
+// Expose backend URL and port from environment variables set by main process
+// This is set BEFORE the window loads, so React can access it immediately
+contextBridge.exposeInMainWorld(
+  "__ELECTRON_BACKEND_URL__",
+  process.env.ELECTRON_BACKEND_URL || "",
+);
+contextBridge.exposeInMainWorld(
+  "__ELECTRON_BACKEND_PORT__",
+  process.env.ELECTRON_BACKEND_PORT ? parseInt(process.env.ELECTRON_BACKEND_PORT) : 0,
+);
