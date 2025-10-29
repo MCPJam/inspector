@@ -76,7 +76,10 @@ async function findAvailablePort(startPort = 3000): Promise<number> {
 
 async function startHonoServer(): Promise<number> {
   try {
-    const port = app.isPackaged ? 3000 : await findAvailablePort(3000);
+    // Use PORT env var if set, otherwise default to 3001 (dev) or 3000 (packaged)
+    const defaultPort = app.isPackaged ? 3000 : 3001;
+    const preferredPort = process.env.PORT ? parseInt(process.env.PORT) : defaultPort;
+    const port = app.isPackaged ? preferredPort : await findAvailablePort(preferredPort);
 
     // Set environment variables to tell the server it's running in Electron
     process.env.ELECTRON_APP = "true";
@@ -98,7 +101,7 @@ async function startHonoServer(): Promise<number> {
       hostname,
     });
 
-    log.info(`🚀 MCPJam Server started on port ${port}`);
+    log.info(`🚀 MCPJam Server started on ${hostname}:${port}`);
     return port;
   } catch (error) {
     log.error("Failed to start Hono server:", error);
@@ -107,6 +110,10 @@ async function startHonoServer(): Promise<number> {
 }
 
 function createMainWindow(serverUrl: string): BrowserWindow {
+  // Set backend URL as environment variable so preload script can access it
+  process.env.ELECTRON_BACKEND_URL = serverUrl;
+  process.env.ELECTRON_BACKEND_PORT = serverPort.toString();
+
   const window = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -149,6 +156,9 @@ function createMainWindow(serverUrl: string): BrowserWindow {
 
   // Load the app
   window.loadURL(isDev ? MAIN_WINDOW_VITE_DEV_SERVER_URL : serverUrl);
+
+  // Backend URL/port are now exposed via preload script (see preload.ts)
+  // No need to inject after load - it's available immediately
 
   if (isDev) {
     window.webContents.openDevTools();
@@ -260,7 +270,9 @@ app.whenReady().then(async () => {
   try {
     // Start the embedded Hono server
     serverPort = await startHonoServer();
-    const serverUrl = `http://127.0.0.1:${serverPort}`;
+    // Use same hostname as the server - localhost in dev, 127.0.0.1 in production
+    const hostname = app.isPackaged ? "127.0.0.1" : "localhost";
+    const serverUrl = `http://${hostname}:${serverPort}`;
 
     // Create the main window
     createAppMenu();
@@ -292,14 +304,16 @@ app.on("window-all-closed", () => {
 app.on("activate", async () => {
   // On macOS, re-create window when the dock icon is clicked
   if (BrowserWindow.getAllWindows().length === 0) {
+    // Use same hostname as the server - localhost in dev, 127.0.0.1 in production
+    const hostname = app.isPackaged ? "127.0.0.1" : "localhost";
     if (serverPort > 0) {
-      const serverUrl = `http://127.0.0.1:${serverPort}`;
+      const serverUrl = `http://${hostname}:${serverPort}`;
       mainWindow = createMainWindow(serverUrl);
     } else {
       // Restart server if needed
       try {
         serverPort = await startHonoServer();
-        const serverUrl = `http://127.0.0.1:${serverPort}`;
+        const serverUrl = `http://${hostname}:${serverPort}`;
         mainWindow = createMainWindow(serverUrl);
       } catch (error) {
         log.error("Failed to restart server:", error);
@@ -328,9 +342,11 @@ app.on("open-url", (event, url) => {
     const state = parsed.searchParams.get("state") ?? "";
 
     // Compute the base URL the renderer should load
+    // Use same hostname as the server - localhost in dev, 127.0.0.1 in production
+    const hostname = app.isPackaged ? "127.0.0.1" : "localhost";
     const baseUrl = isDev
       ? MAIN_WINDOW_VITE_DEV_SERVER_URL
-      : `http://127.0.0.1:${serverPort}`;
+      : `http://${hostname}:${serverPort}`;
 
     let callbackUrl: URL;
     if (isMcpCallback) {

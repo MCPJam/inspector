@@ -66,14 +66,16 @@ const convex = new ConvexReactClient(convexUrl);
 
 const root = createRoot(document.getElementById("root")!);
 
-// Handle MCP OAuth callback redirect in external browser (before mounting React app)
-const isMcpCallbackInBrowser =
+// Handle MCP OAuth callback when it lands in external browser during Electron flow
+// The OAuth provider redirects to http://localhost:8080/oauth/callback?platform=electron
+// We need to redirect to mcpjam:// protocol so Electron can handle it
+const urlParams = new URLSearchParams(window.location.search);
+const isElectronOAuthCallback =
   window.location.pathname.startsWith("/oauth/callback") &&
-  !(window as any).isElectron;
+  urlParams.get("platform") === "electron";
 
-if (isMcpCallbackInBrowser) {
+if (isElectronOAuthCallback) {
   // Extract OAuth params
-  const urlParams = new URLSearchParams(window.location.search);
   const code = urlParams.get("code");
   const state = urlParams.get("state");
   const error = urlParams.get("error");
@@ -90,11 +92,8 @@ if (isMcpCallbackInBrowser) {
       <StrictMode>
         <div className="flex items-center justify-center min-h-screen bg-background">
           <div className="text-center space-y-4 p-8">
-            <div className="text-6xl">✓</div>
-            <h1 className="text-2xl font-semibold">Authentication Complete</h1>
-            <p className="text-muted-foreground">
-              Redirecting to MCPJam Inspector...
-            </p>
+            <div className="text-6xl">🔄</div>
+            <h1 className="text-2xl font-semibold">Redirecting to MCPJam...</h1>
             <p className="text-sm text-muted-foreground">
               If the app doesn't open automatically, please return to it manually.
             </p>
@@ -107,7 +106,7 @@ if (isMcpCallbackInBrowser) {
     window.location.href = protocolUrl.toString();
   }
 } else {
-  // Normal app flow
+  // Normal app flow (web mode or non-callback routes)
   const Providers = (
     <AuthKitProvider clientId={workosClientId} redirectUri={workosRedirectUri}>
       <ConvexProviderWithAuthKit client={convex} useAuth={useAuth}>
