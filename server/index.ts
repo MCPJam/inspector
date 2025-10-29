@@ -385,13 +385,14 @@ app.get("/oauth/callback", (c) => {
   } else {
     // In web mode, serve the frontend which will handle the callback
     // The frontend routing will detect we're on /oauth/callback and process it
-    const indexPath = join(__dirname, "../client/dist/index.html");
+    const indexPath = join(__dirname, "../client/index.html");
     if (existsSync(indexPath)) {
       const html = readFileSync(indexPath, "utf-8");
       return c.html(html);
     }
 
-    // Fallback if index.html not found (dev mode with Vite)
+    // Fallback if index.html not found (should not happen in production)
+    console.error(`[OAuth Callback] index.html not found at ${indexPath}, redirecting to home`);
     return c.redirect(`/?oauth_code=${code || ""}&oauth_error=${error || ""}`);
   }
 });

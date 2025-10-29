@@ -186,6 +186,13 @@ export function useAppState() {
     const isOnCallbackPage = window.location.pathname.startsWith("/oauth/callback");
     const hasCodeParam = new URLSearchParams(window.location.search).has("code");
 
+    logger.info("[OAuth Cleanup] Checking for stale state", {
+      pathname: window.location.pathname,
+      isOnCallbackPage,
+      hasCodeParam,
+      search: window.location.search,
+    });
+
     if (!isOnCallbackPage && !hasCodeParam) {
       const stalePending = localStorage.getItem("mcp-oauth-pending");
       if (stalePending) {
@@ -220,7 +227,16 @@ export function useAppState() {
       // and there's actually a pending OAuth flow
       const hasPendingOAuth = localStorage.getItem("mcp-oauth-pending");
 
+      logger.info("[OAuth Callback] Processing callback", {
+        pathname: window.location.pathname,
+        hasCode: !!code,
+        hasError: !!error,
+        hasPendingOAuth: !!hasPendingOAuth,
+        pendingServer: hasPendingOAuth,
+      });
+
       if (code && hasPendingOAuth) {
+        logger.info("[OAuth Callback] Handling OAuth callback completion", { server: hasPendingOAuth });
         handleOAuthCallbackComplete(code);
       } else if (error && hasPendingOAuth) {
         toast.error(`OAuth authorization failed: ${error}`);
