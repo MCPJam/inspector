@@ -298,6 +298,13 @@ export async function initiateOAuth(
     );
     localStorage.setItem("mcp-oauth-pending", options.serverName);
 
+    console.log("[MCP OAuth] Initiate - saved to localStorage", {
+      serverName: options.serverName,
+      serverUrl: options.serverUrl,
+      verifyServerUrl: localStorage.getItem(`mcp-serverUrl-${options.serverName}`),
+      verifyPending: localStorage.getItem("mcp-oauth-pending"),
+    });
+
     // Store OAuth configuration (scopes) for recovery if connection fails
     const oauthConfig: any = {};
     if (options.scopes && options.scopes.length > 0) {
@@ -408,12 +415,19 @@ export async function handleOAuthCallback(
   try {
     // Get pending server name from localStorage
     const serverName = localStorage.getItem("mcp-oauth-pending");
+    console.log("[MCP OAuth] Callback - checking localStorage", {
+      serverName,
+      allKeys: Object.keys(localStorage).filter(k => k.startsWith("mcp-")),
+    });
+
     if (!serverName) {
       throw new Error("No pending MCP OAuth flow found. If you're trying to log in, please use the login button.");
     }
 
     // Get server URL
     const serverUrl = localStorage.getItem(`mcp-serverUrl-${serverName}`);
+    console.log("[MCP OAuth] Callback - server URL", { serverName, serverUrl });
+
     if (!serverUrl) {
       // Clear stale state
       localStorage.removeItem("mcp-oauth-pending");
