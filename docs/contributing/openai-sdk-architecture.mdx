@@ -26,6 +26,34 @@ MCPJam Inspector provides full support for the [OpenAI Apps SDK](https://develop
   - `ui://` URIs for server-provided HTML content
   - External URLs for remotely hosted components
 
+### OpenAI Apps SDK vs MCP-UI
+
+MCPJam Inspector supports two approaches for custom UI rendering:
+
+| Feature | OpenAI Apps SDK | MCP-UI |
+|---------|-----------------|--------|
+| Specification | OpenAI proprietary | MCP-UI (open standard) |
+| Rendering | Sandboxed iframes | RemoteDOM components |
+| Complexity | Full web applications | Simple interactive components |
+| Tool calls | `window.openai.callTool()` | Action handlers |
+| State persistence | `window.openai.setWidgetState()` | Not supported |
+| Security | Full iframe sandbox | Component-level isolation |
+| Best for | Complex dashboards, charts, forms | Buttons, cards, simple layouts |
+
+**When to use OpenAI Apps SDK:**
+- Need full JavaScript framework support (React, Vue, etc.)
+- Require persistent state across sessions
+- Building complex interactive visualizations
+- Need access to external APIs and libraries
+
+**When to use MCP-UI:**
+- Simple interactive components (buttons, cards)
+- Prefer open standards over proprietary APIs
+- Don't need state persistence
+- Want faster rendering without iframe overhead
+
+See [Playground Architecture - MCP-UI Integration](./playground-architecture#mcp-ui-integration) for MCP-UI implementation details.
+
 ## Architecture Overview
 
 ```mermaid
