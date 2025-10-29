@@ -42,7 +42,7 @@ export function SettingsTab() {
   const [litellmDialogOpen, setLitellmDialogOpen] = useState(false);
   const [litellmUrl, setLitellmUrl] = useState("");
   const [litellmApiKey, setLitellmApiKey] = useState("");
-  const [litellmModelAlias, setLitellmModelAlias] = useState("");
+  const [liteLLMModelAliasInput, setLiteLLMModelAliasInput] = useState("");
   const [openRouterDialogOpen, setOpenRouterDialogOpen] = useState(false);
   const [openRouterApiKeyInput, setOpenRouterApiKeyInput] = useState("");
   const [openRouterSelectedModelsInput, setOpenRouterSelectedModelsInput] =
@@ -150,25 +150,25 @@ export function SettingsTab() {
   const handleLiteLLMEdit = () => {
     setLitellmUrl(getLiteLLMBaseUrl());
     setLitellmApiKey(tokens.litellm || "");
-    setLitellmModelAlias(getLiteLLMModelAlias());
+    setLiteLLMModelAliasInput(getLiteLLMModelAlias());
     setLitellmDialogOpen(true);
   };
 
   const handleLiteLLMSave = () => {
     setLiteLLMBaseUrl(litellmUrl);
     setToken("litellm", litellmApiKey);
-    setLiteLLMModelAlias(litellmModelAlias);
+    setLiteLLMModelAlias(liteLLMModelAliasInput);
     setLitellmDialogOpen(false);
     setLitellmUrl("");
     setLitellmApiKey("");
-    setLitellmModelAlias("");
+    setLiteLLMModelAliasInput("");
   };
 
   const handleLiteLLMCancel = () => {
     setLitellmDialogOpen(false);
     setLitellmUrl("");
     setLitellmApiKey("");
-    setLitellmModelAlias("");
+    setLiteLLMModelAliasInput("");
   };
 
   const handleOpenRouterEdit = () => {
@@ -249,10 +249,10 @@ export function SettingsTab() {
         onOpenChange={setLitellmDialogOpen}
         baseUrl={litellmUrl}
         apiKey={litellmApiKey}
-        modelAlias={litellmModelAlias}
+        modelAlias={liteLLMModelAliasInput}
         onBaseUrlChange={setLitellmUrl}
         onApiKeyChange={setLitellmApiKey}
-        onModelAliasChange={setLitellmModelAlias}
+        onModelAliasChange={setLiteLLMModelAliasInput}
         onSave={handleLiteLLMSave}
         onCancel={handleLiteLLMCancel}
       />
