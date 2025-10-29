@@ -1,6 +1,17 @@
 import { ModelDefinition } from "@/shared/types";
 import { UIMessage } from "@ai-sdk/react";
 import {
+  UIActionResult,
+  UIResourceRenderer,
+  isUIResource,
+  basicComponentLibrary,
+  remoteButtonDefinition,
+  remoteCardDefinition,
+  remoteImageDefinition,
+  remoteStackDefinition,
+  remoteTextDefinition,
+} from "@mcp-ui/client";
+import {
   UIDataTypes,
   UIMessagePart,
   UITools,
@@ -14,7 +25,6 @@ import {
   ChevronDown,
   Loader2,
   MessageCircle,
-  Upload,
   type LucideIcon,
 } from "lucide-react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -29,16 +39,27 @@ type ToolState =
 
 interface ThreadProps {
   messages: UIMessage[];
+  sendFollowUpMessage: (text: string) => void;
   model: ModelDefinition;
   isLoading: boolean;
 }
 
-export function Thread({ messages, model, isLoading }: ThreadProps) {
+export function Thread({
+  messages,
+  sendFollowUpMessage,
+  model,
+  isLoading,
+}: ThreadProps) {
   return (
     <div className="flex-1 overflow-y-auto pb-4">
       <div className="max-w-4xl mx-auto px-4 pt-8 pb-16 space-y-8">
         {messages.map((message, idx) => (
-          <MessageView key={idx} message={message} model={model} />
+          <MessageView
+            key={idx}
+            message={message}
+            model={model}
+            onSendFollowUp={sendFollowUpMessage}
+          />
         ))}
         {isLoading && <ThinkingIndicator model={model} />}
       </div>
@@ -49,9 +70,11 @@ export function Thread({ messages, model, isLoading }: ThreadProps) {
 function MessageView({
   message,
   model,
+  onSendFollowUp,
 }: {
   message: UIMessage;
   model: ModelDefinition;
+  onSendFollowUp: (text: string) => void;
 }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const logoSrc = getProviderLogoFromModel(model, themeMode);
@@ -63,7 +86,12 @@ function MessageView({
       <div className="flex justify-end">
         <div className="max-w-3xl space-y-3 rounded-xl bg-primary px-4 py-3 text-sm leading-6 text-primary-foreground shadow-sm">
           {message.parts?.map((part, i) => (
-            <PartSwitch key={i} part={part} role={role} />
+            <PartSwitch
+              key={i}
+              part={part}
+              role={role}
+              onSendFollowUp={onSendFollowUp}
+            />
           ))}
         </div>
       </div>
@@ -89,7 +117,12 @@ function MessageView({
         {steps.map((stepParts, sIdx) => (
           <div key={sIdx} className="space-y-3">
             {stepParts.map((part, pIdx) => (
-              <PartSwitch key={`${sIdx}-${pIdx}`} part={part} role={role} />
+              <PartSwitch
+                key={`${sIdx}-${pIdx}`}
+                part={part}
+                role={role}
+                onSendFollowUp={onSendFollowUp}
+              />
             ))}
           </div>
         ))}
@@ -118,11 +151,27 @@ function groupAssistantPartsIntoSteps(parts: AnyPart[]): AnyPart[][] {
 function PartSwitch({
   part,
   role,
+  onSendFollowUp,
 }: {
   part: AnyPart;
   role: UIMessage["role"];
+  onSendFollowUp: (text: string) => void;
 }) {
-  if (isToolPart(part) || part.type === "dynamic-tool") {
+  if (isToolPart(part) || isDynamicTool(part)) {
+    const maybeUiResource = (part as any)?.output?.content?.[0] ?? undefined;
+    if (maybeUiResource && isUIResource(maybeUiResource)) {
+      // This renders MCP-UI
+      return (
+        <>
+          <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />
+          <MCPUIResourcePart
+            resource={maybeUiResource.resource}
+            onSendFollowUp={onSendFollowUp}
+          />
+        </>
+      );
+    }
+    // TODO: This is where we probably need to do OpenAI Apps SDK
     return <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />;
   }
 
@@ -378,6 +427,85 @@ function ThinkingIndicator({ model }: { model: ModelDefinition }) {
 function isToolPart(part: AnyPart): part is ToolUIPart<UITools> {
   const t = (part as any).type;
   return typeof t === "string" && t.startsWith("tool-");
+}
+
+type McpResource = {
+  uri: string;
+  [key: string]: unknown;
+};
+
+function MCPUIResourcePart({
+  resource,
+  onSendFollowUp,
+}: {
+  resource: McpResource;
+  onSendFollowUp: (text: string) => void;
+}) {
+  const handleAction = async (action: UIActionResult) => {
+    switch (action.type) {
+      case "tool":
+        console.info("MCP UI tool action received:", action.payload);
+        onSendFollowUp(
+          `Call tool ${action.payload.toolName} with parameters ${JSON.stringify(action.payload.params)}`,
+        );
+        break;
+      case "link":
+        if (action.payload?.url && typeof window !== "undefined") {
+          window.open(action.payload.url, "_blank", "noopener,noreferrer");
+          return { status: "handled" };
+        }
+        break;
+      case "prompt":
+        if (action.payload?.prompt) {
+          onSendFollowUp(`Prompt: ${action.payload.prompt}`);
+          return { status: "handled" };
+        }
+        break;
+      case "intent":
+        if (action.payload?.intent) {
+          onSendFollowUp(`Intent: ${action.payload.intent}`);
+          return { status: "handled" };
+        }
+        break;
+      case "notify":
+        if (action.payload?.message) {
+          onSendFollowUp(`Notification: ${action.payload.message}`);
+          return { status: "handled" };
+        }
+        break;
+    }
+    return { status: "unhandled" };
+  };
+
+  return (
+    <div className="w-full overflow-hidden rounded-2xl border border-border/40 bg-muted/20 shadow-sm">
+      <UIResourceRenderer
+        resource={resource}
+        htmlProps={{
+          style: {
+            border: "2px",
+            borderRadius: "4px",
+            minHeight: "400px",
+          },
+          iframeProps: {
+            title: "Custom MCP Resource",
+            className: "mcp-resource-frame",
+          },
+        }}
+        remoteDomProps={{
+          library: basicComponentLibrary,
+          remoteElements: [
+            remoteButtonDefinition,
+            remoteTextDefinition,
+            remoteStackDefinition,
+            remoteCardDefinition,
+            remoteImageDefinition,
+          ],
+        }}
+        onUIAction={handleAction}
+      />
+    </div>
+  );
 }
 
 function isDynamicTool(part: unknown): part is DynamicToolUIPart {
