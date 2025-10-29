@@ -115,6 +115,7 @@ chatV2.post("/", async (c) => {
                 mode: "step",
                 messages: JSON.stringify(messageHistory),
                 model: String(modelDefinition.id),
+                systemPrompt,
                 temperature: temperature ?? DEFAULT_TEMPERATURE,
                 tools: toolDefs,
               }),
