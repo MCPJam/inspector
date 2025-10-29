@@ -26,7 +26,7 @@ interface ChatInputProps {
   temperature: number;
   onTemperatureChange: (temperature: number) => void;
   hasMessages?: boolean;
-  onResetChat?: () => void;
+  onResetChat: () => void;
 }
 
 export function ChatInput({

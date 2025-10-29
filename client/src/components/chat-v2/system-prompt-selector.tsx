@@ -21,7 +21,7 @@ interface SystemPromptSelectorProps {
   disabled?: boolean;
   isLoading?: boolean;
   hasMessages?: boolean;
-  onResetChat?: () => void;
+  onResetChat: () => void;
 }
 
 export function SystemPromptSelector({
@@ -59,7 +59,7 @@ export function SystemPromptSelector({
     onSystemPromptChange(draftPrompt);
     onTemperatureChange(draftTemperature);
     if (promptChanged || temperatureChanged) {
-      onResetChat?.();
+      onResetChat();
     }
     setIsOpen(false);
     setConfirmReset(false);
