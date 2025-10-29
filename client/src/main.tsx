@@ -67,15 +67,18 @@ const convex = new ConvexReactClient(convexUrl);
 const root = createRoot(document.getElementById("root")!);
 
 // Handle MCP OAuth callback when it lands in external browser during Electron flow
-// The OAuth provider redirects to http://localhost:8080/oauth/callback?platform=electron
-// We need to redirect to mcpjam:// protocol so Electron can handle it
-const urlParams = new URLSearchParams(window.location.search);
-const isElectronOAuthCallback =
+// When OAuth redirects back, it lands in the external browser (not Electron)
+// We need to detect this and redirect to mcpjam:// protocol so Electron can handle it
+// Port 8080 = Electron Vite renderer, other ports = web mode
+const isElectronFrontendPort = window.location.port === "8080";
+const isMcpCallbackInBrowser =
   window.location.pathname.startsWith("/oauth/callback") &&
-  urlParams.get("platform") === "electron";
+  !(window as any).isElectron &&
+  isElectronFrontendPort; // Only redirect if on Electron's port
 
-if (isElectronOAuthCallback) {
+if (isMcpCallbackInBrowser) {
   // Extract OAuth params
+  const urlParams = new URLSearchParams(window.location.search);
   const code = urlParams.get("code");
   const state = urlParams.get("state");
   const error = urlParams.get("error");
@@ -106,7 +109,7 @@ if (isElectronOAuthCallback) {
     window.location.href = protocolUrl.toString();
   }
 } else {
-  // Normal app flow (web mode or non-callback routes)
+  // Not an OAuth callback, render normal app
   const Providers = (
     <AuthKitProvider clientId={workosClientId} redirectUri={workosRedirectUri}>
       <ConvexProviderWithAuthKit client={convex} useAuth={useAuth}>
