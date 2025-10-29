@@ -8,6 +8,10 @@ icon: "puzzle-piece"
 
 This guide explains how MCPJam Inspector implements the OpenAI Apps SDK to render custom UI components for MCP tool results. This enables MCP server developers to create rich, interactive visualizations for their tool outputs.
 
+<Note>
+MCPJam Inspector also supports [MCP-UI](https://github.com/modelcontextprotocol/mcp-ui) for simpler component-based UIs. See the [Playground Architecture](./playground-architecture#mcp-ui-integration) docs for MCP-UI implementation details.
+</Note>
+
 ## Overview
 
 MCPJam Inspector provides full support for the [OpenAI Apps SDK](https://developers.openai.com/apps-sdk), allowing MCP tools to return custom UI components that render in iframes with a sandboxed `window.openai` API bridge.
