@@ -43,6 +43,8 @@ export function ChatTabV2() {
     getLiteLLMModelAlias,
     getOpenRouterSelectedModels,
     getOllamaBaseUrl,
+    getBedrockRegion,
+    getBedrockSecretKey,
   } = useAiProviderKeys();
 
   const [input, setInput] = useState("");
@@ -95,10 +97,22 @@ export function ChatTabV2() {
         apiKey: apiKey,
         temperature,
         systemPrompt,
+        ollamaBaseUrl: getOllamaBaseUrl(),
+        bedrockRegion: getBedrockRegion(),
+        bedrockSecretKey: getBedrockSecretKey(),
       },
       headers: authHeaders,
     });
-  }, [selectedModel, getToken, authHeaders, temperature, systemPrompt]);
+  }, [
+    selectedModel,
+    getToken,
+    authHeaders,
+    temperature,
+    systemPrompt,
+    getOllamaBaseUrl,
+    getBedrockRegion,
+    getBedrockSecretKey,
+  ]);
 
   useEffect(() => {
     let active = true;
