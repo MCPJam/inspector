@@ -38,6 +38,7 @@ import { isMCPJamProvidedModel } from "@/shared/types";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { Thread } from "@/components/chat-v2/thread";
 import { ServerWithName } from "@/hooks/use-app-state";
+import { getToolsMetadata, ToolServerMap } from "@/lib/mcp-tools-api";
 
 const DEFAULT_SYSTEM_PROMPT =
   "You are a helpful assistant with access to MCP tools.";
@@ -70,7 +71,10 @@ export function ChatTabV2({
   const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
   const [temperature, setTemperature] = useState(0.7);
   const [chatSessionId, setChatSessionId] = useState(generateId());
-
+  const [toolsMetadata, setToolsMetadata] = useState<
+    Record<string, Record<string, any>>
+  >({});
+  const [toolServerMap, setToolServerMap] = useState<ToolServerMap>({});
   const availableModels = useMemo(() => {
     return buildAvailableModels({
       hasToken,
@@ -278,6 +282,17 @@ export function ChatTabV2({
     }
   };
 
+  useEffect(() => {
+    const fetchToolsMetadata = async () => {
+      const { metadata, toolServerMap } = await getToolsMetadata(
+        selectedConnectedServerNames,
+      );
+      setToolsMetadata(metadata);
+      setToolServerMap(toolServerMap);
+    };
+    fetchToolsMetadata();
+  }, [selectedConnectedServerNames]);
+
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (input.trim() && status === "ready") {
@@ -299,6 +314,8 @@ export function ChatTabV2({
               sendFollowUpMessage={(text: string) => sendMessage({ text })}
               model={selectedModel}
               isLoading={status === "submitted"}
+              toolsMetadata={toolsMetadata}
+              toolServerMap={toolServerMap}
             />
             <div className="bg-background/80 backdrop-blur-sm flex-shrink-0">
               <div className="max-w-4xl mx-auto p-4">
