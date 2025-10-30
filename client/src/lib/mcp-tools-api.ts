@@ -68,6 +68,26 @@ export async function executeToolApi(
   return body as ToolExecutionResponse;
 }
 
+export async function callTool(
+  serverId: string,
+  toolName: string,
+  parameters: Record<string, unknown>,
+): Promise<CallToolResult> {
+  const response = await executeToolApi(serverId, toolName, parameters);
+
+  if ("error" in response) {
+    throw new Error(response.error);
+  }
+
+  if (response.status === "elicitation_required") {
+    throw new Error(
+      "Tool execution requires elicitation, which is not supported in the emulator yet.",
+    );
+  }
+
+  return response.result;
+}
+
 export async function respondToElicitationApi(
   requestId: string,
   response: ElicitResult,

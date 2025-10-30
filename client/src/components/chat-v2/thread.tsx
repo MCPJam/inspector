@@ -30,7 +30,7 @@ import {
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { getProviderLogoFromModel } from "../chat/chat-helpers";
 import { OpenAIAppRenderer } from "./openai-app-renderer";
-import { getToolServerId, ToolServerMap } from "@/lib/mcp-tools-api";
+import { callTool, getToolServerId, ToolServerMap } from "@/lib/mcp-tools-api";
 
 type AnyPart = UIMessagePart<UIDataTypes, UITools>;
 type ToolState =
@@ -194,17 +194,23 @@ function PartSwitch({
 
     // TODO: Confirm that this is correct.
     if (
-      isDynamicTool(part) &&
-      (part as any).callProviderMetadata?.openai !== undefined
+      (isDynamicTool(part) || isToolPart(part)) &&
+      isPartOpenAIApp(part, toolsMetadata)
     ) {
       const toolName = (part as DynamicToolUIPart).toolName;
       const serverId = toolName
         ? getToolServerId(toolName, toolServerMap)
         : undefined;
 
-      if (!serverId) {
+      if (!toolName || !serverId) {
         return (
-          <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />
+          <>
+            <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />
+            <div className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2">
+              OpenAI apps are currently not supported on MCPJam free models.
+              Bring your own API key in the settings tab.
+            </div>
+          </>
         );
       }
 
@@ -218,6 +224,9 @@ function PartSwitch({
               toolsMetadata[(part as DynamicToolUIPart).toolName] ?? undefined
             }
             onSendFollowUp={onSendFollowUp}
+            onCallTool={(toolName, params) =>
+              callTool(serverId, toolName, params)
+            }
           />
         </>
       );
@@ -563,6 +572,18 @@ function isDynamicTool(part: unknown): part is DynamicToolUIPart {
     !!part &&
     typeof (part as any).type === "string" &&
     (part as any).type === "dynamic-tool"
+  );
+}
+
+function isPartOpenAIApp(
+  part: unknown,
+  toolsMetadata: Record<string, Record<string, any>>,
+): part is DynamicToolUIPart {
+  const toolName = (part as DynamicToolUIPart).toolName;
+  const toolNameFromType = getToolNameFromType((part as any).type);
+  return (
+    toolsMetadata[toolName]?.["openai/outputTemplate"] !== undefined ||
+    toolsMetadata[toolNameFromType]?.["openai/outputTemplate"] !== undefined
   );
 }
 

@@ -38,10 +38,7 @@ import { isMCPJamProvidedModel } from "@/shared/types";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { Thread } from "@/components/chat-v2/thread";
 import { ServerWithName } from "@/hooks/use-app-state";
-import {
-  getToolsMetadata,
-  ToolServerMap,
-} from "@/lib/mcp-tools-api";
+import { getToolsMetadata, ToolServerMap } from "@/lib/mcp-tools-api";
 
 const DEFAULT_SYSTEM_PROMPT =
   "You are a helpful assistant with access to MCP tools.";
