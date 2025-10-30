@@ -199,6 +199,8 @@ chatV2.post("/", async (c) => {
       apiKey ?? "",
       body.ollamaBaseUrl,
       body.litellmBaseUrl,
+      body.bedrockRegion,
+      body.bedrockSecretKey,
     );
 
     const result = streamText({

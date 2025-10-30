@@ -10,4 +10,6 @@ export interface ChatV2Request {
   apiKey?: string;
   ollamaBaseUrl?: string;
   litellmBaseUrl?: string;
+  bedrockRegion?: string;
+  bedrockSecretKey?: string;
 }

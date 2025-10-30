@@ -46,6 +46,8 @@ export function useChat(options: UseChatOptions = {}) {
     getLiteLLMBaseUrl,
     getLiteLLMModelAlias,
     getOpenRouterSelectedModels,
+    getBedrockRegion,
+    getBedrockSecretKey,
   } = useAiProviderKeys();
   const posthog = usePostHog();
 
@@ -177,6 +179,7 @@ export function useChat(options: UseChatOptions = {}) {
       openrouter: Boolean(
         hasToken("openrouter") && getOpenRouterSelectedModels().length > 0,
       ),
+      bedrock: hasToken("bedrock"),
       meta: false,
       "x-ai": false,
     } as const;
@@ -241,6 +244,8 @@ export function useChat(options: UseChatOptions = {}) {
     getLiteLLMBaseUrl,
     getLiteLLMModelAlias,
     getOpenRouterSelectedModels,
+    tokens.bedrock,
+    tokens.bedrockSecretKey,
   ]);
 
   const applySseEvent = useCallback(
@@ -463,6 +468,8 @@ export function useChat(options: UseChatOptions = {}) {
             messages: messagesRef.current.concat(userMessage),
             ollamaBaseUrl: getOllamaBaseUrl(),
             litellmBaseUrl: getLiteLLMBaseUrl(),
+            bedrockRegion: getBedrockRegion(),
+            bedrockSecretKey: getBedrockSecretKey(),
             sendMessagesToBackend: routeThroughBackend,
             selectedServers,
           }),
