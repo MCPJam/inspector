@@ -12,6 +12,10 @@ This guide explains how MCPJam Inspector implements the OpenAI Apps SDK to rende
 
 MCPJam Inspector provides full support for the [OpenAI Apps SDK](https://developers.openai.com/apps-sdk), allowing MCP tools to return custom UI components that render in iframes with a sandboxed `window.openai` API bridge.
 
+<Note>
+  This document covers the **V1 Playground** implementation. As of PR #773, **Playground V2** (`ChatTabV2.tsx`) also supports OpenAI Apps with a streamlined implementation using `openai-app-renderer.tsx`. The V2 implementation uses MCP resources API to fetch widget templates and renders them with similar `window.openai` bridge capabilities.
+</Note>
+
 ### Key Features
 
 - **Custom UI Rendering**: Display tool results using custom HTML/React components
