@@ -1,8 +1,16 @@
-import { FormEvent, useMemo, useState, useEffect } from "react";
+import {
+  FormEvent,
+  useMemo,
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+} from "react";
 import { useChat } from "@ai-sdk/react";
 import {
   DefaultChatTransport,
   lastAssistantMessageIsCompleteWithToolCalls,
+  generateId,
 } from "ai";
 import { useAuth } from "@workos-inc/authkit-react";
 import { ModelDefinition } from "@/shared/types";
@@ -29,8 +37,20 @@ import {
 import { isMCPJamProvidedModel } from "@/shared/types";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { Thread } from "@/components/chat-v2/thread";
+import { ServerWithName } from "@/hooks/use-app-state";
 
-export function ChatTabV2() {
+const DEFAULT_SYSTEM_PROMPT =
+  "You are a helpful assistant with access to MCP tools.";
+
+interface ChatTabProps {
+  connectedServerConfigs: Record<string, ServerWithName>;
+  selectedServerNames: string[];
+}
+
+export function ChatTabV2({
+  connectedServerConfigs,
+  selectedServerNames,
+}: ChatTabProps) {
   const { getAccessToken } = useAuth();
   const {
     hasToken,
@@ -47,6 +67,9 @@ export function ChatTabV2() {
   const [authHeaders, setAuthHeaders] = useState<
     Record<string, string> | undefined
   >(undefined);
+  const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
+  const [temperature, setTemperature] = useState(0.7);
+  const [chatSessionId, setChatSessionId] = useState(generateId());
 
   const availableModels = useMemo(() => {
     return buildAvailableModels({
@@ -79,6 +102,15 @@ export function ChatTabV2() {
   );
   const [elicitationLoading, setElicitationLoading] = useState(false);
 
+  const selectedConnectedServerNames = useMemo(
+    () =>
+      selectedServerNames.filter(
+        (name) =>
+          connectedServerConfigs[name]?.connectionStatus === "connected",
+      ),
+    [selectedServerNames, connectedServerConfigs],
+  );
+
   const transport = useMemo(() => {
     const apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
     return new DefaultChatTransport({
@@ -86,11 +118,20 @@ export function ChatTabV2() {
       body: {
         model: selectedModel,
         apiKey: apiKey,
-        temperature: 0.7,
+        temperature,
+        systemPrompt,
+        selectedServers: selectedConnectedServerNames,
       },
       headers: authHeaders,
     });
-  }, [selectedModel, getToken, authHeaders]);
+  }, [
+    selectedModel,
+    getToken,
+    authHeaders,
+    temperature,
+    systemPrompt,
+    selectedConnectedServerNames,
+  ]);
 
   useEffect(() => {
     let active = true;
@@ -119,8 +160,8 @@ export function ChatTabV2() {
       : false;
   }, [selectedModel]);
 
-  const { messages, sendMessage, stop, status } = useChat({
-    id: `chat-${selectedModel.provider}-${selectedModel.id}`,
+  const { messages, sendMessage, stop, status, setMessages } = useChat({
+    id: chatSessionId,
     transport: transport!,
     // Disable client auto-send for MCPJam-provided models; server handles tool loop
     sendAutomaticallyWhen: isMcpJamModel
@@ -128,7 +169,33 @@ export function ChatTabV2() {
       : lastAssistantMessageIsCompleteWithToolCalls,
   });
 
-  const isLoading = status === "streaming";
+  const resetChat = useCallback(() => {
+    setChatSessionId(generateId());
+    setMessages([]);
+    setInput("");
+  }, [setMessages]);
+
+  useEffect(() => {
+    resetChat();
+  }, [resetChat]);
+
+  const previousSelectedServersRef = useRef<string[]>(
+    selectedConnectedServerNames,
+  );
+
+  useEffect(() => {
+    const previousNames = previousSelectedServersRef.current;
+    const currentNames = selectedConnectedServerNames;
+    const hasChanged =
+      previousNames.length !== currentNames.length ||
+      previousNames.some((name, index) => name !== currentNames[index]);
+
+    if (hasChanged) {
+      resetChat();
+    }
+
+    previousSelectedServersRef.current = currentNames;
+  }, [selectedConnectedServerNames, resetChat]);
 
   useEffect(() => {
     const checkOllama = async () => {
@@ -227,7 +294,12 @@ export function ChatTabV2() {
       >
         <ResizablePanel defaultSize={70} minSize={40} className="min-w-0">
           <div className="flex flex-col bg-background h-full min-h-0 overflow-hidden">
-            <Thread messages={messages} />
+            <Thread
+              messages={messages}
+              sendFollowUpMessage={(text: string) => sendMessage({ text })}
+              model={selectedModel}
+              isLoading={status === "submitted"}
+            />
             <div className="bg-background/80 backdrop-blur-sm flex-shrink-0">
               <div className="max-w-4xl mx-auto p-4">
                 <ChatInput
@@ -236,14 +308,20 @@ export function ChatTabV2() {
                   onSubmit={onSubmit}
                   stop={stop}
                   disabled={status !== "ready"}
-                  isLoading={isLoading}
+                  isLoading={status === "streaming" || status === "submitted"}
                   placeholder="Ask something…"
                   currentModel={selectedModel}
                   availableModels={availableModels}
-                  onModelChange={(model) =>
-                    setSelectedModelId(String(model.id))
-                  }
+                  onModelChange={(model) => {
+                    setSelectedModelId(String(model.id));
+                    resetChat();
+                  }}
+                  systemPrompt={systemPrompt}
+                  onSystemPromptChange={setSystemPrompt}
+                  temperature={temperature}
+                  onTemperatureChange={setTemperature}
                   hasMessages={messages.length > 0}
+                  onResetChat={resetChat}
                 />
               </div>
             </div>

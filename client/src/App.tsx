@@ -89,7 +89,6 @@ export default function App() {
     selectedMCPConfigsMap,
     setSelectedMultipleServersToAllServers,
   } = useAppState();
-
   // Sync tab with hash on mount and when hash changes
   useEffect(() => {
     const applyHash = () => {
@@ -222,7 +221,12 @@ export default function App() {
             />
           )}
 
-          {activeTab === "chat-v2" && <ChatTabV2 />}
+          {activeTab === "chat-v2" && (
+            <ChatTabV2
+              connectedServerConfigs={connectedServerConfigs}
+              selectedServerNames={appState.selectedMultipleServers}
+            />
+          )}
 
           {activeTab === "interceptor" && (
             <InterceptorTab
