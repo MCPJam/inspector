@@ -9,6 +9,8 @@ export type ListToolsResultWithMetadata = ListToolsResult & {
   toolsMetadata?: Record<string, Record<string, any>>;
 };
 
+export type ToolServerMap = Record<string, string>;
+
 export type ToolExecutionResponse =
   | {
       status: "completed";
@@ -84,4 +86,39 @@ export async function respondToElicitationApi(
     return { error: message } as ToolExecutionResponse;
   }
   return body as ToolExecutionResponse;
+}
+
+export interface ToolsMetadataAggregate {
+  metadata: Record<string, Record<string, any>>;
+  toolServerMap: ToolServerMap;
+}
+
+export function getToolServerId(
+  toolName: string,
+  map: ToolServerMap,
+): string | undefined {
+  return map[toolName];
+}
+
+export async function getToolsMetadata(
+  serverIds: string[],
+): Promise<ToolsMetadataAggregate> {
+  const aggregate: ToolsMetadataAggregate = {
+    metadata: {},
+    toolServerMap: {},
+  };
+
+  await Promise.all(
+    serverIds.map(async (serverId) => {
+      const data = await listTools(serverId);
+      const toolsMetadata = data.toolsMetadata ?? {};
+
+      for (const [toolName, meta] of Object.entries(toolsMetadata)) {
+        aggregate.metadata[toolName] = meta;
+        aggregate.toolServerMap[toolName] = serverId;
+      }
+    }),
+  );
+
+  return aggregate;
 }

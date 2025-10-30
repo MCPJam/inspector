@@ -29,6 +29,8 @@ import {
 } from "lucide-react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { getProviderLogoFromModel } from "../chat/chat-helpers";
+import { OpenAIAppRenderer } from "./openai-app-renderer";
+import { getToolServerId, ToolServerMap } from "@/lib/mcp-tools-api";
 
 type AnyPart = UIMessagePart<UIDataTypes, UITools>;
 type ToolState =
@@ -42,6 +44,8 @@ interface ThreadProps {
   sendFollowUpMessage: (text: string) => void;
   model: ModelDefinition;
   isLoading: boolean;
+  toolsMetadata: Record<string, Record<string, any>>;
+  toolServerMap: ToolServerMap;
 }
 
 export function Thread({
@@ -49,6 +53,8 @@ export function Thread({
   sendFollowUpMessage,
   model,
   isLoading,
+  toolsMetadata,
+  toolServerMap,
 }: ThreadProps) {
   return (
     <div className="flex-1 overflow-y-auto pb-4">
@@ -59,6 +65,8 @@ export function Thread({
             message={message}
             model={model}
             onSendFollowUp={sendFollowUpMessage}
+            toolsMetadata={toolsMetadata}
+            toolServerMap={toolServerMap}
           />
         ))}
         {isLoading && <ThinkingIndicator model={model} />}
@@ -71,10 +79,14 @@ function MessageView({
   message,
   model,
   onSendFollowUp,
+  toolsMetadata,
+  toolServerMap,
 }: {
   message: UIMessage;
   model: ModelDefinition;
   onSendFollowUp: (text: string) => void;
+  toolsMetadata: Record<string, Record<string, any>>;
+  toolServerMap: ToolServerMap;
 }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const logoSrc = getProviderLogoFromModel(model, themeMode);
@@ -91,6 +103,8 @@ function MessageView({
               part={part}
               role={role}
               onSendFollowUp={onSendFollowUp}
+              toolsMetadata={toolsMetadata}
+              toolServerMap={toolServerMap}
             />
           ))}
         </div>
@@ -122,6 +136,8 @@ function MessageView({
                 part={part}
                 role={role}
                 onSendFollowUp={onSendFollowUp}
+                toolsMetadata={toolsMetadata}
+                toolServerMap={toolServerMap}
               />
             ))}
           </div>
@@ -152,15 +168,19 @@ function PartSwitch({
   part,
   role,
   onSendFollowUp,
+  toolsMetadata,
+  toolServerMap,
 }: {
   part: AnyPart;
   role: UIMessage["role"];
   onSendFollowUp: (text: string) => void;
+  toolsMetadata: Record<string, Record<string, any>>;
+  toolServerMap: ToolServerMap;
 }) {
   if (isToolPart(part) || isDynamicTool(part)) {
     const maybeUiResource = (part as any)?.output?.content?.[0] ?? undefined;
     if (maybeUiResource && isUIResource(maybeUiResource)) {
-      // This renders MCP-UI
+      // Render MCP-UI
       return (
         <>
           <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />
@@ -171,7 +191,37 @@ function PartSwitch({
         </>
       );
     }
-    // TODO: This is where we probably need to do OpenAI Apps SDK
+
+    // TODO: Confirm that this is correct.
+    if (
+      isDynamicTool(part) &&
+      (part as any).callProviderMetadata?.openai !== undefined
+    ) {
+      const toolName = (part as DynamicToolUIPart).toolName;
+      const serverId = toolName
+        ? getToolServerId(toolName, toolServerMap)
+        : undefined;
+
+      if (!serverId) {
+        return (
+          <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />
+        );
+      }
+
+      return (
+        <>
+          <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />
+          <OpenAIAppRenderer
+            part={part as DynamicToolUIPart}
+            serverId={serverId}
+            toolMetadata={
+              toolsMetadata[(part as DynamicToolUIPart).toolName] ?? undefined
+            }
+            onSendFollowUp={onSendFollowUp}
+          />
+        </>
+      );
+    }
     return <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />;
   }
 
