@@ -1,4 +1,11 @@
-import { FormEvent, useMemo, useState, useEffect } from "react";
+import {
+  FormEvent,
+  useMemo,
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+} from "react";
 import { useChat } from "@ai-sdk/react";
 import {
   DefaultChatTransport,
@@ -30,11 +37,20 @@ import {
 import { isMCPJamProvidedModel } from "@/shared/types";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { Thread } from "@/components/chat-v2/thread";
+import { ServerWithName } from "@/hooks/use-app-state";
 
 const DEFAULT_SYSTEM_PROMPT =
   "You are a helpful assistant with access to MCP tools.";
 
-export function ChatTabV2() {
+interface ChatTabProps {
+  connectedServerConfigs: Record<string, ServerWithName>;
+  selectedServerNames: string[];
+}
+
+export function ChatTabV2({
+  connectedServerConfigs,
+  selectedServerNames,
+}: ChatTabProps) {
   const { getAccessToken } = useAuth();
   const {
     hasToken,
@@ -86,6 +102,15 @@ export function ChatTabV2() {
   );
   const [elicitationLoading, setElicitationLoading] = useState(false);
 
+  const selectedConnectedServerNames = useMemo(
+    () =>
+      selectedServerNames.filter(
+        (name) =>
+          connectedServerConfigs[name]?.connectionStatus === "connected",
+      ),
+    [selectedServerNames, connectedServerConfigs],
+  );
+
   const transport = useMemo(() => {
     const apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
     return new DefaultChatTransport({
@@ -95,10 +120,18 @@ export function ChatTabV2() {
         apiKey: apiKey,
         temperature,
         systemPrompt,
+        selectedServers: selectedConnectedServerNames,
       },
       headers: authHeaders,
     });
-  }, [selectedModel, getToken, authHeaders, temperature, systemPrompt]);
+  }, [
+    selectedModel,
+    getToken,
+    authHeaders,
+    temperature,
+    systemPrompt,
+    selectedConnectedServerNames,
+  ]);
 
   useEffect(() => {
     let active = true;
@@ -136,15 +169,33 @@ export function ChatTabV2() {
       : lastAssistantMessageIsCompleteWithToolCalls,
   });
 
-  const resetChat = () => {
+  const resetChat = useCallback(() => {
     setChatSessionId(generateId());
     setMessages([]);
     setInput("");
-  };
+  }, [setMessages]);
 
   useEffect(() => {
     resetChat();
-  }, []);
+  }, [resetChat]);
+
+  const previousSelectedServersRef = useRef<string[]>(
+    selectedConnectedServerNames,
+  );
+
+  useEffect(() => {
+    const previousNames = previousSelectedServersRef.current;
+    const currentNames = selectedConnectedServerNames;
+    const hasChanged =
+      previousNames.length !== currentNames.length ||
+      previousNames.some((name, index) => name !== currentNames[index]);
+
+    if (hasChanged) {
+      resetChat();
+    }
+
+    previousSelectedServersRef.current = currentNames;
+  }, [selectedConnectedServerNames, resetChat]);
 
   useEffect(() => {
     const checkOllama = async () => {
