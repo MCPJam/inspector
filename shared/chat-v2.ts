@@ -5,8 +5,10 @@ export interface ChatV2Request {
   messages: UIMessage[];
   model?: ModelDefinition;
   modelId?: string;
+  systemPrompt?: string;
   temperature?: number;
   apiKey?: string;
   ollamaBaseUrl?: string;
   litellmBaseUrl?: string;
+  selectedServers?: string[];
 }
