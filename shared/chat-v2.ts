@@ -10,4 +10,5 @@ export interface ChatV2Request {
   apiKey?: string;
   ollamaBaseUrl?: string;
   litellmBaseUrl?: string;
+  selectedServers?: string[];
 }

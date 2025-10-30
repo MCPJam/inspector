@@ -23,7 +23,14 @@ chatV2.post("/", async (c) => {
   try {
     const body = (await c.req.json()) as ChatV2Request;
     const mcpClientManager = c.mcpClientManager;
-    const { messages, apiKey, model, systemPrompt, temperature } = body;
+    const {
+      messages,
+      apiKey,
+      model,
+      systemPrompt,
+      temperature,
+      selectedServers,
+    } = body;
 
     if (!Array.isArray(messages) || messages.length === 0) {
       return c.json({ error: "messages are required" }, 400);
@@ -33,8 +40,8 @@ chatV2.post("/", async (c) => {
     if (!modelDefinition) {
       return c.json({ error: "model is not supported" }, 400);
     }
-
-    const mcpTools = await mcpClientManager.getToolsForAiSdk();
+    console.log("selectedServers", selectedServers);
+    const mcpTools = await mcpClientManager.getToolsForAiSdk(selectedServers);
 
     // If model is MCPJam-provided, delegate to backend free-chat endpoint
     if (modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id)) {
