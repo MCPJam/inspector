@@ -95,6 +95,8 @@ export function ChatTabV2({
     getLiteLLMModelAlias,
     getOpenRouterSelectedModels,
     getOllamaBaseUrl,
+    getBedrockRegion,
+    getBedrockSecretKey,
   } = useAiProviderKeys();
 
   const [input, setInput] = useState("");
@@ -162,6 +164,9 @@ export function ChatTabV2({
         ...(isGpt5 ? {} : { temperature }),
         systemPrompt,
         selectedServers: selectedConnectedServerNames,
+        ollamaBaseUrl: getOllamaBaseUrl(),
+        bedrockRegion: getBedrockRegion(),
+        bedrockSecretKey: getBedrockSecretKey(),
       },
       headers: authHeaders,
     });
@@ -172,6 +177,9 @@ export function ChatTabV2({
     temperature,
     systemPrompt,
     selectedConnectedServerNames,
+    getOllamaBaseUrl,
+    getBedrockRegion,
+    getBedrockSecretKey,
   ]);
 
   useEffect(() => {

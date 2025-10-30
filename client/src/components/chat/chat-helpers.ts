@@ -14,6 +14,7 @@ import openrouterLogo from "/openrouter_logo.png";
 import moonshotLightLogo from "/moonshot_light.png";
 import moonshotDarkLogo from "/moonshot_dark.png";
 import zAiLogo from "/z-ai.png";
+import bedrockLogo from "/bedrock_logo.png";
 
 export const getProviderLogoFromProvider = (
   provider: string,
@@ -68,6 +69,8 @@ export const getProviderLogoFromProvider = (
       return moonshotLightLogo;
     case "z-ai":
       return zAiLogo;
+    case "bedrock":
+      return bedrockLogo;
     default:
       return null;
   }
@@ -104,6 +107,8 @@ export const getProviderColor = (provider: string) => {
       return "text-indigo-600 dark:text-indigo-400";
     case "meta":
       return "text-blue-500 dark:text-blue-400";
+    case "bedrock":
+      return "text-orange-500 dark:text-orange-400";
     default:
       return "text-blue-600 dark:text-blue-400";
   }

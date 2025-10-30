@@ -109,7 +109,8 @@ export type ModelProvider =
   | "mistral"
   | "moonshotai"
   | "openrouter"
-  | "z-ai";
+  | "z-ai"
+  | "bedrock";
 
 const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
   "meta-llama/llama-3.3-70b-instruct",
@@ -197,6 +198,9 @@ export enum Model {
   CODESTRAL_LATEST = "codestral-latest",
   MINISTRAL_8B_LATEST = "ministral-8b-latest",
   MINISTRAL_3B_LATEST = "ministral-3b-latest",
+  // Amazon Bedrock models
+  BEDROCK_DEEPSEEK_V3 = "deepseek.v3-v1:0",
+  BEDROCK_QWEN_3_CODER_480B = "qwen.qwen3-coder-480b-a35b-v1:0",
 }
 
 export const SUPPORTED_MODELS: ModelDefinition[] = [
@@ -367,6 +371,18 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     id: Model.MINISTRAL_3B_LATEST,
     name: "Ministral 3B",
     provider: "mistral",
+  },
+  // Amazon Bedrock models
+
+  {
+    id: Model.BEDROCK_DEEPSEEK_V3,
+    name: "DeepSeek v3 (Bedrock)",
+    provider: "bedrock",
+  },
+  {
+    id: Model.BEDROCK_QWEN_3_CODER_480B,
+    name: "Qwen 3 Coder 480B (Bedrock)",
+    provider: "bedrock",
   },
 ];
 

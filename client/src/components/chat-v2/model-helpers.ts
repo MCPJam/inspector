@@ -46,6 +46,7 @@ export function buildAvailableModels(params: {
     openrouter: Boolean(
       hasToken("openrouter") && getOpenRouterSelectedModels().length > 0,
     ),
+    bedrock: hasToken("bedrock"),
     meta: false,
     "x-ai": false,
   } as const;

@@ -345,6 +345,15 @@ export function ChatTab({
             className="w-8 h-8 object-contain opacity-70 hover:opacity-100 transition-opacity"
           />
         </div>
+
+        {/* Amazon Bedrock */}
+        <div className="flex items-center justify-center">
+          <img
+            src="/bedrock_logo.png"
+            alt="Amazon Bedrock"
+            className="w-8 h-8 object-contain opacity-70 hover:opacity-100 transition-opacity"
+          />
+        </div>
       </div>
 
       {/* CTA */}

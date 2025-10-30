@@ -13,6 +13,9 @@ export interface ProviderTokens {
   litellmModelAlias: string;
   openrouter: string;
   openRouterSelectedModels: string[];
+  bedrock: string;
+  bedrockRegion: string;
+  bedrockSecretKey: string;
 }
 
 export interface useAiProviderKeysReturn {
@@ -30,6 +33,10 @@ export interface useAiProviderKeysReturn {
   setLiteLLMModelAlias: (alias: string) => void;
   getOpenRouterSelectedModels: () => string[];
   setOpenRouterSelectedModels: (models: string[]) => void;
+  getBedrockRegion: () => string;
+  setBedrockRegion: (region: string) => void;
+  getBedrockSecretKey: () => string;
+  setBedrockSecretKey: (key: string) => void;
 }
 
 const STORAGE_KEY = "mcp-inspector-provider-tokens";
@@ -47,6 +54,9 @@ const defaultTokens: ProviderTokens = {
   litellmModelAlias: "", // Model name/alias to use with LiteLLM
   openrouter: "",
   openRouterSelectedModels: [],
+  bedrock: "", // AWS Access Key ID
+  bedrockRegion: "us-east-1", // Default AWS region
+  bedrockSecretKey: "", // AWS Secret Access Key
 };
 
 export function useAiProviderKeys(): useAiProviderKeysReturn {
@@ -114,6 +124,13 @@ export function useAiProviderKeys(): useAiProviderKeysReturn {
           tokens.openRouterSelectedModels.length > 0
         );
       }
+      if (provider === "bedrock") {
+        // For Bedrock, check both access key and secret key
+        return (
+          Boolean(tokens.bedrock?.trim()) &&
+          Boolean(tokens.bedrockSecretKey?.trim())
+        );
+      }
       if (Array.isArray(value)) {
         return value.length > 0;
       }
@@ -179,6 +196,28 @@ export function useAiProviderKeys(): useAiProviderKeysReturn {
     }));
   }, []);
 
+  const getBedrockRegion = useCallback(() => {
+    return tokens.bedrockRegion || defaultTokens.bedrockRegion;
+  }, [tokens.bedrockRegion]);
+
+  const setBedrockRegion = useCallback((region: string) => {
+    setTokens((prev) => ({
+      ...prev,
+      bedrockRegion: region,
+    }));
+  }, []);
+
+  const getBedrockSecretKey = useCallback(() => {
+    return tokens.bedrockSecretKey || "";
+  }, [tokens.bedrockSecretKey]);
+
+  const setBedrockSecretKey = useCallback((key: string) => {
+    setTokens((prev) => ({
+      ...prev,
+      bedrockSecretKey: key,
+    }));
+  }, []);
+
   return {
     tokens,
     setToken,
@@ -194,5 +233,9 @@ export function useAiProviderKeys(): useAiProviderKeysReturn {
     setLiteLLMModelAlias,
     getOpenRouterSelectedModels,
     setOpenRouterSelectedModels,
+    getBedrockRegion,
+    setBedrockRegion,
+    getBedrockSecretKey,
+    setBedrockSecretKey,
   };
 }

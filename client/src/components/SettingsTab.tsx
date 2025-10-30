@@ -5,6 +5,7 @@ import { ProviderConfigDialog } from "./setting/ProviderConfigDialog";
 import { OllamaConfigDialog } from "./setting/OllamaConfigDialog";
 import { LiteLLMConfigDialog } from "./setting/LiteLLMConfigDialog";
 import { OpenRouterConfigDialog } from "./setting/OpenRouterConfigDialog";
+import { BedrockConfigDialog } from "./setting/BedrockConfigDialog";
 import { AccountApiKeySection } from "./setting/AccountApiKeySection";
 
 interface ProviderConfig {
@@ -31,6 +32,10 @@ export function SettingsTab() {
     setLiteLLMModelAlias,
     getOpenRouterSelectedModels,
     setOpenRouterSelectedModels,
+    getBedrockRegion,
+    setBedrockRegion,
+    getBedrockSecretKey,
+    setBedrockSecretKey,
   } = useAiProviderKeys();
 
   const [editingValue, setEditingValue] = useState("");
@@ -47,6 +52,10 @@ export function SettingsTab() {
   const [openRouterApiKeyInput, setOpenRouterApiKeyInput] = useState("");
   const [openRouterSelectedModelsInput, setOpenRouterSelectedModelsInput] =
     useState<string[]>([]);
+  const [bedrockDialogOpen, setBedrockDialogOpen] = useState(false);
+  const [bedrockAccessKeyIdInput, setBedrockAccessKeyIdInput] = useState("");
+  const [bedrockSecretKeyInput, setBedrockSecretKeyInput] = useState("");
+  const [bedrockRegionInput, setBedrockRegionInput] = useState("");
 
   const providerConfigs: ProviderConfig[] = [
     {
@@ -94,9 +103,23 @@ export function SettingsTab() {
       placeholder: "...",
       getApiKeyUrl: "https://console.mistral.ai/api-keys/",
     },
+    {
+      id: "bedrock",
+      name: "Amazon Bedrock",
+      logo: "/bedrock_logo.png",
+      logoAlt: "Amazon Bedrock",
+      description: "Claude 3.5, Llama 3, Mistral models on AWS Bedrock",
+      placeholder: "AWS Access Key ID",
+      getApiKeyUrl: "https://console.aws.amazon.com/iam/",
+    },
   ];
 
   const handleEdit = (providerId: string) => {
+    if (providerId === "bedrock") {
+      handleBedrockEdit();
+      return;
+    }
+
     const provider = providerConfigs.find((p) => p.id === providerId);
     if (provider) {
       setSelectedProvider(provider);
@@ -128,6 +151,11 @@ export function SettingsTab() {
     // Also clear OpenRouter selected models if deleting OpenRouter provider
     if (providerId === "openrouter") {
       setOpenRouterSelectedModels([]);
+    }
+    // Also clear Bedrock credentials if deleting Bedrock provider
+    if (providerId === "bedrock") {
+      setBedrockSecretKey("");
+      setBedrockRegion("");
     }
   };
 
@@ -192,6 +220,30 @@ export function SettingsTab() {
     setOpenRouterDialogOpen(false);
     setOpenRouterApiKeyInput("");
     setOpenRouterSelectedModelsInput([]);
+  };
+
+  const handleBedrockEdit = () => {
+    setBedrockAccessKeyIdInput(tokens.bedrock || "");
+    setBedrockSecretKeyInput(getBedrockSecretKey());
+    setBedrockRegionInput(getBedrockRegion());
+    setBedrockDialogOpen(true);
+  };
+
+  const handleBedrockSave = () => {
+    setToken("bedrock", bedrockAccessKeyIdInput);
+    setBedrockSecretKey(bedrockSecretKeyInput);
+    setBedrockRegion(bedrockRegionInput);
+    setBedrockDialogOpen(false);
+    setBedrockAccessKeyIdInput("");
+    setBedrockSecretKeyInput("");
+    setBedrockRegionInput("");
+  };
+
+  const handleBedrockCancel = () => {
+    setBedrockDialogOpen(false);
+    setBedrockAccessKeyIdInput("");
+    setBedrockSecretKeyInput("");
+    setBedrockRegionInput("");
   };
 
   return (
@@ -267,6 +319,20 @@ export function SettingsTab() {
         onSelectedModelsChange={handleOpenRouterModelsChange}
         onSave={handleOpenRouterSave}
         onCancel={handleOpenRouterCancel}
+      />
+
+      {/* Bedrock Configuration Dialog */}
+      <BedrockConfigDialog
+        open={bedrockDialogOpen}
+        onOpenChange={setBedrockDialogOpen}
+        accessKeyId={bedrockAccessKeyIdInput}
+        secretKey={bedrockSecretKeyInput}
+        region={bedrockRegionInput}
+        onAccessKeyIdChange={setBedrockAccessKeyIdInput}
+        onSecretKeyChange={setBedrockSecretKeyInput}
+        onRegionChange={setBedrockRegionInput}
+        onSave={handleBedrockSave}
+        onCancel={handleBedrockCancel}
       />
     </div>
   );
