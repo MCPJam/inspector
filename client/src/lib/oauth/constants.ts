@@ -24,13 +24,8 @@ export const REDIRECT_URIS = [
   "https://www.mcpjam.com/oauth/callback",
   "https://www.mcpjam.com/authkit/callback",
   "http://127.0.0.1:6274/oauth/callback",
+  "http://127.0.0.1:6274/oauth/callback/debug",
   "http://127.0.0.1:6274/callback",
-  "http://localhost:6274/oauth/callback",
-  "http://localhost:6274/callback",
-  "http://localhost:3000/oauth/callback",
-  "http://localhost:3000/authkit/callback",
-  "http://localhost:8080/oauth/callback",
-  "http://localhost:8080/callback",
 ] as const;
 
 /**

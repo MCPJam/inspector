@@ -567,7 +567,7 @@ export const OAuthFlowTab = ({
           <div>
             <div className="flex items-center gap-2">
               <Workflow className="h-5 w-5" />
-              <h3 className="text-lg font-medium">OAuth Authentication Flow</h3>
+              <h3 className="text-lg font-medium">OAuth Flow</h3>
               <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
                 BETA
               </span>
@@ -602,7 +602,7 @@ export const OAuthFlowTab = ({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="2025-06-18" className="text-xs">
-                    2025-06-18 (Stable)
+                    2025-06-18 (Latest)
                   </SelectItem>
                   <SelectItem value="2025-11-25" className="text-xs">
                     2025-11-25 (Draft)
