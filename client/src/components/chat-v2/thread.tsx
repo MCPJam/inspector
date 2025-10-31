@@ -149,6 +149,15 @@ function MessageView({
 }
 
 function groupAssistantPartsIntoSteps(parts: AnyPart[]): AnyPart[][] {
+  console.log(
+    "groupAssistantPartsIntoSteps - incoming parts:",
+    parts.map((p) => ({
+      type: (p as any).type,
+      hasText: "text" in p,
+      textPreview: "text" in p ? (p as any).text?.substring(0, 50) : undefined,
+    })),
+  );
+
   const groups: AnyPart[][] = [];
   let current: AnyPart[] = [];
   for (const part of parts) {
