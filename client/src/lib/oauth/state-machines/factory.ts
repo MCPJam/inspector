@@ -125,7 +125,7 @@ export function getSupportedRegistrationStrategies(
  */
 export const PROTOCOL_VERSION_INFO = {
   "2025-06-18": {
-    label: "2025-06-18 (Stable)",
+    label: "2025-06-18 (Latest)",
     description: "Original MCP OAuth specification with DCR support",
     features: [
       "Dynamic Client Registration (DCR) priority",
