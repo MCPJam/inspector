@@ -4,6 +4,7 @@ import { createDeepSeek } from "@ai-sdk/deepseek";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createMistral } from "@ai-sdk/mistral";
 import { createOpenAI } from "@ai-sdk/openai";
+import { createXai } from "@ai-sdk/xai";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { createOllama } from "ollama-ai-provider-v2";
 
@@ -48,6 +49,8 @@ export const createLlmModel = (
     }
     case "openrouter":
       return createOpenRouter({ apiKey })(modelDefinition.id);
+    case "xai":
+      return createXai({ apiKey })(modelDefinition.id);
     default:
       throw new Error(
         `Unsupported provider: ${modelDefinition.provider} for model: ${modelDefinition.id}`,

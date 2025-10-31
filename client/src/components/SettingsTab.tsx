@@ -94,6 +94,15 @@ export function SettingsTab() {
       placeholder: "...",
       getApiKeyUrl: "https://console.mistral.ai/api-keys/",
     },
+    {
+      id: "xai",
+      name: "xAI",
+      logo: "/xai_logo.png",
+      logoAlt: "xAI Grok",
+      description: "Grok 3, Grok 3 Mini, Grok Code Fast 1, etc.",
+      placeholder: "xai-...",
+      getApiKeyUrl: "https://console.x.ai/",
+    },
   ];
 
   const handleEdit = (providerId: string) => {

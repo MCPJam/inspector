@@ -172,13 +172,13 @@ export function useChat(options: UseChatOptions = {}) {
       deepseek: hasToken("deepseek"),
       google: hasToken("google"),
       mistral: hasToken("mistral"),
+      xai: hasToken("xai"),
       ollama: isOllamaRunning,
       litellm: Boolean(getLiteLLMBaseUrl() && getLiteLLMModelAlias()),
       openrouter: Boolean(
         hasToken("openrouter") && getOpenRouterSelectedModels().length > 0,
       ),
       meta: false,
-      "x-ai": false,
     } as const;
 
     const cloud = SUPPORTED_MODELS.filter((m) => {
