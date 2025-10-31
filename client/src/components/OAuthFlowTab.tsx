@@ -141,13 +141,43 @@ export const OAuthFlowTab = ({
   // Track custom scopes input
   const [customScopes, setCustomScopes] = useState("");
 
-  // Track protocol version (default to latest)
+  // Track protocol version (load from localStorage or default to latest)
   const [protocolVersion, setProtocolVersion] =
-    useState<OAuthProtocolVersion>("2025-11-25");
+    useState<OAuthProtocolVersion>(() => {
+      try {
+        const saved = localStorage.getItem("mcp-oauth-flow-preferences");
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          return parsed.protocolVersion || "2025-11-25";
+        }
+      } catch (e) {
+        console.error("Failed to load OAuth flow preferences:", e);
+      }
+      return "2025-11-25";
+    });
 
-  // Track client registration strategy (dynamically based on protocol)
+  // Track client registration strategy (load from localStorage or default)
   const [registrationStrategy, setRegistrationStrategy] = useState<string>(
-    () => getDefaultRegistrationStrategy("2025-11-25")
+    () => {
+      try {
+        const saved = localStorage.getItem("mcp-oauth-flow-preferences");
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          // If we have a saved strategy, validate it's supported for the protocol
+          if (parsed.registrationStrategy && parsed.protocolVersion) {
+            const supportedStrategies = getSupportedRegistrationStrategies(
+              parsed.protocolVersion
+            );
+            if (supportedStrategies.includes(parsed.registrationStrategy)) {
+              return parsed.registrationStrategy;
+            }
+          }
+        }
+      } catch (e) {
+        console.error("Failed to load OAuth flow preferences:", e);
+      }
+      return getDefaultRegistrationStrategy("2025-11-25");
+    }
   );
 
   // Use ref to always have access to the latest state
@@ -155,6 +185,22 @@ export const OAuthFlowTab = ({
   useEffect(() => {
     oauthFlowStateRef.current = oauthFlowState;
   }, [oauthFlowState]);
+
+  // Save protocol version and registration strategy to localStorage whenever they change
+  useEffect(() => {
+    try {
+      const preferences = {
+        protocolVersion,
+        registrationStrategy,
+      };
+      localStorage.setItem(
+        "mcp-oauth-flow-preferences",
+        JSON.stringify(preferences)
+      );
+    } catch (e) {
+      console.error("Failed to save OAuth flow preferences:", e);
+    }
+  }, [protocolVersion, registrationStrategy]);
 
   const toggleExpanded = (id: string) => {
     setExpandedBlocks((prev) => {
