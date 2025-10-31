@@ -179,9 +179,13 @@ function PartSwitch({
   toolServerMap: ToolServerMap;
 }) {
   if (isToolPart(part) || isDynamicTool(part)) {
-    const maybeUiResource = (part as any)?.output?.content?.[0] ?? undefined;
+    let maybeUiResource: any;
+    if (isToolPart(part)) {
+      maybeUiResource = (part as any)?.output?.value?.content?.[0];
+    } else {
+      maybeUiResource = (part as any)?.output?.content?.[0];
+    }
     if (maybeUiResource && isUIResource(maybeUiResource)) {
-      // Render MCP-UI
       return (
         <>
           <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />
