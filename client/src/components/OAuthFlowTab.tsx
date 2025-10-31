@@ -56,6 +56,7 @@ import { MCPServerConfig } from "@/sdk";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import "react18-json-view/src/dark.css";
+import { HTTPHistoryEntry } from "./HTTPHistoryEntry";
 
 interface StatusMessageProps {
   message: StatusMessage;
@@ -858,173 +859,22 @@ export const OAuthFlowTab = ({
                 <div className="p-4 space-y-3">
                   {oauthFlowState.httpHistory &&
                   oauthFlowState.httpHistory.length > 0 ? (
-                    (() => {
-                      // Flatten entries into individual messages and reverse
-                      const messages: Array<{
-                        type: "request" | "response";
-                        data: any;
-                        id: string;
-                      }> = [];
-
-                      oauthFlowState.httpHistory.forEach(
-                        (entry, entryIndex) => {
-                          if (entry.request) {
-                            messages.push({
-                              type: "request",
-                              data: entry.request,
-                              id: `request-${entryIndex}`,
-                            });
-                          }
-                          if (entry.response) {
-                            messages.push({
-                              type: "response",
-                              data: entry.response,
-                              id: `response-${entryIndex}`,
-                            });
-                          }
-                        },
-                      );
-
-                      return messages.reverse().map((message) => {
-                        const isExpanded = expandedBlocks.has(message.id);
-
-                        if (message.type === "request") {
-                          const request = message.data;
-                          return (
-                            <div
-                              key={message.id}
-                              className="group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card"
-                            >
-                              <div
-                                className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
-                                onClick={() => toggleExpanded(message.id)}
-                              >
-                                <div className="flex-shrink-0">
-                                  {isExpanded ? (
-                                    <ChevronDown className="h-3 w-3 text-muted-foreground transition-transform" />
-                                  ) : (
-                                    <ChevronRight className="h-3 w-3 text-muted-foreground transition-transform" />
-                                  )}
-                                </div>
-                                <div className="flex items-center gap-2 flex-1 min-w-0">
-                                  <span
-                                    className="flex items-center justify-center px-1 py-0.5 rounded bg-green-500/10 text-green-600 dark:text-green-400"
-                                    title="Outgoing"
-                                  >
-                                    <ArrowUpFromLine className="h-3 w-3" />
-                                  </span>
-                                  <span className="text-xs font-mono text-foreground truncate">
-                                    {request.method} {request.url}
-                                  </span>
-                                </div>
-                              </div>
-                              {isExpanded && (
-                                <div className="border-t bg-muted/20">
-                                  <div className="p-3">
-                                    <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
-                                      <JsonView
-                                        src={{
-                                          method: request.method,
-                                          url: request.url,
-                                          headers: request.headers,
-                                          body: request.body,
-                                        }}
-                                        dark={true}
-                                        theme="atom"
-                                        enableClipboard={true}
-                                        displaySize={false}
-                                        collapseStringsAfterLength={100}
-                                        style={{
-                                          fontSize: "11px",
-                                          fontFamily:
-                                            "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                                          backgroundColor: "transparent",
-                                          padding: "0",
-                                          borderRadius: "0",
-                                          border: "none",
-                                        }}
-                                      />
-                                    </div>
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          );
-                        } else {
-                          const response = message.data;
-                          return (
-                            <div
-                              key={message.id}
-                              className="group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card"
-                            >
-                              <div
-                                className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
-                                onClick={() => toggleExpanded(message.id)}
-                              >
-                                <div className="flex-shrink-0">
-                                  {isExpanded ? (
-                                    <ChevronDown className="h-3 w-3 text-muted-foreground transition-transform" />
-                                  ) : (
-                                    <ChevronRight className="h-3 w-3 text-muted-foreground transition-transform" />
-                                  )}
-                                </div>
-                                <div className="flex items-center gap-2 flex-1 min-w-0">
-                                  <span
-                                    className="flex items-center justify-center px-1 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400"
-                                    title="Incoming"
-                                  >
-                                    <ArrowDownToLine className="h-3 w-3" />
-                                  </span>
-                                  <span
-                                    className={`text-xs px-1.5 py-0.5 rounded font-mono flex-shrink-0 ${
-                                      response.status >= 200 &&
-                                      response.status < 300
-                                        ? "bg-green-500/10 text-green-600 dark:text-green-400"
-                                        : "bg-red-500/10 text-red-600 dark:text-red-400"
-                                    }`}
-                                  >
-                                    {response.status}
-                                  </span>
-                                  <span className="text-xs font-mono text-foreground truncate">
-                                    {response.statusText}
-                                  </span>
-                                </div>
-                              </div>
-                              {isExpanded && (
-                                <div className="border-t bg-muted/20">
-                                  <div className="p-3">
-                                    <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
-                                      <JsonView
-                                        src={{
-                                          status: response.status,
-                                          statusText: response.statusText,
-                                          headers: response.headers,
-                                          body: response.body,
-                                        }}
-                                        dark={true}
-                                        theme="atom"
-                                        enableClipboard={true}
-                                        displaySize={false}
-                                        collapseStringsAfterLength={100}
-                                        style={{
-                                          fontSize: "11px",
-                                          fontFamily:
-                                            "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                                          backgroundColor: "transparent",
-                                          padding: "0",
-                                          borderRadius: "0",
-                                          border: "none",
-                                        }}
-                                      />
-                                    </div>
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          );
-                        }
-                      });
-                    })()
+                    [...oauthFlowState.httpHistory]
+                      .reverse()
+                      .map((entry, index) => (
+                        <HTTPHistoryEntry
+                          key={`http-${oauthFlowState.httpHistory!.length - index - 1}`}
+                          method={entry.request.method}
+                          url={entry.request.url}
+                          status={entry.response?.status}
+                          statusText={entry.response?.statusText}
+                          duration={entry.duration}
+                          requestHeaders={entry.request.headers}
+                          requestBody={entry.request.body}
+                          responseHeaders={entry.response?.headers}
+                          responseBody={entry.response?.body}
+                        />
+                      ))
                   ) : (
                     <div className="text-center py-8 text-muted-foreground text-sm">
                       No HTTP requests yet
