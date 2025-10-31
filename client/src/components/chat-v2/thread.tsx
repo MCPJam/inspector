@@ -208,27 +208,38 @@ function PartSwitch({
       let toolName: string | undefined;
 
       // Check free chat or BYOK. isDynamicTool(part) is true for BYOK.
-      if (isDynamicTool(part)) {
-        toolName = (part as DynamicToolUIPart).toolName;
-        toolInput = (part as DynamicToolUIPart).input;
-        toolOutput = (part as DynamicToolUIPart).output;
-      } else {
-        toolName = getToolNameFromType((part as any).type);
-        toolInput = (part as any).input;
-        toolOutput = (part as any).output.value;
+      const toolState = (part as any).state ?? undefined;
+      if (toolState === "output-available") {
+        if (isDynamicTool(part)) {
+          toolName = (part as DynamicToolUIPart).toolName;
+          toolInput = (part as DynamicToolUIPart).input;
+          toolOutput = (part as DynamicToolUIPart).output;
+        } else {
+          toolName = getToolNameFromType((part as any).type);
+          toolInput = (part as any).input;
+          toolOutput = (part as any).output.value;
+        }
       }
-
       const serverId = toolName
         ? getToolServerId(toolName, toolServerMap)
         : undefined;
 
+      if (toolState !== "output-available") {
+        return (
+          <>
+            <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />
+            <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">
+              Waiting for tool finish executing...
+            </div>
+          </>
+        );
+      }
       if (!toolName || !serverId) {
         return (
           <>
             <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />
             <div className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2">
-              OpenAI apps are currently not supported on MCPJam free models.
-              Bring your own API key in the settings tab.
+              Failed to load tool name or server id.
             </div>
           </>
         );
