@@ -31,6 +31,7 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { getProviderLogoFromModel } from "../chat/chat-helpers";
 import { OpenAIAppRenderer } from "./openai-app-renderer";
 import { callTool, getToolServerId, ToolServerMap } from "@/lib/mcp-tools-api";
+import { MemoizedMarkdown } from "./memomized-markdown";
 
 type AnyPart = UIMessagePart<UIDataTypes, UITools>;
 type ToolState =
@@ -262,9 +263,10 @@ function TextPart({ text, role }: { text: string; role: UIMessage["role"] }) {
   const textColorClass =
     role === "user" ? "text-primary-foreground" : "text-foreground";
   return (
-    <p className={`whitespace-pre-wrap break-words ${textColorClass}`}>
-      {text}
-    </p>
+    <MemoizedMarkdown
+      content={text}
+      className={`break-words ${textColorClass}`}
+    />
   );
 }
 
