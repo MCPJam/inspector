@@ -202,7 +202,22 @@ function PartSwitch({
       (isDynamicTool(part) || isToolPart(part)) &&
       isPartOpenAIApp(part, toolsMetadata)
     ) {
-      const toolName = (part as DynamicToolUIPart).toolName;
+      console.log("part", part);
+      let toolInput: any = null;
+      let toolOutput: any = null;
+      let toolName: string | undefined;
+
+      // Check free chat or BYOK. isDynamicTool(part) is true for BYOK.
+      if (isDynamicTool(part)) {
+        toolName = (part as DynamicToolUIPart).toolName;
+        toolInput = (part as DynamicToolUIPart).input;
+        toolOutput = (part as DynamicToolUIPart).output;
+      } else {
+        toolName = getToolNameFromType((part as any).type);
+        toolInput = (part as any).input;
+        toolOutput = (part as any).output.value;
+      }
+
       const serverId = toolName
         ? getToolServerId(toolName, toolServerMap)
         : undefined;
@@ -223,11 +238,13 @@ function PartSwitch({
         <>
           <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />
           <OpenAIAppRenderer
-            part={part as DynamicToolUIPart}
             serverId={serverId}
-            toolMetadata={
-              toolsMetadata[(part as DynamicToolUIPart).toolName] ?? undefined
-            }
+            toolCallId={(part as any).toolCallId}
+            toolName={toolName}
+            toolState={(part as any).state as ToolState | undefined}
+            toolInput={toolInput ?? null}
+            toolOutput={toolOutput ?? null}
+            toolMetadata={toolsMetadata[toolName] ?? undefined}
             onSendFollowUp={onSendFollowUp}
             onCallTool={(toolName, params) =>
               callTool(serverId, toolName, params)

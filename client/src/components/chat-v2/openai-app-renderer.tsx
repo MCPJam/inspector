@@ -1,21 +1,35 @@
 import { useMemo, useRef, useState, useEffect, useCallback } from "react";
-import { DynamicToolUIPart } from "ai";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { readResource } from "@/lib/mcp-resources-api";
 
 type DisplayMode = "inline" | "pip" | "fullscreen";
 
+type ToolState =
+  | "input-streaming"
+  | "input-available"
+  | "output-available"
+  | "output-error"
+  | string;
+
 interface OpenAIAppRendererProps {
-  part: DynamicToolUIPart;
   serverId: string;
+  toolCallId?: string;
+  toolName?: string;
+  toolState?: ToolState;
+  toolInput?: Record<string, any> | null;
+  toolOutput?: unknown;
   toolMetadata?: Record<string, any>;
   onSendFollowUp?: (text: string) => void;
   onCallTool?: (toolName: string, params: Record<string, any>) => Promise<any>;
 }
 
 export function OpenAIAppRenderer({
-  part,
   serverId,
+  toolCallId,
+  toolName,
+  toolState,
+  toolInput: toolInputProp,
+  toolOutput: toolOutputProp,
   toolMetadata,
   onSendFollowUp,
   onCallTool,
@@ -32,10 +46,13 @@ export function OpenAIAppRenderer({
   const [widgetFetchError, setWidgetFetchError] = useState<string | null>(null);
   const widgetStateRef = useRef<any>(null);
 
-  const toolCallId = part.toolCallId ?? `${part.toolName || "openai-app"}`;
+  const resolvedToolCallId = useMemo(
+    () => toolCallId ?? `${toolName || "openai-app"}`,
+    [toolCallId, toolName],
+  );
   const widgetStateKey = useMemo(
-    () => `openai-widget-state:${toolCallId}`,
-    [toolCallId],
+    () => `openai-widget-state:${resolvedToolCallId}`,
+    [resolvedToolCallId],
   );
 
   useEffect(() => {
@@ -58,12 +75,19 @@ export function OpenAIAppRenderer({
     [toolMetadata],
   );
 
-  const { structuredContent, toolResponseMetadata } = useMemo(() => {
-    return {
-      structuredContent: (part as any).output?.structuredContent,
-      toolResponseMetadata: null,
-    };
-  }, [part.output]);
+  const structuredContent = useMemo(() => {
+    if (
+      toolOutputProp &&
+      typeof toolOutputProp === "object" &&
+      toolOutputProp !== null &&
+      "structuredContent" in (toolOutputProp as Record<string, unknown>)
+    ) {
+      return (toolOutputProp as Record<string, unknown>).structuredContent;
+    }
+    return null;
+  }, [toolOutputProp]);
+
+  const toolResponseMetadata = null;
 
   useEffect(() => {
     let isCancelled = false;
@@ -113,21 +137,21 @@ export function OpenAIAppRenderer({
 
   const htmlContent = widgetHtml;
 
-  const toolInput = useMemo(
-    () => (part.input as Record<string, any>) ?? {},
-    [part.input],
+  const resolvedToolInput = useMemo(
+    () => (toolInputProp as Record<string, any>) ?? {},
+    [toolInputProp],
   );
 
-  const toolOutput = useMemo(
-    () => structuredContent ?? part.output ?? null,
-    [structuredContent, part.output],
+  const resolvedToolOutput = useMemo(
+    () => structuredContent ?? toolOutputProp ?? null,
+    [structuredContent, toolOutputProp],
   );
 
   const srcDoc = useMemo(() => {
     if (!htmlContent) return null;
 
-    const serializedInput = safeJsonStringify(toolInput);
-    const serializedOutput = safeJsonStringify(toolOutput);
+    const serializedInput = safeJsonStringify(resolvedToolInput);
+    const serializedOutput = safeJsonStringify(resolvedToolOutput);
     const serializedMetadata = safeJsonStringify(toolResponseMetadata);
     const serializedTheme = safeJsonStringify(themeMode);
 
@@ -161,7 +185,7 @@ export function OpenAIAppRenderer({
             }
             window.parent?.postMessage({
               type: 'openai:setWidgetState',
-              toolId: ${JSON.stringify(toolCallId)},
+              toolId: ${JSON.stringify(resolvedToolCallId)},
               state
             }, '*');
             dispatchGlobalsEvent();
@@ -398,12 +422,12 @@ export function OpenAIAppRenderer({
     return template;
   }, [
     htmlContent,
-    toolInput,
-    toolOutput,
+    resolvedToolInput,
+    resolvedToolOutput,
     toolResponseMetadata,
     themeMode,
     widgetStateKey,
-    toolCallId,
+    resolvedToolCallId,
   ]);
 
   const appliedHeight = useMemo(
@@ -428,8 +452,8 @@ export function OpenAIAppRenderer({
         displayMode,
         maxHeight,
         locale: "en-US",
-        toolInput,
-        toolOutput,
+        toolInput: resolvedToolInput,
+        toolOutput: resolvedToolOutput,
         toolResponseMetadata,
         widgetState: widgetStateRef.current,
       };
@@ -463,8 +487,8 @@ export function OpenAIAppRenderer({
       isReady,
       maxHeight,
       themeMode,
-      toolInput,
-      toolOutput,
+      resolvedToolInput,
+      resolvedToolOutput,
       toolResponseMetadata,
     ],
   );
@@ -638,7 +662,7 @@ export function OpenAIAppRenderer({
       );
     }
 
-    if (part.state !== "output-available") {
+    if (toolState !== "output-available") {
       return (
         <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">
           Widget UI will appear once the tool finishes executing.
@@ -668,11 +692,11 @@ export function OpenAIAppRenderer({
         </div>
       )}
       <iframe
-        key={`${toolCallId}-${themeMode}`}
+        key={`${resolvedToolCallId}-${themeMode}`}
         ref={iframeRef}
         srcDoc={srcDoc ?? undefined}
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
-        title={`OpenAI App Widget: ${part.toolName || "tool"}`}
+        title={`OpenAI App Widget: ${toolName || "tool"}`}
         allow="web-share"
         className="w-full border border-border/40 rounded-md bg-background"
         style={{
