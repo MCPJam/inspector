@@ -380,11 +380,11 @@ export const OAuthSequenceDiagram = memo(
           id: "request_authorization_server_metadata",
           label: protocolVersion === "2025-11-25"
             ? "GET OAuth/OIDC metadata\n(path insertion priority)"
-            : "GET OAuth/OIDC metadata\n(with root fallback)",
+            : "GET OAuth metadata (RFC8414)\n(with root fallback)",
           description:
             protocolVersion === "2025-11-25"
               ? "Try OAuth path insertion, OIDC path insertion, OIDC path appending"
-              : "Try OAuth path, OAuth root, OIDC path, OIDC appending",
+              : "Try RFC8414 path, then RFC8414 root (no OIDC support)",
           from: "client",
           to: "authServer",
           details: flowState.authorizationServerUrl

@@ -129,7 +129,7 @@ export const PROTOCOL_VERSION_INFO = {
     description: "Original MCP OAuth specification with DCR support",
     features: [
       "Dynamic Client Registration (DCR) priority",
-      "OAuth 2.0 & OIDC discovery with root fallback",
+      "RFC8414 discovery ONLY (no OIDC) with root fallback",
       "PKCE recommended but not enforced",
     ],
   },
@@ -138,7 +138,7 @@ export const PROTOCOL_VERSION_INFO = {
     description: "Latest MCP OAuth specification with CIMD support",
     features: [
       "Client ID Metadata Documents (CIMD) priority",
-      "OAuth 2.0 & OIDC discovery without root fallback",
+      "RFC8414 OR OIDC discovery without root fallback",
       "PKCE strictly required and enforced",
       "Enhanced security with URL-based client IDs",
     ],

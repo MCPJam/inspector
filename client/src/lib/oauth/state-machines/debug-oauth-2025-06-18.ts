@@ -3,7 +3,7 @@
  *
  * This implementation follows the 2025-06-18 MCP OAuth specification:
  * - Registration priority: DCR (SHOULD) > Pre-registered
- * - Discovery: OAuth 2.0 (RFC8414) OR OpenID Connect Discovery 1.0
+ * - Discovery: OAuth 2.0 (RFC8414) ONLY - no OIDC Discovery support
  * - PKCE: Recommended but not strictly verified
  * - No Client ID Metadata Documents support
  */
@@ -67,27 +67,24 @@ function buildResourceMetadataUrl(serverUrl: string): string {
   ).toString();
 }
 
-// Helper: Build authorization server metadata URLs to try (RFC 8414 + OIDC Discovery)
-// 2025-06-18 spec: OAuth path, OAuth root, OIDC path, OIDC appending
+// Helper: Build authorization server metadata URLs to try (RFC 8414 ONLY)
+// 2025-06-18 spec: Only requires RFC8414, does NOT support OIDC Discovery
 function buildAuthServerMetadataUrls(authServerUrl: string): string[] {
   const url = new URL(authServerUrl);
   const urls: string[] = [];
 
   if (url.pathname === "/" || url.pathname === "") {
-    // Root path
+    // Root path - only RFC8414
     urls.push(
       new URL("/.well-known/oauth-authorization-server", url.origin).toString(),
     );
-    urls.push(
-      new URL("/.well-known/openid-configuration", url.origin).toString(),
-    );
   } else {
-    // Path-aware discovery
+    // Path-aware discovery - only RFC8414
     const pathname = url.pathname.endsWith("/")
       ? url.pathname.slice(0, -1)
       : url.pathname;
 
-    // 2025-06-18 spec: OAuth path, OAuth root, OIDC path, OIDC appending
+    // 2025-06-18 spec: RFC8414 with path, then root fallback
     urls.push(
       new URL(
         `/.well-known/oauth-authorization-server${pathname}`,
@@ -96,18 +93,6 @@ function buildAuthServerMetadataUrls(authServerUrl: string): string[] {
     );
     urls.push(
       new URL("/.well-known/oauth-authorization-server", url.origin).toString(),
-    );
-    urls.push(
-      new URL(
-        `/.well-known/openid-configuration${pathname}`,
-        url.origin,
-      ).toString(),
-    );
-    urls.push(
-      new URL(
-        `${pathname}/.well-known/openid-configuration`,
-        url.origin,
-      ).toString(),
     );
   }
 
@@ -1100,7 +1085,7 @@ export const createDebugOAuthStateMachine = (
                 state.resourceMetadata?.scopes_supported ||
                 state.authorizationServerMetadata.scopes_supported;
 
-              // Build scope string following OAuth 2.1 and OIDC best practices
+              // Build scope string following OAuth 2.1 best practices
               const scopes = new Set<string>();
 
               // 1. Add server-advertised scopes first (MCP-specific like tasks.read, read-mcp, etc.)
@@ -1108,16 +1093,7 @@ export const createDebugOAuthStateMachine = (
                 scopesSupported.forEach((scope) => scopes.add(scope));
               }
 
-              // 2. Add standard OIDC scopes only if server supports them
-              // (Some servers like Hugging Face advertise these in scopes_supported)
-              const standardScopes = ["openid", "profile", "email"];
-              standardScopes.forEach((scope) => {
-                if (!scopesSupported || scopesSupported.includes(scope)) {
-                  scopes.add(scope);
-                }
-              });
-
-              // 3. Request offline_access for refresh tokens ONLY if server supports it
+              // 2. Request offline_access for refresh tokens ONLY if server supports it
               // Per OAuth 2.1, this is required to get refresh tokens
               if (scopesSupported?.includes("offline_access")) {
                 scopes.add("offline_access");
