@@ -39,11 +39,17 @@ import { ServerWithName } from "../hooks/use-app-state";
 import {
   OauthFlowStateJune2025,
   EMPTY_OAUTH_FLOW_STATE_V2,
-  createDebugOAuthStateMachine,
+  OAuthProtocolVersion,
 } from "../lib/debug-oauth-state-machine";
+import {
+  createOAuthStateMachine,
+  getDefaultRegistrationStrategy,
+  getSupportedRegistrationStrategies,
+} from "../lib/oauth/state-machines/factory";
 import { DebugMCPOAuthClientProvider } from "../lib/debug-oauth-provider";
 import { OAuthSequenceDiagram } from "./OAuthSequenceDiagram";
 import { OAuthAuthorizationModal } from "./OAuthAuthorizationModal";
+import { ProtocolVersionBadge } from "./oauth/ProtocolVersionSelector";
 import { ServerModal } from "./connection/ServerModal";
 import { ServerFormData } from "@/shared/types";
 import { MCPServerConfig } from "@/sdk";
@@ -134,10 +140,14 @@ export const OAuthFlowTab = ({
   // Track custom scopes input
   const [customScopes, setCustomScopes] = useState("");
 
-  // Track client registration strategy
-  type RegistrationStrategy = "dcr" | "preregistered";
-  const [registrationStrategy, setRegistrationStrategy] =
-    useState<RegistrationStrategy>("dcr");
+  // Track protocol version (default to latest)
+  const [protocolVersion, setProtocolVersion] =
+    useState<OAuthProtocolVersion>("2025-11-25");
+
+  // Track client registration strategy (dynamically based on protocol)
+  const [registrationStrategy, setRegistrationStrategy] = useState<string>(
+    () => getDefaultRegistrationStrategy("2025-11-25")
+  );
 
   // Use ref to always have access to the latest state
   const oauthFlowStateRef = useRef(oauthFlowState);
@@ -166,6 +176,7 @@ export const OAuthFlowTab = ({
       "auth-code",
       "oauth-tokens",
       "token",
+      "id-token", // OIDC ID token log
     ]);
     setDeletedInfoLogs(allInfoLogIds);
   };
@@ -267,7 +278,7 @@ export const OAuthFlowTab = ({
     }
   }, [serverConfig, serverName, updateAuthSettings, customScopes]);
 
-  // Initialize Debug OAuth state machine
+  // Initialize Debug OAuth state machine with protocol version support
   const oauthStateMachine = useMemo(() => {
     if (!serverConfig || !serverName || !authSettings.serverUrl) return null;
 
@@ -289,7 +300,8 @@ export const OAuthFlowTab = ({
       );
     }
 
-    return createDebugOAuthStateMachine({
+    return createOAuthStateMachine({
+      protocolVersion,
       state: oauthFlowStateRef.current,
       getState: () => oauthFlowStateRef.current,
       updateState: updateOAuthFlowState,
@@ -301,6 +313,7 @@ export const OAuthFlowTab = ({
       registrationStrategy,
     });
   }, [
+    protocolVersion,
     serverConfig,
     serverName,
     authSettings.serverUrl,
@@ -567,6 +580,38 @@ export const OAuthFlowTab = ({
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-2 border-r border-border pr-4">
               <label
+                htmlFor="protocol-version"
+                className="text-xs text-muted-foreground whitespace-nowrap"
+              >
+                Protocol:
+              </label>
+              <Select
+                value={protocolVersion}
+                onValueChange={(value: OAuthProtocolVersion) => {
+                  setProtocolVersion(value);
+                  // Reset registration strategy to default for new protocol
+                  setRegistrationStrategy(getDefaultRegistrationStrategy(value));
+                }}
+                disabled={oauthFlowState.isInitiatingAuth}
+              >
+                <SelectTrigger
+                  id="protocol-version"
+                  className="w-[140px] h-9 text-xs"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="2025-06-18" className="text-xs">
+                    2025-06-18 (Stable)
+                  </SelectItem>
+                  <SelectItem value="2025-11-25" className="text-xs">
+                    2025-11-25 (Draft)
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center gap-2 border-r border-border pr-4">
+              <label
                 htmlFor="registration-strategy"
                 className="text-xs text-muted-foreground whitespace-nowrap"
               >
@@ -574,9 +619,7 @@ export const OAuthFlowTab = ({
               </label>
               <Select
                 value={registrationStrategy}
-                onValueChange={(value: RegistrationStrategy) =>
-                  setRegistrationStrategy(value)
-                }
+                onValueChange={(value: string) => setRegistrationStrategy(value)}
                 disabled={oauthFlowState.isInitiatingAuth}
               >
                 <SelectTrigger
@@ -586,18 +629,24 @@ export const OAuthFlowTab = ({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="dcr" className="text-xs">
-                    Dynamic (DCR)
-                  </SelectItem>
-                  <SelectItem value="preregistered" className="text-xs">
-                    Pre-registered
-                  </SelectItem>
+                  {getSupportedRegistrationStrategies(protocolVersion).map(
+                    (strategy) => (
+                      <SelectItem
+                        key={strategy}
+                        value={strategy}
+                        className="text-xs"
+                      >
+                        {strategy === "cimd"
+                          ? "CIMD (URL-based)"
+                          : strategy === "dcr"
+                            ? "Dynamic (DCR)"
+                            : "Pre-registered"}
+                      </SelectItem>
+                    )
+                  )}
                 </SelectContent>
               </Select>
             </div>
-            <p className="text-xs text-muted-foreground">
-              Protocol Revision: 2025-06-18
-            </p>
             {serverEntry && (
               <Button
                 variant="outline"
@@ -689,6 +738,7 @@ export const OAuthFlowTab = ({
           <OAuthSequenceDiagram
             flowState={oauthFlowState}
             registrationStrategy={registrationStrategy}
+            protocolVersion={protocolVersion}
           />
         </div>
 
