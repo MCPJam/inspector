@@ -172,7 +172,6 @@ export function ChatTabV2({
       ? undefined
       : lastAssistantMessageIsCompleteWithToolCalls,
   });
-  console.log("messages", messages);
   const resetChat = useCallback(() => {
     setChatSessionId(generateId());
     setMessages([]);
