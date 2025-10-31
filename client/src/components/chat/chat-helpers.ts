@@ -44,7 +44,7 @@ export const getProviderLogoFromProvider = (
       return ollamaLogo;
     case "meta":
       return metaLogo;
-    case "x-ai":
+    case "xai":
       if (themeMode === "dark") {
         return grokDarkLogo;
       }
@@ -94,7 +94,7 @@ export const getProviderColor = (provider: string) => {
       return "text-orange-500 dark:text-orange-400";
     case "ollama":
       return "text-gray-600 dark:text-gray-400";
-    case "x-ai":
+    case "xai":
       return "text-purple-600 dark:text-purple-400";
     case "litellm":
       return "bg-gradient-to-br from-blue-500 to-purple-600";
