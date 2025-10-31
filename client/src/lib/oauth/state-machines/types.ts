@@ -95,6 +95,8 @@ export interface OAuthFlowState {
   // History of all request/response pairs
   httpHistory?: Array<{
     step: OAuthFlowStep;
+    timestamp: number; // Request start time
+    duration?: number; // Response time in milliseconds
     request: {
       method: string;
       url: string;

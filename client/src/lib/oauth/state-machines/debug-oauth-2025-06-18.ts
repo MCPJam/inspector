@@ -284,6 +284,7 @@ export const createDebugOAuthStateMachine = (
                 ...(state.httpHistory || []),
                 {
                   step: "request_without_token",
+                  timestamp: Date.now(),
                   request: initialRequest,
                 },
               ],
@@ -330,11 +331,12 @@ export const createDebugOAuthStateMachine = (
                 body: response.body,
               };
 
-              // Update the last history entry with the response
+              // Update the last history entry with the response and calculate duration
               const updatedHistory = [...(state.httpHistory || [])];
               if (updatedHistory.length > 0) {
-                updatedHistory[updatedHistory.length - 1].response =
-                  responseData;
+                const lastEntry = updatedHistory[updatedHistory.length - 1];
+                lastEntry.response = responseData;
+                lastEntry.duration = Date.now() - (lastEntry.timestamp || Date.now());
               }
 
               if (response.status === 401) {
@@ -443,6 +445,7 @@ export const createDebugOAuthStateMachine = (
                 ...(state.httpHistory || []),
                 {
                   step: "request_resource_metadata",
+                  timestamp: Date.now(),
                   request: resourceMetadataRequest,
                 },
               ],
@@ -478,9 +481,9 @@ export const createDebugOAuthStateMachine = (
                 // Update the last history entry with the failed response
                 const updatedHistoryFailed = [...(state.httpHistory || [])];
                 if (updatedHistoryFailed.length > 0) {
-                  updatedHistoryFailed[
-                    updatedHistoryFailed.length - 1
-                  ].response = failedResponseData;
+                  const lastEntry = updatedHistoryFailed[updatedHistoryFailed.length - 1];
+                  lastEntry.response = failedResponseData;
+                  lastEntry.duration = Date.now() - (lastEntry.timestamp || Date.now());
                 }
 
                 updateState({
@@ -586,6 +589,7 @@ export const createDebugOAuthStateMachine = (
                 ...(state.httpHistory || []),
                 {
                   step: "request_authorization_server_metadata",
+                  timestamp: Date.now(),
                   request: authServerRequest,
                 },
               ],
@@ -865,6 +869,7 @@ export const createDebugOAuthStateMachine = (
                   ...(state.httpHistory || []),
                   {
                     step: "request_client_registration",
+                    timestamp: Date.now(),
                     request: registrationRequest,
                   },
                 ],
@@ -918,8 +923,9 @@ export const createDebugOAuthStateMachine = (
               // Update the last history entry with the response
               const updatedHistoryReg = [...(state.httpHistory || [])];
               if (updatedHistoryReg.length > 0) {
-                updatedHistoryReg[updatedHistoryReg.length - 1].response =
-                  registrationResponseData;
+                const lastEntry = updatedHistoryReg[updatedHistoryReg.length - 1];
+                lastEntry.response = registrationResponseData;
+                lastEntry.duration = Date.now() - (lastEntry.timestamp || Date.now());
               }
 
               if (!response.ok) {
@@ -997,8 +1003,9 @@ export const createDebugOAuthStateMachine = (
 
               const updatedHistoryError = [...(state.httpHistory || [])];
               if (updatedHistoryError.length > 0) {
-                updatedHistoryError[updatedHistoryError.length - 1].response =
-                  errorResponse;
+                const lastEntry = updatedHistoryError[updatedHistoryError.length - 1];
+                lastEntry.response = errorResponse;
+                lastEntry.duration = Date.now() - (lastEntry.timestamp || Date.now());
               }
 
               updateState({
@@ -1200,6 +1207,7 @@ export const createDebugOAuthStateMachine = (
                 ...(state.httpHistory || []),
                 {
                   step: "token_request",
+                  timestamp: Date.now(),
                   request: tokenRequest,
                 },
               ],
@@ -1268,8 +1276,9 @@ export const createDebugOAuthStateMachine = (
               // Update the last history entry with the response
               const updatedHistoryToken = [...(state.httpHistory || [])];
               if (updatedHistoryToken.length > 0) {
-                updatedHistoryToken[updatedHistoryToken.length - 1].response =
-                  tokenResponseData;
+                const lastEntry = updatedHistoryToken[updatedHistoryToken.length - 1];
+                lastEntry.response = tokenResponseData;
+                lastEntry.duration = Date.now() - (lastEntry.timestamp || Date.now());
               }
 
               if (!response.ok) {
@@ -1450,8 +1459,9 @@ export const createDebugOAuthStateMachine = (
 
               const updatedHistoryError = [...(state.httpHistory || [])];
               if (updatedHistoryError.length > 0) {
-                updatedHistoryError[updatedHistoryError.length - 1].response =
-                  errorResponse;
+                const lastEntry = updatedHistoryError[updatedHistoryError.length - 1];
+                lastEntry.response = errorResponse;
+                lastEntry.duration = Date.now() - (lastEntry.timestamp || Date.now());
               }
 
               updateState({
@@ -1514,6 +1524,7 @@ export const createDebugOAuthStateMachine = (
                 ...(state.httpHistory || []),
                 {
                   step: "authenticated_mcp_request",
+                  timestamp: Date.now(),
                   request: authenticatedRequest,
                 },
               ],
@@ -1563,8 +1574,9 @@ export const createDebugOAuthStateMachine = (
               // Update the last history entry with the response
               const updatedHistoryMcp = [...(state.httpHistory || [])];
               if (updatedHistoryMcp.length > 0) {
-                updatedHistoryMcp[updatedHistoryMcp.length - 1].response =
-                  mcpResponseData;
+                const lastEntry = updatedHistoryMcp[updatedHistoryMcp.length - 1];
+                lastEntry.response = mcpResponseData;
+                lastEntry.duration = Date.now() - (lastEntry.timestamp || Date.now());
               }
 
               if (!response.ok) {
@@ -1689,8 +1701,9 @@ export const createDebugOAuthStateMachine = (
 
               const updatedHistoryError = [...(state.httpHistory || [])];
               if (updatedHistoryError.length > 0) {
-                updatedHistoryError[updatedHistoryError.length - 1].response =
-                  errorResponse;
+                const lastEntry = updatedHistoryError[updatedHistoryError.length - 1];
+                lastEntry.response = errorResponse;
+                lastEntry.duration = Date.now() - (lastEntry.timestamp || Date.now());
               }
 
               updateState({
