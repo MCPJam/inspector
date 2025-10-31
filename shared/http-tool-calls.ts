@@ -122,30 +122,22 @@ export async function executeToolCallsFromMessages(
           const result = await tool.execute(input);
 
           let output: LanguageModelV2ToolResultOutput;
-          if (result && typeof result === "object" && (result as any).content) {
-            const rc: any = (result as any).content;
-            if (
-              rc &&
-              typeof rc === "object" &&
-              "text" in rc &&
-              typeof rc.text === "string"
-            ) {
-              output = { type: "text", value: rc.text } as any;
-            } else if (
-              rc &&
-              typeof rc === "object" &&
-              "type" in rc &&
-              "value" in rc
-            ) {
-              output = {
-                type: (rc.type as any) || "text",
-                value: rc.value,
-              } as any;
+          if (result !== undefined && result !== null) {
+            if (typeof result === "object") {
+              const serialized = serializeToolResult(result);
+              if (serialized.success) {
+                output = { type: "json", value: serialized.value } as any;
+              } else {
+                output = {
+                  type: "text",
+                  value: serialized.fallbackText,
+                } as any;
+              }
             } else {
-              output = { type: "text", value: JSON.stringify(rc) } as any;
+              output = { type: "text", value: String(result) } as any;
             }
           } else {
-            output = { type: "text", value: String(result) } as any;
+            output = { type: "json", value: null } as any;
           }
 
           // Extract serverId from tool name
@@ -190,4 +182,53 @@ export async function executeToolCallsFromMessages(
   }
 
   messages.push(...toolResultsToAdd);
+}
+
+function serializeToolResult(
+  result: Record<string, unknown> | Array<unknown> | object,
+):
+  | { success: true; value: unknown }
+  | { success: false; fallbackText: string } {
+  const seen = new WeakSet<object>();
+
+  try {
+    const sanitized = JSON.parse(
+      JSON.stringify(result, (_key, value) => {
+        if (typeof value === "bigint") {
+          return value.toString();
+        }
+
+        if (typeof value === "function") {
+          return undefined;
+        }
+
+        if (value && typeof value === "object") {
+          if (seen.has(value as object)) {
+            return undefined;
+          }
+          seen.add(value as object);
+        }
+
+        return value;
+      }),
+    );
+
+    return { success: true, value: sanitized ?? null };
+  } catch (error) {
+    let fallbackText: string;
+    try {
+      fallbackText = JSON.stringify(result, null, 2) ?? String(result);
+    } catch {
+      fallbackText = String(result);
+    }
+
+    if (error instanceof Error) {
+      fallbackText = `Failed to serialize tool result: ${error.message}. Raw result: ${fallbackText}`;
+    }
+
+    return {
+      success: false,
+      fallbackText,
+    };
+  }
 }
