@@ -179,9 +179,13 @@ function PartSwitch({
   toolServerMap: ToolServerMap;
 }) {
   if (isToolPart(part) || isDynamicTool(part)) {
-    const maybeUiResource = (part as any)?.output?.content?.[0] ?? undefined;
+    let maybeUiResource: any;
+    if (isToolPart(part)) {
+      maybeUiResource = (part as any)?.output?.value?.content?.[0];
+    } else {
+      maybeUiResource = (part as any)?.output?.content?.[0];
+    }
     if (maybeUiResource && isUIResource(maybeUiResource)) {
-      // Render MCP-UI
       return (
         <>
           <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />
@@ -198,18 +202,44 @@ function PartSwitch({
       (isDynamicTool(part) || isToolPart(part)) &&
       isPartOpenAIApp(part, toolsMetadata)
     ) {
-      const toolName = (part as DynamicToolUIPart).toolName;
+      console.log("part", part);
+      let toolInput: any = null;
+      let toolOutput: any = null;
+      let toolName: string | undefined;
+
+      // Check free chat or BYOK. isDynamicTool(part) is true for BYOK.
+      const toolState = (part as any).state ?? undefined;
+      if (toolState === "output-available") {
+        if (isDynamicTool(part)) {
+          toolName = (part as DynamicToolUIPart).toolName;
+          toolInput = (part as DynamicToolUIPart).input;
+          toolOutput = (part as DynamicToolUIPart).output;
+        } else {
+          toolName = getToolNameFromType((part as any).type);
+          toolInput = (part as any).input;
+          toolOutput = (part as any).output.value;
+        }
+      }
       const serverId = toolName
         ? getToolServerId(toolName, toolServerMap)
         : undefined;
 
+      if (toolState !== "output-available") {
+        return (
+          <>
+            <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />
+            <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">
+              Waiting for tool finish executing...
+            </div>
+          </>
+        );
+      }
       if (!toolName || !serverId) {
         return (
           <>
             <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />
             <div className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2">
-              OpenAI apps are currently not supported on MCPJam free models.
-              Bring your own API key in the settings tab.
+              Failed to load tool name or server id.
             </div>
           </>
         );
@@ -219,11 +249,13 @@ function PartSwitch({
         <>
           <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />
           <OpenAIAppRenderer
-            part={part as DynamicToolUIPart}
             serverId={serverId}
-            toolMetadata={
-              toolsMetadata[(part as DynamicToolUIPart).toolName] ?? undefined
-            }
+            toolCallId={(part as any).toolCallId}
+            toolName={toolName}
+            toolState={(part as any).state as ToolState | undefined}
+            toolInput={toolInput ?? null}
+            toolOutput={toolOutput ?? null}
+            toolMetadata={toolsMetadata[toolName] ?? undefined}
             onSendFollowUp={onSendFollowUp}
             onCallTool={(toolName, params) =>
               callTool(serverId, toolName, params)
