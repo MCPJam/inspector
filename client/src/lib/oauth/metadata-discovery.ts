@@ -100,7 +100,7 @@ export class MetadataDiscoveryService {
     throw new Error(
       `Failed to discover authorization server metadata.\n\n` +
         `Tried ${errors.length} endpoint(s):\n${errorDetails}\n\n` +
-        `Please verify the authorization server URL is correct.`
+        `Please verify the authorization server URL is correct.`,
     );
   }
 
@@ -117,8 +117,7 @@ export class MetadataDiscoveryService {
    * 2. OIDC: https://auth.example.com/.well-known/openid-configuration
    */
   private buildDiscoveryEndpoints(authServerUrl: URL): DiscoveryEndpoint[] {
-    const hasPath =
-      authServerUrl.pathname && authServerUrl.pathname !== "/";
+    const hasPath = authServerUrl.pathname && authServerUrl.pathname !== "/";
     const origin = authServerUrl.origin;
     const path = authServerUrl.pathname;
 

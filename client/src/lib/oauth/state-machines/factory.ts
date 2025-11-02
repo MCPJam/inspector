@@ -27,9 +27,12 @@ import {
 /**
  * Configuration for creating an OAuth state machine with protocol version selection
  */
-export interface OAuthStateMachineFactoryConfig extends BaseOAuthStateMachineConfig {
+export interface OAuthStateMachineFactoryConfig
+  extends BaseOAuthStateMachineConfig {
   protocolVersion: OAuthProtocolVersion;
-  registrationStrategy?: RegistrationStrategy2025_06_18 | RegistrationStrategy2025_11_25;
+  registrationStrategy?:
+    | RegistrationStrategy2025_06_18
+    | RegistrationStrategy2025_11_25;
 }
 
 /**
@@ -62,7 +65,7 @@ export interface OAuthStateMachineFactoryConfig extends BaseOAuthStateMachineCon
  * ```
  */
 export function createOAuthStateMachine(
-  config: OAuthStateMachineFactoryConfig
+  config: OAuthStateMachineFactoryConfig,
 ): OAuthStateMachine {
   const { protocolVersion, ...baseConfig } = config;
 
@@ -72,7 +75,7 @@ export function createOAuthStateMachine(
       if (config.registrationStrategy === "cimd") {
         throw new Error(
           "CIMD registration is not supported in 2025-06-18 protocol. " +
-          "Use 'dcr' or 'preregistered' instead."
+            "Use 'dcr' or 'preregistered' instead.",
         );
       }
       return create2025_06_18(baseConfig as Config2025_06_18);
@@ -92,7 +95,7 @@ export function createOAuthStateMachine(
  * Gets the default registration strategy for a given protocol version
  */
 export function getDefaultRegistrationStrategy(
-  protocolVersion: OAuthProtocolVersion
+  protocolVersion: OAuthProtocolVersion,
 ): string {
   switch (protocolVersion) {
     case "2025-06-18":
@@ -108,7 +111,7 @@ export function getDefaultRegistrationStrategy(
  * Gets the supported registration strategies for a given protocol version
  */
 export function getSupportedRegistrationStrategies(
-  protocolVersion: OAuthProtocolVersion
+  protocolVersion: OAuthProtocolVersion,
 ): ReadonlyArray<string> {
   switch (protocolVersion) {
     case "2025-06-18":

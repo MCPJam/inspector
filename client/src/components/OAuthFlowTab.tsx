@@ -137,8 +137,8 @@ export const OAuthFlowTab = ({
   const [customScopes, setCustomScopes] = useState("");
 
   // Track protocol version (load from localStorage or default to latest)
-  const [protocolVersion, setProtocolVersion] =
-    useState<OAuthProtocolVersion>(() => {
+  const [protocolVersion, setProtocolVersion] = useState<OAuthProtocolVersion>(
+    () => {
       try {
         const saved = localStorage.getItem("mcp-oauth-flow-preferences");
         if (saved) {
@@ -149,7 +149,8 @@ export const OAuthFlowTab = ({
         console.error("Failed to load OAuth flow preferences:", e);
       }
       return "2025-11-25";
-    });
+    },
+  );
 
   // Track client registration strategy (load from localStorage or default)
   const [registrationStrategy, setRegistrationStrategy] = useState<string>(
@@ -161,7 +162,7 @@ export const OAuthFlowTab = ({
           // If we have a saved strategy, validate it's supported for the protocol
           if (parsed.registrationStrategy && parsed.protocolVersion) {
             const supportedStrategies = getSupportedRegistrationStrategies(
-              parsed.protocolVersion
+              parsed.protocolVersion,
             );
             if (supportedStrategies.includes(parsed.registrationStrategy)) {
               return parsed.registrationStrategy;
@@ -172,7 +173,7 @@ export const OAuthFlowTab = ({
         console.error("Failed to load OAuth flow preferences:", e);
       }
       return getDefaultRegistrationStrategy("2025-11-25");
-    }
+    },
   );
 
   // Use ref to always have access to the latest state
@@ -190,7 +191,7 @@ export const OAuthFlowTab = ({
       };
       localStorage.setItem(
         "mcp-oauth-flow-preferences",
-        JSON.stringify(preferences)
+        JSON.stringify(preferences),
       );
     } catch (e) {
       console.error("Failed to save OAuth flow preferences:", e);
@@ -621,7 +622,9 @@ export const OAuthFlowTab = ({
                 onValueChange={(value: OAuthProtocolVersion) => {
                   setProtocolVersion(value);
                   // Reset registration strategy to default for new protocol
-                  setRegistrationStrategy(getDefaultRegistrationStrategy(value));
+                  setRegistrationStrategy(
+                    getDefaultRegistrationStrategy(value),
+                  );
                 }}
                 disabled={oauthFlowState.isInitiatingAuth}
               >
@@ -650,7 +653,9 @@ export const OAuthFlowTab = ({
               </label>
               <Select
                 value={registrationStrategy}
-                onValueChange={(value: string) => setRegistrationStrategy(value)}
+                onValueChange={(value: string) =>
+                  setRegistrationStrategy(value)
+                }
                 disabled={oauthFlowState.isInitiatingAuth}
               >
                 <SelectTrigger
@@ -673,7 +678,7 @@ export const OAuthFlowTab = ({
                             ? "Dynamic (DCR)"
                             : "Pre-registered"}
                       </SelectItem>
-                    )
+                    ),
                   )}
                 </SelectContent>
               </Select>
@@ -810,30 +815,39 @@ export const OAuthFlowTab = ({
 
                 // Create unified array with type markers
                 type ConsoleEntry =
-                  | { type: 'info', timestamp: number, data: typeof infoLogs[0] }
-                  | { type: 'http', timestamp: number, data: typeof httpHistory[0], index: number };
+                  | {
+                      type: "info";
+                      timestamp: number;
+                      data: (typeof infoLogs)[0];
+                    }
+                  | {
+                      type: "http";
+                      timestamp: number;
+                      data: (typeof httpHistory)[0];
+                      index: number;
+                    };
 
                 const allEntries: ConsoleEntry[] = [
                   ...infoLogs
                     .filter((log) => !deletedInfoLogs.has(log.id))
-                    .map(log => ({
-                      type: 'info' as const,
+                    .map((log) => ({
+                      type: "info" as const,
                       timestamp: log.timestamp,
-                      data: log
+                      data: log,
                     })),
                   ...httpHistory.map((entry, index) => ({
-                    type: 'http' as const,
+                    type: "http" as const,
                     timestamp: entry.timestamp,
                     data: entry,
-                    index
-                  }))
+                    index,
+                  })),
                 ];
 
                 // Sort by timestamp (newest first)
                 allEntries.sort((a, b) => b.timestamp - a.timestamp);
 
                 return allEntries.map((entry, idx) => {
-                  if (entry.type === 'info') {
+                  if (entry.type === "info") {
                     const log = entry.data;
                     const isExpanded = expandedBlocks.has(log.id);
                     return (
@@ -905,8 +919,10 @@ export const OAuthFlowTab = ({
               })()}
 
               {/* Empty state */}
-              {(!oauthFlowState.infoLogs || oauthFlowState.infoLogs.length === 0) &&
-                (!oauthFlowState.httpHistory || oauthFlowState.httpHistory.length === 0) &&
+              {(!oauthFlowState.infoLogs ||
+                oauthFlowState.infoLogs.length === 0) &&
+                (!oauthFlowState.httpHistory ||
+                  oauthFlowState.httpHistory.length === 0) &&
                 !oauthFlowState.error && (
                   <div className="text-center py-8 text-muted-foreground text-sm">
                     No console output yet

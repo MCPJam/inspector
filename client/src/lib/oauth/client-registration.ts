@@ -46,20 +46,12 @@ export class ClientRegistrationService {
     serverUrl: string,
     metadata: OAuthMetadata,
     protocolVersion: ProtocolVersion,
-    provider: DebugMCPOAuthClientProvider
+    provider: DebugMCPOAuthClientProvider,
   ): Promise<RegistrationResult> {
     if (protocolVersion === "2025-11-25") {
-      return this.registerClient_2025_11_25(
-        serverUrl,
-        metadata,
-        provider
-      );
+      return this.registerClient_2025_11_25(serverUrl, metadata, provider);
     } else {
-      return this.registerClient_2025_06_18(
-        serverUrl,
-        metadata,
-        provider
-      );
+      return this.registerClient_2025_06_18(serverUrl, metadata, provider);
     }
   }
 
@@ -70,7 +62,7 @@ export class ClientRegistrationService {
   private async registerClient_2025_11_25(
     serverUrl: string,
     metadata: OAuthMetadata,
-    provider: DebugMCPOAuthClientProvider
+    provider: DebugMCPOAuthClientProvider,
   ): Promise<RegistrationResult> {
     const errors: string[] = [];
 
@@ -81,14 +73,13 @@ export class ClientRegistrationService {
         provider.saveClientInformation(result.clientInfo);
         return result;
       } catch (e) {
-        const errorMsg =
-          e instanceof Error ? e.message : String(e);
+        const errorMsg = e instanceof Error ? e.message : String(e);
         errors.push(`CIMD failed: ${errorMsg}`);
         console.warn("CIMD registration failed, trying fallback:", e);
       }
     } else {
       errors.push(
-        "CIMD not supported (client_id_metadata_document_supported not true)"
+        "CIMD not supported (client_id_metadata_document_supported not true)",
       );
     }
 
@@ -105,14 +96,9 @@ export class ClientRegistrationService {
     // 3. Fall back to DCR (MAY support in 2025-11-25)
     if (metadata.registration_endpoint) {
       try {
-        return await this.useDynamicRegistration(
-          serverUrl,
-          metadata,
-          provider
-        );
+        return await this.useDynamicRegistration(serverUrl, metadata, provider);
       } catch (e) {
-        const errorMsg =
-          e instanceof Error ? e.message : String(e);
+        const errorMsg = e instanceof Error ? e.message : String(e);
         errors.push(`DCR failed: ${errorMsg}`);
       }
     } else {
@@ -123,7 +109,7 @@ export class ClientRegistrationService {
     throw new Error(
       `No supported registration method available.\n\n` +
         `Attempted methods:\n${errors.map((e) => `  • ${e}`).join("\n")}\n\n` +
-        `The authorization server must support at least one registration method.`
+        `The authorization server must support at least one registration method.`,
     );
   }
 
@@ -134,21 +120,16 @@ export class ClientRegistrationService {
   private async registerClient_2025_06_18(
     serverUrl: string,
     metadata: OAuthMetadata,
-    provider: DebugMCPOAuthClientProvider
+    provider: DebugMCPOAuthClientProvider,
   ): Promise<RegistrationResult> {
     const errors: string[] = [];
 
     // 1. Try DCR (SHOULD support in 2025-06-18)
     if (metadata.registration_endpoint) {
       try {
-        return await this.useDynamicRegistration(
-          serverUrl,
-          metadata,
-          provider
-        );
+        return await this.useDynamicRegistration(serverUrl, metadata, provider);
       } catch (e) {
-        const errorMsg =
-          e instanceof Error ? e.message : String(e);
+        const errorMsg = e instanceof Error ? e.message : String(e);
         errors.push(`DCR failed: ${errorMsg}`);
         console.warn("DCR failed, trying pre-registered:", e);
       }
@@ -170,7 +151,7 @@ export class ClientRegistrationService {
     throw new Error(
       `No supported registration method available.\n\n` +
         `Attempted methods:\n${errors.map((e) => `  • ${e}`).join("\n")}\n\n` +
-        `The authorization server must support at least one registration method.`
+        `The authorization server must support at least one registration method.`,
     );
   }
 
@@ -207,7 +188,7 @@ export class ClientRegistrationService {
 
       if (!response.ok) {
         throw new Error(
-          `CIMD endpoint returned HTTP ${response.status}: ${response.statusText}`
+          `CIMD endpoint returned HTTP ${response.status}: ${response.statusText}`,
         );
       }
 
@@ -216,7 +197,7 @@ export class ClientRegistrationService {
       // Validate per draft-parecki-oauth-client-id-metadata-document-03
       if (metadata.client_id !== MCPJAM_CLIENT_ID) {
         throw new Error(
-          `CIMD client_id mismatch: expected ${MCPJAM_CLIENT_ID}, got ${metadata.client_id}`
+          `CIMD client_id mismatch: expected ${MCPJAM_CLIENT_ID}, got ${metadata.client_id}`,
         );
       }
 
@@ -236,7 +217,7 @@ export class ClientRegistrationService {
       if (!metadata.redirect_uris.includes(ourRedirectUri)) {
         console.warn(
           `Current redirect URI (${ourRedirectUri}) not found in CIMD document.\n` +
-            `Available redirect URIs:\n${metadata.redirect_uris.map((u: string) => `  • ${u}`).join("\n")}`
+            `Available redirect URIs:\n${metadata.redirect_uris.map((u: string) => `  • ${u}`).join("\n")}`,
         );
       }
     } catch (e) {
@@ -253,15 +234,14 @@ export class ClientRegistrationService {
   private async useDynamicRegistration(
     serverUrl: string,
     metadata: OAuthMetadata,
-    provider: DebugMCPOAuthClientProvider
+    provider: DebugMCPOAuthClientProvider,
   ): Promise<RegistrationResult> {
     try {
       // Prepare client metadata for registration
       const clientMetadata = { ...provider.clientMetadata } as any;
 
       // Include scopes if advertised by the server
-      const scopesSupported =
-        (metadata as any).scopes_supported;
+      const scopesSupported = (metadata as any).scopes_supported;
       if (scopesSupported && scopesSupported.length > 0) {
         clientMetadata.scope = scopesSupported.join(" ");
       }
@@ -289,8 +269,6 @@ export class ClientRegistrationService {
    * Check if authorization server supports Client ID Metadata Documents
    */
   private supportsClientIdMetadata(metadata: OAuthMetadata): boolean {
-    return (
-      (metadata as any).client_id_metadata_document_supported === true
-    );
+    return (metadata as any).client_id_metadata_document_supported === true;
   }
 }

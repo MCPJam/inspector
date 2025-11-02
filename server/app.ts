@@ -20,9 +20,7 @@ const __dirname = dirname(__filename);
 export function createHonoApp() {
   // Load environment variables early so route handlers can read CONVEX_HTTP_URL
   const envFile =
-    process.env.NODE_ENV === "production"
-      ? ".env.production"
-      : ".env.local";
+    process.env.NODE_ENV === "production" ? ".env.production" : ".env.local";
 
   // Determine where to look for .env file:
   // 1. Electron packaged: use process.resourcesPath directly
