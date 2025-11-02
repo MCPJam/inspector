@@ -91,10 +91,14 @@ export function HTTPHistoryEntry({
               </span>
             ) : (
               <>
-                <span className={cn("text-xs font-mono flex-shrink-0", statusColor)}>
+                <span
+                  className={cn("text-xs font-mono flex-shrink-0", statusColor)}
+                >
                   {status}
                 </span>
-                <span className={cn("text-xs font-mono flex-shrink-0", statusColor)}>
+                <span
+                  className={cn("text-xs font-mono flex-shrink-0", statusColor)}
+                >
                   {statusText}
                 </span>
                 {duration !== undefined && (

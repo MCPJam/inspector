@@ -114,9 +114,7 @@ export function ProtocolVersionSelector({
         {/* Registration Strategy Selector */}
         {onRegistrationStrategyChange && (
           <div className="space-y-2">
-            <Label htmlFor="registration-strategy">
-              Registration Strategy
-            </Label>
+            <Label htmlFor="registration-strategy">Registration Strategy</Label>
             <Select
               value={registrationStrategy}
               onValueChange={onRegistrationStrategyChange}

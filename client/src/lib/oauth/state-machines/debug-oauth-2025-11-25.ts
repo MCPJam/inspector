@@ -26,7 +26,8 @@ export { EMPTY_OAUTH_FLOW_STATE };
 export type OauthFlowStateJune2025 = OAuthFlowState;
 
 // Legacy state export
-export const EMPTY_OAUTH_FLOW_STATE_V2: OauthFlowStateJune2025 = EMPTY_OAUTH_FLOW_STATE;
+export const EMPTY_OAUTH_FLOW_STATE_V2: OauthFlowStateJune2025 =
+  EMPTY_OAUTH_FLOW_STATE;
 
 // State machine interface (legacy compatibility)
 export interface DebugOAuthStateMachine extends OAuthStateMachine {
@@ -350,7 +351,8 @@ export const createDebugOAuthStateMachine = (
               if (updatedHistory.length > 0) {
                 const lastEntry = updatedHistory[updatedHistory.length - 1];
                 lastEntry.response = responseData;
-                lastEntry.duration = Date.now() - (lastEntry.timestamp || Date.now());
+                lastEntry.duration =
+                  Date.now() - (lastEntry.timestamp || Date.now());
               }
 
               if (response.status === 401) {
@@ -495,9 +497,11 @@ export const createDebugOAuthStateMachine = (
                 // Update the last history entry with the failed response
                 const updatedHistoryFailed = [...(state.httpHistory || [])];
                 if (updatedHistoryFailed.length > 0) {
-                  const lastEntry = updatedHistoryFailed[updatedHistoryFailed.length - 1];
+                  const lastEntry =
+                    updatedHistoryFailed[updatedHistoryFailed.length - 1];
                   lastEntry.response = failedResponseData;
-                  lastEntry.duration = Date.now() - (lastEntry.timestamp || Date.now());
+                  lastEntry.duration =
+                    Date.now() - (lastEntry.timestamp || Date.now());
                 }
 
                 updateState({
@@ -548,7 +552,8 @@ export const createDebugOAuthStateMachine = (
               if (updatedHistory.length > 0) {
                 const lastEntry = updatedHistory[updatedHistory.length - 1];
                 lastEntry.response = successResponseData;
-                lastEntry.duration = Date.now() - (lastEntry.timestamp || Date.now());
+                lastEntry.duration =
+                  Date.now() - (lastEntry.timestamp || Date.now());
               }
 
               // Add info log for Authorization Servers
@@ -586,7 +591,7 @@ export const createDebugOAuthStateMachine = (
             }
 
             const authServerUrls = buildAuthServerMetadataUrls(
-              state.authorizationServerUrl
+              state.authorizationServerUrl,
             );
 
             const authServerRequest = {
@@ -622,7 +627,7 @@ export const createDebugOAuthStateMachine = (
             }
 
             const urlsToTry = buildAuthServerMetadataUrls(
-              state.authorizationServerUrl
+              state.authorizationServerUrl,
             );
             let authServerMetadata = null;
             let lastError = null;
@@ -723,9 +728,11 @@ export const createDebugOAuthStateMachine = (
             // Update the last history entry with the response
             const updatedHistoryFinal = [...(state.httpHistory || [])];
             if (updatedHistoryFinal.length > 0) {
-              const lastEntry = updatedHistoryFinal[updatedHistoryFinal.length - 1];
+              const lastEntry =
+                updatedHistoryFinal[updatedHistoryFinal.length - 1];
               lastEntry.response = authServerResponseData;
-              lastEntry.duration = Date.now() - (lastEntry.timestamp || Date.now());
+              lastEntry.duration =
+                Date.now() - (lastEntry.timestamp || Date.now());
             }
 
             // Validate PKCE support (REQUIRED for 2025-11-25)
@@ -736,8 +743,8 @@ export const createDebugOAuthStateMachine = (
             if (!supportedMethods || supportedMethods.length === 0) {
               throw new Error(
                 "PKCE is REQUIRED for 2025-11-25 protocol, but authorization server " +
-                "does not advertise code_challenge_methods_supported. " +
-                "Server is not compliant with 2025-11-25 spec."
+                  "does not advertise code_challenge_methods_supported. " +
+                  "Server is not compliant with 2025-11-25 spec.",
               );
             }
 
@@ -959,9 +966,11 @@ export const createDebugOAuthStateMachine = (
               // Update the last history entry with the response
               const updatedHistoryReg = [...(state.httpHistory || [])];
               if (updatedHistoryReg.length > 0) {
-                const lastEntry = updatedHistoryReg[updatedHistoryReg.length - 1];
+                const lastEntry =
+                  updatedHistoryReg[updatedHistoryReg.length - 1];
                 lastEntry.response = registrationResponseData;
-                lastEntry.duration = Date.now() - (lastEntry.timestamp || Date.now());
+                lastEntry.duration =
+                  Date.now() - (lastEntry.timestamp || Date.now());
               }
 
               if (!response.ok) {
@@ -1039,9 +1048,11 @@ export const createDebugOAuthStateMachine = (
 
               const updatedHistoryError = [...(state.httpHistory || [])];
               if (updatedHistoryError.length > 0) {
-                const lastEntry = updatedHistoryError[updatedHistoryError.length - 1];
+                const lastEntry =
+                  updatedHistoryError[updatedHistoryError.length - 1];
                 lastEntry.response = errorResponse;
-                lastEntry.duration = Date.now() - (lastEntry.timestamp || Date.now());
+                lastEntry.duration =
+                  Date.now() - (lastEntry.timestamp || Date.now());
               }
 
               updateState({
@@ -1087,7 +1098,7 @@ export const createDebugOAuthStateMachine = (
 
               if (!cimdResponse.ok) {
                 throw new Error(
-                  `CIMD endpoint returned HTTP ${cimdResponse.status}`
+                  `CIMD endpoint returned HTTP ${cimdResponse.status}`,
                 );
               }
 
@@ -1104,7 +1115,8 @@ export const createDebugOAuthStateMachine = (
               return;
             } catch (error) {
               updateState({
-                error: `CIMD metadata fetch failed: ${error instanceof Error ? error.message : String(error)}. ` +
+                error:
+                  `CIMD metadata fetch failed: ${error instanceof Error ? error.message : String(error)}. ` +
                   "Try using 'dcr' or 'preregistered' registration strategy instead.",
                 isInitiatingAuth: false,
               });
@@ -1121,7 +1133,7 @@ export const createDebugOAuthStateMachine = (
 
               if (!cimdResponse.ok) {
                 throw new Error(
-                  `CIMD endpoint returned HTTP ${cimdResponse.status}`
+                  `CIMD endpoint returned HTTP ${cimdResponse.status}`,
                 );
               }
 
@@ -1141,15 +1153,18 @@ export const createDebugOAuthStateMachine = (
                 "Registration Method": "Client ID Metadata Document (CIMD)",
                 "Client Name": cimdDoc.client_name || "MCPJam",
                 "Redirect URIs": cimdDoc.redirect_uris || [],
-                "Token Auth Method": cimdDoc.token_endpoint_auth_method || "none",
-                "Validation": "✓ Metadata fetched and validated",
-                "Note": "Server fetched and validated client metadata from URL",
+                "Token Auth Method":
+                  cimdDoc.token_endpoint_auth_method || "none",
+                Validation: "✓ Metadata fetched and validated",
+                Note: "Server fetched and validated client metadata from URL",
               };
 
               if (cimdSupported) {
-                cimdInfo["Server Support"] = "✓ Advertised in metadata (client_id_metadata_document_supported: true)";
+                cimdInfo["Server Support"] =
+                  "✓ Advertised in metadata (client_id_metadata_document_supported: true)";
               } else {
-                cimdInfo["Server Support"] = "⚠ Not advertised (attempting anyway)";
+                cimdInfo["Server Support"] =
+                  "⚠ Not advertised (attempting anyway)";
               }
 
               const infoLogs = addInfoLog(
@@ -1169,7 +1184,8 @@ export const createDebugOAuthStateMachine = (
               });
             } catch (error) {
               updateState({
-                error: `CIMD validation failed: ${error instanceof Error ? error.message : String(error)}. ` +
+                error:
+                  `CIMD validation failed: ${error instanceof Error ? error.message : String(error)}. ` +
                   "Try using 'dcr' or 'preregistered' registration strategy instead.",
                 isInitiatingAuth: false,
               });
@@ -1435,9 +1451,11 @@ export const createDebugOAuthStateMachine = (
               // Update the last history entry with the response
               const updatedHistoryToken = [...(state.httpHistory || [])];
               if (updatedHistoryToken.length > 0) {
-                const lastEntry = updatedHistoryToken[updatedHistoryToken.length - 1];
+                const lastEntry =
+                  updatedHistoryToken[updatedHistoryToken.length - 1];
                 lastEntry.response = tokenResponseData;
-                lastEntry.duration = Date.now() - (lastEntry.timestamp || Date.now());
+                lastEntry.duration =
+                  Date.now() - (lastEntry.timestamp || Date.now());
               }
 
               if (!response.ok) {
@@ -1531,7 +1549,7 @@ export const createDebugOAuthStateMachine = (
                       : [formatted.aud];
 
                     const isValidAudience = audArray.some(
-                      (aud: string) => aud === expectedResource
+                      (aud: string) => aud === expectedResource,
                     );
 
                     audienceNote._validation = {
@@ -1579,7 +1597,8 @@ export const createDebugOAuthStateMachine = (
                   }
 
                   // Add OIDC-specific validation note
-                  formattedIdToken._note = "OIDC ID Token - Used for user identity verification";
+                  formattedIdToken._note =
+                    "OIDC ID Token - Used for user identity verification";
 
                   tokenInfoLogs = [
                     ...tokenInfoLogs,
@@ -1618,9 +1637,11 @@ export const createDebugOAuthStateMachine = (
 
               const updatedHistoryError = [...(state.httpHistory || [])];
               if (updatedHistoryError.length > 0) {
-                const lastEntry = updatedHistoryError[updatedHistoryError.length - 1];
+                const lastEntry =
+                  updatedHistoryError[updatedHistoryError.length - 1];
                 lastEntry.response = errorResponse;
-                lastEntry.duration = Date.now() - (lastEntry.timestamp || Date.now());
+                lastEntry.duration =
+                  Date.now() - (lastEntry.timestamp || Date.now());
               }
 
               updateState({
@@ -1733,9 +1754,11 @@ export const createDebugOAuthStateMachine = (
               // Update the last history entry with the response
               const updatedHistoryMcp = [...(state.httpHistory || [])];
               if (updatedHistoryMcp.length > 0) {
-                const lastEntry = updatedHistoryMcp[updatedHistoryMcp.length - 1];
+                const lastEntry =
+                  updatedHistoryMcp[updatedHistoryMcp.length - 1];
                 lastEntry.response = mcpResponseData;
-                lastEntry.duration = Date.now() - (lastEntry.timestamp || Date.now());
+                lastEntry.duration =
+                  Date.now() - (lastEntry.timestamp || Date.now());
               }
 
               if (!response.ok) {
@@ -1860,9 +1883,11 @@ export const createDebugOAuthStateMachine = (
 
               const updatedHistoryError = [...(state.httpHistory || [])];
               if (updatedHistoryError.length > 0) {
-                const lastEntry = updatedHistoryError[updatedHistoryError.length - 1];
+                const lastEntry =
+                  updatedHistoryError[updatedHistoryError.length - 1];
                 lastEntry.response = errorResponse;
-                lastEntry.duration = Date.now() - (lastEntry.timestamp || Date.now());
+                lastEntry.duration =
+                  Date.now() - (lastEntry.timestamp || Date.now());
               }
 
               updateState({

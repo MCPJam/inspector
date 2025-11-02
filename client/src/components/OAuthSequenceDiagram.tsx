@@ -316,7 +316,7 @@ export const OAuthSequenceDiagram = memo(
   ({
     flowState,
     registrationStrategy = "cimd",
-    protocolVersion = "2025-11-25"
+    protocolVersion = "2025-11-25",
   }: OAuthSequenceDiagramProps) => {
     const { nodes, edges } = useMemo(() => {
       const currentStep = flowState.currentStep;
@@ -378,9 +378,10 @@ export const OAuthSequenceDiagram = memo(
         },
         {
           id: "request_authorization_server_metadata",
-          label: protocolVersion === "2025-11-25"
-            ? "GET OAuth/OIDC metadata\n(path insertion priority)"
-            : "GET OAuth metadata (RFC8414)\n(with root fallback)",
+          label:
+            protocolVersion === "2025-11-25"
+              ? "GET OAuth/OIDC metadata\n(path insertion priority)"
+              : "GET OAuth metadata (RFC8414)\n(with root fallback)",
           description:
             protocolVersion === "2025-11-25"
               ? "Try OAuth path insertion, OIDC path insertion, OIDC path appending"
@@ -449,7 +450,8 @@ export const OAuthSequenceDiagram = memo(
               },
               {
                 id: "cimd_fetch_request",
-                label: "Server detects URL-formatted client_id\nFetch metadata from client_id URL",
+                label:
+                  "Server detects URL-formatted client_id\nFetch metadata from client_id URL",
                 description:
                   "Authorization Server fetches client metadata from the URL",
                 from: "authServer",
@@ -461,7 +463,8 @@ export const OAuthSequenceDiagram = memo(
                   },
                   {
                     label: "Note",
-                    value: "Server initiates metadata fetch during authorization",
+                    value:
+                      "Server initiates metadata fetch during authorization",
                   },
                 ],
               },
@@ -486,8 +489,7 @@ export const OAuthSequenceDiagram = memo(
               {
                 id: "received_client_credentials",
                 label: "Validate metadata and redirect_uris",
-                description:
-                  "Authorization Server validates fetched metadata",
+                description: "Authorization Server validates fetched metadata",
                 from: "authServer",
                 to: "authServer",
                 details: [
@@ -512,7 +514,10 @@ export const OAuthSequenceDiagram = memo(
                   from: "client",
                   to: "authServer",
                   details: [
-                    { label: "Note", value: "Dynamic client registration (DCR)" },
+                    {
+                      label: "Note",
+                      value: "Dynamic client registration (DCR)",
+                    },
                   ],
                 },
                 {
@@ -561,9 +566,10 @@ export const OAuthSequenceDiagram = memo(
               ]),
         {
           id: "generate_pkce_parameters",
-          label: protocolVersion === "2025-11-25"
-            ? "Generate PKCE (REQUIRED)\nInclude resource parameter"
-            : "Generate PKCE (recommended)\nInclude resource parameter",
+          label:
+            protocolVersion === "2025-11-25"
+              ? "Generate PKCE (REQUIRED)\nInclude resource parameter"
+              : "Generate PKCE (recommended)\nInclude resource parameter",
           description:
             protocolVersion === "2025-11-25"
               ? "Client generates code verifier and challenge (REQUIRED), includes resource parameter"
