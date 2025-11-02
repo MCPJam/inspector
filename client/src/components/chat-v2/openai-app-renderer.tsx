@@ -45,7 +45,6 @@ export function OpenAIAppRenderer({
   const [isFetchingWidget, setIsFetchingWidget] = useState(false);
   const [widgetFetchError, setWidgetFetchError] = useState<string | null>(null);
   const widgetStateRef = useRef<any>(null);
-
   const resolvedToolCallId = useMemo(
     () => toolCallId ?? `${toolName || "openai-app"}`,
     [toolCallId, toolName],
@@ -87,7 +86,25 @@ export function OpenAIAppRenderer({
     return null;
   }, [toolOutputProp]);
 
-  const toolResponseMetadata = null;
+  const toolResponseMetadata = useMemo(() => {
+    if (toolMetadata && typeof toolMetadata === "object") {
+      return toolMetadata;
+    }
+
+    if (
+      toolOutputProp &&
+      typeof toolOutputProp === "object" &&
+      toolOutputProp !== null &&
+      "_meta" in (toolOutputProp as Record<string, unknown>)
+    ) {
+      const meta = (toolOutputProp as Record<string, unknown>)._meta;
+      if (meta && typeof meta === "object") {
+        return meta as Record<string, unknown>;
+      }
+    }
+
+    return null;
+  }, [toolMetadata, toolOutputProp]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -108,7 +125,48 @@ export function OpenAIAppRenderer({
 
       try {
         const data = await readResource(serverId, tool_meta_outputTemplate);
-        const html = data.content.contents[0].text ?? null;
+
+        const pickString = (value: unknown): string | null => {
+          if (typeof value !== "string") return null;
+          const trimmed = value.trim();
+          return trimmed ? value : null;
+        };
+
+        let html: string | null = null;
+        const content = data?.content as
+          | {
+              contents?: Array<
+                { text?: unknown; blob?: unknown } | Record<string, unknown>
+              >;
+              text?: unknown;
+              blob?: unknown;
+            }
+          | string
+          | undefined;
+
+        if (content && typeof content === "object" && "contents" in content) {
+          const items = Array.isArray(content.contents) ? content.contents : [];
+          for (const item of items) {
+            const candidate =
+              pickString((item as { text?: unknown }).text) ??
+              pickString((item as { blob?: unknown }).blob);
+            if (candidate) {
+              html = candidate;
+              break;
+            }
+          }
+        }
+
+        if (!html && content && typeof content === "object") {
+          html =
+            pickString((content as { text?: unknown }).text) ??
+            pickString((content as { blob?: unknown }).blob);
+        }
+
+        if (!html && typeof content === "string") {
+          html = pickString(content);
+        }
+
         if (!html) {
           setWidgetHtml(null);
           setWidgetFetchError("Resource did not include HTML content");
@@ -291,7 +349,9 @@ export function OpenAIAppRenderer({
               safeArea: openaiAPI.safeArea,
               userAgent: openaiAPI.userAgent
             };
+            const webplusDetail = { globals: detail };
             window.dispatchEvent(new CustomEvent('openai:set_globals', { detail }));
+            window.dispatchEvent(new CustomEvent('webplus:set_globals', { detail: webplusDetail }));
           } catch (err) {
             console.warn('[OpenAI Widget] Failed to dispatch globals event', err);
           }
@@ -394,31 +454,61 @@ export function OpenAIAppRenderer({
             return;
           }
 
-          if (event.data.type === 'openai:set_globals') {
-            const globals = event.data.detail || event.data.globals || {};
-            applyGlobalsUpdate(globals);
+          const { type, detail, globals } = event.data;
+
+          if (type === 'openai:set_globals' || type === 'webplus:set_globals') {
+            const payload =
+              (detail && typeof detail === 'object'
+                ? detail.globals !== undefined
+                  ? detail.globals
+                  : detail
+                : undefined) ?? globals ?? {};
+            applyGlobalsUpdate(payload);
             dispatchGlobalsEvent();
-          } else if (event.data.type === 'openai:tool_response') {
-            const detail = event.data.detail || {};
-            window.dispatchEvent(new CustomEvent('openai:tool_response', { detail }));
+          } else if (type === 'openai:tool_response') {
+            const responseDetail = detail || {};
+            window.dispatchEvent(new CustomEvent('openai:tool_response', { detail: responseDetail }));
           }
         });
       })();
     `;
 
-    const template = `<!DOCTYPE html>
+    const serializedScript = `<script>${script.replace(/<\/script>/gi, "<\\/script>")}</script>`;
+    const hasHtmlTag = /<html[\s>]/i.test(htmlContent);
+    const hasHeadTag = /<head[\s>]/i.test(htmlContent);
+    const hasBaseTag = /<base\s/i.test(htmlContent);
+    const baseTag = hasBaseTag ? "" : '<base href="/" />';
+    const headInjection = `${baseTag}${baseTag ? "\n" : ""}${serializedScript}\n`;
+
+    let template: string;
+
+    if (hasHtmlTag) {
+      if (hasHeadTag) {
+        template = htmlContent.replace(
+          /<head([^>]*)>/i,
+          (_match, headAttrs) => `<head${headAttrs}>${headInjection}`,
+        );
+      } else {
+        template = htmlContent.replace(
+          /<html([^>]*)>/i,
+          (_match, htmlAttrs) =>
+            `<html${htmlAttrs}><head>${headInjection}</head>`,
+        );
+      }
+    } else {
+      template = `<!DOCTYPE html>
 <html>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <base href="/" />
+    ${serializedScript}
   </head>
   <body>
     ${htmlContent}
-    <script>${script.replace(/<\/script>/gi, "<\\/script>")}</script>
   </body>
 </html>`;
-
+    }
     return template;
   }, [
     htmlContent,
@@ -477,6 +567,15 @@ export function OpenAIAppRenderer({
         {
           type: "openai:set_globals",
           detail,
+        },
+        "*",
+      );
+
+      iframeWindow.postMessage(
+        {
+          type: "webplus:set_globals",
+          globals: detail,
+          detail: { globals: detail },
         },
         "*",
       );
@@ -683,7 +782,6 @@ export function OpenAIAppRenderer({
       </div>
     );
   }
-
   return (
     <div className="mt-3 space-y-2">
       {loadError && (
@@ -694,11 +792,11 @@ export function OpenAIAppRenderer({
       <iframe
         key={`${resolvedToolCallId}-${themeMode}`}
         ref={iframeRef}
-        srcDoc={srcDoc ?? undefined}
+        srcDoc={srcDoc || "<html><body>Loading...</body></html>"}
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
         title={`OpenAI App Widget: ${toolName || "tool"}`}
-        allow="web-share"
-        className="w-full border border-border/40 rounded-md bg-background"
+        allow="microphone *; midi *"
+        className="border border-border/40 rounded-md bg-background h-full w-full max-w-full"
         style={{
           minHeight: "320px",
           height: iframeHeight,
