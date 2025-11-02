@@ -91,11 +91,10 @@ export function createHonoApp() {
     "*",
     cors({
       origin: [
-        "http://localhost:8080",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
         "http://localhost:5173",
-        "http://localhost:3000",
+        "http://localhost:6274",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:6274",
       ],
       credentials: true,
     }),
@@ -124,7 +123,7 @@ export function createHonoApp() {
     app.get("/*", serveStatic({ path: `${root}/index.html` }));
   } else if (isElectron && !isPackaged) {
     // Electron development: redirect any front-end route to the renderer dev server
-    const rendererDevUrl = "http://localhost:8080";
+    const rendererDevUrl = "http://localhost:5173";
     app.get("/*", (c) => {
       const target = new URL(c.req.path, rendererDevUrl).toString();
       return c.redirect(target, 307);
@@ -135,7 +134,7 @@ export function createHonoApp() {
       return c.json({
         message: "MCPJam API Server",
         environment: "development",
-        frontend: "http://localhost:8080",
+        frontend: "http://localhost:5173", // Vite dev server
       });
     });
   }

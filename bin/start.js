@@ -124,7 +124,7 @@ function isPortAvailable(port) {
   });
 }
 
-async function findAvailablePort(startPort = 3000, maxPort = 65535) {
+async function findAvailablePort(startPort = 6274, maxPort = 65535) {
   logProgress(`Scanning for available ports starting from ${startPort}...`);
 
   for (let port = startPort; port <= maxPort; port++) {

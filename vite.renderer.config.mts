@@ -24,13 +24,13 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
-      port: 8080,
+      port: 5173,
       hmr: {
-        port: 8081,
+        port: 5174,
       },
       proxy: {
         "/api": {
-          target: "http://localhost:3000", // the port need to be the same as the server port
+          target: "http://localhost:6274", // the port need to be the same as the server port
           changeOrigin: true,
         },
       },
