@@ -278,7 +278,7 @@ export const createDebugOAuthStateMachine = (
                 jsonrpc: "2.0",
                 method: "initialize",
                 params: {
-                  protocolVersion: "2024-11-05",
+                  protocolVersion: "2025-11-25",
                   capabilities: {},
                   clientInfo: {
                     name: "MCP Inspector",
@@ -327,7 +327,7 @@ export const createDebugOAuthStateMachine = (
                   jsonrpc: "2.0",
                   method: "initialize",
                   params: {
-                    protocolVersion: "2024-11-05",
+                    protocolVersion: "2025-11-25",
                     capabilities: {},
                     clientInfo: {
                       name: "MCP Inspector",
@@ -1665,13 +1665,13 @@ export const createDebugOAuthStateMachine = (
               headers: {
                 Authorization: `Bearer ${state.accessToken}`,
                 "Content-Type": "application/json",
-                "MCP-Protocol-Version": "2025-06-18",
+                "MCP-Protocol-Version": "2025-11-25",
               },
               body: {
                 jsonrpc: "2.0",
                 method: "initialize",
                 params: {
-                  protocolVersion: "2025-06-18",
+                  protocolVersion: "2025-11-25",
                   capabilities: {},
                   clientInfo: {
                     name: "MCP Inspector",
@@ -1689,7 +1689,7 @@ export const createDebugOAuthStateMachine = (
               "Authenticated MCP Initialize Request",
               {
                 Request: "MCP initialize with OAuth bearer token",
-                "Protocol Version": "2025-06-18",
+                "Protocol Version": "2025-11-25",
                 Client: "MCP Inspector v1.0.0",
                 Endpoint: state.serverUrl,
               },
@@ -1733,7 +1733,7 @@ export const createDebugOAuthStateMachine = (
                   jsonrpc: "2.0",
                   method: "initialize",
                   params: {
-                    protocolVersion: "2024-11-05",
+                    protocolVersion: "2025-11-25",
                     capabilities: {},
                     clientInfo: {
                       name: "MCP Inspector",
