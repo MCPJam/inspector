@@ -23,11 +23,6 @@ import { Card, CardContent } from "./ui/card";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { Input } from "./ui/input";
 import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "./ui/resizable";
-import {
   Select,
   SelectContent,
   SelectItem,
@@ -39,17 +34,24 @@ import { ServerWithName } from "../hooks/use-app-state";
 import {
   OauthFlowStateJune2025,
   EMPTY_OAUTH_FLOW_STATE_V2,
-  createDebugOAuthStateMachine,
+  OAuthProtocolVersion,
 } from "../lib/debug-oauth-state-machine";
+import {
+  createOAuthStateMachine,
+  getDefaultRegistrationStrategy,
+  getSupportedRegistrationStrategies,
+} from "../lib/oauth/state-machines/factory";
 import { DebugMCPOAuthClientProvider } from "../lib/debug-oauth-provider";
 import { OAuthSequenceDiagram } from "./OAuthSequenceDiagram";
 import { OAuthAuthorizationModal } from "./OAuthAuthorizationModal";
+import { ProtocolVersionBadge } from "./oauth/ProtocolVersionSelector";
 import { ServerModal } from "./connection/ServerModal";
 import { ServerFormData } from "@/shared/types";
 import { MCPServerConfig } from "@/sdk";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import "react18-json-view/src/dark.css";
+import { HTTPHistoryEntry } from "./HTTPHistoryEntry";
 
 interface StatusMessageProps {
   message: StatusMessage;
@@ -134,16 +136,67 @@ export const OAuthFlowTab = ({
   // Track custom scopes input
   const [customScopes, setCustomScopes] = useState("");
 
-  // Track client registration strategy
-  type RegistrationStrategy = "dcr" | "preregistered";
-  const [registrationStrategy, setRegistrationStrategy] =
-    useState<RegistrationStrategy>("dcr");
+  // Track protocol version (load from localStorage or default to latest)
+  const [protocolVersion, setProtocolVersion] = useState<OAuthProtocolVersion>(
+    () => {
+      try {
+        const saved = localStorage.getItem("mcp-oauth-flow-preferences");
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          return parsed.protocolVersion || "2025-11-25";
+        }
+      } catch (e) {
+        console.error("Failed to load OAuth flow preferences:", e);
+      }
+      return "2025-11-25";
+    },
+  );
+
+  // Track client registration strategy (load from localStorage or default)
+  const [registrationStrategy, setRegistrationStrategy] = useState<string>(
+    () => {
+      try {
+        const saved = localStorage.getItem("mcp-oauth-flow-preferences");
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          // If we have a saved strategy, validate it's supported for the protocol
+          if (parsed.registrationStrategy && parsed.protocolVersion) {
+            const supportedStrategies = getSupportedRegistrationStrategies(
+              parsed.protocolVersion,
+            );
+            if (supportedStrategies.includes(parsed.registrationStrategy)) {
+              return parsed.registrationStrategy;
+            }
+          }
+        }
+      } catch (e) {
+        console.error("Failed to load OAuth flow preferences:", e);
+      }
+      return getDefaultRegistrationStrategy("2025-11-25");
+    },
+  );
 
   // Use ref to always have access to the latest state
   const oauthFlowStateRef = useRef(oauthFlowState);
   useEffect(() => {
     oauthFlowStateRef.current = oauthFlowState;
   }, [oauthFlowState]);
+
+  // Save protocol version and registration strategy to localStorage whenever they change
+  useEffect(() => {
+    try {
+      const preferences = {
+        protocolVersion,
+        registrationStrategy,
+      };
+      localStorage.setItem(
+        "mcp-oauth-flow-preferences",
+        JSON.stringify(preferences),
+      );
+    } catch (e) {
+      console.error("Failed to save OAuth flow preferences:", e);
+    }
+  }, [protocolVersion, registrationStrategy]);
 
   const toggleExpanded = (id: string) => {
     setExpandedBlocks((prev) => {
@@ -155,19 +208,9 @@ export const OAuthFlowTab = ({
   };
 
   const clearInfoLogs = () => {
-    // Clear all info logs by marking all as deleted
-    const allInfoLogIds = new Set<string>([
-      "www-authenticate",
-      "authorization-servers",
-      "as-metadata",
-      "dcr",
-      "pkce-generation",
-      "auth-url",
-      "auth-code",
-      "oauth-tokens",
-      "token",
-    ]);
-    setDeletedInfoLogs(allInfoLogIds);
+    // Clear all info logs from state
+    updateOAuthFlowState({ infoLogs: [] });
+    setDeletedInfoLogs(new Set()); // Also clear the deleted set
   };
 
   const clearHttpHistory = () => {
@@ -267,7 +310,7 @@ export const OAuthFlowTab = ({
     }
   }, [serverConfig, serverName, updateAuthSettings, customScopes]);
 
-  // Initialize Debug OAuth state machine
+  // Initialize Debug OAuth state machine with protocol version support
   const oauthStateMachine = useMemo(() => {
     if (!serverConfig || !serverName || !authSettings.serverUrl) return null;
 
@@ -289,7 +332,8 @@ export const OAuthFlowTab = ({
       );
     }
 
-    return createDebugOAuthStateMachine({
+    return createOAuthStateMachine({
+      protocolVersion,
       state: oauthFlowStateRef.current,
       getState: () => oauthFlowStateRef.current,
       updateState: updateOAuthFlowState,
@@ -301,6 +345,7 @@ export const OAuthFlowTab = ({
       registrationStrategy,
     });
   }, [
+    protocolVersion,
     serverConfig,
     serverName,
     authSettings.serverUrl,
@@ -554,7 +599,7 @@ export const OAuthFlowTab = ({
           <div>
             <div className="flex items-center gap-2">
               <Workflow className="h-5 w-5" />
-              <h3 className="text-lg font-medium">OAuth Authentication Flow</h3>
+              <h3 className="text-lg font-medium">OAuth Flow</h3>
               <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
                 BETA
               </span>
@@ -567,6 +612,40 @@ export const OAuthFlowTab = ({
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-2 border-r border-border pr-4">
               <label
+                htmlFor="protocol-version"
+                className="text-xs text-muted-foreground whitespace-nowrap"
+              >
+                Protocol:
+              </label>
+              <Select
+                value={protocolVersion}
+                onValueChange={(value: OAuthProtocolVersion) => {
+                  setProtocolVersion(value);
+                  // Reset registration strategy to default for new protocol
+                  setRegistrationStrategy(
+                    getDefaultRegistrationStrategy(value),
+                  );
+                }}
+                disabled={oauthFlowState.isInitiatingAuth}
+              >
+                <SelectTrigger
+                  id="protocol-version"
+                  className="w-[140px] h-9 text-xs"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="2025-06-18" className="text-xs">
+                    2025-06-18 (Latest)
+                  </SelectItem>
+                  <SelectItem value="2025-11-25" className="text-xs">
+                    2025-11-25 (Draft)
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center gap-2 border-r border-border pr-4">
+              <label
                 htmlFor="registration-strategy"
                 className="text-xs text-muted-foreground whitespace-nowrap"
               >
@@ -574,7 +653,7 @@ export const OAuthFlowTab = ({
               </label>
               <Select
                 value={registrationStrategy}
-                onValueChange={(value: RegistrationStrategy) =>
+                onValueChange={(value: string) =>
                   setRegistrationStrategy(value)
                 }
                 disabled={oauthFlowState.isInitiatingAuth}
@@ -586,18 +665,24 @@ export const OAuthFlowTab = ({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="dcr" className="text-xs">
-                    Dynamic (DCR)
-                  </SelectItem>
-                  <SelectItem value="preregistered" className="text-xs">
-                    Pre-registered
-                  </SelectItem>
+                  {getSupportedRegistrationStrategies(protocolVersion).map(
+                    (strategy) => (
+                      <SelectItem
+                        key={strategy}
+                        value={strategy}
+                        className="text-xs"
+                      >
+                        {strategy === "cimd"
+                          ? "CIMD (URL-based)"
+                          : strategy === "dcr"
+                            ? "Dynamic (DCR)"
+                            : "Pre-registered"}
+                      </SelectItem>
+                    ),
+                  )}
                 </SelectContent>
               </Select>
             </div>
-            <p className="text-xs text-muted-foreground">
-              Protocol Revision: 2025-06-18
-            </p>
             {serverEntry && (
               <Button
                 variant="outline"
@@ -689,301 +774,162 @@ export const OAuthFlowTab = ({
           <OAuthSequenceDiagram
             flowState={oauthFlowState}
             registrationStrategy={registrationStrategy}
+            protocolVersion={protocolVersion}
           />
         </div>
 
-        {/* Side Panel with Details - Split into two resizable sections */}
+        {/* Side Panel with Details - Combined Info and HTTP History */}
         <div className="w-96 border-l border-border flex flex-col">
-          <ResizablePanelGroup direction="vertical" className="flex-1">
-            {/* Top Panel - Info */}
-            <ResizablePanel defaultSize={40} minSize={20} maxSize={80}>
-              <div className="h-full bg-muted/30 overflow-auto">
-                <div className="sticky top-0 z-10 bg-muted/30 backdrop-blur-sm border-b border-border px-4 py-3 flex items-center justify-between">
-                  <h3 className="text-sm font-semibold">Info</h3>
-                  <button
-                    onClick={clearInfoLogs}
-                    className="p-1 hover:bg-muted rounded transition-colors"
-                    title="Clear all logs"
-                  >
-                    <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive transition-colors" />
-                  </button>
-                </div>
-                <div className="p-4 space-y-3">
-                  {/* Error Display */}
-                  {oauthFlowState.error && (
-                    <Alert variant="destructive" className="py-2">
-                      <AlertCircle className="h-4 w-4" />
-                      <AlertDescription className="text-xs">
-                        {oauthFlowState.error}
-                      </AlertDescription>
-                    </Alert>
-                  )}
+          <div className="h-full bg-muted/30 overflow-auto">
+            {/* Header */}
+            <div className="sticky top-0 z-10 bg-muted/30 backdrop-blur-sm border-b border-border px-4 py-3 flex items-center justify-between">
+              <h3 className="text-sm font-semibold">Console Output</h3>
+              <button
+                onClick={() => {
+                  clearInfoLogs();
+                  clearHttpHistory();
+                }}
+                className="p-1 hover:bg-muted rounded transition-colors"
+                title="Clear all logs"
+              >
+                <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive transition-colors" />
+              </button>
+            </div>
 
-                  {/* OAuth Flow Info Logs */}
-                  {(() => {
-                    // Get logs from state
-                    const infoLogs = oauthFlowState.infoLogs || [];
+            {/* Console Output - Merged chronologically */}
+            <div className="p-4 space-y-3">
+              {/* Error Display */}
+              {oauthFlowState.error && (
+                <Alert variant="destructive" className="py-2">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription className="text-xs">
+                    {oauthFlowState.error}
+                  </AlertDescription>
+                </Alert>
+              )}
 
-                    return infoLogs
-                      .slice()
-                      .reverse()
-                      .filter((log) => !deletedInfoLogs.has(log.id))
-                      .map((log) => {
-                        const isExpanded = expandedBlocks.has(log.id);
-                        return (
-                          <div
-                            key={log.id}
-                            className="group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card"
-                          >
-                            <div
-                              className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
-                              onClick={() => toggleExpanded(log.id)}
-                            >
-                              <div className="flex-shrink-0">
-                                {isExpanded ? (
-                                  <ChevronDown className="h-3 w-3 text-muted-foreground transition-transform" />
-                                ) : (
-                                  <ChevronRight className="h-3 w-3 text-muted-foreground transition-transform" />
-                                )}
-                              </div>
-                              <span className="text-xs font-medium text-foreground">
-                                {log.label}
-                              </span>
-                            </div>
-                            {isExpanded && (
-                              <div className="border-t bg-muted/20">
-                                <div className="p-3">
-                                  <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
-                                    <JsonView
-                                      src={log.data}
-                                      dark={true}
-                                      theme="atom"
-                                      enableClipboard={true}
-                                      displaySize={false}
-                                      collapsed={false}
-                                      style={{
-                                        fontSize: "11px",
-                                        fontFamily:
-                                          "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                                        backgroundColor: "transparent",
-                                        padding: "0",
-                                        borderRadius: "0",
-                                        border: "none",
-                                      }}
-                                    />
-                                  </div>
-                                </div>
-                              </div>
+              {/* Merged Console Output - Chronologically sorted */}
+              {(() => {
+                const infoLogs = oauthFlowState.infoLogs || [];
+                const httpHistory = oauthFlowState.httpHistory || [];
+
+                // Create unified array with type markers
+                type ConsoleEntry =
+                  | {
+                      type: "info";
+                      timestamp: number;
+                      data: (typeof infoLogs)[0];
+                    }
+                  | {
+                      type: "http";
+                      timestamp: number;
+                      data: (typeof httpHistory)[0];
+                      index: number;
+                    };
+
+                const allEntries: ConsoleEntry[] = [
+                  ...infoLogs
+                    .filter((log) => !deletedInfoLogs.has(log.id))
+                    .map((log) => ({
+                      type: "info" as const,
+                      timestamp: log.timestamp,
+                      data: log,
+                    })),
+                  ...httpHistory.map((entry, index) => ({
+                    type: "http" as const,
+                    timestamp: entry.timestamp,
+                    data: entry,
+                    index,
+                  })),
+                ];
+
+                // Sort by timestamp (newest first)
+                allEntries.sort((a, b) => b.timestamp - a.timestamp);
+
+                return allEntries.map((entry, idx) => {
+                  if (entry.type === "info") {
+                    const log = entry.data;
+                    const isExpanded = expandedBlocks.has(log.id);
+                    return (
+                      <div
+                        key={log.id}
+                        className="group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card"
+                      >
+                        <div
+                          className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
+                          onClick={() => toggleExpanded(log.id)}
+                        >
+                          <div className="flex-shrink-0">
+                            {isExpanded ? (
+                              <ChevronDown className="h-3 w-3 text-muted-foreground transition-transform" />
+                            ) : (
+                              <ChevronRight className="h-3 w-3 text-muted-foreground transition-transform" />
                             )}
                           </div>
-                        );
-                      });
-                  })()}
-
-                  {/* Empty state when no logs */}
-                  {!oauthFlowState.codeChallenge && (
-                    <div className="text-center py-8 text-muted-foreground text-sm">
-                      No flow information yet
-                    </div>
-                  )}
-                </div>
-              </div>
-            </ResizablePanel>
-
-            <ResizableHandle withHandle />
-
-            {/* Bottom Panel - HTTP History */}
-            <ResizablePanel defaultSize={60} minSize={20}>
-              <div className="h-full bg-muted/30 overflow-auto">
-                <div className="sticky top-0 z-10 bg-muted/30 backdrop-blur-sm border-b border-border px-4 py-3 flex items-center justify-between">
-                  <h3 className="text-sm font-semibold">HTTP History</h3>
-                  <button
-                    onClick={clearHttpHistory}
-                    className="p-1 hover:bg-muted rounded transition-colors"
-                    title="Clear all history"
-                  >
-                    <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive transition-colors" />
-                  </button>
-                </div>
-                <div className="p-4 space-y-3">
-                  {oauthFlowState.httpHistory &&
-                  oauthFlowState.httpHistory.length > 0 ? (
-                    (() => {
-                      // Flatten entries into individual messages and reverse
-                      const messages: Array<{
-                        type: "request" | "response";
-                        data: any;
-                        id: string;
-                      }> = [];
-
-                      oauthFlowState.httpHistory.forEach(
-                        (entry, entryIndex) => {
-                          if (entry.request) {
-                            messages.push({
-                              type: "request",
-                              data: entry.request,
-                              id: `request-${entryIndex}`,
-                            });
-                          }
-                          if (entry.response) {
-                            messages.push({
-                              type: "response",
-                              data: entry.response,
-                              id: `response-${entryIndex}`,
-                            });
-                          }
-                        },
-                      );
-
-                      return messages.reverse().map((message) => {
-                        const isExpanded = expandedBlocks.has(message.id);
-
-                        if (message.type === "request") {
-                          const request = message.data;
-                          return (
-                            <div
-                              key={message.id}
-                              className="group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card"
-                            >
-                              <div
-                                className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
-                                onClick={() => toggleExpanded(message.id)}
-                              >
-                                <div className="flex-shrink-0">
-                                  {isExpanded ? (
-                                    <ChevronDown className="h-3 w-3 text-muted-foreground transition-transform" />
-                                  ) : (
-                                    <ChevronRight className="h-3 w-3 text-muted-foreground transition-transform" />
-                                  )}
-                                </div>
-                                <div className="flex items-center gap-2 flex-1 min-w-0">
-                                  <span
-                                    className="flex items-center justify-center px-1 py-0.5 rounded bg-green-500/10 text-green-600 dark:text-green-400"
-                                    title="Outgoing"
-                                  >
-                                    <ArrowUpFromLine className="h-3 w-3" />
-                                  </span>
-                                  <span className="text-xs font-mono text-foreground truncate">
-                                    {request.method} {request.url}
-                                  </span>
-                                </div>
+                          <span className="text-xs font-medium text-foreground">
+                            {log.label}
+                          </span>
+                        </div>
+                        {isExpanded && (
+                          <div className="border-t bg-muted/20">
+                            <div className="p-3">
+                              <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
+                                <JsonView
+                                  src={log.data}
+                                  dark={true}
+                                  theme="atom"
+                                  enableClipboard={true}
+                                  displaySize={false}
+                                  collapsed={false}
+                                  style={{
+                                    fontSize: "11px",
+                                    fontFamily:
+                                      "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                                    backgroundColor: "transparent",
+                                    padding: "0",
+                                    borderRadius: "0",
+                                    border: "none",
+                                  }}
+                                />
                               </div>
-                              {isExpanded && (
-                                <div className="border-t bg-muted/20">
-                                  <div className="p-3">
-                                    <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
-                                      <JsonView
-                                        src={{
-                                          method: request.method,
-                                          url: request.url,
-                                          headers: request.headers,
-                                          body: request.body,
-                                        }}
-                                        dark={true}
-                                        theme="atom"
-                                        enableClipboard={true}
-                                        displaySize={false}
-                                        collapseStringsAfterLength={100}
-                                        style={{
-                                          fontSize: "11px",
-                                          fontFamily:
-                                            "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                                          backgroundColor: "transparent",
-                                          padding: "0",
-                                          borderRadius: "0",
-                                          border: "none",
-                                        }}
-                                      />
-                                    </div>
-                                  </div>
-                                </div>
-                              )}
                             </div>
-                          );
-                        } else {
-                          const response = message.data;
-                          return (
-                            <div
-                              key={message.id}
-                              className="group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card"
-                            >
-                              <div
-                                className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
-                                onClick={() => toggleExpanded(message.id)}
-                              >
-                                <div className="flex-shrink-0">
-                                  {isExpanded ? (
-                                    <ChevronDown className="h-3 w-3 text-muted-foreground transition-transform" />
-                                  ) : (
-                                    <ChevronRight className="h-3 w-3 text-muted-foreground transition-transform" />
-                                  )}
-                                </div>
-                                <div className="flex items-center gap-2 flex-1 min-w-0">
-                                  <span
-                                    className="flex items-center justify-center px-1 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400"
-                                    title="Incoming"
-                                  >
-                                    <ArrowDownToLine className="h-3 w-3" />
-                                  </span>
-                                  <span
-                                    className={`text-xs px-1.5 py-0.5 rounded font-mono flex-shrink-0 ${
-                                      response.status >= 200 &&
-                                      response.status < 300
-                                        ? "bg-green-500/10 text-green-600 dark:text-green-400"
-                                        : "bg-red-500/10 text-red-600 dark:text-red-400"
-                                    }`}
-                                  >
-                                    {response.status}
-                                  </span>
-                                  <span className="text-xs font-mono text-foreground truncate">
-                                    {response.statusText}
-                                  </span>
-                                </div>
-                              </div>
-                              {isExpanded && (
-                                <div className="border-t bg-muted/20">
-                                  <div className="p-3">
-                                    <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
-                                      <JsonView
-                                        src={{
-                                          status: response.status,
-                                          statusText: response.statusText,
-                                          headers: response.headers,
-                                          body: response.body,
-                                        }}
-                                        dark={true}
-                                        theme="atom"
-                                        enableClipboard={true}
-                                        displaySize={false}
-                                        collapseStringsAfterLength={100}
-                                        style={{
-                                          fontSize: "11px",
-                                          fontFamily:
-                                            "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                                          backgroundColor: "transparent",
-                                          padding: "0",
-                                          borderRadius: "0",
-                                          border: "none",
-                                        }}
-                                      />
-                                    </div>
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          );
-                        }
-                      });
-                    })()
-                  ) : (
-                    <div className="text-center py-8 text-muted-foreground text-sm">
-                      No HTTP requests yet
-                    </div>
-                  )}
-                </div>
-              </div>
-            </ResizablePanel>
-          </ResizablePanelGroup>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  } else {
+                    // HTTP entry
+                    const httpEntry = entry.data;
+                    return (
+                      <HTTPHistoryEntry
+                        key={`http-${entry.index}-${entry.timestamp}`}
+                        method={httpEntry.request.method}
+                        url={httpEntry.request.url}
+                        status={httpEntry.response?.status}
+                        statusText={httpEntry.response?.statusText}
+                        duration={httpEntry.duration}
+                        requestHeaders={httpEntry.request.headers}
+                        requestBody={httpEntry.request.body}
+                        responseHeaders={httpEntry.response?.headers}
+                        responseBody={httpEntry.response?.body}
+                      />
+                    );
+                  }
+                });
+              })()}
+
+              {/* Empty state */}
+              {(!oauthFlowState.infoLogs ||
+                oauthFlowState.infoLogs.length === 0) &&
+                (!oauthFlowState.httpHistory ||
+                  oauthFlowState.httpHistory.length === 0) &&
+                !oauthFlowState.error && (
+                  <div className="text-center py-8 text-muted-foreground text-sm">
+                    No console output yet
+                  </div>
+                )}
+            </div>
+          </div>
         </div>
       </div>
 

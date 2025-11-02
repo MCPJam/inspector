@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 import {
   OauthFlowStateJune2025,
   OAuthFlowStep,
+  OAuthProtocolVersion,
 } from "@/lib/debug-oauth-state-machine";
 
 type NodeStatus = "complete" | "current" | "pending";
@@ -268,7 +269,8 @@ const edgeTypes = {
 
 interface OAuthSequenceDiagramProps {
   flowState: OauthFlowStateJune2025;
-  registrationStrategy?: "dcr" | "preregistered";
+  registrationStrategy?: "cimd" | "dcr" | "preregistered";
+  protocolVersion?: OAuthProtocolVersion;
 }
 
 // Helper to determine status based on current step
@@ -284,6 +286,11 @@ const getActionStatus = (
     "received_resource_metadata",
     "request_authorization_server_metadata",
     "received_authorization_server_metadata",
+    // CIMD steps (2025-11-25 spec)
+    "cimd_prepare",
+    "cimd_fetch_request",
+    "cimd_metadata_response",
+    // DCR step (both protocols)
     "request_client_registration",
     "received_client_credentials",
     "generate_pkce_parameters",
@@ -306,7 +313,11 @@ const getActionStatus = (
 };
 
 export const OAuthSequenceDiagram = memo(
-  ({ flowState, registrationStrategy = "dcr" }: OAuthSequenceDiagramProps) => {
+  ({
+    flowState,
+    registrationStrategy = "cimd",
+    protocolVersion = "2025-11-25",
+  }: OAuthSequenceDiagramProps) => {
     const { nodes, edges } = useMemo(() => {
       const currentStep = flowState.currentStep;
 
@@ -367,13 +378,21 @@ export const OAuthSequenceDiagram = memo(
         },
         {
           id: "request_authorization_server_metadata",
-          label: "GET /.well-known/oauth-authorization-server",
+          label:
+            protocolVersion === "2025-11-25"
+              ? "GET OAuth/OIDC metadata\n(path insertion priority)"
+              : "GET OAuth metadata (RFC8414)\n(with root fallback)",
           description:
-            "Client requests OAuth/OIDC metadata from Authorization Server",
+            protocolVersion === "2025-11-25"
+              ? "Try OAuth path insertion, OIDC path insertion, OIDC path appending"
+              : "Try RFC8414 path, then RFC8414 root (no OIDC support)",
           from: "client",
           to: "authServer",
           details: flowState.authorizationServerUrl
-            ? [{ label: "URL", value: flowState.authorizationServerUrl }]
+            ? [
+                { label: "URL", value: flowState.authorizationServerUrl },
+                { label: "Protocol", value: protocolVersion },
+              ]
             : undefined,
         },
         {
@@ -399,69 +418,162 @@ export const OAuthSequenceDiagram = memo(
               ]
             : undefined,
         },
-        // DCR steps - conditionally included based on registration strategy
-        ...(registrationStrategy === "dcr"
+        // Client registration steps - conditionally included based on strategy
+        ...(registrationStrategy === "cimd"
           ? [
               {
-                id: "request_client_registration",
-                label: "POST /register",
+                id: "cimd_prepare",
+                label: "Client uses HTTPS URL as client_id",
                 description:
-                  "Client registers dynamically with Authorization Server",
-                from: "client",
-                to: "authServer",
-                details: [
-                  { label: "Note", value: "Dynamic client registration" },
-                ],
-              },
-              {
-                id: "received_client_credentials",
-                label: "Client Credentials",
-                description:
-                  "Authorization Server returns client ID and credentials",
-                from: "authServer",
-                to: "client",
-                details: flowState.clientId
-                  ? [
-                      {
-                        label: "client_id",
-                        value: flowState.clientId.substring(0, 20) + "...",
-                      },
-                    ]
-                  : undefined,
-              },
-            ]
-          : [
-              {
-                id: "received_client_credentials",
-                label: "Use Pre-registered Client",
-                description:
-                  "Client uses pre-configured credentials (skipped DCR)",
+                  "Client prepares to use URL-based client identification",
                 from: "client",
                 to: "client",
                 details: flowState.clientId
                   ? [
                       {
-                        label: "client_id",
-                        value: flowState.clientId.substring(0, 20) + "...",
+                        label: "client_id (URL)",
+                        value: flowState.clientId.includes("http")
+                          ? flowState.clientId
+                          : "https://www.mcpjam.com/.well-known/oauth/client-metadata.json",
                       },
                       {
-                        label: "Note",
-                        value: "Pre-registered (no DCR needed)",
+                        label: "Method",
+                        value: "Client ID Metadata Document (CIMD)",
                       },
                     ]
                   : [
                       {
                         label: "Note",
-                        value: "Pre-registered client credentials",
+                        value: "HTTPS URL points to metadata document",
                       },
                     ],
               },
-            ]),
+              {
+                id: "cimd_fetch_request",
+                label:
+                  "Server detects URL-formatted client_id\nFetch metadata from client_id URL",
+                description:
+                  "Authorization Server fetches client metadata from the URL",
+                from: "authServer",
+                to: "client",
+                details: [
+                  {
+                    label: "Action",
+                    value: "GET client_id URL",
+                  },
+                  {
+                    label: "Note",
+                    value:
+                      "Server initiates metadata fetch during authorization",
+                  },
+                ],
+              },
+              {
+                id: "cimd_metadata_response",
+                label: "JSON metadata document",
+                description:
+                  "Client hosting returns metadata with redirect_uris and client info",
+                from: "client",
+                to: "authServer",
+                details: [
+                  {
+                    label: "Content-Type",
+                    value: "application/json",
+                  },
+                  {
+                    label: "Contains",
+                    value: "client_id, client_name, redirect_uris, etc.",
+                  },
+                ],
+              },
+              {
+                id: "received_client_credentials",
+                label: "Validate metadata and redirect_uris",
+                description: "Authorization Server validates fetched metadata",
+                from: "authServer",
+                to: "authServer",
+                details: [
+                  {
+                    label: "Validates",
+                    value: "client_id matches URL, redirect_uris are valid",
+                  },
+                  {
+                    label: "Security",
+                    value: "SSRF protection, domain trust policies",
+                  },
+                ],
+              },
+            ]
+          : registrationStrategy === "dcr"
+            ? [
+                {
+                  id: "request_client_registration",
+                  label: `POST /register (${protocolVersion})`,
+                  description:
+                    "Client registers dynamically with Authorization Server",
+                  from: "client",
+                  to: "authServer",
+                  details: [
+                    {
+                      label: "Note",
+                      value: "Dynamic client registration (DCR)",
+                    },
+                  ],
+                },
+                {
+                  id: "received_client_credentials",
+                  label: "Client Credentials",
+                  description:
+                    "Authorization Server returns client ID and credentials",
+                  from: "authServer",
+                  to: "client",
+                  details: flowState.clientId
+                    ? [
+                        {
+                          label: "client_id",
+                          value: flowState.clientId.substring(0, 20) + "...",
+                        },
+                      ]
+                    : undefined,
+                },
+              ]
+            : [
+                {
+                  id: "received_client_credentials",
+                  label: `Use Pre-registered Client (${protocolVersion})`,
+                  description:
+                    "Client uses pre-configured credentials (skipped DCR)",
+                  from: "client",
+                  to: "client",
+                  details: flowState.clientId
+                    ? [
+                        {
+                          label: "client_id",
+                          value: flowState.clientId.substring(0, 20) + "...",
+                        },
+                        {
+                          label: "Note",
+                          value: "Pre-registered (no DCR needed)",
+                        },
+                      ]
+                    : [
+                        {
+                          label: "Note",
+                          value: "Pre-registered client credentials",
+                        },
+                      ],
+                },
+              ]),
         {
           id: "generate_pkce_parameters",
-          label: "Generate PKCE parameters\nInclude resource parameter",
+          label:
+            protocolVersion === "2025-11-25"
+              ? "Generate PKCE (REQUIRED)\nInclude resource parameter"
+              : "Generate PKCE (recommended)\nInclude resource parameter",
           description:
-            "Client generates code verifier and challenge, includes resource parameter",
+            protocolVersion === "2025-11-25"
+              ? "Client generates code verifier and challenge (REQUIRED), includes resource parameter"
+              : "Client generates code verifier and challenge (recommended), includes resource parameter",
           from: "client",
           to: "client",
           details: flowState.codeChallenge
@@ -475,6 +587,7 @@ export const OAuthSequenceDiagram = memo(
                   value: flowState.codeChallengeMethod || "S256",
                 },
                 { label: "resource", value: flowState.serverUrl || "—" },
+                { label: "Protocol", value: protocolVersion },
               ]
             : undefined,
         },
@@ -823,7 +936,7 @@ export const OAuthSequenceDiagram = memo(
       });
 
       return { nodes, edges };
-    }, [flowState, registrationStrategy]);
+    }, [flowState, registrationStrategy, protocolVersion]);
 
     return (
       <div className="w-full h-full">
