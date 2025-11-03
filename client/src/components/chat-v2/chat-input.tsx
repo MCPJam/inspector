@@ -15,6 +15,7 @@ interface ChatInputProps {
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   stop: () => void;
   disabled?: boolean;
+  submitDisabled?: boolean;
   isLoading?: boolean;
   placeholder?: string;
   className?: string;
@@ -35,6 +36,7 @@ export function ChatInput({
   onSubmit,
   stop,
   disabled = false,
+  submitDisabled = false,
   isLoading = false,
   placeholder = "Type your message...",
   className,
@@ -58,7 +60,7 @@ export function ChatInput({
     ) {
       const trimmed = value.trim();
       event.preventDefault();
-      if (!trimmed || disabled || isLoading) {
+      if (!trimmed || disabled || submitDisabled || isLoading) {
         return;
       }
       formRef.current?.requestSubmit();
@@ -137,11 +139,11 @@ export function ChatInput({
                     size="icon"
                     className={cn(
                       "size-[34px] rounded-full transition-colors",
-                      value.trim() && !disabled
+                      value.trim() && !disabled && !submitDisabled
                         ? "bg-primary text-primary-foreground hover:bg-primary/90"
                         : "bg-muted text-muted-foreground cursor-not-allowed",
                     )}
-                    disabled={!value.trim() || disabled}
+                    disabled={!value.trim() || disabled || submitDisabled}
                   >
                     <ArrowUp size={16} />
                   </Button>
