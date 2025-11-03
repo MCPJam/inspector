@@ -26,10 +26,7 @@ export function usePersistedModel(): UsePersistedModelReturn {
           setSelectedModelIdState(stored);
         }
       } catch (error) {
-        console.warn(
-          "Failed to load selected model from localStorage:",
-          error,
-        );
+        console.warn("Failed to load selected model from localStorage:", error);
       }
       setIsInitialized(true);
     }
