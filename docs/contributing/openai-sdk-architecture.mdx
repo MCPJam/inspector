@@ -42,11 +42,13 @@ graph TB
     subgraph Backend["Backend (Hono.js)"]
         ToolExec[Tool Execution]
         Storage[Widget Data Store]
-        WidgetEndpoint["Endpoint: /widget/:toolId"]
-        ContentEndpoint["Endpoint: /widget-content/:toolId"]
+        StoreEndpoint["POST /openai/widget/store"]
+        WidgetEndpoint["GET /openai/widget/:toolId"]
+        ContentEndpoint["GET /openai/widget-content/:toolId"]
         MCPRead[MCP Resource Read]
 
-        ToolExec --> Storage
+        ToolExec --> StoreEndpoint
+        StoreEndpoint --> Storage
         WidgetEndpoint --> ContentEndpoint
         ContentEndpoint --> Storage
         ContentEndpoint --> MCPRead
