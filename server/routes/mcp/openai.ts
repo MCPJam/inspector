@@ -213,8 +213,6 @@ openai.get("/widget-content/:toolId", async (c) => {
         (function() {
           'use strict';
 
-          console.log('[OpenAI Widget] Initializing bridge for tool: ${toolName}');
-
           const openaiAPI = {
             toolInput: ${JSON.stringify(toolInput)},
             toolOutput: ${JSON.stringify(toolOutput)},
@@ -231,12 +229,10 @@ openai.get("/widget-content/:toolId", async (c) => {
             widgetState: null,
 
             async setWidgetState(state) {
-              console.log('[OpenAI Widget] setWidgetState called:', state);
               this.widgetState = state;
               try {
                 localStorage.setItem(${JSON.stringify(widgetStateKey)}, JSON.stringify(state));
               } catch (err) {
-                console.error('[OpenAI Widget] Failed to save widget state:', err);
               }
               window.parent.postMessage({
                 type: 'openai:setWidgetState',
@@ -246,7 +242,6 @@ openai.get("/widget-content/:toolId", async (c) => {
             },
 
             async callTool(toolName, params = {}) {
-              console.log('[OpenAI Widget] callTool called:', { toolName, params });
               return new Promise((resolve, reject) => {
                 const requestId = \`tool_\${Date.now()}_\${Math.random()}\`;
                 const handler = (event) => {
@@ -275,7 +270,6 @@ openai.get("/widget-content/:toolId", async (c) => {
             },
 
             async sendFollowupTurn(message) {
-              console.log('[OpenAI Widget] sendFollowupTurn called:', message);
               const payload = typeof message === 'string'
                 ? { prompt: message }
                 : message;
@@ -329,8 +323,6 @@ openai.get("/widget-content/:toolId", async (c) => {
             enumerable: true
           });
 
-          console.log('[OpenAI Widget] Bridge initialized. window.openai available.');
-
           // Dispatch initial globals event
           setTimeout(() => {
             try {
@@ -347,7 +339,6 @@ openai.get("/widget-content/:toolId", async (c) => {
                 }
               });
               window.dispatchEvent(globalsEvent);
-              console.log('[OpenAI Widget] Initial globals event dispatched');
             } catch (err) {
               console.error('[OpenAI Widget] Failed to dispatch globals event:', err);
             }
@@ -359,7 +350,6 @@ openai.get("/widget-content/:toolId", async (c) => {
               const stored = localStorage.getItem(${JSON.stringify(widgetStateKey)});
               if (stored && window.openai) {
                 window.openai.widgetState = JSON.parse(stored);
-                console.log('[OpenAI Widget] Restored widget state:', window.openai.widgetState);
               }
             } catch (err) {
               console.error('[OpenAI Widget] Failed to restore widget state:', err);
@@ -372,7 +362,6 @@ openai.get("/widget-content/:toolId", async (c) => {
               const { globals } = event.data;
 
               if (globals?.theme && window.openai) {
-                console.log('[OpenAI Widget] Theme changed to:', globals.theme);
                 window.openai.theme = globals.theme;
 
                 // Dispatch event for widgets that use useTheme() hook
