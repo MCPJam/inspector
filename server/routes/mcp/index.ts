@@ -12,6 +12,7 @@ import interceptor from "./interceptor";
 import evals from "./evals";
 import { adapterHttp, managerHttp } from "./http-adapters";
 import elicitation from "./elicitation";
+import openai from "./openai";
 
 const mcp = new Hono();
 
@@ -47,6 +48,9 @@ mcp.route("/evals", evals);
 
 // Resources endpoints - REAL IMPLEMENTATION
 mcp.route("/resources", resources);
+
+// OpenAI Apps SDK widget endpoints
+mcp.route("/openai", openai);
 
 // Prompts endpoints - REAL IMPLEMENTATION
 mcp.route("/prompts", prompts);
