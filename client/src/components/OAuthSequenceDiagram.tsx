@@ -964,8 +964,9 @@ const DiagramContent = memo(
             // Actor nodes have a header (~52px) + some padding (~50px)
             // Each action segment is ACTION_SPACING (180) apart
             const headerOffset = 102;
-            const actionY = headerOffset + (actionIndex * 180) + 40; // 40 is half of SEGMENT_HEIGHT
-            const centerX = (sourceNode.position.x + targetNode.position.x) / 2 + 70; // +70 to account for node width
+            const actionY = headerOffset + actionIndex * 180 + 40; // 40 is half of SEGMENT_HEIGHT
+            const centerX =
+              (sourceNode.position.x + targetNode.position.x) / 2 + 70; // +70 to account for node width
             const centerY = actionY;
 
             // Zoom into the current step with animation
@@ -1010,14 +1011,12 @@ const DiagramContent = memo(
 DiagramContent.displayName = "DiagramContent";
 
 // Wrapper component with ReactFlowProvider
-export const OAuthSequenceDiagram = memo(
-  (props: OAuthSequenceDiagramProps) => {
-    return (
-      <ReactFlowProvider>
-        <DiagramContent {...props} />
-      </ReactFlowProvider>
-    );
-  },
-);
+export const OAuthSequenceDiagram = memo((props: OAuthSequenceDiagramProps) => {
+  return (
+    <ReactFlowProvider>
+      <DiagramContent {...props} />
+    </ReactFlowProvider>
+  );
+});
 
 OAuthSequenceDiagram.displayName = "OAuthSequenceDiagram";
