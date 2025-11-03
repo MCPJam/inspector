@@ -309,8 +309,10 @@ const getActionStatus = (
   const actionIndex = stepOrder.indexOf(actionStep);
   const currentIndex = stepOrder.indexOf(currentStep);
 
-  if (actionIndex < currentIndex) return "complete";
-  if (actionIndex === currentIndex) return "current";
+  // Show completed steps (everything up to and including current)
+  if (actionIndex <= currentIndex) return "complete";
+  // Show the NEXT step as current (what will happen when you click Next Step)
+  if (actionIndex === currentIndex + 1) return "current";
   return "pending";
 };
 
@@ -962,18 +964,17 @@ const DiagramContent = memo(
           return;
         }
 
-        // Find the edge corresponding to the current step
-        const currentEdgeId = `edge-${flowState.currentStep}`;
-        const currentEdge = edges.find((e) => e.id === currentEdgeId);
+        // Find the edge that has "current" status (the next step to execute)
+        const currentEdge = edges.find((e) => e.data?.status === "current");
 
-        if (currentEdge && currentEdge.data?.status === "current") {
+        if (currentEdge) {
           // Get source and target actor positions
           const sourceNode = nodes.find((n) => n.id === currentEdge.source);
           const targetNode = nodes.find((n) => n.id === currentEdge.target);
 
           if (sourceNode && targetNode) {
             // Find the action index to calculate Y position
-            const actionIndex = edges.findIndex((e) => e.id === currentEdgeId);
+            const actionIndex = edges.findIndex((e) => e.id === currentEdge.id);
 
             // Calculate positions
             // Actor nodes have a header (~52px) + some padding (~50px)
