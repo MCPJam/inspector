@@ -69,6 +69,17 @@ interface ChatTabProps {
   selectedServerNames: string[];
 }
 
+function formatErrorMessage(error: unknown): string | null {
+  if (!error) return null;
+  if (typeof error === "string") return error;
+  if (error instanceof Error) return error.message;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
 export function ChatTabV2({
   connectedServerConfigs,
   selectedServerNames,
@@ -343,16 +354,7 @@ export function ChatTabV2({
   const showDisabledCallout =
     messages.length === 0 && (shouldShowUpsell || shouldShowConnectCallout);
 
-  const errorMessage = useMemo(() => {
-    if (!error) return null;
-    if (typeof error === "string") return error;
-    if (error instanceof Error) return error.message;
-    try {
-      return JSON.stringify(error);
-    } catch {
-      return String(error);
-    }
-  }, [error]);
+  const errorMessage = formatErrorMessage(error);
 
   const handleSignUp = () => {
     posthog.capture("sign_up_button_clicked", {
