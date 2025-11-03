@@ -943,6 +943,11 @@ const DiagramContent = memo(
           return;
         }
 
+        // Don't zoom when flow is complete - let user stay at current position
+        if (flowState.currentStep === "complete") {
+          return;
+        }
+
         // Find the edge that has "current" status (the next step to execute)
         const currentEdge = edges.find((e) => e.data?.status === "current");
 
