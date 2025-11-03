@@ -48,6 +48,21 @@ import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 const DEFAULT_SYSTEM_PROMPT =
   "You are a helpful assistant with access to MCP tools.";
 
+const STARTER_PROMPTS: Array<{ label: string; text: string }> = [
+  {
+    label: "Show me connected tools",
+    text: "List my connected MCP servers and their available tools.",
+  },
+  {
+    label: "Suggest an automation",
+    text: "Suggest an automation I can build with my current MCP setup.",
+  },
+  {
+    label: "Summarize recent activity",
+    text: "Summarize the most recent activity across my MCP servers.",
+  },
+];
+
 interface ChatTabProps {
   connectedServerConfigs: Record<string, ServerWithName>;
   selectedServerNames: string[];
@@ -303,8 +318,8 @@ export function ChatTabV2({
   const disableForAuthentication = !isAuthenticated && isMcpJamModel;
   const disableForServers = noServersConnected;
   const isStreaming = status === "streaming" || status === "submitted";
-  const inputDisabled =
-    disableForAuthentication || disableForServers || status !== "ready";
+  const submitBlocked = disableForAuthentication || disableForServers;
+  const inputDisabled = status !== "ready" || submitBlocked;
 
   let placeholder = "Ask something…";
   if (disableForServers) {
@@ -340,6 +355,39 @@ export function ChatTabV2({
     }
   };
 
+  const handleStarterPrompt = (prompt: string) => {
+    if (submitBlocked || inputDisabled) {
+      setInput(prompt);
+      return;
+    }
+    sendMessage({ text: prompt });
+    setInput("");
+  };
+
+  const sharedChatInputProps = {
+    value: input,
+    onChange: setInput,
+    onSubmit,
+    stop,
+    disabled: inputDisabled,
+    isLoading: isStreaming,
+    placeholder,
+    currentModel: selectedModel,
+    availableModels,
+    onModelChange: (model: ModelDefinition) => {
+      setSelectedModelId(String(model.id));
+      resetChat();
+    },
+    systemPrompt,
+    onSystemPromptChange: setSystemPrompt,
+    temperature,
+    onTemperatureChange: setTemperature,
+    onResetChat: resetChat,
+    submitDisabled: submitBlocked,
+  };
+
+  const showStarterPrompts = !showDisabledCallout && messages.length === 0;
+
   return (
     <div className="flex flex-1 h-full min-h-0 flex-col overflow-hidden">
       <ResizablePanelGroup
@@ -348,51 +396,66 @@ export function ChatTabV2({
       >
         <ResizablePanel defaultSize={70} minSize={40} className="min-w-0">
           <div className="flex flex-col bg-background h-full min-h-0 overflow-hidden">
-            {showDisabledCallout ? (
-              <div className="flex-1 flex items-center justify-center px-4">
-                <div className="max-w-4xl w-full">
-                  {shouldShowUpsell ? (
-                    <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
-                  ) : (
-                    <ConnectMcpServerCallout />
+            {messages.length === 0 ? (
+              <div className="flex-1 flex items-center justify-center overflow-y-auto px-4">
+                <div className="w-full max-w-3xl space-y-6 py-8">
+                  {showDisabledCallout && (
+                    <div className="space-y-4">
+                      {shouldShowUpsell ? (
+                        <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
+                      ) : (
+                        <ConnectMcpServerCallout />
+                      )}
+                    </div>
                   )}
+
+                  <div className="space-y-4">
+                    {showStarterPrompts && (
+                      <div className="text-center">
+                        <p className="text-sm text-muted-foreground mb-3">
+                          Try one of these to get started
+                        </p>
+                        <div className="flex flex-wrap justify-center gap-2">
+                          {STARTER_PROMPTS.map((prompt) => (
+                            <button
+                              key={prompt.text}
+                              type="button"
+                              onClick={() => handleStarterPrompt(prompt.text)}
+                              className="rounded-full border border-border bg-background px-4 py-2 text-sm text-foreground transition hover:border-foreground hover:bg-accent cursor-pointer font-light"
+                            >
+                              {prompt.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <ChatInput {...sharedChatInputProps} hasMessages={false} />
+                  </div>
                 </div>
               </div>
             ) : (
-              <Thread
-                messages={messages}
-                sendFollowUpMessage={(text: string) => sendMessage({ text })}
-                model={selectedModel}
-                isLoading={status === "submitted"}
-                toolsMetadata={toolsMetadata}
-                toolServerMap={toolServerMap}
-              />
+              <>
+                <div className="flex-1 overflow-y-auto">
+                  <Thread
+                    messages={messages}
+                    sendFollowUpMessage={(text: string) =>
+                      sendMessage({ text })
+                    }
+                    model={selectedModel}
+                    isLoading={status === "submitted"}
+                    toolsMetadata={toolsMetadata}
+                    toolServerMap={toolServerMap}
+                  />
+                </div>
+
+                <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0">
+                  <div className="max-w-4xl mx-auto p-4">
+                    <ChatInput {...sharedChatInputProps} hasMessages />
+                  </div>
+                </div>
+              </>
             )}
-            <div className="bg-background/80 backdrop-blur-sm flex-shrink-0">
-              <div className="max-w-4xl mx-auto p-4">
-                <ChatInput
-                  value={input}
-                  onChange={setInput}
-                  onSubmit={onSubmit}
-                  stop={stop}
-                  disabled={inputDisabled}
-                  isLoading={isStreaming}
-                  placeholder={placeholder}
-                  currentModel={selectedModel}
-                  availableModels={availableModels}
-                  onModelChange={(model) => {
-                    setSelectedModelId(String(model.id));
-                    resetChat();
-                  }}
-                  systemPrompt={systemPrompt}
-                  onSystemPromptChange={setSystemPrompt}
-                  temperature={temperature}
-                  onTemperatureChange={setTemperature}
-                  hasMessages={messages.length > 0}
-                  onResetChat={resetChat}
-                />
-              </div>
-            </div>
 
             <ElicitationDialog
               elicitationRequest={elicitation}
