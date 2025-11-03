@@ -1,4 +1,4 @@
-import { useMemo, memo } from "react";
+import { useMemo, memo, useEffect } from "react";
 import type { ReactNode } from "react";
 import {
   Background,
@@ -12,6 +12,8 @@ import {
   ReactFlow,
   EdgeLabelRenderer,
   BaseEdge,
+  useReactFlow,
+  ReactFlowProvider,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { cn } from "@/lib/utils";
@@ -273,51 +275,35 @@ interface OAuthSequenceDiagramProps {
   protocolVersion?: OAuthProtocolVersion;
 }
 
-// Helper to determine status based on current step
+// Helper to determine status based on current step and actual action order
 const getActionStatus = (
   actionStep: OAuthFlowStep | string,
   currentStep: OAuthFlowStep,
+  actionsInFlow: Array<{ id: string }>,
 ): NodeStatus => {
-  const stepOrder: (OAuthFlowStep | string)[] = [
-    "idle",
-    "request_without_token",
-    "received_401_unauthorized",
-    "request_resource_metadata",
-    "received_resource_metadata",
-    "request_authorization_server_metadata",
-    "received_authorization_server_metadata",
-    // CIMD steps (2025-11-25 spec)
-    "cimd_prepare",
-    "cimd_fetch_request",
-    "cimd_metadata_response",
-    // DCR step (both protocols)
-    "request_client_registration",
-    "received_client_credentials",
-    "generate_pkce_parameters",
-    "authorization_request",
-    "browser_to_auth_server",
-    "auth_redirect_to_browser",
-    "received_authorization_code",
-    "token_request",
-    "received_access_token",
-    "authenticated_mcp_request",
-    "complete",
-  ];
+  // Find indices in the actual flow (not a hardcoded order)
+  const actionIndex = actionsInFlow.findIndex((a) => a.id === actionStep);
+  const currentIndex = actionsInFlow.findIndex((a) => a.id === currentStep);
 
-  const actionIndex = stepOrder.indexOf(actionStep);
-  const currentIndex = stepOrder.indexOf(currentStep);
+  // If step not found in flow, it's pending
+  if (actionIndex === -1) return "pending";
 
-  if (actionIndex < currentIndex) return "complete";
-  if (actionIndex === currentIndex) return "current";
+  // Show completed steps (everything up to and including current)
+  if (actionIndex <= currentIndex) return "complete";
+  // Show the NEXT step as current (what will happen when you click Next Step)
+  if (actionIndex === currentIndex + 1) return "current";
   return "pending";
 };
 
-export const OAuthSequenceDiagram = memo(
+// Internal component that has access to ReactFlow instance
+const DiagramContent = memo(
   ({
     flowState,
     registrationStrategy = "cimd",
     protocolVersion = "2025-11-25",
   }: OAuthSequenceDiagramProps) => {
+    const reactFlowInstance = useReactFlow();
+
     const { nodes, edges } = useMemo(() => {
       const currentStep = flowState.currentStep;
 
@@ -883,7 +869,7 @@ export const OAuthSequenceDiagram = memo(
 
       // Create action edges
       const edges: Edge[] = actions.map((action, index) => {
-        const status = getActionStatus(action.id, currentStep);
+        const status = getActionStatus(action.id, currentStep, actions);
         const isComplete = status === "complete";
         const isCurrent = status === "current";
         const isPending = status === "pending";
@@ -938,6 +924,63 @@ export const OAuthSequenceDiagram = memo(
       return { nodes, edges };
     }, [flowState, registrationStrategy, protocolVersion]);
 
+    // Auto-zoom to current step
+    useEffect(() => {
+      if (!reactFlowInstance || !flowState.currentStep) {
+        return;
+      }
+
+      // Small delay to ensure nodes are rendered
+      const timer = setTimeout(() => {
+        // If reset to idle, zoom back to the top
+        if (flowState.currentStep === "idle") {
+          // Zoom to the top of the diagram
+          // Center around the middle actors (Client and MCP Server)
+          reactFlowInstance.setCenter(550, 200, {
+            zoom: 0.8,
+            duration: 800,
+          });
+          return;
+        }
+
+        // Don't zoom when flow is complete - let user stay at current position
+        if (flowState.currentStep === "complete") {
+          return;
+        }
+
+        // Find the edge that has "current" status (the next step to execute)
+        const currentEdge = edges.find((e) => e.data?.status === "current");
+
+        if (currentEdge) {
+          // Get source and target actor positions
+          const sourceNode = nodes.find((n) => n.id === currentEdge.source);
+          const targetNode = nodes.find((n) => n.id === currentEdge.target);
+
+          if (sourceNode && targetNode) {
+            // Find the action index to calculate Y position
+            const actionIndex = edges.findIndex((e) => e.id === currentEdge.id);
+
+            // Calculate positions
+            // Actor nodes have a header (~52px) + some padding (~50px)
+            // Each action segment is ACTION_SPACING (180) apart
+            const headerOffset = 102;
+            const actionY = headerOffset + actionIndex * 180 + 40; // 40 is half of SEGMENT_HEIGHT
+            const centerX =
+              (sourceNode.position.x + targetNode.position.x) / 2 + 70; // +70 to account for node width
+            const centerY = actionY;
+
+            // Zoom into the current step with animation
+            reactFlowInstance.setCenter(centerX, centerY, {
+              zoom: 1.2,
+              duration: 800,
+            });
+          }
+        }
+      }, 100);
+
+      return () => clearTimeout(timer);
+    }, [flowState.currentStep, edges, nodes, reactFlowInstance]);
+
     return (
       <div className="w-full h-full">
         <ReactFlow
@@ -945,14 +988,17 @@ export const OAuthSequenceDiagram = memo(
           edges={edges}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
-          fitView
-          minZoom={0.5}
-          maxZoom={1.5}
-          defaultViewport={{ x: 0, y: 0, zoom: 1 }}
+          minZoom={0.4}
+          maxZoom={2}
+          defaultViewport={{ x: 0, y: 0, zoom: 0.8 }}
           proOptions={{ hideAttribution: true }}
           nodesDraggable={false}
           nodesConnectable={false}
           elementsSelectable={false}
+          panOnScroll={true}
+          zoomOnScroll={true}
+          zoomOnPinch={true}
+          panOnDrag={true}
         >
           <Background />
           <Controls />
@@ -961,5 +1007,16 @@ export const OAuthSequenceDiagram = memo(
     );
   },
 );
+
+DiagramContent.displayName = "DiagramContent";
+
+// Wrapper component with ReactFlowProvider
+export const OAuthSequenceDiagram = memo((props: OAuthSequenceDiagramProps) => {
+  return (
+    <ReactFlowProvider>
+      <DiagramContent {...props} />
+    </ReactFlowProvider>
+  );
+});
 
 OAuthSequenceDiagram.displayName = "OAuthSequenceDiagram";
