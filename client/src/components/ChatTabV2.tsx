@@ -126,7 +126,6 @@ export function ChatTabV2({
     isOllamaRunning,
     ollamaModels,
   ]);
-
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
   const selectedModel = useMemo<ModelDefinition>(() => {
     const fallback = getDefaultModel(availableModels);
@@ -195,6 +194,7 @@ export function ChatTabV2({
         if (!active) return;
         setAuthHeaders(undefined);
       }
+      resetChat();
     })();
     return () => {
       active = false;

@@ -57,6 +57,7 @@ export function Thread({
   toolsMetadata,
   toolServerMap,
 }: ThreadProps) {
+  console.log("messages", messages);
   return (
     <div className="flex-1 overflow-y-auto pb-4">
       <div className="max-w-4xl mx-auto px-4 pt-8 pb-16 space-y-8">
