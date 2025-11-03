@@ -78,9 +78,19 @@ export function OpenAIAppRenderer({
     [structuredContent, toolOutputProp],
   );
 
-  // Store widget data and get URL
+  // Store widget data and get URL - ONLY once when tool state is output-available
   useEffect(() => {
     let isCancelled = false;
+
+    // Don't store until tool execution is complete
+    if (toolState !== "output-available") {
+      return;
+    }
+
+    // Already have a URL, don't re-store
+    if (widgetUrl) {
+      return;
+    }
 
     if (!outputTemplate) {
       setWidgetUrl(null);
@@ -98,7 +108,6 @@ export function OpenAIAppRenderer({
 
     const storeWidgetData = async () => {
       setIsStoringWidget(true);
-      setWidgetUrl(null);
       setStoreError(null);
 
       try {
@@ -148,15 +157,9 @@ export function OpenAIAppRenderer({
     return () => {
       isCancelled = true;
     };
-  }, [
-    serverId,
-    outputTemplate,
-    resolvedToolInput,
-    resolvedToolOutput,
-    resolvedToolCallId,
-    toolName,
-    themeMode,
-  ]);
+    // Store once when state becomes output-available and widgetUrl is not yet set
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [toolState, resolvedToolCallId, widgetUrl, outputTemplate, toolName]);
 
   const appliedHeight = useMemo(
     () => Math.min(Math.max(contentHeight, 320), maxHeight),
@@ -377,7 +380,6 @@ export function OpenAIAppRenderer({
           maxHeight: displayMode === "fullscreen" ? "90vh" : undefined,
         }}
         onLoad={() => {
-          console.log("[OpenAI App] Iframe loaded successfully");
           setIsReady(true);
           setLoadError(null);
         }}
