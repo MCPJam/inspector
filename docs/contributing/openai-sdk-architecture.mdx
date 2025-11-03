@@ -137,7 +137,7 @@ sequenceDiagram
     participant Store as Widget Data Store
 
     Renderer->>Renderer: Extract structuredContent from result
-    Renderer->>API: POST /api/mcp/resources/widget/store
+    Renderer->>API: POST /api/mcp/openai/widget/store
     API->>Store: Store widget data with toolId
     Store-->>API: Success
     API-->>Renderer: Return success: true
@@ -153,7 +153,7 @@ sequenceDiagram
 
 #### Storage Implementation
 
-Located in `server/routes/mcp/resources.ts:6-30`:
+Located in `server/routes/mcp/openai.ts:14-32`:
 
 ```typescript
 interface WidgetData {
