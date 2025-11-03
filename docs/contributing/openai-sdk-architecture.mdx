@@ -808,7 +808,12 @@ server.connect(transport);
    - Check browser console for CSP violations
    - Ensure `<head>` tag exists in HTML for injection
 
-3. **Tool calls timeout**
+3. **Widget data not found (404)**
+   - Check that widget data was successfully stored via POST `/api/mcp/openai/widget/store`
+   - Verify toolId matches between store and load requests
+   - Check server logs for storage errors
+
+4. **Tool calls timeout**
    - Check network tab for `/api/mcp/tools/execute` failures
    - Verify MCP server is connected and responsive
    - Increase timeout in `callTool` implementation (default: 30s)
