@@ -889,9 +889,10 @@ case \"openai:openExternal\":
 ## Related Files
 
 - `client/src/components/tools/ResultsPanel.tsx` - Detects OpenAI components
-- `client/src/components/chat/openai-component-renderer.tsx` - Renders iframes
+- `client/src/components/chat-v2/openai-app-renderer.tsx` - Renders iframes and handles widget lifecycle
 - `client/src/components/ChatTab.tsx` - Chat integration
-- `server/routes/mcp/resources.ts` - Widget storage and serving
+- `server/routes/mcp/openai.ts` - Widget storage, serving, and OpenAI bridge injection
+- `server/routes/mcp/index.ts` - Mounts OpenAI routes at `/openai`
 - `client/src/lib/mcp-tools-api.ts` - Tool execution API
 
 ## Resources
