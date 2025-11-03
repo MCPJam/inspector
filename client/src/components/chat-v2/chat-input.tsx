@@ -112,6 +112,7 @@ export function ChatInput({
               isLoading={isLoading}
               hasMessages={hasMessages}
               onResetChat={onResetChat}
+              currentModel={currentModel}
             />
           </div>
 
