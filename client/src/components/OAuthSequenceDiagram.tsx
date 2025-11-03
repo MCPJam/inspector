@@ -954,7 +954,8 @@ const DiagramContent = memo(
         // If reset to idle, zoom back to the top
         if (flowState.currentStep === "idle") {
           // Zoom to the top of the diagram
-          reactFlowInstance.setCenter(650, 150, {
+          // Center around the middle actors (Client and MCP Server)
+          reactFlowInstance.setCenter(550, 200, {
             zoom: 0.8,
             duration: 800,
           });
