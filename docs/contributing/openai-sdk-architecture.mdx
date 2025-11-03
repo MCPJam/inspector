@@ -259,13 +259,13 @@ openai.get(\"/widget/:toolId\", async (c) => {
 
 #### Stage 2: Content Injection
 
-Located in `server/routes/mcp/resources.ts:173-438`:
+Located in `server/routes/mcp/openai.ts:123-459`:
 
 Key steps:
 
 1. Retrieve widget data from store
 2. Read HTML from MCP server via `readResource(uri)`
-3. Inject `window.openai` API script
+3. Inject `window.openai` API script with bridge implementation
 4. Add security headers (CSP, X-Frame-Options)
 5. Set cache control headers (no-cache for fresh content)
 
