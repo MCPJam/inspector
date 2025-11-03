@@ -12,6 +12,7 @@ import { Slider } from "@/components/ui/slider";
 import { AlertTriangle, Settings2 } from "lucide-react";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { ModelDefinition, isGPT5Model } from "@/shared/types";
 
 interface SystemPromptSelectorProps {
   systemPrompt: string;
@@ -22,6 +23,7 @@ interface SystemPromptSelectorProps {
   isLoading?: boolean;
   hasMessages?: boolean;
   onResetChat: () => void;
+  currentModel: ModelDefinition;
 }
 
 export function SystemPromptSelector({
@@ -33,11 +35,14 @@ export function SystemPromptSelector({
   isLoading,
   hasMessages,
   onResetChat,
+  currentModel,
 }: SystemPromptSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [draftPrompt, setDraftPrompt] = useState(systemPrompt);
   const [draftTemperature, setDraftTemperature] = useState(temperature);
   const [confirmReset, setConfirmReset] = useState(false);
+
+  const isGpt5 = isGPT5Model(currentModel.id);
 
   const handleOpenChange = (open: boolean) => {
     setIsOpen(open);
@@ -123,11 +128,18 @@ export function SystemPromptSelector({
               max={2}
               step={0.1}
               className="w-full"
+              disabled={isGpt5}
             />
-            <p className="text-xs text-muted-foreground">
-              Lower values (0-0.3) for focused tasks, higher values (0.7-2.0)
-              for creative tasks
-            </p>
+            {isGpt5 ? (
+              <p className="text-xs text-muted-foreground">
+                Temperature is not supported for GPT-5 models
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Lower values (0-0.3) for focused tasks, higher values (0.7-2.0)
+                for creative tasks
+              </p>
+            )}
           </div>
 
           {confirmReset && (
