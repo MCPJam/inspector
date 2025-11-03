@@ -13,6 +13,7 @@ import {
   generateId,
 } from "ai";
 import { useAuth } from "@workos-inc/authkit-react";
+import { useConvexAuth } from "convex/react";
 import { ModelDefinition } from "@/shared/types";
 import {
   ProviderTokens,
@@ -39,6 +40,10 @@ import { ChatInput } from "@/components/chat-v2/chat-input";
 import { Thread } from "@/components/chat-v2/thread";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { getToolsMetadata, ToolServerMap } from "@/lib/mcp-tools-api";
+import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
+import { ConnectMcpServerCallout } from "@/components/chat-v2/connect-mcp-server-callout";
+import { usePostHog } from "posthog-js/react";
+import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 
 const DEFAULT_SYSTEM_PROMPT =
   "You are a helpful assistant with access to MCP tools.";
@@ -52,7 +57,9 @@ export function ChatTabV2({
   connectedServerConfigs,
   selectedServerNames,
 }: ChatTabProps) {
-  const { getAccessToken } = useAuth();
+  const { getAccessToken, signUp } = useAuth();
+  const { isAuthenticated } = useConvexAuth();
+  const posthog = usePostHog();
   const {
     hasToken,
     getToken,
@@ -114,6 +121,7 @@ export function ChatTabV2({
       ),
     [selectedServerNames, connectedServerConfigs],
   );
+  const noServersConnected = selectedConnectedServerNames.length === 0;
 
   const transport = useMemo(() => {
     const apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
@@ -292,9 +300,41 @@ export function ChatTabV2({
     fetchToolsMetadata();
   }, [selectedConnectedServerNames]);
 
+  const disableForAuthentication = !isAuthenticated && isMcpJamModel;
+  const disableForServers = noServersConnected;
+  const isStreaming = status === "streaming" || status === "submitted";
+  const inputDisabled =
+    disableForAuthentication || disableForServers || status !== "ready";
+
+  let placeholder = "Ask something…";
+  if (disableForServers) {
+    placeholder = "Connect an MCP server to send your first message";
+  }
+  if (disableForAuthentication) {
+    placeholder = "Sign in to use free chat";
+  }
+
+  const shouldShowUpsell = disableForAuthentication;
+  const shouldShowConnectCallout = disableForServers && !shouldShowUpsell;
+  const showDisabledCallout =
+    messages.length === 0 && (shouldShowUpsell || shouldShowConnectCallout);
+  const handleSignUp = () => {
+    posthog.capture("sign_up_button_clicked", {
+      location: "chat_tab",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+    });
+    signUp();
+  };
+
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (input.trim() && status === "ready") {
+    if (
+      input.trim() &&
+      status === "ready" &&
+      !disableForAuthentication &&
+      !disableForServers
+    ) {
       sendMessage({ text: input });
       setInput("");
     }
@@ -308,14 +348,26 @@ export function ChatTabV2({
       >
         <ResizablePanel defaultSize={70} minSize={40} className="min-w-0">
           <div className="flex flex-col bg-background h-full min-h-0 overflow-hidden">
-            <Thread
-              messages={messages}
-              sendFollowUpMessage={(text: string) => sendMessage({ text })}
-              model={selectedModel}
-              isLoading={status === "submitted"}
-              toolsMetadata={toolsMetadata}
-              toolServerMap={toolServerMap}
-            />
+            {showDisabledCallout ? (
+              <div className="flex-1 flex items-center justify-center px-4">
+                <div className="max-w-4xl w-full">
+                  {shouldShowUpsell ? (
+                    <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
+                  ) : (
+                    <ConnectMcpServerCallout />
+                  )}
+                </div>
+              </div>
+            ) : (
+              <Thread
+                messages={messages}
+                sendFollowUpMessage={(text: string) => sendMessage({ text })}
+                model={selectedModel}
+                isLoading={status === "submitted"}
+                toolsMetadata={toolsMetadata}
+                toolServerMap={toolServerMap}
+              />
+            )}
             <div className="bg-background/80 backdrop-blur-sm flex-shrink-0">
               <div className="max-w-4xl mx-auto p-4">
                 <ChatInput
@@ -323,9 +375,9 @@ export function ChatTabV2({
                   onChange={setInput}
                   onSubmit={onSubmit}
                   stop={stop}
-                  disabled={status !== "ready"}
-                  isLoading={status === "streaming" || status === "submitted"}
-                  placeholder="Ask something…"
+                  disabled={inputDisabled}
+                  isLoading={isStreaming}
+                  placeholder={placeholder}
                   currentModel={selectedModel}
                   availableModels={availableModels}
                   onModelChange={(model) => {
