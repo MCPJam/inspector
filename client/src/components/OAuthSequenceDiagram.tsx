@@ -275,39 +275,18 @@ interface OAuthSequenceDiagramProps {
   protocolVersion?: OAuthProtocolVersion;
 }
 
-// Helper to determine status based on current step
+// Helper to determine status based on current step and actual action order
 const getActionStatus = (
   actionStep: OAuthFlowStep | string,
   currentStep: OAuthFlowStep,
+  actionsInFlow: Array<{ id: string }>,
 ): NodeStatus => {
-  const stepOrder: (OAuthFlowStep | string)[] = [
-    "idle",
-    "request_without_token",
-    "received_401_unauthorized",
-    "request_resource_metadata",
-    "received_resource_metadata",
-    "request_authorization_server_metadata",
-    "received_authorization_server_metadata",
-    // CIMD steps (2025-11-25 spec)
-    "cimd_prepare",
-    "cimd_fetch_request",
-    "cimd_metadata_response",
-    // DCR step (both protocols)
-    "request_client_registration",
-    "received_client_credentials",
-    "generate_pkce_parameters",
-    "authorization_request",
-    "browser_to_auth_server",
-    "auth_redirect_to_browser",
-    "received_authorization_code",
-    "token_request",
-    "received_access_token",
-    "authenticated_mcp_request",
-    "complete",
-  ];
+  // Find indices in the actual flow (not a hardcoded order)
+  const actionIndex = actionsInFlow.findIndex((a) => a.id === actionStep);
+  const currentIndex = actionsInFlow.findIndex((a) => a.id === currentStep);
 
-  const actionIndex = stepOrder.indexOf(actionStep);
-  const currentIndex = stepOrder.indexOf(currentStep);
+  // If step not found in flow, it's pending
+  if (actionIndex === -1) return "pending";
 
   // Show completed steps (everything up to and including current)
   if (actionIndex <= currentIndex) return "complete";
@@ -890,7 +869,7 @@ const DiagramContent = memo(
 
       // Create action edges
       const edges: Edge[] = actions.map((action, index) => {
-        const status = getActionStatus(action.id, currentStep);
+        const status = getActionStatus(action.id, currentStep, actions);
         const isComplete = status === "complete";
         const isCurrent = status === "current";
         const isPending = status === "pending";
