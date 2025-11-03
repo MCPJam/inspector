@@ -217,10 +217,10 @@ sequenceDiagram
 
 #### Stage 1: Container Page
 
-Located in `server/routes/mcp/resources.ts:131-170`:
+Located in `server/routes/mcp/openai.ts:81-120`:
 
 ```typescript
-resources.get(\"/widget/:toolId\", async (c) => {
+openai.get(\"/widget/:toolId\", async (c) => {
   const toolId = c.req.param(\"toolId\");
   const widgetData = widgetDataStore.get(toolId);
 
@@ -242,7 +242,7 @@ resources.get(\"/widget/:toolId\", async (c) => {
           history.replaceState(null, '', '/');
 
           // Fetch actual widget HTML
-          const response = await fetch('/api/mcp/resources/widget-content/${toolId}');
+          const response = await fetch('/api/mcp/openai/widget-content/${toolId}');
           const html = await response.text();
 
           // Replace entire document
