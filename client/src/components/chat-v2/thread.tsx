@@ -29,6 +29,9 @@ import {
 } from "lucide-react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { getProviderLogoFromModel } from "../chat/chat-helpers";
+import { OpenAIAppRenderer } from "./openai-app-renderer";
+import { callTool, getToolServerId, ToolServerMap } from "@/lib/mcp-tools-api";
+import { MemoizedMarkdown } from "./memomized-markdown";
 
 type AnyPart = UIMessagePart<UIDataTypes, UITools>;
 type ToolState =
@@ -42,6 +45,8 @@ interface ThreadProps {
   sendFollowUpMessage: (text: string) => void;
   model: ModelDefinition;
   isLoading: boolean;
+  toolsMetadata: Record<string, Record<string, any>>;
+  toolServerMap: ToolServerMap;
 }
 
 export function Thread({
@@ -49,6 +54,8 @@ export function Thread({
   sendFollowUpMessage,
   model,
   isLoading,
+  toolsMetadata,
+  toolServerMap,
 }: ThreadProps) {
   return (
     <div className="flex-1 overflow-y-auto pb-4">
@@ -59,6 +66,8 @@ export function Thread({
             message={message}
             model={model}
             onSendFollowUp={sendFollowUpMessage}
+            toolsMetadata={toolsMetadata}
+            toolServerMap={toolServerMap}
           />
         ))}
         {isLoading && <ThinkingIndicator model={model} />}
@@ -71,10 +80,14 @@ function MessageView({
   message,
   model,
   onSendFollowUp,
+  toolsMetadata,
+  toolServerMap,
 }: {
   message: UIMessage;
   model: ModelDefinition;
   onSendFollowUp: (text: string) => void;
+  toolsMetadata: Record<string, Record<string, any>>;
+  toolServerMap: ToolServerMap;
 }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const logoSrc = getProviderLogoFromModel(model, themeMode);
@@ -91,6 +104,8 @@ function MessageView({
               part={part}
               role={role}
               onSendFollowUp={onSendFollowUp}
+              toolsMetadata={toolsMetadata}
+              toolServerMap={toolServerMap}
             />
           ))}
         </div>
@@ -122,6 +137,8 @@ function MessageView({
                 part={part}
                 role={role}
                 onSendFollowUp={onSendFollowUp}
+                toolsMetadata={toolsMetadata}
+                toolServerMap={toolServerMap}
               />
             ))}
           </div>
@@ -152,15 +169,23 @@ function PartSwitch({
   part,
   role,
   onSendFollowUp,
+  toolsMetadata,
+  toolServerMap,
 }: {
   part: AnyPart;
   role: UIMessage["role"];
   onSendFollowUp: (text: string) => void;
+  toolsMetadata: Record<string, Record<string, any>>;
+  toolServerMap: ToolServerMap;
 }) {
   if (isToolPart(part) || isDynamicTool(part)) {
-    const maybeUiResource = (part as any)?.output?.content?.[0] ?? undefined;
+    let maybeUiResource: any;
+    if (isToolPart(part)) {
+      maybeUiResource = (part as any)?.output?.value?.content?.[0];
+    } else {
+      maybeUiResource = (part as any)?.output?.content?.[0];
+    }
     if (maybeUiResource && isUIResource(maybeUiResource)) {
-      // This renders MCP-UI
       return (
         <>
           <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />
@@ -171,7 +196,74 @@ function PartSwitch({
         </>
       );
     }
-    // TODO: This is where we probably need to do OpenAI Apps SDK
+
+    // TODO: Confirm that this is correct.
+    if (
+      (isDynamicTool(part) || isToolPart(part)) &&
+      isPartOpenAIApp(part, toolsMetadata)
+    ) {
+      console.log("part", part);
+      let toolInput: any = null;
+      let toolOutput: any = null;
+      let toolName: string | undefined;
+
+      // Check free chat or BYOK. isDynamicTool(part) is true for BYOK.
+      const toolState = (part as any).state ?? undefined;
+      if (toolState === "output-available") {
+        if (isDynamicTool(part)) {
+          toolName = (part as DynamicToolUIPart).toolName;
+          toolInput = (part as DynamicToolUIPart).input;
+          toolOutput = (part as DynamicToolUIPart).output;
+        } else {
+          toolName = getToolNameFromType((part as any).type);
+          toolInput = (part as any).input;
+          toolOutput = (part as any).output.value;
+        }
+      }
+      const serverId = toolName
+        ? getToolServerId(toolName, toolServerMap)
+        : undefined;
+
+      if (toolState !== "output-available") {
+        return (
+          <>
+            <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />
+            <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">
+              Waiting for tool finish executing...
+            </div>
+          </>
+        );
+      }
+      if (!toolName || !serverId) {
+        return (
+          <>
+            <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />
+            <div className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2">
+              Failed to load tool name or server id.
+            </div>
+          </>
+        );
+      }
+
+      return (
+        <>
+          <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />
+          <OpenAIAppRenderer
+            serverId={serverId}
+            toolCallId={(part as any).toolCallId}
+            toolName={toolName}
+            toolState={(part as any).state as ToolState | undefined}
+            toolInput={toolInput ?? null}
+            toolOutput={toolOutput ?? null}
+            toolMetadata={toolsMetadata[toolName] ?? undefined}
+            onSendFollowUp={onSendFollowUp}
+            onCallTool={(toolName, params) =>
+              callTool(serverId, toolName, params)
+            }
+          />
+        </>
+      );
+    }
     return <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />;
   }
 
@@ -203,9 +295,10 @@ function TextPart({ text, role }: { text: string; role: UIMessage["role"] }) {
   const textColorClass =
     role === "user" ? "text-primary-foreground" : "text-foreground";
   return (
-    <p className={`whitespace-pre-wrap break-words ${textColorClass}`}>
-      {text}
-    </p>
+    <MemoizedMarkdown
+      content={text}
+      className={`break-words ${textColorClass}`}
+    />
   );
 }
 
@@ -513,6 +606,18 @@ function isDynamicTool(part: unknown): part is DynamicToolUIPart {
     !!part &&
     typeof (part as any).type === "string" &&
     (part as any).type === "dynamic-tool"
+  );
+}
+
+function isPartOpenAIApp(
+  part: unknown,
+  toolsMetadata: Record<string, Record<string, any>>,
+): part is DynamicToolUIPart {
+  const toolName = (part as DynamicToolUIPart).toolName;
+  const toolNameFromType = getToolNameFromType((part as any).type);
+  return (
+    toolsMetadata[toolName]?.["openai/outputTemplate"] !== undefined ||
+    toolsMetadata[toolNameFromType]?.["openai/outputTemplate"] !== undefined
   );
 }
 
