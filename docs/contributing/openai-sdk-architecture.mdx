@@ -818,15 +818,20 @@ server.connect(transport);
    - Verify MCP server is connected and responsive
    - Increase timeout in `callTool` implementation (default: 30s)
 
-4. **React Router 404 errors**
+5. **React Router 404 errors**
    - Confirm Stage 1 executes `history.replaceState('/')` before loading
    - Check that widget uses `BrowserRouter` not `HashRouter`
    - Verify `<base href=\"/\">` is present in HTML
 
-5. **State doesn't persist**
+6. **State doesn't persist**
    - Check localStorage in browser DevTools
-   - Verify `widgetStateKey` format is consistent
+   - Verify `widgetStateKey` format: `openai-widget-state:${toolName}:${toolId}`
    - Confirm `setWidgetState` postMessage handler is working
+
+7. **Theme not updating**
+   - Check that `openai:set_globals` messages are being sent from parent
+   - Verify widget has event listener for theme changes
+   - Inspect `window.openai.theme` value in widget console
 
 **Debug Tools:**
 
