@@ -161,7 +161,10 @@ interface WidgetData {
   uri: string;
   toolInput: Record<string, any>;
   toolOutput: any;
+  toolResponseMetadata?: Record<string, any> | null;
   toolId: string;
+  toolName: string;
+  theme?: "light" | "dark";
   timestamp: number;
 }
 
