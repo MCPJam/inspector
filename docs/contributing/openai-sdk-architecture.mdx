@@ -61,11 +61,11 @@ graph TB
         Tool -.returns.-> Resource
     end
 
-    Renderer -->|Store widget data| Storage
+    Renderer -->|Store widget data| StoreEndpoint
     Renderer -->|Load iframe| WidgetEndpoint
     Iframe -->|postMessage| Renderer
     Renderer -->|Call tool| ToolExec
-    ToolExec -->|Fetch HTML| MCPRead
+    ContentEndpoint -->|Fetch HTML| MCPRead
     MCPRead -->|Read resource| Resource
 
     classDef frontend fill:#e1f5ff,stroke:#0288d1
