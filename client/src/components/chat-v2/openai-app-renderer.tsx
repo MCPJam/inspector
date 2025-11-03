@@ -120,7 +120,9 @@ export function OpenAIAppRenderer({
         });
 
         if (!response.ok) {
-          throw new Error(`Failed to store widget data: ${response.statusText}`);
+          throw new Error(
+            `Failed to store widget data: ${response.statusText}`,
+          );
         }
 
         if (isCancelled) return;
