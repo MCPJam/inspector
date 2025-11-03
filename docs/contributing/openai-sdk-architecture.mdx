@@ -482,6 +482,42 @@ useEffect(() => {
 }, [widgetUrl, onCallTool, onSendFollowup]);
 ```
 
+#### Theme Synchronization
+
+The parent component automatically sends theme updates to widgets when the user changes between light and dark mode:
+
+Located in `client/src/components/chat-v2/openai-app-renderer.tsx:293-307`:
+
+```typescript
+// Send theme updates to iframe when theme changes
+useEffect(() => {
+  if (!isReady || !iframeRef.current?.contentWindow) return;
+
+  iframeRef.current.contentWindow.postMessage(
+    {
+      type: 'openai:set_globals',
+      globals: {
+        theme: themeMode,
+      },
+    },
+    '*',
+  );
+}, [themeMode, isReady]);
+```
+
+Widgets can listen for theme changes using the `openai:set_globals` event:
+
+```javascript
+// In widget code
+window.addEventListener('message', (event) => {
+  if (event.data.type === 'openai:set_globals') {
+    const { theme } = event.data.globals;
+    // Update widget UI based on theme
+    document.body.classList.toggle('dark', theme === 'dark');
+  }
+});
+```
+
 #### Tool Execution Bridge
 
 Located in `client/src/components/ChatTab.tsx:181-207`:
