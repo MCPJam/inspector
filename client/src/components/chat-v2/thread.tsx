@@ -202,7 +202,6 @@ function PartSwitch({
       (isDynamicTool(part) || isToolPart(part)) &&
       isPartOpenAIApp(part, toolsMetadata)
     ) {
-      console.log("part", part);
       let toolInput: any = null;
       let toolOutput: any = null;
       let toolName: string | undefined;
