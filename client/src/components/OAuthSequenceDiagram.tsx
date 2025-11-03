@@ -1,4 +1,4 @@
-import { useMemo, memo } from "react";
+import { useMemo, memo, useEffect } from "react";
 import type { ReactNode } from "react";
 import {
   Background,
@@ -12,6 +12,8 @@ import {
   ReactFlow,
   EdgeLabelRenderer,
   BaseEdge,
+  useReactFlow,
+  ReactFlowProvider,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { cn } from "@/lib/utils";
@@ -312,12 +314,15 @@ const getActionStatus = (
   return "pending";
 };
 
-export const OAuthSequenceDiagram = memo(
+// Internal component that has access to ReactFlow instance
+const DiagramContent = memo(
   ({
     flowState,
     registrationStrategy = "cimd",
     protocolVersion = "2025-11-25",
   }: OAuthSequenceDiagramProps) => {
+    const reactFlowInstance = useReactFlow();
+
     const { nodes, edges } = useMemo(() => {
       const currentStep = flowState.currentStep;
 
@@ -938,6 +943,57 @@ export const OAuthSequenceDiagram = memo(
       return { nodes, edges };
     }, [flowState, registrationStrategy, protocolVersion]);
 
+    // Auto-zoom to current step
+    useEffect(() => {
+      if (!reactFlowInstance || !flowState.currentStep) {
+        return;
+      }
+
+      // Small delay to ensure nodes are rendered
+      const timer = setTimeout(() => {
+        // If reset to idle, zoom back to the top
+        if (flowState.currentStep === "idle") {
+          // Zoom to the top of the diagram
+          reactFlowInstance.setCenter(650, 150, {
+            zoom: 0.8,
+            duration: 800,
+          });
+          return;
+        }
+
+        // Find the edge corresponding to the current step
+        const currentEdgeId = `edge-${flowState.currentStep}`;
+        const currentEdge = edges.find((e) => e.id === currentEdgeId);
+
+        if (currentEdge && currentEdge.data?.status === "current") {
+          // Get source and target actor positions
+          const sourceNode = nodes.find((n) => n.id === currentEdge.source);
+          const targetNode = nodes.find((n) => n.id === currentEdge.target);
+
+          if (sourceNode && targetNode) {
+            // Find the action index to calculate Y position
+            const actionIndex = edges.findIndex((e) => e.id === currentEdgeId);
+
+            // Calculate positions
+            // Actor nodes have a header (~52px) + some padding (~50px)
+            // Each action segment is ACTION_SPACING (180) apart
+            const headerOffset = 102;
+            const actionY = headerOffset + (actionIndex * 180) + 40; // 40 is half of SEGMENT_HEIGHT
+            const centerX = (sourceNode.position.x + targetNode.position.x) / 2 + 70; // +70 to account for node width
+            const centerY = actionY;
+
+            // Zoom into the current step with animation
+            reactFlowInstance.setCenter(centerX, centerY, {
+              zoom: 1.2,
+              duration: 800,
+            });
+          }
+        }
+      }, 100);
+
+      return () => clearTimeout(timer);
+    }, [flowState.currentStep, edges, nodes, reactFlowInstance]);
+
     return (
       <div className="w-full h-full">
         <ReactFlow
@@ -945,19 +1001,35 @@ export const OAuthSequenceDiagram = memo(
           edges={edges}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
-          fitView
-          minZoom={0.5}
-          maxZoom={1.5}
-          defaultViewport={{ x: 0, y: 0, zoom: 1 }}
+          minZoom={0.4}
+          maxZoom={2}
+          defaultViewport={{ x: 0, y: 0, zoom: 0.8 }}
           proOptions={{ hideAttribution: true }}
           nodesDraggable={false}
           nodesConnectable={false}
           elementsSelectable={false}
+          panOnScroll={true}
+          zoomOnScroll={true}
+          zoomOnPinch={true}
+          panOnDrag={true}
         >
           <Background />
           <Controls />
         </ReactFlow>
       </div>
+    );
+  },
+);
+
+DiagramContent.displayName = "DiagramContent";
+
+// Wrapper component with ReactFlowProvider
+export const OAuthSequenceDiagram = memo(
+  (props: OAuthSequenceDiagramProps) => {
+    return (
+      <ReactFlowProvider>
+        <DiagramContent {...props} />
+      </ReactFlowProvider>
     );
   },
 );
