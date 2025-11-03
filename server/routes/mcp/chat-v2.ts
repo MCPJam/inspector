@@ -45,8 +45,6 @@ chatV2.post("/", async (c) => {
       ? undefined
       : (temperature ?? DEFAULT_TEMPERATURE);
 
-    console.log("Resolved temperature:", resolvedTemperature);
-
     // If model is MCPJam-provided, delegate to backend free-chat endpoint
     if (modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id)) {
       if (!process.env.CONVEX_HTTP_URL) {
