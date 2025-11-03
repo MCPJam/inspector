@@ -44,6 +44,7 @@ import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-
 import { ConnectMcpServerCallout } from "@/components/chat-v2/connect-mcp-server-callout";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
+import { ErrorBox } from "@/components/chat-v2/error";
 
 const DEFAULT_SYSTEM_PROMPT =
   "You are a helpful assistant with access to MCP tools.";
@@ -66,6 +67,17 @@ const STARTER_PROMPTS: Array<{ label: string; text: string }> = [
 interface ChatTabProps {
   connectedServerConfigs: Record<string, ServerWithName>;
   selectedServerNames: string[];
+}
+
+function formatErrorMessage(error: unknown): string | null {
+  if (!error) return null;
+  if (typeof error === "string") return error;
+  if (error instanceof Error) return error.message;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
 }
 
 export function ChatTabV2({
@@ -195,7 +207,7 @@ export function ChatTabV2({
       : false;
   }, [selectedModel]);
 
-  const { messages, sendMessage, stop, status, setMessages } = useChat({
+  const { messages, sendMessage, stop, status, error, setMessages } = useChat({
     id: chatSessionId,
     transport: transport!,
     // Disable client auto-send for MCPJam-provided models; server handles tool loop
@@ -342,6 +354,8 @@ export function ChatTabV2({
   const showDisabledCallout =
     messages.length === 0 && (shouldShowUpsell || shouldShowConnectCallout);
 
+  const errorMessage = formatErrorMessage(error);
+
   const handleSignUp = () => {
     posthog.capture("sign_up_button_clicked", {
       location: "chat_tab",
@@ -461,17 +475,27 @@ export function ChatTabV2({
               </div>
             ) : (
               <>
-                <div className="flex-1 overflow-y-auto">
-                  <Thread
-                    messages={messages}
-                    sendFollowUpMessage={(text: string) =>
-                      sendMessage({ text })
-                    }
-                    model={selectedModel}
-                    isLoading={status === "submitted"}
-                    toolsMetadata={toolsMetadata}
-                    toolServerMap={toolServerMap}
-                  />
+                <div className="flex flex-1 flex-col min-h-0">
+                  <div className="flex-1 overflow-y-auto">
+                    <Thread
+                      messages={messages}
+                      sendFollowUpMessage={(text: string) =>
+                        sendMessage({ text })
+                      }
+                      model={selectedModel}
+                      isLoading={status === "submitted"}
+                      toolsMetadata={toolsMetadata}
+                      toolServerMap={toolServerMap}
+                    />
+                  </div>
+                  {errorMessage && (
+                    <div className="px-4 pb-4 pt-4">
+                      <ErrorBox
+                        message={errorMessage}
+                        onResetChat={resetChat}
+                      />
+                    </div>
+                  )}
                 </div>
 
                 <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0">
