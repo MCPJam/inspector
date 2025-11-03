@@ -40,7 +40,6 @@ chatV2.post("/", async (c) => {
     if (!modelDefinition) {
       return c.json({ error: "model is not supported" }, 400);
     }
-    console.log("selectedServers", selectedServers);
     const mcpTools = await mcpClientManager.getToolsForAiSdk(selectedServers);
 
     // If model is MCPJam-provided, delegate to backend free-chat endpoint
@@ -170,7 +169,7 @@ chatV2.post("/", async (c) => {
 
             const beforeLen = messageHistory.length;
             if (hasUnresolvedToolCalls(messageHistory as any)) {
-              await executeToolCallsFromMessages(messageHistory as any, {
+              await executeToolCallsFromMessages(messageHistory, {
                 clientManager: mcpClientManager,
               });
             }
