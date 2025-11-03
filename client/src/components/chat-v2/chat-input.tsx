@@ -69,7 +69,7 @@ export function ChatInput({
     <form ref={formRef} className={cn("w-full", className)} onSubmit={onSubmit}>
       <div
         className={cn(
-          "relative flex w-full flex-col rounded-3xl border border-border/40",
+          "relative flex w-full flex-col rounded-3xl",
           "bg-muted/70 px-2 pt-2 pb-2",
         )}
       >
