@@ -172,6 +172,7 @@ export function ChatTabV2({
       ? undefined
       : lastAssistantMessageIsCompleteWithToolCalls,
   });
+  const hasMessages = messages.length > 0;
   const resetChat = useCallback(() => {
     setChatSessionId(generateId());
     setMessages([]);
@@ -308,39 +309,77 @@ export function ChatTabV2({
       >
         <ResizablePanel defaultSize={70} minSize={40} className="min-w-0">
           <div className="flex flex-col bg-background h-full min-h-0 overflow-hidden">
-            <Thread
-              messages={messages}
-              sendFollowUpMessage={(text: string) => sendMessage({ text })}
-              model={selectedModel}
-              isLoading={status === "submitted"}
-              toolsMetadata={toolsMetadata}
-              toolServerMap={toolServerMap}
-            />
-            <div className="bg-background/80 backdrop-blur-sm flex-shrink-0">
-              <div className="max-w-4xl mx-auto p-4">
-                <ChatInput
-                  value={input}
-                  onChange={setInput}
-                  onSubmit={onSubmit}
-                  stop={stop}
-                  disabled={status !== "ready"}
-                  isLoading={status === "streaming" || status === "submitted"}
-                  placeholder="Ask something…"
-                  currentModel={selectedModel}
-                  availableModels={availableModels}
-                  onModelChange={(model) => {
-                    setSelectedModelId(String(model.id));
-                    resetChat();
-                  }}
-                  systemPrompt={systemPrompt}
-                  onSystemPromptChange={setSystemPrompt}
-                  temperature={temperature}
-                  onTemperatureChange={setTemperature}
-                  hasMessages={messages.length > 0}
-                  onResetChat={resetChat}
+            {hasMessages ? (
+              <>
+                <Thread
+                  messages={messages}
+                  sendFollowUpMessage={(text: string) => sendMessage({ text })}
+                  model={selectedModel}
+                  isLoading={status === "submitted"}
+                  toolsMetadata={toolsMetadata}
+                  toolServerMap={toolServerMap}
                 />
+                <div className="bg-background/80 backdrop-blur-sm flex-shrink-0">
+                  <div className="max-w-4xl mx-auto p-4">
+                    <ChatInput
+                      value={input}
+                      onChange={setInput}
+                      onSubmit={onSubmit}
+                      stop={stop}
+                      disabled={status !== "ready"}
+                      isLoading={status === "streaming" || status === "submitted"}
+                      placeholder="Ask something…"
+                      currentModel={selectedModel}
+                      availableModels={availableModels}
+                      onModelChange={(model) => {
+                        setSelectedModelId(String(model.id));
+                        resetChat();
+                      }}
+                      systemPrompt={systemPrompt}
+                      onSystemPromptChange={setSystemPrompt}
+                      temperature={temperature}
+                      onTemperatureChange={setTemperature}
+                      hasMessages={hasMessages}
+                      onResetChat={resetChat}
+                    />
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="flex flex-1 flex-col">
+                <div className="flex flex-1 flex-col items-center justify-center px-4">
+                  <div className="w-full max-w-xl space-y-4 text-center">
+                    <h2 className="text-base font-medium">Test your servers</h2>
+                    <p className="text-sm text-muted-foreground">
+                      Start typing to chat with your connected MCP servers.
+                    </p>
+                  </div>
+                  <div className="w-full max-w-2xl pt-10">
+                    <ChatInput
+                      value={input}
+                      onChange={setInput}
+                      onSubmit={onSubmit}
+                      stop={stop}
+                      disabled={status !== "ready"}
+                      isLoading={status === "streaming" || status === "submitted"}
+                      placeholder="Ask something…"
+                      currentModel={selectedModel}
+                      availableModels={availableModels}
+                      onModelChange={(model) => {
+                        setSelectedModelId(String(model.id));
+                        resetChat();
+                      }}
+                      systemPrompt={systemPrompt}
+                      onSystemPromptChange={setSystemPrompt}
+                      temperature={temperature}
+                      onTemperatureChange={setTemperature}
+                      hasMessages={hasMessages}
+                      onResetChat={resetChat}
+                    />
+                  </div>
+                </div>
               </div>
-            </div>
+            )} 
 
             <ElicitationDialog
               elicitationRequest={elicitation}
