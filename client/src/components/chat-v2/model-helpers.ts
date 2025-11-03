@@ -78,7 +78,8 @@ export function buildAvailableModels(params: {
 export const getDefaultModel = (
   availableModels: ModelDefinition[],
 ): ModelDefinition => {
-  const modelIdsByPriority: Array<Model> = [
+  const modelIdsByPriority: Array<Model | string> = [
+    "meta-llama/llama-3.3-70b-instruct",
     Model.CLAUDE_3_7_SONNET_LATEST, // anthropic
     Model.GPT_4_1, // openai
     Model.GEMINI_2_5_PRO, // google

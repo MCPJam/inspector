@@ -96,7 +96,7 @@ export function ChatInput({
               currentModel={currentModel}
               availableModels={availableModels}
               onModelChange={onModelChange}
-              isLoading={isLoading || disabled}
+              isLoading={isLoading}
               hasMessages={hasMessages}
             />
             <SystemPromptSelector
@@ -107,7 +107,6 @@ export function ChatInput({
               onSystemPromptChange={onSystemPromptChange}
               temperature={temperature}
               onTemperatureChange={onTemperatureChange}
-              disabled={disabled}
               isLoading={isLoading}
               hasMessages={hasMessages}
               onResetChat={onResetChat}
