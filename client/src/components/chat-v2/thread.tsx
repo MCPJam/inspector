@@ -505,11 +505,20 @@ function ThinkingIndicator({ model }: { model: ModelDefinition }) {
 
       <div className="flex-1 min-w-0">
         <div className="inline-flex items-center gap-2 text-muted-foreground/80">
-          <span
-            className="inline-flex h-2.5 w-2.5 animate-ping rounded-full bg-muted-foreground/60"
-            aria-hidden="true"
-          />
-          <span className="text-sm italic">Thinking…</span>
+          <span className="text-sm italic">
+            Thinking
+            <span className="inline-flex">
+              <span className="animate-[blink_1.4s_ease-in-out_infinite]">
+                .
+              </span>
+              <span className="animate-[blink_1.4s_ease-in-out_0.2s_infinite]">
+                .
+              </span>
+              <span className="animate-[blink_1.4s_ease-in-out_0.4s_infinite]">
+                .
+              </span>
+            </span>
+          </span>
         </div>
       </div>
     </article>
