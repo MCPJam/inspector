@@ -161,6 +161,14 @@ export function ChatTabV2({
   ]);
 
   useEffect(() => {
+    posthog.capture("chat_tab_viewed", {
+      location: "chat_tab",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+    });
+  }, []);
+
+  useEffect(() => {
     let active = true;
     (async () => {
       try {
@@ -333,6 +341,7 @@ export function ChatTabV2({
   const shouldShowConnectCallout = disableForServers && !shouldShowUpsell;
   const showDisabledCallout =
     messages.length === 0 && (shouldShowUpsell || shouldShowConnectCallout);
+
   const handleSignUp = () => {
     posthog.capture("sign_up_button_clicked", {
       location: "chat_tab",
@@ -350,6 +359,14 @@ export function ChatTabV2({
       !disableForAuthentication &&
       !disableForServers
     ) {
+      posthog.capture("send_message", {
+        location: "chat_tab",
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+        model_id: selectedModel?.id ?? null,
+        model_name: selectedModel?.name ?? null,
+        model_provider: selectedModel?.provider ?? null,
+      });
       sendMessage({ text: input });
       setInput("");
     }
@@ -360,6 +377,14 @@ export function ChatTabV2({
       setInput(prompt);
       return;
     }
+    posthog.capture("send_message", {
+      location: "chat_tab",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+      model_id: selectedModel?.id ?? null,
+      model_name: selectedModel?.name ?? null,
+      model_provider: selectedModel?.provider ?? null,
+    });
     sendMessage({ text: prompt });
     setInput("");
   };
