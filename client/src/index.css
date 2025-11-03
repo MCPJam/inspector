@@ -231,3 +231,14 @@
 .disable-transitions * {
   transition: none !important;
 }
+
+@keyframes blink {
+  0%,
+  20%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
+}
