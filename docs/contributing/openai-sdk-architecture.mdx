@@ -308,7 +308,7 @@ graph LR
 
 #### API Implementation
 
-Located in `server/routes/mcp/resources.ts:250-376`:
+Located in `server/routes/mcp/openai.ts:213-376`:
 
 **Core API Methods:**
 
@@ -316,14 +316,26 @@ Located in `server/routes/mcp/resources.ts:250-376`:
 const openaiAPI = {
   toolInput: ${JSON.stringify(toolInput)},
   toolOutput: ${JSON.stringify(toolOutput)},
+  toolResponseMetadata: ${JSON.stringify(toolResponseMetadata ?? null)},
   displayMode: 'inline',
-  theme: 'dark',
+  maxHeight: 600,
+  theme: ${JSON.stringify(theme ?? "dark")},
   locale: 'en-US',
+  safeArea: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },
+  userAgent: {
+    device: { type: 'desktop' },
+    capabilities: { hover: true, touch: false }
+  },
   widgetState: null,
 
   // Persist widget state
   async setWidgetState(state) {
-    localStorage.setItem(widgetStateKey, JSON.stringify(state));
+    this.widgetState = state;
+    try {
+      localStorage.setItem(widgetStateKey, JSON.stringify(state));
+    } catch (err) {
+      console.error('[OpenAI Widget] Failed to save widget state:', err);
+    }
     window.parent.postMessage({
       type: 'openai:setWidgetState',
       toolId: toolId,
@@ -380,6 +392,25 @@ const openaiAPI = {
       mode
     }, '*');
     return { mode };
+  },
+
+  // Alias for compatibility
+  async sendFollowUpMessage(args) {
+    const prompt = typeof args === 'string' ? args : (args?.prompt || '');
+    return this.sendFollowupTurn(prompt);
+  },
+
+  // Open external URL
+  async openExternal(options) {
+    const href = typeof options === 'string' ? options : options?.href;
+    if (!href) {
+      throw new Error('href is required for openExternal');
+    }
+    window.parent.postMessage({
+      type: 'openai:openExternal',
+      href
+    }, '*');
+    window.open(href, '_blank', 'noopener,noreferrer');
   }
 };
 
