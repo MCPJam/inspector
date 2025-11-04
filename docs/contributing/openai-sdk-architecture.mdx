@@ -495,12 +495,12 @@ useEffect(() => {
 
   iframeRef.current.contentWindow.postMessage(
     {
-      type: 'openai:set_globals',
+      type: "openai:set_globals",
       globals: {
         theme: themeMode,
       },
     },
-    '*',
+    "*",
   );
 }, [themeMode, isReady]);
 ```
@@ -509,11 +509,11 @@ Widgets can listen for theme changes using the `openai:set_globals` event:
 
 ```javascript
 // In widget code
-window.addEventListener('message', (event) => {
-  if (event.data.type === 'openai:set_globals') {
+window.addEventListener("message", (event) => {
+  if (event.data.type === "openai:set_globals") {
     const { theme } = event.data.globals;
     // Update widget UI based on theme
-    document.body.classList.toggle('dark', theme === 'dark');
+    document.body.classList.toggle("dark", theme === "dark");
   }
 });
 ```
