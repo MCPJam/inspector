@@ -8,7 +8,7 @@ import {
 } from "ai";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { createLlmModel } from "../../utils/chat-helpers";
-import { isMCPJamProvidedModel } from "@/shared/types";
+import { isGPT5Model, isMCPJamProvidedModel } from "@/shared/types";
 import zodToJsonSchema from "zod-to-json-schema";
 import {
   hasUnresolvedToolCalls,
@@ -41,6 +41,9 @@ chatV2.post("/", async (c) => {
       return c.json({ error: "model is not supported" }, 400);
     }
     const mcpTools = await mcpClientManager.getToolsForAiSdk(selectedServers);
+    const resolvedTemperature = isGPT5Model(modelDefinition.id)
+      ? undefined
+      : (temperature ?? DEFAULT_TEMPERATURE);
 
     // If model is MCPJam-provided, delegate to backend free-chat endpoint
     if (modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id)) {
@@ -122,7 +125,9 @@ chatV2.post("/", async (c) => {
                 messages: JSON.stringify(messageHistory),
                 model: String(modelDefinition.id),
                 systemPrompt,
-                temperature: temperature ?? DEFAULT_TEMPERATURE,
+                ...(resolvedTemperature == undefined
+                  ? {}
+                  : { temperature: resolvedTemperature }),
                 tools: toolDefs,
               }),
             });
@@ -210,7 +215,9 @@ chatV2.post("/", async (c) => {
     const result = streamText({
       model: llmModel,
       messages: convertToModelMessages(messages),
-      temperature: temperature ?? DEFAULT_TEMPERATURE,
+      ...(resolvedTemperature == undefined
+        ? {}
+        : { temperature: resolvedTemperature }),
       system: systemPrompt,
       tools: mcpTools,
       stopWhen: stepCountIs(20),
