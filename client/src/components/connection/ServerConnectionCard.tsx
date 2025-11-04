@@ -37,7 +37,6 @@ interface ServerConnectionCardProps {
   onReconnect: (serverName: string) => void;
   onEdit: (server: ServerWithName) => void;
   onRemove?: (serverName: string) => void;
-  onViewDetail?: (server: ServerWithName) => void;
 }
 
 export function ServerConnectionCard({
@@ -46,7 +45,6 @@ export function ServerConnectionCard({
   onReconnect,
   onEdit,
   onRemove,
-  onViewDetail,
 }: ServerConnectionCardProps) {
   const posthog = usePostHog();
   const [isReconnecting, setIsReconnecting] = useState(false);
@@ -127,7 +125,7 @@ export function ServerConnectionCard({
         className={`border border-border/50 bg-card/50 backdrop-blur-sm hover:border-border transition-colors ${
           isConnected ? "cursor-pointer" : "cursor-default"
         }`}
-        onClick={() => isConnected && onViewDetail?.(server)}
+        onClick={() => isConnected && onEdit(server)}
       >
         <div className="p-4 space-y-3 py-0">
           {/* Header Row */}
