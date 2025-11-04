@@ -38,8 +38,8 @@ import {
   getSupportedRegistrationStrategies,
 } from "../lib/oauth/state-machines/factory";
 import { DebugMCPOAuthClientProvider } from "../lib/debug-oauth-provider";
-import { OAuthSequenceDiagram } from "./OAuthSequenceDiagram";
-import { OAuthAuthorizationModal } from "./OAuthAuthorizationModal";
+import { OAuthSequenceDiagram } from "./oauth/OAuthSequenceDiagram";
+import { OAuthAuthorizationModal } from "./oauth/OAuthAuthorizationModal";
 import { ServerModal } from "./connection/ServerModal";
 import { ServerFormData } from "@/shared/types";
 import { MCPServerConfig } from "@/sdk";
