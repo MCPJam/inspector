@@ -281,7 +281,7 @@ export const createDebugOAuthStateMachine = (
                   protocolVersion: "2025-11-25",
                   capabilities: {},
                   clientInfo: {
-                    name: "MCP Inspector",
+                    name: "MCPJam Inspector",
                     version: "1.0.0",
                   },
                 },
@@ -330,7 +330,7 @@ export const createDebugOAuthStateMachine = (
                     protocolVersion: "2025-11-25",
                     capabilities: {},
                     clientInfo: {
-                      name: "MCP Inspector",
+                      name: "MCPJam Inspector",
                       version: "1.0.0",
                     },
                   },
@@ -882,7 +882,7 @@ export const createDebugOAuthStateMachine = (
                 state.authorizationServerMetadata.scopes_supported;
 
               const clientMetadata: Record<string, any> = {
-                client_name: "MCP Inspector Debug Client",
+                client_name: "MCPJam Inspector Debug Client",
                 redirect_uris: [redirectUri],
                 grant_types: ["authorization_code", "refresh_token"],
                 response_types: ["code"],
@@ -1674,7 +1674,7 @@ export const createDebugOAuthStateMachine = (
                   protocolVersion: "2025-11-25",
                   capabilities: {},
                   clientInfo: {
-                    name: "MCP Inspector",
+                    name: "MCPJam Inspector",
                     version: "1.0.0",
                   },
                 },
@@ -1690,7 +1690,7 @@ export const createDebugOAuthStateMachine = (
               {
                 Request: "MCP initialize with OAuth bearer token",
                 "Protocol Version": "2025-11-25",
-                Client: "MCP Inspector v1.0.0",
+                Client: "MCPJam Inspector v1.0.0",
                 Endpoint: state.serverUrl,
               },
             );
@@ -1736,7 +1736,7 @@ export const createDebugOAuthStateMachine = (
                     protocolVersion: "2025-11-25",
                     capabilities: {},
                     clientInfo: {
-                      name: "MCP Inspector",
+                      name: "MCPJam Inspector",
                       version: "1.0.0",
                     },
                   },
