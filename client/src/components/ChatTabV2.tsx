@@ -14,7 +14,7 @@ import {
 } from "ai";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import { ModelDefinition } from "@/shared/types";
+import { ModelDefinition, isGPT5Model } from "@/shared/types";
 import {
   ProviderTokens,
   useAiProviderKeys,
@@ -152,12 +152,14 @@ export function ChatTabV2({
 
   const transport = useMemo(() => {
     const apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
+    const isGpt5 = isGPT5Model(selectedModel.id);
+
     return new DefaultChatTransport({
       api: "/api/mcp/chat-v2",
       body: {
         model: selectedModel,
         apiKey: apiKey,
-        temperature,
+        ...(isGpt5 ? {} : { temperature }),
         systemPrompt,
         selectedServers: selectedConnectedServerNames,
       },
