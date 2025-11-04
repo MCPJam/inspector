@@ -436,8 +436,7 @@ const DiagramContent = memo(
               },
               {
                 id: "cimd_fetch_request",
-                label:
-                  "Fetch metadata from client_id URL",
+                label: "Fetch metadata from client_id URL",
                 description:
                   "Authorization Server fetches client metadata from the URL",
                 from: "authServer",
