@@ -7,31 +7,31 @@ WORKDIR /app
 
 # Copy package.json and package-lock.json files
 COPY package.json package-lock.json ./
-COPY client/package.json client/package-lock.json ./client/
-COPY server/package.json server/package-lock.json ./server/
 COPY sdk/package.json sdk/package-lock.json ./sdk/
 COPY evals-cli/package.json evals-cli/package-lock.json ./evals-cli/
 
 # Install dependencies using package-lock files for consistent versions
 RUN npm ci --legacy-peer-deps
-RUN cd client && npm ci --legacy-peer-deps
-RUN cd server && npm ci --legacy-peer-deps
-RUN cd sdk && npm ci --legacy-peer-deps
-RUN cd evals-cli && npm ci --legacy-peer-deps
+RUN npm --prefix sdk ci --legacy-peer-deps
+RUN npm --prefix evals-cli ci --legacy-peer-deps
 
 # Stage 2: Build client
 FROM deps-base AS client-builder
 COPY shared/ ./shared/
 COPY client/ ./client/
+COPY tsconfig.json ./
+COPY vite.renderer.config.mts ./
+COPY vite.main.config.ts ./
+COPY vite.preload.config.ts ./
 COPY .env.production ./
 # Set environment variable for Docker platform detection
 ENV VITE_DOCKER=true
-RUN cd client && npm run build
+RUN npm run build:client
 
 # Stage 3: Build SDK (required by server)
 FROM deps-base AS sdk-builder
 COPY sdk/ ./sdk/
-RUN cd sdk && npm run build
+RUN npm --prefix sdk run build
 
 # Stage 4: Build server
 FROM deps-base AS server-builder
@@ -39,8 +39,8 @@ COPY --from=sdk-builder /app/sdk/dist ./sdk/dist
 COPY shared/ ./shared/
 COPY evals-cli/ ./evals-cli/
 COPY server/ ./server/
-COPY client/ ./client/
-RUN cd server && npm run build
+COPY tsconfig.json ./
+RUN npm run build:server
 
 # Stage 5: Production image - extend existing or create new
 FROM node:20-slim AS production
@@ -70,8 +70,6 @@ COPY --from=client-builder /app/client/public ./public
 # Copy package.json and node_modules for runtime dependencies
 COPY --from=deps-base /app/package.json ./package.json
 COPY --from=deps-base /app/node_modules ./node_modules
-COPY --from=deps-base /app/server/package.json ./server/package.json
-COPY --from=deps-base /app/server/node_modules ./server/node_modules
 
 # Copy shared types
 COPY shared/ ./shared/
