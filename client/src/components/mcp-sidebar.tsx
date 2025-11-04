@@ -66,11 +66,6 @@ const navigationSections = [
         url: "#auth",
         icon: Signature,
       },
-      {
-        title: "OAuth Flow",
-        url: "#oauth-flow",
-        icon: Workflow,
-      },
     ],
   },
   {
