@@ -366,7 +366,7 @@ const DiagramContent = memo(
           id: "request_authorization_server_metadata",
           label:
             protocolVersion === "2025-11-25"
-              ? "GET OAuth/OIDC metadata\n(path insertion priority)"
+              ? "GET Authorization server metadata endpoint"
               : "GET /.well-known/oauth-authorization-server",
           description:
             protocolVersion === "2025-11-25"
@@ -437,7 +437,7 @@ const DiagramContent = memo(
               {
                 id: "cimd_fetch_request",
                 label:
-                  "Server detects URL-formatted client_id\nFetch metadata from client_id URL",
+                  "Fetch metadata from client_id URL",
                 description:
                   "Authorization Server fetches client metadata from the URL",
                 from: "authServer",
