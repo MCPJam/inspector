@@ -683,6 +683,19 @@ const DiagramContent = memo(
               ]
             : undefined,
         },
+        {
+          id: "complete",
+          label: "MCP response",
+          description: "MCP Server returns successful response",
+          from: "mcpServer",
+          to: "client",
+          details: flowState.accessToken
+            ? [
+                { label: "Status", value: "200 OK" },
+                { label: "Content", value: "tools, resources, prompts" },
+              ]
+            : undefined,
+        },
       ];
 
       // Calculate total height needed for segments
