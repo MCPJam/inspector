@@ -216,7 +216,16 @@ chatV2.post("/", async (c) => {
       stopWhen: stepCountIs(20),
     });
 
-    return result.toUIMessageStreamResponse();
+    return result.toUIMessageStreamResponse({
+      onError: (error) => {
+        console.error("[mcp/chat-v2] stream error:", error);
+        // Return detailed error message to be sent to the client
+        if (error instanceof Error) {
+          return error.message;
+        }
+        return String(error);
+      },
+    });
   } catch (error) {
     console.error("[mcp/chat-v2] failed to process chat request", error);
     return c.json({ error: "Unexpected error" }, 500);
