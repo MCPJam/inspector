@@ -722,13 +722,23 @@ export const OAuthFlowTab = ({
               Reset
             </Button>
             <Button
-              onClick={() => {
-                // If we're at authorization step, open the popup
-                if (oauthFlowState.currentStep === "authorization_request") {
+              onClick={async () => {
+                // If we're about to do authorization or already at it, handle the modal
+                if (
+                  oauthFlowState.currentStep === "authorization_request" ||
+                  oauthFlowState.currentStep === "generate_pkce_parameters"
+                ) {
+                  // First proceed to authorization_request if needed
+                  if (
+                    oauthFlowState.currentStep === "generate_pkce_parameters"
+                  ) {
+                    await proceedToNextStep();
+                  }
+                  // Then open modal
                   setIsAuthModalOpen(true);
                 } else {
                   // Otherwise proceed to next step
-                  void proceedToNextStep();
+                  await proceedToNextStep();
                 }
               }}
               disabled={
@@ -744,7 +754,8 @@ export const OAuthFlowTab = ({
                 </>
               ) : oauthFlowState.isInitiatingAuth ? (
                 "Processing..."
-              ) : oauthFlowState.currentStep === "authorization_request" ? (
+              ) : oauthFlowState.currentStep === "authorization_request" ||
+                oauthFlowState.currentStep === "generate_pkce_parameters" ? (
                 "Ready to authorize"
               ) : (
                 "Next Step"
