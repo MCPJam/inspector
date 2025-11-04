@@ -16,6 +16,10 @@ import { ServerWithName } from "@/hooks/use-app-state";
 import { getStoredTokens, hasOAuthConfig } from "@/lib/mcp-oauth";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import { usePostHog } from "posthog-js/react";
+import { decodeJWT } from "@/lib/jwt-decoder";
+import JsonView from "react18-json-view";
+import "react18-json-view/src/style.css";
+import "react18-json-view/src/dark.css";
 
 interface ServerModalProps {
   isOpen: boolean;
@@ -884,6 +888,53 @@ export function ServerModal({
                                 )}
                               </button>
                             </div>
+                            {(() => {
+                              const decoded = decodeJWT(tokens.access_token);
+                              if (!decoded) return null;
+                              return (
+                                <div className="mt-2">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      toggleTokenExpansion("accessTokenDecoded")
+                                    }
+                                    className="text-xs text-muted-foreground hover:text-foreground cursor-pointer flex items-center gap-1"
+                                  >
+                                    {expandedTokens.has(
+                                      "accessTokenDecoded",
+                                    ) ? (
+                                      <ChevronDown className="h-3 w-3" />
+                                    ) : (
+                                      <ChevronRight className="h-3 w-3" />
+                                    )}
+                                    View Decoded JWT
+                                  </button>
+                                  {expandedTokens.has("accessTokenDecoded") && (
+                                    <div className="mt-1">
+                                      <JsonView
+                                        src={decoded}
+                                        theme="atom"
+                                        dark={true}
+                                        enableClipboard={true}
+                                        displaySize={false}
+                                        collapseStringsAfterLength={100}
+                                        style={{
+                                          fontSize: "11px",
+                                          fontFamily:
+                                            "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                                          backgroundColor:
+                                            "hsl(var(--background))",
+                                          padding: "8px",
+                                          borderRadius: "6px",
+                                          border:
+                                            "1px solid hsl(var(--border))",
+                                        }}
+                                      />
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
                           </div>
 
                           {/* Refresh Token */}
@@ -922,6 +973,57 @@ export function ServerModal({
                                   )}
                                 </button>
                               </div>
+                              {(() => {
+                                const decoded = decodeJWT(tokens.refresh_token);
+                                if (!decoded) return null;
+                                return (
+                                  <div className="mt-2">
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        toggleTokenExpansion(
+                                          "refreshTokenDecoded",
+                                        )
+                                      }
+                                      className="text-xs text-muted-foreground hover:text-foreground cursor-pointer flex items-center gap-1"
+                                    >
+                                      {expandedTokens.has(
+                                        "refreshTokenDecoded",
+                                      ) ? (
+                                        <ChevronDown className="h-3 w-3" />
+                                      ) : (
+                                        <ChevronRight className="h-3 w-3" />
+                                      )}
+                                      View Decoded JWT
+                                    </button>
+                                    {expandedTokens.has(
+                                      "refreshTokenDecoded",
+                                    ) && (
+                                      <div className="mt-1">
+                                        <JsonView
+                                          src={decoded}
+                                          theme="atom"
+                                          dark={true}
+                                          enableClipboard={true}
+                                          displaySize={false}
+                                          collapseStringsAfterLength={100}
+                                          style={{
+                                            fontSize: "11px",
+                                            fontFamily:
+                                              "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                                            backgroundColor:
+                                              "hsl(var(--background))",
+                                            padding: "8px",
+                                            borderRadius: "6px",
+                                            border:
+                                              "1px solid hsl(var(--border))",
+                                          }}
+                                        />
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                             </div>
                           )}
 
@@ -959,6 +1061,53 @@ export function ServerModal({
                                   )}
                                 </button>
                               </div>
+                              {(() => {
+                                const decoded = decodeJWT(
+                                  (tokens as any).id_token,
+                                );
+                                if (!decoded) return null;
+                                return (
+                                  <div className="mt-2">
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        toggleTokenExpansion("idTokenDecoded")
+                                      }
+                                      className="text-xs text-muted-foreground hover:text-foreground cursor-pointer flex items-center gap-1"
+                                    >
+                                      {expandedTokens.has("idTokenDecoded") ? (
+                                        <ChevronDown className="h-3 w-3" />
+                                      ) : (
+                                        <ChevronRight className="h-3 w-3" />
+                                      )}
+                                      View Decoded JWT
+                                    </button>
+                                    {expandedTokens.has("idTokenDecoded") && (
+                                      <div className="mt-1">
+                                        <JsonView
+                                          src={decoded}
+                                          theme="atom"
+                                          dark={true}
+                                          enableClipboard={true}
+                                          displaySize={false}
+                                          collapseStringsAfterLength={100}
+                                          style={{
+                                            fontSize: "11px",
+                                            fontFamily:
+                                              "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                                            backgroundColor:
+                                              "hsl(var(--background))",
+                                            padding: "8px",
+                                            borderRadius: "6px",
+                                            border:
+                                              "1px solid hsl(var(--border))",
+                                          }}
+                                        />
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                             </div>
                           )}
 
