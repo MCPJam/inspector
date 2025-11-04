@@ -10,7 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
-import { ChevronDown, ChevronRight, Settings } from "lucide-react";
+import { ChevronDown, ChevronRight, Settings, Copy, Check } from "lucide-react";
 import { ServerFormData } from "@/shared/types.js";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { getStoredTokens, hasOAuthConfig } from "@/lib/mcp-oauth";
@@ -67,6 +67,9 @@ export function ServerModal({
   const [showEnvVars, setShowEnvVars] = useState<boolean>(false);
   const [showCustomHeaders, setShowCustomHeaders] = useState<boolean>(false);
   const [showAuthSettings, setShowAuthSettings] = useState<boolean>(false);
+  const [showTokenInsights, setShowTokenInsights] = useState<boolean>(false);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [expandedTokens, setExpandedTokens] = useState<Set<string>>(new Set());
 
   // Convert ServerWithName to ServerFormData format
   const convertServerConfig = (server: ServerWithName): ServerFormData => {
@@ -269,6 +272,31 @@ export function ServerModal({
     return null;
   };
 
+  // Copy to clipboard helper
+  const copyToClipboard = async (text: string, fieldName: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedField(fieldName);
+      setTimeout(() => setCopiedField(null), 2000); // Reset after 2 seconds
+    } catch (error) {
+      console.error("Failed to copy text:", error);
+      toast.error("Failed to copy to clipboard");
+    }
+  };
+
+  // Toggle token expansion
+  const toggleTokenExpansion = (tokenName: string) => {
+    setExpandedTokens((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(tokenName)) {
+        newSet.delete(tokenName);
+      } else {
+        newSet.add(tokenName);
+      }
+      return newSet;
+    });
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -412,6 +440,9 @@ export function ServerModal({
     setShowEnvVars(false);
     setShowCustomHeaders(false);
     setShowAuthSettings(false);
+    setShowTokenInsights(false);
+    setCopiedField(null);
+    setExpandedTokens(new Set());
   };
 
   const addEnvVar = () => {
@@ -787,6 +818,163 @@ export function ServerModal({
                   </div>
                 )}
               </div>
+
+              {/* Token Insights for Developers (Edit Mode Only) */}
+              {mode === "edit" &&
+                server &&
+                (authType === "oauth" || server.oauthTokens) &&
+                (() => {
+                  const tokens =
+                    server.oauthTokens || getStoredTokens(server.name);
+                  if (!tokens) return null;
+
+                  return (
+                    <div className="border border-border rounded-lg overflow-hidden">
+                      <button
+                        type="button"
+                        onClick={() => setShowTokenInsights(!showTokenInsights)}
+                        className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors cursor-pointer"
+                      >
+                        <div className="flex items-center gap-2">
+                          {showTokenInsights ? (
+                            <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                          ) : (
+                            <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                          )}
+                          <span className="text-sm font-medium text-foreground">
+                            OAuth Tokens
+                          </span>
+                        </div>
+                      </button>
+
+                      {showTokenInsights && (
+                        <div className="p-4 space-y-3 border-t border-border bg-muted/30">
+                          {/* Access Token */}
+                          <div>
+                            <span className="text-xs text-muted-foreground font-medium">
+                              Access Token:
+                            </span>
+                            <div
+                              className="font-mono text-xs text-foreground break-all bg-background/50 p-2 rounded mt-1 relative group cursor-pointer hover:bg-background/70 transition-colors"
+                              onClick={() =>
+                                toggleTokenExpansion("accessToken")
+                              }
+                            >
+                              <div className="pr-8">
+                                {expandedTokens.has("accessToken") ||
+                                tokens.access_token.length <= 50
+                                  ? tokens.access_token
+                                  : `${tokens.access_token.substring(0, 50)}...`}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  copyToClipboard(
+                                    tokens.access_token,
+                                    "accessToken",
+                                  );
+                                }}
+                                className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
+                              >
+                                {copiedField === "accessToken" ? (
+                                  <Check className="h-3 w-3 text-green-500" />
+                                ) : (
+                                  <Copy className="h-3 w-3" />
+                                )}
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Refresh Token */}
+                          {tokens.refresh_token && (
+                            <div>
+                              <span className="text-xs text-muted-foreground font-medium">
+                                Refresh Token:
+                              </span>
+                              <div
+                                className="font-mono text-xs text-foreground break-all bg-background/50 p-2 rounded mt-1 relative group cursor-pointer hover:bg-background/70 transition-colors"
+                                onClick={() =>
+                                  toggleTokenExpansion("refreshToken")
+                                }
+                              >
+                                <div className="pr-8">
+                                  {expandedTokens.has("refreshToken") ||
+                                  tokens.refresh_token.length <= 50
+                                    ? tokens.refresh_token
+                                    : `${tokens.refresh_token.substring(0, 50)}...`}
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    copyToClipboard(
+                                      tokens.refresh_token || "",
+                                      "refreshToken",
+                                    );
+                                  }}
+                                  className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
+                                >
+                                  {copiedField === "refreshToken" ? (
+                                    <Check className="h-3 w-3 text-green-500" />
+                                  ) : (
+                                    <Copy className="h-3 w-3" />
+                                  )}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* ID Token */}
+                          {(tokens as any).id_token && (
+                            <div>
+                              <span className="text-xs text-muted-foreground font-medium">
+                                ID Token:
+                              </span>
+                              <div
+                                className="font-mono text-xs text-foreground break-all bg-background/50 p-2 rounded mt-1 relative group cursor-pointer hover:bg-background/70 transition-colors"
+                                onClick={() => toggleTokenExpansion("idToken")}
+                              >
+                                <div className="pr-8">
+                                  {expandedTokens.has("idToken") ||
+                                  (tokens as any).id_token.length <= 50
+                                    ? (tokens as any).id_token
+                                    : `${(tokens as any).id_token.substring(0, 50)}...`}
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    copyToClipboard(
+                                      (tokens as any).id_token || "",
+                                      "idToken",
+                                    );
+                                  }}
+                                  className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
+                                >
+                                  {copiedField === "idToken" ? (
+                                    <Check className="h-3 w-3 text-green-500" />
+                                  ) : (
+                                    <Copy className="h-3 w-3" />
+                                  )}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Token Metadata */}
+                          <div className="flex flex-wrap gap-4 text-xs text-muted-foreground pt-2 border-t border-border">
+                            <span>Type: {tokens.token_type || "Bearer"}</span>
+                            {tokens.expires_in && (
+                              <span>Expires in: {tokens.expires_in}s</span>
+                            )}
+                            {tokens.scope && <span>Scope: {tokens.scope}</span>}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
               {/* Custom Headers for HTTP */}
               <div className="border border-border rounded-lg overflow-hidden">
