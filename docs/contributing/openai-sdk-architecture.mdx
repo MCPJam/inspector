@@ -17,7 +17,9 @@ MCPJam Inspector provides full support for the [OpenAI Apps SDK](https://develop
 - **Custom UI Rendering**: Display tool results using custom HTML/React components
 - **Interactive Widgets**: Components can call other MCP tools and send followup messages
 - **State Persistence**: Widget state persists across sessions via localStorage
+- **Theme Synchronization**: Widgets automatically receive theme updates (light/dark mode)
 - **Secure Isolation**: Components run in sandboxed iframes with CSP headers
+- **Server-Side Storage**: Widget context stored server-side with 1-hour TTL for iframe access
 - **Dual Mode Support**:
   - `ui://` URIs for server-provided HTML content
   - External URLs for remotely hosted components
@@ -42,11 +44,13 @@ graph TB
     subgraph Backend["Backend (Hono.js)"]
         ToolExec[Tool Execution]
         Storage[Widget Data Store]
-        WidgetEndpoint["Endpoint: /widget/:toolId"]
-        ContentEndpoint["Endpoint: /widget-content/:toolId"]
+        StoreEndpoint["POST /openai/widget/store"]
+        WidgetEndpoint["GET /openai/widget/:toolId"]
+        ContentEndpoint["GET /openai/widget-content/:toolId"]
         MCPRead[MCP Resource Read]
 
-        ToolExec --> Storage
+        ToolExec --> StoreEndpoint
+        StoreEndpoint --> Storage
         WidgetEndpoint --> ContentEndpoint
         ContentEndpoint --> Storage
         ContentEndpoint --> MCPRead
@@ -59,11 +63,11 @@ graph TB
         Tool -.returns.-> Resource
     end
 
-    Renderer -->|Store widget data| Storage
+    Renderer -->|Store widget data| StoreEndpoint
     Renderer -->|Load iframe| WidgetEndpoint
     Iframe -->|postMessage| Renderer
     Renderer -->|Call tool| ToolExec
-    ToolExec -->|Fetch HTML| MCPRead
+    ContentEndpoint -->|Fetch HTML| MCPRead
     MCPRead -->|Read resource| Resource
 
     classDef frontend fill:#e1f5ff,stroke:#0288d1
@@ -137,7 +141,7 @@ sequenceDiagram
     participant Store as Widget Data Store
 
     Renderer->>Renderer: Extract structuredContent from result
-    Renderer->>API: POST /api/mcp/resources/widget/store
+    Renderer->>API: POST /api/mcp/openai/widget/store
     API->>Store: Store widget data with toolId
     Store-->>API: Success
     API-->>Renderer: Return success: true
@@ -153,7 +157,7 @@ sequenceDiagram
 
 #### Storage Implementation
 
-Located in `server/routes/mcp/resources.ts:6-30`:
+Located in `server/routes/mcp/openai.ts:14-32`:
 
 ```typescript
 interface WidgetData {
@@ -161,7 +165,10 @@ interface WidgetData {
   uri: string;
   toolInput: Record<string, any>;
   toolOutput: any;
+  toolResponseMetadata?: Record<string, any> | null;
   toolId: string;
+  toolName: string;
+  theme?: "light" | "dark";
   timestamp: number;
 }
 
@@ -214,10 +221,10 @@ sequenceDiagram
 
 #### Stage 1: Container Page
 
-Located in `server/routes/mcp/resources.ts:131-170`:
+Located in `server/routes/mcp/openai.ts:81-120`:
 
 ```typescript
-resources.get(\"/widget/:toolId\", async (c) => {
+openai.get(\"/widget/:toolId\", async (c) => {
   const toolId = c.req.param(\"toolId\");
   const widgetData = widgetDataStore.get(toolId);
 
@@ -239,7 +246,7 @@ resources.get(\"/widget/:toolId\", async (c) => {
           history.replaceState(null, '', '/');
 
           // Fetch actual widget HTML
-          const response = await fetch('/api/mcp/resources/widget-content/${toolId}');
+          const response = await fetch('/api/mcp/openai/widget-content/${toolId}');
           const html = await response.text();
 
           // Replace entire document
@@ -256,13 +263,13 @@ resources.get(\"/widget/:toolId\", async (c) => {
 
 #### Stage 2: Content Injection
 
-Located in `server/routes/mcp/resources.ts:173-438`:
+Located in `server/routes/mcp/openai.ts:123-459`:
 
 Key steps:
 
 1. Retrieve widget data from store
 2. Read HTML from MCP server via `readResource(uri)`
-3. Inject `window.openai` API script
+3. Inject `window.openai` API script with bridge implementation
 4. Add security headers (CSP, X-Frame-Options)
 5. Set cache control headers (no-cache for fresh content)
 
@@ -305,7 +312,7 @@ graph LR
 
 #### API Implementation
 
-Located in `server/routes/mcp/resources.ts:250-376`:
+Located in `server/routes/mcp/openai.ts:213-376`:
 
 **Core API Methods:**
 
@@ -313,14 +320,26 @@ Located in `server/routes/mcp/resources.ts:250-376`:
 const openaiAPI = {
   toolInput: ${JSON.stringify(toolInput)},
   toolOutput: ${JSON.stringify(toolOutput)},
+  toolResponseMetadata: ${JSON.stringify(toolResponseMetadata ?? null)},
   displayMode: 'inline',
-  theme: 'dark',
+  maxHeight: 600,
+  theme: ${JSON.stringify(theme ?? "dark")},
   locale: 'en-US',
+  safeArea: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },
+  userAgent: {
+    device: { type: 'desktop' },
+    capabilities: { hover: true, touch: false }
+  },
   widgetState: null,
 
   // Persist widget state
   async setWidgetState(state) {
-    localStorage.setItem(widgetStateKey, JSON.stringify(state));
+    this.widgetState = state;
+    try {
+      localStorage.setItem(widgetStateKey, JSON.stringify(state));
+    } catch (err) {
+      console.error('[OpenAI Widget] Failed to save widget state:', err);
+    }
     window.parent.postMessage({
       type: 'openai:setWidgetState',
       toolId: toolId,
@@ -377,6 +396,25 @@ const openaiAPI = {
       mode
     }, '*');
     return { mode };
+  },
+
+  // Alias for compatibility
+  async sendFollowUpMessage(args) {
+    const prompt = typeof args === 'string' ? args : (args?.prompt || '');
+    return this.sendFollowupTurn(prompt);
+  },
+
+  // Open external URL
+  async openExternal(options) {
+    const href = typeof options === 'string' ? options : options?.href;
+    if (!href) {
+      throw new Error('href is required for openExternal');
+    }
+    window.parent.postMessage({
+      type: 'openai:openExternal',
+      href
+    }, '*');
+    window.open(href, '_blank', 'noopener,noreferrer');
   }
 };
 
@@ -393,7 +431,7 @@ window.webplus = openaiAPI; // Compatibility alias
 
 ### 5. Parent-Side Message Handling
 
-Located in `client/src/components/chat/openai-component-renderer.tsx:118-196`:
+Located in `client/src/components/chat-v2/openai-app-renderer.tsx:172-290`:
 
 ```typescript
 useEffect(() => {
@@ -444,6 +482,42 @@ useEffect(() => {
 }, [widgetUrl, onCallTool, onSendFollowup]);
 ```
 
+#### Theme Synchronization
+
+The parent component automatically sends theme updates to widgets when the user changes between light and dark mode:
+
+Located in `client/src/components/chat-v2/openai-app-renderer.tsx:293-307`:
+
+```typescript
+// Send theme updates to iframe when theme changes
+useEffect(() => {
+  if (!isReady || !iframeRef.current?.contentWindow) return;
+
+  iframeRef.current.contentWindow.postMessage(
+    {
+      type: 'openai:set_globals',
+      globals: {
+        theme: themeMode,
+      },
+    },
+    '*',
+  );
+}, [themeMode, isReady]);
+```
+
+Widgets can listen for theme changes using the `openai:set_globals` event:
+
+```javascript
+// In widget code
+window.addEventListener('message', (event) => {
+  if (event.data.type === 'openai:set_globals') {
+    const { theme } = event.data.globals;
+    // Update widget UI based on theme
+    document.body.classList.toggle('dark', theme === 'dark');
+  }
+});
+```
+
 #### Tool Execution Bridge
 
 Located in `client/src/components/ChatTab.tsx:181-207`:
@@ -475,7 +549,7 @@ const handleCallTool = async (
 
 ### Content Security Policy
 
-Located in `server/routes/mcp/resources.ts:408-422`:
+Located in `server/routes/mcp/openai.ts:408-437`:
 
 ```typescript
 const trustedCdns = [
@@ -503,7 +577,7 @@ c.header(\"Content-Security-Policy\", [
 
 ### Iframe Sandbox
 
-Located in `client/src/components/chat/openai-component-renderer.tsx:218-230`:
+Located in `client/src/components/chat-v2/openai-app-renderer.tsx:379-391`:
 
 ```typescript
 <iframe
@@ -734,20 +808,30 @@ server.connect(transport);
    - Check browser console for CSP violations
    - Ensure `<head>` tag exists in HTML for injection
 
-3. **Tool calls timeout**
+3. **Widget data not found (404)**
+   - Check that widget data was successfully stored via POST `/api/mcp/openai/widget/store`
+   - Verify toolId matches between store and load requests
+   - Check server logs for storage errors
+
+4. **Tool calls timeout**
    - Check network tab for `/api/mcp/tools/execute` failures
    - Verify MCP server is connected and responsive
    - Increase timeout in `callTool` implementation (default: 30s)
 
-4. **React Router 404 errors**
+5. **React Router 404 errors**
    - Confirm Stage 1 executes `history.replaceState('/')` before loading
    - Check that widget uses `BrowserRouter` not `HashRouter`
    - Verify `<base href=\"/\">` is present in HTML
 
-5. **State doesn't persist**
+6. **State doesn't persist**
    - Check localStorage in browser DevTools
-   - Verify `widgetStateKey` format is consistent
+   - Verify `widgetStateKey` format: `openai-widget-state:${toolName}:${toolId}`
    - Confirm `setWidgetState` postMessage handler is working
+
+7. **Theme not updating**
+   - Check that `openai:set_globals` messages are being sent from parent
+   - Verify widget has event listener for theme changes
+   - Inspect `window.openai.theme` value in widget console
 
 **Debug Tools:**
 
@@ -855,9 +939,10 @@ case \"openai:openExternal\":
 ## Related Files
 
 - `client/src/components/tools/ResultsPanel.tsx` - Detects OpenAI components
-- `client/src/components/chat/openai-component-renderer.tsx` - Renders iframes
+- `client/src/components/chat-v2/openai-app-renderer.tsx` - Renders iframes and handles widget lifecycle
 - `client/src/components/ChatTab.tsx` - Chat integration
-- `server/routes/mcp/resources.ts` - Widget storage and serving
+- `server/routes/mcp/openai.ts` - Widget storage, serving, and OpenAI bridge injection
+- `server/routes/mcp/index.ts` - Mounts OpenAI routes at `/openai`
 - `client/src/lib/mcp-tools-api.ts` - Tool execution API
 
 ## Resources
