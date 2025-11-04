@@ -324,7 +324,7 @@ const DiagramContent = memo(
         },
         {
           id: "received_401_unauthorized",
-          label: "HTTP 401 Unauthorized",
+          label: "HTTP 401 Unauthorized with WWW-Authenticate header",
           description: "Server returns 401 with WWW-Authenticate header",
           from: "mcpServer",
           to: "client",
@@ -367,7 +367,7 @@ const DiagramContent = memo(
           label:
             protocolVersion === "2025-11-25"
               ? "GET OAuth/OIDC metadata\n(path insertion priority)"
-              : "GET OAuth metadata (RFC8414)\n(with root fallback)",
+              : "GET /.well-known/oauth-authorization-server",
           description:
             protocolVersion === "2025-11-25"
               ? "Try OAuth path insertion, OIDC path insertion, OIDC path appending"
@@ -555,7 +555,7 @@ const DiagramContent = memo(
           label:
             protocolVersion === "2025-11-25"
               ? "Generate PKCE (REQUIRED)\nInclude resource parameter"
-              : "Generate PKCE (recommended)\nInclude resource parameter",
+              : "Generate PKCE parameters",
           description:
             protocolVersion === "2025-11-25"
               ? "Client generates code verifier and challenge (REQUIRED), includes resource parameter"
