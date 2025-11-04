@@ -6,7 +6,6 @@ import { ServerWithName } from "@/hooks/use-app-state";
 import { ServerConnectionCard } from "./connection/ServerConnectionCard";
 import { ServerModal } from "./connection/ServerModal";
 import { JsonImportModal } from "./connection/JsonImportModal";
-import { ServerDetailModal } from "./connection/ServerDetailModal";
 import { ServerFormData } from "@/shared/types.js";
 import { MCPIcon } from "./ui/mcp-icon";
 import { usePostHog } from "posthog-js/react";
@@ -35,8 +34,6 @@ export function ServersTab({
   const [serverToEdit, setServerToEdit] = useState<ServerWithName | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [filterType, setFilterType] = useState<"all" | "stdio" | "http">("all");
-  const [isViewingServerDetail, setIsViewingServerDetail] = useState(false);
-  const [serverToView, setServerToView] = useState<ServerWithName | null>(null);
 
   const filteredServers = Object.entries(connectedServerConfigs).filter(
     ([name, server]) => {
@@ -70,16 +67,6 @@ export function ServersTab({
   const handleCloseEditModal = () => {
     setIsEditingServer(false);
     setServerToEdit(null);
-  };
-
-  const handleViewServerDetail = (server: ServerWithName) => {
-    setServerToView(server);
-    setIsViewingServerDetail(true);
-  };
-
-  const handleCloseDetailModal = () => {
-    setIsViewingServerDetail(false);
-    setServerToView(null);
   };
 
   const handleJsonImport = (servers: ServerFormData[]) => {
@@ -138,7 +125,6 @@ export function ServersTab({
               onReconnect={onReconnect}
               onEdit={handleEditServer}
               onRemove={onRemove}
-              onViewDetail={handleViewServerDetail}
             />
           ))}
         </div>
@@ -208,13 +194,6 @@ export function ServersTab({
         isOpen={isImportingJson}
         onClose={() => setIsImportingJson(false)}
         onImport={handleJsonImport}
-      />
-
-      {/* Server Detail Modal */}
-      <ServerDetailModal
-        server={serverToView}
-        isOpen={isViewingServerDetail}
-        onClose={handleCloseDetailModal}
       />
     </div>
   );
