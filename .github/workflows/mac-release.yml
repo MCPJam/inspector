@@ -86,6 +86,7 @@ jobs:
           sudo diskutil unmountDisk force /Volumes/"MCPJam Inspector" 2>/dev/null || true
           hdiutil detach /Volumes/"MCPJam Inspector" -force 2>/dev/null || true
         env:
+          NODE_OPTIONS: --max-old-space-size=8192
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
 
