@@ -115,6 +115,32 @@ export function HTTPHistoryEntry({
       <CollapsibleContent>
         <div className="border-t bg-muted/20">
           <div className="p-3 space-y-3">
+            {/* URL */}
+            <div>
+              <div className="text-xs font-medium text-muted-foreground mb-1">
+                URL
+              </div>
+              <div className="rounded-sm bg-background/60 p-2 max-h-[200px] overflow-auto">
+                <JsonView
+                  src={{ url }}
+                  dark={true}
+                  theme="atom"
+                  enableClipboard={true}
+                  displaySize={false}
+                  collapsed={false}
+                  style={{
+                    fontSize: "11px",
+                    fontFamily:
+                      "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                    backgroundColor: "transparent",
+                    padding: "0",
+                    borderRadius: "0",
+                    border: "none",
+                  }}
+                />
+              </div>
+            </div>
+
             {/* Request Headers */}
             {requestHeaders && Object.keys(requestHeaders).length > 0 && (
               <div>
