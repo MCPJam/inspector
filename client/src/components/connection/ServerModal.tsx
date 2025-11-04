@@ -64,6 +64,9 @@ export function ServerModal({
   >([]);
   const [requestTimeout, setRequestTimeout] = useState<string>("10000");
   const [showConfiguration, setShowConfiguration] = useState<boolean>(false);
+  const [showEnvVars, setShowEnvVars] = useState<boolean>(false);
+  const [showCustomHeaders, setShowCustomHeaders] = useState<boolean>(false);
+  const [showAuthSettings, setShowAuthSettings] = useState<boolean>(false);
 
   // Convert ServerWithName to ServerFormData format
   const convertServerConfig = (server: ServerWithName): ServerFormData => {
@@ -178,6 +181,7 @@ export function ServerModal({
           }),
         );
         setEnvVars(envEntries);
+        setShowEnvVars(envEntries.length > 0);
       } else {
         // HTTP server
         const headers = formData.headers || {};
@@ -190,6 +194,8 @@ export function ServerModal({
             value: String(value),
           }));
         setCustomHeaders(headerEntries);
+        setShowCustomHeaders(headerEntries.length > 0);
+
         const authHeader = headers.Authorization;
         const hasBearerToken = authHeader?.startsWith("Bearer ");
         const hasOAuth = formData.useOAuth;
@@ -201,15 +207,18 @@ export function ServerModal({
           setClientId(formData.clientId || "");
           setClientSecret(formData.clientSecret || "");
           setUseCustomClientId(!!formData.clientId);
+          setShowAuthSettings(true);
 
           setServerFormData((prev) => ({ ...prev, useOAuth: true }));
         } else if (hasBearerToken) {
           setAuthType("bearer");
           setBearerToken(authHeader.slice(7)); // Remove 'Bearer ' prefix
+          setShowAuthSettings(true);
 
           setServerFormData((prev) => ({ ...prev, useOAuth: false }));
         } else {
           setAuthType("none");
+          setShowAuthSettings(false);
 
           setServerFormData((prev) => ({ ...prev, useOAuth: false }));
         }
@@ -400,10 +409,14 @@ export function ServerModal({
     setCustomHeaders([]);
     setRequestTimeout("10000");
     setShowConfiguration(false);
+    setShowEnvVars(false);
+    setShowCustomHeaders(false);
+    setShowAuthSettings(false);
   };
 
   const addEnvVar = () => {
     setEnvVars([...envVars, { key: "", value: "" }]);
+    setShowEnvVars(true);
   };
 
   const updateEnvVar = (
@@ -422,6 +435,7 @@ export function ServerModal({
 
   const addCustomHeader = () => {
     setCustomHeaders([...customHeaders, { key: "", value: "" }]);
+    setShowCustomHeaders(true);
   };
 
   const updateCustomHeader = (
@@ -442,7 +456,7 @@ export function ServerModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
-      <DialogContent className="max-w-md sm:max-w-lg">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader className="space-y-2">
           <DialogTitle className="flex text-xl font-semibold">
             <img src="/mcp.svg" alt="MCP" className="mr-2" /> {dialogTitle}
@@ -546,23 +560,43 @@ export function ServerModal({
 
           {/* Environment Variables for STDIO */}
           {serverFormData.type === "stdio" && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <label className="block text-sm font-medium text-foreground">
-                  Environment Variables
-                </label>
+            <div className="border border-border rounded-lg overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setShowEnvVars(!showEnvVars)}
+                className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors cursor-pointer"
+              >
+                <div className="flex items-center gap-2">
+                  {showEnvVars ? (
+                    <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                  ) : (
+                    <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                  )}
+                  <span className="text-sm font-medium text-foreground">
+                    Environment Variables
+                  </span>
+                  {envVars.length > 0 && (
+                    <span className="text-xs text-muted-foreground">
+                      ({envVars.length})
+                    </span>
+                  )}
+                </div>
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={addEnvVar}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    addEnvVar();
+                  }}
                   className="text-xs"
                 >
                   Add Variable
                 </Button>
-              </div>
-              {envVars.length > 0 && (
-                <div className="space-y-2 max-h-32 overflow-y-auto">
+              </button>
+
+              {showEnvVars && envVars.length > 0 && (
+                <div className="p-4 space-y-2 border-t border-border bg-muted/30 max-h-48 overflow-y-auto">
                   {envVars.map((envVar, index) => (
                     <div key={index} className="flex gap-2 items-center">
                       <Input
@@ -600,175 +634,198 @@ export function ServerModal({
           {/* Authentication for HTTP */}
           {serverFormData.type === "http" && (
             <div className="space-y-4">
-              <div className="space-y-2">
-                <label className="block text-sm font-medium text-foreground">
-                  Authentication
-                </label>
-                <Select
-                  value={authType}
-                  onValueChange={(value: "oauth" | "bearer" | "none") => {
-                    setAuthType(value);
-                    if (value === "oauth") {
-                      setServerFormData((prev) => ({
-                        ...prev,
-                        useOAuth: true,
-                      }));
-                    } else {
-                      setServerFormData((prev) => ({
-                        ...prev,
-                        useOAuth: false,
-                      }));
-                    }
-                  }}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">No Authentication</SelectItem>
-                    <SelectItem value="bearer">Bearer Token</SelectItem>
-                    <SelectItem value="oauth">OAuth 2.0</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {authType === "bearer" && (
-                <div className="space-y-2">
+              <div className="border border-border rounded-lg overflow-hidden">
+                <div className="p-3 space-y-2">
                   <label className="block text-sm font-medium text-foreground">
-                    Bearer Token
+                    Authentication
                   </label>
-                  <Input
-                    type="password"
-                    value={bearerToken}
-                    onChange={(e) => setBearerToken(e.target.value)}
-                    placeholder="Enter your bearer token"
-                    className="h-10"
-                  />
+                  <Select
+                    value={authType}
+                    onValueChange={(value: "oauth" | "bearer" | "none") => {
+                      setAuthType(value);
+                      setShowAuthSettings(value !== "none");
+                      if (value === "oauth") {
+                        setServerFormData((prev) => ({
+                          ...prev,
+                          useOAuth: true,
+                        }));
+                      } else {
+                        setServerFormData((prev) => ({
+                          ...prev,
+                          useOAuth: false,
+                        }));
+                      }
+                    }}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">No Authentication</SelectItem>
+                      <SelectItem value="bearer">Bearer Token</SelectItem>
+                      <SelectItem value="oauth">OAuth 2.0</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
-              )}
 
-              {authType === "oauth" && (
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <label className="block text-sm font-medium text-foreground">
-                      OAuth Scopes
+                {showAuthSettings && authType === "bearer" && (
+                  <div className="px-3 pb-3 space-y-2 border-t border-border bg-muted/30">
+                    <label className="block text-sm font-medium text-foreground pt-3">
+                      Bearer Token
                     </label>
                     <Input
-                      value={oauthScopesInput}
-                      onChange={(e) => setOauthScopesInput(e.target.value)}
-                      placeholder="mcp:* or custom scopes separated by spaces"
+                      type="password"
+                      value={bearerToken}
+                      onChange={(e) => setBearerToken(e.target.value)}
+                      placeholder="Enter your bearer token"
                       className="h-10"
                     />
-                    <p className="text-xs text-muted-foreground">
-                      Default: mcp:* (space-separated for multiple scopes)
-                    </p>
                   </div>
+                )}
 
-                  <div className="space-y-2">
-                    <div className="flex items-center space-x-2">
-                      <input
-                        type="checkbox"
-                        id="useCustomClientId"
-                        checked={useCustomClientId}
-                        onChange={(e) => {
-                          setUseCustomClientId(e.target.checked);
-                          if (!e.target.checked) {
-                            setClientId("");
-                            setClientSecret("");
-                            setClientIdError(null);
-                            setClientSecretError(null);
-                          }
-                        }}
-                        className="rounded"
-                      />
-                      <label
-                        htmlFor="useCustomClientId"
-                        className="text-sm font-medium text-foreground"
-                      >
-                        Use custom OAuth credentials
+                {showAuthSettings && authType === "oauth" && (
+                  <div className="px-3 pb-3 space-y-3 border-t border-border bg-muted/30">
+                    <div className="space-y-2 pt-3">
+                      <label className="block text-sm font-medium text-foreground">
+                        OAuth Scopes
                       </label>
+                      <Input
+                        value={oauthScopesInput}
+                        onChange={(e) => setOauthScopesInput(e.target.value)}
+                        placeholder="mcp:* or custom scopes separated by spaces"
+                        className="h-10"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Default: mcp:* (space-separated for multiple scopes)
+                      </p>
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                      Leave unchecked to use the server's default OAuth flow
-                    </p>
+
+                    <div className="space-y-2">
+                      <div className="flex items-center space-x-2">
+                        <input
+                          type="checkbox"
+                          id="useCustomClientId"
+                          checked={useCustomClientId}
+                          onChange={(e) => {
+                            setUseCustomClientId(e.target.checked);
+                            if (!e.target.checked) {
+                              setClientId("");
+                              setClientSecret("");
+                              setClientIdError(null);
+                              setClientSecretError(null);
+                            }
+                          }}
+                          className="rounded"
+                        />
+                        <label
+                          htmlFor="useCustomClientId"
+                          className="text-sm font-medium text-foreground"
+                        >
+                          Use custom OAuth credentials
+                        </label>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Leave unchecked to use the server's default OAuth flow
+                      </p>
+                    </div>
+
+                    {useCustomClientId && (
+                      <div className="space-y-3">
+                        <div className="space-y-2">
+                          <label className="block text-sm font-medium text-foreground">
+                            Client ID
+                          </label>
+                          <Input
+                            value={clientId}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              setClientId(value);
+                              const error = validateClientId(value);
+                              setClientIdError(error);
+                            }}
+                            placeholder="Your OAuth Client ID"
+                            className={`h-10 ${
+                              clientIdError ? "border-red-500" : ""
+                            }`}
+                          />
+                          {clientIdError && (
+                            <p className="text-xs text-red-500">
+                              {clientIdError}
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="block text-sm font-medium text-foreground">
+                            Client Secret (Optional)
+                          </label>
+                          <Input
+                            type="password"
+                            value={clientSecret}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              setClientSecret(value);
+                              const error = validateClientSecret(value);
+                              setClientSecretError(error);
+                            }}
+                            placeholder="Your OAuth Client Secret"
+                            className={`h-10 ${
+                              clientSecretError ? "border-red-500" : ""
+                            }`}
+                          />
+                          {clientSecretError && (
+                            <p className="text-xs text-red-500">
+                              {clientSecretError}
+                            </p>
+                          )}
+                          <p className="text-xs text-muted-foreground">
+                            Optional for public clients using PKCE
+                          </p>
+                        </div>
+                      </div>
+                    )}
                   </div>
-
-                  {useCustomClientId && (
-                    <div className="space-y-4">
-                      <div className="space-y-2">
-                        <label className="block text-sm font-medium text-foreground">
-                          Client ID
-                        </label>
-                        <Input
-                          value={clientId}
-                          onChange={(e) => {
-                            const value = e.target.value;
-                            setClientId(value);
-                            const error = validateClientId(value);
-                            setClientIdError(error);
-                          }}
-                          placeholder="Your OAuth Client ID"
-                          className={`h-10 ${
-                            clientIdError ? "border-red-500" : ""
-                          }`}
-                        />
-                        {clientIdError && (
-                          <p className="text-xs text-red-500">
-                            {clientIdError}
-                          </p>
-                        )}
-                      </div>
-
-                      <div className="space-y-2">
-                        <label className="block text-sm font-medium text-foreground">
-                          Client Secret (Optional)
-                        </label>
-                        <Input
-                          type="password"
-                          value={clientSecret}
-                          onChange={(e) => {
-                            const value = e.target.value;
-                            setClientSecret(value);
-                            const error = validateClientSecret(value);
-                            setClientSecretError(error);
-                          }}
-                          placeholder="Your OAuth Client Secret"
-                          className={`h-10 ${
-                            clientSecretError ? "border-red-500" : ""
-                          }`}
-                        />
-                        {clientSecretError && (
-                          <p className="text-xs text-red-500">
-                            {clientSecretError}
-                          </p>
-                        )}
-                        <p className="text-xs text-muted-foreground">
-                          Optional for public clients using PKCE
-                        </p>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
+                )}
+              </div>
 
               {/* Custom Headers for HTTP */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="block text-sm font-medium text-foreground">
-                    Custom Headers
-                  </label>
+              <div className="border border-border rounded-lg overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setShowCustomHeaders(!showCustomHeaders)}
+                  className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors cursor-pointer"
+                >
+                  <div className="flex items-center gap-2">
+                    {showCustomHeaders ? (
+                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                    )}
+                    <span className="text-sm font-medium text-foreground">
+                      Custom Headers
+                    </span>
+                    {customHeaders.length > 0 && (
+                      <span className="text-xs text-muted-foreground">
+                        ({customHeaders.length})
+                      </span>
+                    )}
+                  </div>
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={addCustomHeader}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      addCustomHeader();
+                    }}
                     className="text-xs"
                   >
                     Add Header
                   </Button>
-                </div>
-                {customHeaders.length > 0 && (
-                  <div className="space-y-2 max-h-32 overflow-y-auto">
+                </button>
+
+                {showCustomHeaders && customHeaders.length > 0 && (
+                  <div className="p-4 space-y-2 border-t border-border bg-muted/30 max-h-48 overflow-y-auto">
                     {customHeaders.map((header, index) => (
                       <div key={index} className="flex gap-2 items-center">
                         <Input
@@ -800,10 +857,15 @@ export function ServerModal({
                     ))}
                   </div>
                 )}
-                <p className="text-xs text-muted-foreground">
-                  Add custom HTTP headers for your MCP server connection (e.g.
-                  API-Key, X-Custom-Header)
-                </p>
+
+                {!showCustomHeaders && (
+                  <div className="px-3 pb-3">
+                    <p className="text-xs text-muted-foreground">
+                      Add custom HTTP headers for your MCP server connection
+                      (e.g. API-Key, X-Custom-Header)
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           )}
