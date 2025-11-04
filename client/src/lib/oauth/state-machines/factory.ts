@@ -6,7 +6,6 @@
  */
 
 import type {
-  OAuthFlowState,
   OAuthStateMachine,
   OAuthProtocolVersion,
   BaseOAuthStateMachineConfig,
@@ -30,7 +29,7 @@ import {
 export interface OAuthStateMachineFactoryConfig
   extends BaseOAuthStateMachineConfig {
   protocolVersion: OAuthProtocolVersion;
-  registrationStrategy?:
+  registrationStrategy:
     | RegistrationStrategy2025_06_18
     | RegistrationStrategy2025_11_25;
 }
