@@ -1,10 +1,15 @@
 import { defineConfig } from "tsup";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const serverDir = dirname(fileURLToPath(import.meta.url));
+const rootDir = join(serverDir, "..");
 
 export default defineConfig({
-  entry: ["index.ts"],
+  entry: [join(serverDir, "index.ts")],
   format: ["esm"],
   target: "node18",
-  outDir: "../dist/server",
+  outDir: join(rootDir, "dist/server"),
   clean: true,
   bundle: true,
   minify: false,
@@ -47,7 +52,7 @@ export default defineConfig({
     options.mainFields = ["module", "main"];
     // Configure path alias for @/sdk
     options.alias = {
-      "@/sdk": "../sdk/dist/index.js",
+      "@/sdk": join(rootDir, "sdk/dist/index.js"),
     };
   },
 });

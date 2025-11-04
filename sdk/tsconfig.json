@@ -7,7 +7,7 @@
     "declarationMap": true,
     "emitDeclarationOnly": false,
     "outDir": "./dist",
-    "rootDir": "./src",
+    "rootDir": "./",
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "target": "ES2019",
