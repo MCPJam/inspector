@@ -12,7 +12,7 @@ import { TracingTab } from "./components/TracingTab";
 import { InterceptorTab } from "./components/InterceptorTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
-import OAuthDebugCallback from "./components/OAuthDebugCallback";
+import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import { MCPSidebar } from "./components/mcp-sidebar";
 import { ActiveServerSelector } from "./components/ActiveServerSelector";
 import {
