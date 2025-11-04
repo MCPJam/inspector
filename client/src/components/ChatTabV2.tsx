@@ -14,7 +14,7 @@ import {
 } from "ai";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import { ModelDefinition } from "@/shared/types";
+import { ModelDefinition, isGPT5Model } from "@/shared/types";
 import {
   ProviderTokens,
   useAiProviderKeys,
@@ -45,6 +45,7 @@ import { ConnectMcpServerCallout } from "@/components/chat-v2/connect-mcp-server
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import { ErrorBox } from "@/components/chat-v2/error";
+import { usePersistedModel } from "@/hooks/use-persisted-model";
 
 const DEFAULT_SYSTEM_PROMPT =
   "You are a helpful assistant with access to MCP tools.";
@@ -126,7 +127,7 @@ export function ChatTabV2({
     isOllamaRunning,
     ollamaModels,
   ]);
-  const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
+  const { selectedModelId, setSelectedModelId } = usePersistedModel();
   const selectedModel = useMemo<ModelDefinition>(() => {
     const fallback = getDefaultModel(availableModels);
     if (!selectedModelId) return fallback;
@@ -151,12 +152,14 @@ export function ChatTabV2({
 
   const transport = useMemo(() => {
     const apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
+    const isGpt5 = isGPT5Model(selectedModel.id);
+
     return new DefaultChatTransport({
       api: "/api/mcp/chat-v2",
       body: {
         model: selectedModel,
         apiKey: apiKey,
-        temperature,
+        ...(isGpt5 ? {} : { temperature }),
         systemPrompt,
         selectedServers: selectedConnectedServerNames,
       },
