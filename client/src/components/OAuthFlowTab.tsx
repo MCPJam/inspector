@@ -52,6 +52,11 @@ import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import "react18-json-view/src/dark.css";
 import { HTTPHistoryEntry } from "./HTTPHistoryEntry";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "./ui/resizable";
 
 interface StatusMessageProps {
   message: StatusMessage;
@@ -768,169 +773,175 @@ export const OAuthFlowTab = ({
       ) : null}
 
       {/* Flow Visualization - Takes up all remaining space */}
-      <div className="flex-1 overflow-hidden flex flex-row">
-        {/* ReactFlow Sequence Diagram */}
-        <div className="flex-1">
-          <OAuthSequenceDiagram
-            flowState={oauthFlowState}
-            registrationStrategy={registrationStrategy}
-            protocolVersion={protocolVersion}
-          />
-        </div>
+      <div className="flex-1 overflow-hidden">
+        <ResizablePanelGroup direction="horizontal" className="h-full">
+          {/* ReactFlow Sequence Diagram */}
+          <ResizablePanel defaultSize={70} minSize={30}>
+            <OAuthSequenceDiagram
+              flowState={oauthFlowState}
+              registrationStrategy={registrationStrategy}
+              protocolVersion={protocolVersion}
+            />
+          </ResizablePanel>
 
-        {/* Side Panel with Details - Combined Info and HTTP History */}
-        <div className="w-96 border-l border-border flex flex-col">
-          <div className="h-full bg-muted/30 overflow-auto">
-            {/* Header */}
-            <div className="sticky top-0 z-10 bg-muted/30 backdrop-blur-sm border-b border-border px-4 py-3 flex items-center justify-between">
-              <h3 className="text-sm font-semibold">Console Output</h3>
-              <button
-                onClick={() => {
-                  clearInfoLogs();
-                  clearHttpHistory();
-                }}
-                className="p-1 hover:bg-muted rounded transition-colors"
-                title="Clear all logs"
-              >
-                <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive transition-colors" />
-              </button>
-            </div>
+          <ResizableHandle withHandle />
 
-            {/* Console Output - Merged chronologically */}
-            <div className="p-4 space-y-3">
-              {/* Error Display */}
-              {oauthFlowState.error && (
-                <Alert variant="destructive" className="py-2">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertDescription className="text-xs">
-                    {oauthFlowState.error}
-                  </AlertDescription>
-                </Alert>
-              )}
+          {/* Side Panel with Details - Combined Info and HTTP History */}
+          <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
+            <div className="h-full border-l border-border flex flex-col">
+              <div className="h-full bg-muted/30 overflow-auto">
+                {/* Header */}
+                <div className="sticky top-0 z-10 bg-muted/30 backdrop-blur-sm border-b border-border px-4 py-3 flex items-center justify-between">
+                  <h3 className="text-sm font-semibold">Console Output</h3>
+                  <button
+                    onClick={() => {
+                      clearInfoLogs();
+                      clearHttpHistory();
+                    }}
+                    className="p-1 hover:bg-muted rounded transition-colors"
+                    title="Clear all logs"
+                  >
+                    <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive transition-colors" />
+                  </button>
+                </div>
 
-              {/* Merged Console Output - Chronologically sorted */}
-              {(() => {
-                const infoLogs = oauthFlowState.infoLogs || [];
-                const httpHistory = oauthFlowState.httpHistory || [];
+                {/* Console Output - Merged chronologically */}
+                <div className="p-4 space-y-3">
+                  {/* Error Display */}
+                  {oauthFlowState.error && (
+                    <Alert variant="destructive" className="py-2">
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertDescription className="text-xs">
+                        {oauthFlowState.error}
+                      </AlertDescription>
+                    </Alert>
+                  )}
 
-                // Create unified array with type markers
-                type ConsoleEntry =
-                  | {
-                      type: "info";
-                      timestamp: number;
-                      data: (typeof infoLogs)[0];
-                    }
-                  | {
-                      type: "http";
-                      timestamp: number;
-                      data: (typeof httpHistory)[0];
-                      index: number;
-                    };
+                  {/* Merged Console Output - Chronologically sorted */}
+                  {(() => {
+                    const infoLogs = oauthFlowState.infoLogs || [];
+                    const httpHistory = oauthFlowState.httpHistory || [];
 
-                const allEntries: ConsoleEntry[] = [
-                  ...infoLogs
-                    .filter((log) => !deletedInfoLogs.has(log.id))
-                    .map((log) => ({
-                      type: "info" as const,
-                      timestamp: log.timestamp,
-                      data: log,
-                    })),
-                  ...httpHistory.map((entry, index) => ({
-                    type: "http" as const,
-                    timestamp: entry.timestamp,
-                    data: entry,
-                    index,
-                  })),
-                ];
+                    // Create unified array with type markers
+                    type ConsoleEntry =
+                      | {
+                          type: "info";
+                          timestamp: number;
+                          data: (typeof infoLogs)[0];
+                        }
+                      | {
+                          type: "http";
+                          timestamp: number;
+                          data: (typeof httpHistory)[0];
+                          index: number;
+                        };
 
-                // Sort by timestamp (newest first)
-                allEntries.sort((a, b) => b.timestamp - a.timestamp);
+                    const allEntries: ConsoleEntry[] = [
+                      ...infoLogs
+                        .filter((log) => !deletedInfoLogs.has(log.id))
+                        .map((log) => ({
+                          type: "info" as const,
+                          timestamp: log.timestamp,
+                          data: log,
+                        })),
+                      ...httpHistory.map((entry, index) => ({
+                        type: "http" as const,
+                        timestamp: entry.timestamp,
+                        data: entry,
+                        index,
+                      })),
+                    ];
 
-                return allEntries.map((entry, idx) => {
-                  if (entry.type === "info") {
-                    const log = entry.data;
-                    const isExpanded = expandedBlocks.has(log.id);
-                    return (
-                      <div
-                        key={log.id}
-                        className="group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card"
-                      >
-                        <div
-                          className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
-                          onClick={() => toggleExpanded(log.id)}
-                        >
-                          <div className="flex-shrink-0">
-                            {isExpanded ? (
-                              <ChevronDown className="h-3 w-3 text-muted-foreground transition-transform" />
-                            ) : (
-                              <ChevronRight className="h-3 w-3 text-muted-foreground transition-transform" />
+                    // Sort by timestamp (newest first)
+                    allEntries.sort((a, b) => b.timestamp - a.timestamp);
+
+                    return allEntries.map((entry, idx) => {
+                      if (entry.type === "info") {
+                        const log = entry.data;
+                        const isExpanded = expandedBlocks.has(log.id);
+                        return (
+                          <div
+                            key={log.id}
+                            className="group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card"
+                          >
+                            <div
+                              className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
+                              onClick={() => toggleExpanded(log.id)}
+                            >
+                              <div className="flex-shrink-0">
+                                {isExpanded ? (
+                                  <ChevronDown className="h-3 w-3 text-muted-foreground transition-transform" />
+                                ) : (
+                                  <ChevronRight className="h-3 w-3 text-muted-foreground transition-transform" />
+                                )}
+                              </div>
+                              <span className="text-xs font-medium text-foreground">
+                                {log.label}
+                              </span>
+                            </div>
+                            {isExpanded && (
+                              <div className="border-t bg-muted/20">
+                                <div className="p-3">
+                                  <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
+                                    <JsonView
+                                      src={log.data}
+                                      dark={true}
+                                      theme="atom"
+                                      enableClipboard={true}
+                                      displaySize={false}
+                                      collapsed={false}
+                                      style={{
+                                        fontSize: "11px",
+                                        fontFamily:
+                                          "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                                        backgroundColor: "transparent",
+                                        padding: "0",
+                                        borderRadius: "0",
+                                        border: "none",
+                                      }}
+                                    />
+                                  </div>
+                                </div>
+                              </div>
                             )}
                           </div>
-                          <span className="text-xs font-medium text-foreground">
-                            {log.label}
-                          </span>
-                        </div>
-                        {isExpanded && (
-                          <div className="border-t bg-muted/20">
-                            <div className="p-3">
-                              <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
-                                <JsonView
-                                  src={log.data}
-                                  dark={true}
-                                  theme="atom"
-                                  enableClipboard={true}
-                                  displaySize={false}
-                                  collapsed={false}
-                                  style={{
-                                    fontSize: "11px",
-                                    fontFamily:
-                                      "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                                    backgroundColor: "transparent",
-                                    padding: "0",
-                                    borderRadius: "0",
-                                    border: "none",
-                                  }}
-                                />
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  } else {
-                    // HTTP entry
-                    const httpEntry = entry.data;
-                    return (
-                      <HTTPHistoryEntry
-                        key={`http-${entry.index}-${entry.timestamp}`}
-                        method={httpEntry.request.method}
-                        url={httpEntry.request.url}
-                        status={httpEntry.response?.status}
-                        statusText={httpEntry.response?.statusText}
-                        duration={httpEntry.duration}
-                        requestHeaders={httpEntry.request.headers}
-                        requestBody={httpEntry.request.body}
-                        responseHeaders={httpEntry.response?.headers}
-                        responseBody={httpEntry.response?.body}
-                      />
-                    );
-                  }
-                });
-              })()}
+                        );
+                      } else {
+                        // HTTP entry
+                        const httpEntry = entry.data;
+                        return (
+                          <HTTPHistoryEntry
+                            key={`http-${entry.index}-${entry.timestamp}`}
+                            method={httpEntry.request.method}
+                            url={httpEntry.request.url}
+                            status={httpEntry.response?.status}
+                            statusText={httpEntry.response?.statusText}
+                            duration={httpEntry.duration}
+                            requestHeaders={httpEntry.request.headers}
+                            requestBody={httpEntry.request.body}
+                            responseHeaders={httpEntry.response?.headers}
+                            responseBody={httpEntry.response?.body}
+                          />
+                        );
+                      }
+                    });
+                  })()}
 
-              {/* Empty state */}
-              {(!oauthFlowState.infoLogs ||
-                oauthFlowState.infoLogs.length === 0) &&
-                (!oauthFlowState.httpHistory ||
-                  oauthFlowState.httpHistory.length === 0) &&
-                !oauthFlowState.error && (
-                  <div className="text-center py-8 text-muted-foreground text-sm">
-                    No console output yet
-                  </div>
-                )}
+                  {/* Empty state */}
+                  {(!oauthFlowState.infoLogs ||
+                    oauthFlowState.infoLogs.length === 0) &&
+                    (!oauthFlowState.httpHistory ||
+                      oauthFlowState.httpHistory.length === 0) &&
+                    !oauthFlowState.error && (
+                      <div className="text-center py-8 text-muted-foreground text-sm">
+                        No console output yet
+                      </div>
+                    )}
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
+          </ResizablePanel>
+        </ResizablePanelGroup>
       </div>
 
       {/* OAuth Authorization Modal */}
