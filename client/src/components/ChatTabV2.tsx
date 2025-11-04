@@ -152,7 +152,7 @@ export function ChatTabV2({
   const transport = useMemo(() => {
     const apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
     const isGpt5 = isGPT5Model(selectedModel.id);
-    
+
     return new DefaultChatTransport({
       api: "/api/mcp/chat-v2",
       body: {

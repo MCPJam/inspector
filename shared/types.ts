@@ -138,7 +138,7 @@ export const isGPT5Model = (modelId: string | Model): boolean => {
   if (isMCPJamProvidedModel(id)) {
     return false;
   }
-  return id.includes('gpt-5');
+  return id.includes("gpt-5");
 };
 
 export interface ModelDefinition {
