@@ -280,6 +280,10 @@ sequenceDiagram
     │   └── /prompts
     │       ├── GET / - List prompts
     │       └── POST /:name/get - Get prompt
+    ├── /openai
+    │   ├── POST /widget/store - Store widget data
+    │   ├── GET /widget/:toolId - Widget container page
+    │   └── GET /widget-content/:toolId - Widget HTML with bridge
     ├── /health - Health check
     └── /rpc-logs - SSE logs stream
     ```
@@ -293,6 +297,7 @@ sequenceDiagram
     | `/tools` | `server/routes/mcp/tools.ts` | - |
     | `/resources` | `server/routes/mcp/resources.ts` | - |
     | `/prompts` | `server/routes/mcp/prompts.ts` | - |
+    | `/openai` | `server/routes/mcp/openai.ts` | - |
   </Tab>
 </Tabs>
 
