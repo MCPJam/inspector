@@ -3,10 +3,15 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
 import tailwindcss from "@tailwindcss/vite";
+import { fileURLToPath } from "url";
+
+const clientDir = fileURLToPath(new URL(".", import.meta.url));
+const rootDir = path.resolve(clientDir, "..");
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  envDir: "..",
+  root: clientDir,
+  envDir: rootDir,
   plugins: [
     react(),
     tailwindcss(),
@@ -23,13 +28,16 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
-      "@/shared": path.resolve(__dirname, "../shared"),
-      "@/sdk": path.resolve(__dirname, "../sdk/src/index.ts"),
-      "@": path.resolve(__dirname, "./src"),
+      "@/shared": path.resolve(clientDir, "../shared"),
+      "@/sdk": path.resolve(clientDir, "../sdk/src/index.ts"),
+      "@": path.resolve(clientDir, "./src"),
       // Force React resolution to prevent conflicts with @mcp-ui/client
-      react: path.resolve(__dirname, "node_modules/react"),
-      "react-dom": path.resolve(__dirname, "node_modules/react-dom"),
-      "@mcp-ui/client": path.resolve(__dirname, "node_modules/@mcp-ui/client"),
+      react: path.resolve(clientDir, "../node_modules/react"),
+      "react-dom": path.resolve(clientDir, "../node_modules/react-dom"),
+      "@mcp-ui/client": path.resolve(
+        clientDir,
+        "../node_modules/@mcp-ui/client",
+      ),
     },
     dedupe: ["react", "react-dom"],
   },
@@ -86,7 +94,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: "../dist/client",
+    outDir: path.resolve(rootDir, "dist/client"),
     sourcemap: true,
     emptyOutDir: true,
   },
