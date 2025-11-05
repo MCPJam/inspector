@@ -10,7 +10,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import { ActorNode } from "./ActorNode";
 import { CustomActionEdge } from "./CustomActionEdge";
-import type { OAuthFlowStep } from "@/lib/debug-oauth-state-machine";
+import type { OAuthFlowStep } from "@/lib/oauth/state-machines/types";
 
 const nodeTypes = {
   actor: ActorNode,

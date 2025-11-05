@@ -1,5 +1,5 @@
 import type { Node, Edge } from "@xyflow/react";
-import type { OAuthFlowStep } from "@/lib/debug-oauth-state-machine";
+import type { OAuthFlowStep } from "@/lib/oauth/state-machines/types";
 import {
   ACTORS,
   ACTOR_X_POSITIONS,
