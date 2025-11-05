@@ -17,6 +17,15 @@ import type {
   OAuthStateMachine,
   RegistrationStrategy2025_11_25,
 } from "./types";
+import type { DiagramAction } from "./shared/types";
+import {
+  proxyFetch,
+  addInfoLog,
+  generateRandomString,
+  generateCodeChallenge,
+  loadPreregisteredCredentials,
+  buildResourceMetadataUrl,
+} from "./shared/helpers";
 
 // Re-export types for backward compatibility
 export type { OAuthFlowStep, OAuthFlowState };
@@ -28,11 +37,6 @@ export type OauthFlowStateJune2025 = OAuthFlowState;
 // Legacy state export
 export const EMPTY_OAUTH_FLOW_STATE_V2: OauthFlowStateJune2025 =
   EMPTY_OAUTH_FLOW_STATE;
-
-// State machine interface (legacy compatibility)
-export interface DebugOAuthStateMachine extends OAuthStateMachine {
-  // All methods inherited from OAuthStateMachine
-}
 
 // Configuration for creating the state machine (2025-11-25 specific)
 export interface DebugOAuthStateMachineConfig {
@@ -46,16 +50,6 @@ export interface DebugOAuthStateMachineConfig {
   customScopes?: string;
   customHeaders?: Record<string, string>;
   registrationStrategy?: RegistrationStrategy2025_11_25; // cimd | dcr | preregistered
-}
-
-// Action definition for sequence diagram (co-located with state machine)
-export interface DiagramAction {
-  id: string;
-  label: string;
-  description: string;
-  from: string;
-  to: string;
-  details?: Array<{ label: string; value: any }>;
 }
 
 /**
@@ -447,27 +441,6 @@ export function buildActions_2025_11_25(
   ];
 }
 
-// Helper: Build well-known resource metadata URL from server URL
-// This follows RFC 9728 OAuth 2.0 Protected Resource Metadata
-function buildResourceMetadataUrl(serverUrl: string): string {
-  const url = new URL(serverUrl);
-  // Try path-aware discovery first (if server has a path)
-  if (url.pathname !== "/" && url.pathname !== "") {
-    const pathname = url.pathname.endsWith("/")
-      ? url.pathname.slice(0, -1)
-      : url.pathname;
-    return new URL(
-      `/.well-known/oauth-protected-resource${pathname}`,
-      url.origin,
-    ).toString();
-  }
-  // Otherwise use root discovery
-  return new URL(
-    "/.well-known/oauth-protected-resource",
-    url.origin,
-  ).toString();
-}
-
 // Helper: Build authorization server metadata URLs to try (RFC 8414 + OIDC Discovery)
 // 2025-11-25 spec: Path insertion first, then path appending (NO root fallback for paths)
 function buildAuthServerMetadataUrls(authServerUrl: string): string[] {
@@ -513,115 +486,10 @@ function buildAuthServerMetadataUrls(authServerUrl: string): string[] {
   return urls;
 }
 
-// Helper: Load pre-registered OAuth credentials from localStorage
-function loadPreregisteredCredentials(serverName: string): {
-  clientId?: string;
-  clientSecret?: string;
-} {
-  try {
-    // Try to load from mcp-client-{serverName} (where ServerModal stores them)
-    const storedClientInfo = localStorage.getItem(`mcp-client-${serverName}`);
-    if (storedClientInfo) {
-      const parsed = JSON.parse(storedClientInfo);
-      return {
-        clientId: parsed.client_id || undefined,
-        clientSecret: parsed.client_secret || undefined,
-      };
-    }
-  } catch (e) {
-    console.error("Failed to load pre-registered credentials:", e);
-  }
-  return {};
-}
-
-/**
- * Helper function to make requests via backend debug proxy (bypasses CORS)
- *
- * Uses the debug-specific proxy endpoint for OAuth flow visualization.
- * Automatically adds MCP-required headers so you don't have to remember them:
- * - Accept: "application/json, text/event-stream" (required by MCP HTTP transport spec)
- *
- * You can still override these by passing custom headers in options.headers
- */
-async function proxyFetch(
-  url: string,
-  options: RequestInit = {},
-): Promise<{
-  status: number;
-  statusText: string;
-  headers: Record<string, string>;
-  body: any;
-  ok: boolean;
-}> {
-  // Merge headers with MCP-required defaults
-  // Per MCP spec: HTTP clients MUST include both application/json and text/event-stream
-  const defaultHeaders: Record<string, string> = {
-    Accept: "application/json, text/event-stream",
-  };
-
-  const mergedHeaders = {
-    ...defaultHeaders,
-    ...((options.headers as Record<string, string>) || {}),
-  };
-
-  // Determine if body is JSON or form-urlencoded
-  let bodyToSend: any = undefined;
-  if (options.body) {
-    const contentType =
-      mergedHeaders[
-        Object.keys(mergedHeaders).find(
-          (k) => k.toLowerCase() === "content-type",
-        ) || ""
-      ];
-
-    if (contentType?.includes("application/x-www-form-urlencoded")) {
-      // For form-urlencoded, convert to object
-      const params = new URLSearchParams(options.body as string);
-      bodyToSend = Object.fromEntries(params.entries());
-    } else if (typeof options.body === "string") {
-      // Try to parse as JSON
-      try {
-        bodyToSend = JSON.parse(options.body);
-      } catch {
-        bodyToSend = options.body;
-      }
-    } else {
-      bodyToSend = options.body;
-    }
-  }
-
-  const proxyPayload = {
-    url,
-    method: options.method || "GET",
-    body: bodyToSend,
-    headers: mergedHeaders,
-  };
-
-  const response = await fetch("/api/mcp/oauth/debug/proxy", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(proxyPayload),
-  });
-
-  if (!response.ok) {
-    throw new Error(
-      `Backend debug proxy error: ${response.status} ${response.statusText}`,
-    );
-  }
-
-  const data = await response.json();
-  return {
-    ...data,
-    ok: data.status >= 200 && data.status < 300,
-  };
-}
-
 // Factory function to create the 2025-11-25 state machine
 export const createDebugOAuthStateMachine = (
   config: DebugOAuthStateMachineConfig,
-): DebugOAuthStateMachine => {
+): OAuthStateMachine => {
   const {
     state: initialState,
     getState,
@@ -651,7 +519,7 @@ export const createDebugOAuthStateMachine = (
   const getCurrentState = () => (getState ? getState() : initialState);
 
   // Create machine object that can reference itself
-  const machine: DebugOAuthStateMachine = {
+  const machine: OAuthStateMachine = {
     state: initialState,
     updateState,
 
@@ -2345,42 +2213,3 @@ export const createDebugOAuthStateMachine = (
 
   return machine;
 };
-
-// Helper function to add an info log to the state
-function addInfoLog(
-  state: OauthFlowStateJune2025,
-  id: string,
-  label: string,
-  data: any,
-): Array<{ id: string; label: string; data: any; timestamp: number }> {
-  return [
-    ...(state.infoLogs || []),
-    {
-      id,
-      label,
-      data,
-      timestamp: Date.now(),
-    },
-  ];
-}
-
-// Helper function to generate random string for PKCE
-function generateRandomString(length: number): string {
-  const charset =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
-  const randomValues = new Uint8Array(length);
-  crypto.getRandomValues(randomValues);
-  return Array.from(
-    randomValues,
-    (byte) => charset[byte % charset.length],
-  ).join("");
-}
-
-// Helper function to generate code challenge from verifier
-async function generateCodeChallenge(verifier: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(verifier);
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  const base64 = btoa(String.fromCharCode(...new Uint8Array(hash)));
-  return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
-}
