@@ -12,12 +12,10 @@ const API_BASE = "/api/mcp/registry";
 export async function listRegistryServers(options?: {
   limit?: number;
   cursor?: string;
-  search?: string;
 }): Promise<RegistryServerListResponse> {
   const params = new URLSearchParams();
   if (options?.limit) params.append("limit", options.limit.toString());
   if (options?.cursor) params.append("cursor", options.cursor);
-  if (options?.search) params.append("search", options.search);
 
   const url = `${API_BASE}/servers${params.toString() ? `?${params.toString()}` : ""}`;
   const response = await fetch(url);

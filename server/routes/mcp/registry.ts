@@ -9,7 +9,6 @@ registry.get("/servers", async (c) => {
   try {
     const limit = c.req.query("limit") || "50";
     const cursor = c.req.query("cursor");
-    const search = c.req.query("search");
 
     let url = `${REGISTRY_BASE_URL}/servers?limit=${limit}`;
     if (cursor) {
@@ -22,17 +21,6 @@ registry.get("/servers", async (c) => {
     }
 
     const data = await response.json();
-
-    // Client-side search filtering if provided
-    if (search && data.servers) {
-      const searchLower = search.toLowerCase();
-      data.servers = data.servers.filter((server: any) => {
-        const searchText = `${server.name} ${server.description || ""}`.toLowerCase();
-        return searchText.includes(searchLower);
-      });
-      data.metadata.count = data.servers.length;
-    }
-
     return c.json(data);
   } catch (error) {
     console.error("Error fetching registry servers:", error);

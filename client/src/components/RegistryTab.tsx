@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { ServerCard } from "./registry/ServerCard";
 import { ServerDetailModal } from "./registry/ServerDetailModal";
 import { SearchInput } from "./ui/search-input";
@@ -9,13 +9,14 @@ import type { RegistryServer, ServerFormData } from "@/shared/types";
 import { listRegistryServers } from "@/lib/registry-api";
 import { AddServerModal } from "./connection/AddServerModal";
 import { toast } from "sonner";
+import { searchRegistryServers, parseSearchQuery } from "@/lib/registry-search";
 
 interface RegistryTabProps {
   onConnect: (formData: ServerFormData) => void;
 }
 
 export function RegistryTab({ onConnect }: RegistryTabProps) {
-  const [servers, setServers] = useState<RegistryServer[]>([]);
+  const [allServers, setAllServers] = useState<RegistryServer[]>([]); // All fetched servers
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -28,7 +29,7 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [selectedServer, setSelectedServer] = useState<RegistryServer | null>(null);
 
-  const fetchServers = async (cursor?: string, search?: string) => {
+  const fetchServers = async (cursor?: string) => {
     try {
       if (cursor) {
         setLoadingMore(true);
@@ -38,9 +39,8 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
       setError(null);
 
       const response = await listRegistryServers({
-        limit: 50,
+        limit: 100, // Fetch more at once since we're doing client-side search
         cursor,
-        search,
       });
 
       // Unwrap servers from the wrapper structure
@@ -51,10 +51,10 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
 
       if (cursor) {
         // Append to existing servers for pagination
-        setServers((prev) => [...prev, ...unwrappedServers]);
+        setAllServers((prev) => [...prev, ...unwrappedServers]);
       } else {
-        // Replace servers for new search
-        setServers(unwrappedServers);
+        // Replace servers for initial load
+        setAllServers(unwrappedServers);
       }
 
       setNextCursor(response.metadata.nextCursor);
@@ -69,22 +69,27 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
     }
   };
 
+  // Use Fuse.js for client-side search with memoization
+  const filteredServers = useMemo(() => {
+    if (!searchQuery.trim()) {
+      return allServers;
+    }
+
+    const { query, filters } = parseSearchQuery(searchQuery);
+    return searchRegistryServers(allServers, query, filters);
+  }, [allServers, searchQuery]);
+
   useEffect(() => {
     fetchServers();
   }, []);
 
   const handleSearch = (value: string) => {
     setSearchQuery(value);
-    if (value.trim()) {
-      fetchServers(undefined, value);
-    } else {
-      fetchServers();
-    }
   };
 
   const handleLoadMore = () => {
     if (nextCursor && !loadingMore) {
-      fetchServers(nextCursor, searchQuery || undefined);
+      fetchServers(nextCursor);
     }
   };
 
@@ -144,7 +149,7 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
     return formData;
   };
 
-  if (loading && servers.length === 0) {
+  if (loading && allServers.length === 0) {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="flex flex-col items-center gap-3">
@@ -155,7 +160,7 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
     );
   }
 
-  if (error && servers.length === 0) {
+  if (error && allServers.length === 0) {
     return (
       <div className="flex items-center justify-center h-full p-4">
         <EmptyState
@@ -192,14 +197,14 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
         <SearchInput
           placeholder="Search servers..."
           value={searchQuery}
-          onChange={handleSearch}
+          onValueChange={handleSearch}
           className="max-w-md"
         />
       </div>
 
       {/* Server grid */}
       <div className="flex-1 overflow-auto p-4">
-        {servers.length === 0 ? (
+        {filteredServers.length === 0 ? (
           <EmptyState
             icon={Package}
             title="No Servers Found"
@@ -211,7 +216,7 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
           />
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {servers.map((server, index) => (
+            {filteredServers.map((server, index) => (
               <ServerCard
                 key={`${server.name || 'unknown'}-${server.version || 'unknown'}-${index}`}
                 server={server}
