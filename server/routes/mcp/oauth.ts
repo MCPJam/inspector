@@ -96,47 +96,94 @@ oauth.post("/debug/proxy", async (c) => {
     // Handle SSE (Server-Sent Events) response
     if (contentTypeHeader.includes("text/event-stream")) {
       try {
-        const text = await response.text();
-        // Parse SSE events
+        // For backwards compatibility detection with old HTTP+SSE transport (2024-11-05):
+        // - Read from SSE stream until we get the first complete event
+        // - If it's an "endpoint" event, this is the old transport
+        // - Extract the endpoint URL and return it
+        const reader = response.body?.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
         const events: any[] = [];
-        const lines = text.split("\n");
         let currentEvent: any = {};
+        const maxReadTime = 5000; // 5 second timeout (generous for network latency)
+        const startTime = Date.now();
 
-        for (const line of lines) {
-          if (line.startsWith("event:")) {
-            currentEvent.event = line.substring(6).trim();
-          } else if (line.startsWith("data:")) {
-            const data = line.substring(5).trim();
-            try {
-              currentEvent.data = JSON.parse(data);
-            } catch {
-              currentEvent.data = data;
+        if (reader) {
+          try {
+            while (Date.now() - startTime < maxReadTime) {
+              const { done, value } = await Promise.race([
+                reader.read(),
+                new Promise<{ done: boolean; value: undefined }>((_, reject) =>
+                  setTimeout(() => reject(new Error("Read timeout")), 1000),
+                ),
+              ]);
+
+              if (done) break;
+
+              buffer += decoder.decode(value, { stream: true });
+              const lines = buffer.split("\n");
+              // Keep the last incomplete line in the buffer
+              buffer = lines.pop() || "";
+
+              for (const line of lines) {
+                if (line.startsWith("event:")) {
+                  currentEvent.event = line.substring(6).trim();
+                } else if (line.startsWith("data:")) {
+                  const data = line.substring(5).trim();
+                  try {
+                    currentEvent.data = JSON.parse(data);
+                  } catch {
+                    currentEvent.data = data;
+                  }
+                } else if (line.startsWith("id:")) {
+                  currentEvent.id = line.substring(3).trim();
+                } else if (line === "") {
+                  // Empty line indicates end of event
+                  if (Object.keys(currentEvent).length > 0) {
+                    events.push({ ...currentEvent });
+                    currentEvent = {};
+
+                    // For backwards compatibility detection: check if first event is "endpoint"
+                    if (events.length >= 1) {
+                      // Got at least one event, that's enough for detection
+                      break;
+                    }
+                  }
+                }
+              }
+
+              // Exit if we have at least one complete event
+              if (events.length >= 1) break;
             }
-          } else if (line.startsWith("id:")) {
-            currentEvent.id = line.substring(3).trim();
-          } else if (line === "") {
-            // Empty line indicates end of event
-            if (Object.keys(currentEvent).length > 0) {
-              events.push(currentEvent);
-              currentEvent = {};
+          } finally {
+            // Always cancel the reader to free resources
+            try {
+              await reader.cancel();
+            } catch (e) {
+              console.error("Error canceling SSE reader:", e);
             }
           }
         }
 
-        // If we parsed events, return them. Otherwise return the raw text.
-        responseBody =
-          events.length > 0
-            ? {
-                events,
-                // If there's a "message" event with MCP response, extract it
-                mcpResponse:
-                  events.find((e) => e.event === "message" || !e.event)?.data ||
-                  null,
-              }
-            : { raw: text };
+        // Return structured response for client
+        // Client can check if events[0].event === "endpoint" to detect old transport
+        responseBody = {
+          transport: "sse",
+          events,
+          // For old HTTP+SSE transport, first event should be "endpoint"
+          isOldTransport: events[0]?.event === "endpoint",
+          endpoint: events[0]?.event === "endpoint" ? events[0].data : null,
+          // Include any MCP response if found
+          mcpResponse:
+            events.find((e) => e.event === "message" || !e.event)?.data || null,
+          rawBuffer: buffer,
+        };
       } catch (error) {
         console.error("Failed to parse SSE response:", error);
-        responseBody = { error: "Failed to parse SSE stream" };
+        responseBody = {
+          error: "Failed to parse SSE stream",
+          details: error instanceof Error ? error.message : String(error),
+        };
       }
     } else {
       // Handle JSON or text response
