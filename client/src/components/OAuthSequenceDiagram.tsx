@@ -309,69 +309,86 @@ const DiagramContent = memo(
 
       // Define actions in the sequence (matches MCP OAuth spec)
       const actions = [
-        {
-          id: "request_without_token",
-          label: "MCP request without token",
-          description: "Client makes initial request without authorization",
-          from: "client",
-          to: "mcpServer",
-          details: flowState.serverUrl
-            ? [
-                { label: "POST", value: flowState.serverUrl },
-                { label: "method", value: "initialize" },
-              ]
-            : undefined,
-        },
-        {
-          id: "received_401_unauthorized",
-          label: "HTTP 401 Unauthorized with WWW-Authenticate header",
-          description: "Server returns 401 with WWW-Authenticate header",
-          from: "mcpServer",
-          to: "client",
-          details: flowState.resourceMetadataUrl
-            ? [{ label: "Note", value: "Extract resource_metadata URL" }]
-            : undefined,
-        },
-        {
-          id: "request_resource_metadata",
-          label: "Request Protected Resource Metadata",
-          description: "Client requests metadata from well-known URI",
-          from: "client",
-          to: "mcpServer",
-          details: flowState.resourceMetadataUrl
-            ? [
-                {
-                  label: "GET",
-                  value: new URL(flowState.resourceMetadataUrl).pathname,
-                },
-              ]
-            : undefined,
-        },
-        {
-          id: "received_resource_metadata",
-          label: "Return metadata",
-          description: "Server returns OAuth protected resource metadata",
-          from: "mcpServer",
-          to: "client",
-          details: flowState.resourceMetadata?.authorization_servers
-            ? [
-                {
-                  label: "Auth Server",
-                  value: flowState.resourceMetadata.authorization_servers[0],
-                },
-              ]
-            : undefined,
-        },
+        // For 2025-03-26: Start directly with discovery (no initial MCP request)
+        // Other protocols: Show initial unauthorized request that triggers OAuth
+        ...(protocolVersion === "2025-03-26"
+          ? []
+          : [
+              {
+                id: "request_without_token",
+                label: "MCP request without token",
+                description:
+                  "Client makes initial request without authorization",
+                from: "client",
+                to: "mcpServer",
+                details: flowState.serverUrl
+                  ? [
+                      { label: "POST", value: flowState.serverUrl },
+                      { label: "method", value: "initialize" },
+                    ]
+                  : undefined,
+              },
+            ]),
+        // For 2025-03-26: Skip RFC9728 steps, go directly to auth server discovery
+        ...(protocolVersion === "2025-03-26"
+          ? []
+          : [
+              {
+                id: "received_401_unauthorized",
+                label: "HTTP 401 Unauthorized with WWW-Authenticate header",
+                description: "Server returns 401 with WWW-Authenticate header",
+                from: "mcpServer",
+                to: "client",
+                details: flowState.resourceMetadataUrl
+                  ? [{ label: "Note", value: "Extract resource_metadata URL" }]
+                  : undefined,
+              },
+              {
+                id: "request_resource_metadata",
+                label: "Request Protected Resource Metadata",
+                description: "Client requests metadata from well-known URI",
+                from: "client",
+                to: "mcpServer",
+                details: flowState.resourceMetadataUrl
+                  ? [
+                      {
+                        label: "GET",
+                        value: new URL(flowState.resourceMetadataUrl).pathname,
+                      },
+                    ]
+                  : undefined,
+              },
+              {
+                id: "received_resource_metadata",
+                label: "Return metadata",
+                description: "Server returns OAuth protected resource metadata",
+                from: "mcpServer",
+                to: "client",
+                details: flowState.resourceMetadata?.authorization_servers
+                  ? [
+                      {
+                        label: "Auth Server",
+                        value:
+                          flowState.resourceMetadata.authorization_servers[0],
+                      },
+                    ]
+                  : undefined,
+              },
+            ]),
         {
           id: "request_authorization_server_metadata",
           label:
-            protocolVersion === "2025-11-25"
-              ? "GET Authorization server metadata endpoint"
-              : "GET /.well-known/oauth-authorization-server",
+            protocolVersion === "2025-03-26"
+              ? "GET /.well-known/oauth-authorization-server from MCP base URL"
+              : protocolVersion === "2025-11-25"
+                ? "GET Authorization server metadata endpoint"
+                : "GET /.well-known/oauth-authorization-server",
           description:
-            protocolVersion === "2025-11-25"
-              ? "Try OAuth path insertion, OIDC path insertion, OIDC path appending"
-              : "Try RFC8414 path, then RFC8414 root (no OIDC support)",
+            protocolVersion === "2025-03-26"
+              ? "Direct discovery from MCP server base URL with fallback to /authorize, /token, /register"
+              : protocolVersion === "2025-11-25"
+                ? "Try OAuth path insertion, OIDC path insertion, OIDC path appending"
+                : "Try RFC8414 path, then RFC8414 root (no OIDC support)",
           from: "client",
           to: "authServer",
           details: flowState.authorizationServerUrl
@@ -436,8 +453,7 @@ const DiagramContent = memo(
               },
               {
                 id: "cimd_fetch_request",
-                label:
-                  "Fetch metadata from client_id URL",
+                label: "Fetch metadata from client_id URL",
                 description:
                   "Authorization Server fetches client metadata from the URL",
                 from: "authServer",
@@ -555,11 +571,15 @@ const DiagramContent = memo(
           label:
             protocolVersion === "2025-11-25"
               ? "Generate PKCE (REQUIRED)\nInclude resource parameter"
-              : "Generate PKCE parameters",
+              : protocolVersion === "2025-03-26"
+                ? "Generate PKCE (REQUIRED)\nInclude resource parameter"
+                : "Generate PKCE parameters",
           description:
             protocolVersion === "2025-11-25"
               ? "Client generates code verifier and challenge (REQUIRED), includes resource parameter"
-              : "Client generates code verifier and challenge (recommended), includes resource parameter",
+              : protocolVersion === "2025-03-26"
+                ? "Client generates code verifier and challenge (REQUIRED), includes resource parameter"
+                : "Client generates code verifier and challenge (recommended), includes resource parameter",
           from: "client",
           to: "client",
           details: flowState.codeChallenge

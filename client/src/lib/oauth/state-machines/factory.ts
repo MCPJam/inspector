@@ -6,13 +6,18 @@
  */
 
 import type {
-  OAuthFlowState,
   OAuthStateMachine,
   OAuthProtocolVersion,
   BaseOAuthStateMachineConfig,
+  RegistrationStrategy2025_03_26,
   RegistrationStrategy2025_06_18,
   RegistrationStrategy2025_11_25,
 } from "./types";
+
+import {
+  createDebugOAuthStateMachine as create2025_03_26,
+  type DebugOAuthStateMachineConfig as Config2025_03_26,
+} from "./debug-oauth-2025-03-26";
 
 import {
   createDebugOAuthStateMachine as create2025_06_18,
@@ -30,7 +35,8 @@ import {
 export interface OAuthStateMachineFactoryConfig
   extends BaseOAuthStateMachineConfig {
   protocolVersion: OAuthProtocolVersion;
-  registrationStrategy?:
+  registrationStrategy:
+    | RegistrationStrategy2025_03_26
     | RegistrationStrategy2025_06_18
     | RegistrationStrategy2025_11_25;
 }
@@ -70,6 +76,16 @@ export function createOAuthStateMachine(
   const { protocolVersion, ...baseConfig } = config;
 
   switch (protocolVersion) {
+    case "2025-03-26":
+      // Validate registration strategy for 2025-03-26
+      if (config.registrationStrategy === "cimd") {
+        throw new Error(
+          "CIMD registration is not supported in 2025-03-26 protocol. " +
+            "Use 'dcr' or 'preregistered' instead.",
+        );
+      }
+      return create2025_03_26(baseConfig as Config2025_03_26);
+
     case "2025-06-18":
       // Validate registration strategy for 2025-06-18
       if (config.registrationStrategy === "cimd") {
@@ -98,6 +114,8 @@ export function getDefaultRegistrationStrategy(
   protocolVersion: OAuthProtocolVersion,
 ): string {
   switch (protocolVersion) {
+    case "2025-03-26":
+      return "dcr";
     case "2025-06-18":
       return "dcr";
     case "2025-11-25":
@@ -114,6 +132,8 @@ export function getSupportedRegistrationStrategies(
   protocolVersion: OAuthProtocolVersion,
 ): ReadonlyArray<string> {
   switch (protocolVersion) {
+    case "2025-03-26":
+      return ["dcr", "preregistered"] as const;
     case "2025-06-18":
       return ["dcr", "preregistered"] as const;
     case "2025-11-25":
@@ -127,20 +147,33 @@ export function getSupportedRegistrationStrategies(
  * Protocol version metadata for UI display
  */
 export const PROTOCOL_VERSION_INFO = {
+  "2025-03-26": {
+    label: "2025-03-26 (Legacy)",
+    description: "Original MCP OAuth specification with direct discovery",
+    features: [
+      "Dynamic Client Registration (DCR) SHOULD be supported",
+      "Direct RFC8414 discovery from MCP server base URL",
+      "Fallback to default endpoints (/authorize, /token, /register)",
+      "PKCE is REQUIRED for all clients",
+      "No Protected Resource Metadata (RFC9728)",
+    ],
+  },
   "2025-06-18": {
     label: "2025-06-18 (Latest)",
-    description: "Original MCP OAuth specification with DCR support",
+    description: "Current MCP OAuth specification with resource metadata",
     features: [
-      "Dynamic Client Registration (DCR) priority",
+      "Dynamic Client Registration (DCR) SHOULD be supported",
+      "Protected Resource Metadata (RFC9728) required",
       "RFC8414 discovery ONLY (no OIDC) with root fallback",
-      "PKCE recommended but not enforced",
+      "PKCE recommended but not strictly enforced",
     ],
   },
   "2025-11-25": {
     label: "2025-11-25 (Draft)",
-    description: "Latest MCP OAuth specification with CIMD support",
+    description: "Proposed MCP OAuth specification with CIMD support",
     features: [
-      "Client ID Metadata Documents (CIMD) priority",
+      "Client ID Metadata Documents (CIMD) SHOULD be supported",
+      "Protected Resource Metadata (RFC9728) required",
       "RFC8414 OR OIDC discovery without root fallback",
       "PKCE strictly required and enforced",
       "Enhanced security with URL-based client IDs",
