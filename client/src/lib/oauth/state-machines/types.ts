@@ -1,6 +1,5 @@
 /**
  * Shared types for OAuth state machines
- * Used by both 2025-06-18 and 2025-11-25 protocol implementations
  */
 
 // OAuth flow steps based on MCP specification
@@ -8,6 +7,7 @@ export type OAuthFlowStep =
   | "idle"
   | "request_without_token"
   | "received_401_unauthorized"
+  | "discovery_start" // 2025-03-26 spec: Start discovery from MCP server URL
   | "request_resource_metadata"
   | "received_resource_metadata"
   | "request_authorization_server_metadata"
@@ -154,8 +154,9 @@ export interface BaseOAuthStateMachineConfig {
 }
 
 // Registration strategies
+export type RegistrationStrategy2025_03_26 = "dcr" | "preregistered";
 export type RegistrationStrategy2025_06_18 = "dcr" | "preregistered";
 export type RegistrationStrategy2025_11_25 = "cimd" | "dcr" | "preregistered";
 
 // Protocol versions
-export type OAuthProtocolVersion = "2025-06-18" | "2025-11-25";
+export type OAuthProtocolVersion = "2025-03-26" | "2025-06-18" | "2025-11-25";

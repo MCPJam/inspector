@@ -17,13 +17,13 @@ import {
 } from "./ui/select";
 import { getStoredTokens } from "../lib/mcp-oauth";
 import { ServerWithName } from "../hooks/use-app-state";
+import { EMPTY_OAUTH_FLOW_STATE_V2 } from "../lib/oauth/state-machines/debug-oauth-2025-06-18";
 import {
-  OauthFlowStateJune2025,
-  EMPTY_OAUTH_FLOW_STATE_V2,
+  OAuthFlowState,
   OAuthProtocolVersion,
   RegistrationStrategy2025_11_25,
   RegistrationStrategy2025_06_18,
-} from "../lib/debug-oauth-state-machine";
+} from "../lib/oauth/state-machines/types";
 import {
   createOAuthStateMachine,
   getDefaultRegistrationStrategy,
@@ -33,7 +33,6 @@ import { DebugMCPOAuthClientProvider } from "../lib/debug-oauth-provider";
 import { OAuthSequenceDiagram } from "./oauth/OAuthSequenceDiagram";
 import { OAuthFlowLogger } from "./oauth/OAuthFlowLogger";
 import { OAuthAuthorizationModal } from "./oauth/OAuthAuthorizationModal";
-import { ServerModal } from "./connection/ServerModal";
 import { ServerFormData } from "@/shared/types";
 import { MCPServerConfig } from "@/sdk";
 import {
@@ -41,6 +40,7 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "./ui/resizable";
+import { EditServerModal } from "./connection/EditServerModal";
 
 interface StatusMessageProps {
   message: StatusMessage;
@@ -98,7 +98,7 @@ export const OAuthFlowTab = ({
   const [authSettings, setAuthSettings] = useState<AuthSettings>(
     DEFAULT_AUTH_SETTINGS,
   );
-  const [oauthFlowState, setOAuthFlowState] = useState<OauthFlowStateJune2025>(
+  const [oauthFlowState, setOAuthFlowState] = useState<OAuthFlowState>(
     EMPTY_OAUTH_FLOW_STATE_V2,
   );
 
@@ -193,7 +193,7 @@ export const OAuthFlowTab = ({
   }, []);
 
   const updateOAuthFlowState = useCallback(
-    (updates: Partial<OauthFlowStateJune2025>) => {
+    (updates: Partial<OAuthFlowState>) => {
       setOAuthFlowState((prev) => ({ ...prev, ...updates }));
     },
     [],
@@ -606,6 +606,9 @@ export const OAuthFlowTab = ({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="2025-03-26" className="text-xs">
+                    2025-03-26
+                  </SelectItem>
                   <SelectItem value="2025-06-18" className="text-xs">
                     2025-06-18 (Latest)
                   </SelectItem>
@@ -789,12 +792,11 @@ export const OAuthFlowTab = ({
 
       {/* Edit Server Modal */}
       {serverEntry && onUpdate && (
-        <ServerModal
-          mode="edit"
+        <EditServerModal
           isOpen={isEditingServer}
           onClose={() => setIsEditingServer(false)}
           onSubmit={(formData, originalName) =>
-            onUpdate(originalName!, formData)
+            onUpdate(originalName, formData)
           }
           server={serverEntry}
         />

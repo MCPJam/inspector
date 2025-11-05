@@ -8,10 +8,23 @@ export type ConnectionStatus =
   | "disconnected"
   | "oauth-flow";
 
+export interface InitializationInfo {
+  protocolVersion?: string;
+  transport?: string;
+  serverCapabilities?: Record<string, any>;
+  serverVersion?: {
+    name: string;
+    version: string;
+  };
+  instructions?: string;
+  clientCapabilities?: Record<string, any>;
+}
+
 export interface ServerWithName {
   name: string;
   config: MCPServerConfig;
   oauthTokens?: OauthTokens;
+  initializationInfo?: InitializationInfo;
   lastConnectionTime: Date;
   connectionStatus: ConnectionStatus;
   retryCount: number;
@@ -50,7 +63,12 @@ export type AppAction =
   | { type: "SYNC_AGENT_STATUS"; servers: AgentServerInfo[] }
   | { type: "SELECT_SERVER"; name: string }
   | { type: "SET_MULTI_SELECTED"; names: string[] }
-  | { type: "SET_MULTI_MODE"; enabled: boolean };
+  | { type: "SET_MULTI_MODE"; enabled: boolean }
+  | {
+      type: "SET_INITIALIZATION_INFO";
+      name: string;
+      initInfo: InitializationInfo;
+    };
 
 export const initialAppState: AppState = {
   servers: {},
