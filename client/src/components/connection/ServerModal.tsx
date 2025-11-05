@@ -85,7 +85,7 @@ export function ServerModal({
   const [showTokenInsights, setShowTokenInsights] = useState<boolean>(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [expandedTokens, setExpandedTokens] = useState<Set<string>>(new Set());
-  const [activeTab, setActiveTab] = useState<"config" | "tools">("config");
+  const [activeTab, setActiveTab] = useState<"config" | "tools" | "initialization">("config");
   const [tools, setTools] = useState<ListToolsResultWithMetadata | null>(null);
   const [isLoadingTools, setIsLoadingTools] = useState(false);
   const [toolsError, setToolsError] = useState<string | null>(null);
@@ -572,6 +572,17 @@ export function ServerModal({
                 }`}
               >
                 Widget Metadata
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab("initialization")}
+                className={`px-4 py-2 text-sm font-medium transition-colors ${
+                  activeTab === "initialization"
+                    ? "border-b-2 border-primary text-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Initialization
               </button>
             </div>
           )}
@@ -1479,6 +1490,149 @@ export function ServerModal({
             </div>
 
             {/* Close button for tools view */}
+            <div className="flex justify-end space-x-2 pt-4">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  posthog.capture("cancel_button_clicked", {
+                    location: "server_modal",
+                    platform: detectPlatform(),
+                    environment: detectEnvironment(),
+                  });
+                  handleClose();
+                }}
+                className="px-4"
+              >
+                Close
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* Show initialization info when in edit mode and initialization tab is active */}
+        {mode === "edit" && activeTab === "initialization" && server && (
+          <div className="space-y-6">
+            <div className="mb-3">
+              <h3 className="text-lg font-semibold">MCP Initialization Info</h3>
+              <p className="text-sm text-muted-foreground mt-1">
+                Protocol version and capabilities exchanged during server initialization
+              </p>
+            </div>
+
+            {server.initializationInfo ? (
+              <div className="space-y-4">
+                {/* Protocol & Transport */}
+                <div className="bg-muted/30 rounded-lg p-4">
+                  <h4 className="text-sm font-medium mb-2">Connection Details</h4>
+                  <div className="space-y-1 text-sm">
+                    {server.initializationInfo.protocolVersion && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-muted-foreground">Protocol Version:</span>
+                        <span className="font-mono">
+                          {server.initializationInfo.protocolVersion}
+                        </span>
+                      </div>
+                    )}
+                    {server.initializationInfo.transport && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-muted-foreground">Transport:</span>
+                        <span className="font-mono uppercase">
+                          {server.initializationInfo.transport}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Server Version */}
+                {server.initializationInfo.serverVersion && (
+                  <div className="bg-muted/30 rounded-lg p-4">
+                    <h4 className="text-sm font-medium mb-2">Server Version</h4>
+                    <div className="space-y-1 text-sm">
+                      <div className="flex items-center gap-2">
+                        <span className="text-muted-foreground">Name:</span>
+                        <span className="font-mono">
+                          {server.initializationInfo.serverVersion.name}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-muted-foreground">Version:</span>
+                        <span className="font-mono">
+                          {server.initializationInfo.serverVersion.version}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Server Instructions */}
+                {server.initializationInfo.instructions && (
+                  <div className="bg-muted/30 rounded-lg p-4">
+                    <h4 className="text-sm font-medium mb-2">Instructions</h4>
+                    <p className="text-sm text-muted-foreground">
+                      {server.initializationInfo.instructions}
+                    </p>
+                  </div>
+                )}
+
+                {/* Server Capabilities */}
+                {server.initializationInfo.serverCapabilities && (
+                  <div className="bg-muted/30 rounded-lg p-4">
+                    <h4 className="text-sm font-medium mb-2">Server Capabilities</h4>
+                    <JsonView
+                      src={server.initializationInfo.serverCapabilities}
+                      theme="atom"
+                      dark={true}
+                      enableClipboard={true}
+                      displaySize={false}
+                      collapseStringsAfterLength={100}
+                      style={{
+                        fontSize: "11px",
+                        fontFamily:
+                          "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                        backgroundColor: "hsl(var(--background))",
+                        padding: "8px",
+                        borderRadius: "6px",
+                        border: "1px solid hsl(var(--border))",
+                      }}
+                    />
+                  </div>
+                )}
+
+                {/* Client Capabilities */}
+                {server.initializationInfo.clientCapabilities && (
+                  <div className="bg-muted/30 rounded-lg p-4">
+                    <h4 className="text-sm font-medium mb-2">Client Capabilities</h4>
+                    <JsonView
+                      src={server.initializationInfo.clientCapabilities}
+                      theme="atom"
+                      dark={true}
+                      enableClipboard={true}
+                      displaySize={false}
+                      collapseStringsAfterLength={100}
+                      style={{
+                        fontSize: "11px",
+                        fontFamily:
+                          "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                        backgroundColor: "hsl(var(--background))",
+                        padding: "8px",
+                        borderRadius: "6px",
+                        border: "1px solid hsl(var(--border))",
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="bg-muted/30 rounded-lg p-8 text-center">
+                <p className="text-sm text-muted-foreground">
+                  No initialization info available. Reconnect to the server to capture initialization data.
+                </p>
+              </div>
+            )}
+
+            {/* Close button */}
             <div className="flex justify-end space-x-2 pt-4">
               <Button
                 type="button"
