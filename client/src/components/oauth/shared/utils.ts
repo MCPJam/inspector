@@ -1,5 +1,5 @@
 import type { OAuthFlowStep } from "@/lib/debug-oauth-state-machine";
-import type { NodeStatus, Action } from "./types";
+import type { NodeStatus } from "./types";
 
 // Helper to determine status based on current step and actual action order
 export const getActionStatus = (

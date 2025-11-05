@@ -2,9 +2,9 @@ import { memo, useMemo } from "react";
 import type { OAuthProtocolVersion } from "@/lib/debug-oauth-state-machine";
 import type { OAuthFlowState } from "@/lib/oauth/state-machines/types";
 import { OAuthSequenceDiagramContent } from "./oauth/shared/OAuthSequenceDiagramContent";
-import { buildActions_2025_11_25 } from "./oauth/diagrams/actions/actions_2025_11_25";
-import { buildActions_2025_06_18 } from "./oauth/diagrams/actions/actions_2025_06_18";
-import { buildActions_2025_03_26 } from "./oauth/diagrams/actions/actions_2025_03_26";
+import { buildActions_2025_11_25 } from "@/lib/oauth/state-machines/debug-oauth-2025-11-25";
+import { buildActions_2025_06_18 } from "@/lib/oauth/state-machines/debug-oauth-2025-06-18";
+import { buildActions_2025_03_26 } from "@/lib/oauth/state-machines/debug-oauth-2025-03-26";
 
 interface OAuthSequenceDiagramProps {
   flowState: OAuthFlowState;
@@ -16,8 +16,8 @@ interface OAuthSequenceDiagramProps {
  * Factory component that selects the appropriate OAuth actions builder
  * based on the protocol version and renders the sequence diagram.
  *
- * Each protocol version has its own actions builder file with protocol-specific
- * actions and behavior, ensuring clear 1:1 mapping with state machine files.
+ * Actions are co-located with their state machine files for easy maintenance
+ * and to ensure step IDs match between business logic and visualization.
  */
 export const OAuthSequenceDiagram = memo((props: OAuthSequenceDiagramProps) => {
   const {
@@ -33,10 +33,18 @@ export const OAuthSequenceDiagram = memo((props: OAuthSequenceDiagramProps) => {
         return buildActions_2025_11_25(flowState, registrationStrategy);
 
       case "2025-06-18":
-        return buildActions_2025_06_18(flowState, registrationStrategy);
+        // 2025-06-18 doesn't support CIMD, fallback to DCR
+        return buildActions_2025_06_18(
+          flowState,
+          registrationStrategy === "cimd" ? "dcr" : registrationStrategy
+        );
 
       case "2025-03-26":
-        return buildActions_2025_03_26(flowState, registrationStrategy);
+        // 2025-03-26 doesn't support CIMD, fallback to DCR
+        return buildActions_2025_03_26(
+          flowState,
+          registrationStrategy === "cimd" ? "dcr" : registrationStrategy
+        );
 
       default:
         console.warn(
