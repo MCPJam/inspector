@@ -16,6 +16,7 @@ import type {
   OAuthFlowState,
   OAuthStateMachine,
   RegistrationStrategy2025_03_26,
+  HttpHistoryEntry,
 } from "./types";
 import type { DiagramAction } from "./shared/types";
 import {
@@ -442,6 +443,7 @@ export const createDebugOAuthStateMachine = (
                   response.status === 200
                     ? addInfoLog(
                         state,
+                        "discovery_start",
                         "optional-auth",
                         "Optional Authentication",
                         {
@@ -580,6 +582,7 @@ export const createDebugOAuthStateMachine = (
 
               const fallbackInfo = addInfoLog(
                 getCurrentState(),
+                "received_authorization_server_metadata",
                 "fallback-endpoints",
                 "Using Fallback Endpoints",
                 {
@@ -674,6 +677,7 @@ export const createDebugOAuthStateMachine = (
 
             const infoLogs = addInfoLog(
               getCurrentState(),
+              "received_authorization_server_metadata",
               "as-metadata",
               "Authorization Server Metadata",
               metadata,
@@ -731,6 +735,7 @@ export const createDebugOAuthStateMachine = (
 
               const infoLogs = addInfoLog(
                 getCurrentState(),
+                "received_client_credentials",
                 "dcr",
                 "Pre-registered Client",
                 preregInfo,
@@ -877,6 +882,7 @@ export const createDebugOAuthStateMachine = (
 
                 const infoLogs = addInfoLog(
                   getCurrentState(),
+                  "received_client_credentials",
                   "dcr",
                   "Dynamic Client Registration",
                   dcrInfo,
@@ -939,6 +945,7 @@ export const createDebugOAuthStateMachine = (
 
             const pkceInfoLogs = addInfoLog(
               getCurrentState(),
+              "generate_pkce_parameters",
               "pkce-generation",
               "Generate PKCE Parameters (REQUIRED)",
               {
@@ -1009,6 +1016,7 @@ export const createDebugOAuthStateMachine = (
 
             const authUrlInfoLogs = addInfoLog(
               getCurrentState(),
+              "authorization_request",
               "auth-url",
               "Authorization URL",
               {
@@ -1193,6 +1201,7 @@ export const createDebugOAuthStateMachine = (
                   ...tokenInfoLogs,
                   {
                     id: "auth-code",
+                    step: "received_authorization_code",
                     label: "Authorization Code",
                     data: {
                       code: state.authorizationCode,
@@ -1215,6 +1224,7 @@ export const createDebugOAuthStateMachine = (
                   ...tokenInfoLogs,
                   {
                     id: "oauth-tokens",
+                    step: "received_access_token",
                     label: "OAuth Tokens",
                     data: tokenData,
                     timestamp: Date.now(),
@@ -1267,6 +1277,7 @@ export const createDebugOAuthStateMachine = (
                     ...tokenInfoLogs,
                     {
                       id: "token",
+                      step: "received_access_token",
                       label: "Access Token (Decoded JWT)",
                       data: audienceNote,
                       timestamp: Date.now(),
@@ -1299,6 +1310,7 @@ export const createDebugOAuthStateMachine = (
                     ...tokenInfoLogs,
                     {
                       id: "id-token",
+                      step: "received_access_token",
                       label: "ID Token (OIDC - Decoded JWT)",
                       data: formattedIdToken,
                       timestamp: Date.now(),
@@ -1378,6 +1390,7 @@ export const createDebugOAuthStateMachine = (
 
             const authenticatedRequestInfoLogs = addInfoLog(
               getCurrentState(),
+              "authenticated_mcp_request",
               "authenticated-init",
               "Authenticated MCP Initialize Request",
               {
@@ -1468,8 +1481,8 @@ export const createDebugOAuthStateMachine = (
                       },
                     };
 
-                    const getHistoryEntry = {
-                      step: "http_sse_fallback",
+                    const getHistoryEntry: HttpHistoryEntry = {
+                      step: "complete",
                       timestamp: Date.now(),
                       request: getRequest,
                     };
@@ -1479,6 +1492,7 @@ export const createDebugOAuthStateMachine = (
                     // Add info log for backwards compatibility attempt
                     let fallbackInfoLogs = addInfoLog(
                       getCurrentState(),
+                      "authenticated_mcp_request",
                       "http-sse-fallback-attempt",
                       "Backwards Compatibility Check",
                       {
@@ -1529,6 +1543,7 @@ export const createDebugOAuthStateMachine = (
 
                       const httpSseInfoLogs = addInfoLog(
                         getCurrentState(),
+                        "authenticated_mcp_request",
                         "http-sse-detected",
                         "HTTP+SSE Transport Detected (2024-11-05)",
                         {
@@ -1609,6 +1624,7 @@ export const createDebugOAuthStateMachine = (
 
                 mcpInfoLogs = addInfoLog(
                   getCurrentState(),
+                  "authenticated_mcp_request",
                   "mcp-protocol",
                   "MCP Server Information",
                   protocolInfo,
@@ -1616,6 +1632,7 @@ export const createDebugOAuthStateMachine = (
               } else if (isSSE) {
                 mcpInfoLogs = addInfoLog(
                   getCurrentState(),
+                  "authenticated_mcp_request",
                   "mcp-transport",
                   "MCP Transport Detected",
                   {
@@ -1649,6 +1666,7 @@ export const createDebugOAuthStateMachine = (
 
                 mcpInfoLogs = addInfoLog(
                   getCurrentState(),
+                  "authenticated_mcp_request",
                   "mcp-protocol",
                   "MCP Server Information",
                   protocolInfo,
