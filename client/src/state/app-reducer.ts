@@ -56,7 +56,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
             lastConnectionTime: new Date(),
             retryCount: 0,
             lastError: undefined,
-            oauthTokens: action.tokens ?? existing.oauthTokens,
+            oauthTokens: action.tokens,
             enabled: true,
           }),
         },
@@ -157,6 +157,21 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           ? []
           : state.selectedMultipleServers,
       };
+
+    case "SET_INITIALIZATION_INFO": {
+      const existing = state.servers[action.name];
+      if (!existing) return state;
+      return {
+        ...state,
+        servers: {
+          ...state.servers,
+          [action.name]: {
+            ...existing,
+            initializationInfo: action.initInfo,
+          },
+        },
+      };
+    }
 
     default:
       return state;

@@ -9,6 +9,7 @@ import {
   deleteServer,
   listServers,
   reconnectServer,
+  getInitializationInfo,
 } from "@/state/mcp-api";
 import {
   ensureAuthorizedForReconnect,
@@ -114,6 +115,8 @@ export function useAppState() {
                 config: result.serverConfig,
                 tokens: getStoredTokens(serverName),
               });
+              // Fetch initialization info after successful connection
+              await fetchAndStoreInitInfo(serverName);
               logger.info("OAuth connection successful", { serverName });
               toast.success(
                 `OAuth connection successful! Connected to ${serverName}.`,
@@ -191,6 +194,26 @@ export function useAppState() {
     }
   }, [isLoading, handleOAuthCallbackComplete]);
 
+  // Helper to fetch and store initialization info
+  const fetchAndStoreInitInfo = useCallback(async (serverName: string) => {
+    try {
+      const result = await getInitializationInfo(serverName);
+      if (result.success && result.initInfo) {
+        dispatch({
+          type: "SET_INITIALIZATION_INFO",
+          name: serverName,
+          initInfo: result.initInfo,
+        });
+      }
+    } catch (error) {
+      // Silent fail - initialization info is optional
+      console.debug("Failed to fetch initialization info", {
+        serverName,
+        error,
+      });
+    }
+  }, []);
+
   const handleConnect = useCallback(
     async (formData: ServerFormData) => {
       const validationError = validateForm(formData);
@@ -249,6 +272,8 @@ export function useAppState() {
                   config: oauthResult.serverConfig,
                   tokens: getStoredTokens(formData.name),
                 });
+                // Fetch initialization info after successful connection
+                await fetchAndStoreInitInfo(formData.name);
                 toast.success(`Connected successfully with OAuth!`);
               } else {
                 dispatch({
@@ -288,6 +313,8 @@ export function useAppState() {
             name: formData.name,
             config: mcpConfig,
           });
+          // Fetch initialization info after successful connection
+          await fetchAndStoreInitInfo(formData.name);
           logger.info("Connection successful", { serverName: formData.name });
           toast.success(`Connected successfully!`);
         } else {
@@ -318,7 +345,7 @@ export function useAppState() {
         toast.error(`Network error: ${errorMessage}`);
       }
     },
-    [appState.servers, logger],
+    [appState.servers, logger, fetchAndStoreInitInfo],
   );
 
   // CLI config processing guard
@@ -478,6 +505,8 @@ export function useAppState() {
             config: authResult.serverConfig,
             tokens: authResult.tokens,
           });
+          // Fetch initialization info after successful reconnection
+          await fetchAndStoreInitInfo(serverName);
           logger.info("Reconnection successful", { serverName, result });
           return { success: true } as const;
         } else {
@@ -507,7 +536,7 @@ export function useAppState() {
         throw error;
       }
     },
-    [appState.servers],
+    [appState.servers, fetchAndStoreInitInfo],
   );
 
   // Sync with centralized agent status on app startup only
@@ -580,6 +609,8 @@ export function useAppState() {
               name: originalServerName,
               config: mcpConfig,
             });
+            // Fetch initialization info after successful update
+            await fetchAndStoreInitInfo(originalServerName);
             toast.success("Server configuration updated successfully!");
             return;
           } else {
@@ -593,6 +624,11 @@ export function useAppState() {
             error,
           );
         }
+      }
+
+      // Clear OAuth tokens if switching from OAuth to no authentication
+      if (hadOAuthTokens && !formData.useOAuth) {
+        clearOAuthData(originalServerName);
       }
 
       await handleDisconnect(originalServerName);

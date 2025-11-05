@@ -35,3 +35,10 @@ export async function reconnectServer(
   });
   return res.json();
 }
+
+export async function getInitializationInfo(serverId: string) {
+  const res = await fetch(
+    `/api/mcp/servers/init-info/${encodeURIComponent(serverId)}`,
+  );
+  return res.json();
+}
