@@ -33,6 +33,7 @@ export function AddServerModal({
   const formState = useServerForm();
 
   const handleClose = () => {
+    formState.resetForm();
     onClose();
   };
 
@@ -70,7 +71,8 @@ export function AddServerModal({
       }
 
       onSubmit(finalFormData);
-      handleClose();
+      formState.resetForm();
+      onClose();
     }
   };
 
