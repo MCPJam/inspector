@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { toast } from "sonner";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -22,15 +23,57 @@ interface AddServerModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSubmit: (formData: ServerFormData) => void;
+  initialData?: Partial<ServerFormData>;
 }
 
 export function AddServerModal({
   isOpen,
   onClose,
   onSubmit,
+  initialData,
 }: AddServerModalProps) {
   const posthog = usePostHog();
   const formState = useServerForm();
+
+  // Initialize form with initial data if provided
+  useEffect(() => {
+    if (initialData && isOpen) {
+      if (initialData.name) {
+        formState.setServerFormData((prev) => ({
+          ...prev,
+          name: initialData.name || "",
+        }));
+      }
+      if (initialData.type) {
+        formState.setServerFormData((prev) => ({
+          ...prev,
+          type: initialData.type || "stdio",
+        }));
+      }
+      if (initialData.command) {
+        const fullCommand = initialData.args
+          ? `${initialData.command} ${initialData.args.join(" ")}`
+          : initialData.command;
+        formState.setCommandInput(fullCommand);
+      }
+      if (initialData.url) {
+        formState.setServerFormData((prev) => ({
+          ...prev,
+          url: initialData.url || "",
+        }));
+      }
+      if (initialData.env) {
+        const envArray = Object.entries(initialData.env).map(([key, value]) => ({
+          key,
+          value,
+        }));
+        formState.setEnvVars(envArray);
+        if (envArray.length > 0) {
+          formState.setShowEnvVars(true);
+        }
+      }
+    }
+  }, [initialData, isOpen]);
 
   const handleClose = () => {
     formState.resetForm();

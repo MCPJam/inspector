@@ -11,6 +11,7 @@ import {
   ListChecks,
   HandMetal,
   Workflow,
+  Package,
 } from "lucide-react";
 
 import { NavMain } from "@/components/sidebar/nav-main";
@@ -35,6 +36,11 @@ const navigationSections = [
         title: "MCP Servers",
         url: "#servers",
         icon: MCPIcon,
+      },
+      {
+        title: "Registry",
+        url: "#registry",
+        icon: Package,
       },
       {
         title: "Playground",

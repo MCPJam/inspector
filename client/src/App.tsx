@@ -12,6 +12,7 @@ import { TracingTab } from "./components/TracingTab";
 import { InterceptorTab } from "./components/InterceptorTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
+import { RegistryTab } from "./components/RegistryTab";
 import OAuthDebugCallback from "./components/OAuthDebugCallback";
 import { MCPSidebar } from "./components/mcp-sidebar";
 import { ActiveServerSelector } from "./components/ActiveServerSelector";
@@ -173,6 +174,10 @@ export default function App() {
               onUpdate={handleUpdate}
               onRemove={handleRemoveServer}
             />
+          )}
+
+          {activeTab === "registry" && (
+            <RegistryTab onConnect={handleConnect} />
           )}
 
           {activeTab === "tools" && (

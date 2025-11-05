@@ -570,3 +570,59 @@ export interface ServerStatus {
   timestamp: string;
   service?: string;
 }
+
+// MCP Registry types
+export interface RegistryPackage {
+  registryType: "npm" | "pypi" | "go" | string;
+  identifier: string;
+  version?: string;
+}
+
+export interface RegistryRemote {
+  type: "stdio" | "sse" | "streamableHttp";
+  url?: string;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+}
+
+export interface RegistryServer {
+  $schema?: string;
+  name: string;
+  description: string;
+  status: "active" | "deleted" | "deprecated" | string;
+  version: string;
+  packages?: RegistryPackage[];
+  remotes?: RegistryRemote[];
+  _meta?: Record<string, any>;
+}
+
+export interface RegistryServerVersion {
+  name: string;
+  version: string;
+  description: string;
+  status: string;
+  packages?: RegistryPackage[];
+  remotes?: RegistryRemote[];
+  _meta?: Record<string, any>;
+}
+
+export interface RegistryServerWrapper {
+  server: RegistryServer;
+  _meta?: Record<string, any>;
+}
+
+export interface RegistryServerListResponse {
+  servers: RegistryServerWrapper[];
+  metadata: {
+    count: number;
+    nextCursor?: string;
+  };
+}
+
+export interface RegistryVersionListResponse {
+  versions: string[];
+  metadata: {
+    count: number;
+  };
+}
