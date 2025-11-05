@@ -768,6 +768,167 @@ export function ServerModal({
               </div>
             )}
 
+            {/* Authentication for HTTP (only in add mode - edit mode has separate auth tab) */}
+            {mode === "add" && serverFormData.type === "http" && (
+              <div className="space-y-4">
+                <div className="border border-border rounded-lg overflow-hidden">
+                  <div className="p-3 space-y-2">
+                    <label className="block text-sm font-medium text-foreground">
+                      Authentication
+                    </label>
+                    <Select
+                      value={authType}
+                      onValueChange={(value: "oauth" | "bearer" | "none") => {
+                        setAuthType(value);
+                        setShowAuthSettings(value !== "none");
+                        if (value === "oauth") {
+                          setServerFormData((prev) => ({
+                            ...prev,
+                            useOAuth: true,
+                          }));
+                        } else {
+                          setServerFormData((prev) => ({
+                            ...prev,
+                            useOAuth: false,
+                          }));
+                        }
+                      }}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">No Authentication</SelectItem>
+                        <SelectItem value="bearer">Bearer Token</SelectItem>
+                        <SelectItem value="oauth">OAuth 2.0</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Bearer Token Settings */}
+                  {showAuthSettings && authType === "bearer" && (
+                    <div className="px-3 pb-3 space-y-2 border-t border-border bg-muted/30">
+                      <label className="block text-sm font-medium text-foreground pt-3">
+                        Bearer Token
+                      </label>
+                      <Input
+                        type="password"
+                        value={bearerToken}
+                        onChange={(e) => setBearerToken(e.target.value)}
+                        placeholder="Enter your bearer token"
+                        className="h-10"
+                      />
+                    </div>
+                  )}
+
+                  {/* OAuth Settings */}
+                  {showAuthSettings && authType === "oauth" && (
+                    <div className="px-3 pb-3 space-y-3 border-t border-border bg-muted/30">
+                      <div className="space-y-2 pt-3">
+                        <label className="block text-sm font-medium text-foreground">
+                          OAuth Scopes
+                        </label>
+                        <Input
+                          value={oauthScopesInput}
+                          onChange={(e) => setOauthScopesInput(e.target.value)}
+                          placeholder="mcp:* or custom scopes separated by spaces"
+                          className="h-10"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Default: mcp:* (space-separated for multiple scopes)
+                        </p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center space-x-2">
+                          <input
+                            type="checkbox"
+                            id="useCustomClientId"
+                            checked={useCustomClientId}
+                            onChange={(e) => {
+                              setUseCustomClientId(e.target.checked);
+                              if (!e.target.checked) {
+                                setClientId("");
+                                setClientSecret("");
+                                setClientIdError(null);
+                                setClientSecretError(null);
+                              }
+                            }}
+                            className="rounded"
+                          />
+                          <label
+                            htmlFor="useCustomClientId"
+                            className="text-sm font-medium text-foreground"
+                          >
+                            Use custom OAuth credentials
+                          </label>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Leave unchecked to use the server's default OAuth flow
+                        </p>
+                      </div>
+
+                      {useCustomClientId && (
+                        <div className="space-y-3">
+                          <div className="space-y-2">
+                            <label className="block text-sm font-medium text-foreground">
+                              Client ID
+                            </label>
+                            <Input
+                              value={clientId}
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                setClientId(value);
+                                const error = validateClientId(value);
+                                setClientIdError(error);
+                              }}
+                              placeholder="Your OAuth Client ID"
+                              className={`h-10 ${
+                                clientIdError ? "border-red-500" : ""
+                              }`}
+                            />
+                            {clientIdError && (
+                              <p className="text-xs text-red-500">
+                                {clientIdError}
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="space-y-2">
+                            <label className="block text-sm font-medium text-foreground">
+                              Client Secret (Optional)
+                            </label>
+                            <Input
+                              type="password"
+                              value={clientSecret}
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                setClientSecret(value);
+                                const error = validateClientSecret(value);
+                                setClientSecretError(error);
+                              }}
+                              placeholder="Your OAuth Client Secret"
+                              className={`h-10 ${
+                                clientSecretError ? "border-red-500" : ""
+                              }`}
+                            />
+                            {clientSecretError && (
+                              <p className="text-xs text-red-500">
+                                {clientSecretError}
+                              </p>
+                            )}
+                            <p className="text-xs text-muted-foreground">
+                              Optional for public clients using PKCE
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Custom Headers for HTTP */}
             {serverFormData.type === "http" && (
               <div className="space-y-4">
@@ -1542,7 +1703,7 @@ export function ServerModal({
               </div>
             )}
 
-            {/* Close button */}
+            {/* Action buttons */}
             <div className="flex justify-end space-x-2 pt-4">
               <Button
                 type="button"
@@ -1557,7 +1718,21 @@ export function ServerModal({
                 }}
                 className="px-4"
               >
-                Close
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={(e) => {
+                  posthog.capture("update_server_button_clicked", {
+                    location: "server_modal_auth_tab",
+                    platform: detectPlatform(),
+                    environment: detectEnvironment(),
+                  });
+                  handleSubmit(e as any);
+                }}
+                className="px-4"
+              >
+                Update Server
               </Button>
             </div>
           </div>
