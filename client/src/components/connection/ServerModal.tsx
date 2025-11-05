@@ -85,7 +85,7 @@ export function ServerModal({
   const [showTokenInsights, setShowTokenInsights] = useState<boolean>(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [expandedTokens, setExpandedTokens] = useState<Set<string>>(new Set());
-  const [activeTab, setActiveTab] = useState<"config" | "tools" | "initialization">("config");
+  const [activeTab, setActiveTab] = useState<"config" | "auth" | "tools">("config");
   const [tools, setTools] = useState<ListToolsResultWithMetadata | null>(null);
   const [isLoadingTools, setIsLoadingTools] = useState(false);
   const [toolsError, setToolsError] = useState<string | null>(null);
@@ -564,6 +564,17 @@ export function ServerModal({
               </button>
               <button
                 type="button"
+                onClick={() => setActiveTab("auth")}
+                className={`px-4 py-2 text-sm font-medium transition-colors ${
+                  activeTab === "auth"
+                    ? "border-b-2 border-primary text-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Authentication
+              </button>
+              <button
+                type="button"
                 onClick={() => setActiveTab("tools")}
                 className={`px-4 py-2 text-sm font-medium transition-colors ${
                   activeTab === "tools"
@@ -573,23 +584,13 @@ export function ServerModal({
               >
                 Widget Metadata
               </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab("initialization")}
-                className={`px-4 py-2 text-sm font-medium transition-colors ${
-                  activeTab === "initialization"
-                    ? "border-b-2 border-primary text-foreground"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                Initialization
-              </button>
             </div>
           )}
         </DialogHeader>
 
         {/* Show configuration form when in add mode or config tab is active */}
         {(mode === "add" || activeTab === "config") && (
+          <>
           <form
             onSubmit={(e) => {
               posthog.capture("add_server_button_clicked", {
@@ -758,13 +759,300 @@ export function ServerModal({
               </div>
             )}
 
-            {/* Authentication for HTTP */}
+            {/* Custom Headers for HTTP */}
             {serverFormData.type === "http" && (
               <div className="space-y-4">
                 <div className="border border-border rounded-lg overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setShowCustomHeaders(!showCustomHeaders)}
+                    className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2">
+                      {showCustomHeaders ? (
+                        <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                      ) : (
+                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                      )}
+                      <span className="text-sm font-medium text-foreground">
+                        Custom Headers
+                      </span>
+                      {customHeaders.length > 0 && (
+                        <span className="text-xs text-muted-foreground">
+                          ({customHeaders.length})
+                        </span>
+                      )}
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        addCustomHeader();
+                      }}
+                      className="text-xs"
+                    >
+                      Add Header
+                    </Button>
+                  </button>
+
+                  {showCustomHeaders && customHeaders.length > 0 && (
+                    <div className="p-4 space-y-2 border-t border-border bg-muted/30 max-h-48 overflow-y-auto">
+                      {customHeaders.map((header, index) => (
+                        <div key={index} className="flex gap-2 items-center">
+                          <Input
+                            value={header.key}
+                            onChange={(e) =>
+                              updateCustomHeader(index, "key", e.target.value)
+                            }
+                            placeholder="Header-Name"
+                            className="flex-1 text-xs"
+                          />
+                          <Input
+                            value={header.value}
+                            onChange={(e) =>
+                              updateCustomHeader(index, "value", e.target.value)
+                            }
+                            placeholder="header-value"
+                            className="flex-1 text-xs"
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => removeCustomHeader(index)}
+                            className="px-2 text-xs"
+                          >
+                            ×
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {!showCustomHeaders && (
+                    <div className="px-3 pb-3">
+                      <p className="text-xs text-muted-foreground">
+                        Add custom HTTP headers for your MCP server connection
+                        (e.g. API-Key, X-Custom-Header)
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Configuration Section */}
+            <div className="border border-border rounded-lg overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setShowConfiguration(!showConfiguration)}
+                className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors cursor-pointer"
+              >
+                <div className="flex items-center gap-2">
+                  {showConfiguration ? (
+                    <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                  ) : (
+                    <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                  )}
+                  <span className="text-sm font-medium text-foreground">
+                    Additional Configuration
+                  </span>
+                </div>
+              </button>
+
+              {showConfiguration && (
+                <div className="p-4 space-y-4 border-t border-border bg-muted/30">
+                  {/* Request Timeout */}
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-foreground">
+                      Request Timeout
+                    </label>
+                    <Input
+                      type="number"
+                      value={requestTimeout}
+                      onChange={(e) => setRequestTimeout(e.target.value)}
+                      placeholder="10000"
+                      className="h-10"
+                      min="1000"
+                      max="600000"
+                      step="1000"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Timeout in ms (default: 10000ms, min: 1000ms, max:
+                      600000ms)
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end space-x-2 pt-4">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  posthog.capture("cancel_button_clicked", {
+                    location: "server_modal",
+                    platform: detectPlatform(),
+                    environment: detectEnvironment(),
+                  });
+                  handleClose();
+                }}
+                className="px-4"
+              >
+                Cancel
+              </Button>
+              <Button type="submit" className="px-4">
+                {mode === "add" ? "Add Server" : "Update Server"}
+              </Button>
+            </div>
+          </form>
+
+          {/* Initialization Info section (only in edit mode) */}
+          {mode === "edit" && server && (
+            <div className="space-y-4 mt-6 pt-6 border-t border-border">
+              <div>
+                <h3 className="text-lg font-semibold">MCP Initialization Info</h3>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Protocol version and capabilities exchanged during server initialization
+                </p>
+              </div>
+
+              {server.initializationInfo ? (
+                <div className="space-y-4">
+                  {/* Protocol & Transport */}
+                  <div className="bg-muted/30 rounded-lg p-4">
+                    <h4 className="text-sm font-medium mb-2">Connection Details</h4>
+                    <div className="space-y-1 text-sm">
+                      {server.initializationInfo.protocolVersion && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-muted-foreground">Protocol Version:</span>
+                          <span className="font-mono">
+                            {server.initializationInfo.protocolVersion}
+                          </span>
+                        </div>
+                      )}
+                      {server.initializationInfo.transport && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-muted-foreground">Transport:</span>
+                          <span className="font-mono uppercase">
+                            {server.initializationInfo.transport}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Server Version */}
+                  {server.initializationInfo.serverVersion && (
+                    <div className="bg-muted/30 rounded-lg p-4">
+                      <h4 className="text-sm font-medium mb-2">Server Version</h4>
+                      <div className="space-y-1 text-sm">
+                        <div className="flex items-center gap-2">
+                          <span className="text-muted-foreground">Name:</span>
+                          <span className="font-mono">
+                            {server.initializationInfo.serverVersion.name}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-muted-foreground">Version:</span>
+                          <span className="font-mono">
+                            {server.initializationInfo.serverVersion.version}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Server Instructions */}
+                  {server.initializationInfo.instructions && (
+                    <div className="bg-muted/30 rounded-lg p-4">
+                      <h4 className="text-sm font-medium mb-2">Instructions</h4>
+                      <p className="text-sm text-muted-foreground">
+                        {server.initializationInfo.instructions}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Server Capabilities */}
+                  {server.initializationInfo.serverCapabilities && (
+                    <div className="bg-muted/30 rounded-lg p-4">
+                      <h4 className="text-sm font-medium mb-2">Server Capabilities</h4>
+                      <JsonView
+                        src={server.initializationInfo.serverCapabilities}
+                        theme="atom"
+                        dark={true}
+                        enableClipboard={true}
+                        displaySize={false}
+                        collapseStringsAfterLength={100}
+                        style={{
+                          fontSize: "11px",
+                          fontFamily:
+                            "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                          backgroundColor: "hsl(var(--background))",
+                          padding: "8px",
+                          borderRadius: "6px",
+                          border: "1px solid hsl(var(--border))",
+                        }}
+                      />
+                    </div>
+                  )}
+
+                  {/* Client Capabilities */}
+                  {server.initializationInfo.clientCapabilities && (
+                    <div className="bg-muted/30 rounded-lg p-4">
+                      <h4 className="text-sm font-medium mb-2">Client Capabilities</h4>
+                      <JsonView
+                        src={server.initializationInfo.clientCapabilities}
+                        theme="atom"
+                        dark={true}
+                        enableClipboard={true}
+                        displaySize={false}
+                        collapseStringsAfterLength={100}
+                        style={{
+                          fontSize: "11px",
+                          fontFamily:
+                            "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                          backgroundColor: "hsl(var(--background))",
+                          padding: "8px",
+                          borderRadius: "6px",
+                          border: "1px solid hsl(var(--border))",
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="bg-muted/30 rounded-lg p-8 text-center">
+                  <p className="text-sm text-muted-foreground">
+                    No initialization info available. Reconnect to the server to capture initialization data.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+          </>
+        )}
+
+        {/* Show authentication tab when in edit mode and auth tab is active */}
+        {mode === "edit" && activeTab === "auth" && server && (
+          <div className="space-y-6">
+            <div>
+              <h3 className="text-lg font-semibold">Authentication Settings</h3>
+              <p className="text-sm text-muted-foreground mt-1">
+                Configure authentication for your MCP server connection
+              </p>
+            </div>
+
+            {serverFormData.type === "http" ? (
+              <div className="space-y-4">
+                {/* Authentication Type Selection */}
+                <div className="border border-border rounded-lg overflow-hidden">
                   <div className="p-3 space-y-2">
                     <label className="block text-sm font-medium text-foreground">
-                      Authentication
+                      Authentication Type
                     </label>
                     <Select
                       value={authType}
@@ -795,6 +1083,7 @@ export function ServerModal({
                     </Select>
                   </div>
 
+                  {/* Bearer Token Settings */}
                   {showAuthSettings && authType === "bearer" && (
                     <div className="px-3 pb-3 space-y-2 border-t border-border bg-muted/30">
                       <label className="block text-sm font-medium text-foreground pt-3">
@@ -810,6 +1099,7 @@ export function ServerModal({
                     </div>
                   )}
 
+                  {/* OAuth Settings */}
                   {showAuthSettings && authType === "oauth" && (
                     <div className="px-3 pb-3 space-y-3 border-t border-border bg-muted/30">
                       <div className="space-y-2 pt-3">
@@ -915,10 +1205,8 @@ export function ServerModal({
                   )}
                 </div>
 
-                {/* Token Insights for Developers (Edit Mode Only) */}
-                {mode === "edit" &&
-                  server &&
-                  (authType === "oauth" || server.oauthTokens) &&
+                {/* Token Insights (OAuth only) */}
+                {(authType === "oauth" || server.oauthTokens) &&
                   (() => {
                     const tokens =
                       server.oauthTokens || getStoredTokens(server.name);
@@ -1230,134 +1518,17 @@ export function ServerModal({
                       </div>
                     );
                   })()}
-
-                {/* Custom Headers for HTTP */}
-                <div className="border border-border rounded-lg overflow-hidden">
-                  <button
-                    type="button"
-                    onClick={() => setShowCustomHeaders(!showCustomHeaders)}
-                    className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors cursor-pointer"
-                  >
-                    <div className="flex items-center gap-2">
-                      {showCustomHeaders ? (
-                        <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                      ) : (
-                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                      )}
-                      <span className="text-sm font-medium text-foreground">
-                        Custom Headers
-                      </span>
-                      {customHeaders.length > 0 && (
-                        <span className="text-xs text-muted-foreground">
-                          ({customHeaders.length})
-                        </span>
-                      )}
-                    </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        addCustomHeader();
-                      }}
-                      className="text-xs"
-                    >
-                      Add Header
-                    </Button>
-                  </button>
-
-                  {showCustomHeaders && customHeaders.length > 0 && (
-                    <div className="p-4 space-y-2 border-t border-border bg-muted/30 max-h-48 overflow-y-auto">
-                      {customHeaders.map((header, index) => (
-                        <div key={index} className="flex gap-2 items-center">
-                          <Input
-                            value={header.key}
-                            onChange={(e) =>
-                              updateCustomHeader(index, "key", e.target.value)
-                            }
-                            placeholder="Header-Name"
-                            className="flex-1 text-xs"
-                          />
-                          <Input
-                            value={header.value}
-                            onChange={(e) =>
-                              updateCustomHeader(index, "value", e.target.value)
-                            }
-                            placeholder="header-value"
-                            className="flex-1 text-xs"
-                          />
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => removeCustomHeader(index)}
-                            className="px-2 text-xs"
-                          >
-                            ×
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {!showCustomHeaders && (
-                    <div className="px-3 pb-3">
-                      <p className="text-xs text-muted-foreground">
-                        Add custom HTTP headers for your MCP server connection
-                        (e.g. API-Key, X-Custom-Header)
-                      </p>
-                    </div>
-                  )}
-                </div>
+              </div>
+            ) : (
+              <div className="bg-muted/30 rounded-lg p-8 text-center">
+                <p className="text-sm text-muted-foreground">
+                  Authentication settings are only available for HTTP/SSE servers.
+                  STDIO servers use process-level authentication.
+                </p>
               </div>
             )}
 
-            {/* Configuration Section */}
-            <div className="border border-border rounded-lg overflow-hidden">
-              <button
-                type="button"
-                onClick={() => setShowConfiguration(!showConfiguration)}
-                className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors cursor-pointer"
-              >
-                <div className="flex items-center gap-2">
-                  {showConfiguration ? (
-                    <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                  ) : (
-                    <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                  )}
-                  <span className="text-sm font-medium text-foreground">
-                    Additional Configuration
-                  </span>
-                </div>
-              </button>
-
-              {showConfiguration && (
-                <div className="p-4 space-y-4 border-t border-border bg-muted/30">
-                  {/* Request Timeout */}
-                  <div className="space-y-2">
-                    <label className="block text-sm font-medium text-foreground">
-                      Request Timeout
-                    </label>
-                    <Input
-                      type="number"
-                      value={requestTimeout}
-                      onChange={(e) => setRequestTimeout(e.target.value)}
-                      placeholder="10000"
-                      className="h-10"
-                      min="1000"
-                      max="600000"
-                      step="1000"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Timeout in ms (default: 10000ms, min: 1000ms, max:
-                      600000ms)
-                    </p>
-                  </div>
-                </div>
-              )}
-            </div>
-
+            {/* Close button */}
             <div className="flex justify-end space-x-2 pt-4">
               <Button
                 type="button"
@@ -1372,13 +1543,10 @@ export function ServerModal({
                 }}
                 className="px-4"
               >
-                Cancel
-              </Button>
-              <Button type="submit" className="px-4">
-                {mode === "add" ? "Add Server" : "Update Server"}
+                Close
               </Button>
             </div>
-          </form>
+          </div>
         )}
 
         {/* Show tools section when in edit mode and tools tab is active */}
@@ -1510,148 +1678,6 @@ export function ServerModal({
           </div>
         )}
 
-        {/* Show initialization info when in edit mode and initialization tab is active */}
-        {mode === "edit" && activeTab === "initialization" && server && (
-          <div className="space-y-6">
-            <div className="mb-3">
-              <h3 className="text-lg font-semibold">MCP Initialization Info</h3>
-              <p className="text-sm text-muted-foreground mt-1">
-                Protocol version and capabilities exchanged during server initialization
-              </p>
-            </div>
-
-            {server.initializationInfo ? (
-              <div className="space-y-4">
-                {/* Protocol & Transport */}
-                <div className="bg-muted/30 rounded-lg p-4">
-                  <h4 className="text-sm font-medium mb-2">Connection Details</h4>
-                  <div className="space-y-1 text-sm">
-                    {server.initializationInfo.protocolVersion && (
-                      <div className="flex items-center gap-2">
-                        <span className="text-muted-foreground">Protocol Version:</span>
-                        <span className="font-mono">
-                          {server.initializationInfo.protocolVersion}
-                        </span>
-                      </div>
-                    )}
-                    {server.initializationInfo.transport && (
-                      <div className="flex items-center gap-2">
-                        <span className="text-muted-foreground">Transport:</span>
-                        <span className="font-mono uppercase">
-                          {server.initializationInfo.transport}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Server Version */}
-                {server.initializationInfo.serverVersion && (
-                  <div className="bg-muted/30 rounded-lg p-4">
-                    <h4 className="text-sm font-medium mb-2">Server Version</h4>
-                    <div className="space-y-1 text-sm">
-                      <div className="flex items-center gap-2">
-                        <span className="text-muted-foreground">Name:</span>
-                        <span className="font-mono">
-                          {server.initializationInfo.serverVersion.name}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-muted-foreground">Version:</span>
-                        <span className="font-mono">
-                          {server.initializationInfo.serverVersion.version}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Server Instructions */}
-                {server.initializationInfo.instructions && (
-                  <div className="bg-muted/30 rounded-lg p-4">
-                    <h4 className="text-sm font-medium mb-2">Instructions</h4>
-                    <p className="text-sm text-muted-foreground">
-                      {server.initializationInfo.instructions}
-                    </p>
-                  </div>
-                )}
-
-                {/* Server Capabilities */}
-                {server.initializationInfo.serverCapabilities && (
-                  <div className="bg-muted/30 rounded-lg p-4">
-                    <h4 className="text-sm font-medium mb-2">Server Capabilities</h4>
-                    <JsonView
-                      src={server.initializationInfo.serverCapabilities}
-                      theme="atom"
-                      dark={true}
-                      enableClipboard={true}
-                      displaySize={false}
-                      collapseStringsAfterLength={100}
-                      style={{
-                        fontSize: "11px",
-                        fontFamily:
-                          "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                        backgroundColor: "hsl(var(--background))",
-                        padding: "8px",
-                        borderRadius: "6px",
-                        border: "1px solid hsl(var(--border))",
-                      }}
-                    />
-                  </div>
-                )}
-
-                {/* Client Capabilities */}
-                {server.initializationInfo.clientCapabilities && (
-                  <div className="bg-muted/30 rounded-lg p-4">
-                    <h4 className="text-sm font-medium mb-2">Client Capabilities</h4>
-                    <JsonView
-                      src={server.initializationInfo.clientCapabilities}
-                      theme="atom"
-                      dark={true}
-                      enableClipboard={true}
-                      displaySize={false}
-                      collapseStringsAfterLength={100}
-                      style={{
-                        fontSize: "11px",
-                        fontFamily:
-                          "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                        backgroundColor: "hsl(var(--background))",
-                        padding: "8px",
-                        borderRadius: "6px",
-                        border: "1px solid hsl(var(--border))",
-                      }}
-                    />
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="bg-muted/30 rounded-lg p-8 text-center">
-                <p className="text-sm text-muted-foreground">
-                  No initialization info available. Reconnect to the server to capture initialization data.
-                </p>
-              </div>
-            )}
-
-            {/* Close button */}
-            <div className="flex justify-end space-x-2 pt-4">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  posthog.capture("cancel_button_clicked", {
-                    location: "server_modal",
-                    platform: detectPlatform(),
-                    environment: detectEnvironment(),
-                  });
-                  handleClose();
-                }}
-                className="px-4"
-              >
-                Close
-              </Button>
-            </div>
-          </div>
-        )}
       </DialogContent>
     </Dialog>
   );
