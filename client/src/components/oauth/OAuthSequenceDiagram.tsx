@@ -3,7 +3,7 @@ import type {
   OAuthProtocolVersion,
   OAuthFlowState,
 } from "@/lib/oauth/state-machines/types";
-import { OAuthSequenceDiagramContent } from "./oauth/shared/OAuthSequenceDiagramContent";
+import { OAuthSequenceDiagramContent } from "@/components/oauth/shared/OAuthSequenceDiagramContent";
 import { buildActions_2025_11_25 } from "@/lib/oauth/state-machines/debug-oauth-2025-11-25";
 import { buildActions_2025_06_18 } from "@/lib/oauth/state-machines/debug-oauth-2025-06-18";
 import { buildActions_2025_03_26 } from "@/lib/oauth/state-machines/debug-oauth-2025-03-26";
