@@ -28,11 +28,11 @@ import {
 } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
+import { OAuthProtocolVersion } from "@/lib/oauth/state-machines/types";
 import {
-  OAuthProtocolVersion,
   PROTOCOL_VERSION_INFO,
   getSupportedRegistrationStrategies,
-} from "@/lib/debug-oauth-state-machine";
+} from "@/lib/oauth/state-machines/factory";
 
 interface ProtocolVersionSelectorProps {
   value: OAuthProtocolVersion;
