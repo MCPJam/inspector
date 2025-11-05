@@ -1,57 +1,46 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { Button } from "@/components/ui/button";
-import {
-  AlertCircle,
-  Workflow,
-  ChevronDown,
-  ChevronRight,
-  CheckCircle2,
-  Trash2,
-} from "lucide-react";
-import { EmptyState } from "./ui/empty-state";
+import { AlertCircle, Workflow, CheckCircle2 } from "lucide-react";
+import { EmptyState } from "@/components/ui/empty-state";
 import {
   AuthSettings,
   DEFAULT_AUTH_SETTINGS,
   StatusMessage,
 } from "@/shared/types.js";
-import { Card, CardContent } from "./ui/card";
-import { Alert, AlertDescription } from "./ui/alert";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "./ui/select";
-import { getStoredTokens } from "../lib/mcp-oauth";
-import { ServerWithName } from "../hooks/use-app-state";
-import { EMPTY_OAUTH_FLOW_STATE_V2 } from "../lib/oauth/state-machines/debug-oauth-2025-06-18";
+} from "@/components/ui/select";
+import { getStoredTokens } from "@/lib/mcp-oauth";
+import { ServerWithName } from "@/hooks/use-app-state";
+import { EMPTY_OAUTH_FLOW_STATE_V2 } from "@/lib/oauth/state-machines/debug-oauth-2025-06-18";
 import {
   OAuthFlowState,
   OAuthProtocolVersion,
   RegistrationStrategy2025_11_25,
   RegistrationStrategy2025_06_18,
-} from "../lib/oauth/state-machines/types";
+} from "@/lib/oauth/state-machines/types";
 import {
   createOAuthStateMachine,
   getDefaultRegistrationStrategy,
   getSupportedRegistrationStrategies,
-} from "../lib/oauth/state-machines/factory";
-import { DebugMCPOAuthClientProvider } from "../lib/debug-oauth-provider";
-import { OAuthSequenceDiagram } from "./OAuthSequenceDiagram";
-import { OAuthAuthorizationModal } from "./OAuthAuthorizationModal";
-import { EditServerModal } from "./connection/EditServerModal";
+} from "@/lib/oauth/state-machines/factory";
+import { DebugMCPOAuthClientProvider } from "@/lib/debug-oauth-provider";
+import { OAuthSequenceDiagram } from "@/components/oauth/OAuthSequenceDiagram";
+import { OAuthFlowLogger } from "@/components/oauth/OAuthFlowLogger";
+import { OAuthAuthorizationModal } from "@/components/oauth/OAuthAuthorizationModal";
 import { ServerFormData } from "@/shared/types";
 import { MCPServerConfig } from "@/sdk";
-import JsonView from "react18-json-view";
-import "react18-json-view/src/style.css";
-import "react18-json-view/src/dark.css";
-import { HTTPHistoryEntry } from "./HTTPHistoryEntry";
 import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
 } from "./ui/resizable";
+import { EditServerModal } from "./connection/EditServerModal";
 
 interface StatusMessageProps {
   message: StatusMessage;
@@ -118,14 +107,6 @@ export const OAuthFlowTab = ({
 
   // Track if user manually reset (don't auto-restart in this case)
   const manualResetRef = useRef(false);
-
-  // Track which HTTP blocks are expanded
-  const [expandedBlocks, setExpandedBlocks] = useState<Set<string>>(new Set());
-
-  // Track which info logs have been deleted
-  const [deletedInfoLogs, setDeletedInfoLogs] = useState<Set<string>>(
-    new Set(),
-  );
 
   // Track if authorization modal is open
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
@@ -198,19 +179,9 @@ export const OAuthFlowTab = ({
     }
   }, [protocolVersion, registrationStrategy]);
 
-  const toggleExpanded = (id: string) => {
-    setExpandedBlocks((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
   const clearInfoLogs = () => {
     // Clear all info logs from state
     updateOAuthFlowState({ infoLogs: [] });
-    setDeletedInfoLogs(new Set()); // Also clear the deleted set
   };
 
   const clearHttpHistory = () => {
@@ -248,8 +219,6 @@ export const OAuthFlowTab = ({
       clearTimeout(exchangeTimeoutRef.current); // Clear any pending exchange
       exchangeTimeoutRef.current = null;
     }
-    setExpandedBlocks(new Set());
-    setDeletedInfoLogs(new Set());
     setCustomScopes(""); // Clear custom scopes
     // Headers will remain from server config (not cleared on reset)
   }, [updateOAuthFlowState]);
@@ -803,158 +772,11 @@ export const OAuthFlowTab = ({
 
           {/* Side Panel with Details - Combined Info and HTTP History */}
           <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
-            <div className="h-full border-l border-border flex flex-col">
-              <div className="h-full bg-muted/30 overflow-auto">
-                {/* Header */}
-                <div className="sticky top-0 z-10 bg-muted/30 backdrop-blur-sm border-b border-border px-4 py-3 flex items-center justify-between">
-                  <h3 className="text-sm font-semibold">Console Output</h3>
-                  <button
-                    onClick={() => {
-                      clearInfoLogs();
-                      clearHttpHistory();
-                    }}
-                    className="p-1 hover:bg-muted rounded transition-colors"
-                    title="Clear all logs"
-                  >
-                    <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive transition-colors" />
-                  </button>
-                </div>
-
-                {/* Console Output - Merged chronologically */}
-                <div className="p-4 space-y-3">
-                  {/* Error Display */}
-                  {oauthFlowState.error && (
-                    <Alert variant="destructive" className="py-2">
-                      <AlertCircle className="h-4 w-4" />
-                      <AlertDescription className="text-xs">
-                        {oauthFlowState.error}
-                      </AlertDescription>
-                    </Alert>
-                  )}
-
-                  {/* Merged Console Output - Chronologically sorted */}
-                  {(() => {
-                    const infoLogs = oauthFlowState.infoLogs || [];
-                    const httpHistory = oauthFlowState.httpHistory || [];
-
-                    // Create unified array with type markers
-                    type ConsoleEntry =
-                      | {
-                          type: "info";
-                          timestamp: number;
-                          data: (typeof infoLogs)[0];
-                        }
-                      | {
-                          type: "http";
-                          timestamp: number;
-                          data: (typeof httpHistory)[0];
-                          index: number;
-                        };
-
-                    const allEntries: ConsoleEntry[] = [
-                      ...infoLogs
-                        .filter((log) => !deletedInfoLogs.has(log.id))
-                        .map((log) => ({
-                          type: "info" as const,
-                          timestamp: log.timestamp,
-                          data: log,
-                        })),
-                      ...httpHistory.map((entry, index) => ({
-                        type: "http" as const,
-                        timestamp: entry.timestamp,
-                        data: entry,
-                        index,
-                      })),
-                    ];
-
-                    // Sort by timestamp (newest first)
-                    allEntries.sort((a, b) => b.timestamp - a.timestamp);
-
-                    return allEntries.map((entry, idx) => {
-                      if (entry.type === "info") {
-                        const log = entry.data;
-                        const isExpanded = expandedBlocks.has(log.id);
-                        return (
-                          <div
-                            key={log.id}
-                            className="group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card"
-                          >
-                            <div
-                              className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
-                              onClick={() => toggleExpanded(log.id)}
-                            >
-                              <div className="flex-shrink-0">
-                                {isExpanded ? (
-                                  <ChevronDown className="h-3 w-3 text-muted-foreground transition-transform" />
-                                ) : (
-                                  <ChevronRight className="h-3 w-3 text-muted-foreground transition-transform" />
-                                )}
-                              </div>
-                              <span className="text-xs font-medium text-foreground">
-                                {log.label}
-                              </span>
-                            </div>
-                            {isExpanded && (
-                              <div className="border-t bg-muted/20">
-                                <div className="p-3">
-                                  <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
-                                    <JsonView
-                                      src={log.data}
-                                      dark={true}
-                                      theme="atom"
-                                      enableClipboard={true}
-                                      displaySize={false}
-                                      collapsed={false}
-                                      style={{
-                                        fontSize: "11px",
-                                        fontFamily:
-                                          "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                                        backgroundColor: "transparent",
-                                        padding: "0",
-                                        borderRadius: "0",
-                                        border: "none",
-                                      }}
-                                    />
-                                  </div>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      } else {
-                        // HTTP entry
-                        const httpEntry = entry.data;
-                        return (
-                          <HTTPHistoryEntry
-                            key={`http-${entry.index}-${entry.timestamp}`}
-                            method={httpEntry.request.method}
-                            url={httpEntry.request.url}
-                            status={httpEntry.response?.status}
-                            statusText={httpEntry.response?.statusText}
-                            duration={httpEntry.duration}
-                            requestHeaders={httpEntry.request.headers}
-                            requestBody={httpEntry.request.body}
-                            responseHeaders={httpEntry.response?.headers}
-                            responseBody={httpEntry.response?.body}
-                          />
-                        );
-                      }
-                    });
-                  })()}
-
-                  {/* Empty state */}
-                  {(!oauthFlowState.infoLogs ||
-                    oauthFlowState.infoLogs.length === 0) &&
-                    (!oauthFlowState.httpHistory ||
-                      oauthFlowState.httpHistory.length === 0) &&
-                    !oauthFlowState.error && (
-                      <div className="text-center py-8 text-muted-foreground text-sm">
-                        No console output yet
-                      </div>
-                    )}
-                </div>
-              </div>
-            </div>
+            <OAuthFlowLogger
+              oauthFlowState={oauthFlowState}
+              onClearLogs={clearInfoLogs}
+              onClearHttpHistory={clearHttpHistory}
+            />
           </ResizablePanel>
         </ResizablePanelGroup>
       </div>

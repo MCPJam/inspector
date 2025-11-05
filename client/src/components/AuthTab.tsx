@@ -21,7 +21,7 @@ import {
   OAuthFlowState,
   EMPTY_OAUTH_FLOW_STATE,
 } from "../lib/oauth-flow-types";
-import { OAuthFlowProgressSimple } from "./OAuthFlowProgressSimple";
+import { OAuthFlowProgressSimple } from "./oauth/OAuthFlowProgressSimple";
 import { OAuthStateMachine } from "../lib/oauth-state-machine";
 import { MCPServerConfig } from "@/sdk";
 
