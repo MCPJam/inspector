@@ -40,7 +40,7 @@ import {
 import { DebugMCPOAuthClientProvider } from "../lib/debug-oauth-provider";
 import { OAuthSequenceDiagram } from "./OAuthSequenceDiagram";
 import { OAuthAuthorizationModal } from "./OAuthAuthorizationModal";
-import { ServerModal } from "./connection/ServerModal";
+import { EditServerModal } from "./connection/EditServerModal";
 import { ServerFormData } from "@/shared/types";
 import { MCPServerConfig } from "@/sdk";
 import JsonView from "react18-json-view";
@@ -970,12 +970,11 @@ export const OAuthFlowTab = ({
 
       {/* Edit Server Modal */}
       {serverEntry && onUpdate && (
-        <ServerModal
-          mode="edit"
+        <EditServerModal
           isOpen={isEditingServer}
           onClose={() => setIsEditingServer(false)}
           onSubmit={(formData, originalName) =>
-            onUpdate(originalName!, formData)
+            onUpdate(originalName, formData)
           }
           server={serverEntry}
         />
