@@ -17,6 +17,14 @@ import type {
   OAuthStateMachine,
   RegistrationStrategy2025_03_26,
 } from "./types";
+import type { DiagramAction } from "./shared/types";
+import {
+  proxyFetch,
+  addInfoLog,
+  generateRandomString,
+  generateCodeChallenge,
+  loadPreregisteredCredentials,
+} from "./shared/helpers";
 
 // Re-export types for backward compatibility
 export type { OAuthFlowStep, OAuthFlowState };
@@ -28,11 +36,6 @@ export type OauthFlowStateJune2025 = OAuthFlowState;
 // Legacy state export
 export const EMPTY_OAUTH_FLOW_STATE_V2: OauthFlowStateJune2025 =
   EMPTY_OAUTH_FLOW_STATE;
-
-// State machine interface (legacy compatibility)
-export interface DebugOAuthStateMachine extends OAuthStateMachine {
-  // All methods inherited from OAuthStateMachine
-}
 
 // Configuration for creating the state machine (2025-03-26 specific)
 export interface DebugOAuthStateMachineConfig {
@@ -46,6 +49,257 @@ export interface DebugOAuthStateMachineConfig {
   customScopes?: string;
   customHeaders?: Record<string, string>;
   registrationStrategy?: RegistrationStrategy2025_03_26; // dcr | preregistered only
+}
+
+/**
+ * Build the sequence of actions for the 2025-03-26 OAuth flow
+ * This function creates the visual representation of the OAuth flow steps
+ * that will be displayed in the sequence diagram.
+ */
+export function buildActions_2025_03_26(
+  flowState: OAuthFlowState,
+  registrationStrategy: "dcr" | "preregistered",
+): DiagramAction[] {
+  return [
+    // 2025-03-26: NO Protected Resource Metadata (RFC9728) support
+    // Flow starts directly with Authorization Server Metadata discovery
+    {
+      id: "request_authorization_server_metadata",
+      label: "GET /.well-known/oauth-authorization-server from MCP base URL",
+      description:
+        "Direct discovery from MCP server base URL with fallback to /authorize, /token, /register",
+      from: "client",
+      to: "authServer",
+      details: flowState.authorizationServerUrl
+        ? [
+            { label: "URL", value: flowState.authorizationServerUrl },
+            { label: "Protocol", value: "2025-03-26" },
+          ]
+        : undefined,
+    },
+    {
+      id: "received_authorization_server_metadata",
+      label: "Authorization server metadata response",
+      description: "Authorization Server returns metadata",
+      from: "authServer",
+      to: "client",
+      details: flowState.authorizationServerMetadata
+        ? [
+            {
+              label: "Token",
+              value: new URL(
+                flowState.authorizationServerMetadata.token_endpoint,
+              ).pathname,
+            },
+            {
+              label: "Auth",
+              value: new URL(
+                flowState.authorizationServerMetadata.authorization_endpoint,
+              ).pathname,
+            },
+          ]
+        : undefined,
+    },
+    // Client registration steps (no CIMD support in 2025-03-26)
+    ...(registrationStrategy === "dcr"
+      ? [
+          {
+            id: "request_client_registration",
+            label: "POST /register (2025-03-26)",
+            description:
+              "Client registers dynamically with Authorization Server",
+            from: "client",
+            to: "authServer",
+            details: [
+              {
+                label: "Note",
+                value: "Dynamic client registration (DCR)",
+              },
+            ],
+          },
+          {
+            id: "received_client_credentials",
+            label: "Client Credentials",
+            description:
+              "Authorization Server returns client ID and credentials",
+            from: "authServer",
+            to: "client",
+            details: flowState.clientId
+              ? [
+                  {
+                    label: "client_id",
+                    value: flowState.clientId.substring(0, 20) + "...",
+                  },
+                ]
+              : undefined,
+          },
+        ]
+      : [
+          {
+            id: "received_client_credentials",
+            label: "Use Pre-registered Client (2025-03-26)",
+            description: "Client uses pre-configured credentials (skipped DCR)",
+            from: "client",
+            to: "client",
+            details: flowState.clientId
+              ? [
+                  {
+                    label: "client_id",
+                    value: flowState.clientId.substring(0, 20) + "...",
+                  },
+                  {
+                    label: "Note",
+                    value: "Pre-registered (no DCR needed)",
+                  },
+                ]
+              : [
+                  {
+                    label: "Note",
+                    value: "Pre-registered client credentials",
+                  },
+                ],
+          },
+        ]),
+    {
+      id: "generate_pkce_parameters",
+      label: "Generate PKCE parameters",
+      description:
+        "Client generates code verifier and challenge (recommended), includes resource parameter",
+      from: "client",
+      to: "client",
+      details: flowState.codeChallenge
+        ? [
+            {
+              label: "code_challenge",
+              value: flowState.codeChallenge.substring(0, 15) + "...",
+            },
+            {
+              label: "method",
+              value: flowState.codeChallengeMethod || "S256",
+            },
+            { label: "resource", value: flowState.serverUrl || "—" },
+            { label: "Protocol", value: "2025-03-26" },
+          ]
+        : undefined,
+    },
+    {
+      id: "authorization_request",
+      label: "Open browser with authorization URL",
+      description:
+        "Client opens browser with authorization URL + code_challenge + resource",
+      from: "client",
+      to: "browser",
+      details: flowState.authorizationUrl
+        ? [
+            {
+              label: "code_challenge",
+              value:
+                flowState.codeChallenge?.substring(0, 12) + "..." || "S256",
+            },
+            { label: "resource", value: flowState.serverUrl || "" },
+          ]
+        : undefined,
+    },
+    {
+      id: "browser_to_auth_server",
+      label: "Authorization request with resource parameter",
+      description: "Browser navigates to authorization endpoint",
+      from: "browser",
+      to: "authServer",
+      details: flowState.authorizationUrl
+        ? [{ label: "Note", value: "User authorizes in browser" }]
+        : undefined,
+    },
+    {
+      id: "auth_redirect_to_browser",
+      label: "Redirect to callback with authorization code",
+      description:
+        "Authorization Server redirects browser back to callback URL",
+      from: "authServer",
+      to: "browser",
+      details: flowState.authorizationCode
+        ? [
+            {
+              label: "code",
+              value: flowState.authorizationCode.substring(0, 20) + "...",
+            },
+          ]
+        : undefined,
+    },
+    {
+      id: "received_authorization_code",
+      label: "Authorization code callback",
+      description: "Browser redirects back to client with authorization code",
+      from: "browser",
+      to: "client",
+      details: flowState.authorizationCode
+        ? [
+            {
+              label: "code",
+              value: flowState.authorizationCode.substring(0, 20) + "...",
+            },
+          ]
+        : undefined,
+    },
+    {
+      id: "token_request",
+      label: "Token request + code_verifier + resource",
+      description: "Client exchanges authorization code for access token",
+      from: "client",
+      to: "authServer",
+      details: flowState.codeVerifier
+        ? [
+            { label: "grant_type", value: "authorization_code" },
+            { label: "resource", value: flowState.serverUrl || "" },
+          ]
+        : undefined,
+    },
+    {
+      id: "received_access_token",
+      label: "Access token (+ refresh token)",
+      description: "Authorization Server returns access token",
+      from: "authServer",
+      to: "client",
+      details: flowState.accessToken
+        ? [
+            { label: "token_type", value: flowState.tokenType || "Bearer" },
+            {
+              label: "expires_in",
+              value: flowState.expiresIn?.toString() || "3600",
+            },
+          ]
+        : undefined,
+    },
+    {
+      id: "authenticated_mcp_request",
+      label: "MCP request with access token",
+      description: "Client makes authenticated request to MCP server",
+      from: "client",
+      to: "mcpServer",
+      details: flowState.accessToken
+        ? [
+            { label: "POST", value: "tools/list" },
+            {
+              label: "Authorization",
+              value: "Bearer " + flowState.accessToken.substring(0, 15) + "...",
+            },
+          ]
+        : undefined,
+    },
+    {
+      id: "complete",
+      label: "MCP response",
+      description: "MCP Server returns successful response",
+      from: "mcpServer",
+      to: "client",
+      details: flowState.accessToken
+        ? [
+            { label: "Status", value: "200 OK" },
+            { label: "Content", value: "tools, resources, prompts" },
+          ]
+        : undefined,
+    },
+  ];
 }
 
 // Helper: Build authorization base URL from MCP server URL (2025-03-26 specific)
@@ -86,104 +340,10 @@ function buildAuthServerMetadataUrls(serverUrl: string): string[] {
   return urls;
 }
 
-// Helper: Load pre-registered OAuth credentials from localStorage
-function loadPreregisteredCredentials(serverName: string): {
-  clientId?: string;
-  clientSecret?: string;
-} {
-  try {
-    // Try to load from mcp-client-{serverName} (where ServerModal stores them)
-    const storedClientInfo = localStorage.getItem(`mcp-client-${serverName}`);
-    if (storedClientInfo) {
-      const parsed = JSON.parse(storedClientInfo);
-      return {
-        clientId: parsed.client_id || undefined,
-        clientSecret: parsed.client_secret || undefined,
-      };
-    }
-  } catch (e) {
-    console.error("Failed to load pre-registered credentials:", e);
-  }
-  return {};
-}
-
-/**
- * Helper function to make requests via backend debug proxy (bypasses CORS)
- */
-async function proxyFetch(
-  url: string,
-  options: RequestInit = {},
-): Promise<{
-  status: number;
-  statusText: string;
-  headers: Record<string, string>;
-  body: any;
-  ok: boolean;
-}> {
-  const defaultHeaders: Record<string, string> = {
-    Accept: "application/json, text/event-stream",
-  };
-
-  const mergedHeaders = {
-    ...defaultHeaders,
-    ...((options.headers as Record<string, string>) || {}),
-  };
-
-  let bodyToSend: any = undefined;
-  if (options.body) {
-    const contentType =
-      mergedHeaders[
-        Object.keys(mergedHeaders).find(
-          (k) => k.toLowerCase() === "content-type",
-        ) || ""
-      ];
-
-    if (contentType?.includes("application/x-www-form-urlencoded")) {
-      const params = new URLSearchParams(options.body as string);
-      bodyToSend = Object.fromEntries(params.entries());
-    } else if (typeof options.body === "string") {
-      try {
-        bodyToSend = JSON.parse(options.body);
-      } catch {
-        bodyToSend = options.body;
-      }
-    } else {
-      bodyToSend = options.body;
-    }
-  }
-
-  const proxyPayload = {
-    url,
-    method: options.method || "GET",
-    body: bodyToSend,
-    headers: mergedHeaders,
-  };
-
-  const response = await fetch("/api/mcp/oauth/debug/proxy", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(proxyPayload),
-  });
-
-  if (!response.ok) {
-    throw new Error(
-      `Backend debug proxy error: ${response.status} ${response.statusText}`,
-    );
-  }
-
-  const data = await response.json();
-  return {
-    ...data,
-    ok: data.status >= 200 && data.status < 300,
-  };
-}
-
 // Factory function to create the 2025-03-26 state machine
 export const createDebugOAuthStateMachine = (
   config: DebugOAuthStateMachineConfig,
-): DebugOAuthStateMachine => {
+): OAuthStateMachine => {
   const {
     state: initialState,
     getState,
@@ -209,7 +369,7 @@ export const createDebugOAuthStateMachine = (
 
   const getCurrentState = () => (getState ? getState() : initialState);
 
-  const machine: DebugOAuthStateMachine = {
+  const machine: OAuthStateMachine = {
     state: initialState,
     updateState,
 
@@ -1574,42 +1734,3 @@ export const createDebugOAuthStateMachine = (
 
   return machine;
 };
-
-// Helper function to add an info log to the state
-function addInfoLog(
-  state: OauthFlowStateJune2025,
-  id: string,
-  label: string,
-  data: any,
-): Array<{ id: string; label: string; data: any; timestamp: number }> {
-  return [
-    ...(state.infoLogs || []),
-    {
-      id,
-      label,
-      data,
-      timestamp: Date.now(),
-    },
-  ];
-}
-
-// Helper function to generate random string for PKCE
-function generateRandomString(length: number): string {
-  const charset =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
-  const randomValues = new Uint8Array(length);
-  crypto.getRandomValues(randomValues);
-  return Array.from(
-    randomValues,
-    (byte) => charset[byte % charset.length],
-  ).join("");
-}
-
-// Helper function to generate code challenge from verifier
-async function generateCodeChallenge(verifier: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(verifier);
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  const base64 = btoa(String.fromCharCode(...new Uint8Array(hash)));
-  return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
-}
