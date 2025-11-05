@@ -267,7 +267,7 @@ export const createDebugOAuthStateMachine = (
                   protocolVersion: "2024-11-05",
                   capabilities: {},
                   clientInfo: {
-                    name: "MCP Inspector",
+                    name: "MCPJam Inspector",
                     version: "1.0.0",
                   },
                 },
@@ -316,7 +316,7 @@ export const createDebugOAuthStateMachine = (
                     protocolVersion: "2024-11-05",
                     capabilities: {},
                     clientInfo: {
-                      name: "MCP Inspector",
+                      name: "MCPJam Inspector",
                       version: "1.0.0",
                     },
                   },
@@ -843,7 +843,7 @@ export const createDebugOAuthStateMachine = (
                 state.authorizationServerMetadata.scopes_supported;
 
               const clientMetadata: Record<string, any> = {
-                client_name: "MCP Inspector Debug Client",
+                client_name: "MCPJam Inspector Debug Client",
                 redirect_uris: [redirectUri],
                 grant_types: ["authorization_code", "refresh_token"],
                 response_types: ["code"],
@@ -1507,7 +1507,7 @@ export const createDebugOAuthStateMachine = (
                   protocolVersion: "2025-06-18",
                   capabilities: {},
                   clientInfo: {
-                    name: "MCP Inspector",
+                    name: "MCPJam Inspector",
                     version: "1.0.0",
                   },
                 },
@@ -1523,7 +1523,7 @@ export const createDebugOAuthStateMachine = (
               {
                 Request: "MCP initialize with OAuth bearer token",
                 "Protocol Version": "2025-06-18",
-                Client: "MCP Inspector v1.0.0",
+                Client: "MCPJam Inspector v1.0.0",
                 Endpoint: state.serverUrl,
               },
             );
@@ -1569,7 +1569,7 @@ export const createDebugOAuthStateMachine = (
                     protocolVersion: "2024-11-05",
                     capabilities: {},
                     clientInfo: {
-                      name: "MCP Inspector",
+                      name: "MCPJam Inspector",
                       version: "1.0.0",
                     },
                   },
@@ -1613,7 +1613,8 @@ export const createDebugOAuthStateMachine = (
 
               // Extract MCP response from body (could be direct JSON or parsed SSE)
               let mcpResponse = null;
-              if (isSSE && response.body?.mcpResponse) {
+              // Handle structured SSE response from debug proxy
+              if (isSSE && response.body?.transport === "sse") {
                 // SSE response - extract MCP response from parsed events
                 mcpResponse = response.body.mcpResponse;
               } else {

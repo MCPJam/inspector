@@ -637,6 +637,9 @@ export const OAuthFlowTab = ({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="2025-03-26" className="text-xs">
+                    2025-03-26
+                  </SelectItem>
                   <SelectItem value="2025-06-18" className="text-xs">
                     2025-06-18 (Latest)
                   </SelectItem>
