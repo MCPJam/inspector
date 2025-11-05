@@ -2,7 +2,7 @@
  * Shared helper functions for OAuth state machines
  */
 
-import type { OAuthFlowState } from "../types";
+import type { InfoLogEntry, OAuthFlowState, OAuthFlowStep } from "../types";
 
 /**
  * Helper function to make requests via backend debug proxy (bypasses CORS)
@@ -82,14 +82,16 @@ export async function proxyFetch(
  */
 export function addInfoLog(
   state: OAuthFlowState,
+  step: OAuthFlowStep,
   id: string,
   label: string,
   data: any,
-): Array<{ id: string; label: string; data: any; timestamp: number }> {
+): Array<InfoLogEntry> {
   return [
     ...(state.infoLogs || []),
     {
       id,
+      step,
       label,
       data,
       timestamp: Date.now(),

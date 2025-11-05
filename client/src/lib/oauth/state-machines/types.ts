@@ -93,34 +93,39 @@ export interface OAuthFlowState {
   };
 
   // History of all request/response pairs
-  httpHistory?: Array<{
-    step: OAuthFlowStep;
-    timestamp: number; // Request start time
-    duration?: number; // Response time in milliseconds
-    request: {
-      method: string;
-      url: string;
-      headers: Record<string, string>;
-      body?: any;
-    };
-    response?: {
-      status: number;
-      statusText: string;
-      headers: Record<string, string>;
-      body: any;
-    };
-  }>;
+  httpHistory?: Array<HttpHistoryEntry>;
 
   // Info logs for OAuth flow debugging
-  infoLogs?: Array<{
-    id: string;
-    label: string;
-    data: any;
-    timestamp: number;
-  }>;
+  infoLogs?: Array<InfoLogEntry>;
 
   error?: string;
 }
+
+export type InfoLogEntry = {
+  id: string;
+  step: OAuthFlowStep;
+  label: string;
+  data: any;
+  timestamp: number;
+};
+
+export type HttpHistoryEntry = {
+  step: OAuthFlowStep;
+  timestamp: number; // Request start time
+  duration?: number; // Response time in milliseconds
+  request: {
+    method: string;
+    url: string;
+    headers: Record<string, string>;
+    body?: any;
+  };
+  response?: {
+    status: number;
+    statusText: string;
+    headers: Record<string, string>;
+    body: any;
+  };
+};
 
 // Initial empty state
 export const EMPTY_OAUTH_FLOW_STATE: OAuthFlowState = {
