@@ -70,15 +70,15 @@ export function useServerForm(server?: ServerWithName) {
           ? JSON.parse(storedOAuthConfig)
           : {};
 
-        // Retrieve scopes from multiple sources (in priority order)
+        // Retrieve scopes from multiple sources (prioritize config over tokens/storage)
         scopes =
+          config.oauthScopes ||
           server.oauthTokens?.scope?.split(" ") ||
           storedTokens?.scope?.split(" ") ||
           oauthConfig.scopes ||
-          config.oauthScopes ||
           [];
 
-        // Get client ID and secret from multiple sources
+        // Get client ID and secret from multiple sources (prioritize config)
         clientIdValue =
           (typeof config.clientId === "string" ? config.clientId : "") ||
           storedTokens?.client_id ||
@@ -117,6 +117,8 @@ export function useServerForm(server?: ServerWithName) {
         setCommandInput(fullCommand);
       }
 
+      // Don't set a default scope for existing servers - use what's configured
+      // Only set default for new servers
       setOauthScopesInput(scopes.join(" "));
       setRequestTimeout(String(server.config.requestTimeout || 10000));
 
@@ -284,22 +286,31 @@ export function useServerForm(server?: ServerWithName) {
         }
       });
 
+      // Parse OAuth scopes from input (preserve them even when not using OAuth)
+      const scopes = oauthScopesInput
+        .trim()
+        .split(/\s+/)
+        .filter((s) => s.length > 0);
+      if (scopes.length > 0) {
+        finalFormData.oauthScopes = scopes;
+      }
+
+      // Preserve client credentials
+      if (clientId.trim()) {
+        finalFormData.clientId = clientId.trim();
+      }
+      if (clientSecret.trim()) {
+        finalFormData.clientSecret = clientSecret.trim();
+      }
+
       // Handle authentication
       if (authType === "bearer" && bearerToken) {
         headers["Authorization"] = `Bearer ${bearerToken.trim()}`;
         finalFormData.useOAuth = false;
       } else if (authType === "oauth") {
         finalFormData.useOAuth = true;
-        const scopes = oauthScopesInput
-          .trim()
-          .split(/\s+/)
-          .filter((s) => s.length > 0);
-        finalFormData.oauthScopes = scopes.length > 0 ? scopes : ["mcp:*"];
-
-        if (useCustomClientId) {
-          finalFormData.clientId = clientId.trim();
-          finalFormData.clientSecret = clientSecret ? clientSecret.trim() : undefined;
-        }
+        // Don't add default scopes - let the OAuth server use its defaults
+        // This prevents invalid_scope errors when the server doesn't recognize "mcp:*"
       } else {
         finalFormData.useOAuth = false;
       }

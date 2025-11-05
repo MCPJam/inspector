@@ -623,6 +623,11 @@ export function useAppState() {
         }
       }
 
+      // Clear OAuth tokens if switching from OAuth to no authentication
+      if (hadOAuthTokens && !formData.useOAuth) {
+        clearOAuthData(originalServerName);
+      }
+
       await handleDisconnect(originalServerName);
       await handleConnect(formData);
       if (
