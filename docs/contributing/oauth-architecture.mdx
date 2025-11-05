@@ -276,16 +276,19 @@ Manages the step-by-step OAuth flow:
 - Updates UI state via callbacks
 - Validates preconditions before transitions
 
-### 3. CORS Proxy
+### 3. Debug Proxy
 
 **Location:** `server/routes/mcp/oauth.ts:10`
 
-Proxies OAuth metadata requests to bypass CORS:
+Proxies OAuth and MCP requests to bypass CORS:
 
 - Enforces HTTPS for security
 - Adds proper CORS headers
 - Validates URL format
 - Returns OAuth metadata JSON
+- Handles SSE (Server-Sent Events) responses
+- Detects legacy HTTP+SSE transport (2024-11-05)
+- Parses SSE streams and extracts endpoint events
 
 ### 4. Fetch Interceptor
 
