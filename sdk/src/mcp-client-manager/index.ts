@@ -229,9 +229,10 @@ export class MCPClientManager {
       transportType = "stdio";
     } else {
       // Check if using SSE or Streamable HTTP based on URL or preference
-      transportType = config.preferSSE || config.url.pathname.endsWith("/sse")
-        ? "sse"
-        : "streamable-http";
+      transportType =
+        config.preferSSE || config.url.pathname.endsWith("/sse")
+          ? "sse"
+          : "streamable-http";
     }
 
     // Try to get protocol version from transport if available

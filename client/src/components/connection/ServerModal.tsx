@@ -94,7 +94,9 @@ export function ServerModal({
   const [showTokenInsights, setShowTokenInsights] = useState<boolean>(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [expandedTokens, setExpandedTokens] = useState<Set<string>>(new Set());
-  const [activeTab, setActiveTab] = useState<"config" | "auth" | "tools">("config");
+  const [activeTab, setActiveTab] = useState<"config" | "auth" | "tools">(
+    "config",
+  );
   const [tools, setTools] = useState<ListToolsResultWithMetadata | null>(null);
   const [isLoadingTools, setIsLoadingTools] = useState(false);
   const [toolsError, setToolsError] = useState<string | null>(null);
@@ -600,356 +602,121 @@ export function ServerModal({
         {/* Show configuration form when in add mode or config tab is active */}
         {(mode === "add" || activeTab === "config") && (
           <>
-          <form
-            onSubmit={(e) => {
-              posthog.capture("add_server_button_clicked", {
-                location: "server_modal",
-                platform: detectPlatform(),
-                environment: detectEnvironment(),
-              });
-              handleSubmit(e);
-            }}
-            className="space-y-6"
-          >
-            <div className="space-y-2">
-              <label className="block text-sm font-medium text-foreground">
-                Server Name
-              </label>
-              <Input
-                value={serverFormData.name}
-                onChange={(e) =>
-                  setServerFormData((prev) => ({
-                    ...prev,
-                    name: e.target.value,
-                  }))
-                }
-                placeholder="my-mcp-server"
-                required
-                className="h-10"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <label className="block text-sm font-medium text-foreground">
-                Connection Type
-              </label>
-              {serverFormData.type === "stdio" ? (
-                <div className="flex">
-                  <Select
-                    value={serverFormData.type}
-                    onValueChange={(value: "stdio" | "http") =>
-                      setServerFormData((prev) => ({
-                        ...prev,
-                        type: value,
-                      }))
-                    }
-                  >
-                    <SelectTrigger className="w-22 rounded-r-none border-r-0 text-xs border-border">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="stdio">STDIO</SelectItem>
-                      <SelectItem value="http">HTTP/SSE</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Input
-                    value={commandInput}
-                    onChange={(e) => setCommandInput(e.target.value)}
-                    placeholder="npx -y @modelcontextprotocol/server-everything"
-                    required
-                    className="flex-1 rounded-l-none text-sm border-border"
-                  />
-                </div>
-              ) : (
-                <div className="flex">
-                  <Select
-                    value={serverFormData.type}
-                    onValueChange={(value: "stdio" | "http") =>
-                      setServerFormData((prev) => ({
-                        ...prev,
-                        type: value,
-                      }))
-                    }
-                  >
-                    <SelectTrigger className="w-22 rounded-r-none border-r-0 text-xs border-border">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="stdio">STDIO</SelectItem>
-                      <SelectItem value="http">HTTP</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Input
-                    value={serverFormData.url}
-                    onChange={(e) =>
-                      setServerFormData((prev) => ({
-                        ...prev,
-                        url: e.target.value,
-                      }))
-                    }
-                    placeholder="http://localhost:8080/mcp"
-                    required
-                    className="flex-1 rounded-l-none text-sm border-border"
-                  />
-                </div>
-              )}
-            </div>
-
-            {/* Environment Variables for STDIO */}
-            {serverFormData.type === "stdio" && (
-              <div className="border border-border rounded-lg overflow-hidden">
-                <button
-                  type="button"
-                  onClick={() => setShowEnvVars(!showEnvVars)}
-                  className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors cursor-pointer"
-                >
-                  <div className="flex items-center gap-2">
-                    {showEnvVars ? (
-                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                    ) : (
-                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                    )}
-                    <span className="text-sm font-medium text-foreground">
-                      Environment Variables
-                    </span>
-                    {envVars.length > 0 && (
-                      <span className="text-xs text-muted-foreground">
-                        ({envVars.length})
-                      </span>
-                    )}
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      addEnvVar();
-                    }}
-                    className="text-xs"
-                  >
-                    Add Variable
-                  </Button>
-                </button>
-
-                {showEnvVars && envVars.length > 0 && (
-                  <div className="p-4 space-y-2 border-t border-border bg-muted/30 max-h-48 overflow-y-auto">
-                    {envVars.map((envVar, index) => (
-                      <div key={index} className="flex gap-2 items-center">
-                        <Input
-                          value={envVar.key}
-                          onChange={(e) =>
-                            updateEnvVar(index, "key", e.target.value)
-                          }
-                          placeholder="KEY"
-                          className="flex-1 text-xs"
-                        />
-                        <Input
-                          value={envVar.value}
-                          onChange={(e) =>
-                            updateEnvVar(index, "value", e.target.value)
-                          }
-                          placeholder="value"
-                          className="flex-1 text-xs"
-                        />
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => removeEnvVar(index)}
-                          className="px-2 text-xs"
-                        >
-                          ×
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                )}
+            <form
+              onSubmit={(e) => {
+                posthog.capture("add_server_button_clicked", {
+                  location: "server_modal",
+                  platform: detectPlatform(),
+                  environment: detectEnvironment(),
+                });
+                handleSubmit(e);
+              }}
+              className="space-y-6"
+            >
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-foreground">
+                  Server Name
+                </label>
+                <Input
+                  value={serverFormData.name}
+                  onChange={(e) =>
+                    setServerFormData((prev) => ({
+                      ...prev,
+                      name: e.target.value,
+                    }))
+                  }
+                  placeholder="my-mcp-server"
+                  required
+                  className="h-10"
+                />
               </div>
-            )}
 
-            {/* Authentication for HTTP (only in add mode - edit mode has separate auth tab) */}
-            {mode === "add" && serverFormData.type === "http" && (
-              <div className="space-y-4">
-                <div className="border border-border rounded-lg overflow-hidden">
-                  <div className="p-3 space-y-2">
-                    <label className="block text-sm font-medium text-foreground">
-                      Authentication
-                    </label>
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-foreground">
+                  Connection Type
+                </label>
+                {serverFormData.type === "stdio" ? (
+                  <div className="flex">
                     <Select
-                      value={authType}
-                      onValueChange={(value: "oauth" | "bearer" | "none") => {
-                        setAuthType(value);
-                        setShowAuthSettings(value !== "none");
-                        if (value === "oauth") {
-                          setServerFormData((prev) => ({
-                            ...prev,
-                            useOAuth: true,
-                          }));
-                        } else {
-                          setServerFormData((prev) => ({
-                            ...prev,
-                            useOAuth: false,
-                          }));
-                        }
-                      }}
+                      value={serverFormData.type}
+                      onValueChange={(value: "stdio" | "http") =>
+                        setServerFormData((prev) => ({
+                          ...prev,
+                          type: value,
+                        }))
+                      }
                     >
-                      <SelectTrigger className="w-full">
+                      <SelectTrigger className="w-22 rounded-r-none border-r-0 text-xs border-border">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="none">No Authentication</SelectItem>
-                        <SelectItem value="bearer">Bearer Token</SelectItem>
-                        <SelectItem value="oauth">OAuth 2.0</SelectItem>
+                        <SelectItem value="stdio">STDIO</SelectItem>
+                        <SelectItem value="http">HTTP/SSE</SelectItem>
                       </SelectContent>
                     </Select>
+                    <Input
+                      value={commandInput}
+                      onChange={(e) => setCommandInput(e.target.value)}
+                      placeholder="npx -y @modelcontextprotocol/server-everything"
+                      required
+                      className="flex-1 rounded-l-none text-sm border-border"
+                    />
                   </div>
-
-                  {/* Bearer Token Settings */}
-                  {showAuthSettings && authType === "bearer" && (
-                    <div className="px-3 pb-3 space-y-2 border-t border-border bg-muted/30">
-                      <label className="block text-sm font-medium text-foreground pt-3">
-                        Bearer Token
-                      </label>
-                      <Input
-                        type="password"
-                        value={bearerToken}
-                        onChange={(e) => setBearerToken(e.target.value)}
-                        placeholder="Enter your bearer token"
-                        className="h-10"
-                      />
-                    </div>
-                  )}
-
-                  {/* OAuth Settings */}
-                  {showAuthSettings && authType === "oauth" && (
-                    <div className="px-3 pb-3 space-y-3 border-t border-border bg-muted/30">
-                      <div className="space-y-2 pt-3">
-                        <label className="block text-sm font-medium text-foreground">
-                          OAuth Scopes
-                        </label>
-                        <Input
-                          value={oauthScopesInput}
-                          onChange={(e) => setOauthScopesInput(e.target.value)}
-                          placeholder="mcp:* or custom scopes separated by spaces"
-                          className="h-10"
-                        />
-                        <p className="text-xs text-muted-foreground">
-                          Default: mcp:* (space-separated for multiple scopes)
-                        </p>
-                      </div>
-
-                      <div className="space-y-2">
-                        <div className="flex items-center space-x-2">
-                          <input
-                            type="checkbox"
-                            id="useCustomClientId"
-                            checked={useCustomClientId}
-                            onChange={(e) => {
-                              setUseCustomClientId(e.target.checked);
-                              if (!e.target.checked) {
-                                setClientId("");
-                                setClientSecret("");
-                                setClientIdError(null);
-                                setClientSecretError(null);
-                              }
-                            }}
-                            className="rounded"
-                          />
-                          <label
-                            htmlFor="useCustomClientId"
-                            className="text-sm font-medium text-foreground"
-                          >
-                            Use custom OAuth credentials
-                          </label>
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                          Leave unchecked to use the server's default OAuth flow
-                        </p>
-                      </div>
-
-                      {useCustomClientId && (
-                        <div className="space-y-3">
-                          <div className="space-y-2">
-                            <label className="block text-sm font-medium text-foreground">
-                              Client ID
-                            </label>
-                            <Input
-                              value={clientId}
-                              onChange={(e) => {
-                                const value = e.target.value;
-                                setClientId(value);
-                                const error = validateClientId(value);
-                                setClientIdError(error);
-                              }}
-                              placeholder="Your OAuth Client ID"
-                              className={`h-10 ${
-                                clientIdError ? "border-red-500" : ""
-                              }`}
-                            />
-                            {clientIdError && (
-                              <p className="text-xs text-red-500">
-                                {clientIdError}
-                              </p>
-                            )}
-                          </div>
-
-                          <div className="space-y-2">
-                            <label className="block text-sm font-medium text-foreground">
-                              Client Secret (Optional)
-                            </label>
-                            <Input
-                              type="password"
-                              value={clientSecret}
-                              onChange={(e) => {
-                                const value = e.target.value;
-                                setClientSecret(value);
-                                const error = validateClientSecret(value);
-                                setClientSecretError(error);
-                              }}
-                              placeholder="Your OAuth Client Secret"
-                              className={`h-10 ${
-                                clientSecretError ? "border-red-500" : ""
-                              }`}
-                            />
-                            {clientSecretError && (
-                              <p className="text-xs text-red-500">
-                                {clientSecretError}
-                              </p>
-                            )}
-                            <p className="text-xs text-muted-foreground">
-                              Optional for public clients using PKCE
-                            </p>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
+                ) : (
+                  <div className="flex">
+                    <Select
+                      value={serverFormData.type}
+                      onValueChange={(value: "stdio" | "http") =>
+                        setServerFormData((prev) => ({
+                          ...prev,
+                          type: value,
+                        }))
+                      }
+                    >
+                      <SelectTrigger className="w-22 rounded-r-none border-r-0 text-xs border-border">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="stdio">STDIO</SelectItem>
+                        <SelectItem value="http">HTTP</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Input
+                      value={serverFormData.url}
+                      onChange={(e) =>
+                        setServerFormData((prev) => ({
+                          ...prev,
+                          url: e.target.value,
+                        }))
+                      }
+                      placeholder="http://localhost:8080/mcp"
+                      required
+                      className="flex-1 rounded-l-none text-sm border-border"
+                    />
+                  </div>
+                )}
               </div>
-            )}
 
-            {/* Custom Headers for HTTP */}
-            {serverFormData.type === "http" && (
-              <div className="space-y-4">
+              {/* Environment Variables for STDIO */}
+              {serverFormData.type === "stdio" && (
                 <div className="border border-border rounded-lg overflow-hidden">
                   <button
                     type="button"
-                    onClick={() => setShowCustomHeaders(!showCustomHeaders)}
+                    onClick={() => setShowEnvVars(!showEnvVars)}
                     className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors cursor-pointer"
                   >
                     <div className="flex items-center gap-2">
-                      {showCustomHeaders ? (
+                      {showEnvVars ? (
                         <ChevronDown className="h-4 w-4 text-muted-foreground" />
                       ) : (
                         <ChevronRight className="h-4 w-4 text-muted-foreground" />
                       )}
                       <span className="text-sm font-medium text-foreground">
-                        Custom Headers
+                        Environment Variables
                       </span>
-                      {customHeaders.length > 0 && (
+                      {envVars.length > 0 && (
                         <span className="text-xs text-muted-foreground">
-                          ({customHeaders.length})
+                          ({envVars.length})
                         </span>
                       )}
                     </div>
@@ -959,39 +726,39 @@ export function ServerModal({
                       size="sm"
                       onClick={(e) => {
                         e.stopPropagation();
-                        addCustomHeader();
+                        addEnvVar();
                       }}
                       className="text-xs"
                     >
-                      Add Header
+                      Add Variable
                     </Button>
                   </button>
 
-                  {showCustomHeaders && customHeaders.length > 0 && (
+                  {showEnvVars && envVars.length > 0 && (
                     <div className="p-4 space-y-2 border-t border-border bg-muted/30 max-h-48 overflow-y-auto">
-                      {customHeaders.map((header, index) => (
+                      {envVars.map((envVar, index) => (
                         <div key={index} className="flex gap-2 items-center">
                           <Input
-                            value={header.key}
+                            value={envVar.key}
                             onChange={(e) =>
-                              updateCustomHeader(index, "key", e.target.value)
+                              updateEnvVar(index, "key", e.target.value)
                             }
-                            placeholder="Header-Name"
+                            placeholder="KEY"
                             className="flex-1 text-xs"
                           />
                           <Input
-                            value={header.value}
+                            value={envVar.value}
                             onChange={(e) =>
-                              updateCustomHeader(index, "value", e.target.value)
+                              updateEnvVar(index, "value", e.target.value)
                             }
-                            placeholder="header-value"
+                            placeholder="value"
                             className="flex-1 text-xs"
                           />
                           <Button
                             type="button"
                             variant="outline"
                             size="sm"
-                            onClick={() => removeCustomHeader(index)}
+                            onClick={() => removeEnvVar(index)}
                             className="px-2 text-xs"
                           >
                             ×
@@ -1000,66 +767,264 @@ export function ServerModal({
                       ))}
                     </div>
                   )}
+                </div>
+              )}
 
-                  {!showCustomHeaders && (
-                    <div className="px-3 pb-3">
-                      <p className="text-xs text-muted-foreground">
-                        Add custom HTTP headers for your MCP server connection
-                        (e.g. API-Key, X-Custom-Header)
-                      </p>
+              {/* Authentication for HTTP (only in add mode - edit mode has separate auth tab) */}
+              {mode === "add" && serverFormData.type === "http" && (
+                <div className="space-y-4">
+                  <div className="border border-border rounded-lg overflow-hidden">
+                    <div className="p-3 space-y-2">
+                      <label className="block text-sm font-medium text-foreground">
+                        Authentication
+                      </label>
+                      <Select
+                        value={authType}
+                        onValueChange={(value: "oauth" | "bearer" | "none") => {
+                          setAuthType(value);
+                          setShowAuthSettings(value !== "none");
+                          if (value === "oauth") {
+                            setServerFormData((prev) => ({
+                              ...prev,
+                              useOAuth: true,
+                            }));
+                          } else {
+                            setServerFormData((prev) => ({
+                              ...prev,
+                              useOAuth: false,
+                            }));
+                          }
+                        }}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">
+                            No Authentication
+                          </SelectItem>
+                          <SelectItem value="bearer">Bearer Token</SelectItem>
+                          <SelectItem value="oauth">OAuth 2.0</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
-                  )}
-                </div>
-              </div>
-            )}
 
-            {/* Configuration Section */}
-            <div className="border border-border rounded-lg overflow-hidden">
-              <button
-                type="button"
-                onClick={() => setShowConfiguration(!showConfiguration)}
-                className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors cursor-pointer"
-              >
-                <div className="flex items-center gap-2">
-                  {showConfiguration ? (
-                    <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                  ) : (
-                    <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                  )}
-                  <span className="text-sm font-medium text-foreground">
-                    Additional Configuration
-                  </span>
-                </div>
-              </button>
+                    {/* Bearer Token Settings */}
+                    {showAuthSettings && authType === "bearer" && (
+                      <div className="px-3 pb-3 space-y-2 border-t border-border bg-muted/30">
+                        <label className="block text-sm font-medium text-foreground pt-3">
+                          Bearer Token
+                        </label>
+                        <Input
+                          type="password"
+                          value={bearerToken}
+                          onChange={(e) => setBearerToken(e.target.value)}
+                          placeholder="Enter your bearer token"
+                          className="h-10"
+                        />
+                      </div>
+                    )}
 
-              {showConfiguration && (
-                <div className="p-4 space-y-4 border-t border-border bg-muted/30">
-                  {/* Request Timeout */}
-                  <div className="space-y-2">
-                    <label className="block text-sm font-medium text-foreground">
-                      Request Timeout
-                    </label>
-                    <Input
-                      type="number"
-                      value={requestTimeout}
-                      onChange={(e) => setRequestTimeout(e.target.value)}
-                      placeholder="10000"
-                      className="h-10"
-                      min="1000"
-                      max="600000"
-                      step="1000"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Timeout in ms (default: 10000ms, min: 1000ms, max:
-                      600000ms)
-                    </p>
+                    {/* OAuth Settings */}
+                    {showAuthSettings && authType === "oauth" && (
+                      <div className="px-3 pb-3 space-y-3 border-t border-border bg-muted/30">
+                        <div className="space-y-2 pt-3">
+                          <label className="block text-sm font-medium text-foreground">
+                            OAuth Scopes
+                          </label>
+                          <Input
+                            value={oauthScopesInput}
+                            onChange={(e) =>
+                              setOauthScopesInput(e.target.value)
+                            }
+                            placeholder="mcp:* or custom scopes separated by spaces"
+                            className="h-10"
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            Default: mcp:* (space-separated for multiple scopes)
+                          </p>
+                        </div>
+
+                        <div className="space-y-2">
+                          <div className="flex items-center space-x-2">
+                            <input
+                              type="checkbox"
+                              id="useCustomClientId"
+                              checked={useCustomClientId}
+                              onChange={(e) => {
+                                setUseCustomClientId(e.target.checked);
+                                if (!e.target.checked) {
+                                  setClientId("");
+                                  setClientSecret("");
+                                  setClientIdError(null);
+                                  setClientSecretError(null);
+                                }
+                              }}
+                              className="rounded"
+                            />
+                            <label
+                              htmlFor="useCustomClientId"
+                              className="text-sm font-medium text-foreground"
+                            >
+                              Use custom OAuth credentials
+                            </label>
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            Leave unchecked to use the server's default OAuth
+                            flow
+                          </p>
+                        </div>
+
+                        {useCustomClientId && (
+                          <div className="space-y-3">
+                            <div className="space-y-2">
+                              <label className="block text-sm font-medium text-foreground">
+                                Client ID
+                              </label>
+                              <Input
+                                value={clientId}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  setClientId(value);
+                                  const error = validateClientId(value);
+                                  setClientIdError(error);
+                                }}
+                                placeholder="Your OAuth Client ID"
+                                className={`h-10 ${
+                                  clientIdError ? "border-red-500" : ""
+                                }`}
+                              />
+                              {clientIdError && (
+                                <p className="text-xs text-red-500">
+                                  {clientIdError}
+                                </p>
+                              )}
+                            </div>
+
+                            <div className="space-y-2">
+                              <label className="block text-sm font-medium text-foreground">
+                                Client Secret (Optional)
+                              </label>
+                              <Input
+                                type="password"
+                                value={clientSecret}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  setClientSecret(value);
+                                  const error = validateClientSecret(value);
+                                  setClientSecretError(error);
+                                }}
+                                placeholder="Your OAuth Client Secret"
+                                className={`h-10 ${
+                                  clientSecretError ? "border-red-500" : ""
+                                }`}
+                              />
+                              {clientSecretError && (
+                                <p className="text-xs text-red-500">
+                                  {clientSecretError}
+                                </p>
+                              )}
+                              <p className="text-xs text-muted-foreground">
+                                Optional for public clients using PKCE
+                              </p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
-            </div>
 
-            {/* Server Info section (only in edit mode) */}
-            {mode === "edit" && server && server.initializationInfo && (
+              {/* Custom Headers for HTTP */}
+              {serverFormData.type === "http" && (
+                <div className="space-y-4">
+                  <div className="border border-border rounded-lg overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => setShowCustomHeaders(!showCustomHeaders)}
+                      className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors cursor-pointer"
+                    >
+                      <div className="flex items-center gap-2">
+                        {showCustomHeaders ? (
+                          <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                        ) : (
+                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                        )}
+                        <span className="text-sm font-medium text-foreground">
+                          Custom Headers
+                        </span>
+                        {customHeaders.length > 0 && (
+                          <span className="text-xs text-muted-foreground">
+                            ({customHeaders.length})
+                          </span>
+                        )}
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          addCustomHeader();
+                        }}
+                        className="text-xs"
+                      >
+                        Add Header
+                      </Button>
+                    </button>
+
+                    {showCustomHeaders && customHeaders.length > 0 && (
+                      <div className="p-4 space-y-2 border-t border-border bg-muted/30 max-h-48 overflow-y-auto">
+                        {customHeaders.map((header, index) => (
+                          <div key={index} className="flex gap-2 items-center">
+                            <Input
+                              value={header.key}
+                              onChange={(e) =>
+                                updateCustomHeader(index, "key", e.target.value)
+                              }
+                              placeholder="Header-Name"
+                              className="flex-1 text-xs"
+                            />
+                            <Input
+                              value={header.value}
+                              onChange={(e) =>
+                                updateCustomHeader(
+                                  index,
+                                  "value",
+                                  e.target.value,
+                                )
+                              }
+                              placeholder="header-value"
+                              className="flex-1 text-xs"
+                            />
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => removeCustomHeader(index)}
+                              className="px-2 text-xs"
+                            >
+                              ×
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {!showCustomHeaders && (
+                      <div className="px-3 pb-3">
+                        <p className="text-xs text-muted-foreground">
+                          Add custom HTTP headers for your MCP server connection
+                          (e.g. API-Key, X-Custom-Header)
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Configuration Section */}
               <div className="border border-border rounded-lg overflow-hidden">
                 <button
                   type="button"
@@ -1073,141 +1038,207 @@ export function ServerModal({
                       <ChevronRight className="h-4 w-4 text-muted-foreground" />
                     )}
                     <span className="text-sm font-medium text-foreground">
-                      Server Info
+                      Additional Configuration
                     </span>
                   </div>
                 </button>
 
                 {showConfiguration && (
                   <div className="p-4 space-y-4 border-t border-border bg-muted/30">
-                    {/* Connection Details */}
-                    <div className="space-y-3">
-                      <h4 className="text-xs font-semibold text-foreground uppercase tracking-wide">
-                        Connection Details
-                      </h4>
-                      {server.initializationInfo.protocolVersion && (
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm text-muted-foreground">Protocol Version</span>
-                          <Badge variant="secondary" className="font-mono text-xs">
-                            {server.initializationInfo.protocolVersion}
-                          </Badge>
-                        </div>
-                      )}
-                      {server.initializationInfo.transport && (
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm text-muted-foreground">Transport</span>
-                          <Badge variant="secondary" className="font-mono uppercase text-xs">
-                            {server.initializationInfo.transport}
-                          </Badge>
-                        </div>
-                      )}
-                      {server.initializationInfo.serverVersion && (
-                        <>
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm text-muted-foreground">Server Name</span>
-                            <span className="text-sm font-mono">
-                              {server.initializationInfo.serverVersion.name}
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm text-muted-foreground">Server Version</span>
-                            <Badge variant="outline" className="font-mono text-xs">
-                              {server.initializationInfo.serverVersion.version}
-                            </Badge>
-                          </div>
-                        </>
-                      )}
+                    {/* Request Timeout */}
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-foreground">
+                        Request Timeout
+                      </label>
+                      <Input
+                        type="number"
+                        value={requestTimeout}
+                        onChange={(e) => setRequestTimeout(e.target.value)}
+                        placeholder="10000"
+                        className="h-10"
+                        min="1000"
+                        max="600000"
+                        step="1000"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Timeout in ms (default: 10000ms, min: 1000ms, max:
+                        600000ms)
+                      </p>
                     </div>
-
-                    {/* Server Instructions */}
-                    {server.initializationInfo.instructions && (
-                      <div className="space-y-3 pt-2 border-t border-border/50">
-                        <h4 className="text-xs font-semibold text-foreground uppercase tracking-wide">
-                          Server Instructions
-                        </h4>
-                        <p className="text-sm text-muted-foreground leading-relaxed">
-                          {server.initializationInfo.instructions}
-                        </p>
-                      </div>
-                    )}
-
-                    {/* Server Capabilities */}
-                    {server.initializationInfo.serverCapabilities && (
-                      <div className="space-y-3 pt-2 border-t border-border/50">
-                        <h4 className="text-xs font-semibold text-foreground uppercase tracking-wide">
-                          Server Capabilities
-                        </h4>
-                        <JsonView
-                          src={server.initializationInfo.serverCapabilities}
-                          theme="atom"
-                          dark={true}
-                          enableClipboard={true}
-                          displaySize={false}
-                          collapseStringsAfterLength={100}
-                          style={{
-                            fontSize: "11px",
-                            fontFamily:
-                              "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                            backgroundColor: "hsl(var(--background))",
-                            padding: "8px",
-                            borderRadius: "6px",
-                            border: "1px solid hsl(var(--border))",
-                          }}
-                        />
-                      </div>
-                    )}
-
-                    {/* Client Capabilities */}
-                    {server.initializationInfo.clientCapabilities && (
-                      <div className="space-y-3 pt-2 border-t border-border/50">
-                        <h4 className="text-xs font-semibold text-foreground uppercase tracking-wide">
-                          Client Capabilities
-                        </h4>
-                        <JsonView
-                          src={server.initializationInfo.clientCapabilities}
-                          theme="atom"
-                          dark={true}
-                          enableClipboard={true}
-                          displaySize={false}
-                          collapseStringsAfterLength={100}
-                          style={{
-                            fontSize: "11px",
-                            fontFamily:
-                              "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                            backgroundColor: "hsl(var(--background))",
-                            padding: "8px",
-                            borderRadius: "6px",
-                            border: "1px solid hsl(var(--border))",
-                          }}
-                        />
-                      </div>
-                    )}
                   </div>
                 )}
               </div>
-            )}
 
-            <div className="flex justify-end space-x-2 pt-4">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  posthog.capture("cancel_button_clicked", {
-                    location: "server_modal",
-                    platform: detectPlatform(),
-                    environment: detectEnvironment(),
-                  });
-                  handleClose();
-                }}
-                className="px-4"
-              >
-                Cancel
-              </Button>
-              <Button type="submit" className="px-4">
-                {mode === "add" ? "Add Server" : "Update Server"}
-              </Button>
-            </div>
-          </form>
+              {/* Server Info section (only in edit mode) */}
+              {mode === "edit" && server && server.initializationInfo && (
+                <div className="border border-border rounded-lg overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setShowConfiguration(!showConfiguration)}
+                    className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2">
+                      {showConfiguration ? (
+                        <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                      ) : (
+                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                      )}
+                      <span className="text-sm font-medium text-foreground">
+                        Server Info
+                      </span>
+                    </div>
+                  </button>
+
+                  {showConfiguration && (
+                    <div className="p-4 space-y-4 border-t border-border bg-muted/30">
+                      {/* Connection Details */}
+                      <div className="space-y-3">
+                        <h4 className="text-xs font-semibold text-foreground uppercase tracking-wide">
+                          Connection Details
+                        </h4>
+                        {server.initializationInfo.protocolVersion && (
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm text-muted-foreground">
+                              Protocol Version
+                            </span>
+                            <Badge
+                              variant="secondary"
+                              className="font-mono text-xs"
+                            >
+                              {server.initializationInfo.protocolVersion}
+                            </Badge>
+                          </div>
+                        )}
+                        {server.initializationInfo.transport && (
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm text-muted-foreground">
+                              Transport
+                            </span>
+                            <Badge
+                              variant="secondary"
+                              className="font-mono uppercase text-xs"
+                            >
+                              {server.initializationInfo.transport}
+                            </Badge>
+                          </div>
+                        )}
+                        {server.initializationInfo.serverVersion && (
+                          <>
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm text-muted-foreground">
+                                Server Name
+                              </span>
+                              <span className="text-sm font-mono">
+                                {server.initializationInfo.serverVersion.name}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm text-muted-foreground">
+                                Server Version
+                              </span>
+                              <Badge
+                                variant="outline"
+                                className="font-mono text-xs"
+                              >
+                                {
+                                  server.initializationInfo.serverVersion
+                                    .version
+                                }
+                              </Badge>
+                            </div>
+                          </>
+                        )}
+                      </div>
+
+                      {/* Server Instructions */}
+                      {server.initializationInfo.instructions && (
+                        <div className="space-y-3 pt-2 border-t border-border/50">
+                          <h4 className="text-xs font-semibold text-foreground uppercase tracking-wide">
+                            Server Instructions
+                          </h4>
+                          <p className="text-sm text-muted-foreground leading-relaxed">
+                            {server.initializationInfo.instructions}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Server Capabilities */}
+                      {server.initializationInfo.serverCapabilities && (
+                        <div className="space-y-3 pt-2 border-t border-border/50">
+                          <h4 className="text-xs font-semibold text-foreground uppercase tracking-wide">
+                            Server Capabilities
+                          </h4>
+                          <JsonView
+                            src={server.initializationInfo.serverCapabilities}
+                            theme="atom"
+                            dark={true}
+                            enableClipboard={true}
+                            displaySize={false}
+                            collapseStringsAfterLength={100}
+                            style={{
+                              fontSize: "11px",
+                              fontFamily:
+                                "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                              backgroundColor: "hsl(var(--background))",
+                              padding: "8px",
+                              borderRadius: "6px",
+                              border: "1px solid hsl(var(--border))",
+                            }}
+                          />
+                        </div>
+                      )}
+
+                      {/* Client Capabilities */}
+                      {server.initializationInfo.clientCapabilities && (
+                        <div className="space-y-3 pt-2 border-t border-border/50">
+                          <h4 className="text-xs font-semibold text-foreground uppercase tracking-wide">
+                            Client Capabilities
+                          </h4>
+                          <JsonView
+                            src={server.initializationInfo.clientCapabilities}
+                            theme="atom"
+                            dark={true}
+                            enableClipboard={true}
+                            displaySize={false}
+                            collapseStringsAfterLength={100}
+                            style={{
+                              fontSize: "11px",
+                              fontFamily:
+                                "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                              backgroundColor: "hsl(var(--background))",
+                              padding: "8px",
+                              borderRadius: "6px",
+                              border: "1px solid hsl(var(--border))",
+                            }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="flex justify-end space-x-2 pt-4">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    posthog.capture("cancel_button_clicked", {
+                      location: "server_modal",
+                      platform: detectPlatform(),
+                      environment: detectEnvironment(),
+                    });
+                    handleClose();
+                  }}
+                  className="px-4"
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" className="px-4">
+                  {mode === "add" ? "Add Server" : "Update Server"}
+                </Button>
+              </div>
+            </form>
           </>
         )}
 
@@ -1697,8 +1728,8 @@ export function ServerModal({
             ) : (
               <div className="bg-muted/30 rounded-lg p-8 text-center">
                 <p className="text-sm text-muted-foreground">
-                  Authentication settings are only available for HTTP/SSE servers.
-                  STDIO servers use process-level authentication.
+                  Authentication settings are only available for HTTP/SSE
+                  servers. STDIO servers use process-level authentication.
                 </p>
               </div>
             )}
@@ -1866,7 +1897,6 @@ export function ServerModal({
             </div>
           </div>
         )}
-
       </DialogContent>
     </Dialog>
   );

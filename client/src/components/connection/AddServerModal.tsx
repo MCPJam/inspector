@@ -51,7 +51,7 @@ export function AddServerModal({
       // Validate Client Secret if provided
       if (formState.clientSecret) {
         const clientSecretError = formState.validateClientSecret(
-          formState.clientSecret
+          formState.clientSecret,
         );
         if (clientSecretError) {
           toast.error(clientSecretError);
@@ -177,9 +177,7 @@ export function AddServerModal({
             <EnvVarsSection
               envVars={formState.envVars}
               showEnvVars={formState.showEnvVars}
-              onToggle={() =>
-                formState.setShowEnvVars(!formState.showEnvVars)
-              }
+              onToggle={() => formState.setShowEnvVars(!formState.showEnvVars)}
               onAdd={formState.addEnvVar}
               onRemove={formState.removeEnvVar}
               onUpdate={formState.updateEnvVar}
@@ -281,7 +279,9 @@ export function AddServerModal({
                   <Input
                     type="number"
                     value={formState.requestTimeout}
-                    onChange={(e) => formState.setRequestTimeout(e.target.value)}
+                    onChange={(e) =>
+                      formState.setRequestTimeout(e.target.value)
+                    }
                     placeholder="10000"
                     className="h-10"
                     min="1000"

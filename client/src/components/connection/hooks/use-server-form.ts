@@ -26,9 +26,15 @@ export function useServerForm(server?: ServerWithName) {
   const [authType, setAuthType] = useState<"oauth" | "bearer" | "none">("none");
   const [useCustomClientId, setUseCustomClientId] = useState(false);
   const [clientIdError, setClientIdError] = useState<string | null>(null);
-  const [clientSecretError, setClientSecretError] = useState<string | null>(null);
-  const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>([]);
-  const [customHeaders, setCustomHeaders] = useState<Array<{ key: string; value: string }>>([]);
+  const [clientSecretError, setClientSecretError] = useState<string | null>(
+    null,
+  );
+  const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>(
+    [],
+  );
+  const [customHeaders, setCustomHeaders] = useState<
+    Array<{ key: string; value: string }>
+  >([]);
   const [requestTimeout, setRequestTimeout] = useState<string>("10000");
   const [showConfiguration, setShowConfiguration] = useState<boolean>(false);
   const [showEnvVars, setShowEnvVars] = useState<boolean>(false);
@@ -86,7 +92,9 @@ export function useServerForm(server?: ServerWithName) {
           "";
 
         clientSecretValue =
-          (typeof config.clientSecret === "string" ? config.clientSecret : "") ||
+          (typeof config.clientSecret === "string"
+            ? config.clientSecret
+            : "") ||
           clientInfo?.client_secret ||
           "";
       }
@@ -96,7 +104,11 @@ export function useServerForm(server?: ServerWithName) {
         type: server.config.command ? "stdio" : "http",
         command: server.config.command || "",
         args: server.config.args || [],
-        url: server.config.url ? (typeof server.config.url === "string" ? server.config.url : server.config.url.toString()) : "",
+        url: server.config.url
+          ? typeof server.config.url === "string"
+            ? server.config.url
+            : server.config.url.toString()
+          : "",
         headers: server.config.headers || {},
         env: server.config.env || {},
         useOAuth: hasOAuth,
@@ -126,10 +138,12 @@ export function useServerForm(server?: ServerWithName) {
       if (hasOAuth) {
         setAuthType("oauth");
         setShowAuthSettings(true);
-      } else if (server.config.headers?.["Authorization"]?.startsWith("Bearer ")) {
+      } else if (
+        server.config.headers?.["Authorization"]?.startsWith("Bearer ")
+      ) {
         setAuthType("bearer");
         setBearerToken(
-          server.config.headers["Authorization"].replace("Bearer ", "")
+          server.config.headers["Authorization"].replace("Bearer ", ""),
         );
         setShowAuthSettings(true);
       } else {
@@ -147,7 +161,7 @@ export function useServerForm(server?: ServerWithName) {
       // Initialize env vars
       if (server.config.env) {
         const envArray = Object.entries(server.config.env).map(
-          ([key, value]) => ({ key, value: String(value) })
+          ([key, value]) => ({ key, value: String(value) }),
         );
         setEnvVars(envArray);
       }
@@ -211,7 +225,7 @@ export function useServerForm(server?: ServerWithName) {
   const updateEnvVar = (
     index: number,
     field: "key" | "value",
-    value: string
+    value: string,
   ) => {
     const updated = [...envVars];
     updated[index][field] = value;
@@ -230,7 +244,7 @@ export function useServerForm(server?: ServerWithName) {
   const updateCustomHeader = (
     index: number,
     field: "key" | "value",
-    value: string
+    value: string,
   ) => {
     const updated = [...customHeaders];
     updated[index][field] = value;
@@ -315,7 +329,8 @@ export function useServerForm(server?: ServerWithName) {
         finalFormData.useOAuth = false;
       }
 
-      finalFormData.url = typeof serverFormData.url === "string" ? serverFormData.url.trim() : ""; // Trim URL to remove trailing/leading spaces
+      finalFormData.url =
+        typeof serverFormData.url === "string" ? serverFormData.url.trim() : ""; // Trim URL to remove trailing/leading spaces
       finalFormData.headers = headers;
       finalFormData.env = undefined;
       finalFormData.command = undefined;
