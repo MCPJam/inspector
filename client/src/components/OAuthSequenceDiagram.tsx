@@ -38,25 +38,27 @@ export const OAuthSequenceDiagram = memo((props: OAuthSequenceDiagramProps) => {
         // 2025-06-18 doesn't support CIMD, fallback to DCR
         return buildActions_2025_06_18(
           flowState,
-          registrationStrategy === "cimd" ? "dcr" : registrationStrategy
+          registrationStrategy === "cimd" ? "dcr" : registrationStrategy,
         );
 
       case "2025-03-26":
         // 2025-03-26 doesn't support CIMD, fallback to DCR
         return buildActions_2025_03_26(
           flowState,
-          registrationStrategy === "cimd" ? "dcr" : registrationStrategy
+          registrationStrategy === "cimd" ? "dcr" : registrationStrategy,
         );
 
       default:
         console.warn(
-          `Unknown protocol version: ${protocolVersion}. Defaulting to 2025-11-25.`
+          `Unknown protocol version: ${protocolVersion}. Defaulting to 2025-11-25.`,
         );
         return buildActions_2025_11_25(flowState, registrationStrategy);
     }
   }, [protocolVersion, flowState, registrationStrategy]);
 
-  return <OAuthSequenceDiagramContent flowState={flowState} actions={actions} />;
+  return (
+    <OAuthSequenceDiagramContent flowState={flowState} actions={actions} />
+  );
 });
 
 OAuthSequenceDiagram.displayName = "OAuthSequenceDiagram";

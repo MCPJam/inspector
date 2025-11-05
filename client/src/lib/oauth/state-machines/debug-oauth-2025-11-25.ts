@@ -196,8 +196,7 @@ export function buildActions_2025_11_25(
               },
               {
                 label: "Note",
-                value:
-                  "Server initiates metadata fetch during authorization",
+                value: "Server initiates metadata fetch during authorization",
               },
             ],
           },
@@ -366,8 +365,7 @@ export function buildActions_2025_11_25(
     {
       id: "received_authorization_code",
       label: "Authorization code callback",
-      description:
-        "Browser redirects back to client with authorization code",
+      description: "Browser redirects back to client with authorization code",
       from: "browser",
       to: "client",
       details: flowState.authorizationCode
@@ -419,8 +417,7 @@ export function buildActions_2025_11_25(
             { label: "POST", value: "tools/list" },
             {
               label: "Authorization",
-              value:
-                "Bearer " + flowState.accessToken.substring(0, 15) + "...",
+              value: "Bearer " + flowState.accessToken.substring(0, 15) + "...",
             },
           ]
         : undefined,

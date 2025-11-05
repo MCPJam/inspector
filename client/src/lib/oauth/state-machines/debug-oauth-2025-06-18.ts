@@ -117,8 +117,7 @@ export function buildActions_2025_06_18(
     {
       id: "request_authorization_server_metadata",
       label: "GET Authorization server metadata endpoint",
-      description:
-        "Try RFC8414 path, then RFC8414 root (no OIDC support)",
+      description: "Try RFC8414 path, then RFC8414 root (no OIDC support)",
       from: "client",
       to: "authServer",
       details: flowState.authorizationServerUrl
@@ -189,8 +188,7 @@ export function buildActions_2025_06_18(
           {
             id: "received_client_credentials",
             label: "Use Pre-registered Client (2025-06-18)",
-            description:
-              "Client uses pre-configured credentials (skipped DCR)",
+            description: "Client uses pre-configured credentials (skipped DCR)",
             from: "client",
             to: "client",
             details: flowState.clientId
@@ -281,8 +279,7 @@ export function buildActions_2025_06_18(
     {
       id: "received_authorization_code",
       label: "Authorization code callback",
-      description:
-        "Browser redirects back to client with authorization code",
+      description: "Browser redirects back to client with authorization code",
       from: "browser",
       to: "client",
       details: flowState.authorizationCode
@@ -334,8 +331,7 @@ export function buildActions_2025_06_18(
             { label: "POST", value: "tools/list" },
             {
               label: "Authorization",
-              value:
-                "Bearer " + flowState.accessToken.substring(0, 15) + "...",
+              value: "Bearer " + flowState.accessToken.substring(0, 15) + "...",
             },
           ]
         : undefined,
