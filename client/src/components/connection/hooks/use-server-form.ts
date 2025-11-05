@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { ServerFormData } from "@/shared/types.js";
 import { ServerWithName } from "@/hooks/use-app-state";
+import { hasOAuthConfig, getStoredTokens } from "@/lib/mcp-oauth";
 
 export function useServerForm(server?: ServerWithName) {
   const [serverFormData, setServerFormData] = useState<ServerFormData>({
@@ -37,17 +38,71 @@ export function useServerForm(server?: ServerWithName) {
   // Initialize form with server data (for edit mode)
   useEffect(() => {
     if (server) {
+      const config = server.config;
+      const isHttpServer = "url" in config;
+
+      // For HTTP servers, check OAuth from multiple sources like the original
+      let hasOAuth = false;
+      let scopes: string[] = [];
+      let clientIdValue = "";
+      let clientSecretValue = "";
+
+      if (isHttpServer) {
+        // Check if OAuth is configured by looking at multiple sources:
+        // 1. Check if server has oauth tokens
+        // 2. Check if there's stored OAuth data
+        // 3. Check if the config has an oauth field
+        const hasOAuthTokens = server.oauthTokens != null;
+        const hasStoredOAuthConfig = hasOAuthConfig(server.name);
+        const hasOAuthInConfig = "oauth" in config && config.oauth != null;
+        hasOAuth = hasOAuthTokens || hasStoredOAuthConfig || hasOAuthInConfig;
+
+        const storedOAuthConfig = localStorage.getItem(
+          `mcp-oauth-config-${server.name}`,
+        );
+        const storedClientInfo = localStorage.getItem(
+          `mcp-client-${server.name}`,
+        );
+        const storedTokens = getStoredTokens(server.name);
+
+        const clientInfo = storedClientInfo ? JSON.parse(storedClientInfo) : {};
+        const oauthConfig = storedOAuthConfig
+          ? JSON.parse(storedOAuthConfig)
+          : {};
+
+        // Retrieve scopes from multiple sources (in priority order)
+        scopes =
+          server.oauthTokens?.scope?.split(" ") ||
+          storedTokens?.scope?.split(" ") ||
+          oauthConfig.scopes ||
+          config.oauthScopes ||
+          [];
+
+        // Get client ID and secret from multiple sources
+        clientIdValue =
+          (typeof config.clientId === "string" ? config.clientId : "") ||
+          storedTokens?.client_id ||
+          clientInfo?.client_id ||
+          "";
+
+        clientSecretValue =
+          (typeof config.clientSecret === "string" ? config.clientSecret : "") ||
+          clientInfo?.client_secret ||
+          "";
+      }
+
       setServerFormData({
         name: server.name,
         type: server.config.command ? "stdio" : "http",
         command: server.config.command || "",
         args: server.config.args || [],
-        url: server.config.url || "",
+        url: server.config.url ? (typeof server.config.url === "string" ? server.config.url : server.config.url.toString()) : "",
         headers: server.config.headers || {},
         env: server.config.env || {},
-        useOAuth: server.config.useOAuth ?? true,
-        oauthScopes: server.config.oauthScopes || [],
-        clientId: server.config.clientId || "",
+        useOAuth: hasOAuth,
+        oauthScopes: scopes,
+        clientId: clientIdValue,
+        clientSecret: clientSecretValue,
         requestTimeout: server.config.requestTimeout,
       });
 
@@ -62,11 +117,11 @@ export function useServerForm(server?: ServerWithName) {
         setCommandInput(fullCommand);
       }
 
-      setOauthScopesInput((server.config.oauthScopes || []).join(" "));
+      setOauthScopesInput(scopes.join(" "));
       setRequestTimeout(String(server.config.requestTimeout || 10000));
 
-      // Set auth type based on server config
-      if (server.config.useOAuth) {
+      // Set auth type based on multiple OAuth detection sources
+      if (hasOAuth) {
         setAuthType("oauth");
         setShowAuthSettings(true);
       } else if (server.config.headers?.["Authorization"]?.startsWith("Bearer ")) {
@@ -80,11 +135,11 @@ export function useServerForm(server?: ServerWithName) {
         setShowAuthSettings(false);
       }
 
-      // Set custom OAuth credentials if present
-      if (server.config.clientId) {
+      // Set custom OAuth credentials if present (from any source)
+      if (clientIdValue) {
         setUseCustomClientId(true);
-        setClientId(server.config.clientId);
-        setClientSecret(server.config.clientSecret || "");
+        setClientId(clientIdValue);
+        setClientSecret(clientSecretValue);
       }
 
       // Initialize env vars
@@ -249,7 +304,7 @@ export function useServerForm(server?: ServerWithName) {
         finalFormData.useOAuth = false;
       }
 
-      finalFormData.url = serverFormData.url?.trim(); // Trim URL to remove trailing/leading spaces
+      finalFormData.url = typeof serverFormData.url === "string" ? serverFormData.url.trim() : ""; // Trim URL to remove trailing/leading spaces
       finalFormData.headers = headers;
       finalFormData.env = undefined;
       finalFormData.command = undefined;
@@ -257,6 +312,37 @@ export function useServerForm(server?: ServerWithName) {
     }
 
     return finalFormData;
+  };
+
+  const resetForm = () => {
+    setServerFormData({
+      name: "",
+      type: "stdio",
+      command: "",
+      args: [],
+      url: "",
+      headers: {},
+      env: {},
+      useOAuth: true,
+      oauthScopes: [],
+      clientId: "",
+    });
+    setCommandInput("");
+    setOauthScopesInput("");
+    setClientId("");
+    setClientSecret("");
+    setBearerToken("");
+    setAuthType("none");
+    setUseCustomClientId(false);
+    setClientIdError(null);
+    setClientSecretError(null);
+    setEnvVars([]);
+    setCustomHeaders([]);
+    setRequestTimeout("10000");
+    setShowConfiguration(false);
+    setShowEnvVars(false);
+    setShowCustomHeaders(false);
+    setShowAuthSettings(false);
   };
 
   return {
@@ -315,5 +401,6 @@ export function useServerForm(server?: ServerWithName) {
     removeCustomHeader,
     updateCustomHeader,
     buildFormData,
+    resetForm,
   };
 }
