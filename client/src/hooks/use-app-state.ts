@@ -207,7 +207,10 @@ export function useAppState() {
       }
     } catch (error) {
       // Silent fail - initialization info is optional
-      console.debug("Failed to fetch initialization info", { serverName, error });
+      console.debug("Failed to fetch initialization info", {
+        serverName,
+        error,
+      });
     }
   }, []);
 

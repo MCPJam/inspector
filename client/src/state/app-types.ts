@@ -64,7 +64,11 @@ export type AppAction =
   | { type: "SELECT_SERVER"; name: string }
   | { type: "SET_MULTI_SELECTED"; names: string[] }
   | { type: "SET_MULTI_MODE"; enabled: boolean }
-  | { type: "SET_INITIALIZATION_INFO"; name: string; initInfo: InitializationInfo };
+  | {
+      type: "SET_INITIALIZATION_INFO";
+      name: string;
+      initInfo: InitializationInfo;
+    };
 
 export const initialAppState: AppState = {
   servers: {},

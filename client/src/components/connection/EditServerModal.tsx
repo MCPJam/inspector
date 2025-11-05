@@ -2,7 +2,13 @@ import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "../ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "../ui/dialog";
 import {
   Select,
   SelectContent,
@@ -11,13 +17,7 @@ import {
   SelectValue,
 } from "../ui/select";
 import { Badge } from "../ui/badge";
-import {
-  ChevronDown,
-  ChevronRight,
-  Copy,
-  Check,
-  Loader2,
-} from "lucide-react";
+import { ChevronDown, ChevronRight, Copy, Check, Loader2 } from "lucide-react";
 import { ServerFormData } from "@/shared/types.js";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { getStoredTokens } from "@/lib/mcp-oauth";
@@ -51,7 +51,7 @@ export function EditServerModal({
 }: EditServerModalProps) {
   const posthog = usePostHog();
   const [activeTab, setActiveTab] = useState<"config" | "auth" | "tools">(
-    "config"
+    "config",
   );
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [expandedTokens, setExpandedTokens] = useState<Set<string>>(new Set());
@@ -135,6 +135,13 @@ export function EditServerModal({
   const loadTools = async () => {
     if (!server) return;
 
+    // Check if server is connected
+    if (server.connectionStatus !== "connected") {
+      setToolsError("not-connected");
+      setIsLoadingTools(false);
+      return;
+    }
+
     setIsLoadingTools(true);
     setToolsError(null);
     try {
@@ -203,7 +210,8 @@ export function EditServerModal({
             <img src="/mcp.svg" alt="MCP" className="mr-2" /> Edit MCP Server
           </DialogTitle>
           <DialogDescription className="sr-only">
-            Edit your MCP server configuration, authentication settings, and view widget metadata
+            Edit your MCP server configuration, authentication settings, and
+            view widget metadata
           </DialogDescription>
 
           {/* Tab switcher */}
@@ -443,7 +451,10 @@ export function EditServerModal({
                           <span className="text-sm text-muted-foreground">
                             Protocol Version
                           </span>
-                          <Badge variant="secondary" className="font-mono text-xs">
+                          <Badge
+                            variant="secondary"
+                            className="font-mono text-xs"
+                          >
                             {server.initializationInfo.protocolVersion}
                           </Badge>
                         </div>
@@ -475,7 +486,10 @@ export function EditServerModal({
                             <span className="text-sm text-muted-foreground">
                               Server Version
                             </span>
-                            <Badge variant="outline" className="font-mono text-xs">
+                            <Badge
+                              variant="outline"
+                              className="font-mono text-xs"
+                            >
                               {server.initializationInfo.serverVersion.version}
                             </Badge>
                           </div>
@@ -688,7 +702,7 @@ export function EditServerModal({
                                     e.stopPropagation();
                                     copyToClipboard(
                                       tokens.access_token,
-                                      "accessToken"
+                                      "accessToken",
                                     );
                                   }}
                                   className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
@@ -709,13 +723,13 @@ export function EditServerModal({
                                       type="button"
                                       onClick={() =>
                                         toggleTokenExpansion(
-                                          "accessTokenDecoded"
+                                          "accessTokenDecoded",
                                         )
                                       }
                                       className="text-xs text-muted-foreground hover:text-foreground cursor-pointer flex items-center gap-1"
                                     >
                                       {expandedTokens.has(
-                                        "accessTokenDecoded"
+                                        "accessTokenDecoded",
                                       ) ? (
                                         <ChevronDown className="h-3 w-3" />
                                       ) : (
@@ -724,7 +738,7 @@ export function EditServerModal({
                                       View Decoded JWT
                                     </button>
                                     {expandedTokens.has(
-                                      "accessTokenDecoded"
+                                      "accessTokenDecoded",
                                     ) && (
                                       <div className="mt-1">
                                         <JsonView
@@ -777,7 +791,7 @@ export function EditServerModal({
                                       e.stopPropagation();
                                       copyToClipboard(
                                         tokens.refresh_token || "",
-                                        "refreshToken"
+                                        "refreshToken",
                                       );
                                     }}
                                     className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
@@ -791,7 +805,7 @@ export function EditServerModal({
                                 </div>
                                 {(() => {
                                   const decoded = decodeJWT(
-                                    tokens.refresh_token
+                                    tokens.refresh_token,
                                   );
                                   if (!decoded) return null;
                                   return (
@@ -800,13 +814,13 @@ export function EditServerModal({
                                         type="button"
                                         onClick={() =>
                                           toggleTokenExpansion(
-                                            "refreshTokenDecoded"
+                                            "refreshTokenDecoded",
                                           )
                                         }
                                         className="text-xs text-muted-foreground hover:text-foreground cursor-pointer flex items-center gap-1"
                                       >
                                         {expandedTokens.has(
-                                          "refreshTokenDecoded"
+                                          "refreshTokenDecoded",
                                         ) ? (
                                           <ChevronDown className="h-3 w-3" />
                                         ) : (
@@ -815,7 +829,7 @@ export function EditServerModal({
                                         View Decoded JWT
                                       </button>
                                       {expandedTokens.has(
-                                        "refreshTokenDecoded"
+                                        "refreshTokenDecoded",
                                       ) && (
                                         <div className="mt-1">
                                           <JsonView
@@ -869,7 +883,7 @@ export function EditServerModal({
                                       e.stopPropagation();
                                       copyToClipboard(
                                         (tokens as any).id_token || "",
-                                        "idToken"
+                                        "idToken",
                                       );
                                     }}
                                     className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
@@ -883,7 +897,7 @@ export function EditServerModal({
                                 </div>
                                 {(() => {
                                   const decoded = decodeJWT(
-                                    (tokens as any).id_token
+                                    (tokens as any).id_token,
                                   );
                                   if (!decoded) return null;
                                   return (
@@ -896,7 +910,7 @@ export function EditServerModal({
                                         className="text-xs text-muted-foreground hover:text-foreground cursor-pointer flex items-center gap-1"
                                       >
                                         {expandedTokens.has(
-                                          "idTokenDecoded"
+                                          "idTokenDecoded",
                                         ) ? (
                                           <ChevronDown className="h-3 w-3" />
                                         ) : (
@@ -952,8 +966,8 @@ export function EditServerModal({
             ) : (
               <div className="bg-muted/30 rounded-lg p-8 text-center">
                 <p className="text-sm text-muted-foreground">
-                  Authentication settings are only available for HTTP/SSE servers.
-                  STDIO servers use process-level authentication.
+                  Authentication settings are only available for HTTP/SSE
+                  servers. STDIO servers use process-level authentication.
                 </p>
               </div>
             )}
@@ -1006,14 +1020,22 @@ export function EditServerModal({
                   <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                 </div>
               ) : toolsError ? (
-                <div className="bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800/30 rounded-lg p-4 text-sm text-red-600 dark:text-red-400">
-                  {toolsError}
-                </div>
+                toolsError === "not-connected" ? (
+                  <div className="bg-muted/30 rounded-lg p-8 text-center">
+                    <p className="text-sm text-muted-foreground">
+                      Connect to see widget metadata
+                    </p>
+                  </div>
+                ) : (
+                  <div className="bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800/30 rounded-lg p-4 text-sm text-red-600 dark:text-red-400">
+                    {toolsError}
+                  </div>
+                )
               ) : tools && tools.tools.length > 0 ? (
                 (() => {
                   // Filter tools that have metadata
                   const toolsWithMetadata = tools.tools.filter(
-                    (tool) => tools.toolsMetadata?.[tool.name]
+                    (tool) => tools.toolsMetadata?.[tool.name],
                   );
 
                   if (toolsWithMetadata.length === 0) {
@@ -1079,13 +1101,22 @@ export function EditServerModal({
                                       }`}
                                     >
                                       {(() => {
-                                        if (value === null || value === undefined) return "null";
+                                        if (
+                                          value === null ||
+                                          value === undefined
+                                        )
+                                          return "null";
                                         if (typeof value === "object") {
                                           // Handle URL objects specifically
-                                          if (value instanceof URL) return value.toString();
+                                          if (value instanceof URL)
+                                            return value.toString();
                                           // Handle other objects with JSON
                                           try {
-                                            return JSON.stringify(value, null, 2);
+                                            return JSON.stringify(
+                                              value,
+                                              null,
+                                              2,
+                                            );
                                           } catch {
                                             return String(value);
                                           }
