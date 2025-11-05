@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ExternalLink, Package, Globe, Terminal, Copy, Check } from "lucide-react";
+import { ExternalLink, Package, Globe, Terminal, Copy, Check, Code2, Github } from "lucide-react";
 import type { RegistryServer } from "@/shared/types";
 import { useState } from "react";
 
@@ -21,6 +21,8 @@ export function ServerDetailModal({
   onInstall,
 }: ServerDetailModalProps) {
   const [copiedPackage, setCopiedPackage] = useState<string | null>(null);
+  const [showRawJson, setShowRawJson] = useState(false);
+  const [copiedJson, setCopiedJson] = useState(false);
 
   if (!server) return null;
 
@@ -35,6 +37,13 @@ export function ServerDetailModal({
     navigator.clipboard.writeText(command);
     setCopiedPackage(packageId);
     setTimeout(() => setCopiedPackage(null), 2000);
+  };
+
+  const handleCopyJson = () => {
+    const jsonString = JSON.stringify(server, null, 2);
+    navigator.clipboard.writeText(jsonString);
+    setCopiedJson(true);
+    setTimeout(() => setCopiedJson(false), 2000);
   };
 
   return (
@@ -58,6 +67,11 @@ export function ServerDetailModal({
                 {isOfficial && (
                   <Badge variant="secondary" className="text-xs">
                     Official
+                  </Badge>
+                )}
+                {isOfficial?.isLatest && (
+                  <Badge variant="default" className="text-xs bg-green-600 hover:bg-green-700">
+                    Latest
                   </Badge>
                 )}
                 <Badge variant="outline" className="text-xs">
@@ -187,19 +201,68 @@ export function ServerDetailModal({
 
             {/* Repository Link */}
             {repositoryUrl && (
-              <div>
-                <h3 className="text-sm font-semibold mb-2">Repository</h3>
-                <a
-                  href={repositoryUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-sm text-primary hover:underline inline-flex items-center gap-1"
-                >
-                  {repositoryUrl}
-                  <ExternalLink className="h-3 w-3" />
-                </a>
-              </div>
+              <>
+                <div>
+                  <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                    <Github className="h-4 w-4" />
+                    Repository
+                  </h3>
+                  <a
+                    href={repositoryUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-border hover:bg-accent transition-colors"
+                  >
+                    <span className="text-sm font-medium">{repositoryUrl}</span>
+                    <ExternalLink className="h-4 w-4" />
+                  </a>
+                </div>
+                <Separator />
+              </>
             )}
+
+            {/* Raw JSON Viewer */}
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold flex items-center gap-2">
+                  <Code2 className="h-4 w-4" />
+                  Raw JSON
+                </h3>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleCopyJson}
+                  >
+                    {copiedJson ? (
+                      <>
+                        <Check className="h-3.5 w-3.5 mr-2" />
+                        Copied
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="h-3.5 w-3.5 mr-2" />
+                        Copy
+                      </>
+                    )}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setShowRawJson(!showRawJson)}
+                  >
+                    {showRawJson ? "Hide" : "View"}
+                  </Button>
+                </div>
+              </div>
+              {showRawJson && (
+                <div className="relative">
+                  <pre className="text-xs bg-muted p-4 rounded-lg overflow-auto max-h-96">
+                    <code>{JSON.stringify(server, null, 2)}</code>
+                  </pre>
+                </div>
+              )}
+            </div>
 
             {/* Metadata */}
             {isOfficial && (

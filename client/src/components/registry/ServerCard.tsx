@@ -1,7 +1,7 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Download, ExternalLink } from "lucide-react";
+import { Download, ExternalLink, Clock } from "lucide-react";
 import type { RegistryServer } from "@/shared/types";
 
 interface ServerCardProps {
@@ -23,6 +23,30 @@ export function ServerCard({ server, onInstall, onViewDetails }: ServerCardProps
 
   // Get download count from metadata if available
   const downloadCount = server._meta?.downloads || server._meta?.download_count;
+
+  // Get metadata from the official registry provider
+  const officialMeta = server._meta?.["io.modelcontextprotocol.registry/official"];
+  const isLatest = officialMeta?.isLatest;
+  const updatedAt = officialMeta?.updatedAt;
+  const publishedAt = officialMeta?.publishedAt;
+
+  // Format relative time
+  const getRelativeTime = (dateString: string | undefined) => {
+    if (!dateString) return null;
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffInMs = now.getTime() - date.getTime();
+    const diffInDays = Math.floor(diffInMs / (1000 * 60 * 60 * 24));
+
+    if (diffInDays === 0) return "today";
+    if (diffInDays === 1) return "yesterday";
+    if (diffInDays < 7) return `${diffInDays}d ago`;
+    if (diffInDays < 30) return `${Math.floor(diffInDays / 7)}w ago`;
+    if (diffInDays < 365) return `${Math.floor(diffInDays / 30)}mo ago`;
+    return `${Math.floor(diffInDays / 365)}y ago`;
+  };
+
+  const relativeTime = getRelativeTime(updatedAt || publishedAt);
 
   return (
     <Card className="hover:shadow-md transition-shadow cursor-pointer group">
@@ -48,11 +72,16 @@ export function ServerCard({ server, onInstall, onViewDetails }: ServerCardProps
         </CardDescription>
       </CardHeader>
       <CardContent className="pt-0">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between mb-2">
           <div className="flex flex-wrap gap-1.5">
             {isOfficial && (
               <Badge variant="secondary" className="text-xs">
                 Official
+              </Badge>
+            )}
+            {isLatest && (
+              <Badge variant="default" className="text-xs bg-green-600 hover:bg-green-700">
+                Latest
               </Badge>
             )}
             {isRemote && (
@@ -73,7 +102,13 @@ export function ServerCard({ server, onInstall, onViewDetails }: ServerCardProps
             </div>
           )}
         </div>
-        <div className="flex gap-2 mt-4">
+        {relativeTime && (
+          <div className="flex items-center gap-1 text-xs text-muted-foreground mb-3">
+            <Clock className="h-3 w-3" />
+            <span>Updated {relativeTime}</span>
+          </div>
+        )}
+        <div className="flex gap-2">
           <Button
             size="sm"
             className="flex-1"
