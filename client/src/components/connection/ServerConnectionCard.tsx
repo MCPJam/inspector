@@ -122,7 +122,7 @@ export function ServerConnectionCard({
   return (
     <TooltipProvider>
       <Card
-        className="border border-border/50 bg-card/50 backdrop-blur-sm hover:border-border transition-colors cursor-pointer"
+        className="border border-border/50 bg-card/50 backdrop-blur-sm hover:border-primary/50 hover:shadow-md hover:bg-card/70 transition-all duration-200 cursor-pointer"
         onClick={() => onEdit(server)}
       >
         <div className="p-4 space-y-3 py-0">
