@@ -56,7 +56,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
             lastConnectionTime: new Date(),
             retryCount: 0,
             lastError: undefined,
-            oauthTokens: action.tokens ?? existing.oauthTokens,
+            oauthTokens: action.tokens,
             enabled: true,
           }),
         },

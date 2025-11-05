@@ -122,10 +122,8 @@ export function ServerConnectionCard({
   return (
     <TooltipProvider>
       <Card
-        className={`border border-border/50 bg-card/50 backdrop-blur-sm hover:border-border transition-colors ${
-          isConnected ? "cursor-pointer" : "cursor-default"
-        }`}
-        onClick={() => isConnected && onEdit(server)}
+        className="border border-border/50 bg-card/50 backdrop-blur-sm hover:border-border transition-colors cursor-pointer"
+        onClick={() => onEdit(server)}
       >
         <div className="p-4 space-y-3 py-0">
           {/* Header Row */}
