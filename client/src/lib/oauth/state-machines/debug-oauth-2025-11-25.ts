@@ -628,6 +628,7 @@ export const createDebugOAuthStateMachine = (
                 const infoLogs = wwwAuthenticateHeader
                   ? addInfoLog(
                       state,
+                      "received_401_unauthorized",
                       "www-authenticate",
                       "WWW-Authenticate Header",
                       {
@@ -650,6 +651,7 @@ export const createDebugOAuthStateMachine = (
                 // Add info log explaining optional auth
                 const infoLogs = addInfoLog(
                   state,
+                  "received_401_unauthorized",
                   "optional-auth",
                   "Optional Authentication Detected",
                   {
@@ -823,6 +825,7 @@ export const createDebugOAuthStateMachine = (
               // Add info log for Authorization Servers
               const infoLogs = addInfoLog(
                 state,
+                "received_resource_metadata",
                 "authorization-servers",
                 "Authorization Servers",
                 {
@@ -1042,6 +1045,7 @@ export const createDebugOAuthStateMachine = (
 
             const infoLogs = addInfoLog(
               getCurrentState(),
+              "received_authorization_server_metadata",
               "as-metadata",
               "Authorization Server Metadata",
               metadata,
@@ -1121,6 +1125,7 @@ export const createDebugOAuthStateMachine = (
 
               const infoLogs = addInfoLog(
                 getCurrentState(),
+                "received_client_credentials",
                 "dcr",
                 "Pre-registered Client",
                 preregInfo,
@@ -1281,6 +1286,7 @@ export const createDebugOAuthStateMachine = (
 
                 const infoLogs = addInfoLog(
                   getCurrentState(),
+                  "received_client_credentials",
                   "dcr",
                   "Dynamic Client Registration",
                   dcrInfo,
@@ -1433,6 +1439,7 @@ export const createDebugOAuthStateMachine = (
 
               const infoLogs = addInfoLog(
                 getCurrentState(),
+                "received_client_credentials",
                 "cimd",
                 "Client ID Metadata Document",
                 cimdInfo,
@@ -1467,6 +1474,7 @@ export const createDebugOAuthStateMachine = (
             // Add info log for PKCE parameters
             const pkceInfoLogs = addInfoLog(
               getCurrentState(),
+              "generate_pkce_parameters",
               "pkce-generation",
               "Generate PKCE Parameters",
               {
@@ -1554,6 +1562,7 @@ export const createDebugOAuthStateMachine = (
             // Add info log for Authorization URL
             const authUrlInfoLogs = addInfoLog(
               getCurrentState(),
+              "authorization_request",
               "auth-url",
               "Authorization URL",
               {
@@ -1755,6 +1764,7 @@ export const createDebugOAuthStateMachine = (
                   ...tokenInfoLogs,
                   {
                     id: "auth-code",
+                    step: "authorization_request",
                     label: "Authorization Code",
                     data: {
                       code: state.authorizationCode,
@@ -1777,6 +1787,7 @@ export const createDebugOAuthStateMachine = (
                   ...tokenInfoLogs,
                   {
                     id: "oauth-tokens",
+                    step: "token_request",
                     label: "OAuth Tokens",
                     data: tokenData,
                     timestamp: Date.now(),
@@ -1833,6 +1844,7 @@ export const createDebugOAuthStateMachine = (
                     ...tokenInfoLogs,
                     {
                       id: "token",
+                      step: "token_request",
                       label: "Access Token (Decoded JWT)",
                       data: audienceNote,
                       timestamp: Date.now(),
@@ -1868,6 +1880,7 @@ export const createDebugOAuthStateMachine = (
                     ...tokenInfoLogs,
                     {
                       id: "id-token",
+                      step: "token_request",
                       label: "ID Token (OIDC - Decoded JWT)",
                       data: formattedIdToken,
                       timestamp: Date.now(),
@@ -1949,6 +1962,7 @@ export const createDebugOAuthStateMachine = (
             // Add info log for authenticated initialize request
             const authenticatedRequestInfoLogs = addInfoLog(
               getCurrentState(),
+              "authenticated_mcp_request",
               "authenticated-init",
               "Authenticated MCP Initialize Request",
               {
@@ -2077,6 +2091,7 @@ export const createDebugOAuthStateMachine = (
 
                 mcpInfoLogs = addInfoLog(
                   getCurrentState(),
+                  "authenticated_mcp_request",
                   "mcp-protocol",
                   "MCP Server Information",
                   protocolInfo,
@@ -2085,6 +2100,7 @@ export const createDebugOAuthStateMachine = (
                 // SSE streaming response but no MCP response parsed yet
                 mcpInfoLogs = addInfoLog(
                   getCurrentState(),
+                  "authenticated_mcp_request",
                   "mcp-transport",
                   "MCP Transport Detected",
                   {
@@ -2121,6 +2137,7 @@ export const createDebugOAuthStateMachine = (
 
                 mcpInfoLogs = addInfoLog(
                   getCurrentState(),
+                  "authenticated_mcp_request",
                   "mcp-protocol",
                   "MCP Server Information",
                   protocolInfo,

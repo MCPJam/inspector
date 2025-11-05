@@ -5,10 +5,10 @@ import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import "react18-json-view/src/dark.css";
 import { HTTPHistoryEntry } from "@/components/HTTPHistoryEntry";
-import { OauthFlowStateJune2025 } from "@/lib/debug-oauth-state-machine";
+import { OAuthFlowState } from "@/lib/oauth/state-machines/types";
 
 interface OAuthFlowLoggerProps {
-  oauthFlowState: OauthFlowStateJune2025;
+  oauthFlowState: OAuthFlowState;
   onClearLogs: () => void;
   onClearHttpHistory: () => void;
 }
@@ -18,6 +18,7 @@ export function OAuthFlowLogger({
   onClearLogs,
   onClearHttpHistory,
 }: OAuthFlowLoggerProps) {
+  console.log("oauthFlowState", oauthFlowState);
   const [expandedBlocks, setExpandedBlocks] = useState<Set<string>>(new Set());
   const [deletedInfoLogs, setDeletedInfoLogs] = useState<Set<string>>(
     new Set(),
@@ -87,13 +88,13 @@ export function OAuthFlowLogger({
 
             const allEntries: ConsoleEntry[] = [
               ...infoLogs
-                .filter((log) => !deletedInfoLogs.has(log.id))
-                .map((log) => ({
+                .filter((log: any) => !deletedInfoLogs.has(log.id))
+                .map((log: any) => ({
                   type: "info" as const,
                   timestamp: log.timestamp,
                   data: log,
                 })),
-              ...httpHistory.map((entry, index) => ({
+              ...httpHistory.map((entry: any, index: number) => ({
                 type: "http" as const,
                 timestamp: entry.timestamp,
                 data: entry,
