@@ -4,7 +4,8 @@ import { Button } from "./ui/button";
 import { Plus, Database, FileText } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { ServerConnectionCard } from "./connection/ServerConnectionCard";
-import { ServerModal } from "./connection/ServerModal";
+import { AddServerModal } from "./connection/AddServerModal";
+import { EditServerModal } from "./connection/EditServerModal";
 import { JsonImportModal } from "./connection/JsonImportModal";
 import { ServerFormData } from "@/shared/types.js";
 import { MCPIcon } from "./ui/mcp-icon";
@@ -160,8 +161,7 @@ export function ServersTab({
       )}
 
       {/* Add Server Modal */}
-      <ServerModal
-        mode="add"
+      <AddServerModal
         isOpen={isAddingServer}
         onClose={() => {
           setIsAddingServer(false);
@@ -178,12 +178,11 @@ export function ServersTab({
 
       {/* Edit Server Modal */}
       {serverToEdit && (
-        <ServerModal
-          mode="edit"
+        <EditServerModal
           isOpen={isEditingServer}
           onClose={handleCloseEditModal}
           onSubmit={(formData, originalName) =>
-            onUpdate(originalName!, formData)
+            onUpdate(originalName, formData)
           }
           server={serverToEdit}
         />

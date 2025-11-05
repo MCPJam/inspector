@@ -412,6 +412,9 @@ export type HttpServerDefinition = BaseServerOptions & {
   reconnectionOptions?: StreamableHTTPClientTransportOptions["reconnectionOptions"];
   sessionId?: StreamableHTTPClientTransportOptions["sessionId"];
   oauth?: any;
+  oauthScopes?: string[]; // Persist OAuth scopes in config
+  clientId?: string; // Persist OAuth client ID in config
+  clientSecret?: string; // Persist OAuth client secret in config
 };
 
 export interface ServerFormData {
