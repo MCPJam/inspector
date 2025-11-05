@@ -11,4 +11,6 @@ export interface ChatV2Request {
   ollamaBaseUrl?: string;
   litellmBaseUrl?: string;
   selectedServers?: string[];
+  bedrockRegion?: string;
+  bedrockSecretKey?: string;
 }

@@ -47,6 +47,8 @@ interface ChatRequest {
   messages?: ChatMessage[];
   ollamaBaseUrl?: string;
   litellmBaseUrl?: string;
+  bedrockRegion?: string;
+  bedrockSecretKey?: string;
   action?: string;
   requestId?: string;
   response?: any;
@@ -837,6 +839,8 @@ chat.post("/", async (c) => {
               apiKey || "",
               _ollama_unused,
               _litellm_unused,
+              requestData.bedrockRegion,
+              requestData.bedrockSecretKey,
             );
             await createStreamingResponse(
               llmModel,
