@@ -11,6 +11,15 @@ import {
   SelectValue,
 } from "../ui/select";
 import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "../ui/card";
+import { Badge } from "../ui/badge";
+import { Separator } from "../ui/separator";
+import {
   ChevronDown,
   ChevronRight,
   Settings,
@@ -888,6 +897,135 @@ export function ServerModal({
               )}
             </div>
 
+            {/* Server Info section (only in edit mode) */}
+            {mode === "edit" && server && server.initializationInfo && (
+              <div className="border border-border rounded-lg overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setShowConfiguration(!showConfiguration)}
+                  className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors cursor-pointer"
+                >
+                  <div className="flex items-center gap-2">
+                    {showConfiguration ? (
+                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                    )}
+                    <span className="text-sm font-medium text-foreground">
+                      Server Info
+                    </span>
+                  </div>
+                </button>
+
+                {showConfiguration && (
+                  <div className="p-4 space-y-4 border-t border-border bg-muted/30">
+                    {/* Connection Details */}
+                    <div className="space-y-3">
+                      <h4 className="text-xs font-semibold text-foreground uppercase tracking-wide">
+                        Connection Details
+                      </h4>
+                      {server.initializationInfo.protocolVersion && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm text-muted-foreground">Protocol Version</span>
+                          <Badge variant="secondary" className="font-mono text-xs">
+                            {server.initializationInfo.protocolVersion}
+                          </Badge>
+                        </div>
+                      )}
+                      {server.initializationInfo.transport && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm text-muted-foreground">Transport</span>
+                          <Badge variant="secondary" className="font-mono uppercase text-xs">
+                            {server.initializationInfo.transport}
+                          </Badge>
+                        </div>
+                      )}
+                      {server.initializationInfo.serverVersion && (
+                        <>
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm text-muted-foreground">Server Name</span>
+                            <span className="text-sm font-mono">
+                              {server.initializationInfo.serverVersion.name}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm text-muted-foreground">Server Version</span>
+                            <Badge variant="outline" className="font-mono text-xs">
+                              {server.initializationInfo.serverVersion.version}
+                            </Badge>
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+                    {/* Server Instructions */}
+                    {server.initializationInfo.instructions && (
+                      <div className="space-y-3 pt-2 border-t border-border/50">
+                        <h4 className="text-xs font-semibold text-foreground uppercase tracking-wide">
+                          Server Instructions
+                        </h4>
+                        <p className="text-sm text-muted-foreground leading-relaxed">
+                          {server.initializationInfo.instructions}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Server Capabilities */}
+                    {server.initializationInfo.serverCapabilities && (
+                      <div className="space-y-3 pt-2 border-t border-border/50">
+                        <h4 className="text-xs font-semibold text-foreground uppercase tracking-wide">
+                          Server Capabilities
+                        </h4>
+                        <JsonView
+                          src={server.initializationInfo.serverCapabilities}
+                          theme="atom"
+                          dark={true}
+                          enableClipboard={true}
+                          displaySize={false}
+                          collapseStringsAfterLength={100}
+                          style={{
+                            fontSize: "11px",
+                            fontFamily:
+                              "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                            backgroundColor: "hsl(var(--background))",
+                            padding: "8px",
+                            borderRadius: "6px",
+                            border: "1px solid hsl(var(--border))",
+                          }}
+                        />
+                      </div>
+                    )}
+
+                    {/* Client Capabilities */}
+                    {server.initializationInfo.clientCapabilities && (
+                      <div className="space-y-3 pt-2 border-t border-border/50">
+                        <h4 className="text-xs font-semibold text-foreground uppercase tracking-wide">
+                          Client Capabilities
+                        </h4>
+                        <JsonView
+                          src={server.initializationInfo.clientCapabilities}
+                          theme="atom"
+                          dark={true}
+                          enableClipboard={true}
+                          displaySize={false}
+                          collapseStringsAfterLength={100}
+                          style={{
+                            fontSize: "11px",
+                            fontFamily:
+                              "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                            backgroundColor: "hsl(var(--background))",
+                            padding: "8px",
+                            borderRadius: "6px",
+                            border: "1px solid hsl(var(--border))",
+                          }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="flex justify-end space-x-2 pt-4">
               <Button
                 type="button"
@@ -909,130 +1047,6 @@ export function ServerModal({
               </Button>
             </div>
           </form>
-
-          {/* Initialization Info section (only in edit mode) */}
-          {mode === "edit" && server && (
-            <div className="space-y-4 mt-6 pt-6 border-t border-border">
-              <div>
-                <h3 className="text-lg font-semibold">MCP Initialization Info</h3>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Protocol version and capabilities exchanged during server initialization
-                </p>
-              </div>
-
-              {server.initializationInfo ? (
-                <div className="space-y-4">
-                  {/* Protocol & Transport */}
-                  <div className="bg-muted/30 rounded-lg p-4">
-                    <h4 className="text-sm font-medium mb-2">Connection Details</h4>
-                    <div className="space-y-1 text-sm">
-                      {server.initializationInfo.protocolVersion && (
-                        <div className="flex items-center gap-2">
-                          <span className="text-muted-foreground">Protocol Version:</span>
-                          <span className="font-mono">
-                            {server.initializationInfo.protocolVersion}
-                          </span>
-                        </div>
-                      )}
-                      {server.initializationInfo.transport && (
-                        <div className="flex items-center gap-2">
-                          <span className="text-muted-foreground">Transport:</span>
-                          <span className="font-mono uppercase">
-                            {server.initializationInfo.transport}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Server Version */}
-                  {server.initializationInfo.serverVersion && (
-                    <div className="bg-muted/30 rounded-lg p-4">
-                      <h4 className="text-sm font-medium mb-2">Server Version</h4>
-                      <div className="space-y-1 text-sm">
-                        <div className="flex items-center gap-2">
-                          <span className="text-muted-foreground">Name:</span>
-                          <span className="font-mono">
-                            {server.initializationInfo.serverVersion.name}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-muted-foreground">Version:</span>
-                          <span className="font-mono">
-                            {server.initializationInfo.serverVersion.version}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Server Instructions */}
-                  {server.initializationInfo.instructions && (
-                    <div className="bg-muted/30 rounded-lg p-4">
-                      <h4 className="text-sm font-medium mb-2">Instructions</h4>
-                      <p className="text-sm text-muted-foreground">
-                        {server.initializationInfo.instructions}
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Server Capabilities */}
-                  {server.initializationInfo.serverCapabilities && (
-                    <div className="bg-muted/30 rounded-lg p-4">
-                      <h4 className="text-sm font-medium mb-2">Server Capabilities</h4>
-                      <JsonView
-                        src={server.initializationInfo.serverCapabilities}
-                        theme="atom"
-                        dark={true}
-                        enableClipboard={true}
-                        displaySize={false}
-                        collapseStringsAfterLength={100}
-                        style={{
-                          fontSize: "11px",
-                          fontFamily:
-                            "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                          backgroundColor: "hsl(var(--background))",
-                          padding: "8px",
-                          borderRadius: "6px",
-                          border: "1px solid hsl(var(--border))",
-                        }}
-                      />
-                    </div>
-                  )}
-
-                  {/* Client Capabilities */}
-                  {server.initializationInfo.clientCapabilities && (
-                    <div className="bg-muted/30 rounded-lg p-4">
-                      <h4 className="text-sm font-medium mb-2">Client Capabilities</h4>
-                      <JsonView
-                        src={server.initializationInfo.clientCapabilities}
-                        theme="atom"
-                        dark={true}
-                        enableClipboard={true}
-                        displaySize={false}
-                        collapseStringsAfterLength={100}
-                        style={{
-                          fontSize: "11px",
-                          fontFamily:
-                            "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                          backgroundColor: "hsl(var(--background))",
-                          padding: "8px",
-                          borderRadius: "6px",
-                          border: "1px solid hsl(var(--border))",
-                        }}
-                      />
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="bg-muted/30 rounded-lg p-8 text-center">
-                  <p className="text-sm text-muted-foreground">
-                    No initialization info available. Reconnect to the server to capture initialization data.
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
           </>
         )}
 
