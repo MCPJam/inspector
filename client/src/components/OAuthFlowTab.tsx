@@ -2,14 +2,9 @@ import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import {
   AlertCircle,
-  RefreshCw,
-  Shield,
   Workflow,
   ChevronDown,
   ChevronRight,
-  ArrowDownToLine,
-  ArrowUpFromLine,
-  ExternalLink,
   CheckCircle2,
   Trash2,
 } from "lucide-react";
@@ -20,8 +15,7 @@ import {
   StatusMessage,
 } from "@/shared/types.js";
 import { Card, CardContent } from "./ui/card";
-import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
-import { Input } from "./ui/input";
+import { Alert, AlertDescription } from "./ui/alert";
 import {
   Select,
   SelectContent,
@@ -35,6 +29,8 @@ import {
   OauthFlowStateJune2025,
   EMPTY_OAUTH_FLOW_STATE_V2,
   OAuthProtocolVersion,
+  RegistrationStrategy2025_11_25,
+  RegistrationStrategy2025_06_18,
 } from "../lib/debug-oauth-state-machine";
 import {
   createOAuthStateMachine,
@@ -44,7 +40,6 @@ import {
 import { DebugMCPOAuthClientProvider } from "../lib/debug-oauth-provider";
 import { OAuthSequenceDiagram } from "./OAuthSequenceDiagram";
 import { OAuthAuthorizationModal } from "./OAuthAuthorizationModal";
-import { ProtocolVersionBadge } from "./oauth/ProtocolVersionSelector";
 import { ServerModal } from "./connection/ServerModal";
 import { ServerFormData } from "@/shared/types";
 import { MCPServerConfig } from "@/sdk";
@@ -158,28 +153,28 @@ export const OAuthFlowTab = ({
   );
 
   // Track client registration strategy (load from localStorage or default)
-  const [registrationStrategy, setRegistrationStrategy] = useState<string>(
-    () => {
-      try {
-        const saved = localStorage.getItem("mcp-oauth-flow-preferences");
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          // If we have a saved strategy, validate it's supported for the protocol
-          if (parsed.registrationStrategy && parsed.protocolVersion) {
-            const supportedStrategies = getSupportedRegistrationStrategies(
-              parsed.protocolVersion,
-            );
-            if (supportedStrategies.includes(parsed.registrationStrategy)) {
-              return parsed.registrationStrategy;
-            }
+  const [registrationStrategy, setRegistrationStrategy] = useState<
+    RegistrationStrategy2025_06_18 | RegistrationStrategy2025_11_25
+  >(() => {
+    try {
+      const saved = localStorage.getItem("mcp-oauth-flow-preferences");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // If we have a saved strategy, validate it's supported for the protocol
+        if (parsed.registrationStrategy && parsed.protocolVersion) {
+          const supportedStrategies = getSupportedRegistrationStrategies(
+            parsed.protocolVersion,
+          );
+          if (supportedStrategies.includes(parsed.registrationStrategy)) {
+            return parsed.registrationStrategy;
           }
         }
-      } catch (e) {
-        console.error("Failed to load OAuth flow preferences:", e);
       }
-      return getDefaultRegistrationStrategy("2025-11-25");
-    },
-  );
+    } catch (e) {
+      console.error("Failed to load OAuth flow preferences:", e);
+    }
+    return getDefaultRegistrationStrategy("2025-11-25");
+  });
 
   // Use ref to always have access to the latest state
   const oauthFlowStateRef = useRef(oauthFlowState);
@@ -628,7 +623,9 @@ export const OAuthFlowTab = ({
                   setProtocolVersion(value);
                   // Reset registration strategy to default for new protocol
                   setRegistrationStrategy(
-                    getDefaultRegistrationStrategy(value),
+                    getDefaultRegistrationStrategy(value) as
+                      | RegistrationStrategy2025_06_18
+                      | RegistrationStrategy2025_11_25,
                   );
                 }}
                 disabled={oauthFlowState.isInitiatingAuth}
@@ -640,6 +637,9 @@ export const OAuthFlowTab = ({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="2025-03-26" className="text-xs">
+                    2025-03-26
+                  </SelectItem>
                   <SelectItem value="2025-06-18" className="text-xs">
                     2025-06-18 (Latest)
                   </SelectItem>
@@ -659,7 +659,11 @@ export const OAuthFlowTab = ({
               <Select
                 value={registrationStrategy}
                 onValueChange={(value: string) =>
-                  setRegistrationStrategy(value)
+                  setRegistrationStrategy(
+                    value as
+                      | RegistrationStrategy2025_06_18
+                      | RegistrationStrategy2025_11_25,
+                  )
                 }
                 disabled={oauthFlowState.isInitiatingAuth}
               >

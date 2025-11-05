@@ -1613,7 +1613,8 @@ export const createDebugOAuthStateMachine = (
 
               // Extract MCP response from body (could be direct JSON or parsed SSE)
               let mcpResponse = null;
-              if (isSSE && response.body?.mcpResponse) {
+              // Handle structured SSE response from debug proxy
+              if (isSSE && response.body?.transport === "sse") {
                 // SSE response - extract MCP response from parsed events
                 mcpResponse = response.body.mcpResponse;
               } else {
