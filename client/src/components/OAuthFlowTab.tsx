@@ -1,38 +1,38 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { AlertCircle, Workflow, CheckCircle2 } from "lucide-react";
-import { EmptyState } from "./ui/empty-state";
+import { EmptyState } from "@/components/ui/empty-state";
 import {
   AuthSettings,
   DEFAULT_AUTH_SETTINGS,
   StatusMessage,
 } from "@/shared/types.js";
-import { Card, CardContent } from "./ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "./ui/select";
-import { getStoredTokens } from "../lib/mcp-oauth";
-import { ServerWithName } from "../hooks/use-app-state";
-import { EMPTY_OAUTH_FLOW_STATE_V2 } from "../lib/oauth/state-machines/debug-oauth-2025-06-18";
+} from "@/components/ui/select";
+import { getStoredTokens } from "@/lib/mcp-oauth";
+import { ServerWithName } from "@/hooks/use-app-state";
+import { EMPTY_OAUTH_FLOW_STATE_V2 } from "@/lib/oauth/state-machines/debug-oauth-2025-06-18";
 import {
   OAuthFlowState,
   OAuthProtocolVersion,
   RegistrationStrategy2025_11_25,
   RegistrationStrategy2025_06_18,
-} from "../lib/oauth/state-machines/types";
+} from "@/lib/oauth/state-machines/types";
 import {
   createOAuthStateMachine,
   getDefaultRegistrationStrategy,
   getSupportedRegistrationStrategies,
-} from "../lib/oauth/state-machines/factory";
-import { DebugMCPOAuthClientProvider } from "../lib/debug-oauth-provider";
-import { OAuthSequenceDiagram } from "./oauth/OAuthSequenceDiagram";
-import { OAuthFlowLogger } from "./oauth/OAuthFlowLogger";
-import { OAuthAuthorizationModal } from "./oauth/OAuthAuthorizationModal";
+} from "@/lib/oauth/state-machines/factory";
+import { DebugMCPOAuthClientProvider } from "@/lib/debug-oauth-provider";
+import { OAuthSequenceDiagram } from "@/components/oauth/OAuthSequenceDiagram";
+import { OAuthFlowLogger } from "@/components/oauth/OAuthFlowLogger";
+import { OAuthAuthorizationModal } from "@/components/oauth/OAuthAuthorizationModal";
 import { ServerFormData } from "@/shared/types";
 import { MCPServerConfig } from "@/sdk";
 import {
