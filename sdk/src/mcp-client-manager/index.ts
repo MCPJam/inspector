@@ -215,6 +215,43 @@ export class MCPClientManager {
     return this.clientStates.get(serverId)?.config;
   }
 
+  getInitializationInfo(serverId: string) {
+    const state = this.clientStates.get(serverId);
+    const client = state?.client;
+    if (!client) {
+      return undefined;
+    }
+
+    // Determine transport type from config
+    const config = state.config;
+    let transportType: string;
+    if (this.isStdioConfig(config)) {
+      transportType = "stdio";
+    } else {
+      // Check if using SSE or Streamable HTTP based on URL or preference
+      transportType =
+        config.preferSSE || config.url.pathname.endsWith("/sse")
+          ? "sse"
+          : "streamable-http";
+    }
+
+    // Try to get protocol version from transport if available
+    let protocolVersion: string | undefined;
+    if (state.transport) {
+      // Access internal protocol version if available
+      protocolVersion = (state.transport as any)._protocolVersion;
+    }
+
+    return {
+      protocolVersion,
+      transport: transportType,
+      serverCapabilities: client.getServerCapabilities(),
+      serverVersion: client.getServerVersion(),
+      instructions: client.getInstructions(),
+      clientCapabilities: this.buildCapabilities(config),
+    };
+  }
+
   async connectToServer(
     serverId: string,
     config: MCPServerConfig,
