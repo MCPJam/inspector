@@ -104,7 +104,7 @@ export type ModelProvider =
   | "deepseek"
   | "google"
   | "meta"
-  | "x-ai"
+  | "xai"
   | "litellm"
   | "mistral"
   | "moonshotai"
@@ -197,6 +197,12 @@ export enum Model {
   CODESTRAL_LATEST = "codestral-latest",
   MINISTRAL_8B_LATEST = "ministral-8b-latest",
   MINISTRAL_3B_LATEST = "ministral-3b-latest",
+  // xAI models
+  GROK_3 = "grok-3",
+  GROK_3_MINI = "grok-3-mini",
+  GROK_CODE_FAST_1 = "grok-code-fast-1",
+  GROK_4_FAST_NON_REASONING = "grok-4-fast-non-reasoning",
+  GROK_4_FAST_REASONING = "grok-4-fast-reasoning",
 }
 
 export const SUPPORTED_MODELS: ModelDefinition[] = [
@@ -290,7 +296,7 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
   {
     id: "x-ai/grok-4-fast",
     name: "Grok 4 Fast (Free)",
-    provider: "x-ai",
+    provider: "xai",
   },
   {
     id: "openai/gpt-5-nano",
@@ -367,6 +373,32 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     id: Model.MINISTRAL_3B_LATEST,
     name: "Ministral 3B",
     provider: "mistral",
+  },
+  // xAI models
+  {
+    id: Model.GROK_3,
+    name: "Grok 3",
+    provider: "xai",
+  },
+  {
+    id: Model.GROK_3_MINI,
+    name: "Grok 3 Mini",
+    provider: "xai",
+  },
+  {
+    id: Model.GROK_CODE_FAST_1,
+    name: "Grok Code Fast 1",
+    provider: "xai",
+  },
+  {
+    id: Model.GROK_4_FAST_NON_REASONING,
+    name: "Grok 4 Fast Non-Reasoning",
+    provider: "xai",
+  },
+  {
+    id: Model.GROK_4_FAST_REASONING,
+    name: "Grok 4 Fast Reasoning",
+    provider: "xai",
   },
 ];
 

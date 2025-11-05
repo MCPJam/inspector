@@ -73,6 +73,7 @@
     "@ai-sdk/openai": "^2.0.32",
     "@ai-sdk/provider": "^2.0.0",
     "@ai-sdk/react": "^2.0.79",
+    "@ai-sdk/xai": "^2.0.29",
     "@convex-dev/auth": "^0.0.88",
     "@convex-dev/workos": "^0.0.1",
     "@dnd-kit/core": "^6.3.1",
