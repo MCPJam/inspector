@@ -25,13 +25,13 @@ import {
 } from "./ui/select";
 import { getStoredTokens } from "../lib/mcp-oauth";
 import { ServerWithName } from "../hooks/use-app-state";
+import { EMPTY_OAUTH_FLOW_STATE_V2 } from "../lib/oauth/state-machines/debug-oauth-2025-06-18";
 import {
-  OauthFlowStateJune2025,
-  EMPTY_OAUTH_FLOW_STATE_V2,
+  OAuthFlowState,
   OAuthProtocolVersion,
   RegistrationStrategy2025_11_25,
   RegistrationStrategy2025_06_18,
-} from "../lib/debug-oauth-state-machine";
+} from "../lib/oauth/state-machines/types";
 import {
   createOAuthStateMachine,
   getDefaultRegistrationStrategy,
@@ -109,7 +109,7 @@ export const OAuthFlowTab = ({
   const [authSettings, setAuthSettings] = useState<AuthSettings>(
     DEFAULT_AUTH_SETTINGS,
   );
-  const [oauthFlowState, setOAuthFlowState] = useState<OauthFlowStateJune2025>(
+  const [oauthFlowState, setOAuthFlowState] = useState<OAuthFlowState>(
     EMPTY_OAUTH_FLOW_STATE_V2,
   );
 
@@ -222,7 +222,7 @@ export const OAuthFlowTab = ({
   }, []);
 
   const updateOAuthFlowState = useCallback(
-    (updates: Partial<OauthFlowStateJune2025>) => {
+    (updates: Partial<OAuthFlowState>) => {
       setOAuthFlowState((prev) => ({ ...prev, ...updates }));
     },
     [],

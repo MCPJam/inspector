@@ -1,6 +1,8 @@
 import { memo, useMemo } from "react";
-import type { OAuthProtocolVersion } from "@/lib/debug-oauth-state-machine";
-import type { OAuthFlowState } from "@/lib/oauth/state-machines/types";
+import type {
+  OAuthProtocolVersion,
+  OAuthFlowState,
+} from "@/lib/oauth/state-machines/types";
 import { OAuthSequenceDiagramContent } from "./oauth/shared/OAuthSequenceDiagramContent";
 import { buildActions_2025_11_25 } from "@/lib/oauth/state-machines/debug-oauth-2025-11-25";
 import { buildActions_2025_06_18 } from "@/lib/oauth/state-machines/debug-oauth-2025-06-18";
