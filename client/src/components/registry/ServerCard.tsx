@@ -50,20 +50,20 @@ export function ServerCard({ server, onInstall, onViewDetails }: ServerCardProps
 
   return (
     <Card
-      className="hover:shadow-md transition-shadow cursor-pointer group"
+      className="hover:shadow-md transition-shadow cursor-pointer group w-full"
       onClick={() => onViewDetails(server)}
     >
       <CardHeader className="pb-3">
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1">
+        <div className="flex items-start justify-between gap-2 min-w-0">
+          <div className="flex-1 min-w-0 overflow-hidden">
+            <div className="flex items-center gap-2 mb-1 min-w-0">
               {/* Organization/Icon placeholder */}
               <div className="w-8 h-8 rounded-md bg-primary/10 flex items-center justify-center flex-shrink-0">
                 <span className="text-sm font-bold text-primary">
                   {organization.charAt(0).toUpperCase()}
                 </span>
               </div>
-              <div className="flex-1 min-w-0">
+              <div className="flex-1 min-w-0 overflow-hidden">
                 <CardTitle className="text-base truncate">{projectName}</CardTitle>
                 <p className="text-xs text-muted-foreground truncate">{organization}</p>
               </div>
