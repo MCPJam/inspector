@@ -3,14 +3,13 @@ import {
   Hammer,
   MessageCircle,
   Settings,
-  Signature,
   MessageSquareCode,
   BookOpen,
-  Activity,
   CirclePlayIcon,
   ListChecks,
   HandMetal,
   Workflow,
+  Package,
 } from "lucide-react";
 
 import { NavMain } from "@/components/sidebar/nav-main";
@@ -44,7 +43,7 @@ const navigationSections = [
     ],
   },
   {
-    id: "tools",
+    id: "primitives",
     items: [
       {
         title: "Tools",
@@ -61,16 +60,16 @@ const navigationSections = [
         url: "#prompts",
         icon: MessageSquareCode,
       },
-      {
-        title: "OAuth Debugger",
-        url: "#oauth-flow",
-        icon: Signature,
-      },
     ],
   },
   {
-    id: "evals",
+    id: "others",
     items: [
+      {
+        title: "OAuth Flow",
+        url: "#oauth-flow",
+        icon: Workflow,
+      },
       {
         title: "Run evals",
         url: "#evals",
@@ -80,6 +79,11 @@ const navigationSections = [
         title: "Eval results",
         url: "#eval-results",
         icon: ListChecks,
+      },
+      {
+        title: "Registry",
+        url: "#registry",
+        icon: Package,
       },
     ],
   },
