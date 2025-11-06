@@ -62,14 +62,9 @@ const navigationSections = [
         icon: MessageSquareCode,
       },
       {
-        title: "Auth",
-        url: "#auth",
-        icon: Signature,
-      },
-      {
-        title: "OAuth Flow",
+        title: "OAuth Debugger",
         url: "#oauth-flow",
-        icon: Workflow,
+        icon: Signature,
       },
     ],
   },
