@@ -1,11 +1,17 @@
-import { type ReactNode, createContext, useRef, useContext, useEffect } from "react";
+import {
+  type ReactNode,
+  createContext,
+  useRef,
+  useContext,
+  useEffect,
+} from "react";
 import { useStore } from "zustand";
 import { type RegistryState, createRegistryStore } from "./registry-store";
 
 export type RegistryStoreApi = ReturnType<typeof createRegistryStore>;
 
 const RegistryStoreContext = createContext<RegistryStoreApi | undefined>(
-  undefined
+  undefined,
 );
 
 export interface RegistryStoreProviderProps {
@@ -37,11 +43,13 @@ export const RegistryStoreProvider = ({
 };
 
 export const useRegistryStore = <T,>(
-  selector: (state: RegistryState) => T
+  selector: (state: RegistryState) => T,
 ): T => {
   const store = useContext(RegistryStoreContext);
   if (!store) {
-    throw new Error("useRegistryStore must be used within RegistryStoreProvider");
+    throw new Error(
+      "useRegistryStore must be used within RegistryStoreProvider",
+    );
   }
   return useStore(store, selector);
 };

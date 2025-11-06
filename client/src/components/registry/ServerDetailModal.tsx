@@ -1,9 +1,28 @@
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ExternalLink, Package, Globe, Terminal, Copy, Check, Github, Home, Image, Hash, FolderTree, Shield, Loader2 } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  ExternalLink,
+  Globe,
+  Terminal,
+  Copy,
+  Check,
+  Github,
+  Home,
+  Loader2,
+} from "lucide-react";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import "react18-json-view/src/dark.css";
@@ -16,7 +35,11 @@ interface RegistryServerDetailModalProps {
   server: RegistryServer | null;
   isOpen: boolean;
   onClose: () => void;
-  onInstall: (server: RegistryServer, packageIdx?: number, remoteIdx?: number) => void;
+  onInstall: (
+    server: RegistryServer,
+    packageIdx?: number,
+    remoteIdx?: number,
+  ) => void;
 }
 
 export function RegistryServerDetailModal({
@@ -26,13 +49,13 @@ export function RegistryServerDetailModal({
   onInstall,
 }: RegistryServerDetailModalProps) {
   const [copiedPackage, setCopiedPackage] = useState<string | null>(null);
-  // tabs: details | raw
   const [activeTab, setActiveTab] = useState<string>("details");
   const [copiedJson, setCopiedJson] = useState(false);
-  const [showPublisherMeta, setShowPublisherMeta] = useState(false);
   const [availableVersions, setAvailableVersions] = useState<string[]>([]);
   const [selectedVersion, setSelectedVersion] = useState<string>("");
-  const [currentServer, setCurrentServer] = useState<RegistryServer | null>(initialServer);
+  const [currentServer, setCurrentServer] = useState<RegistryServer | null>(
+    initialServer,
+  );
   const [loadingVersion, setLoadingVersion] = useState(false);
 
   // Fetch available versions when modal opens or server changes
@@ -47,9 +70,14 @@ export function RegistryServerDetailModal({
           // Handle both formats: {versions: string[]} or {servers: [{server: {version: string}}]}
           if (response.versions && Array.isArray(response.versions)) {
             setAvailableVersions(response.versions);
-          } else if ((response as any).servers && Array.isArray((response as any).servers)) {
+          } else if (
+            (response as any).servers &&
+            Array.isArray((response as any).servers)
+          ) {
             // Extract versions from servers array
-            const versions = (response as any).servers.map((s: any) => s.server?.version).filter(Boolean);
+            const versions = (response as any).servers
+              .map((s: any) => s.server?.version)
+              .filter(Boolean);
             setAvailableVersions(versions);
           } else {
             setAvailableVersions([initialServer.version]);
@@ -101,7 +129,8 @@ export function RegistryServerDetailModal({
   const organization = nameParts[0] || "";
   const projectName = nameParts.slice(1).join("/") || server.name || "Unknown";
 
-  const isOfficial = server._meta?.["io.modelcontextprotocol.registry/official"];
+  const isOfficial =
+    server._meta?.["io.modelcontextprotocol.registry/official"];
   const repository = server.repository;
   const repositoryUrl = repository?.url;
   const websiteUrl = server.websiteUrl;
@@ -125,7 +154,9 @@ export function RegistryServerDetailModal({
   // No-op
 
   const renderJson = (data: any, maxHeightClass: string = "max-h-40") => (
-    <div className={`rounded-md border border-border bg-background/60 p-2 overflow-auto ${maxHeightClass}`}>
+    <div
+      className={`rounded-md border border-border bg-background/60 p-2 overflow-auto ${maxHeightClass}`}
+    >
       <JsonView
         src={data}
         dark={true}
@@ -164,547 +195,449 @@ export function RegistryServerDetailModal({
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col">
-        <DialogHeader>
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex-1">
-              <div className="flex items-center gap-2 mb-2">
-                {icons.length > 0 ? (
-                  <div className="w-10 h-10 rounded-lg overflow-hidden flex items-center justify-center flex-shrink-0 bg-background border">
-                    <img
-                      src={icons[0].src}
-                      alt={`${title} icon`}
-                      className="w-full h-full object-contain"
-                      onError={(e) => {
-                        // Fallback to text avatar if image fails to load
-                        const target = e.target as HTMLImageElement;
-                        target.style.display = 'none';
-                        if (target.parentElement) {
-                          target.parentElement.innerHTML = `<span class="text-lg font-bold text-primary">${organization.charAt(0).toUpperCase()}</span>`;
-                        }
-                      }}
-                    />
-                  </div>
-                ) : (
-                  <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
-                    <span className="text-lg font-bold text-primary">
-                      {organization.charAt(0).toUpperCase()}
-                    </span>
-                  </div>
-                )}
-                <div>
-                  <DialogTitle className="text-xl">{title}</DialogTitle>
-                  <p className="text-sm text-muted-foreground">{organization}</p>
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-2 mt-3 items-center">
-                {isOfficial && (
-                  <Badge variant="secondary" className="text-xs">
-                    Official
-                  </Badge>
-                )}
-                {isOfficial?.isLatest && (
-                  <Badge variant="default" className="text-xs bg-green-600 hover:bg-green-700">
-                    Latest
-                  </Badge>
-                )}
-                {availableVersions.length > 1 ? (
-                  <Select value={selectedVersion} onValueChange={handleVersionChange} disabled={loadingVersion}>
-                    <SelectTrigger className="w-[140px] h-6 text-xs">
-                      <SelectValue>
-                        {loadingVersion ? (
-                          <span className="flex items-center gap-1">
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                            Loading...
-                          </span>
-                        ) : (
-                          `v${selectedVersion}`
-                        )}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      {availableVersions.map((version) => (
-                        <SelectItem key={version} value={version} className="text-xs">
-                          v{version}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                ) : (
-                  <Badge variant="outline" className="text-xs">
-                    v{server.version}
-                  </Badge>
-                )}
-                {server.status && (
-                  <Badge
-                    variant="outline"
-                    className={`text-xs ${
-                      server.status.toLowerCase() === "active"
-                        ? "bg-green-600/15 text-green-700 dark:text-green-400"
-                        : server.status.toLowerCase() === "deprecated"
-                          ? "bg-yellow-600/15 text-yellow-700 dark:text-yellow-400"
-                          : server.status.toLowerCase() === "deleted"
-                            ? "bg-red-600/15 text-red-700 dark:text-red-400"
-                            : ""
-                    }`}
-                  >
-                    {server.status}
-                  </Badge>
-                )}
-                {server.remotes && server.remotes.length > 0 && (
-                  <Badge variant="outline" className="text-xs">
-                    <Globe className="h-3 w-3 mr-1" />
-                    Remote
-                  </Badge>
-                )}
-              </div>
-            </div>
-          </div>
-        </DialogHeader>
-
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0">
-          <div className="flex items-center justify-between">
-            <TabsList>
-              <TabsTrigger value="details">Details</TabsTrigger>
-              <TabsTrigger value="raw">Raw JSON</TabsTrigger>
-            </TabsList>
-            {activeTab === "raw" && (
-              <div className="flex gap-2">
-                <Button size="sm" variant="outline" onClick={handleCopyJson}>
-                  {copiedJson ? (
-                    <>
-                      <Check className="h-3.5 w-3.5 mr-2" /> Copied
-                    </>
+        <Tabs
+          value={activeTab}
+          onValueChange={setActiveTab}
+          className="flex-1 flex flex-col min-h-0"
+        >
+          <DialogHeader>
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex-1">
+                <div className="flex items-center gap-3 mb-3">
+                  {icons.length > 0 ? (
+                    <div className="w-12 h-12 rounded overflow-hidden flex items-center justify-center flex-shrink-0 bg-muted">
+                      <img
+                        src={icons[0].src}
+                        alt={`${title} icon`}
+                        className="w-full h-full object-contain"
+                        onError={(e) => {
+                          const target = e.target as HTMLImageElement;
+                          target.style.display = "none";
+                          if (target.parentElement) {
+                            target.parentElement.innerHTML = `<span class="text-xl font-semibold">${organization.charAt(0).toUpperCase()}</span>`;
+                          }
+                        }}
+                      />
+                    </div>
                   ) : (
-                    <>
-                      <Copy className="h-3.5 w-3.5 mr-2" /> Copy
-                    </>
+                    <div className="w-12 h-12 rounded bg-muted flex items-center justify-center flex-shrink-0">
+                      <span className="text-xl font-semibold">
+                        {organization.charAt(0).toUpperCase()}
+                      </span>
+                    </div>
                   )}
-                </Button>
-              </div>
-            )}
-          </div>
-
-          <TabsContent value="details" className="flex-1 overflow-auto mt-4 data-[state=active]:flex data-[state=active]:flex-col">
-            <div className="space-y-6 pb-4">
-            {/* Description */}
-            <div>
-              <h3 className="text-sm font-semibold mb-2">Description</h3>
-              <p className="text-sm text-muted-foreground whitespace-pre-wrap">
-                {server.description}
-              </p>
-              {/* Identifier */}
-              <div className="mt-3 text-xs">
-                <span className="font-semibold mr-2">Identifier:</span>
-                <code className="bg-muted px-2 py-1 rounded">{server.name}</code>
-              </div>
-            </div>
-
-            <Separator />
-
-            {/* Icons */}
-            {icons.length > 1 && (
-              <>
-                <div>
-                  <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-                    <Image className="h-4 w-4" />
-                    Icons
-                  </h3>
-                  <div className="flex flex-wrap gap-3">
-                    {icons.map((icon, idx) => (
-                      <div
-                        key={idx}
-                        className="border border-border rounded-lg p-2 space-y-2"
-                      >
-                        <div className="w-16 h-16 flex items-center justify-center bg-background">
-                          <img
-                            src={icon.src}
-                            alt={`${title} icon ${idx + 1}`}
-                            className="max-w-full max-h-full object-contain"
-                          />
-                        </div>
-                        <div className="text-xs text-muted-foreground space-y-1">
-                          {icon.sizes && icon.sizes.length > 0 && (
-                            <div>Sizes: {icon.sizes.join(", ")}</div>
-                          )}
-                          {icon.mimeType && <div>Type: {icon.mimeType}</div>}
-                          {icon.theme && <div>Theme: {icon.theme}</div>}
-                        </div>
-                      </div>
-                    ))}
+                  <div>
+                    <DialogTitle className="text-xl font-semibold">
+                      {title}
+                    </DialogTitle>
+                    <p className="text-sm text-muted-foreground">
+                      {organization}
+                    </p>
                   </div>
                 </div>
-                <Separator />
-              </>
-            )}
-
-            {/* Packages */}
-            {server.packages && server.packages.length > 0 && (
-              <>
-                <div>
-                  <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-                    <Package className="h-4 w-4" />
-                    Packages
-                  </h3>
-                  <div className="space-y-3">
-                    {server.packages.map((pkg, idx) => {
-                      const installCommand =
-                        pkg.registryType === "npm"
-                          ? `npx -y ${pkg.identifier}`
-                          : pkg.registryType === "pypi"
-                            ? `pip install ${pkg.identifier}`
-                            : pkg.identifier;
-
-                      return (
-                        <div
-                          key={idx}
-                          className="border border-border rounded-lg p-3 space-y-2"
-                        >
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <Badge variant="secondary" className="text-xs">
-                                {pkg.registryType}
-                              </Badge>
-                              <code className="text-xs">{pkg.identifier}</code>
-                            </div>
-                            {pkg.version && (
-                              <span className="text-xs text-muted-foreground">
-                                v{pkg.version}
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <div className="flex flex-wrap gap-2 items-center">
+                    {availableVersions.length > 1 ? (
+                      <Select
+                        value={selectedVersion}
+                        onValueChange={handleVersionChange}
+                        disabled={loadingVersion}
+                      >
+                        <SelectTrigger className="w-[120px] h-7 text-xs">
+                          <SelectValue>
+                            {loadingVersion ? (
+                              <span className="flex items-center gap-1">
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                                Loading...
                               </span>
+                            ) : (
+                              `v${selectedVersion}`
                             )}
-                          </div>
-                          {pkg.registryType === "npm" || pkg.registryType === "pypi" ? (
-                            <div className="flex items-center gap-2">
-                              <code className="flex-1 text-xs bg-muted px-3 py-2 rounded">
-                                {installCommand}
-                              </code>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => handleCopyPackage(pkg.identifier, installCommand)}
-                              >
-                                {copiedPackage === pkg.identifier ? (
-                                  <Check className="h-3.5 w-3.5" />
-                                ) : (
-                                  <Copy className="h-3.5 w-3.5" />
-                                )}
-                              </Button>
-                            </div>
-                          ) : null}
-
-                          {/* Additional package details */}
-                          <div className="text-xs text-muted-foreground space-y-1 mt-2">
-                            {pkg.registryBaseUrl && (
-                              <div>Registry: {pkg.registryBaseUrl}</div>
-                            )}
-                            {pkg.runtimeHint && (
-                              <div>Runtime: {pkg.runtimeHint}</div>
-                            )}
-                            {pkg.fileSha256 && (
-                              <div className="flex items-center gap-2">
-                                <Shield className="h-3 w-3" />
-                                <span className="font-mono break-all">SHA256: {pkg.fileSha256}</span>
-                              </div>
-                            )}
-                            {pkg.runtimeArguments && renderArgs("Runtime Args", pkg.runtimeArguments as any)}
-                            {pkg.packageArguments && renderArgs("Package Args", pkg.packageArguments as any)}
-                            {pkg.environmentVariables && pkg.environmentVariables.length > 0 && (
-                              <div>
-                                <span className="font-semibold">Environment Variables:</span>
-                                <div className="ml-2 mt-1 space-y-1">
-                                  {pkg.environmentVariables.map((env: any, envIdx: number) => {
-                                    const hasSimpleShape = typeof env?.name === "string";
-                                    return (
-                                      <div key={envIdx}>
-                                        {hasSimpleShape ? (
-                                          <div className="flex items-center gap-2">
-                                            <code className="font-mono">{env.name}</code>
-                                            <span className="text-muted-foreground">
-                                              {env.value ?? env.default ?? env.description ?? "(required)"}
-                                              {env.isRequired && <span className="ml-1 text-red-500">*</span>}
-                                            </span>
-                                          </div>
-                                        ) : (
-                                          renderJson(env)
-                                        )}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            )}
-                            {pkg.transport && (
-                              <div>
-                                <span className="font-semibold">Transport:</span>
-                                {typeof pkg.transport === "object" && pkg.transport !== null &&
-                                Object.keys(pkg.transport).every((k) => ["type", "url"].includes(k)) ? (
-                                  <code className="ml-2 text-xs">
-                                    {`{ type: "${(pkg.transport as any).type}"${(pkg.transport as any).url ? `, url: "${(pkg.transport as any).url}"` : ""} }`}
-                                  </code>
-                                ) : (
-                                  <div className="mt-1 ml-0">{renderJson(pkg.transport, "max-h-[120px]")}</div>
-                                )}
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Connect button for this package (skip mcpb for desktop) */}
-                          {pkg.registryType !== 'mcpb' && (
-                            <Button
-                              size="sm"
-                              className="w-full mt-3"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onInstall(server, idx, undefined);
-                              }}
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {availableVersions.map((version) => (
+                            <SelectItem
+                              key={version}
+                              value={version}
+                              className="text-xs"
                             >
-                              <Terminal className="h-3.5 w-3.5 mr-2" />
-                              Connect
-                            </Button>
-                          )}
-                        </div>
-                      );
-                    })}
+                              v{version}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <span>v{server.version}</span>
+                    )}
+                    {server.status && <span>• {server.status}</span>}
+                    {server.remotes && server.remotes.length > 0 && (
+                      <span>• Remote</span>
+                    )}
                   </div>
-                </div>
-                <Separator />
-              </>
-            )}
-
-            {/* Remotes */}
-            {server.remotes && server.remotes.length > 0 && (
-              <>
-                <div>
-                  <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-                    <Globe className="h-4 w-4" />
-                    Remote Connections
-                  </h3>
-                  <div className="space-y-3">
-                    {server.remotes.map((remote, idx) => (
-                      <div
-                        key={idx}
-                        className="border border-border rounded-lg p-3 space-y-2"
+                  <div className="flex items-center gap-2">
+                    <TabsList>
+                      <TabsTrigger value="details">Details</TabsTrigger>
+                      <TabsTrigger value="raw">Raw JSON</TabsTrigger>
+                    </TabsList>
+                    {activeTab === "raw" && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handleCopyJson}
                       >
-                        <div className="flex items-center gap-2">
-                          <Badge variant="secondary" className="text-xs">
-                            {remote.type}
-                          </Badge>
-                          {remote.url && (
-                            <code className="text-xs text-muted-foreground break-all">
-                              {remote.url}
-                            </code>
-                          )}
-                          {remote.command && (
-                            <code className="text-xs text-muted-foreground">
-                              {remote.command}
-                            </code>
-                          )}
-                        </div>
-                      {/* Remote args */}
-                      {remote.args && remote.args.length > 0 && (
-                        <div className="text-xs text-muted-foreground">
-                          <span className="font-semibold">Args:</span>
-                          <code className="ml-2">{remote.args.join(" ")}</code>
-                        </div>
-                      )}
-                      {/* Remote env */}
-                      {remote.env && Object.keys(remote.env).length > 0 && (
-                        <div className="text-xs text-muted-foreground">
-                          <span className="font-semibold">Env:</span>
-                          <div className="ml-2 mt-1 space-y-1 font-mono">
-                            {Object.entries(remote.env).map(([k, v]) => (
-                              <div key={k} className="break-all">
-                                {k}: {String(v)}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                        {/* Remote headers */}
-                        {remote.headers && remote.headers.length > 0 && (
-                          <div className="text-xs text-muted-foreground">
-                            <span className="font-semibold">Headers:</span>
-                            <div className="ml-2 mt-1 space-y-1 font-mono">
-                            {remote.headers.map((header: any, headerIdx: number) => {
-                              if (typeof header?.name === "string") {
-                                return (
-                                  <div key={headerIdx} className="flex items-center gap-2">
-                                    <code>{header.name}</code>
-                                    <span className="text-muted-foreground">
-                                      {header.value || header.description || "(required)"}
-                                      {header.isRequired && <span className="ml-1 text-red-500">*</span>}
-                                    </span>
-                                  </div>
-                                );
-                              }
-                              return <div key={headerIdx}>{renderJson(header)}</div>;
-                            })}
-                            </div>
-                          </div>
+                        {copiedJson ? (
+                          <>
+                            <Check className="h-3.5 w-3.5 mr-2" /> Copied
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="h-3.5 w-3.5 mr-2" /> Copy
+                          </>
                         )}
-
-                        {/* Connect button for this remote */}
-                        <Button
-                          size="sm"
-                          className="w-full mt-3"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onInstall(server, undefined, idx);
-                          }}
-                        >
-                          <Terminal className="h-3.5 w-3.5 mr-2" />
-                          Connect
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <Separator />
-              </>
-            )}
-
-            {/* Website URL */}
-            {websiteUrl && (
-              <>
-                <div>
-                  <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-                    <Home className="h-4 w-4" />
-                    Website
-                  </h3>
-                  <a
-                    href={websiteUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-border hover:bg-accent transition-colors"
-                  >
-                    <span className="text-sm font-medium">{websiteUrl}</span>
-                    <ExternalLink className="h-4 w-4" />
-                  </a>
-                </div>
-                <Separator />
-              </>
-            )}
-
-            {/* Repository Link */}
-            {repositoryUrl && (
-              <>
-                <div>
-                  <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-                    <Github className="h-4 w-4" />
-                    Repository
-                  </h3>
-                  <div className="space-y-2">
-                    <a
-                      href={repositoryUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-border hover:bg-accent transition-colors"
-                    >
-                      <span className="text-sm font-medium">{repositoryUrl}</span>
-                      <ExternalLink className="h-4 w-4" />
-                    </a>
-                    {repository && (
-                      <div className="text-xs text-muted-foreground space-y-1 ml-4">
-                        {repository.id && (
-                          <div className="flex items-center gap-2">
-                            <Hash className="h-3 w-3" />
-                            <span>ID: {repository.id}</span>
-                          </div>
-                        )}
-                        {repository.source && (
-                          <div className="flex items-center gap-2">
-                            <Badge variant="outline" className="text-xs">
-                              {repository.source}
-                            </Badge>
-                          </div>
-                        )}
-                        {repository.subfolder && (
-                          <div className="flex items-center gap-2">
-                            <FolderTree className="h-3 w-3" />
-                            <span>Subfolder: {repository.subfolder}</span>
-                          </div>
-                        )}
-                      </div>
+                      </Button>
                     )}
                   </div>
                 </div>
-                <Separator />
-              </>
-            )}
+              </div>
+            </div>
+          </DialogHeader>
 
-            {/* Raw JSON moved to tabs */}
+          <TabsContent
+            value="details"
+            className="flex-1 overflow-auto mt-4 data-[state=active]:flex data-[state=active]:flex-col"
+          >
+            <div className="space-y-6 pb-4">
+              {/* Description */}
+              <div>
+                <p className="text-sm leading-relaxed">{server.description}</p>
+              </div>
 
-            {/* Metadata */}
-            {(isOfficial || schema) && (
-              <div className="bg-muted/50 rounded-lg p-3">
-                <div className="text-xs space-y-1">
+              <Separator className="my-6" />
+
+              {/* Packages */}
+              {server.packages && server.packages.length > 0 && (
+                <>
+                  <div>
+                    <h3 className="text-sm font-medium mb-4">Packages</h3>
+                    <div className="space-y-4">
+                      {server.packages.map((pkg, idx) => {
+                        const installCommand =
+                          pkg.registryType === "npm"
+                            ? `npx -y ${pkg.identifier}`
+                            : pkg.registryType === "pypi"
+                              ? `pip install ${pkg.identifier}`
+                              : pkg.identifier;
+
+                        return (
+                          <div
+                            key={idx}
+                            className="border rounded p-4 space-y-3"
+                          >
+                            <div className="flex items-center justify-between">
+                              <code className="text-xs font-mono">
+                                {pkg.identifier}
+                              </code>
+                              <span className="text-xs text-muted-foreground">
+                                {pkg.registryType}{" "}
+                                {pkg.version && `• v${pkg.version}`}
+                              </span>
+                            </div>
+
+                            {pkg.registryType === "npm" ||
+                            pkg.registryType === "pypi" ? (
+                              <div className="flex items-center gap-2">
+                                <code className="flex-1 text-xs bg-muted px-3 py-2 rounded font-mono">
+                                  {installCommand}
+                                </code>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() =>
+                                    handleCopyPackage(
+                                      pkg.identifier,
+                                      installCommand,
+                                    )
+                                  }
+                                >
+                                  {copiedPackage === pkg.identifier ? (
+                                    <Check className="h-4 w-4" />
+                                  ) : (
+                                    <Copy className="h-4 w-4" />
+                                  )}
+                                </Button>
+                              </div>
+                            ) : null}
+
+                            {/* Additional package details */}
+                            {(pkg.runtimeHint ||
+                              pkg.environmentVariables?.length ||
+                              pkg.transport) && (
+                              <div className="text-xs text-muted-foreground space-y-2 pt-2 border-t">
+                                {pkg.runtimeHint && (
+                                  <div>Runtime: {pkg.runtimeHint}</div>
+                                )}
+                                {pkg.environmentVariables &&
+                                  pkg.environmentVariables.length > 0 && (
+                                    <div>
+                                      <div className="font-medium mb-1">
+                                        Environment Variables:
+                                      </div>
+                                      <div className="ml-2 space-y-1">
+                                        {pkg.environmentVariables.map(
+                                          (env: any, envIdx: number) => {
+                                            const hasSimpleShape =
+                                              typeof env?.name === "string";
+                                            return (
+                                              <div key={envIdx}>
+                                                {hasSimpleShape ? (
+                                                  <div className="font-mono">
+                                                    {env.name}
+                                                    {env.isRequired && (
+                                                      <span className="text-red-500 ml-1">
+                                                        *
+                                                      </span>
+                                                    )}
+                                                  </div>
+                                                ) : (
+                                                  renderJson(env)
+                                                )}
+                                              </div>
+                                            );
+                                          },
+                                        )}
+                                      </div>
+                                    </div>
+                                  )}
+                                {pkg.transport && (
+                                  <div>
+                                    <div className="font-medium mb-1">
+                                      Transport:
+                                    </div>
+                                    {typeof pkg.transport === "object" &&
+                                    pkg.transport !== null &&
+                                    Object.keys(pkg.transport).every((k) =>
+                                      ["type", "url"].includes(k),
+                                    ) ? (
+                                      <code className="font-mono">
+                                        {`{ type: "${(pkg.transport as any).type}"${(pkg.transport as any).url ? `, url: "${(pkg.transport as any).url}"` : ""} }`}
+                                      </code>
+                                    ) : (
+                                      <div className="mt-1">
+                                        {renderJson(
+                                          pkg.transport,
+                                          "max-h-[120px]",
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Connect button for this package (skip mcpb for desktop) */}
+                            {pkg.registryType !== "mcpb" && (
+                              <Button
+                                size="sm"
+                                className="w-full"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onInstall(server, idx, undefined);
+                                }}
+                              >
+                                <Terminal className="h-4 w-4 mr-2" />
+                                Connect
+                              </Button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <Separator className="my-6" />
+                </>
+              )}
+
+              {/* Remotes */}
+              {server.remotes && server.remotes.length > 0 && (
+                <>
+                  <div>
+                    <h3 className="text-sm font-medium mb-4">
+                      Remote Connections
+                    </h3>
+                    <div className="space-y-4">
+                      {server.remotes.map((remote, idx) => (
+                        <div key={idx} className="border rounded p-4 space-y-3">
+                          <div className="flex items-center gap-2 text-xs">
+                            <span className="text-muted-foreground">
+                              {remote.type}
+                            </span>
+                            {remote.url && (
+                              <code className="font-mono text-muted-foreground break-all">
+                                {remote.url}
+                              </code>
+                            )}
+                            {remote.command && (
+                              <code className="font-mono text-muted-foreground">
+                                {remote.command}
+                              </code>
+                            )}
+                          </div>
+
+                          {/* Remote details */}
+                          {(remote.args?.length ||
+                            remote.env ||
+                            remote.headers?.length) && (
+                            <div className="text-xs text-muted-foreground space-y-2 pt-2 border-t">
+                              {remote.args && remote.args.length > 0 && (
+                                <div>
+                                  <div className="font-medium mb-1">Args:</div>
+                                  <code className="font-mono">
+                                    {remote.args.join(" ")}
+                                  </code>
+                                </div>
+                              )}
+                              {remote.env &&
+                                Object.keys(remote.env).length > 0 && (
+                                  <div>
+                                    <div className="font-medium mb-1">
+                                      Environment:
+                                    </div>
+                                    <div className="ml-2 space-y-1 font-mono">
+                                      {Object.entries(remote.env).map(
+                                        ([k, v]) => (
+                                          <div key={k} className="break-all">
+                                            {k}: {String(v)}
+                                          </div>
+                                        ),
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
+                              {remote.headers && remote.headers.length > 0 && (
+                                <div>
+                                  <div className="font-medium mb-1">
+                                    Headers:
+                                  </div>
+                                  <div className="ml-2 space-y-1 font-mono">
+                                    {remote.headers.map(
+                                      (header: any, headerIdx: number) => {
+                                        if (typeof header?.name === "string") {
+                                          return (
+                                            <div key={headerIdx}>
+                                              {header.name}
+                                              {header.isRequired && (
+                                                <span className="text-red-500 ml-1">
+                                                  *
+                                                </span>
+                                              )}
+                                            </div>
+                                          );
+                                        }
+                                        return (
+                                          <div key={headerIdx}>
+                                            {renderJson(header)}
+                                          </div>
+                                        );
+                                      },
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Connect button for this remote */}
+                          <Button
+                            size="sm"
+                            className="w-full"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onInstall(server, undefined, idx);
+                            }}
+                          >
+                            <Terminal className="h-4 w-4 mr-2" />
+                            Connect
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <Separator className="my-6" />
+                </>
+              )}
+
+              {/* Links */}
+              {(websiteUrl || repositoryUrl) && (
+                <>
+                  <div className="space-y-2">
+                    {websiteUrl && (
+                      <a
+                        href={websiteUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-2 text-sm hover:underline"
+                      >
+                        <Home className="h-4 w-4" />
+                        <span>Website</span>
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    )}
+                    {repositoryUrl && (
+                      <a
+                        href={repositoryUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-2 text-sm hover:underline"
+                      >
+                        <Github className="h-4 w-4" />
+                        <span>Repository</span>
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    )}
+                  </div>
+                  <Separator className="my-6" />
+                </>
+              )}
+
+              {/* Raw JSON moved to tabs */}
+
+              {/* Metadata */}
+              {(isOfficial?.publishedAt || isOfficial?.updatedAt || schema) && (
+                <div className="text-xs text-muted-foreground space-y-1">
                   {isOfficial?.publishedAt && (
-                    <p className="text-muted-foreground">
+                    <div>
                       Published:{" "}
                       {new Date(isOfficial.publishedAt).toLocaleDateString()}
-                    </p>
+                    </div>
                   )}
                   {isOfficial?.updatedAt && (
-                    <p className="text-muted-foreground">
+                    <div>
                       Updated:{" "}
                       {new Date(isOfficial.updatedAt).toLocaleDateString()}
-                    </p>
-                  )}
-                  {isOfficial?.isLatest && (
-                    <p className="text-muted-foreground">
-                      ✓ Latest version
-                    </p>
+                    </div>
                   )}
                   {schema && (
-                    <p className="text-muted-foreground break-all">
-                      Schema: <code className="text-xs">{schema}</code>
-                    </p>
-                  )}
-                  {server._meta?.["io.modelcontextprotocol.registry/publisher-provided"] && (
-                    <div className="mt-2">
-                      <div className="flex items-center justify-between">
-                        <span className="font-semibold">Publisher-provided Metadata</span>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => setShowPublisherMeta((v) => !v)}
-                        >
-                          {showPublisherMeta ? "Hide" : "View"}
-                        </Button>
-                      </div>
-                      {showPublisherMeta && (
-                        <div className="mt-2">
-                          {renderJson(
-                            server._meta?.[
-                              "io.modelcontextprotocol.registry/publisher-provided"
-                            ],
-                            "max-h-60"
-                          )}
-                        </div>
-                      )}
+                    <div className="break-all">
+                      Schema: <code className="font-mono">{schema}</code>
                     </div>
                   )}
                 </div>
-              </div>
-            )}
-              </div>
+              )}
+            </div>
           </TabsContent>
 
           <TabsContent value="raw" className="flex-1 overflow-auto mt-4">
-            <div className="pb-4">
-              {renderJson(server, "max-h-full")}
-            </div>
+            <div className="pb-4">{renderJson(server, "max-h-full")}</div>
           </TabsContent>
         </Tabs>
 
         {/* Footer Actions */}
-        <div className="flex justify-end gap-2 pt-4 border-t mt-4 flex-shrink-0">
-          <Button variant="outline" onClick={onClose}>
+        <div className="flex justify-end gap-3 pt-4 border-t mt-4 flex-shrink-0">
+          <Button variant="ghost" onClick={onClose}>
             Close
           </Button>
-          <Button onClick={() => onInstall(server)}>
-            <Terminal className="h-4 w-4 mr-2" />
-            Connect
-          </Button>
+          <Button onClick={() => onInstall(server)}>Connect</Button>
         </div>
       </DialogContent>
     </Dialog>

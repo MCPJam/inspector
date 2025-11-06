@@ -122,7 +122,9 @@ export function ServerSelectionCard({
           <div className="pr-8">{commandDisplay}</div>
           <button
             type="button"
-            onClick={(event) => copyToClipboard(event, commandDisplay, "command")}
+            onClick={(event) =>
+              copyToClipboard(event, commandDisplay, "command")
+            }
             className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
           >
             {copiedField === "command" ? (

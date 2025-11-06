@@ -60,7 +60,6 @@ const navigationSections = [
         url: "#prompts",
         icon: MessageSquareCode,
       },
-
     ],
   },
   {

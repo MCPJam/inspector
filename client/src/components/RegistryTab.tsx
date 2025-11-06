@@ -31,7 +31,9 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
   // Modal state
   const [isAddServerModalOpen, setIsAddServerModalOpen] = useState(false);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
-  const [selectedServer, setSelectedServer] = useState<RegistryServer | null>(null);
+  const [selectedServer, setSelectedServer] = useState<RegistryServer | null>(
+    null,
+  );
   const [selectedConnectionIndices, setSelectedConnectionIndices] = useState<{
     packageIdx?: number;
     remoteIdx?: number;
@@ -75,7 +77,8 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
   // Filter to show only the latest version of each server
   const latestServers = useMemo(() => {
     return allServers.filter((server) => {
-      const isLatest = server._meta?.['io.modelcontextprotocol.registry/official']?.isLatest;
+      const isLatest =
+        server._meta?.["io.modelcontextprotocol.registry/official"]?.isLatest;
       return isLatest === true;
     });
   }, [allServers]);
@@ -91,7 +94,7 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
     // No search query - return all servers sorted alphabetically
     if (!searchQuery.trim()) {
       return [...latestServers].sort((a, b) =>
-        (a.name || '').localeCompare(b.name || '')
+        (a.name || "").localeCompare(b.name || ""),
       );
     }
 
@@ -101,7 +104,10 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
     // Apply filters first
     if (filters && Object.keys(filters).length > 0) {
       results = results.filter((server) => {
-        if (filters.official !== undefined && server._meta?.official !== filters.official) {
+        if (
+          filters.official !== undefined &&
+          server._meta?.official !== filters.official
+        ) {
           return false;
         }
         if (filters.hasRemote !== undefined) {
@@ -112,7 +118,7 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
         }
         if (filters.packageType) {
           const hasPackageType = server.packages?.some(
-            (pkg) => pkg.registryType === filters.packageType
+            (pkg) => pkg.registryType === filters.packageType,
           );
           if (!hasPackageType) {
             return false;
@@ -127,9 +133,7 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
 
     // If no query text, return filtered results
     if (!query.trim()) {
-      return results.sort((a, b) =>
-        (a.name || '').localeCompare(b.name || '')
-      );
+      return results.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
     }
 
     // Use the memoized Fuse instance for search
@@ -141,7 +145,10 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
     // Apply filters to search results
     if (filters && Object.keys(filters).length > 0) {
       return searchedItems.filter((server) => {
-        if (filters.official !== undefined && server._meta?.official !== filters.official) {
+        if (
+          filters.official !== undefined &&
+          server._meta?.official !== filters.official
+        ) {
           return false;
         }
         if (filters.hasRemote !== undefined) {
@@ -152,7 +159,7 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
         }
         if (filters.packageType) {
           const hasPackageType = server.packages?.some(
-            (pkg) => pkg.registryType === filters.packageType
+            (pkg) => pkg.registryType === filters.packageType,
           );
           if (!hasPackageType) {
             return false;
@@ -208,7 +215,11 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
     return `Updated ${Math.floor(diffHours / 24)}d ago`;
   };
 
-  const handleInstall = (server: RegistryServer, packageIdx?: number, remoteIdx?: number) => {
+  const handleInstall = (
+    server: RegistryServer,
+    packageIdx?: number,
+    remoteIdx?: number,
+  ) => {
     setSelectedServer(server);
     // Store the selected connection indices in state
     setSelectedConnectionIndices({ packageIdx, remoteIdx });
@@ -230,7 +241,7 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
   // Convert registry server to form data with optional connection metadata
   const getPrefilledFormData = (
     packageIdx?: number,
-    remoteIdx?: number
+    remoteIdx?: number,
   ): Partial<ServerFormData> | undefined => {
     if (!selectedServer || !selectedServer.name) return undefined;
 
@@ -277,7 +288,9 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
         formData.url = remote.url;
 
         // Check if headers include Authorization - use Bearer token
-        const authHeader = remote.headers?.find(h => h.name === "Authorization");
+        const authHeader = remote.headers?.find(
+          (h) => h.name === "Authorization",
+        );
         if (authHeader) {
           // Has Authorization header - use Bearer token, not OAuth
           formData.headers = {};
@@ -302,14 +315,17 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
 
     // Fallback: use first available package or remote (skip mcpb)
     const npmPackage = selectedServer.packages?.find(
-      (pkg) => pkg.registryType === "npm"
+      (pkg) => pkg.registryType === "npm",
     );
     if (npmPackage) {
       formData.type = "stdio";
       formData.command = "npx";
       formData.args = ["-y", npmPackage.identifier];
 
-      if (npmPackage.environmentVariables && npmPackage.environmentVariables.length > 0) {
+      if (
+        npmPackage.environmentVariables &&
+        npmPackage.environmentVariables.length > 0
+      ) {
         formData.env = {};
         npmPackage.environmentVariables.forEach((env) => {
           if (env.name && formData.env) {
@@ -354,7 +370,9 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
       <div className="flex items-center justify-center h-full">
         <div className="flex flex-col items-center gap-3">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-          <p className="text-sm text-muted-foreground">Loading registry servers...</p>
+          <p className="text-sm text-muted-foreground">
+            Loading registry servers...
+          </p>
         </div>
       </div>
     );
@@ -387,7 +405,8 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
             <h2 className="text-lg font-semibold">MCP Server Registry</h2>
             <div className="flex items-center gap-2">
               <p className="text-sm text-muted-foreground">
-                {latestServers.length} {latestServers.length === 1 ? 'server' : 'servers'} available
+                {latestServers.length}{" "}
+                {latestServers.length === 1 ? "server" : "servers"} available
               </p>
               {getLastUpdateText() && (
                 <>
@@ -399,8 +418,15 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
               )}
             </div>
           </div>
-          <Button onClick={handleRefresh} variant="outline" size="sm" disabled={isRefreshing}>
-            <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
+          <Button
+            onClick={handleRefresh}
+            variant="outline"
+            size="sm"
+            disabled={isRefreshing}
+          >
+            <RefreshCw
+              className={`h-4 w-4 mr-2 ${isRefreshing ? "animate-spin" : ""}`}
+            />
             Refresh
           </Button>
         </div>
@@ -428,8 +454,8 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
           <div
             style={{
               height: `${rowVirtualizer.getTotalSize()}px`,
-              width: '100%',
-              position: 'relative',
+              width: "100%",
+              position: "relative",
             }}
           >
             {rowVirtualizer.getVirtualItems().map((virtualRow) => {
@@ -438,17 +464,17 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
                 <div
                   key={virtualRow.key}
                   style={{
-                    position: 'absolute',
+                    position: "absolute",
                     top: 0,
                     left: 0,
-                    width: '100%',
+                    width: "100%",
                     transform: `translateY(${virtualRow.start}px)`,
                   }}
                 >
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     {serversInRow.map((server, colIndex) => (
                       <RegistryServerCard
-                        key={`${server.name || 'unknown'}-${server.version || 'unknown'}-${virtualRow.index}-${colIndex}`}
+                        key={`${server.name || "unknown"}-${server.version || "unknown"}-${virtualRow.index}-${colIndex}`}
                         server={server}
                         onInstall={handleInstall}
                         onViewDetails={handleViewDetails}
@@ -482,7 +508,14 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
           setSelectedConnectionIndices({});
         }}
         onSubmit={handleAddServer}
-        initialData={selectedServer ? getPrefilledFormData(selectedConnectionIndices.packageIdx, selectedConnectionIndices.remoteIdx) : undefined}
+        initialData={
+          selectedServer
+            ? getPrefilledFormData(
+                selectedConnectionIndices.packageIdx,
+                selectedConnectionIndices.remoteIdx,
+              )
+            : undefined
+        }
       />
     </div>
   );

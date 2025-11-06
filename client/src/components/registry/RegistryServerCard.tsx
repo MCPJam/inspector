@@ -1,4 +1,10 @@
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Download, Clock } from "lucide-react";
@@ -6,11 +12,19 @@ import type { RegistryServer } from "@/shared/types";
 
 interface RegistryServerCardProps {
   server: RegistryServer;
-  onInstall: (server: RegistryServer, packageIdx?: number, remoteIdx?: number) => void;
+  onInstall: (
+    server: RegistryServer,
+    packageIdx?: number,
+    remoteIdx?: number,
+  ) => void;
   onViewDetails: (server: RegistryServer) => void;
 }
 
-export function RegistryServerCard({ server, onInstall, onViewDetails }: RegistryServerCardProps) {
+export function RegistryServerCard({
+  server,
+  onInstall,
+  onViewDetails,
+}: RegistryServerCardProps) {
   // Extract organization and project name from server.name
   const nameParts = server.name?.split("/") || ["", "Unknown"];
   const organization = nameParts[0] || "";
@@ -25,7 +39,8 @@ export function RegistryServerCard({ server, onInstall, onViewDetails }: Registr
   const downloadCount = server._meta?.downloads || server._meta?.download_count;
 
   // Get metadata from the official registry provider
-  const officialMeta = server._meta?.["io.modelcontextprotocol.registry/official"];
+  const officialMeta =
+    server._meta?.["io.modelcontextprotocol.registry/official"];
   const updatedAt = officialMeta?.updatedAt;
   const publishedAt = officialMeta?.publishedAt;
 
@@ -63,8 +78,12 @@ export function RegistryServerCard({ server, onInstall, onViewDetails }: Registr
                 </span>
               </div>
               <div className="flex-1 min-w-0 overflow-hidden">
-                <CardTitle className="text-base truncate">{projectName}</CardTitle>
-                <p className="text-xs text-muted-foreground truncate">{organization}</p>
+                <CardTitle className="text-base truncate">
+                  {projectName}
+                </CardTitle>
+                <p className="text-xs text-muted-foreground truncate">
+                  {organization}
+                </p>
               </div>
               <Badge variant="outline" className="text-xs">
                 {isRemote ? "Remote" : "Local"}
@@ -98,7 +117,7 @@ export function RegistryServerCard({ server, onInstall, onViewDetails }: Registr
             </div>
           )}
         </div>
-        
+
         <div className="flex gap-2">
           <Button
             size="sm"
