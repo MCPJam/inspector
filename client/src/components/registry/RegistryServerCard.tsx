@@ -1,7 +1,7 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Download, ExternalLink, Clock } from "lucide-react";
+import { Download, Clock } from "lucide-react";
 import type { RegistryServer } from "@/shared/types";
 
 interface RegistryServerCardProps {
@@ -49,10 +49,10 @@ export function RegistryServerCard({ server, onInstall, onViewDetails }: Registr
 
   return (
     <Card
-      className="border border-border/50 bg-card/50 backdrop-blur-sm hover:border-primary/50 hover:shadow-md hover:bg-card/70 transition-all duration-200 cursor-pointer group w-full"
+      className="border border-border/50 bg-card/50 backdrop-blur-sm hover:border-primary/50 hover:shadow-md hover:bg-card/70 transition-all duration-200 cursor-pointer group w-full min-h-[220px] flex flex-col"
       onClick={() => onViewDetails(server)}
     >
-      <CardHeader className="pb-3">
+      <CardHeader className="pb-1">
         <div className="flex items-start justify-between gap-2 min-w-0">
           <div className="flex-1 min-w-0 overflow-hidden">
             <div className="flex items-center gap-2 mb-1 min-w-0">
@@ -75,18 +75,19 @@ export function RegistryServerCard({ server, onInstall, onViewDetails }: Registr
         <CardDescription className="line-clamp-2 text-xs mt-2">
           {server.description}
         </CardDescription>
+        {relativeTime && (
+          <div className="flex items-center gap-1 text-xs text-muted-foreground mt-1">
+            <Clock className="h-3 w-3" />
+            <span>Updated {relativeTime}</span>
+          </div>
+        )}
       </CardHeader>
-      <CardContent className="pt-0">
-        <div className="flex items-center justify-between mb-2">
+      <CardContent className="pt-0 mt-auto">
+        <div className="flex items-center justify-between mb-1">
           <div className="flex flex-wrap gap-1.5">
             {isOfficial && (
               <Badge variant="secondary" className="text-xs">
                 Official
-              </Badge>
-            )}
-            {hasPackages && server.packages![0] && (
-              <Badge variant="outline" className="text-xs">
-                {server.packages![0].registryType}
               </Badge>
             )}
           </div>
@@ -97,12 +98,7 @@ export function RegistryServerCard({ server, onInstall, onViewDetails }: Registr
             </div>
           )}
         </div>
-        {relativeTime && (
-          <div className="flex items-center gap-1 text-xs text-muted-foreground mb-3">
-            <Clock className="h-3 w-3" />
-            <span>Updated {relativeTime}</span>
-          </div>
-        )}
+        
         <div className="flex gap-2">
           <Button
             size="sm"
@@ -117,12 +113,13 @@ export function RegistryServerCard({ server, onInstall, onViewDetails }: Registr
           <Button
             size="sm"
             variant="outline"
+            className="flex-1"
             onClick={(e) => {
               e.stopPropagation();
               onViewDetails(server);
             }}
           >
-            <ExternalLink className="h-3.5 w-3.5" />
+            View details
           </Button>
         </div>
       </CardContent>

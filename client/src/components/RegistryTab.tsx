@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { RegistryServerCard } from "./registry/RegistryServerCard";
 import { RegistryServerDetailModal } from "./registry/ServerDetailModal";
@@ -42,6 +42,35 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
 
   // Determine columns per row based on container width
   const [columnsPerRow, setColumnsPerRow] = useState(3);
+
+  // Update columns per row based on viewport width
+  useEffect(() => {
+    const updateColumns = () => {
+      if (!parentRef.current) return;
+
+      const width = parentRef.current.clientWidth;
+      // Match Tailwind breakpoints: grid-cols-1 md:grid-cols-2 lg:grid-cols-3
+      // md is 768px, lg is 1024px
+      if (width < 768) {
+        setColumnsPerRow(1);
+      } else if (width < 1024) {
+        setColumnsPerRow(2);
+      } else {
+        setColumnsPerRow(3);
+      }
+    };
+
+    updateColumns();
+
+    const resizeObserver = new ResizeObserver(updateColumns);
+    if (parentRef.current) {
+      resizeObserver.observe(parentRef.current);
+    }
+
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, []);
 
   // Filter to show only the latest version of each server
   const latestServers = useMemo(() => {
