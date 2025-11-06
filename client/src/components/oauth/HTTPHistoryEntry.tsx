@@ -3,8 +3,8 @@
  * Displays a consolidated HTTP request/response pair in a Chrome DevTools-style format
  */
 
-import { useState } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { useMemo, useState } from "react";
+import { AlertTriangle, ChevronDown, ChevronRight } from "lucide-react";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import "react18-json-view/src/dark.css";
@@ -14,6 +14,10 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import type {
+  LogErrorDetails,
+  OAuthFlowStep,
+} from "@/lib/oauth/state-machines/types";
 
 interface HTTPHistoryEntryProps {
   method: string;
@@ -25,6 +29,8 @@ interface HTTPHistoryEntryProps {
   requestBody?: any;
   responseHeaders?: Record<string, string>;
   responseBody?: any;
+  error?: LogErrorDetails;
+  step?: OAuthFlowStep;
 }
 
 export function HTTPHistoryEntry({
@@ -37,6 +43,8 @@ export function HTTPHistoryEntry({
   requestBody,
   responseHeaders,
   responseBody,
+  error,
+  step,
 }: HTTPHistoryEntryProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -60,16 +68,35 @@ export function HTTPHistoryEntry({
   };
 
   const statusColor = getStatusColor(status);
-  const isPending = status === undefined;
+  const isPending = status === undefined && !error;
+  const isExpectedAuthChallenge =
+    step === "request_without_token" && status === 401;
+  const hasError =
+    Boolean(error) || (!!status && status >= 400 && !isExpectedAuthChallenge);
+  const errorMessage = useMemo(() => {
+    if (error?.message) return error.message;
+    if (status && status >= 400 && !isExpectedAuthChallenge) {
+      return statusText || `HTTP ${status}`;
+    }
+    return undefined;
+  }, [error?.message, status, statusText, isExpectedAuthChallenge]);
 
   return (
     <Collapsible
       open={isExpanded}
       onOpenChange={setIsExpanded}
-      className="border rounded-lg bg-card shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden"
+      className={cn(
+        "border rounded-lg bg-card shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden",
+        hasError ? "border-red-400 dark:border-red-500" : "border-border",
+      )}
     >
       <CollapsibleTrigger className="w-full">
-        <div className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors">
+        <div
+          className={cn(
+            "px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors",
+            hasError && "bg-red-50/50 dark:bg-red-950/20",
+          )}
+        >
           <div className="flex-shrink-0">
             {isExpanded ? (
               <ChevronDown className="h-3 w-3 text-muted-foreground" />
@@ -108,6 +135,12 @@ export function HTTPHistoryEntry({
                 )}
               </>
             )}
+            {hasError && errorMessage && (
+              <span className="text-xs text-red-600 dark:text-red-400 flex-shrink-0 flex items-center gap-1">
+                <AlertTriangle className="h-3 w-3" />
+                {errorMessage}
+              </span>
+            )}
           </div>
         </div>
       </CollapsibleTrigger>
@@ -115,6 +148,12 @@ export function HTTPHistoryEntry({
       <CollapsibleContent>
         <div className="border-t bg-muted/20">
           <div className="p-3 space-y-3">
+            {hasError && errorMessage && (
+              <div className="text-xs text-red-600 dark:text-red-400 flex items-center gap-1">
+                <AlertTriangle className="h-3.5 w-3.5" />
+                <span>{errorMessage}</span>
+              </div>
+            )}
             {/* URL */}
             <div>
               <div className="text-xs font-medium text-muted-foreground mb-1">
