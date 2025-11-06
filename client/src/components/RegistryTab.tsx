@@ -32,6 +32,10 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
   const [isAddServerModalOpen, setIsAddServerModalOpen] = useState(false);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [selectedServer, setSelectedServer] = useState<RegistryServer | null>(null);
+  const [selectedConnectionIndices, setSelectedConnectionIndices] = useState<{
+    packageIdx?: number;
+    remoteIdx?: number;
+  }>({});
 
   // Ref for the scrollable container
   const parentRef = useRef<HTMLDivElement>(null);
@@ -175,8 +179,10 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
     return `Updated ${Math.floor(diffHours / 24)}d ago`;
   };
 
-  const handleInstall = (server: RegistryServer) => {
+  const handleInstall = (server: RegistryServer, packageIdx?: number, remoteIdx?: number) => {
     setSelectedServer(server);
+    // Store the selected connection indices in state
+    setSelectedConnectionIndices({ packageIdx, remoteIdx });
     setIsDetailModalOpen(false); // Close detail modal if open
     setIsAddServerModalOpen(true);
   };
@@ -192,15 +198,82 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
     setSelectedServer(null);
   };
 
-  // Convert registry server to form data
-  const getPrefilledFormData = (): Partial<ServerFormData> | undefined => {
+  // Convert registry server to form data with optional connection metadata
+  const getPrefilledFormData = (
+    packageIdx?: number,
+    remoteIdx?: number
+  ): Partial<ServerFormData> | undefined => {
     if (!selectedServer || !selectedServer.name) return undefined;
 
     const formData: Partial<ServerFormData> = {
       name: selectedServer.name.split("/").pop() || selectedServer.name,
     };
 
-    // Check if it has npm package
+    // If a specific package is selected
+    if (packageIdx !== undefined && selectedServer.packages?.[packageIdx]) {
+      const pkg = selectedServer.packages[packageIdx];
+
+      formData.type = "stdio";
+      formData.command = pkg.registryType === "npm" ? "npx" : pkg.identifier;
+      formData.args = pkg.registryType === "npm" ? ["-y", pkg.identifier] : [];
+
+      // Add environment variables with hints
+      if (pkg.environmentVariables && pkg.environmentVariables.length > 0) {
+        formData.env = {};
+        pkg.environmentVariables.forEach((env) => {
+          if (env.name && formData.env) {
+            // Use placeholder hint from description if available
+            formData.env[env.name] = env.value || "";
+          }
+        });
+      }
+
+      return formData;
+    }
+
+    // If a specific remote is selected
+    if (remoteIdx !== undefined && selectedServer.remotes?.[remoteIdx]) {
+      const remote = selectedServer.remotes[remoteIdx];
+
+      if (remote.type === "stdio" && remote.command) {
+        formData.type = "stdio";
+        formData.command = remote.command;
+        formData.args = remote.args;
+        formData.env = remote.env;
+        return formData;
+      }
+
+      if (remote.url) {
+        formData.type = "http";
+        formData.url = remote.url;
+
+        // Auto-configure OAuth 2.0 for streamable-http and SSE transports
+        if (
+          remote.type === "streamable-http" ||
+          remote.type === "streamableHttp" ||
+          remote.type === "sse"
+        ) {
+          formData.useOAuth = true;
+        } else if (remote.headers && remote.headers.length > 0) {
+          // Check if headers include Authorization - use Bearer token
+          const authHeader = remote.headers.find(h => h.name === "Authorization");
+          if (authHeader) {
+            // Don't set useOAuth, will be handled as bearer token in modal
+            formData.headers = {};
+            // Store header metadata for hints
+            remote.headers.forEach((header) => {
+              if (formData.headers && header.name) {
+                formData.headers[header.name] = header.value || "";
+              }
+            });
+          }
+        }
+
+        return formData;
+      }
+    }
+
+    // Fallback: use first available package or remote
     const npmPackage = selectedServer.packages?.find(
       (pkg) => pkg.registryType === "npm"
     );
@@ -208,10 +281,19 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
       formData.type = "stdio";
       formData.command = "npx";
       formData.args = ["-y", npmPackage.identifier];
+
+      if (npmPackage.environmentVariables && npmPackage.environmentVariables.length > 0) {
+        formData.env = {};
+        npmPackage.environmentVariables.forEach((env) => {
+          if (env.name && formData.env) {
+            formData.env[env.name] = env.value || "";
+          }
+        });
+      }
+
       return formData;
     }
 
-    // Check if it has remote connection
     const remote = selectedServer.remotes?.[0];
     if (remote) {
       if (remote.type === "stdio" && remote.command) {
@@ -225,7 +307,6 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
         formData.type = "http";
         formData.url = remote.url;
 
-        // Auto-configure OAuth 2.0 for streamable-http and SSE transports
         if (
           remote.type === "streamable-http" ||
           remote.type === "streamableHttp" ||
@@ -371,9 +452,10 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
         onClose={() => {
           setIsAddServerModalOpen(false);
           setSelectedServer(null);
+          setSelectedConnectionIndices({});
         }}
         onSubmit={handleAddServer}
-        initialData={selectedServer ? getPrefilledFormData() : undefined}
+        initialData={selectedServer ? getPrefilledFormData(selectedConnectionIndices.packageIdx, selectedConnectionIndices.remoteIdx) : undefined}
       />
     </div>
   );

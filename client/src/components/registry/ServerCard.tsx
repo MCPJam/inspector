@@ -6,7 +6,7 @@ import type { RegistryServer } from "@/shared/types";
 
 interface ServerCardProps {
   server: RegistryServer;
-  onInstall: (server: RegistryServer) => void;
+  onInstall: (server: RegistryServer, packageIdx?: number, remoteIdx?: number) => void;
   onViewDetails: (server: RegistryServer) => void;
 }
 
@@ -49,7 +49,10 @@ export function ServerCard({ server, onInstall, onViewDetails }: ServerCardProps
   const relativeTime = getRelativeTime(updatedAt || publishedAt);
 
   return (
-    <Card className="hover:shadow-md transition-shadow cursor-pointer group">
+    <Card
+      className="hover:shadow-md transition-shadow cursor-pointer group"
+      onClick={() => onViewDetails(server)}
+    >
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">
