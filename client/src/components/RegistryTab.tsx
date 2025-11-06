@@ -358,7 +358,7 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
             <h2 className="text-lg font-semibold">MCP Server Registry</h2>
             <div className="flex items-center gap-2">
               <p className="text-sm text-muted-foreground">
-                Discover and install official MCP servers
+                {latestServers.length} {latestServers.length === 1 ? 'server' : 'servers'} available
               </p>
               {getLastUpdateText() && (
                 <>
