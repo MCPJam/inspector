@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ServerCard } from "./registry/ServerCard";
+import { RegistryServerCard } from "./registry/RegistryServerCard";
 import { ServerDetailModal } from "./registry/ServerDetailModal";
 import { SearchInput } from "./ui/search-input";
 import { Button } from "./ui/button";
@@ -418,7 +418,7 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
                 >
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     {serversInRow.map((server, colIndex) => (
-                      <ServerCard
+                      <RegistryServerCard
                         key={`${server.name || 'unknown'}-${server.version || 'unknown'}-${virtualRow.index}-${colIndex}`}
                         server={server}
                         onInstall={handleInstall}
