@@ -144,16 +144,16 @@ function MessageView({
         {steps.map((stepParts, sIdx) => (
           <div key={sIdx} className="space-y-3">
             {stepParts.map((part, pIdx) => (
-            <PartSwitch
-              key={`${sIdx}-${pIdx}`}
-              part={part}
-              role={role}
-              onSendFollowUp={onSendFollowUp}
-              toolsMetadata={toolsMetadata}
-              toolServerMap={toolServerMap}
-              widgetState={widgetState}
-              onWidgetStateChange={onWidgetStateChange}
-            />
+              <PartSwitch
+                key={`${sIdx}-${pIdx}`}
+                part={part}
+                role={role}
+                onSendFollowUp={onSendFollowUp}
+                toolsMetadata={toolsMetadata}
+                toolServerMap={toolServerMap}
+                widgetState={widgetState}
+                onWidgetStateChange={onWidgetStateChange}
+              />
             ))}
           </div>
         ))}
@@ -278,9 +278,7 @@ function PartSwitch({
             onCallTool={(toolName, params) =>
               callTool(serverId, toolName, params)
             }
-            widgetState={
-              toolCallId ? widgetState[toolCallId] ?? null : null
-            }
+            widgetState={toolCallId ? (widgetState[toolCallId] ?? null) : null}
             onWidgetStateChange={onWidgetStateChange}
           />
         </>
