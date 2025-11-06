@@ -31,6 +31,7 @@ interface HTTPHistoryEntryProps {
   responseBody?: any;
   error?: LogErrorDetails;
   step?: OAuthFlowStep;
+  defaultOpen?: boolean;
 }
 
 export function HTTPHistoryEntry({
@@ -45,8 +46,9 @@ export function HTTPHistoryEntry({
   responseBody,
   error,
   step,
+  defaultOpen = false,
 }: HTTPHistoryEntryProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(defaultOpen);
 
   // Determine status color
   const getStatusColor = (statusCode?: number) => {
