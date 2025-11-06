@@ -224,6 +224,16 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
       if (remote.url) {
         formData.type = "http";
         formData.url = remote.url;
+
+        // Auto-configure OAuth 2.0 for streamable-http and SSE transports
+        if (
+          remote.type === "streamable-http" ||
+          remote.type === "streamableHttp" ||
+          remote.type === "sse"
+        ) {
+          formData.useOAuth = true;
+        }
+
         return formData;
       }
     }
