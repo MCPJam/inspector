@@ -256,7 +256,7 @@ saveCodeVerifier(verifier)
 ````
 </CodeGroup>
 
-### 2. OAuth State Machine
+### 3. OAuth State Machine
 
 **Location:** `client/src/lib/oauth-state-machine.ts:353`
 
@@ -266,8 +266,9 @@ Manages the step-by-step OAuth flow:
 - Handles errors and retries automatically
 - Updates UI state via callbacks
 - Validates preconditions before transitions
+- Tracks current step for UI synchronization
 
-### 3. CORS Proxy
+### 4. CORS Proxy
 
 **Location:** `server/routes/mcp/oauth.ts:10`
 
