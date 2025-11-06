@@ -416,12 +416,14 @@ clearOAuthData(serverName);
 
 ## File References
 
-| Component        | Location                                |
-| ---------------- | --------------------------------------- |
-| OAuth Flow Types | `client/src/lib/oauth-flow-types.ts`    |
-| State Machine    | `client/src/lib/oauth-state-machine.ts` |
-| OAuth Provider   | `client/src/lib/mcp-oauth.ts`           |
-| CORS Proxy       | `server/routes/mcp/oauth.ts`            |
+| Component        | Location                                                |
+| ---------------- | ------------------------------------------------------- |
+| OAuth Flow Types | `client/src/lib/oauth-flow-types.ts`                    |
+| State Machine    | `client/src/lib/oauth-state-machine.ts`                 |
+| OAuth Provider   | `client/src/lib/mcp-oauth.ts`                           |
+| CORS Proxy       | `server/routes/mcp/oauth.ts`                            |
+| Flow Logger      | `client/src/components/oauth/OAuthFlowLogger.tsx`       |
+| Step Metadata    | `client/src/lib/oauth/state-machines/shared/step-metadata.ts` |
 
 <Note>
   The OAuth implementation follows the MCP specification and uses PKCE for
