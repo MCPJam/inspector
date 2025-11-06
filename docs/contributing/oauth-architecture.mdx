@@ -206,7 +206,25 @@ graph LR
 
 ## Key Components
 
-### 1. MCPOAuthProvider
+### 1. OAuthFlowLogger
+
+**Location:** `client/src/components/oauth/OAuthFlowLogger.tsx`
+
+Provides an interactive guide for the OAuth flow with educational content:
+
+- Groups logs and HTTP requests by OAuth step
+- Displays step metadata including title, summary, and status badges
+- Shows teachable moments and tips for each step
+- Supports focusing on specific steps in the sequence diagram
+- Auto-scrolls to latest activity
+
+Step metadata is defined in `client/src/lib/oauth/state-machines/shared/step-metadata.ts` with:
+- Step ordering and indexing
+- Educational summaries for each step
+- Teachable moments highlighting key concepts
+- Tips for common issues
+
+### 2. MCPOAuthProvider
 
 **Location:** `client/src/lib/mcp-oauth.ts:72`
 
