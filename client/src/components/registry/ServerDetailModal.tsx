@@ -448,18 +448,20 @@ export function ServerDetailModal({
                             )}
                           </div>
 
-                          {/* Add to Inspector button for this package */}
-                          <Button
-                            size="sm"
-                            className="w-full mt-3"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onInstall(server, idx, undefined);
-                            }}
-                          >
-                            <Terminal className="h-3.5 w-3.5 mr-2" />
-                            Add to Inspector
-                          </Button>
+                          {/* Connect button for this package (skip mcpb for desktop) */}
+                          {pkg.registryType !== 'mcpb' && (
+                            <Button
+                              size="sm"
+                              className="w-full mt-3"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onInstall(server, idx, undefined);
+                              }}
+                            >
+                              <Terminal className="h-3.5 w-3.5 mr-2" />
+                              Connect
+                            </Button>
+                          )}
                         </div>
                       );
                     })}
@@ -541,7 +543,7 @@ export function ServerDetailModal({
                           </div>
                         )}
 
-                        {/* Add to Inspector button for this remote */}
+                        {/* Connect button for this remote */}
                         <Button
                           size="sm"
                           className="w-full mt-3"
@@ -551,7 +553,7 @@ export function ServerDetailModal({
                           }}
                         >
                           <Terminal className="h-3.5 w-3.5 mr-2" />
-                          Add to Inspector
+                          Connect
                         </Button>
                       </div>
                     ))}
@@ -702,7 +704,7 @@ export function ServerDetailModal({
           </Button>
           <Button onClick={() => onInstall(server)}>
             <Terminal className="h-4 w-4 mr-2" />
-            Add to Inspector
+            Connect
           </Button>
         </div>
       </DialogContent>
