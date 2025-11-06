@@ -573,28 +573,71 @@ export interface ServerStatus {
 
 // MCP Registry types
 export interface RegistryPackage {
-  registryType: "npm" | "pypi" | "go" | string;
+  registryType: "npm" | "pypi" | "go" | "mcpb" | "oci" | "nuget" | string;
   identifier: string;
   version?: string;
+  registryBaseUrl?: string;
+  runtimeHint?: string;
+  runtimeArguments?: string[];
+  packageArguments?: string[];
+  environmentVariables?: Array<{
+    name: string;
+    value?: string;
+    description?: string;
+  }>;
+  fileSha256?: string;
+  transport?: {
+    type: string;
+    url?: string;
+    headers?: Array<{ name: string; value: string }>;
+  };
 }
 
 export interface RegistryRemote {
-  type: "stdio" | "sse" | "streamableHttp";
+  type: "stdio" | "sse" | "streamable-http" | "streamableHttp";
   url?: string;
   command?: string;
   args?: string[];
   env?: Record<string, string>;
+  headers?: Array<{ name: string; value: string }>;
+}
+
+export interface RegistryIcon {
+  src: string;
+  sizes?: string[];
+  mimeType?: string;
+  theme?: "light" | "dark";
+}
+
+export interface RegistryRepository {
+  url?: string;
+  id?: string;
+  source?: string;
+  subfolder?: string;
 }
 
 export interface RegistryServer {
   $schema?: string;
   name: string;
   description: string;
-  status: "active" | "deleted" | "deprecated" | string;
+  status?: "active" | "deleted" | "deprecated" | string;
   version: string;
+  title?: string;
+  websiteUrl?: string;
+  icons?: RegistryIcon[];
   packages?: RegistryPackage[];
   remotes?: RegistryRemote[];
-  _meta?: Record<string, any>;
+  repository?: RegistryRepository;
+  _meta?: {
+    "io.modelcontextprotocol.registry/official"?: {
+      publishedAt?: string;
+      updatedAt?: string;
+      isLatest?: boolean;
+      status?: string;
+    };
+    "io.modelcontextprotocol.registry/publisher-provided"?: Record<string, any>;
+    [key: string]: any;
+  };
 }
 
 export interface RegistryServerVersion {
