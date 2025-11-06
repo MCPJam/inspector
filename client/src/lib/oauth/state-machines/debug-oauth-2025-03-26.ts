@@ -16,6 +16,7 @@ import type {
   OAuthFlowState,
   OAuthStateMachine,
   RegistrationStrategy2025_03_26,
+  HttpHistoryEntry,
 } from "./types";
 import type { DiagramAction } from "./shared/types";
 import {
@@ -24,6 +25,8 @@ import {
   generateRandomString,
   generateCodeChallenge,
   loadPreregisteredCredentials,
+  markLatestHttpEntryAsError,
+  toLogErrorDetails,
 } from "./shared/helpers";
 
 // Re-export types for backward compatibility
@@ -442,6 +445,7 @@ export const createDebugOAuthStateMachine = (
                   response.status === 200
                     ? addInfoLog(
                         state,
+                        "discovery_start",
                         "optional-auth",
                         "Optional Authentication",
                         {
@@ -580,6 +584,7 @@ export const createDebugOAuthStateMachine = (
 
               const fallbackInfo = addInfoLog(
                 getCurrentState(),
+                "received_authorization_server_metadata",
                 "fallback-endpoints",
                 "Using Fallback Endpoints",
                 {
@@ -674,6 +679,7 @@ export const createDebugOAuthStateMachine = (
 
             const infoLogs = addInfoLog(
               getCurrentState(),
+              "received_authorization_server_metadata",
               "as-metadata",
               "Authorization Server Metadata",
               metadata,
@@ -731,6 +737,7 @@ export const createDebugOAuthStateMachine = (
 
               const infoLogs = addInfoLog(
                 getCurrentState(),
+                "received_client_credentials",
                 "dcr",
                 "Pre-registered Client",
                 preregInfo,
@@ -877,6 +884,7 @@ export const createDebugOAuthStateMachine = (
 
                 const infoLogs = addInfoLog(
                   getCurrentState(),
+                  "received_client_credentials",
                   "dcr",
                   "Dynamic Client Registration",
                   dcrInfo,
@@ -939,6 +947,7 @@ export const createDebugOAuthStateMachine = (
 
             const pkceInfoLogs = addInfoLog(
               getCurrentState(),
+              "generate_pkce_parameters",
               "pkce-generation",
               "Generate PKCE Parameters (REQUIRED)",
               {
@@ -1009,6 +1018,7 @@ export const createDebugOAuthStateMachine = (
 
             const authUrlInfoLogs = addInfoLog(
               getCurrentState(),
+              "authorization_request",
               "auth-url",
               "Authorization URL",
               {
@@ -1193,6 +1203,8 @@ export const createDebugOAuthStateMachine = (
                   ...tokenInfoLogs,
                   {
                     id: "auth-code",
+                    level: "info",
+                    step: "received_authorization_code",
                     label: "Authorization Code",
                     data: {
                       code: state.authorizationCode,
@@ -1215,6 +1227,8 @@ export const createDebugOAuthStateMachine = (
                   ...tokenInfoLogs,
                   {
                     id: "oauth-tokens",
+                    level: "info",
+                    step: "received_access_token",
                     label: "OAuth Tokens",
                     data: tokenData,
                     timestamp: Date.now(),
@@ -1267,6 +1281,8 @@ export const createDebugOAuthStateMachine = (
                     ...tokenInfoLogs,
                     {
                       id: "token",
+                      step: "received_access_token",
+                      level: "info",
                       label: "Access Token (Decoded JWT)",
                       data: audienceNote,
                       timestamp: Date.now(),
@@ -1299,6 +1315,8 @@ export const createDebugOAuthStateMachine = (
                     ...tokenInfoLogs,
                     {
                       id: "id-token",
+                      step: "received_access_token",
+                      level: "info",
                       label: "ID Token (OIDC - Decoded JWT)",
                       data: formattedIdToken,
                       timestamp: Date.now(),
@@ -1378,6 +1396,7 @@ export const createDebugOAuthStateMachine = (
 
             const authenticatedRequestInfoLogs = addInfoLog(
               getCurrentState(),
+              "authenticated_mcp_request",
               "authenticated-init",
               "Authenticated MCP Initialize Request",
               {
@@ -1468,8 +1487,8 @@ export const createDebugOAuthStateMachine = (
                       },
                     };
 
-                    const getHistoryEntry = {
-                      step: "http_sse_fallback",
+                    const getHistoryEntry: HttpHistoryEntry = {
+                      step: "complete",
                       timestamp: Date.now(),
                       request: getRequest,
                     };
@@ -1479,6 +1498,7 @@ export const createDebugOAuthStateMachine = (
                     // Add info log for backwards compatibility attempt
                     let fallbackInfoLogs = addInfoLog(
                       getCurrentState(),
+                      "authenticated_mcp_request",
                       "http-sse-fallback-attempt",
                       "Backwards Compatibility Check",
                       {
@@ -1529,6 +1549,7 @@ export const createDebugOAuthStateMachine = (
 
                       const httpSseInfoLogs = addInfoLog(
                         getCurrentState(),
+                        "authenticated_mcp_request",
                         "http-sse-detected",
                         "HTTP+SSE Transport Detected (2024-11-05)",
                         {
@@ -1609,6 +1630,7 @@ export const createDebugOAuthStateMachine = (
 
                 mcpInfoLogs = addInfoLog(
                   getCurrentState(),
+                  "authenticated_mcp_request",
                   "mcp-protocol",
                   "MCP Server Information",
                   protocolInfo,
@@ -1616,6 +1638,7 @@ export const createDebugOAuthStateMachine = (
               } else if (isSSE) {
                 mcpInfoLogs = addInfoLog(
                   getCurrentState(),
+                  "authenticated_mcp_request",
                   "mcp-transport",
                   "MCP Transport Detected",
                   {
@@ -1649,6 +1672,7 @@ export const createDebugOAuthStateMachine = (
 
                 mcpInfoLogs = addInfoLog(
                   getCurrentState(),
+                  "authenticated_mcp_request",
                   "mcp-protocol",
                   "MCP Server Information",
                   protocolInfo,
@@ -1664,28 +1688,49 @@ export const createDebugOAuthStateMachine = (
                 isInitiatingAuth: false,
               });
             } catch (error) {
+              const errorDetails = toLogErrorDetails(error);
               const errorResponse = {
                 status: 0,
                 statusText: "Network Error",
                 headers: mergeHeaders({}),
                 body: {
-                  error: error instanceof Error ? error.message : String(error),
+                  error: errorDetails.message,
+                  details: errorDetails.details,
                 },
               };
 
               const updatedHistoryError = [...(state.httpHistory || [])];
               if (updatedHistoryError.length > 0) {
-                const lastEntry =
-                  updatedHistoryError[updatedHistoryError.length - 1];
-                lastEntry.response = errorResponse;
-                lastEntry.duration =
-                  Date.now() - (lastEntry.timestamp || Date.now());
+                const lastEntry = {
+                  ...updatedHistoryError[updatedHistoryError.length - 1],
+                  response: errorResponse,
+                  duration:
+                    Date.now() -
+                    (updatedHistoryError[updatedHistoryError.length - 1]
+                      ?.timestamp || Date.now()),
+                  error: errorDetails,
+                };
+                updatedHistoryError[updatedHistoryError.length - 1] = lastEntry;
               }
+
+              const currentState = getCurrentState();
+              const infoLogs = addInfoLog(
+                currentState,
+                "authenticated_mcp_request",
+                `error-authenticated_mcp_request-${Date.now()}`,
+                "Authenticated MCP request failed",
+                {
+                  request: currentState.lastRequest,
+                  error: errorDetails,
+                },
+                { level: "error", error: errorDetails },
+              );
 
               updateState({
                 lastResponse: errorResponse,
                 httpHistory: updatedHistoryError,
-                error: `Authenticated MCP request failed: ${error instanceof Error ? error.message : String(error)}`,
+                infoLogs,
+                error: `Authenticated MCP request failed: ${errorDetails.message}`,
                 isInitiatingAuth: false,
               });
             }
@@ -1700,10 +1745,38 @@ export const createDebugOAuthStateMachine = (
             break;
         }
       } catch (error) {
-        updateState({
-          error: error instanceof Error ? error.message : String(error),
+        const currentState = getCurrentState();
+        const errorDetails = toLogErrorDetails(error);
+        const infoLogs = addInfoLog(
+          currentState,
+          currentState.currentStep,
+          `error-${currentState.currentStep}-${Date.now()}`,
+          "Step failed",
+          {
+            step: currentState.currentStep,
+            request: currentState.lastRequest,
+            response: currentState.lastResponse,
+            error: errorDetails,
+          },
+          { level: "error", error: errorDetails },
+        );
+
+        const updatedHistory = markLatestHttpEntryAsError(
+          currentState.httpHistory,
+          errorDetails,
+        );
+
+        const updates: Partial<OAuthFlowState> = {
+          error: errorDetails.message,
+          infoLogs,
           isInitiatingAuth: false,
-        });
+        };
+
+        if (updatedHistory) {
+          updates.httpHistory = updatedHistory;
+        }
+
+        updateState(updates);
       }
     },
 
