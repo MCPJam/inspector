@@ -26,7 +26,6 @@ export function RegistryServerCard({ server, onInstall, onViewDetails }: Registr
 
   // Get metadata from the official registry provider
   const officialMeta = server._meta?.["io.modelcontextprotocol.registry/official"];
-  const isLatest = officialMeta?.isLatest;
   const updatedAt = officialMeta?.updatedAt;
   const publishedAt = officialMeta?.publishedAt;
 
@@ -67,6 +66,9 @@ export function RegistryServerCard({ server, onInstall, onViewDetails }: Registr
                 <CardTitle className="text-base truncate">{projectName}</CardTitle>
                 <p className="text-xs text-muted-foreground truncate">{organization}</p>
               </div>
+              <Badge variant="outline" className="text-xs">
+                {isRemote ? "Remote" : "Local"}
+              </Badge>
             </div>
           </div>
         </div>
@@ -80,16 +82,6 @@ export function RegistryServerCard({ server, onInstall, onViewDetails }: Registr
             {isOfficial && (
               <Badge variant="secondary" className="text-xs">
                 Official
-              </Badge>
-            )}
-            {isLatest && (
-              <Badge variant="default" className="text-xs bg-green-600 hover:bg-green-700">
-                Latest
-              </Badge>
-            )}
-            {isRemote && (
-              <Badge variant="outline" className="text-xs">
-                Remote
               </Badge>
             )}
             {hasPackages && server.packages![0] && (
