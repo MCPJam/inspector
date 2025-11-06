@@ -23,6 +23,7 @@ import {
 } from "./components/ui/sidebar";
 import { useAppState } from "./hooks/use-app-state";
 import { PreferencesStoreProvider } from "./stores/preferences/preferences-provider";
+import { RegistryStoreProvider } from "./stores/registry/registry-provider";
 import { Toaster } from "./components/ui/sonner";
 import { useElectronOAuth } from "./hooks/useElectronOAuth";
 import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
@@ -250,12 +251,14 @@ export default function App() {
 
   return (
     <PreferencesStoreProvider themeMode="light" themePreset="default">
-      <Toaster />
-      {shouldShowLoginPage && !isOAuthCallbackComplete ? (
-        <LoginPage />
-      ) : (
-        appContent
-      )}
+      <RegistryStoreProvider>
+        <Toaster />
+        {shouldShowLoginPage && !isOAuthCallbackComplete ? (
+          <LoginPage />
+        ) : (
+          appContent
+        )}
+      </RegistryStoreProvider>
     </PreferencesStoreProvider>
   );
 }

@@ -1,4 +1,5 @@
-import { useEffect, useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { ServerCard } from "./registry/ServerCard";
 import { ServerDetailModal } from "./registry/ServerDetailModal";
 import { SearchInput } from "./ui/search-input";
@@ -6,138 +7,163 @@ import { Button } from "./ui/button";
 import { EmptyState } from "./ui/empty-state";
 import { Loader2, Package, RefreshCw } from "lucide-react";
 import type { RegistryServer, ServerFormData } from "@/shared/types";
-import { listRegistryServers } from "@/lib/registry-api";
 import { AddServerModal } from "./connection/AddServerModal";
-import { toast } from "sonner";
-import { searchRegistryServers, parseSearchQuery } from "@/lib/registry-search";
+import { parseSearchQuery, createRegistrySearch } from "@/lib/registry-search";
+import { useRegistryStore } from "@/stores/registry/registry-provider";
 
 interface RegistryTabProps {
   onConnect: (formData: ServerFormData) => void;
 }
 
 export function RegistryTab({ onConnect }: RegistryTabProps) {
-  const [allServers, setAllServers] = useState<RegistryServer[]>([]); // All fetched servers
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // Get data from the registry store
+  const allServers = useRegistryStore((state) => state.allServers);
+  const loading = useRegistryStore((state) => state.loading);
+  const error = useRegistryStore((state) => state.error);
+  const isFullyLoaded = useRegistryStore((state) => state.isFullyLoaded);
+  const lastFetchTime = useRegistryStore((state) => state.lastFetchTime);
+  const fetchAllPages = useRegistryStore((state) => state.fetchAllPages);
+
+  // Local state
   const [searchQuery, setSearchQuery] = useState("");
-  const [nextCursor, setNextCursor] = useState<string | undefined>();
-  const [hasMore, setHasMore] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
 
   // Modal state
   const [isAddServerModalOpen, setIsAddServerModalOpen] = useState(false);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [selectedServer, setSelectedServer] = useState<RegistryServer | null>(null);
 
-  const fetchServers = async (cursor?: string) => {
-    try {
-      if (cursor) {
-        setLoadingMore(true);
-      } else {
-        setLoading(true);
-      }
-      setError(null);
+  // Ref for the scrollable container
+  const parentRef = useRef<HTMLDivElement>(null);
 
-      const response = await listRegistryServers({
-        limit: 100, // Max allowed by the registry API
-        cursor,
-      });
+  // Determine columns per row based on container width
+  const [columnsPerRow, setColumnsPerRow] = useState(3);
 
-      // Unwrap servers from the wrapper structure
-      const unwrappedServers = response.servers.map((wrapper) => ({
-        ...wrapper.server,
-        _meta: { ...wrapper.server._meta, ...wrapper._meta },
-      }));
-
-      if (cursor) {
-        // Append to existing servers for pagination, avoiding duplicates
-        setAllServers((prev) => {
-          const existingIds = new Set(prev.map(s => `${s.name}@${s.version}`));
-          const newServers = unwrappedServers.filter(
-            s => !existingIds.has(`${s.name}@${s.version}`)
-          );
-          return [...prev, ...newServers];
-        });
-      } else {
-        // Replace servers for initial load
-        setAllServers(unwrappedServers);
-      }
-
-      setNextCursor(response.metadata.nextCursor);
-      setHasMore(!!response.metadata.nextCursor);
-
-      // Auto-fetch all pages on initial load for better search experience
-      if (!cursor && response.metadata.nextCursor) {
-        // Recursively fetch remaining pages in background
-        fetchAllRemainingPages(response.metadata.nextCursor);
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to load registry servers";
-      setError(message);
-      toast.error(message);
-    } finally {
-      setLoading(false);
-      setLoadingMore(false);
-    }
-  };
-
-  // Fetch all remaining pages in the background
-  const fetchAllRemainingPages = async (cursor: string) => {
-    try {
-      const response = await listRegistryServers({
-        limit: 100,
-        cursor,
-      });
-
-      const unwrappedServers = response.servers.map((wrapper) => ({
-        ...wrapper.server,
-        _meta: { ...wrapper.server._meta, ...wrapper._meta },
-      }));
-
-      // Deduplicate servers before adding
-      setAllServers((prev) => {
-        const existingIds = new Set(prev.map(s => `${s.name}@${s.version}`));
-        const newServers = unwrappedServers.filter(
-          s => !existingIds.has(`${s.name}@${s.version}`)
-        );
-        return [...prev, ...newServers];
-      });
-
-      setNextCursor(response.metadata.nextCursor);
-      setHasMore(!!response.metadata.nextCursor);
-
-      // Continue fetching if there are more pages
-      if (response.metadata.nextCursor) {
-        fetchAllRemainingPages(response.metadata.nextCursor);
-      }
-    } catch (err) {
-      console.error("Error fetching additional pages:", err);
-      // Don't show error toast for background fetches
-    }
-  };
+  // Memoize the Fuse.js instance to avoid recreating it on every render
+  const fuseInstance = useMemo(() => {
+    if (allServers.length === 0) return null;
+    return createRegistrySearch(allServers);
+  }, [allServers]);
 
   // Use Fuse.js for client-side search with memoization
   const filteredServers = useMemo(() => {
+    // No search query - return all servers sorted alphabetically
     if (!searchQuery.trim()) {
-      return allServers;
+      return [...allServers].sort((a, b) =>
+        (a.name || '').localeCompare(b.name || '')
+      );
     }
 
     const { query, filters } = parseSearchQuery(searchQuery);
-    return searchRegistryServers(allServers, query, filters);
-  }, [allServers, searchQuery]);
+    let results = allServers;
 
-  useEffect(() => {
-    fetchServers();
-  }, []);
+    // Apply filters first
+    if (filters && Object.keys(filters).length > 0) {
+      results = results.filter((server) => {
+        if (filters.official !== undefined && server._meta?.official !== filters.official) {
+          return false;
+        }
+        if (filters.hasRemote !== undefined) {
+          const hasRemote = server.remotes && server.remotes.length > 0;
+          if (hasRemote !== filters.hasRemote) {
+            return false;
+          }
+        }
+        if (filters.packageType) {
+          const hasPackageType = server.packages?.some(
+            (pkg) => pkg.registryType === filters.packageType
+          );
+          if (!hasPackageType) {
+            return false;
+          }
+        }
+        if (filters.status && server.status !== filters.status) {
+          return false;
+        }
+        return true;
+      });
+    }
+
+    // If no query text, return filtered results
+    if (!query.trim()) {
+      return results.sort((a, b) =>
+        (a.name || '').localeCompare(b.name || '')
+      );
+    }
+
+    // Use the memoized Fuse instance for search
+    if (!fuseInstance) return results;
+
+    const searchResults = fuseInstance.search(query);
+    const searchedItems = searchResults.map((result) => result.item);
+
+    // Apply filters to search results
+    if (filters && Object.keys(filters).length > 0) {
+      return searchedItems.filter((server) => {
+        if (filters.official !== undefined && server._meta?.official !== filters.official) {
+          return false;
+        }
+        if (filters.hasRemote !== undefined) {
+          const hasRemote = server.remotes && server.remotes.length > 0;
+          if (hasRemote !== filters.hasRemote) {
+            return false;
+          }
+        }
+        if (filters.packageType) {
+          const hasPackageType = server.packages?.some(
+            (pkg) => pkg.registryType === filters.packageType
+          );
+          if (!hasPackageType) {
+            return false;
+          }
+        }
+        if (filters.status && server.status !== filters.status) {
+          return false;
+        }
+        return true;
+      });
+    }
+
+    return searchedItems;
+  }, [allServers, searchQuery, fuseInstance]);
+
+  // Group servers into rows for virtualization
+  const serverRows = useMemo(() => {
+    const rows: RegistryServer[][] = [];
+    for (let i = 0; i < filteredServers.length; i += columnsPerRow) {
+      rows.push(filteredServers.slice(i, i + columnsPerRow));
+    }
+    return rows;
+  }, [filteredServers, columnsPerRow]);
+
+  // Create row virtualizer
+  const rowVirtualizer = useVirtualizer({
+    count: serverRows.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 280, // Estimated height of a server card row
+    overscan: 2, // Render 2 extra rows above and below viewport
+  });
 
   const handleSearch = (value: string) => {
     setSearchQuery(value);
   };
 
-  const handleLoadMore = () => {
-    if (nextCursor && !loadingMore) {
-      fetchServers(nextCursor);
-    }
+  const handleRefresh = () => {
+    fetchAllPages(true); // Force refresh
+  };
+
+  // Format last update time
+  const getLastUpdateText = () => {
+    if (!lastFetchTime) return null;
+
+    const now = Date.now();
+    const diffMs = now - lastFetchTime;
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    const diffMinutes = Math.floor(diffMs / (1000 * 60));
+
+    if (diffMinutes < 1) return "Updated just now";
+    if (diffMinutes < 60) return `Updated ${diffMinutes}m ago`;
+    if (diffHours < 24) return `Updated ${diffHours}h ago`;
+    return `Updated ${Math.floor(diffHours / 24)}d ago`;
   };
 
   const handleInstall = (server: RegistryServer) => {
@@ -196,12 +222,12 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
     return formData;
   };
 
-  if (loading && allServers.length === 0) {
+  if (!isFullyLoaded && allServers.length === 0) {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="flex flex-col items-center gap-3">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-          <p className="text-sm text-muted-foreground">Loading registry...</p>
+          <p className="text-sm text-muted-foreground">Loading registry servers...</p>
         </div>
       </div>
     );
@@ -215,7 +241,7 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
           title="Failed to Load Registry"
           description={error}
           action={
-            <Button onClick={() => fetchServers()} variant="outline">
+            <Button onClick={handleRefresh} variant="outline">
               <RefreshCw className="h-4 w-4 mr-2" />
               Try Again
             </Button>
@@ -232,12 +258,22 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-lg font-semibold">MCP Server Registry</h2>
-            <p className="text-sm text-muted-foreground">
-              Discover and install official MCP servers
-            </p>
+            <div className="flex items-center gap-2">
+              <p className="text-sm text-muted-foreground">
+                Discover and install official MCP servers
+              </p>
+              {getLastUpdateText() && (
+                <>
+                  <span className="text-sm text-muted-foreground">•</span>
+                  <p className="text-xs text-muted-foreground">
+                    {getLastUpdateText()}
+                  </p>
+                </>
+              )}
+            </div>
           </div>
-          <Button onClick={() => fetchServers()} variant="outline" size="sm">
-            <RefreshCw className="h-4 w-4 mr-2" />
+          <Button onClick={handleRefresh} variant="outline" size="sm" disabled={loading}>
+            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
         </div>
@@ -250,7 +286,7 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
       </div>
 
       {/* Server grid */}
-      <div className="flex-1 overflow-auto p-4">
+      <div ref={parentRef} className="flex-1 overflow-auto p-4">
         {filteredServers.length === 0 ? (
           <EmptyState
             icon={Package}
@@ -262,35 +298,49 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
             }
           />
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredServers.map((server, index) => (
-              <ServerCard
-                key={`${server.name || 'unknown'}-${server.version || 'unknown'}-${index}`}
-                server={server}
-                onInstall={handleInstall}
-                onViewDetails={handleViewDetails}
-              />
-            ))}
+          <div
+            style={{
+              height: `${rowVirtualizer.getTotalSize()}px`,
+              width: '100%',
+              position: 'relative',
+            }}
+          >
+            {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+              const serversInRow = serverRows[virtualRow.index];
+              return (
+                <div
+                  key={virtualRow.key}
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    transform: `translateY(${virtualRow.start}px)`,
+                  }}
+                >
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {serversInRow.map((server, colIndex) => (
+                      <ServerCard
+                        key={`${server.name || 'unknown'}-${server.version || 'unknown'}-${virtualRow.index}-${colIndex}`}
+                        server={server}
+                        onInstall={handleInstall}
+                        onViewDetails={handleViewDetails}
+                      />
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
 
-        {/* Load more button */}
-        {hasMore && (
-          <div className="flex justify-center mt-6">
-            <Button
-              onClick={handleLoadMore}
-              disabled={loadingMore}
-              variant="outline"
-            >
-              {loadingMore ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Loading...
-                </>
-              ) : (
-                "Load More"
-              )}
-            </Button>
+        {/* Loading indicator at bottom while fetching more */}
+        {!isFullyLoaded && allServers.length > 0 && (
+          <div className="flex justify-center mt-6 mb-4">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span>Loading more servers...</span>
+            </div>
           </div>
         )}
       </div>
