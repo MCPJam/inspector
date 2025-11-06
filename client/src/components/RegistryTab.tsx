@@ -22,6 +22,7 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
   const error = useRegistryStore((state) => state.error);
   const isFullyLoaded = useRegistryStore((state) => state.isFullyLoaded);
   const lastFetchTime = useRegistryStore((state) => state.lastFetchTime);
+  const isRefreshing = useRegistryStore((state) => state.isRefreshing);
   const fetchAllPages = useRegistryStore((state) => state.fetchAllPages);
 
   // Local state
@@ -272,8 +273,8 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
               )}
             </div>
           </div>
-          <Button onClick={handleRefresh} variant="outline" size="sm" disabled={loading}>
-            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+          <Button onClick={handleRefresh} variant="outline" size="sm" disabled={isRefreshing}>
+            <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
         </div>
@@ -331,16 +332,6 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
                 </div>
               );
             })}
-          </div>
-        )}
-
-        {/* Loading indicator at bottom while fetching more */}
-        {!isFullyLoaded && allServers.length > 0 && (
-          <div className="flex justify-center mt-6 mb-4">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              <span>Loading more servers...</span>
-            </div>
           </div>
         )}
       </div>
