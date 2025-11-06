@@ -30,6 +30,7 @@ interface InfoLogEntryProps {
   data: any;
   level?: InfoLogLevel;
   error?: LogErrorDetails;
+  defaultOpen?: boolean;
 }
 
 export function InfoLogEntry({
@@ -38,8 +39,9 @@ export function InfoLogEntry({
   data,
   level = "info",
   error,
+  defaultOpen = false,
 }: InfoLogEntryProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(defaultOpen);
 
   // Format timestamp
   const formatTimestamp = (ts: number) => {
