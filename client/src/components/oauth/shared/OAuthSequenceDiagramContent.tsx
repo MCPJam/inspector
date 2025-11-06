@@ -6,10 +6,11 @@ import { DiagramLayout, buildNodesAndEdges, type Action } from "./index";
 interface OAuthSequenceDiagramContentProps {
   flowState: OAuthFlowState;
   actions: Action[];
+  focusedStep?: OAuthFlowState["currentStep"];
 }
 
 const DiagramContent = memo(
-  ({ flowState, actions }: OAuthSequenceDiagramContentProps) => {
+  ({ flowState, actions, focusedStep }: OAuthSequenceDiagramContentProps) => {
     const { nodes, edges } = useMemo(() => {
       return buildNodesAndEdges(actions, flowState.currentStep);
     }, [actions, flowState.currentStep]);
@@ -19,6 +20,7 @@ const DiagramContent = memo(
         nodes={nodes}
         edges={edges}
         currentStep={flowState.currentStep}
+        focusedStep={focusedStep}
       />
     );
   },
