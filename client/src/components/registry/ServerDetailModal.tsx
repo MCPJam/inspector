@@ -139,6 +139,7 @@ export function ServerDetailModal({
           padding: "0",
           borderRadius: "0",
           border: "none",
+          minHeight: "0",
         }}
       />
     </div>
@@ -409,7 +410,14 @@ export function ServerDetailModal({
                             {pkg.transport && (
                               <div>
                                 <span className="font-semibold">Transport:</span>
-                                <div className="mt-1 ml-0">{renderJson(pkg.transport)}</div>
+                                {typeof pkg.transport === "object" && pkg.transport !== null &&
+                                Object.keys(pkg.transport).every((k) => ["type", "url"].includes(k)) ? (
+                                  <code className="ml-2 text-xs">
+                                    {`{ type: "${(pkg.transport as any).type}"${(pkg.transport as any).url ? `, url: "${(pkg.transport as any).url}"` : ""} }`}
+                                  </code>
+                                ) : (
+                                  <div className="mt-1 ml-0">{renderJson(pkg.transport, "max-h-[120px]")}</div>
+                                )}
                               </div>
                             )}
                           </div>

@@ -72,6 +72,15 @@ export function AddServerModal({
           formState.setShowEnvVars(true);
         }
       }
+      // Handle OAuth configuration
+      if (initialData.useOAuth) {
+        formState.setAuthType("oauth");
+        formState.setShowAuthSettings(true);
+        formState.setServerFormData((prev) => ({
+          ...prev,
+          useOAuth: true,
+        }));
+      }
     }
   }, [initialData, isOpen]);
 
