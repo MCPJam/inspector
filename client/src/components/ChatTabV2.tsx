@@ -7,6 +7,7 @@ import {
   useRef,
 } from "react";
 import { useChat } from "@ai-sdk/react";
+import type { UIMessage } from "@ai-sdk/react";
 import {
   DefaultChatTransport,
   lastAssistantMessageIsCompleteWithToolCalls,
@@ -64,6 +65,8 @@ const STARTER_PROMPTS: Array<{ label: string; text: string }> = [
     text: "Summarize the most recent activity across my MCP servers.",
   },
 ];
+
+const WIDGET_STATE_MESSAGE_ID = "system:widget-state";
 
 interface ChatTabProps {
   connectedServerConfigs: Record<string, ServerWithName>;
@@ -139,6 +142,7 @@ export function ChatTabV2({
     null,
   );
   const [elicitationLoading, setElicitationLoading] = useState(false);
+  const [widgetStates, setWidgetStates] = useState<Record<string, any>>({});
 
   const selectedConnectedServerNames = useMemo(
     () =>
@@ -222,6 +226,7 @@ export function ChatTabV2({
     setChatSessionId(generateId());
     setMessages([]);
     setInput("");
+    setWidgetStates({});
   }, [setMessages]);
 
   useEffect(() => {
@@ -408,6 +413,97 @@ export function ChatTabV2({
     setInput("");
   };
 
+  const handleWidgetStateChange = useCallback(
+    (toolCallId: string, state: any) => {
+      if (!toolCallId) return;
+      setWidgetStates((prev) => {
+        if (state == null) {
+          if (!(toolCallId in prev)) return prev;
+          const next = { ...prev };
+          delete next[toolCallId];
+          return next;
+        }
+        if (prev[toolCallId] === state) return prev;
+        return {
+          ...prev,
+          [toolCallId]: state,
+        };
+      });
+    },
+    [],
+  );
+
+  const widgetStateSnapshotText = useMemo(() => {
+    const entries = Object.entries(widgetStates).filter(
+      ([, value]) => value !== null && value !== undefined,
+    );
+    if (entries.length === 0) return null;
+
+    const payload = entries.reduce<Record<string, unknown>>(
+      (acc, [toolCallId, value]) => {
+        acc[toolCallId] = value;
+        return acc;
+      },
+      {},
+    );
+
+    let serialized: string;
+    try {
+      serialized = JSON.stringify(payload);
+    } catch {
+      serialized = String(payload);
+    }
+
+    return `The latest state of the widget is: ${serialized}`;
+  }, [widgetStates]);
+
+  useEffect(() => {
+    setMessages((prevMessages) => {
+      const existingIndex = prevMessages.findIndex(
+        (msg) => msg.id === WIDGET_STATE_MESSAGE_ID,
+      );
+
+      if (!widgetStateSnapshotText) {
+        if (existingIndex === -1) return prevMessages;
+        return prevMessages.filter((_, idx) => idx !== existingIndex);
+      }
+
+      const snapshotMessage: UIMessage = {
+        id: WIDGET_STATE_MESSAGE_ID,
+        role: "system",
+        parts: [
+          {
+            type: "text",
+            text: widgetStateSnapshotText,
+          },
+        ],
+      };
+
+      if (existingIndex === -1) {
+        return [...prevMessages, snapshotMessage];
+      }
+
+      const existing = prevMessages[existingIndex];
+      if (
+        existing.role === "system" &&
+        Array.isArray((existing as any).parts)
+      ) {
+        const firstPart = (existing as any).parts?.[0];
+        if (
+          firstPart &&
+          firstPart.type === "text" &&
+          firstPart.text === widgetStateSnapshotText
+        ) {
+          return prevMessages;
+        }
+      }
+
+      const nextMessages = [...prevMessages];
+      nextMessages[existingIndex] = snapshotMessage;
+      return nextMessages;
+    });
+  }, [widgetStateSnapshotText, setMessages]);
+
   const sharedChatInputProps = {
     value: input,
     onChange: setInput,
@@ -504,6 +600,8 @@ export function ChatTabV2({
                       isLoading={status === "submitted"}
                       toolsMetadata={toolsMetadata}
                       toolServerMap={toolServerMap}
+                      widgetState={widgetStates}
+                      onWidgetStateChange={handleWidgetStateChange}
                     />
                   </div>
                   {errorMessage && (

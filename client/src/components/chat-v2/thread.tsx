@@ -47,6 +47,8 @@ interface ThreadProps {
   isLoading: boolean;
   toolsMetadata: Record<string, Record<string, any>>;
   toolServerMap: ToolServerMap;
+  widgetState: Record<string, any>;
+  onWidgetStateChange: (toolCallId: string, state: any) => void;
 }
 
 export function Thread({
@@ -56,6 +58,8 @@ export function Thread({
   isLoading,
   toolsMetadata,
   toolServerMap,
+  widgetState,
+  onWidgetStateChange,
 }: ThreadProps) {
   return (
     <div className="flex-1 overflow-y-auto pb-4">
@@ -68,6 +72,8 @@ export function Thread({
             onSendFollowUp={sendFollowUpMessage}
             toolsMetadata={toolsMetadata}
             toolServerMap={toolServerMap}
+            widgetState={widgetState}
+            onWidgetStateChange={onWidgetStateChange}
           />
         ))}
         {isLoading && <ThinkingIndicator model={model} />}
@@ -82,12 +88,16 @@ function MessageView({
   onSendFollowUp,
   toolsMetadata,
   toolServerMap,
+  widgetState,
+  onWidgetStateChange,
 }: {
   message: UIMessage;
   model: ModelDefinition;
   onSendFollowUp: (text: string) => void;
   toolsMetadata: Record<string, Record<string, any>>;
   toolServerMap: ToolServerMap;
+  widgetState: Record<string, any>;
+  onWidgetStateChange: (toolCallId: string, state: any) => void;
 }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const logoSrc = getProviderLogoFromModel(model, themeMode);
@@ -106,6 +116,8 @@ function MessageView({
               onSendFollowUp={onSendFollowUp}
               toolsMetadata={toolsMetadata}
               toolServerMap={toolServerMap}
+              widgetState={widgetState}
+              onWidgetStateChange={onWidgetStateChange}
             />
           ))}
         </div>
@@ -132,14 +144,16 @@ function MessageView({
         {steps.map((stepParts, sIdx) => (
           <div key={sIdx} className="space-y-3">
             {stepParts.map((part, pIdx) => (
-              <PartSwitch
-                key={`${sIdx}-${pIdx}`}
-                part={part}
-                role={role}
-                onSendFollowUp={onSendFollowUp}
-                toolsMetadata={toolsMetadata}
-                toolServerMap={toolServerMap}
-              />
+            <PartSwitch
+              key={`${sIdx}-${pIdx}`}
+              part={part}
+              role={role}
+              onSendFollowUp={onSendFollowUp}
+              toolsMetadata={toolsMetadata}
+              toolServerMap={toolServerMap}
+              widgetState={widgetState}
+              onWidgetStateChange={onWidgetStateChange}
+            />
             ))}
           </div>
         ))}
@@ -171,12 +185,16 @@ function PartSwitch({
   onSendFollowUp,
   toolsMetadata,
   toolServerMap,
+  widgetState,
+  onWidgetStateChange,
 }: {
   part: AnyPart;
   role: UIMessage["role"];
   onSendFollowUp: (text: string) => void;
   toolsMetadata: Record<string, Record<string, any>>;
   toolServerMap: ToolServerMap;
+  widgetState: Record<string, any>;
+  onWidgetStateChange: (toolCallId: string, state: any) => void;
 }) {
   if (isToolPart(part) || isDynamicTool(part)) {
     let maybeUiResource: any;
@@ -205,6 +223,7 @@ function PartSwitch({
       let toolInput: any = null;
       let toolOutput: any = null;
       let toolName: string | undefined;
+      const toolCallId = (part as any).toolCallId as string | undefined;
 
       // Check free chat or BYOK. isDynamicTool(part) is true for BYOK.
       const toolState = (part as any).state ?? undefined;
@@ -249,7 +268,7 @@ function PartSwitch({
           <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />
           <OpenAIAppRenderer
             serverId={serverId}
-            toolCallId={(part as any).toolCallId}
+            toolCallId={toolCallId}
             toolName={toolName}
             toolState={(part as any).state as ToolState | undefined}
             toolInput={toolInput ?? null}
@@ -259,6 +278,10 @@ function PartSwitch({
             onCallTool={(toolName, params) =>
               callTool(serverId, toolName, params)
             }
+            widgetState={
+              toolCallId ? widgetState[toolCallId] ?? null : null
+            }
+            onWidgetStateChange={onWidgetStateChange}
           />
         </>
       );
