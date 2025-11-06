@@ -21,3 +21,27 @@ Guided OAuth lets you test your OAuth implementation step-by-step. The feature w
 2. Client Registration
 3. Request & fetch auth code
 4. Request access token
+
+## Debugger Views
+
+The OAuth debugger provides two views to help you understand and troubleshoot your OAuth flow:
+
+### Guide View
+
+The default view organizes all activity by OAuth step. Each step shows:
+- Educational content explaining what to pay attention to
+- Tips for common issues
+- All HTTP requests and logs for that specific step
+- Step status indicators (pending, in progress, completed, error)
+
+This view is ideal for understanding the OAuth flow and identifying which step is causing issues.
+
+### Raw View
+
+The raw view displays all HTTP requests and info logs in chronological order, showing:
+- Exact timestamps for each event
+- Request methods and response status codes
+- Step context for each entry
+- All entries expanded by default for quick inspection
+
+This view is useful for debugging timing issues, understanding the exact sequence of events, and inspecting raw request/response data.
