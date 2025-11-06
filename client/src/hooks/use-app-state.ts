@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useLogger } from "./use-logger";
-import { initialAppState, type ServerWithName, type Profile } from "@/state/app-types";
+import { initialAppState, type ServerWithName, type Workspace } from "@/state/app-types";
 import { appReducer } from "@/state/app-reducer";
 import { loadAppState, saveAppState } from "@/state/storage";
 import {
@@ -648,99 +648,99 @@ export function useAppState() {
     ],
   );
 
-  const handleSwitchProfile = useCallback(
-    async (profileId: string) => {
-      const newProfile = appState.profiles[profileId];
-      if (!newProfile) {
-        toast.error("Profile not found");
+  const handleSwitchWorkspace = useCallback(
+    async (workspaceId: string) => {
+      const newWorkspace = appState.workspaces[workspaceId];
+      if (!newWorkspace) {
+        toast.error("Workspace not found");
         return;
       }
 
-      logger.info("Switching to profile", { profileId, name: newProfile.name });
+      logger.info("Switching to workspace", { workspaceId, name: newWorkspace.name });
 
-      // Simply switch the profile - don't worry about connecting servers
-      dispatch({ type: "SWITCH_PROFILE", profileId });
-      toast.success(`Switched to profile: ${newProfile.name}`);
+      // Simply switch the workspace - don't worry about connecting servers
+      dispatch({ type: "SWITCH_WORKSPACE", workspaceId });
+      toast.success(`Switched to workspace: ${newWorkspace.name}`);
     },
-    [appState.profiles, logger]
+    [appState.workspaces, logger]
   );
 
-  const handleCreateProfile = useCallback((name: string, description?: string) => {
-    const newProfile: Profile = {
-      id: `profile_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+  const handleCreateWorkspace = useCallback((name: string, description?: string) => {
+    const newWorkspace: Workspace = {
+      id: `workspace_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
       name,
       description,
       servers: {},
       createdAt: new Date(),
       updatedAt: new Date(),
     };
-    dispatch({ type: "CREATE_PROFILE", profile: newProfile });
-    toast.success(`Profile "${name}" created`);
-    return newProfile.id;
+    dispatch({ type: "CREATE_WORKSPACE", workspace: newWorkspace });
+    toast.success(`Workspace "${name}" created`);
+    return newWorkspace.id;
   }, []);
 
-  const handleUpdateProfile = useCallback(
-    (profileId: string, updates: Partial<Profile>) => {
-      dispatch({ type: "UPDATE_PROFILE", profileId, updates });
-      toast.success("Profile updated");
+  const handleUpdateWorkspace = useCallback(
+    (workspaceId: string, updates: Partial<Workspace>) => {
+      dispatch({ type: "UPDATE_WORKSPACE", workspaceId, updates });
+      toast.success("Workspace updated");
     },
     []
   );
 
-  const handleDeleteProfile = useCallback(
-    (profileId: string) => {
-      if (profileId === appState.activeProfileId) {
-        toast.error("Cannot delete the active profile. Switch to another profile first.");
+  const handleDeleteWorkspace = useCallback(
+    (workspaceId: string) => {
+      if (workspaceId === appState.activeWorkspaceId) {
+        toast.error("Cannot delete the active workspace. Switch to another workspace first.");
         return;
       }
-      dispatch({ type: "DELETE_PROFILE", profileId });
-      toast.success("Profile deleted");
+      dispatch({ type: "DELETE_WORKSPACE", workspaceId });
+      toast.success("Workspace deleted");
     },
-    [appState.activeProfileId]
+    [appState.activeWorkspaceId]
   );
 
-  const handleDuplicateProfile = useCallback((profileId: string, newName: string) => {
-    dispatch({ type: "DUPLICATE_PROFILE", profileId, newName });
-    toast.success(`Profile duplicated as "${newName}"`);
+  const handleDuplicateWorkspace = useCallback((workspaceId: string, newName: string) => {
+    dispatch({ type: "DUPLICATE_WORKSPACE", workspaceId, newName });
+    toast.success(`Workspace duplicated as "${newName}"`);
   }, []);
 
-  const handleSetDefaultProfile = useCallback((profileId: string) => {
-    dispatch({ type: "SET_DEFAULT_PROFILE", profileId });
-    toast.success("Default profile updated");
+  const handleSetDefaultWorkspace = useCallback((workspaceId: string) => {
+    dispatch({ type: "SET_DEFAULT_WORKSPACE", workspaceId });
+    toast.success("Default workspace updated");
   }, []);
 
-  const handleExportProfile = useCallback(
-    (profileId: string) => {
-      const profile = appState.profiles[profileId];
-      if (!profile) {
-        toast.error("Profile not found");
+  const handleExportWorkspace = useCallback(
+    (workspaceId: string) => {
+      const workspace = appState.workspaces[workspaceId];
+      if (!workspace) {
+        toast.error("Workspace not found");
         return;
       }
 
-      const dataStr = JSON.stringify(profile, null, 2);
+      const dataStr = JSON.stringify(workspace, null, 2);
       const dataBlob = new Blob([dataStr], { type: "application/json" });
       const url = URL.createObjectURL(dataBlob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `${profile.name.replace(/\s+/g, "_")}_profile.json`;
+      link.download = `${workspace.name.replace(/\s+/g, "_")}_workspace.json`;
       link.click();
       URL.revokeObjectURL(url);
-      toast.success("Profile exported");
+      toast.success("Workspace exported");
     },
-    [appState.profiles]
+    [appState.workspaces]
   );
 
-  const handleImportProfile = useCallback((profileData: Profile) => {
+  const handleImportWorkspace = useCallback((workspaceData: Workspace) => {
     // Generate new ID to avoid conflicts
-    const importedProfile: Profile = {
-      ...profileData,
-      id: `profile_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+    const importedWorkspace: Workspace = {
+      ...workspaceData,
+      id: `workspace_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
       createdAt: new Date(),
       updatedAt: new Date(),
       isDefault: false, // Never import as default
     };
-    dispatch({ type: "IMPORT_PROFILE", profile: importedProfile });
-    toast.success(`Profile "${importedProfile.name}" imported`);
+    dispatch({ type: "IMPORT_WORKSPACE", workspace: importedWorkspace });
+    toast.success(`Workspace "${importedWorkspace.name}" imported`);
   }, []);
 
   return {
@@ -766,10 +766,10 @@ export function useAppState() {
     ),
     isMultiSelectMode: appState.isMultiSelectMode,
 
-    // Profile-related
-    profiles: appState.profiles,
-    activeProfileId: appState.activeProfileId,
-    activeProfile: appState.profiles[appState.activeProfileId],
+    // Workspace-related
+    workspaces: appState.workspaces,
+    activeWorkspaceId: appState.activeWorkspaceId,
+    activeWorkspace: appState.workspaces[appState.activeWorkspaceId],
 
     // Actions
     handleConnect,
@@ -784,14 +784,14 @@ export function useAppState() {
     getValidAccessToken,
     setSelectedMultipleServersToAllServers,
 
-    // Profile actions
-    handleSwitchProfile,
-    handleCreateProfile,
-    handleUpdateProfile,
-    handleDeleteProfile,
-    handleDuplicateProfile,
-    handleSetDefaultProfile,
-    handleExportProfile,
-    handleImportProfile,
+    // Workspace actions
+    handleSwitchWorkspace,
+    handleCreateWorkspace,
+    handleUpdateWorkspace,
+    handleDeleteWorkspace,
+    handleDuplicateWorkspace,
+    handleSetDefaultWorkspace,
+    handleExportWorkspace,
+    handleImportWorkspace,
   };
 }

@@ -32,7 +32,7 @@ export interface ServerWithName {
   enabled?: boolean;
 }
 
-export interface Profile {
+export interface Workspace {
   id: string;
   name: string;
   description?: string;
@@ -43,8 +43,8 @@ export interface Profile {
 }
 
 export interface AppState {
-  profiles: Record<string, Profile>;
-  activeProfileId: string;
+  workspaces: Record<string, Workspace>;
+  activeWorkspaceId: string;
   servers: Record<string, ServerWithName>;
   selectedServer: string;
   selectedMultipleServers: string[];
@@ -81,27 +81,27 @@ export type AppAction =
       name: string;
       initInfo: InitializationInfo;
     }
-  | { type: "CREATE_PROFILE"; profile: Profile }
-  | { type: "UPDATE_PROFILE"; profileId: string; updates: Partial<Profile> }
-  | { type: "DELETE_PROFILE"; profileId: string }
-  | { type: "SWITCH_PROFILE"; profileId: string }
-  | { type: "SET_DEFAULT_PROFILE"; profileId: string }
-  | { type: "IMPORT_PROFILE"; profile: Profile }
-  | { type: "DUPLICATE_PROFILE"; profileId: string; newName: string };
+  | { type: "CREATE_WORKSPACE"; workspace: Workspace }
+  | { type: "UPDATE_WORKSPACE"; workspaceId: string; updates: Partial<Workspace> }
+  | { type: "DELETE_WORKSPACE"; workspaceId: string }
+  | { type: "SWITCH_WORKSPACE"; workspaceId: string }
+  | { type: "SET_DEFAULT_WORKSPACE"; workspaceId: string }
+  | { type: "IMPORT_WORKSPACE"; workspace: Workspace }
+  | { type: "DUPLICATE_WORKSPACE"; workspaceId: string; newName: string };
 
 export const initialAppState: AppState = {
-  profiles: {
+  workspaces: {
     default: {
       id: "default",
       name: "Default",
-      description: "Default profile",
+      description: "Default workspace",
       servers: {},
       createdAt: new Date(),
       updatedAt: new Date(),
       isDefault: true,
     },
   },
-  activeProfileId: "default",
+  activeWorkspaceId: "default",
   servers: {},
   selectedServer: "none",
   selectedMultipleServers: [],

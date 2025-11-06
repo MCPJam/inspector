@@ -1,7 +1,7 @@
-import { AppState, initialAppState, ServerWithName, Profile } from "./app-types";
+import { AppState, initialAppState, ServerWithName, Workspace } from "./app-types";
 
 const STORAGE_KEY = "mcp-inspector-state";
-const PROFILES_STORAGE_KEY = "mcp-inspector-profiles";
+const WORKSPACES_STORAGE_KEY = "mcp-inspector-workspaces";
 
 function reviveServer(server: any): ServerWithName {
   const cfg: any = server.config;
@@ -28,39 +28,39 @@ function reviveServer(server: any): ServerWithName {
 export function loadAppState(): AppState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    const profilesRaw = localStorage.getItem(PROFILES_STORAGE_KEY);
+    const workspacesRaw = localStorage.getItem(WORKSPACES_STORAGE_KEY);
 
-    // Load profiles
-    let profiles: Record<string, Profile> = {};
-    let activeProfileId = "default";
+    // Load workspaces
+    let workspaces: Record<string, Workspace> = {};
+    let activeWorkspaceId = "default";
 
-    if (profilesRaw) {
+    if (workspacesRaw) {
       try {
-        const parsedProfiles = JSON.parse(profilesRaw);
-        profiles = Object.fromEntries(
-          Object.entries(parsedProfiles.profiles || {}).map(([id, profile]: [string, any]) => [
+        const parsedWorkspaces = JSON.parse(workspacesRaw);
+        workspaces = Object.fromEntries(
+          Object.entries(parsedWorkspaces.workspaces || {}).map(([id, workspace]: [string, any]) => [
             id,
             {
-              ...profile,
+              ...workspace,
               servers: Object.fromEntries(
-                Object.entries(profile.servers || {}).map(([name, server]) => [
+                Object.entries(workspace.servers || {}).map(([name, server]) => [
                   name,
                   reviveServer(server),
                 ])
               ),
-              createdAt: new Date(profile.createdAt),
-              updatedAt: new Date(profile.updatedAt),
+              createdAt: new Date(workspace.createdAt),
+              updatedAt: new Date(workspace.updatedAt),
             },
           ])
         );
-        activeProfileId = parsedProfiles.activeProfileId || "default";
+        activeWorkspaceId = parsedWorkspaces.activeWorkspaceId || "default";
       } catch (e) {
-        console.error("Failed to parse profiles from storage", e);
+        console.error("Failed to parse workspaces from storage", e);
       }
     }
 
-    // If no profiles exist or default is missing, create it
-    if (Object.keys(profiles).length === 0 || !profiles.default) {
+    // If no workspaces exist or default is missing, create it
+    if (Object.keys(workspaces).length === 0 || !workspaces.default) {
       // Try to migrate from old storage format
       let migratedServers: Record<string, ServerWithName> = {};
       if (raw) {
@@ -77,27 +77,27 @@ export function loadAppState(): AppState {
         }
       }
 
-      profiles = {
+      workspaces = {
         default: {
           id: "default",
           name: "Default",
-          description: "Default profile",
+          description: "Default workspace",
           servers: migratedServers,
           createdAt: new Date(),
           updatedAt: new Date(),
           isDefault: true,
         },
       };
-      activeProfileId = "default";
+      activeWorkspaceId = "default";
     }
 
-    const activeProfile = profiles[activeProfileId];
+    const activeWorkspace = workspaces[activeWorkspaceId];
     const parsed = raw ? JSON.parse(raw) : {};
 
     return {
-      profiles,
-      activeProfileId,
-      servers: activeProfile?.servers || {},
+      workspaces,
+      activeWorkspaceId,
+      servers: activeWorkspace?.servers || {},
       selectedServer: parsed.selectedServer || "none",
       selectedMultipleServers: parsed.selectedMultipleServers || [],
       isMultiSelectMode: parsed.isMultiSelectMode || false,
@@ -110,16 +110,16 @@ export function loadAppState(): AppState {
 
 export function saveAppState(state: AppState) {
   try {
-    // Save profiles separately
-    const profilesData = {
-      activeProfileId: state.activeProfileId,
-      profiles: Object.fromEntries(
-        Object.entries(state.profiles).map(([id, profile]) => [
+    // Save workspaces separately
+    const workspacesData = {
+      activeWorkspaceId: state.activeWorkspaceId,
+      workspaces: Object.fromEntries(
+        Object.entries(state.workspaces).map(([id, workspace]) => [
           id,
           {
-            ...profile,
+            ...workspace,
             servers: Object.fromEntries(
-              Object.entries(profile.servers).map(([name, server]) => {
+              Object.entries(workspace.servers).map(([name, server]) => {
                 const cfg: any = server.config;
                 const serializedConfig =
                   cfg && cfg.url instanceof URL
@@ -132,9 +132,9 @@ export function saveAppState(state: AppState) {
         ])
       ),
     };
-    localStorage.setItem(PROFILES_STORAGE_KEY, JSON.stringify(profilesData));
+    localStorage.setItem(WORKSPACES_STORAGE_KEY, JSON.stringify(workspacesData));
 
-    // Save the rest of state (for backward compatibility and non-profile data)
+    // Save the rest of state (for backward compatibility and non-workspace data)
     const serializable = {
       selectedServer: state.selectedServer,
       selectedMultipleServers: state.selectedMultipleServers,

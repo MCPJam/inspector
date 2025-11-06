@@ -7,15 +7,15 @@ import { ServerConnectionCard } from "./connection/ServerConnectionCard";
 import { AddServerModal } from "./connection/AddServerModal";
 import { EditServerModal } from "./connection/EditServerModal";
 import { JsonImportModal } from "./connection/JsonImportModal";
-import { ProfileSelector } from "./connection/ProfileSelector";
-import { ProfileManagementDialog } from "./connection/ProfileManagementDialog";
+import { WorkspaceSelector } from "./connection/WorkspaceSelector";
+import { WorkspaceManagementDialog } from "./connection/WorkspaceManagementDialog";
 import { ServerFormData } from "@/shared/types.js";
 import { MCPIcon } from "./ui/mcp-icon";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
 import { Badge } from "./ui/badge";
-import { Profile } from "@/state/app-types";
+import { Workspace } from "@/state/app-types";
 interface ServersTabProps {
   connectedServerConfigs: Record<string, ServerWithName>;
   onConnect: (formData: ServerFormData) => void;
@@ -23,17 +23,17 @@ interface ServersTabProps {
   onReconnect: (serverName: string) => void;
   onUpdate: (originalServerName: string, formData: ServerFormData) => void;
   onRemove: (serverName: string) => void;
-  profiles: Record<string, Profile>;
-  activeProfileId: string;
-  activeProfile: Profile;
-  onSwitchProfile: (profileId: string) => void;
-  onCreateProfile: (name: string, description?: string) => void;
-  onUpdateProfile: (profileId: string, updates: Partial<Profile>) => void;
-  onDeleteProfile: (profileId: string) => void;
-  onDuplicateProfile: (profileId: string, newName: string) => void;
-  onSetDefaultProfile: (profileId: string) => void;
-  onExportProfile: (profileId: string) => void;
-  onImportProfile: (profileData: Profile) => void;
+  workspaces: Record<string, Workspace>;
+  activeWorkspaceId: string;
+  activeWorkspace: Workspace;
+  onSwitchWorkspace: (workspaceId: string) => void;
+  onCreateWorkspace: (name: string, description?: string) => void;
+  onUpdateWorkspace: (workspaceId: string, updates: Partial<Workspace>) => void;
+  onDeleteWorkspace: (workspaceId: string) => void;
+  onDuplicateWorkspace: (workspaceId: string, newName: string) => void;
+  onSetDefaultWorkspace: (workspaceId: string) => void;
+  onExportWorkspace: (workspaceId: string) => void;
+  onImportWorkspace: (workspaceData: Workspace) => void;
 }
 
 export function ServersTab({
@@ -43,17 +43,17 @@ export function ServersTab({
   onReconnect,
   onUpdate,
   onRemove,
-  profiles,
-  activeProfileId,
-  activeProfile,
-  onSwitchProfile,
-  onCreateProfile,
-  onUpdateProfile,
-  onDeleteProfile,
-  onDuplicateProfile,
-  onSetDefaultProfile,
-  onExportProfile,
-  onImportProfile,
+  workspaces,
+  activeWorkspaceId,
+  activeWorkspace,
+  onSwitchWorkspace,
+  onCreateWorkspace,
+  onUpdateWorkspace,
+  onDeleteWorkspace,
+  onDuplicateWorkspace,
+  onSetDefaultWorkspace,
+  onExportWorkspace,
+  onImportWorkspace,
 }: ServersTabProps) {
   const posthog = usePostHog();
   const [isAddingServer, setIsAddingServer] = useState(false);
@@ -63,7 +63,7 @@ export function ServersTab({
   const [searchTerm, setSearchTerm] = useState("");
   const [filterType, setFilterType] = useState<"all" | "stdio" | "http">("all");
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
-  const [isManagingProfiles, setIsManagingProfiles] = useState(false);
+  const [isManagingWorkspaces, setIsManagingWorkspaces] = useState(false);
 
   const filteredServers = Object.entries(connectedServerConfigs).filter(
     ([name, server]) => {
@@ -141,11 +141,11 @@ export function ServersTab({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <h2 className="text-2xl font-bold tracking-tight">MCP Servers</h2>
-          <ProfileSelector
-            activeProfileId={activeProfileId}
-            profiles={profiles}
-            onSwitchProfile={onSwitchProfile}
-            onManageProfiles={() => setIsManagingProfiles(true)}
+          <WorkspaceSelector
+            activeWorkspaceId={activeWorkspaceId}
+            workspaces={workspaces}
+            onSwitchWorkspace={onSwitchWorkspace}
+            onManageWorkspaces={() => setIsManagingWorkspaces(true)}
           />
         </div>
         <div className="flex items-center gap-2">
@@ -193,16 +193,16 @@ export function ServersTab({
         </div>
       </div>
 
-      {/* Profile info badge */}
-      {activeProfile && (
+      {/* Workspace info badge */}
+      {activeWorkspace && (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Badge variant="outline">{activeProfile.name}</Badge>
+          <Badge variant="outline">{activeWorkspace.name}</Badge>
           <span>•</span>
           <span>{Object.keys(connectedServerConfigs).length} server(s)</span>
-          {activeProfile.description && (
+          {activeWorkspace.description && (
             <>
               <span>•</span>
-              <span className="truncate max-w-md">{activeProfile.description}</span>
+              <span className="truncate max-w-md">{activeWorkspace.description}</span>
             </>
           )}
         </div>
@@ -288,19 +288,19 @@ export function ServersTab({
         onImport={handleJsonImport}
       />
 
-      {/* Profile Management Dialog */}
-      <ProfileManagementDialog
-        isOpen={isManagingProfiles}
-        onClose={() => setIsManagingProfiles(false)}
-        profiles={profiles}
-        activeProfileId={activeProfileId}
-        onCreateProfile={onCreateProfile}
-        onUpdateProfile={onUpdateProfile}
-        onDeleteProfile={onDeleteProfile}
-        onDuplicateProfile={onDuplicateProfile}
-        onSetDefaultProfile={onSetDefaultProfile}
-        onExportProfile={onExportProfile}
-        onImportProfile={onImportProfile}
+      {/* Workspace Management Dialog */}
+      <WorkspaceManagementDialog
+        isOpen={isManagingWorkspaces}
+        onClose={() => setIsManagingWorkspaces(false)}
+        workspaces={workspaces}
+        activeWorkspaceId={activeWorkspaceId}
+        onCreateWorkspace={onCreateWorkspace}
+        onUpdateWorkspace={onUpdateWorkspace}
+        onDeleteWorkspace={onDeleteWorkspace}
+        onDuplicateWorkspace={onDuplicateWorkspace}
+        onSetDefaultWorkspace={onSetDefaultWorkspace}
+        onExportWorkspace={onExportWorkspace}
+        onImportWorkspace={onImportWorkspace}
       />
     </div>
   );

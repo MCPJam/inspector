@@ -20,7 +20,7 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
-import { Profile } from "@/state/app-types";
+import { Workspace } from "@/state/app-types";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -34,84 +34,84 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
-interface ProfileManagementDialogProps {
+interface WorkspaceManagementDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  profiles: Record<string, Profile>;
-  activeProfileId: string;
-  onCreateProfile: (name: string, description?: string) => void;
-  onUpdateProfile: (profileId: string, updates: Partial<Profile>) => void;
-  onDeleteProfile: (profileId: string) => void;
-  onDuplicateProfile: (profileId: string, newName: string) => void;
-  onSetDefaultProfile: (profileId: string) => void;
-  onExportProfile: (profileId: string) => void;
-  onImportProfile: (profileData: Profile) => void;
+  workspaces: Record<string, Workspace>;
+  activeWorkspaceId: string;
+  onCreateWorkspace: (name: string, description?: string) => void;
+  onUpdateWorkspace: (workspaceId: string, updates: Partial<Workspace>) => void;
+  onDeleteWorkspace: (workspaceId: string) => void;
+  onDuplicateWorkspace: (workspaceId: string, newName: string) => void;
+  onSetDefaultWorkspace: (workspaceId: string) => void;
+  onExportWorkspace: (workspaceId: string) => void;
+  onImportWorkspace: (workspaceData: Workspace) => void;
 }
 
-export function ProfileManagementDialog({
+export function WorkspaceManagementDialog({
   isOpen,
   onClose,
-  profiles,
-  activeProfileId,
-  onCreateProfile,
-  onUpdateProfile,
-  onDeleteProfile,
-  onDuplicateProfile,
-  onSetDefaultProfile,
-  onExportProfile,
-  onImportProfile,
-}: ProfileManagementDialogProps) {
+  workspaces,
+  activeWorkspaceId,
+  onCreateWorkspace,
+  onUpdateWorkspace,
+  onDeleteWorkspace,
+  onDuplicateWorkspace,
+  onSetDefaultWorkspace,
+  onExportWorkspace,
+  onImportWorkspace,
+}: WorkspaceManagementDialogProps) {
   const [view, setView] = useState<"list" | "create" | "edit">("list");
-  const [newProfileName, setNewProfileName] = useState("");
-  const [newProfileDescription, setNewProfileDescription] = useState("");
-  const [editingProfile, setEditingProfile] = useState<Profile | null>(null);
+  const [newWorkspaceName, setNewWorkspaceName] = useState("");
+  const [newWorkspaceDescription, setNewWorkspaceDescription] = useState("");
+  const [editingWorkspace, setEditingWorkspace] = useState<Workspace | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
-  const profileList = Object.values(profiles).sort((a, b) => {
+  const workspaceList = Object.values(workspaces).sort((a, b) => {
     if (a.isDefault) return -1;
     if (b.isDefault) return 1;
     return a.name.localeCompare(b.name);
   });
 
-  const handleCreateProfile = () => {
-    if (newProfileName.trim()) {
-      onCreateProfile(newProfileName.trim(), newProfileDescription.trim() || undefined);
-      setNewProfileName("");
-      setNewProfileDescription("");
+  const handleCreateWorkspace = () => {
+    if (newWorkspaceName.trim()) {
+      onCreateWorkspace(newWorkspaceName.trim(), newWorkspaceDescription.trim() || undefined);
+      setNewWorkspaceName("");
+      setNewWorkspaceDescription("");
       setView("list");
     }
   };
 
-  const handleUpdateProfile = () => {
-    if (editingProfile && editingProfile.name.trim()) {
-      onUpdateProfile(editingProfile.id, {
-        name: editingProfile.name.trim(),
-        description: editingProfile.description?.trim() || undefined,
+  const handleUpdateWorkspace = () => {
+    if (editingWorkspace && editingWorkspace.name.trim()) {
+      onUpdateWorkspace(editingWorkspace.id, {
+        name: editingWorkspace.name.trim(),
+        description: editingWorkspace.description?.trim() || undefined,
       });
-      setEditingProfile(null);
+      setEditingWorkspace(null);
       setView("list");
     }
   };
 
-  const handleStartEdit = (profile: Profile) => {
-    setEditingProfile({ ...profile });
+  const handleStartEdit = (workspace: Workspace) => {
+    setEditingWorkspace({ ...workspace });
     setView("edit");
   };
 
-  const handleDeleteClick = (profileId: string) => {
-    setDeleteConfirmId(profileId);
+  const handleDeleteClick = (workspaceId: string) => {
+    setDeleteConfirmId(workspaceId);
   };
 
   const handleConfirmDelete = () => {
     if (deleteConfirmId) {
-      onDeleteProfile(deleteConfirmId);
+      onDeleteWorkspace(deleteConfirmId);
       setDeleteConfirmId(null);
     }
   };
 
-  const handleDuplicate = (profile: Profile) => {
-    const newName = `${profile.name} (Copy)`;
-    onDuplicateProfile(profile.id, newName);
+  const handleDuplicate = (workspace: Workspace) => {
+    const newName = `${workspace.name} (Copy)`;
+    onDuplicateWorkspace(workspace.id, newName);
   };
 
   const handleImport = () => {
@@ -123,11 +123,11 @@ export function ProfileManagementDialog({
       if (file) {
         try {
           const text = await file.text();
-          const profileData = JSON.parse(text);
-          onImportProfile(profileData);
+          const workspaceData = JSON.parse(text);
+          onImportWorkspace(workspaceData);
         } catch (error) {
-          console.error("Failed to import profile:", error);
-          alert("Failed to import profile. Please check the file format.");
+          console.error("Failed to import workspace:", error);
+          alert("Failed to import workspace. Please check the file format.");
         }
       }
     };
@@ -139,9 +139,9 @@ export function ProfileManagementDialog({
       <Dialog open={isOpen} onOpenChange={onClose}>
         <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
           <DialogHeader>
-            <DialogTitle>Manage Profiles</DialogTitle>
+            <DialogTitle>Manage Workspaces</DialogTitle>
             <DialogDescription>
-              Create, edit, and manage your MCP server profiles
+              Create, edit, and manage your MCP server workspaces
             </DialogDescription>
           </DialogHeader>
 
@@ -154,7 +154,7 @@ export function ProfileManagementDialog({
                   variant="default"
                 >
                   <Plus className="h-4 w-4 mr-2" />
-                  Create Profile
+                  Create Workspace
                 </Button>
                 <Button onClick={handleImport} variant="outline">
                   <Upload className="h-4 w-4 mr-2" />
@@ -164,35 +164,35 @@ export function ProfileManagementDialog({
 
               <ScrollArea className="flex-1">
                 <div className="space-y-2 pr-4">
-                  {profileList.map((profile) => (
+                  {workspaceList.map((workspace) => (
                     <div
-                      key={profile.id}
+                      key={workspace.id}
                       className="p-4 border rounded-lg hover:bg-accent/50 transition-colors"
                     >
                       <div className="flex items-start justify-between">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-1">
                             <h3 className="font-semibold truncate">
-                              {profile.name}
+                              {workspace.name}
                             </h3>
-                            {profile.id === activeProfileId && (
+                            {workspace.id === activeWorkspaceId && (
                               <Badge variant="default" className="text-xs">
                                 Active
                               </Badge>
                             )}
-                            {profile.isDefault && (
+                            {workspace.isDefault && (
                               <Badge variant="secondary" className="text-xs">
                                 Default
                               </Badge>
                             )}
                           </div>
-                          {profile.description && (
+                          {workspace.description && (
                             <p className="text-sm text-muted-foreground truncate">
-                              {profile.description}
+                              {workspace.description}
                             </p>
                           )}
                           <p className="text-xs text-muted-foreground mt-1">
-                            {Object.keys(profile.servers).length} server(s)
+                            {Object.keys(workspace.servers).length} server(s)
                           </p>
                         </div>
 
@@ -201,15 +201,15 @@ export function ProfileManagementDialog({
                             variant="ghost"
                             size="icon"
                             onClick={() =>
-                              onSetDefaultProfile(profile.id)
+                              onSetDefaultWorkspace(workspace.id)
                             }
                             title={
-                              profile.isDefault
+                              workspace.isDefault
                                 ? "Unset as default"
                                 : "Set as default"
                             }
                           >
-                            {profile.isDefault ? (
+                            {workspace.isDefault ? (
                               <Star className="h-4 w-4 fill-current" />
                             ) : (
                               <StarOff className="h-4 w-4" />
@@ -218,33 +218,33 @@ export function ProfileManagementDialog({
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() => handleStartEdit(profile)}
-                            title="Edit profile"
+                            onClick={() => handleStartEdit(workspace)}
+                            title="Edit workspace"
                           >
                             <Edit2 className="h-4 w-4" />
                           </Button>
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() => handleDuplicate(profile)}
-                            title="Duplicate profile"
+                            onClick={() => handleDuplicate(workspace)}
+                            title="Duplicate workspace"
                           >
                             <Copy className="h-4 w-4" />
                           </Button>
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() => onExportProfile(profile.id)}
-                            title="Export profile"
+                            onClick={() => onExportWorkspace(workspace.id)}
+                            title="Export workspace"
                           >
                             <Download className="h-4 w-4" />
                           </Button>
-                          {profile.id !== activeProfileId && (
+                          {workspace.id !== activeWorkspaceId && (
                             <Button
                               variant="ghost"
                               size="icon"
-                              onClick={() => handleDeleteClick(profile.id)}
-                              title="Delete profile"
+                              onClick={() => handleDeleteClick(workspace.id)}
+                              title="Delete workspace"
                             >
                               <Trash2 className="h-4 w-4 text-destructive" />
                             </Button>
@@ -261,22 +261,22 @@ export function ProfileManagementDialog({
           {view === "create" && (
             <div className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="profile-name">Profile Name *</Label>
+                <Label htmlFor="workspace-name">Workspace Name *</Label>
                 <Input
-                  id="profile-name"
-                  value={newProfileName}
-                  onChange={(e) => setNewProfileName(e.target.value)}
+                  id="workspace-name"
+                  value={newWorkspaceName}
+                  onChange={(e) => setNewWorkspaceName(e.target.value)}
                   placeholder="e.g., Work, Personal, Development"
                   autoFocus
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="profile-description">Description</Label>
+                <Label htmlFor="workspace-description">Description</Label>
                 <Textarea
-                  id="profile-description"
-                  value={newProfileDescription}
-                  onChange={(e) => setNewProfileDescription(e.target.value)}
-                  placeholder="Optional description for this profile"
+                  id="workspace-description"
+                  value={newWorkspaceDescription}
+                  onChange={(e) => setNewWorkspaceDescription(e.target.value)}
+                  placeholder="Optional description for this workspace"
                   rows={3}
                 />
               </div>
@@ -285,8 +285,8 @@ export function ProfileManagementDialog({
                   Cancel
                 </Button>
                 <Button
-                  onClick={handleCreateProfile}
-                  disabled={!newProfileName.trim()}
+                  onClick={handleCreateWorkspace}
+                  disabled={!newWorkspaceName.trim()}
                 >
                   Create
                 </Button>
@@ -294,31 +294,31 @@ export function ProfileManagementDialog({
             </div>
           )}
 
-          {view === "edit" && editingProfile && (
+          {view === "edit" && editingWorkspace && (
             <div className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="edit-profile-name">Profile Name *</Label>
+                <Label htmlFor="edit-workspace-name">Workspace Name *</Label>
                 <Input
-                  id="edit-profile-name"
-                  value={editingProfile.name}
+                  id="edit-workspace-name"
+                  value={editingWorkspace.name}
                   onChange={(e) =>
-                    setEditingProfile({
-                      ...editingProfile,
+                    setEditingWorkspace({
+                      ...editingWorkspace,
                       name: e.target.value,
                     })
                   }
-                  placeholder="Profile name"
+                  placeholder="Workspace name"
                   autoFocus
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="edit-profile-description">Description</Label>
+                <Label htmlFor="edit-workspace-description">Description</Label>
                 <Textarea
-                  id="edit-profile-description"
-                  value={editingProfile.description || ""}
+                  id="edit-workspace-description"
+                  value={editingWorkspace.description || ""}
                   onChange={(e) =>
-                    setEditingProfile({
-                      ...editingProfile,
+                    setEditingWorkspace({
+                      ...editingWorkspace,
                       description: e.target.value,
                     })
                   }
@@ -330,15 +330,15 @@ export function ProfileManagementDialog({
                 <Button
                   variant="outline"
                   onClick={() => {
-                    setEditingProfile(null);
+                    setEditingWorkspace(null);
                     setView("list");
                   }}
                 >
                   Cancel
                 </Button>
                 <Button
-                  onClick={handleUpdateProfile}
-                  disabled={!editingProfile.name.trim()}
+                  onClick={handleUpdateWorkspace}
+                  disabled={!editingWorkspace.name.trim()}
                 >
                   Save Changes
                 </Button>
@@ -354,9 +354,9 @@ export function ProfileManagementDialog({
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Profile?</AlertDialogTitle>
+            <AlertDialogTitle>Delete Workspace?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete the profile and all its server
+              This will permanently delete the workspace and all its server
               configurations. This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
