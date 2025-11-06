@@ -120,7 +120,7 @@ export function ServerCard({ server, onInstall, onViewDetails }: ServerCardProps
               onInstall(server);
             }}
           >
-            Add to Inspector
+            Connect
           </Button>
           <Button
             size="sm"

@@ -72,7 +72,7 @@ export function AddServerModal({
           formState.setShowEnvVars(true);
         }
       }
-      // Handle OAuth configuration
+      // Handle authentication configuration
       if (initialData.useOAuth) {
         formState.setAuthType("oauth");
         formState.setShowAuthSettings(true);
@@ -80,6 +80,11 @@ export function AddServerModal({
           ...prev,
           useOAuth: true,
         }));
+      } else if (initialData.headers && initialData.headers["Authorization"] !== undefined) {
+        // Has Authorization header - set up bearer token
+        formState.setAuthType("bearer");
+        formState.setShowAuthSettings(true);
+        formState.setBearerToken(initialData.headers["Authorization"] || "");
       }
     }
   }, [initialData, isOpen]);

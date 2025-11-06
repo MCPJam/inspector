@@ -247,33 +247,31 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
         formData.type = "http";
         formData.url = remote.url;
 
-        // Auto-configure OAuth 2.0 for streamable-http and SSE transports
-        if (
+        // Check if headers include Authorization - use Bearer token
+        const authHeader = remote.headers?.find(h => h.name === "Authorization");
+        if (authHeader) {
+          // Has Authorization header - use Bearer token, not OAuth
+          formData.headers = {};
+          // Store header metadata for hints
+          remote.headers?.forEach((header) => {
+            if (formData.headers && header.name) {
+              formData.headers[header.name] = header.value || "";
+            }
+          });
+        } else if (
           remote.type === "streamable-http" ||
           remote.type === "streamableHttp" ||
           remote.type === "sse"
         ) {
+          // No Authorization header specified - default to OAuth 2.0 for streamable-http and SSE
           formData.useOAuth = true;
-        } else if (remote.headers && remote.headers.length > 0) {
-          // Check if headers include Authorization - use Bearer token
-          const authHeader = remote.headers.find(h => h.name === "Authorization");
-          if (authHeader) {
-            // Don't set useOAuth, will be handled as bearer token in modal
-            formData.headers = {};
-            // Store header metadata for hints
-            remote.headers.forEach((header) => {
-              if (formData.headers && header.name) {
-                formData.headers[header.name] = header.value || "";
-              }
-            });
-          }
         }
 
         return formData;
       }
     }
 
-    // Fallback: use first available package or remote
+    // Fallback: use first available package or remote (skip mcpb)
     const npmPackage = selectedServer.packages?.find(
       (pkg) => pkg.registryType === "npm"
     );
