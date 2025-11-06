@@ -2,7 +2,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ExternalLink, Package, Globe, Terminal, Copy, Check, Github, Home, Image, Hash, FolderTree, Shield, Loader2 } from "lucide-react";
 import JsonView from "react18-json-view";
@@ -13,19 +12,19 @@ import { useState, useEffect } from "react";
 import { listServerVersions, getServerVersion } from "@/lib/registry-api";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-interface ServerDetailModalProps {
+interface RegistryServerDetailModalProps {
   server: RegistryServer | null;
   isOpen: boolean;
   onClose: () => void;
   onInstall: (server: RegistryServer, packageIdx?: number, remoteIdx?: number) => void;
 }
 
-export function ServerDetailModal({
+export function RegistryServerDetailModal({
   server: initialServer,
   isOpen,
   onClose,
   onInstall,
-}: ServerDetailModalProps) {
+}: RegistryServerDetailModalProps) {
   const [copiedPackage, setCopiedPackage] = useState<string | null>(null);
   // tabs: details | raw
   const [activeTab, setActiveTab] = useState<string>("details");
