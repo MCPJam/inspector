@@ -204,79 +204,83 @@ export function SettingsTab() {
   };
 
   return (
-    <div className="container mx-auto p-6 max-w-6xl space-y-8">
-      <div className="flex items-center gap-3 mb-6">
-        <h1 className="text-2xl font-bold">Settings</h1>
-      </div>
-
-      <AccountApiKeySection />
-
-      <div className="space-y-4">
-        <div>
-          <h3 className="text-lg font-semibold">LLM Provider API Keys</h3>
+    <div className="h-full overflow-y-auto">
+      <div className="container mx-auto p-6 max-w-6xl space-y-8">
+        <div className="flex items-center gap-3 mb-6">
+          <h1 className="text-2xl font-bold">Settings</h1>
         </div>
 
-        <ProvidersTable
-          providerConfigs={providerConfigs}
-          hasToken={(providerId) => hasToken(providerId as keyof typeof tokens)}
-          onEditProvider={handleEdit}
-          onDeleteProvider={handleDelete}
-          ollamaBaseUrl={getOllamaBaseUrl()}
-          onEditOllama={handleOllamaEdit}
-          litellmBaseUrl={getLiteLLMBaseUrl()}
-          litellmModelAlias={getLiteLLMModelAlias()}
-          onEditLiteLLM={handleLiteLLMEdit}
-          openRouterSelectedModels={getOpenRouterSelectedModels()}
-          onEditOpenRouter={handleOpenRouterEdit}
+        <AccountApiKeySection />
+
+        <div className="space-y-4">
+          <div>
+            <h3 className="text-lg font-semibold">LLM Provider API Keys</h3>
+          </div>
+
+          <ProvidersTable
+            providerConfigs={providerConfigs}
+            hasToken={(providerId) =>
+              hasToken(providerId as keyof typeof tokens)
+            }
+            onEditProvider={handleEdit}
+            onDeleteProvider={handleDelete}
+            ollamaBaseUrl={getOllamaBaseUrl()}
+            onEditOllama={handleOllamaEdit}
+            litellmBaseUrl={getLiteLLMBaseUrl()}
+            litellmModelAlias={getLiteLLMModelAlias()}
+            onEditLiteLLM={handleLiteLLMEdit}
+            openRouterSelectedModels={getOpenRouterSelectedModels()}
+            onEditOpenRouter={handleOpenRouterEdit}
+          />
+        </div>
+
+        {/* API Key Configuration Dialog */}
+        <ProviderConfigDialog
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+          provider={selectedProvider}
+          value={editingValue}
+          onValueChange={setEditingValue}
+          onSave={handleSave}
+          onCancel={handleCancel}
+        />
+
+        {/* Ollama URL Configuration Dialog */}
+        <OllamaConfigDialog
+          open={ollamaDialogOpen}
+          onOpenChange={setOllamaDialogOpen}
+          value={ollamaUrl}
+          onValueChange={setOllamaUrl}
+          onSave={handleOllamaSave}
+          onCancel={handleOllamaCancel}
+        />
+
+        {/* LiteLLM Configuration Dialog */}
+        <LiteLLMConfigDialog
+          open={litellmDialogOpen}
+          onOpenChange={setLitellmDialogOpen}
+          baseUrl={litellmUrl}
+          apiKey={litellmApiKey}
+          modelAlias={litellmModelAlias}
+          onBaseUrlChange={setLitellmUrl}
+          onApiKeyChange={setLitellmApiKey}
+          onModelAliasChange={setLitellmModelAlias}
+          onSave={handleLiteLLMSave}
+          onCancel={handleLiteLLMCancel}
+        />
+
+        {/* OpenRouter Configuration Dialog */}
+        <OpenRouterConfigDialog
+          open={openRouterDialogOpen}
+          onOpenChange={setOpenRouterDialogOpen}
+          apiKey={openRouterApiKeyInput}
+          selectedModels={openRouterSelectedModelsInput}
+          onApiKeyChange={setOpenRouterApiKeyInput}
+          onSelectedModelsChange={handleOpenRouterModelsChange}
+          onSave={handleOpenRouterSave}
+          onCancel={handleOpenRouterCancel}
         />
       </div>
-
-      {/* API Key Configuration Dialog */}
-      <ProviderConfigDialog
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-        provider={selectedProvider}
-        value={editingValue}
-        onValueChange={setEditingValue}
-        onSave={handleSave}
-        onCancel={handleCancel}
-      />
-
-      {/* Ollama URL Configuration Dialog */}
-      <OllamaConfigDialog
-        open={ollamaDialogOpen}
-        onOpenChange={setOllamaDialogOpen}
-        value={ollamaUrl}
-        onValueChange={setOllamaUrl}
-        onSave={handleOllamaSave}
-        onCancel={handleOllamaCancel}
-      />
-
-      {/* LiteLLM Configuration Dialog */}
-      <LiteLLMConfigDialog
-        open={litellmDialogOpen}
-        onOpenChange={setLitellmDialogOpen}
-        baseUrl={litellmUrl}
-        apiKey={litellmApiKey}
-        modelAlias={litellmModelAlias}
-        onBaseUrlChange={setLitellmUrl}
-        onApiKeyChange={setLitellmApiKey}
-        onModelAliasChange={setLitellmModelAlias}
-        onSave={handleLiteLLMSave}
-        onCancel={handleLiteLLMCancel}
-      />
-
-      {/* OpenRouter Configuration Dialog */}
-      <OpenRouterConfigDialog
-        open={openRouterDialogOpen}
-        onOpenChange={setOpenRouterDialogOpen}
-        apiKey={openRouterApiKeyInput}
-        selectedModels={openRouterSelectedModelsInput}
-        onApiKeyChange={setOpenRouterApiKeyInput}
-        onSelectedModelsChange={handleOpenRouterModelsChange}
-        onSave={handleOpenRouterSave}
-        onCancel={handleOpenRouterCancel}
-      />
     </div>
   );
 }

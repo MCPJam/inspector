@@ -102,34 +102,38 @@ export function EvalsResultsTab() {
   }
 
   return (
-    <div className="space-y-6 p-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Evaluation results</h1>
+    <div className="h-full flex flex-col overflow-hidden">
+      <div className="flex-shrink-0 p-6 pb-4">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-semibold">Evaluation results</h1>
+        </div>
       </div>
 
-      {!selectedSuite ? (
-        <SuitesOverview
-          suites={suites || []}
-          onSelectSuite={setSelectedSuiteId}
-        />
-      ) : isSuiteDetailsLoading ? (
-        <div className="flex h-64 items-center justify-center">
-          <div className="text-center">
-            <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
-            <p className="mt-4 text-muted-foreground">
-              Loading suite details...
-            </p>
+      <div className="flex-1 overflow-y-auto px-6 pb-6">
+        {!selectedSuite ? (
+          <SuitesOverview
+            suites={suites || []}
+            onSelectSuite={setSelectedSuiteId}
+          />
+        ) : isSuiteDetailsLoading ? (
+          <div className="flex h-64 items-center justify-center">
+            <div className="text-center">
+              <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
+              <p className="mt-4 text-muted-foreground">
+                Loading suite details...
+              </p>
+            </div>
           </div>
-        </div>
-      ) : (
-        <SuiteIterationsView
-          suite={selectedSuite}
-          cases={suiteDetails?.testCases || []}
-          iterations={iterationsForSelectedSuite}
-          aggregate={suiteAggregate}
-          onBack={() => setSelectedSuiteId(null)}
-        />
-      )}
+        ) : (
+          <SuiteIterationsView
+            suite={selectedSuite}
+            cases={suiteDetails?.testCases || []}
+            iterations={iterationsForSelectedSuite}
+            aggregate={suiteAggregate}
+            onBack={() => setSelectedSuiteId(null)}
+          />
+        )}
+      </div>
     </div>
   );
 }
