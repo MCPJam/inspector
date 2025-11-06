@@ -20,6 +20,8 @@ interface OpenAIAppRendererProps {
   toolMetadata?: Record<string, any>;
   onSendFollowUp?: (text: string) => void;
   onCallTool?: (toolName: string, params: Record<string, any>) => Promise<any>;
+  widgetState?: Record<string, any>;
+  onWidgetStateChange?: (toolCallId: string, state: any) => void;
 }
 
 export function OpenAIAppRenderer({
@@ -32,6 +34,8 @@ export function OpenAIAppRenderer({
   toolMetadata,
   onSendFollowUp,
   onCallTool,
+  widgetState,
+  onWidgetStateChange,
 }: OpenAIAppRendererProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
@@ -43,6 +47,12 @@ export function OpenAIAppRenderer({
   const [widgetUrl, setWidgetUrl] = useState<string | null>(null);
   const [isStoringWidget, setIsStoringWidget] = useState(false);
   const [storeError, setStoreError] = useState<string | null>(null);
+  const lastPersistedWidgetStateRef = useRef<string | null>(null);
+  const hasSentWidgetStateRef = useRef(false);
+  const widgetStateJson = useMemo(
+    () => JSON.stringify(widgetState ?? null),
+    [widgetState],
+  );
 
   const resolvedToolCallId = useMemo(
     () => toolCallId ?? `${toolName || "openai-app"}-${Date.now()}`,
@@ -125,6 +135,7 @@ export function OpenAIAppRenderer({
             toolId: resolvedToolCallId,
             toolName: toolName,
             theme: themeMode,
+            widgetState: widgetState ?? null,
           }),
         });
 
@@ -139,6 +150,7 @@ export function OpenAIAppRenderer({
         // Set the widget URL after successful storage
         const url = `/api/mcp/openai/widget/${resolvedToolCallId}`;
         setWidgetUrl(url);
+        lastPersistedWidgetStateRef.current = widgetStateJson;
       } catch (err) {
         if (isCancelled) return;
         console.error("Error storing widget data:", err);
@@ -159,7 +171,19 @@ export function OpenAIAppRenderer({
     };
     // Store once when state becomes output-available and widgetUrl is not yet set
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toolState, resolvedToolCallId, widgetUrl, outputTemplate, toolName]);
+  }, [
+    toolState,
+    resolvedToolCallId,
+    widgetUrl,
+    outputTemplate,
+    toolName,
+    resolvedToolInput,
+    resolvedToolOutput,
+    themeMode,
+    serverId,
+    widgetState,
+    widgetStateJson,
+  ]);
 
   const appliedHeight = useMemo(
     () => Math.min(Math.max(contentHeight, 320), maxHeight),
@@ -198,6 +222,9 @@ export function OpenAIAppRenderer({
         case "openai:setWidgetState": {
           // Widget state is already persisted by the iframe script
           console.log("[OpenAI App] Widget state updated:", event.data.state);
+          if (onWidgetStateChange) {
+            onWidgetStateChange(resolvedToolCallId, event.data.state);
+          }
           break;
         }
 
@@ -293,21 +320,95 @@ export function OpenAIAppRenderer({
     };
   }, [handleMessage]);
 
-  // Send theme updates to iframe when theme changes
+  useEffect(() => {
+    if (!widgetUrl) return;
+    if (!toolName) return;
+    if (widgetStateJson === lastPersistedWidgetStateRef.current) return;
+    if (!resolvedToolCallId) return;
+
+    let isCurrent = true;
+
+    const persistState = async () => {
+      try {
+        const response = await fetch("/api/mcp/openai/widget/state", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            toolId: resolvedToolCallId,
+            toolName,
+            serverId,
+            widgetState: widgetState ?? null,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(
+            `Failed to persist widget state: ${response.statusText}`,
+          );
+        }
+
+        if (isCurrent) {
+          lastPersistedWidgetStateRef.current = widgetStateJson;
+        }
+      } catch (err) {
+        console.error("[OpenAI App] Failed to persist widget state:", err);
+      }
+    };
+
+    persistState();
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [
+    widgetUrl,
+    widgetStateJson,
+    resolvedToolCallId,
+    widgetState,
+    toolName,
+    serverId,
+  ]);
+
   useEffect(() => {
     if (!isReady || !iframeRef.current?.contentWindow) return;
 
-    console.log("[OpenAI App] Sending theme update to iframe:", themeMode);
+    const prevHasSentWidgetState = hasSentWidgetStateRef.current;
+    const shouldSendWidgetStateValue =
+      widgetState !== undefined && widgetState !== null;
+    const shouldSendWidgetStateNull =
+      widgetState === null && prevHasSentWidgetState;
+
+    console.log("[OpenAI App] Sending globals update to iframe:", {
+      theme: themeMode,
+      widgetStateStatus:
+        widgetState === undefined
+          ? "unavailable"
+          : widgetState === null
+            ? "null"
+            : "value",
+      shouldSendWidgetStateValue,
+      shouldSendWidgetStateNull,
+    });
+    const globals: Record<string, unknown> = {
+      theme: themeMode,
+    };
+    if (shouldSendWidgetStateValue) {
+      globals.widgetState = widgetState;
+      hasSentWidgetStateRef.current = true;
+    } else if (shouldSendWidgetStateNull) {
+      globals.widgetState = null;
+      hasSentWidgetStateRef.current = false;
+    }
     iframeRef.current.contentWindow.postMessage(
       {
         type: "openai:set_globals",
-        globals: {
-          theme: themeMode,
-        },
+        globals,
       },
       "*",
     );
-  }, [themeMode, isReady]);
+  }, [themeMode, isReady, widgetState]);
 
   // Loading state
   if (isStoringWidget) {
