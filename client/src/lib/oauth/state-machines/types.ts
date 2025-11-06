@@ -101,12 +101,21 @@ export interface OAuthFlowState {
   error?: string;
 }
 
+export type InfoLogLevel = "info" | "warning" | "error";
+
+export type LogErrorDetails = {
+  message: string;
+  details?: unknown;
+};
+
 export type InfoLogEntry = {
   id: string;
   step: OAuthFlowStep;
   label: string;
   data: any;
   timestamp: number;
+  level: InfoLogLevel;
+  error?: LogErrorDetails;
 };
 
 export type HttpHistoryEntry = {
@@ -125,6 +134,7 @@ export type HttpHistoryEntry = {
     headers: Record<string, string>;
     body: any;
   };
+  error?: LogErrorDetails;
 };
 
 // Initial empty state
