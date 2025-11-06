@@ -23,7 +23,7 @@ export function ServerSelectionCard({
   onToggle,
 }: ServerSelectionCardProps) {
   const [copiedField, setCopiedField] = useState<string | null>(null);
-  const [isConfigExpanded, setIsConfigExpanded] = useState(false);
+  const [isConfigExpanded, setIsConfigExpanded] = useState(true);
   const {
     label: connectionStatusLabel,
     Icon: ConnectionStatusIcon,
@@ -72,92 +72,112 @@ export function ServerSelectionCard({
       onClick={handleToggle}
       onKeyDown={handleCardKeyDown}
       className={cn(
-        "relative gap-3 p-3 border border-border/40 bg-card/40 transition-colors",
-        "hover:border-border cursor-pointer",
-        selected && "border-primary/60 ring-2 ring-primary/30",
+        "border bg-card/50 backdrop-blur-sm hover:border-primary/50 hover:shadow-md hover:bg-card/70 transition-all duration-200 cursor-pointer relative",
+        selected
+          ? "border-primary/60 ring-2 ring-primary/30"
+          : "border-primary/40 shadow-lg ring-2 ring-primary/20 animate-pulse",
       )}
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <span
-            aria-hidden
-            className="h-2 w-2 flex-shrink-0 rounded-full"
-            style={{ backgroundColor: indicatorColor }}
-          />
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <p className="text-sm font-medium text-foreground truncate">
-                {server.name}
-              </p>
-              <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                <ConnectionStatusIcon className={iconClassName} />
-                <span>{totalRetriesLabel}</span>
+      <div className="p-4 space-y-3 py-0">
+        {/* Header Row */}
+        <div className="flex items-baseline justify-between">
+          <div className="flex items-baseline gap-3 flex-1">
+            <div
+              className="h-2 w-2 rounded-full flex-shrink-0 mt-1"
+              style={{
+                backgroundColor: indicatorColor,
+              }}
+            />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <h3 className="font-medium text-sm text-foreground">
+                  {server.name}
+                </h3>
+                <div className="flex items-center gap-1 leading-none">
+                  <ConnectionStatusIcon className={iconClassName} />
+                  <p className="text-xs text-muted-foreground leading-none">
+                    {totalRetriesLabel}
+                  </p>
+                </div>
               </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                {transportLabel}
+              </p>
             </div>
           </div>
-        </div>
-        {selected && (
-          <Badge variant="secondary" className="h-5 px-1 text-[11px]">
-            <Check className="mr-1 h-3 w-3" />
-            Selected
-          </Badge>
-        )}
-      </div>
-      <p className="mt-0.5 text-[11px] uppercase tracking-wide text-muted-foreground">
-        {transportLabel}
-      </p>
-      <div className="relative break-all rounded border border-border/30 bg-muted/30 p-1.5 font-mono text-[11px] text-muted-foreground">
-        <div className="pr-6">{commandDisplay}</div>
-        <button
-          type="button"
-          onClick={(event) => copyToClipboard(event, commandDisplay, "command")}
-          className="absolute right-1 top-1 cursor-pointer p-1 text-muted-foreground/60 transition-colors hover:text-foreground"
-        >
-          {copiedField === "command" ? (
-            <Check className="h-3 w-3 text-green-500" />
-          ) : (
-            <Copy className="h-3 w-3" />
-          )}
-        </button>
-      </div>
 
-      {isConfigExpanded && (
-        <div className="relative rounded border border-border/20 bg-muted/20 p-1.5 font-mono text-[11px] text-muted-foreground">
-          <pre className="max-h-40 overflow-auto pr-6 whitespace-pre-wrap">
-            {serverConfigJson}
-          </pre>
+          {selected && (
+            <Badge variant="secondary" className="h-5 px-1 text-[11px]">
+              <Check className="mr-1 h-3 w-3" />
+              Selected
+            </Badge>
+          )}
+        </div>
+
+        {/* Command Display */}
+        <div
+          className="font-mono text-xs text-muted-foreground bg-muted/30 p-2 rounded border border-border/30 break-all relative group"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="pr-8">{commandDisplay}</div>
           <button
             type="button"
             onClick={(event) =>
-              copyToClipboard(event, serverConfigJson, "config")
+              copyToClipboard(event, commandDisplay, "command")
             }
-            className="absolute right-1 top-1 cursor-pointer p-1 text-muted-foreground/60 transition-colors hover:text-foreground"
+            className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
           >
-            {copiedField === "config" ? (
+            {copiedField === "command" ? (
               <Check className="h-3 w-3 text-green-500" />
             ) : (
               <Copy className="h-3 w-3" />
             )}
           </button>
         </div>
-      )}
 
-      <div className="flex justify-end pt-0.5">
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            setIsConfigExpanded((previous) => !previous);
-          }}
-          aria-label={isConfigExpanded ? "Hide config" : "Show config"}
-          className="rounded-full border border-border/50 bg-background/70 p-1 text-muted-foreground transition-colors hover:text-foreground"
-        >
-          {isConfigExpanded ? (
-            <ChevronUp className="h-3 w-3" />
-          ) : (
-            <ChevronDown className="h-3 w-3" />
-          )}
-        </button>
+        {/* Config Display */}
+        {isConfigExpanded && (
+          <div
+            className="relative rounded border border-border/20 bg-muted/20 p-2 font-mono text-xs text-muted-foreground"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <pre className="max-h-40 overflow-auto pr-8 whitespace-pre-wrap">
+              {serverConfigJson}
+            </pre>
+            <button
+              type="button"
+              onClick={(event) =>
+                copyToClipboard(event, serverConfigJson, "config")
+              }
+              className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
+            >
+              {copiedField === "config" ? (
+                <Check className="h-3 w-3 text-green-500" />
+              ) : (
+                <Copy className="h-3 w-3" />
+              )}
+            </button>
+          </div>
+        )}
+
+        {/* Toggle Config Button */}
+        <div className="flex justify-end pt-0.5">
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              setIsConfigExpanded((previous) => !previous);
+            }}
+            aria-label={isConfigExpanded ? "Hide config" : "Show config"}
+            className="rounded-full border border-border/50 bg-background/70 p-1 text-muted-foreground transition-colors hover:text-foreground cursor-pointer"
+          >
+            {isConfigExpanded ? (
+              <ChevronUp className="h-3 w-3" />
+            ) : (
+              <ChevronDown className="h-3 w-3" />
+            )}
+          </button>
+        </div>
       </div>
     </Card>
   );

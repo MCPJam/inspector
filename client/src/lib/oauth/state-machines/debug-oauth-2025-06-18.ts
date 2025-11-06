@@ -24,6 +24,8 @@ import {
   generateCodeChallenge,
   loadPreregisteredCredentials,
   buildResourceMetadataUrl,
+  markLatestHttpEntryAsError,
+  toLogErrorDetails,
 } from "./shared/helpers";
 
 // Re-export types for backward compatibility
@@ -529,6 +531,7 @@ export const createDebugOAuthStateMachine = (
                 const infoLogs = wwwAuthenticateHeader
                   ? addInfoLog(
                       state,
+                      "received_401_unauthorized",
                       "www-authenticate",
                       "WWW-Authenticate Header",
                       {
@@ -551,6 +554,7 @@ export const createDebugOAuthStateMachine = (
                 // Add info log explaining optional auth
                 const infoLogs = addInfoLog(
                   state,
+                  "received_401_unauthorized",
                   "optional-auth",
                   "Optional Authentication Detected",
                   {
@@ -722,6 +726,7 @@ export const createDebugOAuthStateMachine = (
               // Add info log for Authorization Servers
               const infoLogs = addInfoLog(
                 state,
+                "received_resource_metadata",
                 "authorization-servers",
                 "Authorization Servers",
                 {
@@ -929,6 +934,7 @@ export const createDebugOAuthStateMachine = (
 
             const infoLogs = addInfoLog(
               getCurrentState(),
+              "received_authorization_server_metadata",
               "as-metadata",
               "Authorization Server Metadata",
               metadata,
@@ -997,6 +1003,7 @@ export const createDebugOAuthStateMachine = (
 
               const infoLogs = addInfoLog(
                 getCurrentState(),
+                "received_client_credentials",
                 "dcr",
                 "Pre-registered Client",
                 preregInfo,
@@ -1157,6 +1164,7 @@ export const createDebugOAuthStateMachine = (
 
                 const infoLogs = addInfoLog(
                   getCurrentState(),
+                  "received_client_credentials",
                   "dcr",
                   "Dynamic Client Registration",
                   dcrInfo,
@@ -1224,6 +1232,7 @@ export const createDebugOAuthStateMachine = (
             // Add info log for PKCE parameters
             const pkceInfoLogs = addInfoLog(
               getCurrentState(),
+              "generate_pkce_parameters",
               "pkce-generation",
               "Generate PKCE Parameters",
               {
@@ -1302,6 +1311,7 @@ export const createDebugOAuthStateMachine = (
             // Add info log for Authorization URL
             const authUrlInfoLogs = addInfoLog(
               getCurrentState(),
+              "authorization_request",
               "auth-url",
               "Authorization URL",
               {
@@ -1503,6 +1513,8 @@ export const createDebugOAuthStateMachine = (
                   ...tokenInfoLogs,
                   {
                     id: "auth-code",
+                    step: "token_request",
+                    level: "info",
                     label: "Authorization Code",
                     data: {
                       code: state.authorizationCode,
@@ -1525,6 +1537,8 @@ export const createDebugOAuthStateMachine = (
                   ...tokenInfoLogs,
                   {
                     id: "oauth-tokens",
+                    step: "token_request",
+                    level: "info",
                     label: "OAuth Tokens",
                     data: tokenData,
                     timestamp: Date.now(),
@@ -1581,6 +1595,8 @@ export const createDebugOAuthStateMachine = (
                     ...tokenInfoLogs,
                     {
                       id: "token",
+                      step: "token_request",
+                      level: "info",
                       label: "Access Token (Decoded JWT)",
                       data: audienceNote,
                       timestamp: Date.now(),
@@ -1616,6 +1632,8 @@ export const createDebugOAuthStateMachine = (
                     ...tokenInfoLogs,
                     {
                       id: "id-token",
+                      step: "token_request",
+                      level: "info",
                       label: "ID Token (OIDC - Decoded JWT)",
                       data: formattedIdToken,
                       timestamp: Date.now(),
@@ -1697,6 +1715,7 @@ export const createDebugOAuthStateMachine = (
             // Add info log for authenticated initialize request
             const authenticatedRequestInfoLogs = addInfoLog(
               getCurrentState(),
+              "authenticated_mcp_request",
               "authenticated-init",
               "Authenticated MCP Initialize Request",
               {
@@ -1825,6 +1844,7 @@ export const createDebugOAuthStateMachine = (
 
                 mcpInfoLogs = addInfoLog(
                   getCurrentState(),
+                  "authenticated_mcp_request",
                   "mcp-protocol",
                   "MCP Server Information",
                   protocolInfo,
@@ -1833,6 +1853,7 @@ export const createDebugOAuthStateMachine = (
                 // SSE streaming response but no MCP response parsed yet
                 mcpInfoLogs = addInfoLog(
                   getCurrentState(),
+                  "authenticated_mcp_request",
                   "mcp-transport",
                   "MCP Transport Detected",
                   {
@@ -1869,6 +1890,7 @@ export const createDebugOAuthStateMachine = (
 
                 mcpInfoLogs = addInfoLog(
                   getCurrentState(),
+                  "authenticated_mcp_request",
                   "mcp-protocol",
                   "MCP Server Information",
                   protocolInfo,
@@ -1884,29 +1906,49 @@ export const createDebugOAuthStateMachine = (
                 isInitiatingAuth: false,
               });
             } catch (error) {
-              // Capture the error
+              const errorDetails = toLogErrorDetails(error);
               const errorResponse = {
                 status: 0,
                 statusText: "Network Error",
                 headers: mergeHeaders({}),
                 body: {
-                  error: error instanceof Error ? error.message : String(error),
+                  error: errorDetails.message,
+                  details: errorDetails.details,
                 },
               };
 
               const updatedHistoryError = [...(state.httpHistory || [])];
               if (updatedHistoryError.length > 0) {
-                const lastEntry =
-                  updatedHistoryError[updatedHistoryError.length - 1];
-                lastEntry.response = errorResponse;
-                lastEntry.duration =
-                  Date.now() - (lastEntry.timestamp || Date.now());
+                const lastEntry = {
+                  ...updatedHistoryError[updatedHistoryError.length - 1],
+                  response: errorResponse,
+                  duration:
+                    Date.now() -
+                    (updatedHistoryError[updatedHistoryError.length - 1]
+                      ?.timestamp || Date.now()),
+                  error: errorDetails,
+                };
+                updatedHistoryError[updatedHistoryError.length - 1] = lastEntry;
               }
+
+              const currentState = getCurrentState();
+              const infoLogs = addInfoLog(
+                currentState,
+                "authenticated_mcp_request",
+                `error-authenticated_mcp_request-${Date.now()}`,
+                "Authenticated MCP request failed",
+                {
+                  request: currentState.lastRequest,
+                  error: errorDetails,
+                },
+                { level: "error", error: errorDetails },
+              );
 
               updateState({
                 lastResponse: errorResponse,
                 httpHistory: updatedHistoryError,
-                error: `Authenticated MCP request failed: ${error instanceof Error ? error.message : String(error)}`,
+                infoLogs,
+                error: `Authenticated MCP request failed: ${errorDetails.message}`,
                 isInitiatingAuth: false,
               });
             }
@@ -1922,10 +1964,38 @@ export const createDebugOAuthStateMachine = (
             break;
         }
       } catch (error) {
-        updateState({
-          error: error instanceof Error ? error.message : String(error),
+        const currentState = getCurrentState();
+        const errorDetails = toLogErrorDetails(error);
+        const infoLogs = addInfoLog(
+          currentState,
+          currentState.currentStep,
+          `error-${currentState.currentStep}-${Date.now()}`,
+          "Step failed",
+          {
+            step: currentState.currentStep,
+            request: currentState.lastRequest,
+            response: currentState.lastResponse,
+            error: errorDetails,
+          },
+          { level: "error", error: errorDetails },
+        );
+
+        const updatedHistory = markLatestHttpEntryAsError(
+          currentState.httpHistory,
+          errorDetails,
+        );
+
+        const updates: Partial<OAuthFlowState> = {
+          error: errorDetails.message,
+          infoLogs,
           isInitiatingAuth: false,
-        });
+        };
+
+        if (updatedHistory) {
+          updates.httpHistory = updatedHistory;
+        }
+
+        updateState(updates);
       }
     },
 

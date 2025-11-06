@@ -13,6 +13,7 @@ import evals from "./evals";
 import { adapterHttp, managerHttp } from "./http-adapters";
 import elicitation from "./elicitation";
 import openai from "./openai";
+import registry from "./registry";
 
 const mcp = new Hono();
 
@@ -67,5 +68,8 @@ mcp.route("/interceptor", interceptor);
 // Unified HTTP bridges (SSE + POST) for connected servers
 mcp.route("/adapter-http", adapterHttp);
 mcp.route("/manager-http", managerHttp);
+
+// Registry endpoints - MCP server registry integration
+mcp.route("/registry", registry);
 
 export default mcp;

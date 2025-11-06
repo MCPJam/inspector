@@ -12,7 +12,8 @@ import { TracingTab } from "./components/TracingTab";
 import { InterceptorTab } from "./components/InterceptorTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
-import OAuthDebugCallback from "./components/OAuthDebugCallback";
+import { RegistryTab } from "./components/RegistryTab";
+import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import { MCPSidebar } from "./components/mcp-sidebar";
 import { ActiveServerSelector } from "./components/ActiveServerSelector";
 import {
@@ -22,6 +23,7 @@ import {
 } from "./components/ui/sidebar";
 import { useAppState } from "./hooks/use-app-state";
 import { PreferencesStoreProvider } from "./stores/preferences/preferences-provider";
+import { RegistryStoreProvider } from "./stores/registry/registry-provider";
 import { Toaster } from "./components/ui/sonner";
 import { useElectronOAuth } from "./hooks/useElectronOAuth";
 import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
@@ -175,11 +177,17 @@ export default function App() {
             />
           )}
 
+          {activeTab === "registry" && (
+            <RegistryTab onConnect={handleConnect} />
+          )}
+
           {activeTab === "tools" && (
-            <ToolsTab
-              serverConfig={selectedMCPConfig}
-              serverName={appState.selectedServer}
-            />
+            <div className="h-full overflow-hidden">
+              <ToolsTab
+                serverConfig={selectedMCPConfig}
+                serverName={appState.selectedServer}
+              />
+            </div>
           )}
           {activeTab === "evals" && <EvalsRunTab />}
           {activeTab === "eval-results" && <EvalsResultsTab />}
@@ -245,12 +253,14 @@ export default function App() {
 
   return (
     <PreferencesStoreProvider themeMode="light" themePreset="default">
-      <Toaster />
-      {shouldShowLoginPage && !isOAuthCallbackComplete ? (
-        <LoginPage />
-      ) : (
-        appContent
-      )}
+      <RegistryStoreProvider>
+        <Toaster />
+        {shouldShowLoginPage && !isOAuthCallbackComplete ? (
+          <LoginPage />
+        ) : (
+          appContent
+        )}
+      </RegistryStoreProvider>
     </PreferencesStoreProvider>
   );
 }
