@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
-import { Plus, Database, FileText } from "lucide-react";
+import { Plus, Database, FileText, Layers } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { ServerConnectionCard } from "./connection/ServerConnectionCard";
 import { AddServerModal } from "./connection/AddServerModal";
@@ -11,6 +11,7 @@ import { ServerFormData } from "@/shared/types.js";
 import { MCPIcon } from "./ui/mcp-icon";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
 interface ServersTabProps {
   connectedServerConfigs: Record<string, ServerWithName>;
   onConnect: (formData: ServerFormData) => void;
@@ -35,6 +36,7 @@ export function ServersTab({
   const [serverToEdit, setServerToEdit] = useState<ServerWithName | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [filterType, setFilterType] = useState<"all" | "stdio" | "http">("all");
+  const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
 
   const filteredServers = Object.entries(connectedServerConfigs).filter(
     ([name, server]) => {
@@ -76,6 +78,36 @@ export function ServersTab({
     });
   };
 
+  const handleAddServerClick = () => {
+    posthog.capture("add_server_button_clicked", {
+      location: "servers_tab",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+    });
+    setIsAddingServer(true);
+    setIsActionMenuOpen(false);
+  };
+
+  const handleImportJsonClick = () => {
+    posthog.capture("import_json_button_clicked", {
+      location: "servers_tab",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+    });
+    setIsImportingJson(true);
+    setIsActionMenuOpen(false);
+  };
+
+  const handleAddFromRegistryClick = () => {
+    posthog.capture("add_from_registry_button_clicked", {
+      location: "servers_tab",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+    });
+    window.location.hash = "registry";
+    setIsActionMenuOpen(false);
+  };
+
   return (
     <div className="space-y-6 p-8 h-full overflow-auto">
       {/* Header Section */}
@@ -84,35 +116,47 @@ export function ServersTab({
           <h2 className="text-2xl font-bold tracking-tight">MCP Servers</h2>
         </div>
         <div className="flex items-center gap-2">
-          <Button
-            onClick={() => {
-              posthog.capture("import_json_button_clicked", {
-                location: "servers_tab",
-                platform: detectPlatform(),
-                environment: detectEnvironment(),
-              });
-              setIsImportingJson(true);
-            }}
-            variant="outline"
-            className="cursor-pointer"
+          <HoverCard
+            open={isActionMenuOpen}
+            onOpenChange={setIsActionMenuOpen}
+            openDelay={150}
+            closeDelay={100}
           >
-            <FileText className="h-4 w-4 mr-2" />
-            Import JSON
-          </Button>
-          <Button
-            onClick={() => {
-              posthog.capture("add_server_button_clicked", {
-                location: "servers_tab",
-                platform: detectPlatform(),
-                environment: detectEnvironment(),
-              });
-              setIsAddingServer(true);
-            }}
-            className="cursor-pointer"
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            Add Server
-          </Button>
+            <HoverCardTrigger asChild>
+              <Button onClick={handleAddServerClick} className="cursor-pointer">
+                <Plus className="h-4 w-4 mr-2" />
+                Add Server
+              </Button>
+            </HoverCardTrigger>
+            <HoverCardContent align="end" sideOffset={8} className="w-56 p-3">
+              <div className="flex flex-col gap-2">
+                <Button
+                  variant="ghost"
+                  className="justify-start"
+                  onClick={handleAddServerClick}
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add manually
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="justify-start"
+                  onClick={handleImportJsonClick}
+                >
+                  <FileText className="h-4 w-4 mr-2" />
+                  Import JSON
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="justify-start"
+                  onClick={handleAddFromRegistryClick}
+                >
+                  <Layers className="h-4 w-4 mr-2" />
+                  Add from Registry
+                </Button>
+              </div>
+            </HoverCardContent>
+          </HoverCard>
         </div>
       </div>
       {/* Server Cards Grid */}
