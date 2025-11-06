@@ -2,6 +2,7 @@ import { memo, useMemo } from "react";
 import type {
   OAuthProtocolVersion,
   OAuthFlowState,
+  OAuthFlowStep,
 } from "@/lib/oauth/state-machines/types";
 import { OAuthSequenceDiagramContent } from "@/components/oauth/shared/OAuthSequenceDiagramContent";
 import { buildActions_2025_11_25 } from "@/lib/oauth/state-machines/debug-oauth-2025-11-25";
@@ -12,6 +13,7 @@ interface OAuthSequenceDiagramProps {
   flowState: OAuthFlowState;
   registrationStrategy?: "cimd" | "dcr" | "preregistered";
   protocolVersion?: OAuthProtocolVersion;
+  focusedStep?: OAuthFlowStep | null;
 }
 
 /**
@@ -26,6 +28,7 @@ export const OAuthSequenceDiagram = memo((props: OAuthSequenceDiagramProps) => {
     flowState,
     registrationStrategy = "dcr",
     protocolVersion = "2025-11-25",
+    focusedStep,
   } = props;
 
   // Select the appropriate actions builder based on protocol version
@@ -57,7 +60,11 @@ export const OAuthSequenceDiagram = memo((props: OAuthSequenceDiagramProps) => {
   }, [protocolVersion, flowState, registrationStrategy]);
 
   return (
-    <OAuthSequenceDiagramContent flowState={flowState} actions={actions} />
+    <OAuthSequenceDiagramContent
+      flowState={flowState}
+      actions={actions}
+      focusedStep={focusedStep ?? undefined}
+    />
   );
 });
 

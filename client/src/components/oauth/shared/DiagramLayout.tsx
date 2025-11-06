@@ -24,25 +24,29 @@ interface DiagramLayoutProps {
   nodes: Node[];
   edges: Edge[];
   currentStep: OAuthFlowStep;
+  focusedStep?: OAuthFlowStep | null;
 }
 
 export const DiagramLayout = ({
   nodes,
   edges,
   currentStep,
+  focusedStep,
 }: DiagramLayoutProps) => {
   const reactFlowInstance = useReactFlow();
 
   // Auto-zoom to current step
   useEffect(() => {
-    if (!reactFlowInstance || !currentStep) {
+    const targetStep = focusedStep ?? currentStep;
+
+    if (!reactFlowInstance || !targetStep) {
       return;
     }
 
     // Small delay to ensure nodes are rendered
     const timer = setTimeout(() => {
       // If reset to idle, zoom back to the top
-      if (currentStep === "idle") {
+      if (targetStep === "idle") {
         // Zoom to the top of the diagram
         // Center around the middle actors (Client and MCP Server)
         reactFlowInstance.setCenter(550, 200, {
@@ -53,21 +57,26 @@ export const DiagramLayout = ({
       }
 
       // Don't zoom when flow is complete - let user stay at current position
-      if (currentStep === "complete") {
+      if (targetStep === "complete") {
         return;
       }
 
       // Find the edge that has "current" status (the next step to execute)
-      const currentEdge = edges.find((e) => e.data?.status === "current");
+      const currentEdge = edges.find((e) => e.data?.stepId === targetStep);
 
-      if (currentEdge) {
+      // Fall back to current status if metadata is missing
+      const fallbackEdge = edges.find((e) => e.data?.status === "current");
+
+      const edgeToZoom = currentEdge || fallbackEdge;
+
+      if (edgeToZoom) {
         // Get source and target actor positions
-        const sourceNode = nodes.find((n) => n.id === currentEdge.source);
-        const targetNode = nodes.find((n) => n.id === currentEdge.target);
+        const sourceNode = nodes.find((n) => n.id === edgeToZoom.source);
+        const targetNode = nodes.find((n) => n.id === edgeToZoom.target);
 
         if (sourceNode && targetNode) {
           // Find the action index to calculate Y position
-          const actionIndex = edges.findIndex((e) => e.id === currentEdge.id);
+          const actionIndex = edges.findIndex((e) => e.id === edgeToZoom.id);
 
           // Calculate positions
           // Actor nodes have a header (~52px) + some padding (~50px)
@@ -88,7 +97,7 @@ export const DiagramLayout = ({
     }, 100);
 
     return () => clearTimeout(timer);
-  }, [currentStep, edges, nodes, reactFlowInstance]);
+  }, [currentStep, focusedStep, edges, nodes, reactFlowInstance]);
 
   return (
     <div className="w-full h-full">

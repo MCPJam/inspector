@@ -190,6 +190,7 @@ export function buildNodesAndEdges(
         : `${action.id}-right-target`,
       type: "actionEdge",
       data: {
+        stepId: action.id,
         label: action.label,
         description: action.description,
         status,
