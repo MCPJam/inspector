@@ -38,9 +38,7 @@ export async function listServerVersions(
   const response = await fetch(url);
 
   if (!response.ok) {
-    throw new Error(
-      `Failed to fetch server versions: ${response.statusText}`,
-    );
+    throw new Error(`Failed to fetch server versions: ${response.statusText}`);
   }
 
   return response.json();
@@ -59,9 +57,7 @@ export async function getServerVersion(
   const response = await fetch(url);
 
   if (!response.ok) {
-    throw new Error(
-      `Failed to fetch server version: ${response.statusText}`,
-    );
+    throw new Error(`Failed to fetch server version: ${response.statusText}`);
   }
 
   return response.json();

@@ -33,7 +33,10 @@ const initialState = {
 };
 
 // Load cached data from localStorage
-const loadCachedData = (): { servers: RegistryServer[]; timestamp: number } | null => {
+const loadCachedData = (): {
+  servers: RegistryServer[];
+  timestamp: number;
+} | null => {
   try {
     const cachedServers = localStorage.getItem(CACHE_KEY);
     const cachedTimestamp = localStorage.getItem(CACHE_TIMESTAMP_KEY);
@@ -111,10 +114,10 @@ export const createRegistryStore = () => {
           if (cursor) {
             // Append to existing servers for pagination, avoiding duplicates
             const existingIds = new Set(
-              state.allServers.map((s) => `${s.name}@${s.version}`)
+              state.allServers.map((s) => `${s.name}@${s.version}`),
             );
             const newServers = unwrappedServers.filter(
-              (s) => !existingIds.has(`${s.name}@${s.version}`)
+              (s) => !existingIds.has(`${s.name}@${s.version}`),
             );
             return {
               allServers: [...state.allServers, ...newServers],
@@ -192,8 +195,8 @@ export const createRegistryStore = () => {
           // Deduplicate servers
           const uniqueServers = Array.from(
             new Map(
-              newServers.map((s) => [`${s.name}@${s.version}`, s])
-            ).values()
+              newServers.map((s) => [`${s.name}@${s.version}`, s]),
+            ).values(),
           );
 
           // Only update state after ALL pages are loaded

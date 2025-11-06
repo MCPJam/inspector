@@ -63,10 +63,12 @@ export function AddServerModal({
         }));
       }
       if (initialData.env) {
-        const envArray = Object.entries(initialData.env).map(([key, value]) => ({
-          key,
-          value,
-        }));
+        const envArray = Object.entries(initialData.env).map(
+          ([key, value]) => ({
+            key,
+            value,
+          }),
+        );
         formState.setEnvVars(envArray);
         if (envArray.length > 0) {
           formState.setShowEnvVars(true);
@@ -80,7 +82,10 @@ export function AddServerModal({
           ...prev,
           useOAuth: true,
         }));
-      } else if (initialData.headers && initialData.headers["Authorization"] !== undefined) {
+      } else if (
+        initialData.headers &&
+        initialData.headers["Authorization"] !== undefined
+      ) {
         // Has Authorization header - set up bearer token
         formState.setAuthType("bearer");
         formState.setShowAuthSettings(true);

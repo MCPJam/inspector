@@ -51,14 +51,17 @@ export function searchRegistryServers(
     hasRemote?: boolean;
     packageType?: string;
     status?: string;
-  }
+  },
 ): RegistryServer[] {
   let results = servers;
 
   // Apply filters first
   if (filters) {
     results = results.filter((server) => {
-      if (filters.official !== undefined && server._meta?.official !== filters.official) {
+      if (
+        filters.official !== undefined &&
+        server._meta?.official !== filters.official
+      ) {
         return false;
       }
       if (filters.hasRemote !== undefined) {
@@ -69,7 +72,7 @@ export function searchRegistryServers(
       }
       if (filters.packageType) {
         const hasPackageType = server.packages?.some(
-          (pkg) => pkg.registryType === filters.packageType
+          (pkg) => pkg.registryType === filters.packageType,
         );
         if (!hasPackageType) {
           return false;
@@ -84,9 +87,7 @@ export function searchRegistryServers(
 
   // If no query, return filtered results sorted alphabetically
   if (!query.trim()) {
-    return results.sort((a, b) =>
-      (a.name || '').localeCompare(b.name || '')
-    );
+    return results.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
   }
 
   // Perform fuzzy search on filtered results
