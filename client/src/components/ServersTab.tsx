@@ -7,11 +7,15 @@ import { ServerConnectionCard } from "./connection/ServerConnectionCard";
 import { AddServerModal } from "./connection/AddServerModal";
 import { EditServerModal } from "./connection/EditServerModal";
 import { JsonImportModal } from "./connection/JsonImportModal";
+import { ProfileSelector } from "./connection/ProfileSelector";
+import { ProfileManagementDialog } from "./connection/ProfileManagementDialog";
 import { ServerFormData } from "@/shared/types.js";
 import { MCPIcon } from "./ui/mcp-icon";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
+import { Badge } from "./ui/badge";
+import { Profile } from "@/state/app-types";
 interface ServersTabProps {
   connectedServerConfigs: Record<string, ServerWithName>;
   onConnect: (formData: ServerFormData) => void;
@@ -19,6 +23,17 @@ interface ServersTabProps {
   onReconnect: (serverName: string) => void;
   onUpdate: (originalServerName: string, formData: ServerFormData) => void;
   onRemove: (serverName: string) => void;
+  profiles: Record<string, Profile>;
+  activeProfileId: string;
+  activeProfile: Profile;
+  onSwitchProfile: (profileId: string) => void;
+  onCreateProfile: (name: string, description?: string) => void;
+  onUpdateProfile: (profileId: string, updates: Partial<Profile>) => void;
+  onDeleteProfile: (profileId: string) => void;
+  onDuplicateProfile: (profileId: string, newName: string) => void;
+  onSetDefaultProfile: (profileId: string) => void;
+  onExportProfile: (profileId: string) => void;
+  onImportProfile: (profileData: Profile) => void;
 }
 
 export function ServersTab({
@@ -28,6 +43,17 @@ export function ServersTab({
   onReconnect,
   onUpdate,
   onRemove,
+  profiles,
+  activeProfileId,
+  activeProfile,
+  onSwitchProfile,
+  onCreateProfile,
+  onUpdateProfile,
+  onDeleteProfile,
+  onDuplicateProfile,
+  onSetDefaultProfile,
+  onExportProfile,
+  onImportProfile,
 }: ServersTabProps) {
   const posthog = usePostHog();
   const [isAddingServer, setIsAddingServer] = useState(false);
@@ -37,6 +63,7 @@ export function ServersTab({
   const [searchTerm, setSearchTerm] = useState("");
   const [filterType, setFilterType] = useState<"all" | "stdio" | "http">("all");
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
+  const [isManagingProfiles, setIsManagingProfiles] = useState(false);
 
   const filteredServers = Object.entries(connectedServerConfigs).filter(
     ([name, server]) => {
@@ -112,8 +139,14 @@ export function ServersTab({
     <div className="space-y-6 p-8 h-full overflow-auto">
       {/* Header Section */}
       <div className="flex items-center justify-between">
-        <div>
+        <div className="flex items-center gap-4">
           <h2 className="text-2xl font-bold tracking-tight">MCP Servers</h2>
+          <ProfileSelector
+            activeProfileId={activeProfileId}
+            profiles={profiles}
+            onSwitchProfile={onSwitchProfile}
+            onManageProfiles={() => setIsManagingProfiles(true)}
+          />
         </div>
         <div className="flex items-center gap-2">
           <HoverCard
@@ -159,6 +192,22 @@ export function ServersTab({
           </HoverCard>
         </div>
       </div>
+
+      {/* Profile info badge */}
+      {activeProfile && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Badge variant="outline">{activeProfile.name}</Badge>
+          <span>•</span>
+          <span>{Object.keys(connectedServerConfigs).length} server(s)</span>
+          {activeProfile.description && (
+            <>
+              <span>•</span>
+              <span className="truncate max-w-md">{activeProfile.description}</span>
+            </>
+          )}
+        </div>
+      )}
+
       {/* Server Cards Grid */}
       {connectedCount > 0 ? (
         <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
@@ -237,6 +286,21 @@ export function ServersTab({
         isOpen={isImportingJson}
         onClose={() => setIsImportingJson(false)}
         onImport={handleJsonImport}
+      />
+
+      {/* Profile Management Dialog */}
+      <ProfileManagementDialog
+        isOpen={isManagingProfiles}
+        onClose={() => setIsManagingProfiles(false)}
+        profiles={profiles}
+        activeProfileId={activeProfileId}
+        onCreateProfile={onCreateProfile}
+        onUpdateProfile={onUpdateProfile}
+        onDeleteProfile={onDeleteProfile}
+        onDuplicateProfile={onDuplicateProfile}
+        onSetDefaultProfile={onSetDefaultProfile}
+        onExportProfile={onExportProfile}
+        onImportProfile={onImportProfile}
       />
     </div>
   );
