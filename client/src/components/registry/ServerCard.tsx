@@ -50,7 +50,7 @@ export function ServerCard({ server, onInstall, onViewDetails }: ServerCardProps
 
   return (
     <Card
-      className="hover:shadow-md transition-shadow cursor-pointer group w-full"
+      className="border border-border/50 bg-card/50 backdrop-blur-sm hover:border-primary/50 hover:shadow-md hover:bg-card/70 transition-all duration-200 cursor-pointer group w-full"
       onClick={() => onViewDetails(server)}
     >
       <CardHeader className="pb-3">
