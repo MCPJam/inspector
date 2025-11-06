@@ -4,13 +4,13 @@ import { Button } from "@/components/ui/button";
 import { Download, ExternalLink, Clock } from "lucide-react";
 import type { RegistryServer } from "@/shared/types";
 
-interface ServerCardProps {
+interface RegistryServerCardProps {
   server: RegistryServer;
   onInstall: (server: RegistryServer, packageIdx?: number, remoteIdx?: number) => void;
   onViewDetails: (server: RegistryServer) => void;
 }
 
-export function ServerCard({ server, onInstall, onViewDetails }: ServerCardProps) {
+export function RegistryServerCard({ server, onInstall, onViewDetails }: RegistryServerCardProps) {
   // Extract organization and project name from server.name
   const nameParts = server.name?.split("/") || ["", "Unknown"];
   const organization = nameParts[0] || "";
