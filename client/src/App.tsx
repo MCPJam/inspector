@@ -12,6 +12,7 @@ import { TracingTab } from "./components/TracingTab";
 import { InterceptorTab } from "./components/InterceptorTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
+import { RegistryTab } from "./components/RegistryTab";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import { MCPSidebar } from "./components/mcp-sidebar";
 import { ActiveServerSelector } from "./components/ActiveServerSelector";
@@ -22,6 +23,7 @@ import {
 } from "./components/ui/sidebar";
 import { useAppState } from "./hooks/use-app-state";
 import { PreferencesStoreProvider } from "./stores/preferences/preferences-provider";
+import { RegistryStoreProvider } from "./stores/registry/registry-provider";
 import { Toaster } from "./components/ui/sonner";
 import { useElectronOAuth } from "./hooks/useElectronOAuth";
 import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
@@ -175,6 +177,10 @@ export default function App() {
             />
           )}
 
+          {activeTab === "registry" && (
+            <RegistryTab onConnect={handleConnect} />
+          )}
+
           {activeTab === "tools" && (
             <ToolsTab
               serverConfig={selectedMCPConfig}
@@ -245,12 +251,14 @@ export default function App() {
 
   return (
     <PreferencesStoreProvider themeMode="light" themePreset="default">
-      <Toaster />
-      {shouldShowLoginPage && !isOAuthCallbackComplete ? (
-        <LoginPage />
-      ) : (
-        appContent
-      )}
+      <RegistryStoreProvider>
+        <Toaster />
+        {shouldShowLoginPage && !isOAuthCallbackComplete ? (
+          <LoginPage />
+        ) : (
+          appContent
+        )}
+      </RegistryStoreProvider>
     </PreferencesStoreProvider>
   );
 }
