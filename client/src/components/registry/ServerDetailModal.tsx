@@ -3,12 +3,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ExternalLink, Package, Globe, Terminal, Copy, Check, Code2, Github, Home, Image, Hash, FolderTree, Shield } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ExternalLink, Package, Globe, Terminal, Copy, Check, Code2, Github, Home, Image, Hash, FolderTree, Shield, Loader2 } from "lucide-react";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import "react18-json-view/src/dark.css";
 import type { RegistryServer } from "@/shared/types";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { listServerVersions, getServerVersion } from "@/lib/registry-api";
 
 interface ServerDetailModalProps {
   server: RegistryServer | null;
@@ -18,7 +20,7 @@ interface ServerDetailModalProps {
 }
 
 export function ServerDetailModal({
-  server,
+  server: initialServer,
   isOpen,
   onClose,
   onInstall,
@@ -27,8 +29,72 @@ export function ServerDetailModal({
   const [showRawJson, setShowRawJson] = useState(false);
   const [copiedJson, setCopiedJson] = useState(false);
   const [showPublisherMeta, setShowPublisherMeta] = useState(false);
+  const [availableVersions, setAvailableVersions] = useState<string[]>([]);
+  const [selectedVersion, setSelectedVersion] = useState<string>("");
+  const [currentServer, setCurrentServer] = useState<RegistryServer | null>(initialServer);
+  const [loadingVersion, setLoadingVersion] = useState(false);
 
-  if (!server) return null;
+  // Fetch available versions when modal opens or server changes
+  useEffect(() => {
+    if (isOpen && initialServer?.name) {
+      setCurrentServer(initialServer);
+      setSelectedVersion(initialServer.version);
+
+      // Fetch all available versions
+      listServerVersions(initialServer.name)
+        .then((response) => {
+          // Handle both formats: {versions: string[]} or {servers: [{server: {version: string}}]}
+          if (response.versions && Array.isArray(response.versions)) {
+            setAvailableVersions(response.versions);
+          } else if ((response as any).servers && Array.isArray((response as any).servers)) {
+            // Extract versions from servers array
+            const versions = (response as any).servers.map((s: any) => s.server?.version).filter(Boolean);
+            setAvailableVersions(versions);
+          } else {
+            setAvailableVersions([initialServer.version]);
+          }
+        })
+        .catch((error) => {
+          console.error("Failed to fetch versions:", error);
+          setAvailableVersions([initialServer.version]);
+        });
+    }
+  }, [isOpen, initialServer]);
+
+  // Handle version change
+  const handleVersionChange = async (version: string) => {
+    if (!initialServer?.name || version === selectedVersion) return;
+
+    setLoadingVersion(true);
+    setSelectedVersion(version);
+
+    try {
+      const response = await getServerVersion(initialServer.name, version);
+
+      // The API returns {server: {...}, _meta: {...}} format
+      const versionServer = (response as any).server || response;
+      const versionMeta = (response as any)._meta || {};
+
+      // Update current server with the new version data
+      setCurrentServer({
+        ...versionServer,
+        _meta: {
+          ...versionServer._meta,
+          ...versionMeta,
+        },
+      });
+    } catch (error) {
+      console.error("Failed to fetch version details:", error);
+      // Revert to previous version on error
+      setSelectedVersion(currentServer?.version || initialServer.version);
+    } finally {
+      setLoadingVersion(false);
+    }
+  };
+
+  if (!currentServer) return null;
+
+  const server = currentServer;
 
   const nameParts = server.name?.split("/") || ["", "Unknown"];
   const organization = nameParts[0] || "";
@@ -58,7 +124,7 @@ export function ServerDetailModal({
   // No-op
 
   const renderJson = (data: any, maxHeightClass: string = "max-h-40") => (
-    <div className={`rounded-sm bg-muted p-2 overflow-auto ${maxHeightClass}`}>
+    <div className={`rounded-md border border-border bg-background/60 p-2 overflow-auto ${maxHeightClass}`}>
       <JsonView
         src={data}
         dark={true}
@@ -128,7 +194,7 @@ export function ServerDetailModal({
                   <p className="text-sm text-muted-foreground">{organization}</p>
                 </div>
               </div>
-              <div className="flex flex-wrap gap-2 mt-3">
+              <div className="flex flex-wrap gap-2 mt-3 items-center">
                 {isOfficial && (
                   <Badge variant="secondary" className="text-xs">
                     Official
@@ -139,9 +205,33 @@ export function ServerDetailModal({
                     Latest
                   </Badge>
                 )}
-                <Badge variant="outline" className="text-xs">
-                  v{server.version}
-                </Badge>
+                {availableVersions.length > 1 ? (
+                  <Select value={selectedVersion} onValueChange={handleVersionChange} disabled={loadingVersion}>
+                    <SelectTrigger className="w-[140px] h-6 text-xs">
+                      <SelectValue>
+                        {loadingVersion ? (
+                          <span className="flex items-center gap-1">
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                            Loading...
+                          </span>
+                        ) : (
+                          `v${selectedVersion}`
+                        )}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availableVersions.map((version) => (
+                        <SelectItem key={version} value={version} className="text-xs">
+                          v{version}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Badge variant="outline" className="text-xs">
+                    v{server.version}
+                  </Badge>
+                )}
                 {server.status && (
                   <Badge
                     variant="outline"
