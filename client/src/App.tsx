@@ -90,17 +90,17 @@ export default function App() {
     toggleServerSelection,
     selectedMCPConfigsMap,
     setSelectedMultipleServersToAllServers,
-    profiles,
-    activeProfileId,
-    activeProfile,
-    handleSwitchProfile,
-    handleCreateProfile,
-    handleUpdateProfile,
-    handleDeleteProfile,
-    handleDuplicateProfile,
-    handleSetDefaultProfile,
-    handleExportProfile,
-    handleImportProfile,
+    workspaces,
+    activeWorkspaceId,
+    activeWorkspace,
+    handleSwitchWorkspace,
+    handleCreateWorkspace,
+    handleUpdateWorkspace,
+    handleDeleteWorkspace,
+    handleDuplicateWorkspace,
+    handleSetDefaultWorkspace,
+    handleExportWorkspace,
+    handleImportWorkspace,
   } = useAppState();
   // Sync tab with hash on mount and when hash changes
   useEffect(() => {
@@ -185,17 +185,17 @@ export default function App() {
               onReconnect={handleReconnect}
               onUpdate={handleUpdate}
               onRemove={handleRemoveServer}
-              profiles={profiles}
-              activeProfileId={activeProfileId}
-              activeProfile={activeProfile}
-              onSwitchProfile={handleSwitchProfile}
-              onCreateProfile={handleCreateProfile}
-              onUpdateProfile={handleUpdateProfile}
-              onDeleteProfile={handleDeleteProfile}
-              onDuplicateProfile={handleDuplicateProfile}
-              onSetDefaultProfile={handleSetDefaultProfile}
-              onExportProfile={handleExportProfile}
-              onImportProfile={handleImportProfile}
+              workspaces={workspaces}
+              activeWorkspaceId={activeWorkspaceId}
+              activeWorkspace={activeWorkspace}
+              onSwitchWorkspace={handleSwitchWorkspace}
+              onCreateWorkspace={handleCreateWorkspace}
+              onUpdateWorkspace={handleUpdateWorkspace}
+              onDeleteWorkspace={handleDeleteWorkspace}
+              onDuplicateWorkspace={handleDuplicateWorkspace}
+              onSetDefaultWorkspace={handleSetDefaultWorkspace}
+              onExportWorkspace={handleExportWorkspace}
+              onImportWorkspace={handleImportWorkspace}
             />
           )}
 
