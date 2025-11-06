@@ -23,6 +23,7 @@ import {
   OAuthProtocolVersion,
   RegistrationStrategy2025_11_25,
   RegistrationStrategy2025_06_18,
+  type OAuthFlowStep,
 } from "@/lib/oauth/state-machines/types";
 import {
   createOAuthStateMachine,
@@ -101,6 +102,7 @@ export const OAuthFlowTab = ({
   const [oauthFlowState, setOAuthFlowState] = useState<OAuthFlowState>(
     EMPTY_OAUTH_FLOW_STATE_V2,
   );
+  const [focusedStep, setFocusedStep] = useState<OAuthFlowStep | null>(null);
 
   // Track if we've initialized the flow for the current server
   const initializedServerRef = useRef<string | null>(null);
@@ -162,6 +164,10 @@ export const OAuthFlowTab = ({
   useEffect(() => {
     oauthFlowStateRef.current = oauthFlowState;
   }, [oauthFlowState]);
+
+  useEffect(() => {
+    setFocusedStep(null);
+  }, [oauthFlowState.currentStep]);
 
   // Save protocol version and registration strategy to localStorage whenever they change
   useEffect(() => {
@@ -760,22 +766,25 @@ export const OAuthFlowTab = ({
       <div className="flex-1 overflow-hidden">
         <ResizablePanelGroup direction="horizontal" className="h-full">
           {/* ReactFlow Sequence Diagram */}
-          <ResizablePanel defaultSize={70} minSize={30}>
+          <ResizablePanel defaultSize={50} minSize={30}>
             <OAuthSequenceDiagram
               flowState={oauthFlowState}
               registrationStrategy={registrationStrategy}
               protocolVersion={protocolVersion}
+              focusedStep={focusedStep ?? oauthFlowState.currentStep}
             />
           </ResizablePanel>
 
           <ResizableHandle withHandle />
 
           {/* Side Panel with Details - Combined Info and HTTP History */}
-          <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
+          <ResizablePanel defaultSize={50} minSize={20} maxSize={50}>
             <OAuthFlowLogger
               oauthFlowState={oauthFlowState}
               onClearLogs={clearInfoLogs}
               onClearHttpHistory={clearHttpHistory}
+              activeStep={focusedStep ?? oauthFlowState.currentStep}
+              onFocusStep={setFocusedStep}
             />
           </ResizablePanel>
         </ResizablePanelGroup>
