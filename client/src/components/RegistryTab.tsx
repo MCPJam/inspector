@@ -39,7 +39,7 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
       setError(null);
 
       const response = await listRegistryServers({
-        limit: 100, // Fetch more at once since we're doing client-side search
+        limit: 100, // Max allowed by the registry API
         cursor,
       });
 
@@ -50,8 +50,14 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
       }));
 
       if (cursor) {
-        // Append to existing servers for pagination
-        setAllServers((prev) => [...prev, ...unwrappedServers]);
+        // Append to existing servers for pagination, avoiding duplicates
+        setAllServers((prev) => {
+          const existingIds = new Set(prev.map(s => `${s.name}@${s.version}`));
+          const newServers = unwrappedServers.filter(
+            s => !existingIds.has(`${s.name}@${s.version}`)
+          );
+          return [...prev, ...newServers];
+        });
       } else {
         // Replace servers for initial load
         setAllServers(unwrappedServers);
@@ -59,6 +65,12 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
 
       setNextCursor(response.metadata.nextCursor);
       setHasMore(!!response.metadata.nextCursor);
+
+      // Auto-fetch all pages on initial load for better search experience
+      if (!cursor && response.metadata.nextCursor) {
+        // Recursively fetch remaining pages in background
+        fetchAllRemainingPages(response.metadata.nextCursor);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load registry servers";
       setError(message);
@@ -66,6 +78,41 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
     } finally {
       setLoading(false);
       setLoadingMore(false);
+    }
+  };
+
+  // Fetch all remaining pages in the background
+  const fetchAllRemainingPages = async (cursor: string) => {
+    try {
+      const response = await listRegistryServers({
+        limit: 100,
+        cursor,
+      });
+
+      const unwrappedServers = response.servers.map((wrapper) => ({
+        ...wrapper.server,
+        _meta: { ...wrapper.server._meta, ...wrapper._meta },
+      }));
+
+      // Deduplicate servers before adding
+      setAllServers((prev) => {
+        const existingIds = new Set(prev.map(s => `${s.name}@${s.version}`));
+        const newServers = unwrappedServers.filter(
+          s => !existingIds.has(`${s.name}@${s.version}`)
+        );
+        return [...prev, ...newServers];
+      });
+
+      setNextCursor(response.metadata.nextCursor);
+      setHasMore(!!response.metadata.nextCursor);
+
+      // Continue fetching if there are more pages
+      if (response.metadata.nextCursor) {
+        fetchAllRemainingPages(response.metadata.nextCursor);
+      }
+    } catch (err) {
+      console.error("Error fetching additional pages:", err);
+      // Don't show error toast for background fetches
     }
   };
 

@@ -15,18 +15,22 @@ const fuseOptions: IFuseOptions<RegistryServer> = {
     { name: "_meta.tags", weight: 0.6 }, // Tags if available
   ],
   // Fuzzy matching threshold (0.0 = exact, 1.0 = match anything)
-  // 0.3 is a good balance - allows typos but maintains relevance
-  threshold: 0.3,
+  // 0.4 allows more flexible matching for partial words in long names
+  threshold: 0.4,
   // Include score in results for sorting by relevance
   includeScore: true,
   // Include matched indices for highlighting (future enhancement)
   includeMatches: false,
   // Minimum characters before matching
-  minMatchCharLength: 1,
+  minMatchCharLength: 2,
   // Search in all locations (not just beginning)
   findAllMatches: true,
   // Use extended search for special operators (future: support "^term", "!term", etc)
   useExtendedSearch: false,
+  // Important: Set distance to allow matching substrings in longer strings
+  distance: 1000,
+  // Ignore location for better substring matching
+  ignoreLocation: true,
 };
 
 /**
@@ -78,16 +82,19 @@ export function searchRegistryServers(
     });
   }
 
-  // If no query, return filtered results
+  // If no query, return filtered results sorted alphabetically
   if (!query.trim()) {
-    return results;
+    return results.sort((a, b) =>
+      (a.name || '').localeCompare(b.name || '')
+    );
   }
 
   // Perform fuzzy search on filtered results
   const fuse = new Fuse(results, fuseOptions);
   const searchResults = fuse.search(query);
 
-  // Extract items from search results (sorted by relevance)
+  // Extract items from search results (sorted by relevance score)
+  // Fuse.js returns results sorted by score (best matches first)
   return searchResults.map((result) => result.item);
 }
 
