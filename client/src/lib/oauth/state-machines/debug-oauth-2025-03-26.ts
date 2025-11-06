@@ -25,6 +25,8 @@ import {
   generateRandomString,
   generateCodeChallenge,
   loadPreregisteredCredentials,
+  markLatestHttpEntryAsError,
+  toLogErrorDetails,
 } from "./shared/helpers";
 
 // Re-export types for backward compatibility
@@ -1682,28 +1684,49 @@ export const createDebugOAuthStateMachine = (
                 isInitiatingAuth: false,
               });
             } catch (error) {
+              const errorDetails = toLogErrorDetails(error);
               const errorResponse = {
                 status: 0,
                 statusText: "Network Error",
                 headers: mergeHeaders({}),
                 body: {
-                  error: error instanceof Error ? error.message : String(error),
+                  error: errorDetails.message,
+                  details: errorDetails.details,
                 },
               };
 
               const updatedHistoryError = [...(state.httpHistory || [])];
               if (updatedHistoryError.length > 0) {
-                const lastEntry =
-                  updatedHistoryError[updatedHistoryError.length - 1];
-                lastEntry.response = errorResponse;
-                lastEntry.duration =
-                  Date.now() - (lastEntry.timestamp || Date.now());
+                const lastEntry = {
+                  ...updatedHistoryError[updatedHistoryError.length - 1],
+                  response: errorResponse,
+                  duration:
+                    Date.now() -
+                    (updatedHistoryError[updatedHistoryError.length - 1]
+                      ?.timestamp || Date.now()),
+                  error: errorDetails,
+                };
+                updatedHistoryError[updatedHistoryError.length - 1] = lastEntry;
               }
+
+              const currentState = getCurrentState();
+              const infoLogs = addInfoLog(
+                currentState,
+                "authenticated_mcp_request",
+                `error-authenticated_mcp_request-${Date.now()}`,
+                "Authenticated MCP request failed",
+                {
+                  request: currentState.lastRequest,
+                  error: errorDetails,
+                },
+                { level: "error", error: errorDetails },
+              );
 
               updateState({
                 lastResponse: errorResponse,
                 httpHistory: updatedHistoryError,
-                error: `Authenticated MCP request failed: ${error instanceof Error ? error.message : String(error)}`,
+                infoLogs,
+                error: `Authenticated MCP request failed: ${errorDetails.message}`,
                 isInitiatingAuth: false,
               });
             }
@@ -1718,10 +1741,38 @@ export const createDebugOAuthStateMachine = (
             break;
         }
       } catch (error) {
-        updateState({
-          error: error instanceof Error ? error.message : String(error),
+        const currentState = getCurrentState();
+        const errorDetails = toLogErrorDetails(error);
+        const infoLogs = addInfoLog(
+          currentState,
+          currentState.currentStep,
+          `error-${currentState.currentStep}-${Date.now()}`,
+          "Step failed",
+          {
+            step: currentState.currentStep,
+            request: currentState.lastRequest,
+            response: currentState.lastResponse,
+            error: errorDetails,
+          },
+          { level: "error", error: errorDetails },
+        );
+
+        const updatedHistory = markLatestHttpEntryAsError(
+          currentState.httpHistory,
+          errorDetails,
+        );
+
+        const updates: Partial<OAuthFlowState> = {
+          error: errorDetails.message,
+          infoLogs,
           isInitiatingAuth: false,
-        });
+        };
+
+        if (updatedHistory) {
+          updates.httpHistory = updatedHistory;
+        }
+
+        updateState(updates);
       }
     },
 

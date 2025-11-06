@@ -25,6 +25,8 @@ import {
   generateCodeChallenge,
   loadPreregisteredCredentials,
   buildResourceMetadataUrl,
+  markLatestHttpEntryAsError,
+  toLogErrorDetails,
 } from "./shared/helpers";
 
 // Re-export types for backward compatibility
@@ -2191,10 +2193,37 @@ export const createDebugOAuthStateMachine = (
             break;
         }
       } catch (error) {
-        updateState({
-          error: error instanceof Error ? error.message : String(error),
+        const currentState = getCurrentState();
+        const errorDetails = toLogErrorDetails(error);
+        const infoLogs = addInfoLog(
+          currentState,
+          currentState.currentStep,
+          `error-${currentState.currentStep}-${Date.now()}`,
+          "Step failed",
+          {
+            step: currentState.currentStep,
+            request: currentState.lastRequest,
+            response: currentState.lastResponse,
+            error: errorDetails,
+          },
+          { level: "error", error: errorDetails },
+        );
+        const updatedHistory = markLatestHttpEntryAsError(
+          currentState.httpHistory,
+          errorDetails,
+        );
+
+        const updates: Partial<OAuthFlowState> = {
+          error: errorDetails.message,
+          infoLogs,
           isInitiatingAuth: false,
-        });
+        };
+
+        if (updatedHistory) {
+          updates.httpHistory = updatedHistory;
+        }
+
+        updateState(updates);
       }
     },
 
