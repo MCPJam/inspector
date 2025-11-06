@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { RegistryServerCard } from "./registry/RegistryServerCard";
-import { ServerDetailModal } from "./registry/ServerDetailModal";
+import { RegistryServerDetailModal } from "./registry/ServerDetailModal";
 import { SearchInput } from "./ui/search-input";
 import { Button } from "./ui/button";
 import { EmptyState } from "./ui/empty-state";
@@ -434,7 +434,7 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
       </div>
 
       {/* Server Detail Modal */}
-      <ServerDetailModal
+      <RegistryServerDetailModal
         server={selectedServer}
         isOpen={isDetailModalOpen}
         onClose={() => {
