@@ -1203,6 +1203,7 @@ export const createDebugOAuthStateMachine = (
                   ...tokenInfoLogs,
                   {
                     id: "auth-code",
+                    level: "info",
                     step: "received_authorization_code",
                     label: "Authorization Code",
                     data: {
@@ -1226,6 +1227,7 @@ export const createDebugOAuthStateMachine = (
                   ...tokenInfoLogs,
                   {
                     id: "oauth-tokens",
+                    level: "info",
                     step: "received_access_token",
                     label: "OAuth Tokens",
                     data: tokenData,
@@ -1280,6 +1282,7 @@ export const createDebugOAuthStateMachine = (
                     {
                       id: "token",
                       step: "received_access_token",
+                      level: "info",
                       label: "Access Token (Decoded JWT)",
                       data: audienceNote,
                       timestamp: Date.now(),
@@ -1313,6 +1316,7 @@ export const createDebugOAuthStateMachine = (
                     {
                       id: "id-token",
                       step: "received_access_token",
+                      level: "info",
                       label: "ID Token (OIDC - Decoded JWT)",
                       data: formattedIdToken,
                       timestamp: Date.now(),
