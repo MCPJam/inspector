@@ -39,23 +39,31 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
   // Determine columns per row based on container width
   const [columnsPerRow, setColumnsPerRow] = useState(3);
 
+  // Filter to show only the latest version of each server
+  const latestServers = useMemo(() => {
+    return allServers.filter((server) => {
+      const isLatest = server._meta?.['io.modelcontextprotocol.registry/official']?.isLatest;
+      return isLatest === true;
+    });
+  }, [allServers]);
+
   // Memoize the Fuse.js instance to avoid recreating it on every render
   const fuseInstance = useMemo(() => {
-    if (allServers.length === 0) return null;
-    return createRegistrySearch(allServers);
-  }, [allServers]);
+    if (latestServers.length === 0) return null;
+    return createRegistrySearch(latestServers);
+  }, [latestServers]);
 
   // Use Fuse.js for client-side search with memoization
   const filteredServers = useMemo(() => {
     // No search query - return all servers sorted alphabetically
     if (!searchQuery.trim()) {
-      return [...allServers].sort((a, b) =>
+      return [...latestServers].sort((a, b) =>
         (a.name || '').localeCompare(b.name || '')
       );
     }
 
     const { query, filters } = parseSearchQuery(searchQuery);
-    let results = allServers;
+    let results = latestServers;
 
     // Apply filters first
     if (filters && Object.keys(filters).length > 0) {
