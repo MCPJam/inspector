@@ -15,8 +15,9 @@ export type RegistryState = {
   nextCursor: string | undefined;
   isFullyLoaded: boolean;
   lastFetchTime: number | null;
+  isRefreshing: boolean;
   fetchServers: (cursor?: string) => Promise<void>;
-  fetchAllPages: (forceRefresh?: boolean) => Promise<void>;
+  fetchAllPages: (forceRefresh?: boolean) => void;
   reset: () => void;
 };
 
@@ -28,6 +29,7 @@ const initialState = {
   nextCursor: undefined,
   isFullyLoaded: false,
   lastFetchTime: null,
+  isRefreshing: false,
 };
 
 // Load cached data from localStorage
@@ -140,7 +142,7 @@ export const createRegistryStore = () => {
       }
     },
 
-    fetchAllPages: async (forceRefresh = false) => {
+    fetchAllPages: (forceRefresh = false) => {
       const state = get();
 
       // Check if we need to fetch
@@ -151,73 +153,96 @@ export const createRegistryStore = () => {
         }
       }
 
-      // If already loading, don't start another fetch
-      if (state.loading) return;
+      // If already loading or refreshing, don't start another fetch
+      if (state.loading || state.isRefreshing) return;
 
-      // Reset state for fresh fetch
-      if (forceRefresh) {
-        set({ ...initialState, loading: true });
+      // For initial load (no cached data), show loading spinner
+      if (state.allServers.length === 0) {
+        set({ loading: true, error: null });
+      } else {
+        // For refresh with existing data, set refreshing flag
+        set({ isRefreshing: true, error: null });
       }
 
-      // Fetch the first page
-      await get().fetchServers();
-
-      // Continue fetching remaining pages
-      const fetchRemainingPages = async () => {
-        const currentState = get();
-
-        if (!currentState.nextCursor) {
-          const finalState = get();
-          set({ isFullyLoaded: true, lastFetchTime: Date.now() });
-          // Save all servers to cache
-          saveCachedData(finalState.allServers);
-          return;
-        }
-
+      // Start background fetch - don't await it!
+      (async () => {
         try {
-          const response = await listRegistryServers({
-            limit: 100,
-            cursor: currentState.nextCursor,
-          });
+          const newServers: RegistryServer[] = [];
+          let cursor: string | undefined = undefined;
+          let hasMore = true;
 
-          const unwrappedServers = response.servers.map((wrapper) => ({
-            ...wrapper.server,
-            _meta: { ...wrapper.server._meta, ...wrapper._meta },
-          }));
+          // Fetch all pages
+          while (hasMore) {
+            const response = await listRegistryServers({
+              limit: 100,
+              cursor,
+            });
 
-          set((state) => {
-            // Deduplicate servers before adding
-            const existingIds = new Set(
-              state.allServers.map((s) => `${s.name}@${s.version}`)
-            );
-            const newServers = unwrappedServers.filter(
-              (s) => !existingIds.has(`${s.name}@${s.version}`)
-            );
+            // Unwrap servers from the wrapper structure
+            const unwrappedServers = response.servers.map((wrapper) => ({
+              ...wrapper.server,
+              _meta: { ...wrapper.server._meta, ...wrapper._meta },
+            }));
 
-            return {
-              allServers: [...state.allServers, ...newServers],
-              nextCursor: response.metadata.nextCursor,
-              hasMore: !!response.metadata.nextCursor,
-            };
-          });
-
-          // Continue fetching if there are more pages
-          if (response.metadata.nextCursor) {
-            await fetchRemainingPages();
-          } else {
-            const finalState = get();
-            set({ isFullyLoaded: true, lastFetchTime: Date.now() });
-            // Save all servers to cache
-            saveCachedData(finalState.allServers);
+            newServers.push(...unwrappedServers);
+            cursor = response.metadata.nextCursor;
+            hasMore = !!cursor;
           }
-        } catch (err) {
-          console.error("Error fetching additional pages:", err);
-          // Don't show error toast for background fetches
-          set({ isFullyLoaded: true }); // Mark as loaded even on error to prevent infinite retries
-        }
-      };
 
-      await fetchRemainingPages();
+          // Deduplicate servers
+          const uniqueServers = Array.from(
+            new Map(
+              newServers.map((s) => [`${s.name}@${s.version}`, s])
+            ).values()
+          );
+
+          // Only update state after ALL pages are loaded
+          set({
+            allServers: uniqueServers,
+            isFullyLoaded: true,
+            lastFetchTime: Date.now(),
+            loading: false,
+            isRefreshing: false,
+            error: null,
+          });
+
+          // Save to cache
+          saveCachedData(uniqueServers);
+        } catch (err) {
+          console.error("Error fetching registry servers:", err);
+          const message =
+            err instanceof Error
+              ? err.message
+              : "Failed to load registry servers";
+
+          const currentState = get();
+
+          // If we have cached data, keep it and just show error for refresh
+          if (currentState.allServers.length > 0) {
+            set({
+              loading: false,
+              isRefreshing: false,
+              // Don't set error if we have cached data - just silently fail
+            });
+
+            // Show a subtle toast that refresh failed but we're using cached data
+            toast.warning("Using cached data - refresh failed", {
+              description: "Unable to fetch latest registry data",
+            });
+          } else {
+            // No cached data available, show error
+            set({
+              error: message,
+              loading: false,
+              isRefreshing: false,
+              // Mark as loaded even on error to prevent infinite retries
+              isFullyLoaded: false,
+            });
+
+            toast.error(message);
+          }
+        }
+      })();
     },
 
     reset: () => set(initialState),
