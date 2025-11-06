@@ -176,10 +176,12 @@ export default function App() {
           )}
 
           {activeTab === "tools" && (
-            <ToolsTab
-              serverConfig={selectedMCPConfig}
-              serverName={appState.selectedServer}
-            />
+            <div className="h-full overflow-hidden">
+              <ToolsTab
+                serverConfig={selectedMCPConfig}
+                serverName={appState.selectedServer}
+              />
+            </div>
           )}
           {activeTab === "evals" && <EvalsRunTab />}
           {activeTab === "eval-results" && <EvalsResultsTab />}

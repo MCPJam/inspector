@@ -211,7 +211,7 @@ export function SettingsTab() {
 
       <AccountApiKeySection />
 
-      <div className="space-y-4">
+      <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
         <div>
           <h3 className="text-lg font-semibold">LLM Provider API Keys</h3>
         </div>
