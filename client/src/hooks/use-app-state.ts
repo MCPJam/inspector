@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useLogger } from "./use-logger";
-import { initialAppState, type ServerWithName } from "@/state/app-types";
+import { initialAppState, type ServerWithName, type Profile } from "@/state/app-types";
 import { appReducer } from "@/state/app-reducer";
 import { loadAppState, saveAppState } from "@/state/storage";
 import {
@@ -648,6 +648,101 @@ export function useAppState() {
     ],
   );
 
+  const handleSwitchProfile = useCallback(
+    async (profileId: string) => {
+      const newProfile = appState.profiles[profileId];
+      if (!newProfile) {
+        toast.error("Profile not found");
+        return;
+      }
+
+      logger.info("Switching to profile", { profileId, name: newProfile.name });
+
+      // Simply switch the profile - don't worry about connecting servers
+      dispatch({ type: "SWITCH_PROFILE", profileId });
+      toast.success(`Switched to profile: ${newProfile.name}`);
+    },
+    [appState.profiles, logger]
+  );
+
+  const handleCreateProfile = useCallback((name: string, description?: string) => {
+    const newProfile: Profile = {
+      id: `profile_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+      name,
+      description,
+      servers: {},
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    dispatch({ type: "CREATE_PROFILE", profile: newProfile });
+    toast.success(`Profile "${name}" created`);
+    return newProfile.id;
+  }, []);
+
+  const handleUpdateProfile = useCallback(
+    (profileId: string, updates: Partial<Profile>) => {
+      dispatch({ type: "UPDATE_PROFILE", profileId, updates });
+      toast.success("Profile updated");
+    },
+    []
+  );
+
+  const handleDeleteProfile = useCallback(
+    (profileId: string) => {
+      if (profileId === appState.activeProfileId) {
+        toast.error("Cannot delete the active profile. Switch to another profile first.");
+        return;
+      }
+      dispatch({ type: "DELETE_PROFILE", profileId });
+      toast.success("Profile deleted");
+    },
+    [appState.activeProfileId]
+  );
+
+  const handleDuplicateProfile = useCallback((profileId: string, newName: string) => {
+    dispatch({ type: "DUPLICATE_PROFILE", profileId, newName });
+    toast.success(`Profile duplicated as "${newName}"`);
+  }, []);
+
+  const handleSetDefaultProfile = useCallback((profileId: string) => {
+    dispatch({ type: "SET_DEFAULT_PROFILE", profileId });
+    toast.success("Default profile updated");
+  }, []);
+
+  const handleExportProfile = useCallback(
+    (profileId: string) => {
+      const profile = appState.profiles[profileId];
+      if (!profile) {
+        toast.error("Profile not found");
+        return;
+      }
+
+      const dataStr = JSON.stringify(profile, null, 2);
+      const dataBlob = new Blob([dataStr], { type: "application/json" });
+      const url = URL.createObjectURL(dataBlob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${profile.name.replace(/\s+/g, "_")}_profile.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+      toast.success("Profile exported");
+    },
+    [appState.profiles]
+  );
+
+  const handleImportProfile = useCallback((profileData: Profile) => {
+    // Generate new ID to avoid conflicts
+    const importedProfile: Profile = {
+      ...profileData,
+      id: `profile_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      isDefault: false, // Never import as default
+    };
+    dispatch({ type: "IMPORT_PROFILE", profile: importedProfile });
+    toast.success(`Profile "${importedProfile.name}" imported`);
+  }, []);
+
   return {
     // State
     appState,
@@ -671,6 +766,11 @@ export function useAppState() {
     ),
     isMultiSelectMode: appState.isMultiSelectMode,
 
+    // Profile-related
+    profiles: appState.profiles,
+    activeProfileId: appState.activeProfileId,
+    activeProfile: appState.profiles[appState.activeProfileId],
+
     // Actions
     handleConnect,
     handleDisconnect,
@@ -683,5 +783,15 @@ export function useAppState() {
     toggleServerSelection,
     getValidAccessToken,
     setSelectedMultipleServersToAllServers,
+
+    // Profile actions
+    handleSwitchProfile,
+    handleCreateProfile,
+    handleUpdateProfile,
+    handleDeleteProfile,
+    handleDuplicateProfile,
+    handleSetDefaultProfile,
+    handleExportProfile,
+    handleImportProfile,
   };
 }

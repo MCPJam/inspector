@@ -32,7 +32,19 @@ export interface ServerWithName {
   enabled?: boolean;
 }
 
+export interface Profile {
+  id: string;
+  name: string;
+  description?: string;
+  servers: Record<string, ServerWithName>;
+  createdAt: Date;
+  updatedAt: Date;
+  isDefault?: boolean;
+}
+
 export interface AppState {
+  profiles: Record<string, Profile>;
+  activeProfileId: string;
   servers: Record<string, ServerWithName>;
   selectedServer: string;
   selectedMultipleServers: string[];
@@ -68,9 +80,28 @@ export type AppAction =
       type: "SET_INITIALIZATION_INFO";
       name: string;
       initInfo: InitializationInfo;
-    };
+    }
+  | { type: "CREATE_PROFILE"; profile: Profile }
+  | { type: "UPDATE_PROFILE"; profileId: string; updates: Partial<Profile> }
+  | { type: "DELETE_PROFILE"; profileId: string }
+  | { type: "SWITCH_PROFILE"; profileId: string }
+  | { type: "SET_DEFAULT_PROFILE"; profileId: string }
+  | { type: "IMPORT_PROFILE"; profile: Profile }
+  | { type: "DUPLICATE_PROFILE"; profileId: string; newName: string };
 
 export const initialAppState: AppState = {
+  profiles: {
+    default: {
+      id: "default",
+      name: "Default",
+      description: "Default profile",
+      servers: {},
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      isDefault: true,
+    },
+  },
+  activeProfileId: "default",
   servers: {},
   selectedServer: "none",
   selectedMultipleServers: [],
