@@ -3,10 +3,8 @@ import {
   Hammer,
   MessageCircle,
   Settings,
-  Signature,
   MessageSquareCode,
   BookOpen,
-  Activity,
   CirclePlayIcon,
   ListChecks,
   HandMetal,
@@ -38,11 +36,6 @@ const navigationSections = [
         icon: MCPIcon,
       },
       {
-        title: "Registry",
-        url: "#registry",
-        icon: Package,
-      },
-      {
         title: "Playground",
         url: "#chat-v2",
         icon: MessageCircle,
@@ -50,7 +43,7 @@ const navigationSections = [
     ],
   },
   {
-    id: "tools",
+    id: "primitives",
     items: [
       {
         title: "Tools",
@@ -67,21 +60,17 @@ const navigationSections = [
         url: "#prompts",
         icon: MessageSquareCode,
       },
-      {
-        title: "Auth",
-        url: "#auth",
-        icon: Signature,
-      },
+
+    ],
+  },
+  {
+    id: "others",
+    items: [
       {
         title: "OAuth Flow",
         url: "#oauth-flow",
         icon: Workflow,
       },
-    ],
-  },
-  {
-    id: "evals",
-    items: [
       {
         title: "Run evals",
         url: "#evals",
@@ -91,6 +80,11 @@ const navigationSections = [
         title: "Eval results",
         url: "#eval-results",
         icon: ListChecks,
+      },
+      {
+        title: "Registry",
+        url: "#registry",
+        icon: Package,
       },
     ],
   },
