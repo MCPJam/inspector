@@ -4,19 +4,20 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ExternalLink, Package, Globe, Terminal, Copy, Check, Code2, Github, Home, Image, Hash, FolderTree, Shield, Loader2 } from "lucide-react";
+import { ExternalLink, Package, Globe, Terminal, Copy, Check, Github, Home, Image, Hash, FolderTree, Shield, Loader2 } from "lucide-react";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import "react18-json-view/src/dark.css";
 import type { RegistryServer } from "@/shared/types";
 import { useState, useEffect } from "react";
 import { listServerVersions, getServerVersion } from "@/lib/registry-api";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 interface ServerDetailModalProps {
   server: RegistryServer | null;
   isOpen: boolean;
   onClose: () => void;
-  onInstall: (server: RegistryServer) => void;
+  onInstall: (server: RegistryServer, packageIdx?: number, remoteIdx?: number) => void;
 }
 
 export function ServerDetailModal({
@@ -26,7 +27,8 @@ export function ServerDetailModal({
   onInstall,
 }: ServerDetailModalProps) {
   const [copiedPackage, setCopiedPackage] = useState<string | null>(null);
-  const [showRawJson, setShowRawJson] = useState(false);
+  // tabs: details | raw
+  const [activeTab, setActiveTab] = useState<string>("details");
   const [copiedJson, setCopiedJson] = useState(false);
   const [showPublisherMeta, setShowPublisherMeta] = useState(false);
   const [availableVersions, setAvailableVersions] = useState<string[]>([]);
@@ -162,7 +164,7 @@ export function ServerDetailModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-3xl max-h-[85vh]">
+      <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col">
         <DialogHeader>
           <div className="flex items-start justify-between gap-4">
             <div className="flex-1">
@@ -260,8 +262,31 @@ export function ServerDetailModal({
           </div>
         </DialogHeader>
 
-        <ScrollArea className="max-h-[60vh] pr-4">
-          <div className="space-y-6">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0">
+          <div className="flex items-center justify-between">
+            <TabsList>
+              <TabsTrigger value="details">Details</TabsTrigger>
+              <TabsTrigger value="raw">Raw JSON</TabsTrigger>
+            </TabsList>
+            {activeTab === "raw" && (
+              <div className="flex gap-2">
+                <Button size="sm" variant="outline" onClick={handleCopyJson}>
+                  {copiedJson ? (
+                    <>
+                      <Check className="h-3.5 w-3.5 mr-2" /> Copied
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="h-3.5 w-3.5 mr-2" /> Copy
+                    </>
+                  )}
+                </Button>
+              </div>
+            )}
+          </div>
+
+          <TabsContent value="details" className="flex-1 overflow-auto mt-4 data-[state=active]:flex data-[state=active]:flex-col">
+            <div className="space-y-6 pb-4">
             {/* Description */}
             <div>
               <h3 className="text-sm font-semibold mb-2">Description</h3>
@@ -396,6 +421,7 @@ export function ServerDetailModal({
                                             <code className="font-mono">{env.name}</code>
                                             <span className="text-muted-foreground">
                                               {env.value ?? env.default ?? env.description ?? "(required)"}
+                                              {env.isRequired && <span className="ml-1 text-red-500">*</span>}
                                             </span>
                                           </div>
                                         ) : (
@@ -421,6 +447,19 @@ export function ServerDetailModal({
                               </div>
                             )}
                           </div>
+
+                          {/* Add to Inspector button for this package */}
+                          <Button
+                            size="sm"
+                            className="w-full mt-3"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onInstall(server, idx, undefined);
+                            }}
+                          >
+                            <Terminal className="h-3.5 w-3.5 mr-2" />
+                            Add to Inspector
+                          </Button>
                         </div>
                       );
                     })}
@@ -487,8 +526,12 @@ export function ServerDetailModal({
                             {remote.headers.map((header: any, headerIdx: number) => {
                               if (typeof header?.name === "string") {
                                 return (
-                                  <div key={headerIdx}>
-                                    {header.name}: {header.value}
+                                  <div key={headerIdx} className="flex items-center gap-2">
+                                    <code>{header.name}</code>
+                                    <span className="text-muted-foreground">
+                                      {header.value || header.description || "(required)"}
+                                      {header.isRequired && <span className="ml-1 text-red-500">*</span>}
+                                    </span>
                                   </div>
                                 );
                               }
@@ -497,6 +540,19 @@ export function ServerDetailModal({
                             </div>
                           </div>
                         )}
+
+                        {/* Add to Inspector button for this remote */}
+                        <Button
+                          size="sm"
+                          className="w-full mt-3"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onInstall(server, undefined, idx);
+                          }}
+                        >
+                          <Terminal className="h-3.5 w-3.5 mr-2" />
+                          Add to Inspector
+                        </Button>
                       </div>
                     ))}
                   </div>
@@ -574,42 +630,7 @@ export function ServerDetailModal({
               </>
             )}
 
-            {/* Raw JSON Viewer */}
-            <div>
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-semibold flex items-center gap-2">
-                  <Code2 className="h-4 w-4" />
-                  Raw JSON
-                </h3>
-                <div className="flex gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={handleCopyJson}
-                  >
-                    {copiedJson ? (
-                      <>
-                        <Check className="h-3.5 w-3.5 mr-2" />
-                        Copied
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="h-3.5 w-3.5 mr-2" />
-                        Copy
-                      </>
-                    )}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setShowRawJson(!showRawJson)}
-                  >
-                    {showRawJson ? "Hide" : "View"}
-                  </Button>
-                </div>
-              </div>
-              {showRawJson && <div className="relative">{renderJson(server, "max-h-96")}</div>}
-            </div>
+            {/* Raw JSON moved to tabs */}
 
             {/* Metadata */}
             {(isOfficial || schema) && (
@@ -664,11 +685,18 @@ export function ServerDetailModal({
                 </div>
               </div>
             )}
-          </div>
-        </ScrollArea>
+              </div>
+          </TabsContent>
+
+          <TabsContent value="raw" className="flex-1 overflow-auto mt-4">
+            <div className="pb-4">
+              {renderJson(server, "max-h-full")}
+            </div>
+          </TabsContent>
+        </Tabs>
 
         {/* Footer Actions */}
-        <div className="flex justify-end gap-2 pt-4 border-t">
+        <div className="flex justify-end gap-2 pt-4 border-t mt-4 flex-shrink-0">
           <Button variant="outline" onClick={onClose}>
             Close
           </Button>

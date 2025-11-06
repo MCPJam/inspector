@@ -584,12 +584,20 @@ export interface RegistryPackage {
     name: string;
     value?: string;
     description?: string;
+    isRequired?: boolean;
+    isSecret?: boolean;
   }>;
   fileSha256?: string;
   transport?: {
     type: string;
     url?: string;
-    headers?: Array<{ name: string; value: string }>;
+    headers?: Array<{
+      name: string;
+      value?: string;
+      description?: string;
+      isRequired?: boolean;
+      isSecret?: boolean;
+    }>;
   };
 }
 
@@ -599,7 +607,13 @@ export interface RegistryRemote {
   command?: string;
   args?: string[];
   env?: Record<string, string>;
-  headers?: Array<{ name: string; value: string }>;
+  headers?: Array<{
+    name: string;
+    value?: string;
+    description?: string;
+    isRequired?: boolean;
+    isSecret?: boolean;
+  }>;
 }
 
 export interface RegistryIcon {
