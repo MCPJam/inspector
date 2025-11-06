@@ -8,6 +8,7 @@ import {
   StatusMessage,
 } from "@/shared/types.js";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -119,6 +120,50 @@ export const OAuthFlowTab = ({
   // Track custom scopes input
   const [customScopes, setCustomScopes] = useState("");
 
+  const [serverUrlInput, setServerUrlInput] = useState(() => {
+    if (serverConfig && "url" in serverConfig) {
+      return (serverConfig as any).url.toString();
+    }
+    return "";
+  });
+
+  const isHttpServer = Boolean(serverConfig && "url" in serverConfig);
+
+  const previousServerIdentityRef = useRef<string | null>(null);
+  const lastConfigUrlRef = useRef<string | null>(null);
+  useEffect(() => {
+    const identity = serverName ?? serverEntry?.name ?? null;
+    const configUrl =
+      serverConfig && "url" in serverConfig
+        ? (serverConfig as any).url.toString()
+        : null;
+
+    const identityChanged = identity !== previousServerIdentityRef.current;
+
+    if (identityChanged) {
+      previousServerIdentityRef.current = identity;
+      lastConfigUrlRef.current = configUrl;
+      setServerUrlInput(configUrl ?? "");
+      return;
+    }
+
+    if (configUrl !== lastConfigUrlRef.current) {
+      const previousConfigUrl = lastConfigUrlRef.current;
+      lastConfigUrlRef.current = configUrl;
+      if (
+        !previousConfigUrl ||
+        serverUrlInput.trim() === (previousConfigUrl ?? "")
+      ) {
+        setServerUrlInput(configUrl ?? "");
+      }
+    }
+
+    if (!serverConfig && serverUrlInput !== "") {
+      lastConfigUrlRef.current = null;
+      setServerUrlInput("");
+    }
+  }, [serverConfig, serverEntry, serverName, serverUrlInput]);
+
   // Track protocol version (load from localStorage or default to latest)
   const [protocolVersion, setProtocolVersion] = useState<OAuthProtocolVersion>(
     () => {
@@ -198,6 +243,14 @@ export const OAuthFlowTab = ({
     setAuthSettings((prev) => ({ ...prev, ...updates }));
   }, []);
 
+  const handleServerUrlChange = useCallback(
+    (value: string) => {
+      setServerUrlInput(value);
+      updateAuthSettings({ serverUrl: value });
+    },
+    [updateAuthSettings],
+  );
+
   const updateOAuthFlowState = useCallback(
     (updates: Partial<OAuthFlowState>) => {
       setOAuthFlowState((prev) => ({ ...prev, ...updates }));
@@ -229,16 +282,17 @@ export const OAuthFlowTab = ({
     // Headers will remain from server config (not cleared on reset)
   }, [updateOAuthFlowState]);
 
-  // Update auth settings when server config changes
+  // Update auth settings when server config changes or server URL is overridden
   useEffect(() => {
-    if (serverConfig && serverConfig.url && serverName) {
-      const serverUrl = serverConfig.url.toString();
+    if (serverConfig && serverName && isHttpServer) {
+      const configUrl = (serverConfig as any).url.toString();
+      const effectiveUrl = serverUrlInput.trim() || configUrl;
 
       // Check for existing tokens using the real OAuth system
       const existingTokens = getStoredTokens(serverName);
 
       updateAuthSettings({
-        serverUrl,
+        serverUrl: effectiveUrl,
         tokens: existingTokens,
         error: null,
         statusMessage: null,
@@ -283,7 +337,14 @@ export const OAuthFlowTab = ({
     } else {
       updateAuthSettings(DEFAULT_AUTH_SETTINGS);
     }
-  }, [serverConfig, serverName, updateAuthSettings, customScopes]);
+  }, [
+    serverConfig,
+    serverName,
+    updateAuthSettings,
+    customScopes,
+    isHttpServer,
+    serverUrlInput,
+  ]);
 
   // Initialize Debug OAuth state machine with protocol version support
   const oauthStateMachine = useMemo(() => {
@@ -480,7 +541,6 @@ export const OAuthFlowTab = ({
 
   // Check if server supports OAuth
   // Only HTTP servers support OAuth (STDIO servers use process-based auth)
-  const isHttpServer = serverConfig && "url" in serverConfig;
   const supportsOAuth = isHttpServer;
 
   if (!serverConfig) {
@@ -570,177 +630,180 @@ export const OAuthFlowTab = ({
     <div className="h-[calc(100vh-120px)] flex flex-col bg-background">
       {/* Header */}
       <div className="px-6 py-4 border-b border-border bg-background">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="flex items-center gap-2">
-              <Workflow className="h-5 w-5" />
-              <h3 className="text-lg font-medium">OAuth Flow</h3>
-              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
-                BETA
-              </span>
-            </div>
-            <p className="text-sm text-muted-foreground">
-              {serverEntry?.name || "Unknown Server"} •{" "}
-              {isHttpServer && (serverConfig as any).url.toString()}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-2 border-r border-border pr-4">
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="flex-1 min-w-[220px] space-y-2">
               <label
-                htmlFor="protocol-version"
-                className="text-xs text-muted-foreground whitespace-nowrap"
+                htmlFor="oauth-flow-server-url"
+                className="text-xs uppercase tracking-wide text-muted-foreground"
               >
-                Protocol:
+                Server URL
               </label>
-              <Select
-                value={protocolVersion}
-                onValueChange={(value: OAuthProtocolVersion) => {
-                  setProtocolVersion(value);
-                  // Reset registration strategy to default for new protocol
-                  setRegistrationStrategy(
-                    getDefaultRegistrationStrategy(value) as
-                      | RegistrationStrategy2025_06_18
-                      | RegistrationStrategy2025_11_25,
-                  );
+              <Input
+                id="oauth-flow-server-url"
+                value={serverUrlInput}
+                onChange={(event) => handleServerUrlChange(event.target.value)}
+                placeholder="https://example.com"
+                className="h-9"
+                spellCheck={false}
+                autoComplete="off"
+              />
+            </div>
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="min-w-[150px] space-y-1">
+                <label
+                  htmlFor="protocol-version"
+                  className="text-xs uppercase tracking-wide text-muted-foreground"
+                >
+                  Protocol
+                </label>
+                <Select
+                  value={protocolVersion}
+                  onValueChange={(value: OAuthProtocolVersion) => {
+                    setProtocolVersion(value);
+                    // Reset registration strategy to default for new protocol
+                    setRegistrationStrategy(
+                      getDefaultRegistrationStrategy(value) as
+                        | RegistrationStrategy2025_06_18
+                        | RegistrationStrategy2025_11_25,
+                    );
+                  }}
+                  disabled={oauthFlowState.isInitiatingAuth}
+                >
+                  <SelectTrigger
+                    id="protocol-version"
+                    className="h-9 w-full text-xs"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="2025-03-26" className="text-xs">
+                      2025-03-26
+                    </SelectItem>
+                    <SelectItem value="2025-06-18" className="text-xs">
+                      2025-06-18 (Latest)
+                    </SelectItem>
+                    <SelectItem value="2025-11-25" className="text-xs">
+                      2025-11-25 (Draft)
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="min-w-[180px] space-y-1">
+                <label
+                  htmlFor="registration-strategy"
+                  className="text-xs uppercase tracking-wide text-muted-foreground"
+                >
+                  Registration
+                </label>
+                <Select
+                  value={registrationStrategy}
+                  onValueChange={(value: string) =>
+                    setRegistrationStrategy(
+                      value as
+                        | RegistrationStrategy2025_06_18
+                        | RegistrationStrategy2025_11_25,
+                    )
+                  }
+                  disabled={oauthFlowState.isInitiatingAuth}
+                >
+                  <SelectTrigger
+                    id="registration-strategy"
+                    className="h-9 w-full text-xs"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {getSupportedRegistrationStrategies(protocolVersion).map(
+                      (strategy) => (
+                        <SelectItem
+                          key={strategy}
+                          value={strategy}
+                          className="text-xs"
+                        >
+                          {strategy === "cimd"
+                            ? "CIMD (URL-based)"
+                            : strategy === "dcr"
+                              ? "Dynamic (DCR)"
+                              : "Pre-registered"}
+                        </SelectItem>
+                      ),
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="flex items-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  // Mark this as a manual reset (don't auto-restart)
+                  manualResetRef.current = true;
+
+                  if (oauthStateMachine) {
+                    oauthStateMachine.resetFlow();
+                  }
+
+                  // Reset the initialized server ref to allow manual restart
+                  initializedServerRef.current = null;
+
+                  // Clear processed code tracker and any pending exchanges
+                  processedCodeRef.current = null;
+                  if (exchangeTimeoutRef.current) {
+                    clearTimeout(exchangeTimeoutRef.current);
+                    exchangeTimeoutRef.current = null;
+                  }
                 }}
                 disabled={oauthFlowState.isInitiatingAuth}
               >
-                <SelectTrigger
-                  id="protocol-version"
-                  className="w-[140px] h-9 text-xs"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="2025-03-26" className="text-xs">
-                    2025-03-26
-                  </SelectItem>
-                  <SelectItem value="2025-06-18" className="text-xs">
-                    2025-06-18 (Latest)
-                  </SelectItem>
-                  <SelectItem value="2025-11-25" className="text-xs">
-                    2025-11-25 (Draft)
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex items-center gap-2 border-r border-border pr-4">
-              <label
-                htmlFor="registration-strategy"
-                className="text-xs text-muted-foreground whitespace-nowrap"
-              >
-                Registration:
-              </label>
-              <Select
-                value={registrationStrategy}
-                onValueChange={(value: string) =>
-                  setRegistrationStrategy(
-                    value as
-                      | RegistrationStrategy2025_06_18
-                      | RegistrationStrategy2025_11_25,
-                  )
-                }
-                disabled={oauthFlowState.isInitiatingAuth}
-              >
-                <SelectTrigger
-                  id="registration-strategy"
-                  className="w-[180px] h-9 text-xs"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {getSupportedRegistrationStrategies(protocolVersion).map(
-                    (strategy) => (
-                      <SelectItem
-                        key={strategy}
-                        value={strategy}
-                        className="text-xs"
-                      >
-                        {strategy === "cimd"
-                          ? "CIMD (URL-based)"
-                          : strategy === "dcr"
-                            ? "Dynamic (DCR)"
-                            : "Pre-registered"}
-                      </SelectItem>
-                    ),
-                  )}
-                </SelectContent>
-              </Select>
-            </div>
-            {serverEntry && (
-              <Button
-                variant="outline"
-                onClick={() => setIsEditingServer(true)}
-                disabled={oauthFlowState.isInitiatingAuth}
-              >
-                Edit Config
+                Reset
               </Button>
-            )}
-            <Button
-              variant="outline"
-              onClick={() => {
-                // Mark this as a manual reset (don't auto-restart)
-                manualResetRef.current = true;
-
-                if (oauthStateMachine) {
-                  oauthStateMachine.resetFlow();
-                }
-
-                // Reset the initialized server ref to allow manual restart
-                initializedServerRef.current = null;
-
-                // Clear processed code tracker and any pending exchanges
-                processedCodeRef.current = null;
-                if (exchangeTimeoutRef.current) {
-                  clearTimeout(exchangeTimeoutRef.current);
-                  exchangeTimeoutRef.current = null;
-                }
-              }}
-              disabled={oauthFlowState.isInitiatingAuth}
-            >
-              Reset
-            </Button>
-            <Button
-              onClick={async () => {
-                // If we're about to do authorization or already at it, handle the modal
-                if (
-                  oauthFlowState.currentStep === "authorization_request" ||
-                  oauthFlowState.currentStep === "generate_pkce_parameters"
-                ) {
-                  // First proceed to authorization_request if needed
+              <Button
+                onClick={async () => {
+                  // If we're about to do authorization or already at it, handle the modal
                   if (
+                    oauthFlowState.currentStep === "authorization_request" ||
                     oauthFlowState.currentStep === "generate_pkce_parameters"
                   ) {
+                    // First proceed to authorization_request if needed
+                    if (
+                      oauthFlowState.currentStep === "generate_pkce_parameters"
+                    ) {
+                      await proceedToNextStep();
+                    }
+                    // Then open modal
+                    setIsAuthModalOpen(true);
+                  } else {
+                    // Otherwise proceed to next step
                     await proceedToNextStep();
                   }
-                  // Then open modal
-                  setIsAuthModalOpen(true);
-                } else {
-                  // Otherwise proceed to next step
-                  await proceedToNextStep();
+                }}
+                disabled={
+                  oauthFlowState.isInitiatingAuth ||
+                  oauthFlowState.currentStep === "complete"
                 }
-              }}
-              disabled={
-                oauthFlowState.isInitiatingAuth ||
-                oauthFlowState.currentStep === "complete"
-              }
-              className={`min-w-[180px] ${oauthFlowState.currentStep === "complete" ? "bg-green-600 hover:bg-green-600" : ""}`}
-            >
-              {oauthFlowState.currentStep === "complete" ? (
-                <>
-                  <CheckCircle2 className="mr-2 h-4 w-4" />
-                  Flow Complete
-                </>
-              ) : oauthFlowState.isInitiatingAuth ? (
-                "Processing..."
-              ) : oauthFlowState.currentStep === "authorization_request" ||
-                oauthFlowState.currentStep === "generate_pkce_parameters" ? (
-                "Ready to authorize"
-              ) : (
-                "Next Step"
-              )}
-            </Button>
+                className={`min-w-[180px] ${oauthFlowState.currentStep === "complete" ? "bg-green-600 hover:bg-green-600" : ""}`}
+              >
+                {oauthFlowState.currentStep === "complete" ? (
+                  <>
+                    <CheckCircle2 className="mr-2 h-4 w-4" />
+                    Flow Complete
+                  </>
+                ) : oauthFlowState.isInitiatingAuth ? (
+                  "Processing..."
+                ) : oauthFlowState.currentStep === "authorization_request" ||
+                  oauthFlowState.currentStep === "generate_pkce_parameters" ? (
+                  "Ready to authorize"
+                ) : (
+                  "Next Step"
+                )}
+              </Button>
+            </div>
           </div>
+          <p className="text-xs text-muted-foreground">
+            Set the target URL, pick your protocol version, and confirm the
+            registration strategy before continuing.
+          </p>
         </div>
       </div>
 
