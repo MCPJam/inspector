@@ -4,7 +4,6 @@ import { ChevronDown, ChevronRight, Loader2, RotateCw } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
-  TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { IterationDetails } from "./iteration-details";
@@ -196,9 +195,9 @@ export function SuiteIterationsView({
         <Button variant="ghost" size="sm" onClick={onBack}>
           ← Back to suites
         </Button>
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span>
               <Button
                 variant="outline"
                 size="sm"
@@ -211,16 +210,14 @@ export function SuiteIterationsView({
                 />
                 Rerun
               </Button>
-            </TooltipTrigger>
-            {!canRerun && (
-              <TooltipContent>
-                <p>
-                  Connect the following servers: {missingServers.join(", ")}
-                </p>
-              </TooltipContent>
-            )}
-          </Tooltip>
-        </TooltipProvider>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>
+            {!canRerun
+              ? `Connect the following servers: ${missingServers.join(", ")}`
+              : "Rerun evaluation"}
+          </TooltipContent>
+        </Tooltip>
       </div>
       <div className="space-y-4">
         {caseGroups.map((group, index) => {
