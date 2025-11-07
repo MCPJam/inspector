@@ -91,13 +91,13 @@ export function WorkspaceSelector({
           onBlur={handleNameBlur}
           onKeyDown={handleNameKeyDown}
           autoFocus
-          className="px-3 py-1.5 text-sm font-medium border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
+          className="px-3 py-2 text-xl font-semibold border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
         />
       ) : (
         <Button
           variant="ghost"
           onClick={handleNameClick}
-          className="px-3 py-1.5 h-auto font-medium hover:bg-accent"
+          className="px-3 py-2 h-auto text-xl font-semibold hover:bg-accent"
         >
           {activeWorkspace?.name || "No Workspace"}
         </Button>
