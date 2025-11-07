@@ -1,4 +1,4 @@
-import { ChevronDown, Plus } from "lucide-react";
+import { ChevronDown, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -15,8 +15,9 @@ interface WorkspaceSelectorProps {
   activeWorkspaceId: string;
   workspaces: Record<string, Workspace>;
   onSwitchWorkspace: (workspaceId: string) => void;
-  onCreateWorkspace: (name: string) => void;
+  onCreateWorkspace: (name: string, switchTo?: boolean) => string;
   onUpdateWorkspace: (workspaceId: string, updates: Partial<Workspace>) => void;
+  onDeleteWorkspace: (workspaceId: string) => void;
 }
 
 export function WorkspaceSelector({
@@ -25,6 +26,7 @@ export function WorkspaceSelector({
   onSwitchWorkspace,
   onCreateWorkspace,
   onUpdateWorkspace,
+  onDeleteWorkspace,
 }: WorkspaceSelectorProps) {
   const activeWorkspace = workspaces[activeWorkspaceId];
   const [isEditing, setIsEditing] = useState(false);
@@ -39,10 +41,20 @@ export function WorkspaceSelector({
   });
 
   const handleCreateWorkspace = () => {
-    const name = prompt("Enter workspace name:");
-    if (name && name.trim()) {
-      onCreateWorkspace(name.trim());
+    // Find a unique name for "New workspace"
+    let baseName = "New workspace";
+    let name = baseName;
+    let counter = 1;
+
+    // Check if a workspace with this name already exists
+    const workspaceNames = Object.values(workspaces).map(w => w.name.toLowerCase());
+    while (workspaceNames.includes(name.toLowerCase())) {
+      counter++;
+      name = `${baseName} ${counter}`;
     }
+
+    // Create and switch to the new workspace
+    onCreateWorkspace(name, true);
   };
 
   const handleNameClick = () => {
@@ -98,17 +110,30 @@ export function WorkspaceSelector({
             <ChevronDown className="h-4 w-4 opacity-50" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-[200px]">
+        <DropdownMenuContent align="start" className="w-[240px]">
           {workspaceList.map((workspace) => (
             <DropdownMenuItem
               key={workspace.id}
-              onClick={() => onSwitchWorkspace(workspace.id)}
               className={cn(
-                "cursor-pointer",
+                "cursor-pointer group flex items-center justify-between",
                 workspace.id === activeWorkspaceId && "bg-accent"
               )}
             >
-              <span className="truncate flex-1">{workspace.name}</span>
+              <span
+                className="truncate flex-1"
+                onClick={() => onSwitchWorkspace(workspace.id)}
+              >
+                {workspace.name}
+              </span>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDeleteWorkspace(workspace.id);
+                }}
+                className="opacity-0 group-hover:opacity-100 hover:text-destructive transition-opacity p-1"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
             </DropdownMenuItem>
           ))}
           <DropdownMenuSeparator />

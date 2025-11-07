@@ -26,8 +26,9 @@ interface ServersTabProps {
   activeWorkspaceId: string;
   activeWorkspace: Workspace;
   onSwitchWorkspace: (workspaceId: string) => void;
-  onCreateWorkspace: (name: string) => void;
+  onCreateWorkspace: (name: string, switchTo?: boolean) => string;
   onUpdateWorkspace: (workspaceId: string, updates: Partial<Workspace>) => void;
+  onDeleteWorkspace: (workspaceId: string) => void;
 }
 
 export function ServersTab({
@@ -43,6 +44,7 @@ export function ServersTab({
   onSwitchWorkspace,
   onCreateWorkspace,
   onUpdateWorkspace,
+  onDeleteWorkspace,
 }: ServersTabProps) {
   const posthog = usePostHog();
   const [isAddingServer, setIsAddingServer] = useState(false);
@@ -134,6 +136,7 @@ export function ServersTab({
             onSwitchWorkspace={onSwitchWorkspace}
             onCreateWorkspace={onCreateWorkspace}
             onUpdateWorkspace={onUpdateWorkspace}
+            onDeleteWorkspace={onDeleteWorkspace}
           />
         </div>
         <div className="flex items-center gap-2">

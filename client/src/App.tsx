@@ -96,6 +96,7 @@ export default function App() {
     handleSwitchWorkspace,
     handleCreateWorkspace,
     handleUpdateWorkspace,
+    handleDeleteWorkspace,
   } = useAppState();
   // Sync tab with hash on mount and when hash changes
   useEffect(() => {
@@ -186,6 +187,7 @@ export default function App() {
               onSwitchWorkspace={handleSwitchWorkspace}
               onCreateWorkspace={handleCreateWorkspace}
               onUpdateWorkspace={handleUpdateWorkspace}
+              onDeleteWorkspace={handleDeleteWorkspace}
             />
           )}
 
