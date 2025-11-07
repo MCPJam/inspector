@@ -675,11 +675,10 @@ export function useAppState() {
     [appState.workspaces, appState.servers, handleDisconnect, logger]
   );
 
-  const handleCreateWorkspace = useCallback((name: string, description?: string) => {
+  const handleCreateWorkspace = useCallback((name: string) => {
     const newWorkspace: Workspace = {
       id: `workspace_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
       name,
-      description,
       servers: {},
       createdAt: new Date(),
       updatedAt: new Date(),
