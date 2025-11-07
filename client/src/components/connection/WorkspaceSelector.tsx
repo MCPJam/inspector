@@ -97,7 +97,7 @@ export function WorkspaceSelector({
         <Button
           variant="ghost"
           onClick={handleNameClick}
-          className="px-3 py-2 h-auto text-xl font-semibold hover:bg-accent"
+          className="px-3 py-2 h-auto text-m font-semibold hover:bg-accent"
         >
           {activeWorkspace?.name || "No Workspace"}
         </Button>
