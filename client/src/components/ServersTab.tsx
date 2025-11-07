@@ -14,7 +14,6 @@ import { MCPIcon } from "./ui/mcp-icon";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
-import { Badge } from "./ui/badge";
 import { Workspace } from "@/state/app-types";
 interface ServersTabProps {
   connectedServerConfigs: Record<string, ServerWithName>;
@@ -140,7 +139,7 @@ export function ServersTab({
       {/* Header Section */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <h2 className="text-2xl font-bold tracking-tight">MCP Servers</h2>
+          <h2 className="text-2xl font-bold tracking-tight">{activeWorkspace.name}</h2>
           <WorkspaceSelector
             activeWorkspaceId={activeWorkspaceId}
             workspaces={workspaces}
@@ -192,21 +191,6 @@ export function ServersTab({
           </HoverCard>
         </div>
       </div>
-
-      {/* Workspace info badge */}
-      {activeWorkspace && (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Badge variant="outline">{activeWorkspace.name}</Badge>
-          <span>•</span>
-          <span>{Object.keys(connectedServerConfigs).length} server(s)</span>
-          {activeWorkspace.description && (
-            <>
-              <span>•</span>
-              <span className="truncate max-w-md">{activeWorkspace.description}</span>
-            </>
-          )}
-        </div>
-      )}
 
       {/* Server Cards Grid */}
       {connectedCount > 0 ? (
