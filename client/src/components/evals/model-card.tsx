@@ -7,6 +7,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { getProviderLogo, getProviderColor } from "@/lib/provider-logos";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
 interface ModelCardProps {
   model: OpenRouterModel;
@@ -63,7 +65,10 @@ function getProviderFromId(modelId: string): string {
 }
 
 export function ModelCard({ model, isSelected, onSelect }: ModelCardProps) {
-  const provider = getProviderFromId(model.id);
+  const themeMode = usePreferencesStore((s) => s.themeMode);
+  const providerName = getProviderFromId(model.id);
+  const providerKey = model.id.split("/")[0]; // e.g., "openai", "anthropic"
+  const logoSrc = getProviderLogo(providerKey, themeMode);
   const contextTokens = formatNumber(model.context_length);
   const inputPrice = formatPrice(model.pricing.prompt);
   const outputPrice = formatPrice(model.pricing.completion);
@@ -93,20 +98,38 @@ export function ModelCard({ model, isSelected, onSelect }: ModelCardProps) {
         {/* Header */}
         <div className="space-y-1 pr-8">
           <div className="flex items-center gap-2">
+            {logoSrc ? (
+              <img
+                src={logoSrc}
+                alt={`${providerName} logo`}
+                className="h-4 w-4 object-contain flex-shrink-0"
+              />
+            ) : (
+              <div
+                className={cn(
+                  "h-4 w-4 rounded-sm flex items-center justify-center flex-shrink-0",
+                  getProviderColor(providerKey)
+                )}
+              >
+                <span className="text-white font-bold text-[8px]">
+                  {providerName?.charAt(0) || "?"}
+                </span>
+              </div>
+            )}
             <h3 className="font-semibold text-foreground line-clamp-1">
               {model.name}
             </h3>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Info className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
+                <Info className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground flex-shrink-0" />
               </TooltipTrigger>
               <TooltipContent side="top" className="max-w-xs">
                 <p className="text-xs">{model.description}</p>
               </TooltipContent>
             </Tooltip>
           </div>
-          {provider && (
-            <p className="text-xs text-muted-foreground">by {provider}</p>
+          {providerName && (
+            <p className="text-xs text-muted-foreground">by {providerName}</p>
           )}
         </div>
 
