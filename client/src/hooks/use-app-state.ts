@@ -675,7 +675,7 @@ export function useAppState() {
     [appState.workspaces, appState.servers, handleDisconnect, logger]
   );
 
-  const handleCreateWorkspace = useCallback((name: string) => {
+  const handleCreateWorkspace = useCallback((name: string, switchTo: boolean = false) => {
     const newWorkspace: Workspace = {
       id: `workspace_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
       name,
@@ -684,6 +684,12 @@ export function useAppState() {
       updatedAt: new Date(),
     };
     dispatch({ type: "CREATE_WORKSPACE", workspace: newWorkspace });
+
+    // Switch to the new workspace if requested
+    if (switchTo) {
+      dispatch({ type: "SWITCH_WORKSPACE", workspaceId: newWorkspace.id });
+    }
+
     toast.success(`Workspace "${name}" created`);
     return newWorkspace.id;
   }, []);
@@ -691,7 +697,6 @@ export function useAppState() {
   const handleUpdateWorkspace = useCallback(
     (workspaceId: string, updates: Partial<Workspace>) => {
       dispatch({ type: "UPDATE_WORKSPACE", workspaceId, updates });
-      toast.success("Workspace updated");
     },
     []
   );
