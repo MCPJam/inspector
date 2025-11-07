@@ -461,12 +461,18 @@ export function EvalRunner({
         }),
       });
 
-      const result = await response.json();
-
       if (!response.ok) {
-        throw new Error(result.error || "Failed to start evals");
+        let errorMessage = "Failed to start evals";
+        try {
+          const result = await response.json();
+          errorMessage = result.error || errorMessage;
+        } catch (parseError) {
+          console.error("Failed to parse error response:", parseError);
+        }
+        throw new Error(errorMessage);
       }
 
+      const result = await response.json();
       toast.success(result.message || "Evals started successfully!");
       setTestCases([buildBlankTestCase(1, selectedModel)]);
       setCurrentStep(3);
