@@ -81,7 +81,7 @@ The application will be available at `http://localhost:3001`.
 
 Develop [OpenAI apps](https://developers.openai.com/apps-sdk/) or [MCP-UI](https://mcpui.dev/) apps locally. No ngrok needed. MCPJam is the only local-first OpenAI app emulator.
 
-<img alt="MCPJam LLM playground" src="./docs/images/mcpjam-llm-playground.png">
+<img alt="MCPJam LLM playground" src="./docs/images/mcpjam-mcp-ui.png">
 
 ## OAuth Debugger
 
