@@ -129,16 +129,7 @@ export function ServersTab({
     <div className="space-y-6 p-8 h-full overflow-auto">
       {/* Header Section */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <WorkspaceSelector
-            activeWorkspaceId={activeWorkspaceId}
-            workspaces={workspaces}
-            onSwitchWorkspace={onSwitchWorkspace}
-            onCreateWorkspace={onCreateWorkspace}
-            onUpdateWorkspace={onUpdateWorkspace}
-            onDeleteWorkspace={onDeleteWorkspace}
-          />
-        </div>
+        <h2 className="text-2xl font-bold tracking-tight">MCP Servers</h2>
         <div className="flex items-center gap-2">
           <HoverCard
             open={isActionMenuOpen}
