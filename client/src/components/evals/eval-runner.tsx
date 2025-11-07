@@ -34,6 +34,7 @@ import { ModelSelector } from "@/components/chat/model-selector";
 import { cn } from "@/lib/utils";
 import { ModelDefinition, isMCPJamProvidedModel } from "@/shared/types";
 import { ServerSelectionCard } from "./ServerSelectionCard";
+import { EvalModelSelector } from "./eval-model-selector";
 
 interface TestCase {
   title: string;
@@ -548,9 +549,9 @@ export function EvalRunner({
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-lg pb-2">Choose your evaluation model</h3>
-                <p className="text-sm text-muted-foreground">
-                  For example, if you want to simulate using your server with
-                  Claude Desktop, select an Anthropic model.
+                <p className="text-sm text-muted-foreground pb-2">
+                  Select from our curated list of MCPJam provided models. All
+                  models are free to use for evaluations.
                 </p>
               </div>
             </div>
@@ -561,38 +562,17 @@ export function EvalRunner({
                   No models available
                 </p>
                 <p className="mt-2">
-                  Connect a provider or enable MCPJam provided models in
-                  Settings to unlock model selection.
+                  Sign in to view MCPJam provided models and start running
+                  evaluations.
                 </p>
               </div>
-            ) : selectedModel ? (
-              <div className="space-y-3">
-                <div className="flex items-center gap-3">
-                  <ModelSelector
-                    currentModel={selectedModel}
-                    availableModels={availableModels}
-                    onModelChange={setSelectedModel}
-                  />
-                </div>
-
-                {!isMCPJamModel &&
-                  !providerHasToken &&
-                  selectedModelProvider && (
-                    <div className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/5 p-3 text-sm">
-                      <AlertCircle className="mt-0.5 h-4 w-4 text-destructive" />
-                      <div>
-                        <p className="font-medium text-destructive">
-                          Add your {selectedModel.provider} API key
-                        </p>
-                        <p className="text-muted-foreground">
-                          Configure credentials in Settings to run this model.
-                          Keys are stored locally and never sent to our servers.
-                        </p>
-                      </div>
-                    </div>
-                  )}
-              </div>
-            ) : null}
+            ) : (
+              <EvalModelSelector
+                selectedModel={selectedModel}
+                availableModels={availableModels}
+                onModelChange={setSelectedModel}
+              />
+            )}
           </div>
         );
       case "tests":
