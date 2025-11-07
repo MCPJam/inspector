@@ -14,38 +14,11 @@ www.mcpjam.com
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=for-the-badge)](https://opensource.org/licenses/Apache-2.0)
 [![Discord](https://img.shields.io/badge/Discord-Join%20Server-5865F2.svg?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/JEnDtz8X6z)
 
-<br/>
-<br/>
 </div>
 
-MCPJam inspector is the local-first development platform for MCP servers. Visually test your server's tools, resources, and prompts. Try your server against different models in the LLM playground. Now with support for OpenAI Apps SDK.
+MCPJam inspector is the testing and debugging platform for MCP servers & OpenAI apps. Visually inspect your server's tools, resources, prompts, and OAuth. Try your server against different models in the LLM playground.
 
-## 📸 Screenshots
-
-<img alt="MCPJam Inspector Demo" src="./client/public/demo_1.png">
-
-<details>
-<summary><strong>LLM Playground</strong></summary>
-
-<img alt="LLM Chat Demo" src="./client/public/demo_2.png">
-
-</details>
-
-<details>
-<summary><strong>Evals and pen testing</strong></summary>
-
-<img alt="MCPJam Connection Demo" src="./client/public/demo_3.png">
-
-</details>
-
-<details>
-<summary><strong>Connect with OAuth</strong></summary>
-
-<img alt="MCPJam Connection Demo" src="./client/public/demo_4.png">
-
-</details>
-
-## 🚀 Quick Start
+### 🚀 Quick Start
 
 Start up the MCPJam inspector:
 
@@ -53,31 +26,29 @@ Start up the MCPJam inspector:
 npx @mcpjam/inspector@latest
 ```
 
-## Key Features
+<img alt="MCPJam Inspector Demo" src="./docs/images/mcpjam-tools-tab.png">
 
-| Feature                        | Description                                                                                                                                             |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Protocol handshake testing** | Visually test your MCP server's tools, resources, prompts, elicitation, and OAuth 2. MCPJam is compliant with the latest MCP specs.                     |
-| **All transports**             | Connect to any MCP server. MCPJam inspector supports STDIO, SSE, and Streamable HTTP transports.                                                        |
-| **LLM Playground**             | Integrated chat playground with OpenAI, Anthropic Claude, Google Gemini, and Ollama model support. Test how your MCP server would behave against an LLM |
-| **Test OAuth**                 | Test your server's OAuth and Dynamic Client Registration implementation.                                                                                |
-| **View JSON-RPC**              | View every JSON-RPC message sent over network. Provides granular observability and debugging.                                                           |
-| **MCP-UI and OpenAI Apps SDK** | Test your MCP server's implementation of MCP-UI or OpenAI Apps SDK                                                                                      |
+# Table of contents
 
-## 🎉 Now with OpenAI Apps SDK support!
-
-<img alt="OpenAI Apps SDK Demo" src="./client/public/apps_sdk_pizza.png">
-
-Developing with Apps SDK is pretty restricted right now as it requires ChatGPT developer mode access and an OpenAI partner to approve access. We wanted to make that more accessible for developers today by putting it in an open source project, give y’all a head start.
-
-Test your Apps SDK app with:
-
-- Tools tab. Deterministically call tools and view your UI
-- LLM playground to see your Apps SDK UI in a chat environment
-
-The feature is in beta, and still needs polishing. Please report any bugs in the issues tab. We encourage the community to contibute!
+- [Installation Guides](#installation-guides)
+- [Key Features](#key-features)
+  - [OpenAI Apps & MCP-UI](#openai-apps--mcp-ui)
+  - [OAuth Debugger](#oauth-debugger)
+  - [LLM Playground](#llm-playground)
+- [Contributing](#contributing-)
+- [Links](#links-)
+- [Community](#community-)
+- [Shoutouts](#shoutouts-)
+- [License](#-license)
 
 # Installation Guides
+
+### Requirements
+
+[![Node.js](https://img.shields.io/badge/Node.js-20+-green.svg?style=for-the-badge&logo=node.js)](https://nodejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5+-blue.svg?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
+
+## Install via NPM
 
 We recommend starting MCPJam inspector via `npx`:
 
@@ -85,9 +56,12 @@ We recommend starting MCPJam inspector via `npx`:
 npx @mcpjam/inspector@latest
 ```
 
-or download the Mac / Windows desktop app [on our site](https://www.mcpjam.com/).
+We also have a Mac and Windows desktop app:
 
-## 🐳 Docker
+- [Install Mac](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam.Inspector.dmg)
+- [Install Windows](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam-Inspector-Setup.exe)
+
+## Docker
 
 Run MCPJam Inspector using Docker:
 
@@ -101,99 +75,58 @@ docker run -d -p 3001:3001 --name mcp-inspector mcpjam/mcp-inspector:latest
 
 The application will be available at `http://localhost:3001`.
 
-## Open commands
+# Key Features
 
-```bash
-# Launch with custom port
-npx @mcpjam/inspector@latest --port 4000
+## OpenAI Apps & MCP-UI
 
-# Shortcut for starting MCPJam and an Ollama model
-npx @mcpjam/inspector@latest --ollama llama3.2
+Develop [OpenAI apps](https://developers.openai.com/apps-sdk/) or [MCP-UI](https://mcpui.dev/) apps locally. No ngrok needed. MCPJam is the only local-first OpenAI app emulator.
 
-# Local FastMCP STDIO example
-npx @mcpjam/inspector@latest uv run fastmcp run /Users/matt8p/demo/src/server.py
+<img alt="MCPJam LLM playground" src="./docs/images/mcpjam-llm-playground.png">
 
-# Local Node example
-npx @mcpjam/inspector@latest npx -y /Users/matt8p/demo-ts/dist/index.js
-```
+## OAuth Debugger
 
-## Connecting to MCP servers
+View every step of the OAuth handshake in detail, with guided explanations.
 
-### mcp.json
+<img alt="MCPJam OAuth Flow Debugger" src="./docs/images/mcpjam-oauth-flow.png">
 
-You can import your `mcp.json` MCP server configs from Claude Desktop and Cursor with the command:
+## LLM Playground
 
-```
-npx @mcpjam/inspector@latest --config mcp.json
-```
+Try your server against any LLM model. We provide frontier models like GPT-5, Claude Sonnet, Gemini 2.5. No API key needed, it's on us.
 
-### SSE / Streamable HTTP
+<img alt="MCPJam LLM playground" src="./docs/images/mcpjam-llm-playground.png">
 
-Spin up the MCPJam inspector
+# Contributing 👨‍💻
 
-```
-npx @mcpjam/inspector@latest
-```
+We're grateful for you considering contributing to MCPJam. Please read our [contributing guide](CONTRIBUTING.md).
 
-In the UI "MCP Servers" tab, click add server, select HTTP, then paste in your server URL. Support for OAuth 2.0 testing.
+You can also reach out to the contributors that hang out in our [Discord channel](https://discord.gg/JEnDtz8X6z).
 
-## Requirements
+# Links 🔗
 
-[![Node.js](https://img.shields.io/badge/Node.js-20+-green.svg?style=for-the-badge&logo=node.js)](https://nodejs.org/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5+-blue.svg?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
+- Roadmap (TBD)
+- [Website](https://www.mcpjam.com/)
+- [Blog](https://www.mcpjam.com/blog)
+- [Pricing](https://www.mcpjam.com/pricing)
+- [Docs](https://docs.mcpjam.com/)
 
-## 🛠️ Development
+# Community 🌍
 
-### Local Development Setup
+- [Discord](https://discord.gg/JEnDtz8X6z)
+- [𝕏 (Twitter)](https://x.com/mcpjams)
+- [Blog](https://www.mcpjam.com/blog)
+- [LinkedIn](https://www.linkedin.com/company/mcpjam)
 
-```bash
-# Clone the repository
-git clone https://github.com/mcpjam/inspector.git
-cd inspector
+# Shoutouts 📣
 
-# Install dependencies
-npm install
+Some of our partners and favorite frameworks:
 
-# Start development server
-npm run dev
-```
-
-The development server will start at `http://localhost:6274` with hot reloading enabled.
-
-### Build for Production
-
-```bash
-# Build the application
-npm run build
-
-# Start production server
-npm run start
-```
-
-## 🤝 Contributing
-
-We welcome contributions to MCPJam Inspector V1! Please read our [Contributing Guide](https://docs.mcpjam.com/CONTRIBUTING) for development guidelines and best practices.
-
-## 📚 Resources
-
-- **💬 Discord**: [Join the MCPJam Community](https://discord.gg/JEnDtz8X6z)
-- **📖 MCP Protocol**: [Model Context Protocol Documentation](https://modelcontextprotocol.io/)
-- **🤖 AI SDK**: [Vercel AI SDK](https://sdk.vercel.ai/)
-- **⚡ FastApps** [DooiLabs/FastApps](https://github.com/DooiLabs/FastApps) - The Python framework to build OpenAI Apps.
-- **✖️ xMCP** [xMCP](https://xmcp.dev/) - The Typescript MCP framework. Ship on Vercel instantly.
+- [Stytch](https://stytch.com) - Our favorite MCP OAuth provider
+- [DooiLabs/FastApps](https://github.com/DooiLabs/FastApps) - The Python framework to build OpenAI Apps.
+- [xMCP](https://xmcp.dev/) - The Typescript MCP framework. Ship on Vercel instantly.
+- [Alpic](https://alpic.ai/) - Host MCP servers
 
 ---
 
-## 📄 License
+# License 📄 
 
-This project is licensed under the **Apache License 2.0** - see the [LICENSE](LICENSE) file for details.
-
----
-
-<div align="center">
-
-**MCPJam Inspector V1** • Built with Hono.js and ❤️ for the MCP community
-
-[🌐 Website](https://mcpjam.com) • [📖 Docs](https://modelcontextprotocol.io/) • [🐛 Issues](https://github.com/MCPJam/inspector/issues)
-
-</div>
+This project is licensed under the **Apache License 2.0** - see the [LICENSE](LICENSE).
