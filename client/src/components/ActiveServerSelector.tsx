@@ -81,10 +81,6 @@ export function ActiveServerSelector({
       // If we only want OAuth servers, filter for those
       if (showOnlyOAuthServers && !isOAuthServer(server)) return false;
 
-      // For non-OAuth filtering, only show connected servers
-      if (!showOnlyOAuthServers && server.connectionStatus !== "connected")
-        return false;
-
       return true;
     },
   );

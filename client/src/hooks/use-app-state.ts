@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useLogger } from "./use-logger";
-import { initialAppState, type ServerWithName } from "@/state/app-types";
+import {
+  initialAppState,
+  type ServerWithName,
+  type Workspace,
+} from "@/state/app-types";
 import { appReducer } from "@/state/app-reducer";
 import { loadAppState, saveAppState } from "@/state/storage";
 import {
@@ -648,6 +652,128 @@ export function useAppState() {
     ],
   );
 
+  const handleSwitchWorkspace = useCallback(
+    async (workspaceId: string) => {
+      const newWorkspace = appState.workspaces[workspaceId];
+      if (!newWorkspace) {
+        toast.error("Workspace not found");
+        return;
+      }
+
+      logger.info("Switching to workspace", {
+        workspaceId,
+        name: newWorkspace.name,
+      });
+
+      // Disconnect all currently connected servers before switching
+      const currentServers = Object.keys(appState.servers);
+      for (const serverName of currentServers) {
+        const server = appState.servers[serverName];
+        if (server.connectionStatus === "connected") {
+          logger.info("Disconnecting server before workspace switch", {
+            serverName,
+          });
+          await handleDisconnect(serverName);
+        }
+      }
+
+      // Switch the workspace
+      dispatch({ type: "SWITCH_WORKSPACE", workspaceId });
+      toast.success(`Switched to workspace: ${newWorkspace.name}`);
+    },
+    [appState.workspaces, appState.servers, handleDisconnect, logger],
+  );
+
+  const handleCreateWorkspace = useCallback(
+    (name: string, switchTo: boolean = false) => {
+      const newWorkspace: Workspace = {
+        id: `workspace_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+        name,
+        servers: {},
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      dispatch({ type: "CREATE_WORKSPACE", workspace: newWorkspace });
+
+      // Switch to the new workspace if requested
+      if (switchTo) {
+        dispatch({ type: "SWITCH_WORKSPACE", workspaceId: newWorkspace.id });
+      }
+
+      toast.success(`Workspace "${name}" created`);
+      return newWorkspace.id;
+    },
+    [],
+  );
+
+  const handleUpdateWorkspace = useCallback(
+    (workspaceId: string, updates: Partial<Workspace>) => {
+      dispatch({ type: "UPDATE_WORKSPACE", workspaceId, updates });
+    },
+    [],
+  );
+
+  const handleDeleteWorkspace = useCallback(
+    (workspaceId: string) => {
+      if (workspaceId === appState.activeWorkspaceId) {
+        toast.error(
+          "Cannot delete the active workspace. Switch to another workspace first.",
+        );
+        return;
+      }
+      dispatch({ type: "DELETE_WORKSPACE", workspaceId });
+      toast.success("Workspace deleted");
+    },
+    [appState.activeWorkspaceId],
+  );
+
+  const handleDuplicateWorkspace = useCallback(
+    (workspaceId: string, newName: string) => {
+      dispatch({ type: "DUPLICATE_WORKSPACE", workspaceId, newName });
+      toast.success(`Workspace duplicated as "${newName}"`);
+    },
+    [],
+  );
+
+  const handleSetDefaultWorkspace = useCallback((workspaceId: string) => {
+    dispatch({ type: "SET_DEFAULT_WORKSPACE", workspaceId });
+    toast.success("Default workspace updated");
+  }, []);
+
+  const handleExportWorkspace = useCallback(
+    (workspaceId: string) => {
+      const workspace = appState.workspaces[workspaceId];
+      if (!workspace) {
+        toast.error("Workspace not found");
+        return;
+      }
+
+      const dataStr = JSON.stringify(workspace, null, 2);
+      const dataBlob = new Blob([dataStr], { type: "application/json" });
+      const url = URL.createObjectURL(dataBlob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${workspace.name.replace(/\s+/g, "_")}_workspace.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+      toast.success("Workspace exported");
+    },
+    [appState.workspaces],
+  );
+
+  const handleImportWorkspace = useCallback((workspaceData: Workspace) => {
+    // Generate new ID to avoid conflicts
+    const importedWorkspace: Workspace = {
+      ...workspaceData,
+      id: `workspace_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      isDefault: false, // Never import as default
+    };
+    dispatch({ type: "IMPORT_WORKSPACE", workspace: importedWorkspace });
+    toast.success(`Workspace "${importedWorkspace.name}" imported`);
+  }, []);
+
   return {
     // State
     appState,
@@ -671,6 +797,11 @@ export function useAppState() {
     ),
     isMultiSelectMode: appState.isMultiSelectMode,
 
+    // Workspace-related
+    workspaces: appState.workspaces,
+    activeWorkspaceId: appState.activeWorkspaceId,
+    activeWorkspace: appState.workspaces[appState.activeWorkspaceId],
+
     // Actions
     handleConnect,
     handleDisconnect,
@@ -683,5 +814,15 @@ export function useAppState() {
     toggleServerSelection,
     getValidAccessToken,
     setSelectedMultipleServersToAllServers,
+
+    // Workspace actions
+    handleSwitchWorkspace,
+    handleCreateWorkspace,
+    handleUpdateWorkspace,
+    handleDeleteWorkspace,
+    handleDuplicateWorkspace,
+    handleSetDefaultWorkspace,
+    handleExportWorkspace,
+    handleImportWorkspace,
   };
 }
