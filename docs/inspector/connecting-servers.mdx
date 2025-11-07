@@ -6,9 +6,22 @@ icon: "Plug"
 
 You can connect to MCP servers using all transports: STDIO, SSE, and Streamable HTTP. With OAuth 2 and Dynamic Client Registration (DCR) support.
 
+## Workspaces
+
+Workspaces let you organize your MCP servers into different contexts. For example, you might have separate workspaces for "Work", "Personal", or "Development" projects.
+
+### Managing workspaces
+
+- **Switch workspaces**: Click the workspace name in the header to see all workspaces and switch between them
+- **Rename workspace**: Click the workspace name to edit it inline
+- **Create workspace**: Click the dropdown next to the workspace name and select "Add Workspace"
+- **Delete workspace**: Click the trash icon next to a workspace in the dropdown (you cannot delete the active workspace)
+
+Each workspace maintains its own set of server connections. When you switch workspaces, all servers from the previous workspace are disconnected, and you'll see the servers configured for the new workspace.
+
 ## Manage connections
 
-You can connect to multiple MCP servers simultaneously. To manage connections, go to the "MCP Servers" tab in the MCPJam inspector.
+You can connect to multiple MCP servers simultaneously. To manage connections, go to the "Workspaces" tab in the MCPJam inspector.
 
 <Frame>
   <img
