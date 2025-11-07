@@ -518,9 +518,20 @@ export function EvalRunner({
                   No connected servers yet
                 </p>
                 <p className="mt-2">
-                  Launch a server from the Servers tab to make it available
+                  Launch a server from the Workspaces tab to make it available
                   here. Once connected, it will appear instantly.
                 </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-4"
+                  onClick={() => {
+                    window.location.hash = "servers";
+                  }}
+                >
+                  Go to Workspaces tab
+                </Button>
               </div>
             )}
           </div>
