@@ -30,7 +30,7 @@
   "scripts": {
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:convex": "convex dev",
-    "dev:server": "tsx watch server/index.ts",
+    "dev:server": "tsx watch --include 'evals-cli/src/**/*.ts' --exclude 'evals-cli/dist/**' --exclude 'evals-cli/node_modules/**' server/index.ts",
     "dev:client": "vite --config client/vite.config.ts --port 3000",
     "dev:client:clean": "rm -rf node_modules/.vite && FORCE_OPTIMIZE=true vite --config client/vite.config.ts --port 3000",
     "build": "npm run clean && npm run build:sdk && npm run build:client && npm run build:server",
