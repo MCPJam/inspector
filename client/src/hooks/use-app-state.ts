@@ -658,11 +658,21 @@ export function useAppState() {
 
       logger.info("Switching to workspace", { workspaceId, name: newWorkspace.name });
 
-      // Simply switch the workspace - don't worry about connecting servers
+      // Disconnect all currently connected servers before switching
+      const currentServers = Object.keys(appState.servers);
+      for (const serverName of currentServers) {
+        const server = appState.servers[serverName];
+        if (server.connectionStatus === "connected") {
+          logger.info("Disconnecting server before workspace switch", { serverName });
+          await handleDisconnect(serverName);
+        }
+      }
+
+      // Switch the workspace
       dispatch({ type: "SWITCH_WORKSPACE", workspaceId });
       toast.success(`Switched to workspace: ${newWorkspace.name}`);
     },
-    [appState.workspaces, logger]
+    [appState.workspaces, appState.servers, handleDisconnect, logger]
   );
 
   const handleCreateWorkspace = useCallback((name: string, description?: string) => {

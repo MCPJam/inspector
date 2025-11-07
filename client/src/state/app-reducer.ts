@@ -246,10 +246,20 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case "SWITCH_WORKSPACE": {
       const targetWorkspace = state.workspaces[action.workspaceId];
       if (!targetWorkspace) return state;
+
+      // Mark all servers as disconnected when switching workspaces
+      // since we disconnect them before switching
+      const disconnectedServers = Object.fromEntries(
+        Object.entries(targetWorkspace.servers).map(([name, server]) => [
+          name,
+          { ...server, connectionStatus: "disconnected" as ConnectionStatus },
+        ])
+      );
+
       return {
         ...state,
         activeWorkspaceId: action.workspaceId,
-        servers: { ...targetWorkspace.servers },
+        servers: disconnectedServers,
         selectedServer: "none",
         selectedMultipleServers: [],
       };
