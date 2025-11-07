@@ -1,12 +1,23 @@
 import { useMemo } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery } from "convex/react";
+import { RotateCw } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { aggregateSuite } from "./helpers";
 import type { EvalSuite, EvalCase, EvalIteration } from "./types";
 
 interface SuiteRowProps {
   suite: EvalSuite;
   onSelectSuite: (id: string) => void;
+  onRerun: (suite: EvalSuite) => void;
+  connectedServerNames: Set<string>;
+  isRerunning: boolean;
 }
 
 function formatCompactStatus(
@@ -25,7 +36,13 @@ function formatCompactStatus(
   return parts.join(" · ") || "No results";
 }
 
-export function SuiteRow({ suite, onSelectSuite }: SuiteRowProps) {
+export function SuiteRow({
+  suite,
+  onSelectSuite,
+  onRerun,
+  connectedServerNames,
+  isRerunning,
+}: SuiteRowProps) {
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
   const servers = suite.config?.environment.servers;
@@ -87,13 +104,25 @@ export function SuiteRow({ suite, onSelectSuite }: SuiteRowProps) {
     return "bg-red-500/50";
   };
 
+  // Check if all servers are connected
+  const suiteServers = Array.isArray(servers) ? servers : [];
+  const missingServers = suiteServers.filter(
+    (server) => !connectedServerNames.has(server),
+  );
+  const canRerun = missingServers.length === 0;
+
+  const handleRerunClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onRerun(suite);
+  };
+
   return (
-    <button
-      onClick={() => onSelectSuite(suite._id)}
-      className="group relative flex w-full items-center gap-4 py-3 pl-4 pr-4 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 cursor-pointer"
-    >
+    <div className="group relative flex w-full items-center gap-4 py-3 pl-4 pr-4 transition-colors hover:bg-muted/50">
       <div className={`absolute left-0 top-0 h-full w-1 ${getBorderColor()}`} />
-      <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] items-center gap-4">
+      <button
+        onClick={() => onSelectSuite(suite._id)}
+        className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] items-center gap-4 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 cursor-pointer"
+      >
         <div className="min-w-0">
           <div className="text-sm font-medium text-foreground">
             {new Date(suite._creationTime || 0).toLocaleDateString("en-US", {
@@ -123,7 +152,33 @@ export function SuiteRow({ suite, onSelectSuite }: SuiteRowProps) {
               )
             : "Loading..."}
         </div>
-      </div>
-    </button>
+      </button>
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className="w-20 flex justify-end">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleRerunClick}
+                disabled={!canRerun || isRerunning}
+                className="h-8 w-8 p-0"
+              >
+                <RotateCw
+                  className={`h-4 w-4 ${isRerunning ? "animate-spin" : ""}`}
+                />
+              </Button>
+            </div>
+          </TooltipTrigger>
+          {!canRerun && (
+            <TooltipContent>
+              <p>
+                Connect the following servers: {missingServers.join(", ")}
+              </p>
+            </TooltipContent>
+          )}
+        </Tooltip>
+      </TooltipProvider>
+    </div>
   );
 }
