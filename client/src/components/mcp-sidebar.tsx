@@ -8,7 +8,8 @@ import {
   CirclePlayIcon,
   ListChecks,
   HandMetal,
-  Signature,
+  Workflow,
+  Box,
 } from "lucide-react";
 
 import { NavMain } from "@/components/sidebar/nav-main";
@@ -67,7 +68,7 @@ const navigationSections = [
       {
         title: "OAuth Debugger",
         url: "#oauth-flow",
-        icon: Signature,
+        icon: Workflow,
       },
       {
         title: "Run evals",
@@ -82,7 +83,7 @@ const navigationSections = [
       {
         title: "MCP Registry",
         url: "#registry",
-        icon: MCPIcon,
+        icon: Box,
       },
     ],
   },
