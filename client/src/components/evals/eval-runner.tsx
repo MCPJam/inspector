@@ -35,6 +35,7 @@ import { cn } from "@/lib/utils";
 import { ModelDefinition, isMCPJamProvidedModel } from "@/shared/types";
 import { ServerSelectionCard } from "./ServerSelectionCard";
 import { EvalModelSelector } from "./eval-model-selector";
+import { UserModelSelector } from "./user-model-selector";
 
 interface TestCase {
   title: string;
@@ -114,6 +115,7 @@ export function EvalRunner({
   const [testCases, setTestCases] = useState<TestCase[]>([
     buildBlankTestCase(1, null),
   ]);
+  const [modelTab, setModelTab] = useState<"mcpjam" | "yours">("mcpjam");
 
   const connectedServers = useMemo(
     () =>
@@ -546,31 +548,58 @@ export function EvalRunner({
       case "model":
         return (
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-lg pb-2">Choose your evaluation model</h3>
-                <p className="text-sm text-muted-foreground pb-2">
-                  Select from our curated list of MCPJam provided models. All
-                  models are free to use for evaluations.
-                </p>
-              </div>
+            <div>
+              <h3 className="text-lg pb-2">Choose your evaluation model</h3>
+              <p className="text-sm text-muted-foreground">
+                Select a model to run your evaluations. MCPJam models are free
+                to use.
+              </p>
             </div>
 
-            {availableModels.length === 0 ? (
-              <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
-                <p className="font-medium text-foreground">
-                  No models available
-                </p>
-                <p className="mt-2">
-                  Sign in to view MCPJam provided models and start running
-                  evaluations.
-                </p>
-              </div>
-            ) : (
+            {/* Tabs */}
+            <div className="flex items-center gap-1 rounded-lg border p-1 w-fit">
+              <button
+                type="button"
+                onClick={() => setModelTab("mcpjam")}
+                className={cn(
+                  "rounded-md px-4 py-2 text-sm font-medium transition-colors",
+                  modelTab === "mcpjam"
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                MCPJam Free Models
+              </button>
+              <button
+                type="button"
+                onClick={() => setModelTab("yours")}
+                className={cn(
+                  "rounded-md px-4 py-2 text-sm font-medium transition-colors",
+                  modelTab === "yours"
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                Your Providers
+              </button>
+            </div>
+
+            {/* Tab Content */}
+            {modelTab === "mcpjam" ? (
               <EvalModelSelector
                 selectedModel={selectedModel}
                 availableModels={availableModels}
                 onModelChange={setSelectedModel}
+              />
+            ) : (
+              <UserModelSelector
+                selectedModel={selectedModel}
+                availableModels={availableModels}
+                onModelChange={setSelectedModel}
+                missingApiKey={
+                  !isMCPJamModel && !providerHasToken && !!selectedModelProvider
+                }
+                providerName={selectedModel?.provider}
               />
             )}
           </div>
