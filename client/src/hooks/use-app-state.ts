@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useLogger } from "./use-logger";
-import { initialAppState, type ServerWithName, type Workspace } from "@/state/app-types";
+import {
+  initialAppState,
+  type ServerWithName,
+  type Workspace,
+} from "@/state/app-types";
 import { appReducer } from "@/state/app-reducer";
 import { loadAppState, saveAppState } from "@/state/storage";
 import {
@@ -656,14 +660,19 @@ export function useAppState() {
         return;
       }
 
-      logger.info("Switching to workspace", { workspaceId, name: newWorkspace.name });
+      logger.info("Switching to workspace", {
+        workspaceId,
+        name: newWorkspace.name,
+      });
 
       // Disconnect all currently connected servers before switching
       const currentServers = Object.keys(appState.servers);
       for (const serverName of currentServers) {
         const server = appState.servers[serverName];
         if (server.connectionStatus === "connected") {
-          logger.info("Disconnecting server before workspace switch", { serverName });
+          logger.info("Disconnecting server before workspace switch", {
+            serverName,
+          });
           await handleDisconnect(serverName);
         }
       }
@@ -672,51 +681,59 @@ export function useAppState() {
       dispatch({ type: "SWITCH_WORKSPACE", workspaceId });
       toast.success(`Switched to workspace: ${newWorkspace.name}`);
     },
-    [appState.workspaces, appState.servers, handleDisconnect, logger]
+    [appState.workspaces, appState.servers, handleDisconnect, logger],
   );
 
-  const handleCreateWorkspace = useCallback((name: string, switchTo: boolean = false) => {
-    const newWorkspace: Workspace = {
-      id: `workspace_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
-      name,
-      servers: {},
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-    dispatch({ type: "CREATE_WORKSPACE", workspace: newWorkspace });
+  const handleCreateWorkspace = useCallback(
+    (name: string, switchTo: boolean = false) => {
+      const newWorkspace: Workspace = {
+        id: `workspace_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+        name,
+        servers: {},
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      dispatch({ type: "CREATE_WORKSPACE", workspace: newWorkspace });
 
-    // Switch to the new workspace if requested
-    if (switchTo) {
-      dispatch({ type: "SWITCH_WORKSPACE", workspaceId: newWorkspace.id });
-    }
+      // Switch to the new workspace if requested
+      if (switchTo) {
+        dispatch({ type: "SWITCH_WORKSPACE", workspaceId: newWorkspace.id });
+      }
 
-    toast.success(`Workspace "${name}" created`);
-    return newWorkspace.id;
-  }, []);
+      toast.success(`Workspace "${name}" created`);
+      return newWorkspace.id;
+    },
+    [],
+  );
 
   const handleUpdateWorkspace = useCallback(
     (workspaceId: string, updates: Partial<Workspace>) => {
       dispatch({ type: "UPDATE_WORKSPACE", workspaceId, updates });
     },
-    []
+    [],
   );
 
   const handleDeleteWorkspace = useCallback(
     (workspaceId: string) => {
       if (workspaceId === appState.activeWorkspaceId) {
-        toast.error("Cannot delete the active workspace. Switch to another workspace first.");
+        toast.error(
+          "Cannot delete the active workspace. Switch to another workspace first.",
+        );
         return;
       }
       dispatch({ type: "DELETE_WORKSPACE", workspaceId });
       toast.success("Workspace deleted");
     },
-    [appState.activeWorkspaceId]
+    [appState.activeWorkspaceId],
   );
 
-  const handleDuplicateWorkspace = useCallback((workspaceId: string, newName: string) => {
-    dispatch({ type: "DUPLICATE_WORKSPACE", workspaceId, newName });
-    toast.success(`Workspace duplicated as "${newName}"`);
-  }, []);
+  const handleDuplicateWorkspace = useCallback(
+    (workspaceId: string, newName: string) => {
+      dispatch({ type: "DUPLICATE_WORKSPACE", workspaceId, newName });
+      toast.success(`Workspace duplicated as "${newName}"`);
+    },
+    [],
+  );
 
   const handleSetDefaultWorkspace = useCallback((workspaceId: string) => {
     dispatch({ type: "SET_DEFAULT_WORKSPACE", workspaceId });
@@ -741,7 +758,7 @@ export function useAppState() {
       URL.revokeObjectURL(url);
       toast.success("Workspace exported");
     },
-    [appState.workspaces]
+    [appState.workspaces],
   );
 
   const handleImportWorkspace = useCallback((workspaceData: Workspace) => {

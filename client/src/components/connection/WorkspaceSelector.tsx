@@ -47,7 +47,9 @@ export function WorkspaceSelector({
     let counter = 1;
 
     // Check if a workspace with this name already exists
-    const workspaceNames = Object.values(workspaces).map(w => w.name.toLowerCase());
+    const workspaceNames = Object.values(workspaces).map((w) =>
+      w.name.toLowerCase(),
+    );
     while (workspaceNames.includes(name.toLowerCase())) {
       counter++;
       name = `${baseName} ${counter}`;
@@ -116,7 +118,7 @@ export function WorkspaceSelector({
               key={workspace.id}
               className={cn(
                 "cursor-pointer group flex items-center justify-between",
-                workspace.id === activeWorkspaceId && "bg-accent"
+                workspace.id === activeWorkspaceId && "bg-accent",
               )}
             >
               <span
@@ -137,7 +139,10 @@ export function WorkspaceSelector({
             </DropdownMenuItem>
           ))}
           <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={handleCreateWorkspace} className="cursor-pointer">
+          <DropdownMenuItem
+            onClick={handleCreateWorkspace}
+            className="cursor-pointer"
+          >
             <Plus className="mr-2 h-4 w-4" />
             Add Workspace
           </DropdownMenuItem>

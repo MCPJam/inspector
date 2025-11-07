@@ -1,4 +1,9 @@
-import { AppState, initialAppState, ServerWithName, Workspace } from "./app-types";
+import {
+  AppState,
+  initialAppState,
+  ServerWithName,
+  Workspace,
+} from "./app-types";
 
 const STORAGE_KEY = "mcp-inspector-state";
 const WORKSPACES_STORAGE_KEY = "mcp-inspector-workspaces";
@@ -38,20 +43,21 @@ export function loadAppState(): AppState {
       try {
         const parsedWorkspaces = JSON.parse(workspacesRaw);
         workspaces = Object.fromEntries(
-          Object.entries(parsedWorkspaces.workspaces || {}).map(([id, workspace]: [string, any]) => [
-            id,
-            {
-              ...workspace,
-              servers: Object.fromEntries(
-                Object.entries(workspace.servers || {}).map(([name, server]) => [
-                  name,
-                  reviveServer(server),
-                ])
-              ),
-              createdAt: new Date(workspace.createdAt),
-              updatedAt: new Date(workspace.updatedAt),
-            },
-          ])
+          Object.entries(parsedWorkspaces.workspaces || {}).map(
+            ([id, workspace]: [string, any]) => [
+              id,
+              {
+                ...workspace,
+                servers: Object.fromEntries(
+                  Object.entries(workspace.servers || {}).map(
+                    ([name, server]) => [name, reviveServer(server)],
+                  ),
+                ),
+                createdAt: new Date(workspace.createdAt),
+                updatedAt: new Date(workspace.updatedAt),
+              },
+            ],
+          ),
         );
         activeWorkspaceId = parsedWorkspaces.activeWorkspaceId || "default";
       } catch (e) {
@@ -70,7 +76,7 @@ export function loadAppState(): AppState {
             Object.entries(parsed.servers || {}).map(([name, server]) => [
               name,
               reviveServer(server),
-            ])
+            ]),
           );
         } catch (e) {
           console.error("Failed to migrate old state", e);
@@ -126,13 +132,16 @@ export function saveAppState(state: AppState) {
                     ? { ...cfg, url: cfg.url.toString() }
                     : cfg;
                 return [name, { ...server, config: serializedConfig }];
-              })
+              }),
             ),
           },
-        ])
+        ]),
       ),
     };
-    localStorage.setItem(WORKSPACES_STORAGE_KEY, JSON.stringify(workspacesData));
+    localStorage.setItem(
+      WORKSPACES_STORAGE_KEY,
+      JSON.stringify(workspacesData),
+    );
 
     // Save the rest of state (for backward compatibility and non-workspace data)
     const serializable = {
@@ -147,7 +156,7 @@ export function saveAppState(state: AppState) {
               ? { ...cfg, url: cfg.url.toString() }
               : cfg;
           return [name, { ...server, config: serializedConfig }];
-        })
+        }),
       ),
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(serializable));
