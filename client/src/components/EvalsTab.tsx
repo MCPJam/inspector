@@ -189,15 +189,13 @@ export function EvalsTab() {
 
   // Handle back navigation
   const handleBack = () => {
-    if (selectedSuiteId) {
-      setSelectedSuiteId(null);
-    } else if (view === "run") {
+    if (view === "run") {
       setView("results");
     }
   };
 
-  // Show back button if we're in run view OR viewing suite details
-  const showBackButton = view === "run" || !!selectedSuiteId;
+  // Show back button only in run view (suite details has its own back button)
+  const showBackButton = view === "run";
 
   if (isLoading) {
     return (
