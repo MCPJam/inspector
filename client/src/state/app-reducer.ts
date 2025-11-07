@@ -127,7 +127,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case "REMOVE_SERVER": {
       const { [action.name]: _, ...rest } = state.servers;
       const activeWorkspace = state.workspaces[state.activeWorkspaceId];
-      const { [action.name]: __, ...restWorkspaceServers } = activeWorkspace.servers;
+      const { [action.name]: __, ...restWorkspaceServers } =
+        activeWorkspace.servers;
       return {
         ...state,
         servers: rest,
@@ -236,7 +237,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     }
 
     case "DELETE_WORKSPACE": {
-      const { [action.workspaceId]: _, ...remainingWorkspaces } = state.workspaces;
+      const { [action.workspaceId]: _, ...remainingWorkspaces } =
+        state.workspaces;
       return {
         ...state,
         workspaces: remainingWorkspaces,
@@ -253,7 +255,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         Object.entries(targetWorkspace.servers).map(([name, server]) => [
           name,
           { ...server, connectionStatus: "disconnected" as ConnectionStatus },
-        ])
+        ]),
       );
 
       return {

@@ -82,7 +82,11 @@ export type AppAction =
       initInfo: InitializationInfo;
     }
   | { type: "CREATE_WORKSPACE"; workspace: Workspace }
-  | { type: "UPDATE_WORKSPACE"; workspaceId: string; updates: Partial<Workspace> }
+  | {
+      type: "UPDATE_WORKSPACE";
+      workspaceId: string;
+      updates: Partial<Workspace>;
+    }
   | { type: "DELETE_WORKSPACE"; workspaceId: string }
   | { type: "SWITCH_WORKSPACE"; workspaceId: string }
   | { type: "SET_DEFAULT_WORKSPACE"; workspaceId: string }

@@ -64,7 +64,9 @@ export function WorkspaceManagementDialog({
   const [view, setView] = useState<"list" | "create" | "edit">("list");
   const [newWorkspaceName, setNewWorkspaceName] = useState("");
   const [newWorkspaceDescription, setNewWorkspaceDescription] = useState("");
-  const [editingWorkspace, setEditingWorkspace] = useState<Workspace | null>(null);
+  const [editingWorkspace, setEditingWorkspace] = useState<Workspace | null>(
+    null,
+  );
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
   const workspaceList = Object.values(workspaces).sort((a, b) => {
@@ -75,7 +77,10 @@ export function WorkspaceManagementDialog({
 
   const handleCreateWorkspace = () => {
     if (newWorkspaceName.trim()) {
-      onCreateWorkspace(newWorkspaceName.trim(), newWorkspaceDescription.trim() || undefined);
+      onCreateWorkspace(
+        newWorkspaceName.trim(),
+        newWorkspaceDescription.trim() || undefined,
+      );
       setNewWorkspaceName("");
       setNewWorkspaceDescription("");
       setView("list");
@@ -200,9 +205,7 @@ export function WorkspaceManagementDialog({
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() =>
-                              onSetDefaultWorkspace(workspace.id)
-                            }
+                            onClick={() => onSetDefaultWorkspace(workspace.id)}
                             title={
                               workspace.isDefault
                                 ? "Unset as default"
