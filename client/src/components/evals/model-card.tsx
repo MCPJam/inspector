@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Check, Info } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { OpenRouterModel } from "@/types/model-metadata";
@@ -9,6 +10,7 @@ import {
 } from "@/components/ui/tooltip";
 import { getProviderLogo, getProviderColor } from "@/lib/provider-logos";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { ModelDetailsModal } from "./model-details-modal";
 
 interface ModelCardProps {
   model: OpenRouterModel;
@@ -65,6 +67,7 @@ function getProviderFromId(modelId: string): string {
 }
 
 export function ModelCard({ model, isSelected, onSelect }: ModelCardProps) {
+  const [showDetails, setShowDetails] = useState(false);
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const providerName = getProviderFromId(model.id);
   const providerKey = model.id.split("/")[0]; // e.g., "openai", "anthropic"
@@ -119,14 +122,17 @@ export function ModelCard({ model, isSelected, onSelect }: ModelCardProps) {
             <h3 className="font-semibold text-foreground line-clamp-1">
               {model.name}
             </h3>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Info className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground flex-shrink-0" />
-              </TooltipTrigger>
-              <TooltipContent side="top" className="max-w-xs">
-                <p className="text-xs">{model.description}</p>
-              </TooltipContent>
-            </Tooltip>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowDetails(true);
+              }}
+              className="flex-shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+              aria-label="View model details"
+            >
+              <Info className="h-3.5 w-3.5" />
+            </button>
           </div>
           {providerName && (
             <p className="text-xs text-muted-foreground">by {providerName}</p>
@@ -167,6 +173,12 @@ export function ModelCard({ model, isSelected, onSelect }: ModelCardProps) {
           </Tooltip>
         </div>
       </div>
+
+      <ModelDetailsModal
+        model={model}
+        open={showDetails}
+        onOpenChange={setShowDetails}
+      />
     </button>
   );
 }
