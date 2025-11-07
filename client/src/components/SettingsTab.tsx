@@ -206,8 +206,9 @@ export function SettingsTab() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="container mx-auto p-6 max-w-6xl space-y-8">
-        <div className="flex items-center gap-3 mb-6">
+        <div className="flex flex-col gap-3 mb-6">
           <h1 className="text-2xl font-bold">Settings</h1>
+          <pre>MCPJam Version: v{__APP_VERSION__}</pre>
         </div>
 
         <AccountApiKeySection />
