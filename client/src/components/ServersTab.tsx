@@ -7,11 +7,14 @@ import { ServerConnectionCard } from "./connection/ServerConnectionCard";
 import { AddServerModal } from "./connection/AddServerModal";
 import { EditServerModal } from "./connection/EditServerModal";
 import { JsonImportModal } from "./connection/JsonImportModal";
+import { WorkspaceSelector } from "./connection/WorkspaceSelector";
 import { ServerFormData } from "@/shared/types.js";
 import { MCPIcon } from "./ui/mcp-icon";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
+import { Workspace } from "@/state/app-types";
+
 interface ServersTabProps {
   connectedServerConfigs: Record<string, ServerWithName>;
   onConnect: (formData: ServerFormData) => void;
@@ -19,6 +22,13 @@ interface ServersTabProps {
   onReconnect: (serverName: string) => void;
   onUpdate: (originalServerName: string, formData: ServerFormData) => void;
   onRemove: (serverName: string) => void;
+  workspaces: Record<string, Workspace>;
+  activeWorkspaceId: string;
+  activeWorkspace: Workspace;
+  onSwitchWorkspace: (workspaceId: string) => void;
+  onCreateWorkspace: (name: string, switchTo?: boolean) => string;
+  onUpdateWorkspace: (workspaceId: string, updates: Partial<Workspace>) => void;
+  onDeleteWorkspace: (workspaceId: string) => void;
 }
 
 export function ServersTab({
@@ -28,6 +38,13 @@ export function ServersTab({
   onReconnect,
   onUpdate,
   onRemove,
+  workspaces,
+  activeWorkspaceId,
+  activeWorkspace,
+  onSwitchWorkspace,
+  onCreateWorkspace,
+  onUpdateWorkspace,
+  onDeleteWorkspace,
 }: ServersTabProps) {
   const posthog = usePostHog();
   const [isAddingServer, setIsAddingServer] = useState(false);
@@ -112,9 +129,7 @@ export function ServersTab({
     <div className="space-y-6 p-8 h-full overflow-auto">
       {/* Header Section */}
       <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight">MCP Servers</h2>
-        </div>
+        <h2 className="text-2xl font-bold tracking-tight">MCP Servers</h2>
         <div className="flex items-center gap-2">
           <HoverCard
             open={isActionMenuOpen}
@@ -159,6 +174,7 @@ export function ServersTab({
           </HoverCard>
         </div>
       </div>
+
       {/* Server Cards Grid */}
       {connectedCount > 0 ? (
         <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">

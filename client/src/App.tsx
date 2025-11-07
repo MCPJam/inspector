@@ -90,6 +90,13 @@ export default function App() {
     toggleServerSelection,
     selectedMCPConfigsMap,
     setSelectedMultipleServersToAllServers,
+    workspaces,
+    activeWorkspaceId,
+    activeWorkspace,
+    handleSwitchWorkspace,
+    handleCreateWorkspace,
+    handleUpdateWorkspace,
+    handleDeleteWorkspace,
   } = useAppState();
   // Sync tab with hash on mount and when hash changes
   useEffect(() => {
@@ -140,7 +147,14 @@ export default function App() {
     <SidebarProvider defaultOpen={true}>
       <MCPSidebar onNavigate={handleNavigate} activeTab={activeTab} />
       <SidebarInset className="flex flex-col min-h-0">
-        <Header />
+        <Header
+          workspaces={workspaces}
+          activeWorkspaceId={activeWorkspaceId}
+          onSwitchWorkspace={handleSwitchWorkspace}
+          onCreateWorkspace={handleCreateWorkspace}
+          onUpdateWorkspace={handleUpdateWorkspace}
+          onDeleteWorkspace={handleDeleteWorkspace}
+        />
         <div className="flex flex-1 min-h-0 flex-col overflow-hidden h-full">
           {/* Active Server Selector - Only show on Tools, Resources, Prompts, Auth, OAuth Flow, and Interceptor pages */}
           {(activeTab === "tools" ||
@@ -174,6 +188,13 @@ export default function App() {
               onReconnect={handleReconnect}
               onUpdate={handleUpdate}
               onRemove={handleRemoveServer}
+              workspaces={workspaces}
+              activeWorkspaceId={activeWorkspaceId}
+              activeWorkspace={activeWorkspace}
+              onSwitchWorkspace={handleSwitchWorkspace}
+              onCreateWorkspace={handleCreateWorkspace}
+              onUpdateWorkspace={handleUpdateWorkspace}
+              onDeleteWorkspace={handleDeleteWorkspace}
             />
           )}
 
