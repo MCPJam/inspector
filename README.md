@@ -35,7 +35,6 @@ npx @mcpjam/inspector@latest
   - [OpenAI Apps & MCP-UI](#openai-apps--mcp-ui)
   - [OAuth Debugger](#oauth-debugger)
   - [LLM Playground](#llm-playground)
-  
 - [Contributing](#contributing-)
 - [Links](#links-)
 - [Community](#community-)
@@ -94,8 +93,6 @@ View every step of the OAuth handshake in detail, with guided explanations.
 Try your server against any LLM model. We provide frontier models like GPT-5, Claude Sonnet, Gemini 2.5. No API key needed, it's on us. 
 
 <img alt="MCPJam LLM playground" src="./docs/images/mcpjam-llm-playground.png">    
-
-<br />
 
 # Contributing 👨‍💻
 
