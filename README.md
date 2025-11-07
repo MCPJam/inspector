@@ -95,7 +95,6 @@ Try your server against any LLM model. We provide frontier models like GPT-5, Cl
 <img alt="MCPJam LLM playground" src="./docs/images/mcpjam-llm-playground.png">    
 
 # Contributing 👨‍💻
-
 We're grateful for you considering contributing to MCPJam. Please read our [contributing guide](CONTRIBUTING.md).
 
 You can also reach out to the contributors that hang out in our [Discord channel](https://discord.gg/JEnDtz8X6z). 
