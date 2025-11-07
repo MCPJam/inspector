@@ -8,13 +8,13 @@ import { AddServerModal } from "./connection/AddServerModal";
 import { EditServerModal } from "./connection/EditServerModal";
 import { JsonImportModal } from "./connection/JsonImportModal";
 import { WorkspaceSelector } from "./connection/WorkspaceSelector";
-import { WorkspaceManagementDialog } from "./connection/WorkspaceManagementDialog";
 import { ServerFormData } from "@/shared/types.js";
 import { MCPIcon } from "./ui/mcp-icon";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
 import { Workspace } from "@/state/app-types";
+
 interface ServersTabProps {
   connectedServerConfigs: Record<string, ServerWithName>;
   onConnect: (formData: ServerFormData) => void;
@@ -26,13 +26,8 @@ interface ServersTabProps {
   activeWorkspaceId: string;
   activeWorkspace: Workspace;
   onSwitchWorkspace: (workspaceId: string) => void;
-  onCreateWorkspace: (name: string, description?: string) => void;
+  onCreateWorkspace: (name: string) => void;
   onUpdateWorkspace: (workspaceId: string, updates: Partial<Workspace>) => void;
-  onDeleteWorkspace: (workspaceId: string) => void;
-  onDuplicateWorkspace: (workspaceId: string, newName: string) => void;
-  onSetDefaultWorkspace: (workspaceId: string) => void;
-  onExportWorkspace: (workspaceId: string) => void;
-  onImportWorkspace: (workspaceData: Workspace) => void;
 }
 
 export function ServersTab({
@@ -48,11 +43,6 @@ export function ServersTab({
   onSwitchWorkspace,
   onCreateWorkspace,
   onUpdateWorkspace,
-  onDeleteWorkspace,
-  onDuplicateWorkspace,
-  onSetDefaultWorkspace,
-  onExportWorkspace,
-  onImportWorkspace,
 }: ServersTabProps) {
   const posthog = usePostHog();
   const [isAddingServer, setIsAddingServer] = useState(false);
@@ -62,7 +52,6 @@ export function ServersTab({
   const [searchTerm, setSearchTerm] = useState("");
   const [filterType, setFilterType] = useState<"all" | "stdio" | "http">("all");
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
-  const [isManagingWorkspaces, setIsManagingWorkspaces] = useState(false);
 
   const filteredServers = Object.entries(connectedServerConfigs).filter(
     ([name, server]) => {
@@ -139,12 +128,12 @@ export function ServersTab({
       {/* Header Section */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <h2 className="text-2xl font-bold tracking-tight">{activeWorkspace.name}</h2>
           <WorkspaceSelector
             activeWorkspaceId={activeWorkspaceId}
             workspaces={workspaces}
             onSwitchWorkspace={onSwitchWorkspace}
-            onManageWorkspaces={() => setIsManagingWorkspaces(true)}
+            onCreateWorkspace={onCreateWorkspace}
+            onUpdateWorkspace={onUpdateWorkspace}
           />
         </div>
         <div className="flex items-center gap-2">
@@ -270,21 +259,6 @@ export function ServersTab({
         isOpen={isImportingJson}
         onClose={() => setIsImportingJson(false)}
         onImport={handleJsonImport}
-      />
-
-      {/* Workspace Management Dialog */}
-      <WorkspaceManagementDialog
-        isOpen={isManagingWorkspaces}
-        onClose={() => setIsManagingWorkspaces(false)}
-        workspaces={workspaces}
-        activeWorkspaceId={activeWorkspaceId}
-        onCreateWorkspace={onCreateWorkspace}
-        onUpdateWorkspace={onUpdateWorkspace}
-        onDeleteWorkspace={onDeleteWorkspace}
-        onDuplicateWorkspace={onDuplicateWorkspace}
-        onSetDefaultWorkspace={onSetDefaultWorkspace}
-        onExportWorkspace={onExportWorkspace}
-        onImportWorkspace={onImportWorkspace}
       />
     </div>
   );
