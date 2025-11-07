@@ -607,7 +607,7 @@ export function EvalRunner({
       case "tests":
         return (
           <div className="space-y-6">
-            <div className="flex items-center justify-between">
+            <div className="flex items-start justify-between">
               <div>
                 <h3 className="text-lg pb-2">Define your test cases</h3>
                 <p className="text-sm text-muted-foreground">
@@ -615,6 +615,17 @@ export function EvalRunner({
                   use your server.
                 </p>
               </div>
+              {stepCompletion.servers && stepCompletion.model && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleGenerateTests}
+                  disabled={isGenerating}
+                >
+                  {isGenerating ? "Generating..." : "Generate tests"}
+                  <Sparkles className="h-4 w-4 ml-2" />
+                </Button>
+              )}
             </div>
 
             {!stepCompletion.servers || !stepCompletion.model ? (
@@ -630,22 +641,6 @@ export function EvalRunner({
               </div>
             ) : (
               <>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="lg"
-                      onClick={handleGenerateTests}
-                      disabled={isGenerating}
-                    >
-                      <span className="bg-gradient-to-r from-purple-600 via-violet-600 to-indigo-600 bg-clip-text text-transparent">
-                        {isGenerating ? "Generating..." : "Generate tests"}
-                      </span>
-                      <Sparkles className="h-4 w-4 ml-2 fill-purple-600" />
-                    </Button>
-                  </div>
-                </div>
 
                 {isGenerating && (
                   <div className="flex items-center justify-center rounded-lg border p-6">
