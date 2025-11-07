@@ -16,7 +16,7 @@ www.mcpjam.com
 
 </div>
 
-MCPJam inspector is the local-first development platform for MCP servers & OpenAI apps. Visually test your server's tools, resources, prompts, and OAuth. Try your server against different models in the LLM playground.
+MCPJam inspector is the testing and debugging platform for MCP servers & OpenAI apps. Visually inspect your server's tools, resources, prompts, and OAuth. Try your server against different models in the LLM playground.
 
 ### 🚀 Quick Start
 
@@ -26,7 +26,7 @@ Start up the MCPJam inspector:
 npx @mcpjam/inspector@latest
 ```
 
-<img alt="MCPJam Inspector Demo" src="./docs/images/mcpjam-tools-tab.png">                                                                                  |
+<img alt="MCPJam Inspector Demo" src="./docs/images/mcpjam-tools-tab.png">
 
 # Table of contents
 
@@ -56,7 +56,8 @@ We recommend starting MCPJam inspector via `npx`:
 npx @mcpjam/inspector@latest
 ```
 
-We also have a Mac and Windows desktop app: 
+We also have a Mac and Windows desktop app:
+
 - [Install Mac](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam.Inspector.dmg)
 - [Install Windows](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam-Inspector-Setup.exe)
 
@@ -78,45 +79,50 @@ The application will be available at `http://localhost:3001`.
 
 ## OpenAI Apps & MCP-UI
 
-Develop [OpenAI apps](https://developers.openai.com/apps-sdk/) or [MCP-UI](https://mcpui.dev/) apps locally. No ngrok needed. MCPJam is the only local-first OpenAI app emulator. 
+Develop [OpenAI apps](https://developers.openai.com/apps-sdk/) or [MCP-UI](https://mcpui.dev/) apps locally. No ngrok needed. MCPJam is the only local-first OpenAI app emulator.
 
-<img alt="MCPJam LLM playground" src="./docs/images/mcpjam-llm-playground.png">   
+<img alt="MCPJam LLM playground" src="./docs/images/mcpjam-llm-playground.png">
 
-## OAuth Debugger 
+## OAuth Debugger
 
 View every step of the OAuth handshake in detail, with guided explanations.
 
-<img alt="MCPJam OAuth Flow Debugger" src="./docs/images/mcpjam-oauth-flow.png">    
+<img alt="MCPJam OAuth Flow Debugger" src="./docs/images/mcpjam-oauth-flow.png">
 
-## LLM Playground 
+## LLM Playground
 
-Try your server against any LLM model. We provide frontier models like GPT-5, Claude Sonnet, Gemini 2.5. No API key needed, it's on us. 
+Try your server against any LLM model. We provide frontier models like GPT-5, Claude Sonnet, Gemini 2.5. No API key needed, it's on us.
 
-<img alt="MCPJam LLM playground" src="./docs/images/mcpjam-llm-playground.png">    
+<img alt="MCPJam LLM playground" src="./docs/images/mcpjam-llm-playground.png">
 
 # Contributing 👨‍💻
+
 We're grateful for you considering contributing to MCPJam. Please read our [contributing guide](CONTRIBUTING.md).
 
-You can also reach out to the contributors that hang out in our [Discord channel](https://discord.gg/JEnDtz8X6z). 
+You can also reach out to the contributors that hang out in our [Discord channel](https://discord.gg/JEnDtz8X6z).
 
 # Links 🔗
+
 - Roadmap (TBD)
 - [Website](https://www.mcpjam.com/)
 - [Blog](https://www.mcpjam.com/blog)
 - [Pricing](https://www.mcpjam.com/pricing)
-- [Docs](https://docs.mcpjam.com/) 
+- [Docs](https://docs.mcpjam.com/)
 
 # Community 🌍
+
 - [Discord](https://discord.gg/JEnDtz8X6z)
 - [𝕏 (Twitter)](https://x.com/mcpjams)
 - [Blog](https://www.mcpjam.com/blog)
 - [LinkedIn](https://www.linkedin.com/company/mcpjam)
 
 # Shoutouts 📣
+
 Some of our partners and favorite frameworks:
+
 - [Stytch](https://stytch.com) - Our favorite MCP OAuth provider
 - [DooiLabs/FastApps](https://github.com/DooiLabs/FastApps) - The Python framework to build OpenAI Apps.
-- [xMCP](https://xmcp.dev/) -  The Typescript MCP framework. Ship on Vercel instantly.
+- [xMCP](https://xmcp.dev/) - The Typescript MCP framework. Ship on Vercel instantly.
 - [Alpic](https://alpic.ai/) - Host MCP servers
 
 ---
