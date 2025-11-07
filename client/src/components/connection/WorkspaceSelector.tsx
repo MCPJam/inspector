@@ -93,7 +93,7 @@ export function WorkspaceSelector({
           onBlur={handleNameBlur}
           onKeyDown={handleNameKeyDown}
           autoFocus
-          className="px-3 py-2 text-xl font-semibold border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
+          className="px-3 py-2 text-m font-semibold border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
         />
       ) : (
         <Button
