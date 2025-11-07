@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import {
   Tooltip,
   TooltipContent,
-  TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { aggregateSuite } from "./helpers";
@@ -153,10 +152,10 @@ export function SuiteRow({
             : "Loading..."}
         </div>
       </button>
-      <TooltipProvider>
+      <div className="w-20 flex justify-end">
         <Tooltip>
           <TooltipTrigger asChild>
-            <div className="w-20 flex justify-end">
+            <span>
               <Button
                 variant="ghost"
                 size="sm"
@@ -168,17 +167,15 @@ export function SuiteRow({
                   className={`h-4 w-4 ${isRerunning ? "animate-spin" : ""}`}
                 />
               </Button>
-            </div>
+            </span>
           </TooltipTrigger>
-          {!canRerun && (
-            <TooltipContent>
-              <p>
-                Connect the following servers: {missingServers.join(", ")}
-              </p>
-            </TooltipContent>
-          )}
+          <TooltipContent>
+            {!canRerun
+              ? `Connect the following servers: ${missingServers.join(", ")}`
+              : "Rerun evaluation"}
+          </TooltipContent>
         </Tooltip>
-      </TooltipProvider>
+      </div>
     </div>
   );
 }
