@@ -1,7 +1,8 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery } from "convex/react";
 import { FlaskConical, Plus, ArrowLeft } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import type { EvalCase, EvalIteration, EvalSuite } from "./evals/types";
@@ -10,21 +11,42 @@ import { SuitesOverview } from "./evals/suites-overview";
 import { SuiteIterationsView } from "./evals/suite-iterations-view";
 import { EvalRunner } from "./evals/eval-runner";
 import { useChat } from "@/hooks/use-chat";
+import { useAppState } from "@/hooks/use-app-state";
+import {
+  useAiProviderKeys,
+  type ProviderTokens,
+} from "@/hooks/use-ai-provider-keys";
+import { isMCPJamProvidedModel } from "@/shared/types";
 
 type View = "results" | "run";
 
 export function EvalsTab() {
   const { isAuthenticated, isLoading } = useConvexAuth();
-  const { user } = useAuth();
+  const { user, getAccessToken } = useAuth();
 
   const [view, setView] = useState<View>("results");
   const [selectedSuiteId, setSelectedSuiteId] = useState<string | null>(null);
+  const [isRerunning, setIsRerunning] = useState(false);
 
   const { availableModels } = useChat({
     systemPrompt: "",
     temperature: 1,
     selectedServers: [],
   });
+
+  const { appState } = useAppState();
+  const { getToken, hasToken } = useAiProviderKeys();
+
+  // Get connected server names
+  const connectedServerNames = useMemo(
+    () =>
+      new Set(
+        Object.entries(appState.servers)
+          .filter(([, server]) => server.connectionStatus === "connected")
+          .map(([name]) => name),
+      ),
+    [appState.servers],
+  );
 
   const enableOverviewQuery = isAuthenticated && !!user;
   const overviewData = useQuery(
@@ -71,6 +93,99 @@ export function EvalsTab() {
       suiteDetails.iterations,
     );
   }, [selectedSuite, suiteDetails]);
+
+  // Rerun handler
+  const handleRerun = useCallback(
+    async (suite: EvalSuite) => {
+      if (isRerunning) return;
+
+      const suiteServers = suite.config?.environment?.servers || [];
+      const missingServers = suiteServers.filter(
+        (server) => !connectedServerNames.has(server),
+      );
+
+      if (missingServers.length > 0) {
+        toast.error(
+          `Please connect the following servers first: ${missingServers.join(", ")}`,
+        );
+        return;
+      }
+
+      // Get the tests from the suite config
+      const tests = suite.config?.tests || [];
+      if (tests.length === 0) {
+        toast.error("No tests found in this suite");
+        return;
+      }
+
+      // Check if we have the model and API keys
+      const firstTest = tests[0];
+      const modelId = firstTest.model;
+      const provider = firstTest.provider;
+
+      const currentModelIsJam = isMCPJamProvidedModel(modelId);
+      let apiKey: string | undefined;
+
+      if (!currentModelIsJam) {
+        const tokenKey = provider.toLowerCase() as keyof ProviderTokens;
+        if (!hasToken(tokenKey)) {
+          toast.error(
+            `Please add your ${provider} API key in Settings before running evals`,
+          );
+          return;
+        }
+        apiKey = getToken(tokenKey) || undefined;
+      }
+
+      setIsRerunning(true);
+
+      try {
+        const accessToken = await getAccessToken();
+
+        const response = await fetch("/api/mcp/evals/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            tests: tests.map((test) => ({
+              title: test.title,
+              query: test.query,
+              runs: 1, // Default to 1 run for rerun
+              model: test.model,
+              provider: test.provider,
+              expectedToolCalls: test.expectedToolCalls,
+            })),
+            serverIds: suiteServers,
+            llmConfig: {
+              provider,
+              apiKey: currentModelIsJam ? "router" : apiKey || "router",
+            },
+            convexAuthToken: accessToken,
+          }),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(errorText || "Failed to start eval run");
+        }
+
+        toast.success("Eval run started successfully! Results will appear shortly.");
+      } catch (error) {
+        console.error("Failed to rerun evals:", error);
+        toast.error(
+          error instanceof Error ? error.message : "Failed to start eval run",
+        );
+      } finally {
+        setIsRerunning(false);
+      }
+    },
+    [
+      isRerunning,
+      connectedServerNames,
+      getAccessToken,
+      hasToken,
+      getToken,
+    ],
+  );
 
   // Handle back navigation
   const handleBack = () => {
@@ -168,6 +283,9 @@ export function EvalsTab() {
           <SuitesOverview
             suites={suites || []}
             onSelectSuite={setSelectedSuiteId}
+            onRerun={handleRerun}
+            connectedServerNames={connectedServerNames}
+            isRerunning={isRerunning}
           />
         ) : isSuiteDetailsLoading ? (
           <div className="flex h-64 items-center justify-center">
@@ -185,6 +303,9 @@ export function EvalsTab() {
             iterations={iterationsForSelectedSuite}
             aggregate={suiteAggregate}
             onBack={() => setSelectedSuiteId(null)}
+            onRerun={handleRerun}
+            connectedServerNames={connectedServerNames}
+            isRerunning={isRerunning}
           />
         )}
       </div>
