@@ -62,12 +62,10 @@ export function EvalsResultsTab() {
 
   if (isLoading) {
     return (
-      <div className="p-6">
-        <div className="flex h-64 items-center justify-center">
-          <div className="text-center">
-            <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
-            <p className="mt-4 text-muted-foreground">Loading...</p>
-          </div>
+      <div className="h-full flex items-center justify-center p-6">
+        <div className="text-center">
+          <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
+          <p className="mt-4 text-muted-foreground">Loading...</p>
         </div>
       </div>
     );
@@ -75,7 +73,7 @@ export function EvalsResultsTab() {
 
   if (!isAuthenticated || !user) {
     return (
-      <div className="p-6">
+      <div className="h-full p-6">
         <EmptyState
           icon={FlaskConical}
           title="Sign in to view your evals"
@@ -88,14 +86,12 @@ export function EvalsResultsTab() {
 
   if (isOverviewLoading && enableOverviewQuery) {
     return (
-      <div className="p-6">
-        <div className="flex h-64 items-center justify-center">
-          <div className="text-center">
-            <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
-            <p className="mt-4 text-muted-foreground">
-              Loading your eval data...
-            </p>
-          </div>
+      <div className="h-full flex items-center justify-center p-6">
+        <div className="text-center">
+          <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
+          <p className="mt-4 text-muted-foreground">
+            Loading your eval data...
+          </p>
         </div>
       </div>
     );
