@@ -98,4 +98,7 @@ export default defineConfig({
     sourcemap: true,
     emptyOutDir: true,
   },
+  define: {
+    __APP_VERSION__: JSON.stringify(process.env.npm_package_version),
+  },
 });
