@@ -585,8 +585,25 @@ export function useAppState() {
   );
 
   const handleUpdate = useCallback(
-    async (originalServerName: string, formData: ServerFormData) => {
+    async (
+      originalServerName: string,
+      formData: ServerFormData,
+      skipAutoConnect?: boolean,
+    ) => {
       const originalServer = appState.servers[originalServerName];
+
+      // If skipAutoConnect is true, just update the config without reconnecting
+      if (skipAutoConnect) {
+        const mcpConfig = toMCPConfig(formData);
+        dispatch({
+          type: "CONNECT_SUCCESS",
+          name: originalServerName,
+          config: mcpConfig,
+        });
+        toast.success("Server configuration updated");
+        return;
+      }
+
       const hadOAuthTokens = originalServer?.oauthTokens != null;
       const shouldPreserveOAuth =
         hadOAuthTokens &&

@@ -88,7 +88,11 @@ interface OAuthFlowTabProps {
   serverConfig?: MCPServerConfig;
   serverEntry?: ServerWithName;
   serverName?: string;
-  onUpdate?: (originalServerName: string, formData: ServerFormData) => void;
+  onUpdate?: (
+    originalServerName: string,
+    formData: ServerFormData,
+    skipAutoConnect?: boolean,
+  ) => void;
 }
 
 export const OAuthFlowTab = ({
@@ -734,6 +738,15 @@ export const OAuthFlowTab = ({
               </div>
             </div>
             <div className="flex items-end gap-2">
+              {serverEntry && onUpdate && (
+                <Button
+                  variant="outline"
+                  onClick={() => setIsEditingServer(true)}
+                  disabled={oauthFlowState.isInitiatingAuth}
+                >
+                  Edit Config
+                </Button>
+              )}
               <Button
                 variant="outline"
                 onClick={() => {
@@ -867,10 +880,11 @@ export const OAuthFlowTab = ({
         <EditServerModal
           isOpen={isEditingServer}
           onClose={() => setIsEditingServer(false)}
-          onSubmit={(formData, originalName) =>
-            onUpdate(originalName, formData)
+          onSubmit={(formData, originalName, skipAutoConnect) =>
+            onUpdate(originalName, formData, skipAutoConnect)
           }
           server={serverEntry}
+          skipAutoConnect={true}
         />
       )}
     </div>

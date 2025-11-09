@@ -20,7 +20,11 @@ interface ServersTabProps {
   onConnect: (formData: ServerFormData) => void;
   onDisconnect: (serverName: string) => void;
   onReconnect: (serverName: string) => void;
-  onUpdate: (originalServerName: string, formData: ServerFormData) => void;
+  onUpdate: (
+    originalServerName: string,
+    formData: ServerFormData,
+    skipAutoConnect?: boolean,
+  ) => void;
   onRemove: (serverName: string) => void;
   workspaces: Record<string, Workspace>;
   activeWorkspaceId: string;
