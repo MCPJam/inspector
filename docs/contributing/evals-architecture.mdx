@@ -625,8 +625,7 @@ The system now uses Vercel's AI SDK (`ai` package) for LLM interactions:
 ```mermaid
 sequenceDiagram
     participant UI as UI
-    participant CM as ClientManager
-    participant MCP as MCP Client
+    participant CM as MCPClientManager
     participant Server as MCP Server
 
     UI->>CM: listServers()
@@ -636,19 +635,17 @@ sequenceDiagram
     CM-->>UI: "connected"
 
     UI->>CM: listTools("server1")
-    CM->>MCP: listTools()
-    MCP->>Server: tools/list
-    Server-->>MCP: {tools: [...]}
-    MCP-->>CM: {tools: [...]}
+    CM->>Server: tools/list
+    Server-->>CM: {tools: [...]}
     CM-->>UI: {tools: [...]}
 
     Note over UI,Server: During eval execution...
 
     UI->>Runner: Execute eval
-    Runner->>MCP: callTool("toolName", args)
-    MCP->>Server: tools/call
-    Server-->>MCP: {result: ...}
-    MCP-->>Runner: {result: ...}
+    Runner->>CM: getToolsForAiSdk(serverIds)
+    CM-->>Runner: ToolSet (AI SDK format)
+    Runner->>Server: Execute tool via AI SDK
+    Server-->>Runner: {result: ...}
 ```
 
 **Transport Support:**
