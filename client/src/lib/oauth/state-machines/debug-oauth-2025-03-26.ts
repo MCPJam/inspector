@@ -1541,8 +1541,11 @@ export const createDebugOAuthStateMachine = (
                           "SSE Stream URL": state.serverUrl,
                           "POST Endpoint": fullEndpoint,
                           "First Event": sseBody.events?.[0],
-                          "Migration Note": "This transport is deprecated. Please update your server to use the 2025-03-26 Streamable HTTP transport.",
-                          "How It Works": "Client connected via GET for SSE stream. Subsequent requests use POST to: " + fullEndpoint,
+                          "Migration Note":
+                            "This transport is deprecated. Please update your server to use the 2025-03-26 Streamable HTTP transport.",
+                          "How It Works":
+                            "Client connected via GET for SSE stream. Subsequent requests use POST to: " +
+                            fullEndpoint,
                         },
                       );
 
