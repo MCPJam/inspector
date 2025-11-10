@@ -282,8 +282,8 @@ export const OAuthFlowTab = ({
       clearTimeout(exchangeTimeoutRef.current); // Clear any pending exchange
       exchangeTimeoutRef.current = null;
     }
-    setCustomScopes(""); // Clear custom scopes
-    // Headers will remain from server config (not cleared on reset)
+    // Don't clear custom scopes - they should persist from server config
+    // Headers and scopes will remain from server config (not cleared on reset)
   }, [updateOAuthFlowState]);
 
   // Update auth settings when server config changes or server URL is overridden
@@ -880,9 +880,11 @@ export const OAuthFlowTab = ({
         <EditServerModal
           isOpen={isEditingServer}
           onClose={() => setIsEditingServer(false)}
-          onSubmit={(formData, originalName, skipAutoConnect) =>
-            onUpdate(originalName, formData, skipAutoConnect)
-          }
+          onSubmit={(formData, originalName, skipAutoConnect) => {
+            onUpdate(originalName, formData, skipAutoConnect);
+            // Reset OAuth flow to regenerate authorization URL with new config
+            resetOAuthFlow();
+          }}
           server={serverEntry}
           skipAutoConnect={true}
         />
