@@ -572,7 +572,6 @@ export function OAuthFlowLogger({
                           data={log.data}
                           level={level}
                           error={log.error}
-                          defaultOpen
                         />
                       </div>
                     );
@@ -623,7 +622,6 @@ export function OAuthFlowLogger({
                         responseBody={httpEntry.response?.body}
                         error={httpEntry.error}
                         step={httpEntry.step}
-                        defaultOpen
                       />
                     </div>
                   );
