@@ -21,7 +21,10 @@ import {
   ChevronRight,
   CheckCircle2,
   Circle,
+  AlertTriangle,
+  Copy,
 } from "lucide-react";
+import { generateGuideText, generateRawText } from "@/lib/oauth/log-formatters";
 import "react18-json-view/src/style.css";
 
 interface OAuthFlowLoggerProps {
@@ -43,6 +46,7 @@ export function OAuthFlowLogger({
   const rawScrollRef = useRef<HTMLDivElement | null>(null);
   const [deletedInfoLogs] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<"guide" | "raw">("guide");
+  const [copySuccess, setCopySuccess] = useState(false);
 
   const groups = useMemo(() => {
     type StepEntry =
@@ -229,6 +233,20 @@ export function OAuthFlowLogger({
     };
   };
 
+  const handleCopyLogs = async () => {
+    try {
+      const text =
+        activeTab === "guide"
+          ? generateGuideText(oauthFlowState, groups)
+          : generateRawText(oauthFlowState, timelineEntries);
+      await navigator.clipboard.writeText(text);
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy logs:", err);
+    }
+  };
+
   return (
     <div className="h-full border-l border-border flex flex-col">
       <div className="bg-muted/30 border-b border-border px-4 py-3">
@@ -240,11 +258,20 @@ export function OAuthFlowLogger({
         onValueChange={(value) => setActiveTab(value as "guide" | "raw")}
         className="flex-1 overflow-hidden"
       >
-        <div className="px-4 pt-2">
+        <div className="px-4 pt-2 flex items-center justify-between gap-3">
           <TabsList>
             <TabsTrigger value="guide">Guide</TabsTrigger>
             <TabsTrigger value="raw">Raw</TabsTrigger>
           </TabsList>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleCopyLogs}
+            className="h-8"
+          >
+            <Copy className="h-3.5 w-3.5 mr-2" />
+            {copySuccess ? "Copied!" : "Copy logs"}
+          </Button>
         </div>
 
         <TabsContent value="guide" className="flex-1 overflow-hidden">
@@ -281,15 +308,35 @@ export function OAuthFlowLogger({
                     (entry) => entry.type === "http",
                   );
                   const totalEntries = infoEntries.length + httpEntries.length;
+
+                  // Check for deprecated transport detection (HTTP+SSE)
+                  const hasDeprecatedTransport = infoEntries.some(
+                    ({ log }) =>
+                      log.label?.includes("HTTP+SSE Transport Detected") ||
+                      log.id === "http-sse-detected",
+                  );
+
                   const errorInfoCount = infoEntries.filter(
                     ({ log }) => log.level === "error",
                   ).length;
                   const httpErrorCount = httpEntries.filter(({ entry }) => {
                     if (entry.error) return true;
                     const status = entry.response?.status;
+                    // Don't treat 401 on initial request as error
                     if (
                       entry.step === "request_without_token" &&
                       status === 401
+                    ) {
+                      return false;
+                    }
+                    // Don't treat 4xx on authenticated_mcp_request as error if deprecated transport was detected
+                    // (the 4xx triggers the GET fallback for backwards compatibility)
+                    if (
+                      entry.step === "authenticated_mcp_request" &&
+                      hasDeprecatedTransport &&
+                      status &&
+                      status >= 400 &&
+                      status < 500
                     ) {
                       return false;
                     }
@@ -332,9 +379,11 @@ export function OAuthFlowLogger({
                           "relative bg-background border rounded-lg transition-all",
                           hasError
                             ? "border-red-400 ring-1 ring-red-400/20 shadow-md"
-                            : isActive
-                              ? "border-blue-400 shadow-md ring-1 ring-blue-400/20"
-                              : "border-border shadow-sm hover:shadow-md",
+                            : hasDeprecatedTransport
+                              ? "border-yellow-400 ring-1 ring-yellow-400/20 shadow-md"
+                              : isActive
+                                ? "border-blue-400 shadow-md ring-1 ring-blue-400/20"
+                                : "border-border shadow-sm hover:shadow-md",
                         )}
                       >
                         {/* Step header - clickable */}
@@ -346,6 +395,8 @@ export function OAuthFlowLogger({
                           <div className="flex-shrink-0 mt-0.5">
                             {hasError ? (
                               <AlertCircle className="h-4 w-4 text-red-500" />
+                            ) : hasDeprecatedTransport ? (
+                              <AlertTriangle className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
                             ) : (
                               <StatusIcon className={statusInfo.className} />
                             )}
@@ -371,6 +422,14 @@ export function OAuthFlowLogger({
                                   className="text-[10px] h-4 px-1.5"
                                 >
                                   {errorCount} error{errorCount > 1 ? "s" : ""}
+                                </Badge>
+                              )}
+                              {hasDeprecatedTransport && !hasError && (
+                                <Badge
+                                  variant="outline"
+                                  className="text-[10px] h-4 px-1.5 border-yellow-400 text-yellow-700 dark:text-yellow-400 bg-yellow-50 dark:bg-yellow-950/30"
+                                >
+                                  HTTP+SSE transport
                                 </Badge>
                               )}
                             </div>
@@ -539,7 +598,6 @@ export function OAuthFlowLogger({
                           data={log.data}
                           level={level}
                           error={log.error}
-                          defaultOpen
                         />
                       </div>
                     );
@@ -590,7 +648,6 @@ export function OAuthFlowLogger({
                         responseBody={httpEntry.response?.body}
                         error={httpEntry.error}
                         step={httpEntry.step}
-                        defaultOpen
                       />
                     </div>
                   );

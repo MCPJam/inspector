@@ -29,6 +29,35 @@ import {
   toLogErrorDetails,
 } from "./shared/helpers";
 
+/**
+ * Canonicalize a URL for use as a resource parameter per RFC 8707
+ * - Lowercase scheme and host
+ * - Remove fragment
+ * - Remove trailing slash (unless path is just "/")
+ */
+function canonicalizeResourceUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+
+    // Lowercase scheme and host
+    parsed.protocol = parsed.protocol.toLowerCase();
+    parsed.hostname = parsed.hostname.toLowerCase();
+
+    // Remove fragment
+    parsed.hash = "";
+
+    // Remove trailing slash unless it's the root path
+    if (parsed.pathname !== "/" && parsed.pathname.endsWith("/")) {
+      parsed.pathname = parsed.pathname.slice(0, -1);
+    }
+
+    return parsed.toString();
+  } catch (error) {
+    console.warn("Failed to canonicalize resource URL:", url, error);
+    return url; // Return original if parsing fails
+  }
+}
+
 // Re-export types for backward compatibility
 export type { OAuthFlowStep, OAuthFlowState };
 export { EMPTY_OAUTH_FLOW_STATE };
@@ -315,7 +344,12 @@ export function buildActions_2025_11_25(
               label: "method",
               value: flowState.codeChallengeMethod || "S256",
             },
-            { label: "resource", value: flowState.serverUrl || "—" },
+            {
+              label: "resource",
+              value: flowState.serverUrl
+                ? canonicalizeResourceUrl(flowState.serverUrl)
+                : "—",
+            },
             { label: "Protocol", value: "2025-11-25" },
           ]
         : undefined,
@@ -334,7 +368,12 @@ export function buildActions_2025_11_25(
               value:
                 flowState.codeChallenge?.substring(0, 12) + "..." || "S256",
             },
-            { label: "resource", value: flowState.serverUrl || "" },
+            {
+              label: "resource",
+              value: flowState.serverUrl
+                ? canonicalizeResourceUrl(flowState.serverUrl)
+                : "",
+            },
           ]
         : undefined,
     },
@@ -388,7 +427,12 @@ export function buildActions_2025_11_25(
       details: flowState.codeVerifier
         ? [
             { label: "grant_type", value: "authorization_code" },
-            { label: "resource", value: flowState.serverUrl || "" },
+            {
+              label: "resource",
+              value: flowState.serverUrl
+                ? canonicalizeResourceUrl(flowState.serverUrl)
+                : "",
+            },
           ]
         : undefined,
     },
@@ -501,6 +545,9 @@ export const createDebugOAuthStateMachine = (
     customHeaders,
     registrationStrategy = "cimd", // Default to CIMD for 2025-11-25
   } = config;
+
+  // Canonicalize the server URL once at initialization (per RFC 8707)
+  const canonicalServerUrl = canonicalizeResourceUrl(serverUrl);
 
   // Use provided redirectUrl or default to the origin + /oauth/callback/debug
   const redirectUri =
@@ -1220,9 +1267,9 @@ export const createDebugOAuthStateMachine = (
                 state.authorizationServerMetadata.registration_endpoint,
                 {
                   method: "POST",
-                  headers: {
+                  headers: mergeHeaders({
                     "Content-Type": "application/json",
-                  },
+                  }),
                   body: JSON.stringify(state.lastRequest.body),
                 },
               );
@@ -1482,7 +1529,7 @@ export const createDebugOAuthStateMachine = (
               {
                 code_challenge: codeChallenge,
                 method: "S256",
-                resource: state.serverUrl || "Unknown",
+                resource: canonicalServerUrl,
               },
             );
 
@@ -1518,9 +1565,7 @@ export const createDebugOAuthStateMachine = (
             );
             authUrl.searchParams.set("code_challenge_method", "S256");
             authUrl.searchParams.set("state", state.state || "");
-            if (state.serverUrl) {
-              authUrl.searchParams.set("resource", state.serverUrl);
-            }
+            authUrl.searchParams.set("resource", canonicalServerUrl);
 
             // Add scopes to request refresh tokens and other capabilities
             // If custom scopes are provided, use them exclusively
@@ -1532,27 +1577,13 @@ export const createDebugOAuthStateMachine = (
                 state.resourceMetadata?.scopes_supported ||
                 state.authorizationServerMetadata.scopes_supported;
 
-              // Build scope string following OAuth 2.1 and OIDC best practices
+              // Build scope string using only server-advertised scopes
               const scopes = new Set<string>();
 
-              // 1. Add server-advertised scopes first (MCP-specific like tasks.read, read-mcp, etc.)
+              // Add all server-advertised scopes (MCP-specific, OIDC, or other)
+              // This ensures we only request scopes the server explicitly supports
               if (scopesSupported && scopesSupported.length > 0) {
                 scopesSupported.forEach((scope) => scopes.add(scope));
-              }
-
-              // 2. Add standard OIDC scopes only if server supports them
-              // (Some servers like Hugging Face advertise these in scopes_supported)
-              const standardScopes = ["openid", "profile", "email"];
-              standardScopes.forEach((scope) => {
-                if (!scopesSupported || scopesSupported.includes(scope)) {
-                  scopes.add(scope);
-                }
-              });
-
-              // 3. Request offline_access for refresh tokens ONLY if server supports it
-              // Per OAuth 2.1, this is required to get refresh tokens
-              if (scopesSupported?.includes("offline_access")) {
-                scopes.add("offline_access");
               }
 
               // Set scope parameter - use only scopes the server actually supports
@@ -1633,9 +1664,7 @@ export const createDebugOAuthStateMachine = (
               tokenRequestBodyObj.code_verifier = state.codeVerifier;
             }
 
-            if (state.serverUrl) {
-              tokenRequestBodyObj.resource = state.serverUrl;
-            }
+            tokenRequestBodyObj.resource = canonicalServerUrl;
 
             const tokenRequest = {
               method: "POST",
@@ -1699,19 +1728,17 @@ export const createDebugOAuthStateMachine = (
                 tokenRequestBody.set("client_secret", state.clientSecret);
               }
 
-              // Add resource parameter if available
-              if (state.serverUrl) {
-                tokenRequestBody.set("resource", state.serverUrl);
-              }
+              // Add resource parameter (canonicalized per RFC 8707)
+              tokenRequestBody.set("resource", canonicalServerUrl);
 
               // Make the token request via backend proxy
               const response = await proxyFetch(
                 state.authorizationServerMetadata.token_endpoint,
                 {
                   method: "POST",
-                  headers: {
+                  headers: mergeHeaders({
                     "Content-Type": "application/x-www-form-urlencoded",
-                  },
+                  }),
                   body: tokenRequestBody.toString(),
                 },
               );
@@ -2009,10 +2036,10 @@ export const createDebugOAuthStateMachine = (
             try {
               const response = await proxyFetch(state.serverUrl, {
                 method: "POST",
-                headers: {
+                headers: mergeHeaders({
                   Authorization: `Bearer ${state.accessToken}`,
                   "Content-Type": "application/json",
-                },
+                }),
                 body: JSON.stringify({
                   jsonrpc: "2.0",
                   method: "initialize",
