@@ -88,7 +88,11 @@ interface OAuthFlowTabProps {
   serverConfig?: MCPServerConfig;
   serverEntry?: ServerWithName;
   serverName?: string;
-  onUpdate?: (originalServerName: string, formData: ServerFormData) => void;
+  onUpdate?: (
+    originalServerName: string,
+    formData: ServerFormData,
+    skipAutoConnect?: boolean,
+  ) => void;
 }
 
 export const OAuthFlowTab = ({
@@ -278,8 +282,8 @@ export const OAuthFlowTab = ({
       clearTimeout(exchangeTimeoutRef.current); // Clear any pending exchange
       exchangeTimeoutRef.current = null;
     }
-    setCustomScopes(""); // Clear custom scopes
-    // Headers will remain from server config (not cleared on reset)
+    // Don't clear custom scopes - they should persist from server config
+    // Headers and scopes will remain from server config (not cleared on reset)
   }, [updateOAuthFlowState]);
 
   // Update auth settings when server config changes or server URL is overridden
@@ -734,6 +738,15 @@ export const OAuthFlowTab = ({
               </div>
             </div>
             <div className="flex items-end gap-2">
+              {serverEntry && onUpdate && (
+                <Button
+                  variant="outline"
+                  onClick={() => setIsEditingServer(true)}
+                  disabled={oauthFlowState.isInitiatingAuth}
+                >
+                  Edit Config
+                </Button>
+              )}
               <Button
                 variant="outline"
                 onClick={() => {
@@ -834,7 +847,7 @@ export const OAuthFlowTab = ({
               flowState={oauthFlowState}
               registrationStrategy={registrationStrategy}
               protocolVersion={protocolVersion}
-              focusedStep={focusedStep ?? oauthFlowState.currentStep}
+              focusedStep={focusedStep}
             />
           </ResizablePanel>
 
@@ -867,10 +880,13 @@ export const OAuthFlowTab = ({
         <EditServerModal
           isOpen={isEditingServer}
           onClose={() => setIsEditingServer(false)}
-          onSubmit={(formData, originalName) =>
-            onUpdate(originalName, formData)
-          }
+          onSubmit={(formData, originalName, skipAutoConnect) => {
+            onUpdate(originalName, formData, skipAutoConnect);
+            // Reset OAuth flow to regenerate authorization URL with new config
+            resetOAuthFlow();
+          }}
           server={serverEntry}
+          skipAutoConnect={true}
         />
       )}
     </div>
