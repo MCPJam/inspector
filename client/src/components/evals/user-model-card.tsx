@@ -51,7 +51,7 @@ export function UserModelCard({
         "hover:border-primary/50 hover:shadow-md",
         isSelected
           ? "border-primary bg-primary/5 shadow-md"
-          : "border-border bg-background"
+          : "border-border bg-background",
       )}
     >
       {/* Selection indicator */}
@@ -77,7 +77,7 @@ export function UserModelCard({
               <div
                 className={cn(
                   "h-4 w-4 rounded-sm flex items-center justify-center flex-shrink-0",
-                  getProviderColor(model.provider)
+                  getProviderColor(model.provider),
                 )}
               >
                 <span className="text-white font-bold text-[8px]">

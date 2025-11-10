@@ -168,7 +168,9 @@ export function EvalsTab() {
           throw new Error(errorText || "Failed to start eval run");
         }
 
-        toast.success("Eval run started successfully! Results will appear shortly.");
+        toast.success(
+          "Eval run started successfully! Results will appear shortly.",
+        );
       } catch (error) {
         console.error("Failed to rerun evals:", error);
         toast.error(
@@ -268,11 +270,7 @@ export function EvalsTab() {
             </h1>
           </div>
           {view === "results" && !selectedSuiteId && (
-            <Button
-              onClick={() => setView("run")}
-              className="gap-2"
-              size="sm"
-            >
+            <Button onClick={() => setView("run")} className="gap-2" size="sm">
               <Plus className="h-4 w-4" />
               Create new run
             </Button>

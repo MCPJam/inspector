@@ -20,7 +20,7 @@ type ViewMode = "grid" | "list";
  * Convert OpenRouterModel to ModelDefinition
  */
 function openRouterToModelDefinition(
-  orModel: OpenRouterModel
+  orModel: OpenRouterModel,
 ): ModelDefinition {
   // Extract provider from model ID (e.g., "openai/gpt-5" -> "openai")
   const parts = orModel.id.split("/");
@@ -53,7 +53,7 @@ export function EvalModelSelector({
       (model) =>
         model.name.toLowerCase().includes(query) ||
         model.id.toLowerCase().includes(query) ||
-        model.description.toLowerCase().includes(query)
+        model.description.toLowerCase().includes(query),
     );
   }, [models, searchQuery]);
 
@@ -167,7 +167,7 @@ export function EvalModelSelector({
             "gap-4",
             viewMode === "grid"
               ? "grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3"
-              : "flex flex-col"
+              : "flex flex-col",
           )}
         >
           {filteredModels.map((model) => (
