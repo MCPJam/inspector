@@ -572,7 +572,7 @@ export function EvalRunner({
                   "rounded-md px-4 py-2 text-sm font-medium transition-colors",
                   modelTab === "mcpjam"
                     ? "bg-primary text-primary-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
                 )}
               >
                 MCPJam Free Models
@@ -584,7 +584,7 @@ export function EvalRunner({
                   "rounded-md px-4 py-2 text-sm font-medium transition-colors",
                   modelTab === "yours"
                     ? "bg-primary text-primary-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
                 )}
               >
                 Your Providers
@@ -648,7 +648,6 @@ export function EvalRunner({
               </div>
             ) : (
               <>
-
                 {isGenerating && (
                   <div className="flex items-center justify-center rounded-lg border p-6">
                     <div className="text-center text-sm text-muted-foreground">

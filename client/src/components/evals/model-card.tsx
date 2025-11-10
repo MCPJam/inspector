@@ -53,12 +53,12 @@ function getProviderFromId(modelId: string): string {
 
   const provider = parts[0];
   const providerMap: Record<string, string> = {
-    "openai": "OpenAI",
-    "anthropic": "Anthropic",
-    "google": "Google",
-    "meta": "Meta",
+    openai: "OpenAI",
+    anthropic: "Anthropic",
+    google: "Google",
+    meta: "Meta",
     "x-ai": "xAI",
-    "moonshotai": "Moonshot AI",
+    moonshotai: "Moonshot AI",
     "z-ai": "Zhipu AI",
     "meta-llama": "Meta",
   };
@@ -85,7 +85,7 @@ export function ModelCard({ model, isSelected, onSelect }: ModelCardProps) {
         "hover:border-primary/50 hover:shadow-md",
         isSelected
           ? "border-primary bg-primary/5 shadow-md"
-          : "border-border bg-background"
+          : "border-border bg-background",
       )}
     >
       {/* Selection indicator */}
@@ -111,7 +111,7 @@ export function ModelCard({ model, isSelected, onSelect }: ModelCardProps) {
               <div
                 className={cn(
                   "h-4 w-4 rounded-sm flex items-center justify-center flex-shrink-0",
-                  getProviderColor(providerKey)
+                  getProviderColor(providerKey),
                 )}
               >
                 <span className="text-white font-bold text-[8px]">

@@ -39,7 +39,8 @@ function formatNumber(num: number): string {
 function formatPrice(price: string): string {
   const numPrice = parseFloat(price);
   if (numPrice === 0) return "$0";
-  if (numPrice < 0.01) return `$${(numPrice * 1000000).toFixed(2)} per 1M tokens`;
+  if (numPrice < 0.01)
+    return `$${(numPrice * 1000000).toFixed(2)} per 1M tokens`;
   return `$${numPrice} per 1M tokens`;
 }
 
@@ -52,13 +53,13 @@ function getProviderFromId(modelId: string): string {
 
   const provider = parts[0];
   const providerMap: Record<string, string> = {
-    "openai": "OpenAI",
-    "anthropic": "Anthropic",
-    "google": "Google",
-    "meta": "Meta",
+    openai: "OpenAI",
+    anthropic: "Anthropic",
+    google: "Google",
+    meta: "Meta",
     "meta-llama": "Meta",
     "x-ai": "xAI",
-    "moonshotai": "Moonshot AI",
+    moonshotai: "Moonshot AI",
     "z-ai": "Zhipu AI",
   };
 
@@ -163,9 +164,7 @@ export function ModelDetailsModal({
               {parseFloat(model.pricing.request) > 0 && (
                 <div className="flex items-center justify-between rounded-md bg-muted/30 p-3">
                   <span className="text-sm">Per Request</span>
-                  <span className="font-medium">
-                    ${model.pricing.request}
-                  </span>
+                  <span className="font-medium">${model.pricing.request}</span>
                 </div>
               )}
             </div>
@@ -239,11 +238,13 @@ export function ModelDetailsModal({
                         Output:
                       </p>
                       <div className="flex flex-wrap gap-2">
-                        {model.architecture.output_modalities.map((modality) => (
-                          <Badge key={modality} variant="secondary">
-                            {modality}
-                          </Badge>
-                        ))}
+                        {model.architecture.output_modalities.map(
+                          (modality) => (
+                            <Badge key={modality} variant="secondary">
+                              {modality}
+                            </Badge>
+                          ),
+                        )}
                       </div>
                     </div>
                   )}

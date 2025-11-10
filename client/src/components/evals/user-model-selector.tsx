@@ -31,7 +31,7 @@ export function UserModelSelector({
   const filteredModels = useMemo(() => {
     // First filter out MCPJam provided models
     const userModels = availableModels.filter(
-      (model) => !isMCPJamProvidedModel(String(model.id))
+      (model) => !isMCPJamProvidedModel(String(model.id)),
     );
 
     // Then apply search filter
@@ -44,7 +44,7 @@ export function UserModelSelector({
       (model) =>
         model.name.toLowerCase().includes(query) ||
         String(model.id).toLowerCase().includes(query) ||
-        model.provider.toLowerCase().includes(query)
+        model.provider.toLowerCase().includes(query),
     );
   }, [availableModels, searchQuery]);
 
@@ -145,7 +145,7 @@ export function UserModelSelector({
             "gap-4",
             viewMode === "grid"
               ? "grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3"
-              : "flex flex-col"
+              : "flex flex-col",
           )}
         >
           {filteredModels.map((model) => (
