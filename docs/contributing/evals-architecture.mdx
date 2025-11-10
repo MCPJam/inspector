@@ -95,9 +95,25 @@ graph TB
 
 ### 1. Client Layer (UI)
 
+#### **EvalsTab Component** (`client/src/components/EvalsTab.tsx`)
+
+The unified Evals tab that combines evaluation creation and results viewing in a single interface.
+
+**View States:**
+
+- **Results View**: Default view showing all evaluation suites and their results
+- **Run View**: Inline evaluation runner for creating new test runs
+
+**Key Features:**
+
+- Single navigation item in sidebar (replaces separate "Run evals" and "Eval results" tabs)
+- Integrated rerun functionality with server connection validation
+- Real-time updates via Convex subscriptions
+- Authentication-gated access (requires sign-in)
+
 #### **EvalRunner Component** (`client/src/components/evals/eval-runner.tsx`)
 
-The primary UI for configuring and launching evaluation runs.
+The primary UI for configuring and launching evaluation runs. Can be used inline within EvalsTab or as a standalone component.
 
 **Architecture: 4-Step Wizard**
 
