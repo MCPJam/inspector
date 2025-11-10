@@ -26,7 +26,7 @@ export function EvalsTab() {
 
   const [view, setView] = useState<View>("results");
   const [selectedSuiteId, setSelectedSuiteId] = useState<string | null>(null);
-  const [isRerunning, setIsRerunning] = useState(false);
+  const [rerunningSuiteId, setRerunningSuiteId] = useState<string | null>(null);
 
   const { availableModels } = useChat({
     systemPrompt: "",
@@ -97,7 +97,7 @@ export function EvalsTab() {
   // Rerun handler
   const handleRerun = useCallback(
     async (suite: EvalSuite) => {
-      if (isRerunning) return;
+      if (rerunningSuiteId) return;
 
       const suiteServers = suite.config?.environment?.servers || [];
       const missingServers = suiteServers.filter(
@@ -137,7 +137,7 @@ export function EvalsTab() {
         apiKey = getToken(tokenKey) || undefined;
       }
 
-      setIsRerunning(true);
+      setRerunningSuiteId(suite._id);
 
       try {
         const accessToken = await getAccessToken();
@@ -175,11 +175,11 @@ export function EvalsTab() {
           error instanceof Error ? error.message : "Failed to start eval run",
         );
       } finally {
-        setIsRerunning(false);
+        setRerunningSuiteId(null);
       }
     },
     [
-      isRerunning,
+      rerunningSuiteId,
       connectedServerNames,
       getAccessToken,
       hasToken,
@@ -293,7 +293,7 @@ export function EvalsTab() {
             onSelectSuite={setSelectedSuiteId}
             onRerun={handleRerun}
             connectedServerNames={connectedServerNames}
-            isRerunning={isRerunning}
+            rerunningSuiteId={rerunningSuiteId}
           />
         ) : isSuiteDetailsLoading ? (
           <div className="flex h-64 items-center justify-center">
@@ -313,7 +313,7 @@ export function EvalsTab() {
             onBack={() => setSelectedSuiteId(null)}
             onRerun={handleRerun}
             connectedServerNames={connectedServerNames}
-            isRerunning={isRerunning}
+            rerunningSuiteId={rerunningSuiteId}
           />
         )}
       </div>

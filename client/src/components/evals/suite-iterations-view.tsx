@@ -18,7 +18,7 @@ export function SuiteIterationsView({
   onBack,
   onRerun,
   connectedServerNames,
-  isRerunning,
+  rerunningSuiteId,
 }: {
   suite: EvalSuite;
   cases: EvalCase[];
@@ -27,7 +27,7 @@ export function SuiteIterationsView({
   onBack: () => void;
   onRerun: (suite: EvalSuite) => void;
   connectedServerNames: Set<string>;
-  isRerunning: boolean;
+  rerunningSuiteId: string | null;
 }) {
   const [openIterationId, setOpenIterationId] = useState<string | null>(null);
   const [expandedQueries, setExpandedQueries] = useState<Set<string>>(
@@ -188,6 +188,7 @@ export function SuiteIterationsView({
     (server) => !connectedServerNames.has(server),
   );
   const canRerun = missingServers.length === 0;
+  const isRerunning = rerunningSuiteId === suite._id;
 
   return (
     <div className="space-y-4">

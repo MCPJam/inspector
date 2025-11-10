@@ -6,7 +6,7 @@ interface SuitesOverviewProps {
   onSelectSuite: (id: string) => void;
   onRerun: (suite: EvalSuite) => void;
   connectedServerNames: Set<string>;
-  isRerunning: boolean;
+  rerunningSuiteId: string | null;
 }
 
 export function SuitesOverview({
@@ -14,7 +14,7 @@ export function SuitesOverview({
   onSelectSuite,
   onRerun,
   connectedServerNames,
-  isRerunning,
+  rerunningSuiteId,
 }: SuitesOverviewProps) {
   if (suites.length === 0) {
     return (
@@ -50,7 +50,7 @@ export function SuitesOverview({
               onSelectSuite={onSelectSuite}
               onRerun={onRerun}
               connectedServerNames={connectedServerNames}
-              isRerunning={isRerunning}
+              rerunningSuiteId={rerunningSuiteId}
             />
           ))}
         </div>
