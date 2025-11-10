@@ -35,52 +35,58 @@ The Evals system is composed of three main layers:
 ```mermaid
 graph TB
     subgraph Client["Client Layer (React + Vite)"]
-        A[EvalRunner Component]
-        B[EvalsResultsTab Component]
-        C[Suite Views & Iterations]
+        A[EvalsTab Component]
+        B[EvalRunner Component]
+        C[Model Selection Components]
+        D[Suite Views & Iterations]
     end
 
     subgraph Server["Server Layer (Hono.js)"]
-        D[POST /api/mcp/evals/run]
-        E[POST /api/mcp/evals/generate-tests]
-        F[eval-agent.ts]
-        G[eval-transformer.ts]
+        E[POST /api/mcp/evals/run]
+        F[POST /api/mcp/evals/generate-tests]
+        G[GET /api/mcp/models]
+        H[eval-agent.ts]
+        I[eval-transformer.ts]
     end
 
     subgraph CLI["CLI Layer (evals-cli)"]
-        H[runner.ts - Core Orchestrator]
-        I[evaluator.ts - Result Comparison]
-        J[RunRecorder - DB Interface]
-        K[Mastra MCP Client]
+        J[runner.ts - Core Orchestrator]
+        K[evaluator.ts - Result Comparison]
+        L[RunRecorder - DB Interface]
+        M[Mastra MCP Client]
     end
 
     subgraph Backend["MCPJamBackend"]
-        L[EvalSuite Table]
-        M[EvalCase Table]
-        N[EvalIteration Table]
-        O[Convex Actions]
+        N[EvalSuite Table]
+        O[EvalCase Table]
+        P[EvalIteration Table]
+        Q[Convex Actions]
+        R[Model Metadata]
     end
 
-    A -->|POST requests| D
-    A -->|POST requests| E
-    B -->|Query subscriptions| L
-    C -->|Query subscriptions| M
-    C -->|Query subscriptions| N
+    A -->|Inline runner| B
+    B -->|POST requests| E
+    B -->|POST requests| F
+    C -->|GET request| G
+    A -->|Query subscriptions| N
+    D -->|Query subscriptions| O
+    D -->|Query subscriptions| P
 
-    D --> H
-    E --> F
-    D --> G
+    E --> J
+    F --> H
+    E --> I
+    G --> R
 
-    H --> J
-    J --> O
-    O --> L
-    O --> M
-    O --> N
+    J --> L
+    L --> Q
+    Q --> N
+    Q --> O
+    Q --> P
 
-    H --> K
-    K -->|Tool execution| P[MCP Servers]
+    J --> M
+    M -->|Tool execution| S[MCP Servers]
 
-    F -->|LLM call| Q[Backend LLM]
+    H -->|LLM call| T[Backend LLM]
 ```
 
 ---
