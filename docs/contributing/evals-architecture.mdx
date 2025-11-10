@@ -323,14 +323,16 @@ flowchart TD
     B -->|Invalid| C[Return 400 error]
     B -->|Valid| D[Resolve server IDs]
     D --> E{Check server status}
-    E -->|Not connected| F[Throw error]
+    E -->|Not connected| F[Return error]
     E -->|Connected| G[Transform server configs]
     G --> H[Transform LLM config]
-    H --> I[Call runEvalsWithAuth async]
-    I --> J[Return success immediately]
-
-    I --> K[Background execution continues...]
+    H --> I[Await runEvalsWithAuth]
+    I --> J{Execution successful?}
+    J -->|Yes| K[Return success message]
+    J -->|No| L[Return 500 error with message]
 ```
+
+**Note:** The endpoint now awaits execution completion and returns structured errors, improving error handling and user feedback.
 
 **Key Functions:**
 
