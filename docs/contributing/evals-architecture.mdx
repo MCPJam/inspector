@@ -135,18 +135,28 @@ stateDiagram-v2
 1. **Select Servers**: Choose from connected MCP servers
    - Filters: Only shows connected servers
    - Validation: At least one server required
+   - Empty state directs users to Workspaces tab
 
-2. **Choose Model**: Select LLM provider and model
-   - Providers: OpenAI, Anthropic, DeepSeek, Ollama, MCPJam
-   - Credential check: Validates API keys via `hasToken()`
+2. **Choose Model**: Select LLM provider and model with tabbed interface
+   - **MCPJam Free Models Tab**: Browse models via `EvalModelSelector`
+     - Fetches model metadata from `/api/mcp/models` endpoint
+     - Displays model cards with pricing, context length, and provider info
+     - Grid/list view toggle
+     - Search and filter capabilities
+   - **Your Providers Tab**: Select from user-configured models via `UserModelSelector`
+     - Filters out MCPJam-provided models
+     - Shows API key warnings for missing credentials
+     - Uses models from Settings configuration
 
 3. **Define Tests**: Create or generate test cases
    - Manual entry: Title, query, expected tool calls, number of runs
    - AI generation: Click "Generate Tests" to create 6 test cases (2 easy, 2 medium, 2 hard)
+   - Generation button only appears after servers and model are selected
 
 4. **Review & Run**: Confirm and execute
    - Displays summary of configuration
    - POST to `/api/mcp/evals/run`
+   - Immediately navigates to results view on submission
 
 #### **Results Components** (`client/src/components/evals/*`)
 
