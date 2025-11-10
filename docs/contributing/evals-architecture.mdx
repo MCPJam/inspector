@@ -567,21 +567,21 @@ The system supports multiple execution paths based on the selected model:
 flowchart TD
     A[Model Selection] --> B{Provider Type}
 
-    B -->|OpenAI| C[Direct API: @ai-sdk/openai]
-    B -->|Anthropic| D[Direct API: @ai-sdk/anthropic]
-    B -->|DeepSeek| E[Direct API: @ai-sdk/openai compat]
-    B -->|Ollama| F[Direct API: @ai-sdk/ollama]
-    B -->|MCPJam| G[MCPJamBackend: MCPJamBackend/streaming]
+    B -->|OpenAI| C[AI SDK: @ai-sdk/openai]
+    B -->|Anthropic| D[AI SDK: @ai-sdk/anthropic]
+    B -->|DeepSeek| E[AI SDK: @ai-sdk/openai compat]
+    B -->|Ollama| F[AI SDK: @ai-sdk/ollama]
+    B -->|MCPJam| G[MCPJam Backend: /stream]
 
-    C --> H[streamText via ai SDK]
+    C --> H[generateText via AI SDK]
     D --> H
     E --> H
     F --> H
 
-    G --> I[runBackendConversation]
+    G --> I[runIterationViaBackend]
 
-    H --> J[Agentic Loop]
-    I --> J
+    H --> J[Single-step execution]
+    I --> K[Multi-step agentic loop]
 ```
 
 **Provider Configuration:**
@@ -608,6 +608,15 @@ flowchart TD
   // Uses Convex auth token instead of API key
 }
 ```
+
+**AI SDK Integration:**
+
+The system now uses Vercel's AI SDK (`ai` package) for LLM interactions:
+
+- `generateText()`: Single-step text generation with tool calling
+- `createLlmModel()`: Helper to create provider-specific model instances
+- Automatic tool call extraction and evaluation
+- Built-in token usage tracking
 
 ### MCP Server Integration
 
