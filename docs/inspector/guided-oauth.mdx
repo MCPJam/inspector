@@ -21,3 +21,27 @@ Guided OAuth lets you test your OAuth implementation step-by-step. The feature w
 2. Client Registration
 3. Request & fetch auth code
 4. Request access token
+
+## Features
+
+### Edit Configuration
+
+You can edit your server configuration during OAuth testing without reconnecting. Click the **Edit Config** button to modify settings like:
+
+- Server URL
+- OAuth scopes
+- Custom headers
+- Environment variables
+
+Changes update the OAuth flow immediately, regenerating the authorization URL with your new configuration.
+
+### Copy Logs
+
+Export OAuth logs for debugging or sharing with your team. Click **Copy logs** to copy in two formats:
+
+- **Guide view** - Step-by-step explanation with teachable moments and tips
+- **Raw view** - Complete timeline with all HTTP requests and responses
+
+### Transport Detection
+
+The debugger automatically detects deprecated HTTP+SSE transport and displays a warning. If your server uses this older transport, you'll see a yellow badge with migration guidance to the modern Streamable HTTP transport (2025-03-26).
