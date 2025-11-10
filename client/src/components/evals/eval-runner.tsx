@@ -49,6 +49,7 @@ interface TestCase {
 interface EvalRunnerProps {
   availableModels: ModelDefinition[];
   inline?: boolean;
+  onSuccess?: () => void;
 }
 
 const PREFERENCE_STORAGE_KEY = "mcp-inspector-eval-runner-preferences";
@@ -94,6 +95,7 @@ const buildBlankTestCase = (
 export function EvalRunner({
   availableModels,
   inline = false,
+  onSuccess,
 }: EvalRunnerProps) {
   const [open, setOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -439,6 +441,15 @@ export function EvalRunner({
       return;
     }
 
+    // Switch view immediately before starting the API call
+    if (!inline) {
+      setOpen(false);
+      window.location.hash = "evals";
+    } else {
+      // In inline mode, call the callback to switch view immediately
+      onSuccess?.();
+    }
+
     setIsSubmitting(true);
 
     try {
@@ -479,10 +490,6 @@ export function EvalRunner({
       toast.success(result.message || "Evals started successfully!");
       setTestCases([buildBlankTestCase(1, selectedModel)]);
       setCurrentStep(3);
-      if (!inline) {
-        setOpen(false);
-      }
-      window.location.hash = "eval-results";
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to start evals",

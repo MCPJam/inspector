@@ -194,6 +194,12 @@ export function EvalsTab() {
     }
   };
 
+  // Handle eval run success - navigate back to results view
+  const handleEvalRunSuccess = useCallback(() => {
+    setView("results");
+    setSelectedSuiteId(null);
+  }, []);
+
   // Show back button only in run view (suite details has its own back button)
   const showBackButton = view === "run";
 
@@ -276,7 +282,11 @@ export function EvalsTab() {
 
       <div className="flex-1 overflow-y-auto px-6 pb-6">
         {view === "run" ? (
-          <EvalRunner availableModels={availableModels} inline={true} />
+          <EvalRunner
+            availableModels={availableModels}
+            inline={true}
+            onSuccess={handleEvalRunSuccess}
+          />
         ) : !selectedSuite ? (
           <SuitesOverview
             suites={suites || []}
