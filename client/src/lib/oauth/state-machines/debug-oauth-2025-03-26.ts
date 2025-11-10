@@ -1495,23 +1495,7 @@ export const createDebugOAuthStateMachine = (
 
                     updatedHistoryMcp.push(getHistoryEntry);
 
-                    // Add info log for backwards compatibility attempt
-                    let fallbackInfoLogs = addInfoLog(
-                      getCurrentState(),
-                      "authenticated_mcp_request",
-                      "http-sse-fallback-attempt",
-                      "Backwards Compatibility Check",
-                      {
-                        Reason: `POST failed with ${response.status}, checking for old HTTP+SSE transport`,
-                        "GET Request": state.serverUrl,
-                        Note: "Attempting to detect SSE stream with 'endpoint' event",
-                      },
-                    );
-
-                    updateState({
-                      infoLogs: fallbackInfoLogs,
-                      httpHistory: updatedHistoryMcp,
-                    });
+                    // Don't add intermediate log - the detection result log below has all the info
 
                     const getResponse = await proxyFetch(state.serverUrl, {
                       method: "GET",
@@ -1557,7 +1541,8 @@ export const createDebugOAuthStateMachine = (
                           "SSE Stream URL": state.serverUrl,
                           "POST Endpoint": fullEndpoint,
                           "First Event": sseBody.events?.[0],
-                          Note: "Server uses the old HTTP+SSE transport. All subsequent MCP requests should be POSTed to the endpoint above.",
+                          "Migration Note": "This transport is deprecated. Please update your server to use the 2025-03-26 Streamable HTTP transport.",
+                          "How It Works": "Client connected via GET for SSE stream. Subsequent requests use POST to: " + fullEndpoint,
                         },
                       );
 

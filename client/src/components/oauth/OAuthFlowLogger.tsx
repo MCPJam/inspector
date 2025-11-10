@@ -21,6 +21,7 @@ import {
   ChevronRight,
   CheckCircle2,
   Circle,
+  AlertTriangle,
 } from "lucide-react";
 import "react18-json-view/src/style.css";
 
@@ -281,15 +282,35 @@ export function OAuthFlowLogger({
                     (entry) => entry.type === "http",
                   );
                   const totalEntries = infoEntries.length + httpEntries.length;
+
+                  // Check for deprecated transport detection (HTTP+SSE)
+                  const hasDeprecatedTransport = infoEntries.some(
+                    ({ log }) =>
+                      log.label?.includes("HTTP+SSE Transport Detected") ||
+                      log.id === "http-sse-detected"
+                  );
+
                   const errorInfoCount = infoEntries.filter(
                     ({ log }) => log.level === "error",
                   ).length;
                   const httpErrorCount = httpEntries.filter(({ entry }) => {
                     if (entry.error) return true;
                     const status = entry.response?.status;
+                    // Don't treat 401 on initial request as error
                     if (
                       entry.step === "request_without_token" &&
                       status === 401
+                    ) {
+                      return false;
+                    }
+                    // Don't treat 4xx on authenticated_mcp_request as error if deprecated transport was detected
+                    // (the 4xx triggers the GET fallback for backwards compatibility)
+                    if (
+                      entry.step === "authenticated_mcp_request" &&
+                      hasDeprecatedTransport &&
+                      status &&
+                      status >= 400 &&
+                      status < 500
                     ) {
                       return false;
                     }
@@ -332,9 +353,11 @@ export function OAuthFlowLogger({
                           "relative bg-background border rounded-lg transition-all",
                           hasError
                             ? "border-red-400 ring-1 ring-red-400/20 shadow-md"
-                            : isActive
-                              ? "border-blue-400 shadow-md ring-1 ring-blue-400/20"
-                              : "border-border shadow-sm hover:shadow-md",
+                            : hasDeprecatedTransport
+                              ? "border-yellow-400 ring-1 ring-yellow-400/20 shadow-md"
+                              : isActive
+                                ? "border-blue-400 shadow-md ring-1 ring-blue-400/20"
+                                : "border-border shadow-sm hover:shadow-md",
                         )}
                       >
                         {/* Step header - clickable */}
@@ -346,6 +369,8 @@ export function OAuthFlowLogger({
                           <div className="flex-shrink-0 mt-0.5">
                             {hasError ? (
                               <AlertCircle className="h-4 w-4 text-red-500" />
+                            ) : hasDeprecatedTransport ? (
+                              <AlertTriangle className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
                             ) : (
                               <StatusIcon className={statusInfo.className} />
                             )}
@@ -371,6 +396,14 @@ export function OAuthFlowLogger({
                                   className="text-[10px] h-4 px-1.5"
                                 >
                                   {errorCount} error{errorCount > 1 ? "s" : ""}
+                                </Badge>
+                              )}
+                              {hasDeprecatedTransport && !hasError && (
+                                <Badge
+                                  variant="outline"
+                                  className="text-[10px] h-4 px-1.5 border-yellow-400 text-yellow-700 dark:text-yellow-400 bg-yellow-50 dark:bg-yellow-950/30"
+                                >
+                                HTTP+SSE transport 
                                 </Badge>
                               )}
                             </div>
