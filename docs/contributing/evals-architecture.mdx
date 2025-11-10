@@ -913,19 +913,21 @@ const LlmsConfigSchema = z.object({
 2. **Add provider case** in `evals-cli/src/utils/helpers.ts` (createLlmModel function):
 
 ```typescript
-function getModelForProvider(
-  llms: LlmsConfig,
+export const createLlmModel = (
   provider: string,
-  modelId: string,
-) {
+  model: string,
+  llmsConfig: LlmsConfig,
+): LanguageModel | undefined => {
+  const apiKey = llmsConfig[provider];
+  if (!apiKey) {
+    throw new Error(`LLM API key not found for provider: ${provider}`);
+  }
   switch (provider) {
     case "myProvider":
-      return myProvider.chat(modelId, {
-        apiKey: llms.myProvider?.apiKey,
-      });
+      return createMyProvider({ apiKey })(model);
     // ...
   }
-}
+};
 ```
 
 3. **Add to UI model list** in `client/src/hooks/use-chat.tsx`:
