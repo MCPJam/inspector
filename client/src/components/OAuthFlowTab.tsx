@@ -847,7 +847,7 @@ export const OAuthFlowTab = ({
               flowState={oauthFlowState}
               registrationStrategy={registrationStrategy}
               protocolVersion={protocolVersion}
-              focusedStep={focusedStep ?? oauthFlowState.currentStep}
+              focusedStep={focusedStep}
             />
           </ResizablePanel>
 
