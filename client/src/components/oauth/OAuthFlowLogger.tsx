@@ -22,7 +22,12 @@ import {
   CheckCircle2,
   Circle,
   AlertTriangle,
+  Copy,
 } from "lucide-react";
+import {
+  generateGuideText,
+  generateRawText,
+} from "@/lib/oauth/log-formatters";
 import "react18-json-view/src/style.css";
 
 interface OAuthFlowLoggerProps {
@@ -44,6 +49,7 @@ export function OAuthFlowLogger({
   const rawScrollRef = useRef<HTMLDivElement | null>(null);
   const [deletedInfoLogs] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<"guide" | "raw">("guide");
+  const [copySuccess, setCopySuccess] = useState(false);
 
   const groups = useMemo(() => {
     type StepEntry =
@@ -230,6 +236,20 @@ export function OAuthFlowLogger({
     };
   };
 
+  const handleCopyLogs = async () => {
+    try {
+      const text =
+        activeTab === "guide"
+          ? generateGuideText(oauthFlowState, groups)
+          : generateRawText(oauthFlowState, timelineEntries);
+      await navigator.clipboard.writeText(text);
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy logs:", err);
+    }
+  };
+
   return (
     <div className="h-full border-l border-border flex flex-col">
       <div className="bg-muted/30 border-b border-border px-4 py-3">
@@ -241,11 +261,20 @@ export function OAuthFlowLogger({
         onValueChange={(value) => setActiveTab(value as "guide" | "raw")}
         className="flex-1 overflow-hidden"
       >
-        <div className="px-4 pt-2">
+        <div className="px-4 pt-2 flex items-center justify-between gap-3">
           <TabsList>
             <TabsTrigger value="guide">Guide</TabsTrigger>
             <TabsTrigger value="raw">Raw</TabsTrigger>
           </TabsList>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleCopyLogs}
+            className="h-8"
+          >
+            <Copy className="h-3.5 w-3.5 mr-2" />
+            {copySuccess ? "Copied!" : "Copy logs"}
+          </Button>
         </div>
 
         <TabsContent value="guide" className="flex-1 overflow-hidden">
