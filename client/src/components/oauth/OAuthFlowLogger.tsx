@@ -24,10 +24,7 @@ import {
   AlertTriangle,
   Copy,
 } from "lucide-react";
-import {
-  generateGuideText,
-  generateRawText,
-} from "@/lib/oauth/log-formatters";
+import { generateGuideText, generateRawText } from "@/lib/oauth/log-formatters";
 import "react18-json-view/src/style.css";
 
 interface OAuthFlowLoggerProps {
@@ -316,7 +313,7 @@ export function OAuthFlowLogger({
                   const hasDeprecatedTransport = infoEntries.some(
                     ({ log }) =>
                       log.label?.includes("HTTP+SSE Transport Detected") ||
-                      log.id === "http-sse-detected"
+                      log.id === "http-sse-detected",
                   );
 
                   const errorInfoCount = infoEntries.filter(
@@ -432,7 +429,7 @@ export function OAuthFlowLogger({
                                   variant="outline"
                                   className="text-[10px] h-4 px-1.5 border-yellow-400 text-yellow-700 dark:text-yellow-400 bg-yellow-50 dark:bg-yellow-950/30"
                                 >
-                                HTTP+SSE transport 
+                                  HTTP+SSE transport
                                 </Badge>
                               )}
                             </div>

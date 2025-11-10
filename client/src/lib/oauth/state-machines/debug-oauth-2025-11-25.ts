@@ -346,7 +346,9 @@ export function buildActions_2025_11_25(
             },
             {
               label: "resource",
-              value: flowState.serverUrl ? canonicalizeResourceUrl(flowState.serverUrl) : "—"
+              value: flowState.serverUrl
+                ? canonicalizeResourceUrl(flowState.serverUrl)
+                : "—",
             },
             { label: "Protocol", value: "2025-11-25" },
           ]
@@ -368,7 +370,9 @@ export function buildActions_2025_11_25(
             },
             {
               label: "resource",
-              value: flowState.serverUrl ? canonicalizeResourceUrl(flowState.serverUrl) : ""
+              value: flowState.serverUrl
+                ? canonicalizeResourceUrl(flowState.serverUrl)
+                : "",
             },
           ]
         : undefined,
@@ -425,7 +429,9 @@ export function buildActions_2025_11_25(
             { label: "grant_type", value: "authorization_code" },
             {
               label: "resource",
-              value: flowState.serverUrl ? canonicalizeResourceUrl(flowState.serverUrl) : ""
+              value: flowState.serverUrl
+                ? canonicalizeResourceUrl(flowState.serverUrl)
+                : "",
             },
           ]
         : undefined,
