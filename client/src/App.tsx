@@ -211,8 +211,16 @@ export default function App() {
               />
             </div>
           )}
-          {activeTab === "evals" && <EvalsRunTab />}
-          {activeTab === "eval-results" && <EvalsResultsTab />}
+          {activeTab === "evals" && (
+            <div className="h-full overflow-hidden">
+              <EvalsRunTab />
+            </div>
+          )}
+          {activeTab === "eval-results" && (
+            <div className="h-full overflow-hidden">
+              <EvalsResultsTab />
+            </div>
+          )}
           {activeTab === "resources" && (
             <ResourcesTab
               serverConfig={selectedMCPConfig}
