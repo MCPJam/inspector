@@ -189,10 +189,7 @@ HTTP API endpoints for eval execution and test generation.
     }
   }>
   serverIds: string[]
-  llmConfig: {
-    provider: string
-    apiKey: string
-  }
+  modelApiKey?: string | null
   convexAuthToken: string
 }
 ```
@@ -206,19 +203,16 @@ flowchart TD
     B -->|Valid| D[Resolve server IDs]
     D --> E{Check server status}
     E -->|Not connected| F[Throw error]
-    E -->|Connected| G[Transform server configs]
-    G --> H[Transform LLM config]
-    H --> I[Call runEvalsWithAuth async]
-    I --> J[Return success immediately]
+    E -->|Connected| G[Call runEvalSuiteWithAiSdk async]
+    G --> H[Return success immediately]
 
-    I --> K[Background execution continues...]
+    G --> I[Background execution continues...]
 ```
 
 **Key Functions:**
 
 - `resolveServerIdsOrThrow()`: Case-insensitive server ID matching
-- `transformServerConfigsToEnvironment()`: Converts server manager format to CLI format
-- `transformLLMConfigToLlmsConfig()`: Routes API keys appropriately
+- `runEvalSuiteWithAiSdk()`: Executes eval suite in background using AI SDK
 
 ##### **Endpoint: POST `/api/mcp/evals/generate-tests`**
 
