@@ -34,6 +34,8 @@ import { ModelSelector } from "@/components/chat/model-selector";
 import { cn } from "@/lib/utils";
 import { ModelDefinition, isMCPJamProvidedModel } from "@/shared/types";
 import { ServerSelectionCard } from "./ServerSelectionCard";
+import { EvalModelSelector } from "./eval-model-selector";
+import { UserModelSelector } from "./user-model-selector";
 
 interface TestCase {
   title: string;
@@ -47,6 +49,7 @@ interface TestCase {
 interface EvalRunnerProps {
   availableModels: ModelDefinition[];
   inline?: boolean;
+  onSuccess?: () => void;
 }
 
 const PREFERENCE_STORAGE_KEY = "mcp-inspector-eval-runner-preferences";
@@ -92,6 +95,7 @@ const buildBlankTestCase = (
 export function EvalRunner({
   availableModels,
   inline = false,
+  onSuccess,
 }: EvalRunnerProps) {
   const [open, setOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -113,6 +117,7 @@ export function EvalRunner({
   const [testCases, setTestCases] = useState<TestCase[]>([
     buildBlankTestCase(1, null),
   ]);
+  const [modelTab, setModelTab] = useState<"mcpjam" | "yours">("mcpjam");
 
   const connectedServers = useMemo(
     () =>
@@ -436,6 +441,15 @@ export function EvalRunner({
       return;
     }
 
+    // Switch view immediately before starting the API call
+    if (!inline) {
+      setOpen(false);
+      window.location.hash = "evals";
+    } else {
+      // In inline mode, call the callback to switch view immediately
+      onSuccess?.();
+    }
+
     setIsSubmitting(true);
 
     try {
@@ -461,19 +475,21 @@ export function EvalRunner({
         }),
       });
 
-      const result = await response.json();
-
       if (!response.ok) {
-        throw new Error(result.error || "Failed to start evals");
+        let errorMessage = "Failed to start evals";
+        try {
+          const result = await response.json();
+          errorMessage = result.error || errorMessage;
+        } catch (parseError) {
+          console.error("Failed to parse error response:", parseError);
+        }
+        throw new Error(errorMessage);
       }
 
+      const result = await response.json();
       toast.success(result.message || "Evals started successfully!");
       setTestCases([buildBlankTestCase(1, selectedModel)]);
       setCurrentStep(3);
-      if (!inline) {
-        setOpen(false);
-      }
-      window.location.hash = "eval-results";
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to start evals",
@@ -518,9 +534,20 @@ export function EvalRunner({
                   No connected servers yet
                 </p>
                 <p className="mt-2">
-                  Launch a server from the Servers tab to make it available
+                  Launch a server from the Workspaces tab to make it available
                   here. Once connected, it will appear instantly.
                 </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-4"
+                  onClick={() => {
+                    window.location.hash = "servers";
+                  }}
+                >
+                  Go to Workspaces tab
+                </Button>
               </div>
             )}
           </div>
@@ -528,60 +555,66 @@ export function EvalRunner({
       case "model":
         return (
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-lg pb-2">Choose your evaluation model</h3>
-                <p className="text-sm text-muted-foreground">
-                  For example, if you want to simulate using your server with
-                  Claude Desktop, select an Anthropic model.
-                </p>
-              </div>
+            <div>
+              <h3 className="text-lg pb-2">Choose your evaluation model</h3>
+              <p className="text-sm text-muted-foreground">
+                Select a model to run your evaluations. MCPJam models are free
+                to use.
+              </p>
             </div>
 
-            {availableModels.length === 0 ? (
-              <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
-                <p className="font-medium text-foreground">
-                  No models available
-                </p>
-                <p className="mt-2">
-                  Connect a provider or enable MCPJam provided models in
-                  Settings to unlock model selection.
-                </p>
-              </div>
-            ) : selectedModel ? (
-              <div className="space-y-3">
-                <div className="flex items-center gap-3">
-                  <ModelSelector
-                    currentModel={selectedModel}
-                    availableModels={availableModels}
-                    onModelChange={setSelectedModel}
-                  />
-                </div>
+            {/* Tabs */}
+            <div className="flex items-center gap-1 rounded-lg border p-1 w-fit">
+              <button
+                type="button"
+                onClick={() => setModelTab("mcpjam")}
+                className={cn(
+                  "rounded-md px-4 py-2 text-sm font-medium transition-colors",
+                  modelTab === "mcpjam"
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                MCPJam Free Models
+              </button>
+              <button
+                type="button"
+                onClick={() => setModelTab("yours")}
+                className={cn(
+                  "rounded-md px-4 py-2 text-sm font-medium transition-colors",
+                  modelTab === "yours"
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                Your Providers
+              </button>
+            </div>
 
-                {!isMCPJamModel &&
-                  !providerHasToken &&
-                  selectedModelProvider && (
-                    <div className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/5 p-3 text-sm">
-                      <AlertCircle className="mt-0.5 h-4 w-4 text-destructive" />
-                      <div>
-                        <p className="font-medium text-destructive">
-                          Add your {selectedModel.provider} API key
-                        </p>
-                        <p className="text-muted-foreground">
-                          Configure credentials in Settings to run this model.
-                          Keys are stored locally and never sent to our servers.
-                        </p>
-                      </div>
-                    </div>
-                  )}
-              </div>
-            ) : null}
+            {/* Tab Content */}
+            {modelTab === "mcpjam" ? (
+              <EvalModelSelector
+                selectedModel={selectedModel}
+                availableModels={availableModels}
+                onModelChange={setSelectedModel}
+              />
+            ) : (
+              <UserModelSelector
+                selectedModel={selectedModel}
+                availableModels={availableModels}
+                onModelChange={setSelectedModel}
+                missingApiKey={
+                  !isMCPJamModel && !providerHasToken && !!selectedModelProvider
+                }
+                providerName={selectedModel?.provider}
+              />
+            )}
           </div>
         );
       case "tests":
         return (
           <div className="space-y-6">
-            <div className="flex items-center justify-between">
+            <div className="flex items-start justify-between">
               <div>
                 <h3 className="text-lg pb-2">Define your test cases</h3>
                 <p className="text-sm text-muted-foreground">
@@ -589,6 +622,17 @@ export function EvalRunner({
                   use your server.
                 </p>
               </div>
+              {stepCompletion.servers && stepCompletion.model && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleGenerateTests}
+                  disabled={isGenerating}
+                >
+                  {isGenerating ? "Generating..." : "Generate tests"}
+                  <Sparkles className="h-4 w-4 ml-2" />
+                </Button>
+              )}
             </div>
 
             {!stepCompletion.servers || !stepCompletion.model ? (
@@ -604,23 +648,6 @@ export function EvalRunner({
               </div>
             ) : (
               <>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="lg"
-                      onClick={handleGenerateTests}
-                      disabled={isGenerating}
-                    >
-                      <span className="bg-gradient-to-r from-purple-600 via-violet-600 to-indigo-600 bg-clip-text text-transparent">
-                        {isGenerating ? "Generating..." : "Generate tests"}
-                      </span>
-                      <Sparkles className="h-4 w-4 ml-2 fill-purple-600" />
-                    </Button>
-                  </div>
-                </div>
-
                 {isGenerating && (
                   <div className="flex items-center justify-center rounded-lg border p-6">
                     <div className="text-center text-sm text-muted-foreground">
