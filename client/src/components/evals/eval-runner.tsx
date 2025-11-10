@@ -36,6 +36,8 @@ import { ModelDefinition, isMCPJamProvidedModel } from "@/shared/types";
 import { ServerSelectionCard } from "./ServerSelectionCard";
 import { EvalModelSelector } from "./eval-model-selector";
 import { UserModelSelector } from "./user-model-selector";
+import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
+import posthog from "posthog-js";
 
 interface TestCase {
   title: string;
@@ -320,6 +322,13 @@ export function EvalRunner({
   };
 
   const handleGenerateTests = async () => {
+    posthog.capture("eval_generate_tests_button_clicked", {
+      location: "eval_runner",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+      step: currentStep,
+    });
+
     if (!isAuthenticated) {
       toast.error("Please sign in to generate tests");
       return;
@@ -945,8 +954,20 @@ export function EvalRunner({
           variant={nextVariant}
           onClick={() => {
             if (currentStep < steps.length - 1) {
+              posthog.capture("eval_setup_next_step_button_clicked", {
+                location: "eval_runner",
+                platform: detectPlatform(),
+                environment: detectEnvironment(),
+                step: currentStep,
+              });
               handleNext();
             } else {
+              posthog.capture("eval_setup_start_eval_run_button_clicked", {
+                location: "eval_runner",
+                platform: detectPlatform(),
+                environment: detectEnvironment(),
+                step: currentStep,
+              });
               void handleSubmit();
             }
           }}
