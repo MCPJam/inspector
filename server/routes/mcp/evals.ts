@@ -145,23 +145,32 @@ evals.post("/run", async (c) => {
     const convexClient = new ConvexHttpClient(convexUrl);
     convexClient.setAuth(convexAuthToken);
 
-    runEvalsWithAuth(
-      tests,
-      environment,
-      llms,
-      convexClient,
-      convexHttpUrl,
-      convexAuthToken,
-    ).catch((error) => {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      console.error("[Error running evals:", errorMessage);
-    });
+    try {
+      await runEvalsWithAuth(
+        tests,
+        environment,
+        llms,
+        convexClient,
+        convexHttpUrl,
+        convexAuthToken,
+      );
 
-    return c.json({
-      success: true,
-      message: "Evals started successfully. Check the Evals tab for progress.",
-    });
+      return c.json({
+        success: true,
+        message:
+          "Evals started successfully. Check the Evals tab for progress.",
+      });
+    } catch (runError) {
+      const errorMessage =
+        runError instanceof Error ? runError.message : String(runError);
+      console.error("[Error running evals]:", errorMessage);
+      return c.json(
+        {
+          error: errorMessage,
+        },
+        500,
+      );
+    }
   } catch (error) {
     console.error("Error in /evals/run:", error);
     return c.json(

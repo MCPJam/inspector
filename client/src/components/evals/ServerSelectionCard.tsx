@@ -74,8 +74,8 @@ export function ServerSelectionCard({
       className={cn(
         "border bg-card/50 backdrop-blur-sm hover:border-primary/50 hover:shadow-md hover:bg-card/70 transition-all duration-200 cursor-pointer relative",
         selected
-          ? "border-primary/60 ring-2 ring-primary/30"
-          : "border-primary/40 shadow-lg ring-2 ring-primary/20 animate-pulse",
+          ? "border-primary/60 ring-2 ring-primary/30 shadow-lg"
+          : "border-border/50",
       )}
     >
       <div className="p-4 space-y-3 py-0">

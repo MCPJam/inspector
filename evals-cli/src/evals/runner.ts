@@ -218,7 +218,7 @@ const runIterationViaBackend = async ({
       },
     });
   } catch (error) {
-    Logger.errorWithExit(
+    throw new Error(
       `Backend execution error: ${
         error instanceof Error ? error.message : String(error)
       }`,
