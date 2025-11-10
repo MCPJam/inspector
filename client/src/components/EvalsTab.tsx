@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery } from "convex/react";
 import { FlaskConical, Plus, ArrowLeft } from "lucide-react";
@@ -17,6 +17,8 @@ import {
   type ProviderTokens,
 } from "@/hooks/use-ai-provider-keys";
 import { isMCPJamProvidedModel } from "@/shared/types";
+import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
+import posthog from "posthog-js";
 
 type View = "results" | "run";
 
@@ -36,6 +38,14 @@ export function EvalsTab() {
 
   const { appState } = useAppState();
   const { getToken, hasToken } = useAiProviderKeys();
+
+  useEffect(() => {
+    posthog.capture("evals_tab_viewed", {
+      location: "evals_tab",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+    });
+  }, []);
 
   // Get connected server names
   const connectedServerNames = useMemo(
@@ -270,7 +280,18 @@ export function EvalsTab() {
             </h1>
           </div>
           {view === "results" && !selectedSuiteId && (
-            <Button onClick={() => setView("run")} className="gap-2" size="sm">
+            <Button
+              onClick={() => {
+                posthog.capture("create_new_run_button_clicked", {
+                  location: "evals_tab",
+                  platform: detectPlatform(),
+                  environment: detectEnvironment(),
+                });
+                setView("run");
+              }}
+              className="gap-2"
+              size="sm"
+            >
               <Plus className="h-4 w-4" />
               Create new run
             </Button>
