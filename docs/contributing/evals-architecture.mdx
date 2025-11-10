@@ -811,21 +811,6 @@ console.log("Tools for AI SDK:", await mcpClientManager.getToolsForAiSdk(serverI
 
 ### Testing Changes
 
-**Run evals locally:**
-
-```bash
-cd evals-cli
-npm run build
-npm link
-
-# Run test
-mcpjam evals run \
-  --tests examples/tests.json \
-  --environment examples/environment.json \
-  --llms examples/llms.json \
-  --api-key your-api-key
-```
-
 **Test via UI:**
 
 1. Start development server: `npm run dev`
@@ -833,6 +818,16 @@ mcpjam evals run \
 3. Configure and execute test
 4. Check browser console for errors
 5. View results in "Eval results" tab
+6. Monitor server logs for execution details
+
+**Test server-side execution:**
+
+```typescript
+// In server/services/evals-runner.ts
+console.log("Starting eval suite:", tests.length, "tests");
+console.log("Using servers:", serverIds);
+console.log("Model API key provided:", !!modelApiKey);
+```
 
 ### Common Issues
 
