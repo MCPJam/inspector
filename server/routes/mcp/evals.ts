@@ -157,7 +157,8 @@ evals.post("/run", async (c) => {
 
       return c.json({
         success: true,
-        message: "Evals started successfully. Check the Evals tab for progress.",
+        message:
+          "Evals started successfully. Check the Evals tab for progress.",
       });
     } catch (runError) {
       const errorMessage =
