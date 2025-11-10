@@ -37,16 +37,14 @@ export const DiagramLayout = ({
 
   // Auto-zoom to current step
   useEffect(() => {
-    const targetStep = focusedStep ?? currentStep;
-
-    if (!reactFlowInstance || !targetStep) {
+    if (!reactFlowInstance) {
       return;
     }
 
     // Small delay to ensure nodes are rendered
     const timer = setTimeout(() => {
       // If reset to idle, zoom back to the top
-      if (targetStep === "idle") {
+      if (currentStep === "idle") {
         // Zoom to the top of the diagram
         // Center around the middle actors (Client and MCP Server)
         reactFlowInstance.setCenter(550, 200, {
@@ -57,17 +55,25 @@ export const DiagramLayout = ({
       }
 
       // Don't zoom when flow is complete - let user stay at current position
-      if (targetStep === "complete") {
+      if (currentStep === "complete") {
         return;
       }
 
-      // Find the edge that has "current" status (the next step to execute)
-      const currentEdge = edges.find((e) => e.data?.stepId === targetStep);
+      // Determine which edge to zoom to
+      let edgeToZoom;
 
-      // Fall back to current status if metadata is missing
-      const fallbackEdge = edges.find((e) => e.data?.status === "current");
+      if (focusedStep) {
+        // If user has focused on a specific step, zoom to that
+        edgeToZoom = edges.find((e) => e.data?.stepId === focusedStep);
+      } else {
+        // Otherwise, find the edge with "current" status (the next step to execute)
+        edgeToZoom = edges.find((e) => e.data?.status === "current");
+      }
 
-      const edgeToZoom = currentEdge || fallbackEdge;
+      // Fallback: if no current edge found and no focused step, try to find by currentStep
+      if (!edgeToZoom && !focusedStep) {
+        edgeToZoom = edges.find((e) => e.data?.stepId === currentStep);
+      }
 
       if (edgeToZoom) {
         // Get source and target actor positions
@@ -119,7 +125,7 @@ export const DiagramLayout = ({
         panOnDrag={true}
       >
         <Background />
-        <Controls />
+        <Controls showInteractive={false} />
       </ReactFlow>
     </div>
   );

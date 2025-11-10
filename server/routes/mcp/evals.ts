@@ -144,16 +144,17 @@ evals.post("/run", async (c) => {
         error instanceof Error ? error.message : String(error);
       console.error("[Error running evals:", errorMessage);
     });
-
     return c.json({
       success: true,
       message: "Evals started successfully. Check the Evals tab for progress.",
     });
-  } catch (error) {
-    console.error("Error in /evals/run:", error);
+  } catch (runError) {
+    const errorMessage =
+      runError instanceof Error ? runError.message : String(runError);
+    console.error("[Error running evals]:", errorMessage);
     return c.json(
       {
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: errorMessage,
       },
       500,
     );
