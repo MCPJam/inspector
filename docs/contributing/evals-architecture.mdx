@@ -158,6 +158,75 @@ stateDiagram-v2
    - POST to `/api/mcp/evals/run`
    - Immediately navigates to results view on submission
 
+#### **Model Selection Components**
+
+##### **EvalModelSelector** (`client/src/components/evals/eval-model-selector.tsx`)
+
+Displays MCPJam-provided models with rich metadata.
+
+**Features:**
+
+- Fetches model data via `useModelMetadata` hook
+- Grid/list view toggle
+- Search filtering by name, ID, or description
+- Model cards show:
+  - Provider logo and name
+  - Context length
+  - Input/output pricing
+  - Model description
+- Click model card to view detailed modal with full specifications
+
+##### **UserModelSelector** (`client/src/components/evals/user-model-selector.tsx`)
+
+Displays models from user's configured API providers.
+
+**Features:**
+
+- Filters out MCPJam-provided models automatically
+- Shows API key warning if provider credentials missing
+- Grid/list view toggle
+- Search filtering
+- Simpler card design (no pricing info)
+
+##### **ModelCard** (`client/src/components/evals/model-card.tsx`)
+
+Individual model card for MCPJam models.
+
+**Displays:**
+
+- Provider logo (theme-aware)
+- Model name and provider
+- Description (2-line clamp)
+- Context length badge
+- Input/output pricing badges
+- Info button to open details modal
+- Selection indicator
+
+##### **ModelDetailsModal** (`client/src/components/evals/model-details-modal.tsx`)
+
+Full-screen modal with comprehensive model information.
+
+**Sections:**
+
+- Provider information
+- Full description
+- Context length and max completion tokens
+- Detailed pricing breakdown (input, output, image, per-request)
+- Architecture details (modality, tokenizer, instruct type)
+- Supported input/output modalities
+- Supported parameters
+- Model ID
+
+##### **UserModelCard** (`client/src/components/evals/user-model-card.tsx`)
+
+Simplified card for user provider models.
+
+**Displays:**
+
+- Provider logo (theme-aware)
+- Model name and provider
+- Selection indicator
+
 #### **Results Components** (`client/src/components/evals/*`)
 
 Real-time display of evaluation results.
@@ -165,12 +234,13 @@ Real-time display of evaluation results.
 **Component Hierarchy:**
 
 ```
-EvalsResultsTab
+EvalsTab
 ├─ SuitesOverview (List of all suites)
-│  └─ SuiteRow (Individual suite card)
+│  └─ SuiteRow (Individual suite card with rerun button)
 │
 └─ SuiteIterationsView (Detailed view)
    ├─ Test case aggregates
+   ├─ Rerun button with server validation
    └─ IterationCard (Individual run results)
       └─ IterationDetails (Expandable details)
 ```
@@ -179,7 +249,7 @@ EvalsResultsTab
 
 ```mermaid
 sequenceDiagram
-    participant UI as EvalsResultsTab
+    participant UI as EvalsTab
     participant Convex
 
     UI->>Convex: Query evals:getCurrentUserEvalTestSuitesWithMetadata
@@ -193,6 +263,17 @@ sequenceDiagram
     UI->>UI: Aggregate by test case
     UI->>UI: Render iteration details
 ```
+
+**Rerun Functionality:**
+
+Both `SuiteRow` and `SuiteIterationsView` include rerun buttons that:
+
+1. Validate all required servers are connected
+2. Check for API keys if using non-MCPJam models
+3. Extract test configuration from suite
+4. POST to `/api/mcp/evals/run` with same configuration
+5. Show loading state during execution
+6. Display success/error toast messages
 
 ---
 
