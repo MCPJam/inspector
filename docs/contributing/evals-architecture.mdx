@@ -910,7 +910,7 @@ const LlmsConfigSchema = z.object({
 });
 ```
 
-2. **Add provider case** in `evals-cli/src/evals/runner.ts`:
+2. **Add provider case** in `evals-cli/src/utils/helpers.ts` (createLlmModel function):
 
 ```typescript
 function getModelForProvider(
