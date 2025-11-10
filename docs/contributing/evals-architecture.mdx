@@ -728,39 +728,31 @@ evals:getAllTestCasesAndIterationsBySuite(
 
 ### Adding a New LLM Provider
 
-1. **Update LLM config schema** in `evals-cli/src/utils/validators.ts`:
+1. **Add AI SDK provider package**:
 
-```typescript
-const LlmsConfigSchema = z.object({
-  // Add your provider
-  myProvider: z
-    .object({
-      apiKey: z.string(),
-      model: z.string(),
-    })
-    .optional(),
-});
+```bash
+npm install @ai-sdk/my-provider
 ```
 
-2. **Add provider case** in `evals-cli/src/evals/runner.ts`:
+2. **Update model creation** in `server/utils/chat-helpers.ts`:
 
 ```typescript
-function getModelForProvider(
-  llms: LlmsConfig,
-  provider: string,
-  modelId: string,
+import { createMyProvider } from "@ai-sdk/my-provider";
+
+export function createLlmModel(
+  modelDefinition: ModelDefinition,
+  apiKey: string,
 ) {
-  switch (provider) {
+  switch (modelDefinition.provider) {
     case "myProvider":
-      return myProvider.chat(modelId, {
-        apiKey: llms.myProvider?.apiKey,
-      });
+      const myProvider = createMyProvider({ apiKey });
+      return myProvider(modelDefinition.id);
     // ...
   }
 }
 ```
 
-3. **Add to UI model list** in `client/src/hooks/use-chat.tsx`:
+3. **Add to UI model list** in `shared/types.ts`:
 
 ```typescript
 const availableModels: ModelDefinition[] = [
