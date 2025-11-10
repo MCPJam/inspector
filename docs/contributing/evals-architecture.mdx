@@ -363,6 +363,46 @@ flowchart TD
     H --> I[Return generated tests]
 ```
 
+##### **Endpoint: GET `/api/mcp/models`**
+
+Proxy endpoint to fetch model metadata from Convex backend.
+
+**Request Headers:**
+
+- `Authorization: Bearer <convex-auth-token>`
+
+**Response Schema:**
+
+```typescript
+{
+  ok: boolean
+  data?: OpenRouterModel[]
+  error?: string
+}
+```
+
+**Processing Flow:**
+
+```mermaid
+flowchart TD
+    A[Receive GET /models] --> B{Check auth header}
+    B -->|Missing| C[Return 401 error]
+    B -->|Present| D[Proxy to Convex backend]
+    D --> E{Response OK?}
+    E -->|No| F[Return error with status]
+    E -->|Yes| G[Return model metadata]
+```
+
+**Model Metadata Structure:**
+
+Each model includes:
+- Model ID and name
+- Provider information
+- Pricing (input, output, image, per-request)
+- Context length and max completion tokens
+- Architecture details (modality, tokenizer, instruct type)
+- Supported parameters and modalities
+
 #### **Test Generation Agent** (`server/services/eval-agent.ts`)
 
 Generates test cases using backend LLM.
