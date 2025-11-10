@@ -1,8 +1,9 @@
-import { createContext, useContext, useRef } from "react";
+import { createContext, useContext, useRef, useEffect } from "react";
 
 import { useStore, type StoreApi } from "zustand";
 
 import { createPreferencesStore, PreferencesState } from "./preferences-store";
+import { updateThemeMode, updateThemePreset } from "@/lib/theme-utils";
 
 const PreferencesStoreContext =
   createContext<StoreApi<PreferencesState> | null>(null);
@@ -19,6 +20,15 @@ export const PreferencesStoreProvider = ({
   const storeRef = useRef<StoreApi<PreferencesState> | null>(null);
 
   storeRef.current ??= createPreferencesStore({ themeMode, themePreset });
+
+  // Apply theme on mount
+  useEffect(() => {
+    const state = storeRef.current?.getState();
+    if (state) {
+      updateThemeMode(state.themeMode);
+      updateThemePreset(state.themePreset);
+    }
+  }, []);
 
   return (
     <PreferencesStoreContext.Provider value={storeRef.current}>
