@@ -125,7 +125,7 @@ export const DiagramLayout = ({
         panOnDrag={true}
       >
         <Background />
-        <Controls />
+        <Controls showInteractive={false} />
       </ReactFlow>
     </div>
   );
