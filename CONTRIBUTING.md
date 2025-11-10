@@ -52,8 +52,8 @@ npm run dev
 
 This runs:
 
-- **Client**: Vite dev server on `:8080`
-- **Server**: Hono dev server on `:3000`
+- **Client**: Vite dev server on `:3000`
+- **Server**: Hono dev server on `:3001`
 
 For Windows users, there's a specific script:
 
@@ -118,9 +118,7 @@ Your commit messages should be structured as follows:
 
 ## Getting Help
 
-- **GitHub Issues**: https://github.com/MCPJam/inspector/issues
-- **Discord**: https://discord.com/invite/JEnDtz8X6z
-- **Discussions**: Use GitHub Discussions for questions
-- **Documentation**: https://docs.mcpjam.com
+- [Discord](https://discord.com/invite/JEnDtz8X6z)
+- [Docs](https://docs.mcpjam.com)
 
 Thank you for your contribution!

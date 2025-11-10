@@ -17,12 +17,10 @@ export function EvalsRunTab() {
 
   if (isLoading) {
     return (
-      <div className="p-6">
-        <div className="flex h-64 items-center justify-center">
-          <div className="text-center">
-            <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
-            <p className="mt-4 text-muted-foreground">Loading...</p>
-          </div>
+      <div className="h-full flex items-center justify-center p-6">
+        <div className="text-center">
+          <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
+          <p className="mt-4 text-muted-foreground">Loading...</p>
         </div>
       </div>
     );
@@ -30,7 +28,7 @@ export function EvalsRunTab() {
 
   if (!isAuthenticated || !user) {
     return (
-      <div className="p-6">
+      <div className="h-full p-6">
         <EmptyState
           icon={FlaskConical}
           title="Sign in to run evals"
@@ -42,12 +40,14 @@ export function EvalsRunTab() {
   }
 
   return (
-    <div className="space-y-6 p-6">
-      <div className="space-y-2">
-        <h1 className="text-2xl font-semibold">Evaluation runner</h1>
-      </div>
-      <div className="w-full">
-        <EvalRunner availableModels={availableModels} inline={true} />
+    <div className="h-full overflow-y-auto">
+      <div className="space-y-6 p-6">
+        <div className="space-y-2">
+          <h1 className="text-2xl font-semibold">Evaluation runner</h1>
+        </div>
+        <div className="w-full">
+          <EvalRunner availableModels={availableModels} inline={true} />
+        </div>
       </div>
     </div>
   );
