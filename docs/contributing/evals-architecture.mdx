@@ -279,73 +279,84 @@ Return JSON array of test cases.
 
 ---
 
-### 3. CLI Layer (Execution Engine)
+### 3. Execution Engine (Server-side)
 
-#### **Runner** (`evals-cli/src/evals/runner.ts`)
+#### **Evals Runner** (`server/services/evals-runner.ts`)
 
-The core orchestrator that executes evaluation tests.
+The core orchestrator that executes evaluation tests using AI SDK.
 
-**Entry Points:**
+**Entry Point:**
 
-1. `runEvalsWithApiKey()`: CLI mode with API key authentication
-2. `runEvalsWithAuth()`: UI mode with Convex authentication
+- `runEvalSuiteWithAiSdk()`: Executes eval suite with AI SDK integration
 
 **Execution Flow:**
 
 ```mermaid
 flowchart TD
-    A[Start runEvalsWithAuth] --> B[Validate configs]
-    B --> C[Create MCP Client via Mastra]
-    C --> D[List tools from all servers]
-    D --> E[Create RunRecorder]
-    E --> F[Pre-create suite in DB]
+    A[Start runEvalSuiteWithAiSdk] --> B[Validate tests]
+    B --> C[Create RunRecorder with Convex auth]
+    C --> D[Get tools from MCPClientManager]
+    D --> E[Ensure suite in DB]
 
-    F --> G{For each test case}
-    G --> H[Record test case in DB]
-    H --> I{For each run iteration}
-    I --> J[Start iteration in DB]
-    J --> K[Determine execution path]
+    E --> F{For each test case}
+    F --> G[Record test case in DB]
+    G --> H{For each run iteration}
+    H --> I[Start iteration in DB]
+    I --> J[Build model definition]
+    J --> K{Is MCPJam model?}
 
-    K --> L{Is MCPJam model?}
-    L -->|Yes| M[runIterationViaBackend]
-    L -->|No| N[runIteration local]
+    K -->|Yes| L[runIterationViaBackend]
+    K -->|No| M[runIterationWithAiSdk]
 
-    M --> O[Execute agentic loop]
-    N --> O
+    L --> N[Execute agentic loop]
+    M --> N
 
-    O --> P[Evaluate results]
-    P --> Q[Finish iteration in DB]
+    N --> O[Evaluate results]
+    O --> P[Finish iteration in DB]
 
-    Q --> R{More iterations?}
-    R -->|Yes| I
-    R -->|No| S{More test cases?}
-    S -->|Yes| G
-    S -->|No| T[Complete suite]
+    P --> Q{More iterations?}
+    Q -->|Yes| H
+    Q -->|No| R{More test cases?}
+    R -->|Yes| F
+    R -->|No| S[Complete suite]
 ```
 
-**Agentic Loop (Local Models):**
+**Agentic Loop (AI SDK Models):**
 
 ```mermaid
 sequenceDiagram
-    participant Runner as runner.ts
-    participant LLM as LLM Provider
-    participant MCP as MCP Client
+    participant Runner as evals-runner.ts
+    participant AI as AI SDK
+    participant MCP as MCPClientManager
     participant DB as Database
 
-    Runner->>LLM: streamText(prompt, tools)
+    Runner->>AI: generateText(messages, tools)
+    AI-->>Runner: Response with tool calls
 
-    loop Up to 20 turns
-        LLM-->>Runner: Response with tool calls
-        Runner->>Runner: Extract tool names & inputs
+    Runner->>Runner: Extract tool names
+    Runner->>Runner: Evaluate: expected vs actual
+    Runner->>DB: Update iteration with results
+```
 
-        loop For each tool call
-            Runner->>MCP: Execute tool
-            MCP-->>Runner: Tool result
+**Agentic Loop (Backend Models):**
+
+```mermaid
+sequenceDiagram
+    participant Runner as evals-runner.ts
+    participant Backend as MCPJam Backend
+    participant MCP as MCPClientManager
+    participant DB as Database
+
+    loop Up to 20 steps
+        Runner->>Backend: POST /stream (mode: step)
+        Backend-->>Runner: Response with tool calls
+        Runner->>Runner: Extract tool names
+
+        alt Has unresolved tool calls
+            Runner->>MCP: Execute tool calls
+            MCP-->>Runner: Tool results
             Runner->>Runner: Add to message history
         end
-
-        Runner->>LLM: Continue with tool results
-        LLM-->>Runner: Next response
 
         alt finishReason !== "tool-calls"
             break Exit loop
@@ -358,10 +369,11 @@ sequenceDiagram
 
 **Key Features:**
 
-- Max 20 conversation turns to prevent infinite loops
-- Token usage tracking (prompt + completion)
+- Max 20 conversation steps for backend models to prevent infinite loops
+- Token usage tracking (input + output tokens) for AI SDK models
 - Duration measurement
 - Tool call recording
+- Dual execution paths: AI SDK for external providers, backend for MCPJam models
 
 #### **Evaluator** (`evals-cli/src/evals/evaluator.ts`)
 
