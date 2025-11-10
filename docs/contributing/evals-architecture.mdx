@@ -930,7 +930,22 @@ export const createLlmModel = (
 };
 ```
 
-3. **Add to UI model list** in `client/src/hooks/use-chat.tsx`:
+3. **Add provider logo** in `client/src/lib/provider-logos.ts`:
+
+```typescript
+export const getProviderLogo = (
+  provider: string,
+  themeMode?: ThemeMode,
+): string | null => {
+  switch (provider) {
+    case "myProvider":
+      return myProviderLogo;
+    // ...
+  }
+};
+```
+
+4. **Add to UI model list** in `client/src/hooks/use-chat.tsx`:
 
 ```typescript
 const availableModels: ModelDefinition[] = [
