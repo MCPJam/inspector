@@ -735,19 +735,25 @@ flowchart TD
 
     B -->|OpenAI| C[Direct API: @ai-sdk/openai]
     B -->|Anthropic| D[Direct API: @ai-sdk/anthropic]
-    B -->|DeepSeek| E[Direct API: @ai-sdk/openai compat]
-    B -->|Ollama| F[Direct API: @ai-sdk/ollama]
-    B -->|MCPJam| G[MCPJamBackend: MCPJamBackend/streaming]
+    B -->|DeepSeek| E[Direct API: @ai-sdk/deepseek]
+    B -->|Google| F[Direct API: @ai-sdk/google]
+    B -->|Mistral| G[Direct API: @ai-sdk/mistral]
+    B -->|xAI| H[Direct API: @ai-sdk/xai]
+    B -->|OpenRouter| I[Direct API: @openrouter/ai-sdk-provider]
+    B -->|MCPJam| J[MCPJamBackend: MCPJamBackend/streaming]
 
-    C --> H[streamText via ai SDK]
-    D --> H
-    E --> H
-    F --> H
+    C --> K[streamText via ai SDK]
+    D --> K
+    E --> K
+    F --> K
+    G --> K
+    H --> K
+    I --> K
 
-    G --> I[runBackendConversation]
+    J --> L[runBackendConversation]
 
-    H --> J[Agentic Loop]
-    I --> J
+    K --> M[Agentic Loop]
+    L --> M
 ```
 
 **Provider Configuration:**
