@@ -16,7 +16,7 @@ interface SuiteRowProps {
   onSelectSuite: (id: string) => void;
   onRerun: (suite: EvalSuite) => void;
   connectedServerNames: Set<string>;
-  isRerunning: boolean;
+  rerunningSuiteId: string | null;
 }
 
 function formatCompactStatus(
@@ -40,7 +40,7 @@ export function SuiteRow({
   onSelectSuite,
   onRerun,
   connectedServerNames,
-  isRerunning,
+  rerunningSuiteId,
 }: SuiteRowProps) {
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
@@ -109,6 +109,7 @@ export function SuiteRow({
     (server) => !connectedServerNames.has(server),
   );
   const canRerun = missingServers.length === 0;
+  const isRerunning = rerunningSuiteId === suite._id;
 
   const handleRerunClick = (e: React.MouseEvent) => {
     e.stopPropagation();
