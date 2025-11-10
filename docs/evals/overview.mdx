@@ -6,9 +6,39 @@ icon: "vial"
 
 Your users are connecting to your MCP server from different clients like Claude Desktop, Cursor, etc, and with different LLMs. MCP evals ensures that your MCP server works across all environments.
 
-## E2E testing
+## Running evals in the UI
 
-We built a CLI that performs MCP evals and End to End (E2E) testing. The CLI creates a simulated end user's environment and tests popular user flows.
+Inspector provides a unified Evals tab where you can create evaluation runs, browse available models, and view results all in one place.
+
+### Creating an evaluation run
+
+1. Navigate to the **Evals** tab in Inspector
+2. Click **Create new run** to launch the evaluation wizard
+3. Follow the guided steps:
+   - **Select servers**: Choose which connected MCP servers to test
+   - **Choose model**: Select from MCPJam free models or your own provider models
+   - **Define tests**: Create test cases manually or use AI to generate them
+   - **Review & run**: Confirm your configuration and execute
+
+### Model selection
+
+Inspector offers two types of models for running evaluations:
+
+- **MCPJam Free Models**: Browse and use models provided by MCPJam at no cost, including models from OpenAI, Anthropic, Google, Meta, and more
+- **Your Providers**: Use models from your own API keys configured in Settings (OpenAI, Anthropic, DeepSeek, Google, Mistral, xAI, OpenRouter)
+
+### Viewing results
+
+All evaluation results appear in the Evals tab. You can:
+
+- View a list of all evaluation suites with pass/fail statistics
+- Click into any suite to see detailed results for each test case
+- Rerun evaluations with the same configuration
+- Track token usage and execution time for each test
+
+## E2E testing with the CLI
+
+The CLI performs MCP evals and End to End (E2E) testing by creating a simulated end user's environment and testing popular user flows.
 
 An example of E2E test for PayPal MCP:
 
