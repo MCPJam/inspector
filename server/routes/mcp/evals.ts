@@ -1,15 +1,11 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { runEvalsWithAuth } from "../../../evals-cli/src/evals/runner";
-import {
-  transformServerConfigsToEnvironment,
-  transformLLMConfigToLlmsConfig,
-} from "../../utils/eval-transformer";
 import { ConvexHttpClient } from "convex/browser";
 import {
   generateTestCases,
   type DiscoveredTool,
 } from "../../services/eval-agent";
+import { runEvalSuiteWithAiSdk } from "../../services/evals-runner";
 import type { MCPClientManager } from "@/sdk";
 import "../../types/hono";
 
@@ -52,7 +48,7 @@ async function collectToolsForServers(
 
       try {
         const { tools } = await clientManager.listTools(serverId);
-        return tools.map((tool) => ({
+        return tools.map((tool: any) => ({
           name: tool.name,
           description: tool.description,
           inputSchema: tool.inputSchema,
@@ -95,10 +91,7 @@ const RunEvalsRequestSchema = z.object({
     }),
   ),
   serverIds: z.array(z.string()).min(1, "At least one server must be selected"),
-  llmConfig: z.object({
-    provider: z.string(),
-    apiKey: z.string(),
-  }),
+  modelApiKey: z.string().optional().nullable(),
   convexAuthToken: z.string(),
 });
 
@@ -113,24 +106,17 @@ evals.post("/run", async (c) => {
       return c.json(
         {
           error: "Invalid request body",
-          details: validationResult.error.errors,
+          details: validationResult.error.issues,
         },
         400,
       );
     }
 
-    const { tests, serverIds, llmConfig, convexAuthToken } =
+    const { tests, serverIds, modelApiKey, convexAuthToken } =
       validationResult.data as RunEvalsRequest;
 
     const clientManager = c.mcpClientManager;
     const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
-
-    const environment = transformServerConfigsToEnvironment(
-      resolvedServerIds,
-      clientManager,
-    );
-    const modelId = tests.length > 0 ? tests[0].model : undefined;
-    const llms = transformLLMConfigToLlmsConfig(llmConfig, modelId);
 
     const convexUrl = process.env.CONVEX_URL;
     if (!convexUrl) {
@@ -145,37 +131,30 @@ evals.post("/run", async (c) => {
     const convexClient = new ConvexHttpClient(convexUrl);
     convexClient.setAuth(convexAuthToken);
 
-    try {
-      await runEvalsWithAuth(
-        tests,
-        environment,
-        llms,
-        convexClient,
-        convexHttpUrl,
-        convexAuthToken,
-      );
-
-      return c.json({
-        success: true,
-        message:
-          "Evals started successfully. Check the Evals tab for progress.",
-      });
-    } catch (runError) {
+    runEvalSuiteWithAiSdk({
+      tests,
+      serverIds: resolvedServerIds,
+      modelApiKey: modelApiKey ?? undefined,
+      convexClient,
+      convexHttpUrl,
+      convexAuthToken,
+      mcpClientManager: clientManager,
+    }).catch((error) => {
       const errorMessage =
-        runError instanceof Error ? runError.message : String(runError);
-      console.error("[Error running evals]:", errorMessage);
-      return c.json(
-        {
-          error: errorMessage,
-        },
-        500,
-      );
-    }
-  } catch (error) {
-    console.error("Error in /evals/run:", error);
+        error instanceof Error ? error.message : String(error);
+      console.error("[Error running evals:", errorMessage);
+    });
+    return c.json({
+      success: true,
+      message: "Evals started successfully. Check the Evals tab for progress.",
+    });
+  } catch (runError) {
+    const errorMessage =
+      runError instanceof Error ? runError.message : String(runError);
+    console.error("[Error running evals]:", errorMessage);
     return c.json(
       {
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: errorMessage,
       },
       500,
     );
@@ -198,7 +177,7 @@ evals.post("/generate-tests", async (c) => {
       return c.json(
         {
           error: "Invalid request body",
-          details: validationResult.error.errors,
+          details: validationResult.error.issues,
         },
         400,
       );

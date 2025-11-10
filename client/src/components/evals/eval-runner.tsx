@@ -80,10 +80,7 @@ const steps = [
 
 type StepKey = (typeof steps)[number]["key"];
 
-const buildBlankTestCase = (
-  index: number,
-  model: ModelDefinition | null,
-): TestCase => ({
+const buildBlankTestCase = (model: ModelDefinition | null): TestCase => ({
   title: ``,
   query: "",
   runs: 1,
@@ -115,7 +112,7 @@ export function EvalRunner({
     null,
   );
   const [testCases, setTestCases] = useState<TestCase[]>([
-    buildBlankTestCase(1, null),
+    buildBlankTestCase(null),
   ]);
   const [modelTab, setModelTab] = useState<"mcpjam" | "yours">("mcpjam");
 
@@ -299,19 +296,8 @@ export function EvalRunner({
     });
   };
 
-  const handleAddTestCases = (count: number) => {
-    if (count <= 0) return;
-    setTestCases((prev) => {
-      const baseLength = prev.length;
-      const additions = Array.from({ length: count }, (_, offset) =>
-        buildBlankTestCase(baseLength + offset + 1, selectedModel),
-      );
-      return [...prev, ...additions];
-    });
-  };
-
   const handleAddTestCase = () => {
-    handleAddTestCases(1);
+    setTestCases((prev) => [...prev, buildBlankTestCase(selectedModel)]);
   };
 
   const handleRemoveTestCase = (index: number) => {
@@ -461,16 +447,15 @@ export function EvalRunner({
         provider: selectedModel.provider,
       }));
 
+      const modelApiKey = currentModelIsJam ? null : apiKey || null;
+
       const response = await fetch("/api/mcp/evals/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           tests: testsWithModelInfo,
           serverIds: selectedServers,
-          llmConfig: {
-            provider: selectedModel.provider,
-            apiKey: currentModelIsJam ? "router" : apiKey || "router",
-          },
+          modelApiKey,
           convexAuthToken: accessToken,
         }),
       });
@@ -488,7 +473,7 @@ export function EvalRunner({
 
       const result = await response.json();
       toast.success(result.message || "Evals started successfully!");
-      setTestCases([buildBlankTestCase(1, selectedModel)]);
+      setTestCases([buildBlankTestCase(selectedModel)]);
       setCurrentStep(3);
     } catch (error) {
       toast.error(
