@@ -843,6 +843,28 @@ sequenceDiagram
    }
    ```
 
+### Shared Utilities
+
+#### **Provider Logos** (`client/src/lib/provider-logos.ts`)
+
+Centralized utility for provider logos and colors used across chat, evals, and other components.
+
+**Functions:**
+
+- `getProviderLogo(provider, themeMode)`: Returns logo path for a provider, with theme-aware variants for Ollama, xAI, and Moonshot
+- `getProviderColor(provider)`: Returns Tailwind color classes for provider badges
+
+**Supported Providers:**
+
+- Anthropic, OpenAI, DeepSeek, Google, Meta, Mistral, Ollama, xAI, LiteLLM, OpenRouter, Moonshot AI, Zhipu AI
+
+**Theme Support:**
+
+Some providers have different logos for light/dark themes:
+- Ollama: Light and dark variants
+- xAI (Grok): Light and dark variants
+- Moonshot AI: Light and dark variants
+
 ### MCPJam Backend
 
 **Database Actions:**
