@@ -53,6 +53,7 @@ export default function App() {
       platform: detectPlatform(),
       environment: detectEnvironment(),
       user_agent: navigator.userAgent,
+      version: __APP_VERSION__,
       is_authenticated: isAuthenticated,
     });
   }, [isAuthLoading, isAuthenticated]);
