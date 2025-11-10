@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import type { OpenRouterModel, ModelMetadataResponse } from "@/types/model-metadata";
+import type {
+  OpenRouterModel,
+  ModelMetadataResponse,
+} from "@/types/model-metadata";
 
 /**
  * Hook to fetch MCPJam provided model metadata from the backend

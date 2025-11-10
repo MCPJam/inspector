@@ -121,9 +121,7 @@ export function validateAndNormalizeMCPClientConfiguration(
             `Invalid server configuration for '${name}': ${error.message}`,
           );
         }
-        throw new Error(
-          `Invalid server configuration for '${name}': ${error}`,
-        );
+        throw new Error(`Invalid server configuration for '${name}': ${error}`);
       }
     }
 
@@ -155,8 +153,8 @@ export function validateLlms(value: unknown): LlmsConfig | undefined {
     const result = LlmsConfigSchema.parse(value);
 
     // Check if at least one valid API key is provided
-    const hasValidKey = Object.values(result).some((key) =>
-      typeof key === 'string' && isValidLlmApiKey(key)
+    const hasValidKey = Object.values(result).some(
+      (key) => typeof key === "string" && isValidLlmApiKey(key),
     );
 
     if (!hasValidKey) {
@@ -169,9 +167,7 @@ export function validateLlms(value: unknown): LlmsConfig | undefined {
     if (error instanceof z.ZodError) {
       throw new Error(`Invalid LLMs configuration: ${error.message}`);
     }
-    throw new Error(
-      error instanceof Error ? error.message : String(error),
-    );
+    throw new Error(error instanceof Error ? error.message : String(error));
   }
 }
 
