@@ -794,22 +794,19 @@ async connectServer(serverId: string, config: ServerConfig) {
 **Enable verbose logging:**
 
 ```typescript
-// In runner.ts
-const DEBUG = true;
-
-if (DEBUG) {
-  console.log("LLM Response:", response);
-  console.log("Tool Calls:", toolCalls);
-  console.log("Message History:", messages);
-}
+// In evals-runner.ts
+console.log("AI SDK Response:", result);
+console.log("Tool Calls:", result.toolCalls);
+console.log("Message History:", result.response?.messages);
 ```
 
 **Inspect MCP client:**
 
 ```typescript
-// In runner.ts
+// In evals-runner.ts
 console.log("Available tools:", tools);
-console.log("Server status:", mcpClient.getConnectionStatus());
+console.log("Server IDs:", serverIds);
+console.log("Tools for AI SDK:", await mcpClientManager.getToolsForAiSdk(serverIds));
 ```
 
 ### Testing Changes
