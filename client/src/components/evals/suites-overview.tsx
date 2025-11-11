@@ -203,24 +203,6 @@ export function SuitesOverview({
           );
         })}
       </div>
-
-      <div className="rounded-xl border">
-        <div className="border-b bg-muted/50 px-4 py-2 text-xs font-semibold text-muted-foreground">
-          Legacy view
-        </div>
-        <div className="divide-y">
-          {sortedOverview.map((entry) => (
-            <SuiteRow
-              key={`legacy-${entry.suite._id}`}
-              suite={entry.suite}
-              onSelectSuite={onSelectSuite}
-              onRerun={onRerun}
-              connectedServerNames={connectedServerNames}
-              rerunningSuiteId={rerunningSuiteId}
-            />
-          ))}
-        </div>
-      </div>
     </div>
   );
 }
