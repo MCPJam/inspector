@@ -1,8 +1,16 @@
-import type { EvalSuite } from "./types";
+import { useMemo } from "react";
+import type { EvalSuite, EvalSuiteOverviewEntry } from "./types";
 import { SuiteRow } from "./SuiteRow";
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+} from "@/components/ui/chart";
+import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
+import { cn } from "@/lib/utils";
 
 interface SuitesOverviewProps {
-  suites: EvalSuite[];
+  overview: EvalSuiteOverviewEntry[];
   onSelectSuite: (id: string) => void;
   onRerun: (suite: EvalSuite) => void;
   connectedServerNames: Set<string>;
@@ -10,13 +18,13 @@ interface SuitesOverviewProps {
 }
 
 export function SuitesOverview({
-  suites,
+  overview,
   onSelectSuite,
   onRerun,
   connectedServerNames,
   rerunningSuiteId,
 }: SuitesOverviewProps) {
-  if (suites.length === 0) {
+  if (overview.length === 0) {
     return (
       <div className="h-[calc(100vh-220px)] flex items-center justify-center rounded-xl border border-dashed">
         <div className="text-center space-y-2">
@@ -29,24 +37,182 @@ export function SuitesOverview({
     );
   }
 
-  const sortedSuites = [...suites].sort(
-    (a, b) => (b._creationTime || 0) - (a._creationTime || 0),
+  const sortedOverview = useMemo(
+    () =>
+      [...overview].sort((a, b) => {
+        const aTime =
+          a.suite.updatedAt ??
+          a.latestRun?.completedAt ??
+          a.latestRun?.createdAt ??
+          a.suite._creationTime ??
+          0;
+        const bTime =
+          b.suite.updatedAt ??
+          b.latestRun?.completedAt ??
+          b.latestRun?.createdAt ??
+          b.suite._creationTime ??
+          0;
+        return bTime - aTime;
+      }),
+    [overview],
   );
 
   return (
     <div className="space-y-4">
-      <div className="overflow-hidden rounded-xl border">
-        <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-4 border-b bg-muted/50 px-4 py-2 text-xs font-semibold text-muted-foreground">
-          <div>Created</div>
-          <div>Tests</div>
-          <div>Results</div>
-          <div className="w-20"></div>
+      <div className="space-y-3">
+        {sortedOverview.map((entry) => {
+          const { suite, latestRun, passRateTrend, totals } = entry;
+          const chartData =
+            passRateTrend.length > 0
+              ? passRateTrend.map((rate, index) => ({
+                  run: index + 1,
+                  passRate: Math.round(rate * 100),
+                }))
+              : latestRun?.summary
+                ? [
+                    {
+                      run: 1,
+                      passRate: Math.round(latestRun.summary.passRate * 100),
+                    },
+                  ]
+                : [{ run: 1, passRate: 0 }];
+          console.log('[Evals] Suite overview chart data for', suite.name, ':', chartData);
+
+          const chartConfig = {
+            passRate: {
+              label: "Pass rate",
+              color: "var(--chart-1)",
+            },
+          };
+
+          const servers = suite.config?.environment?.servers ?? [];
+          const missingServers = servers.filter(
+            (server) => !connectedServerNames.has(server),
+          );
+          const canRerun = missingServers.length === 0;
+          const isRerunning = rerunningSuiteId === suite._id;
+
+          const latestPassRate = latestRun?.summary
+            ? Math.round(latestRun.summary.passRate * 100)
+            : chartData.at(-1)?.passRate ?? 0;
+
+          const runsLabel =
+            totals.runs === 1 ? "1 run" : `${totals.runs} runs total`;
+
+          const lastRunTimestamp =
+            latestRun?.completedAt ??
+            latestRun?.createdAt ??
+            suite.updatedAt ??
+            suite._creationTime ??
+            null;
+
+          const lastRunLabel = lastRunTimestamp
+            ? new Date(lastRunTimestamp).toLocaleString()
+            : "No runs yet";
+
+          return (
+            <div
+              key={suite._id}
+              className="rounded-xl border bg-card text-card-foreground shadow-sm hover:border-primary/40 transition-colors"
+            >
+              <button
+                onClick={() => onSelectSuite(suite._id)}
+                className="w-full text-left"
+              >
+                <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="flex-1 space-y-2">
+                    <div className="flex flex-col gap-1">
+                      <h2 className="text-base font-semibold">
+                        {suite.name || "Untitled suite"}
+                      </h2>
+                      <p className="text-xs text-muted-foreground">
+                        {suite.description || "No description provided"}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                      <span>{lastRunLabel}</span>
+                      <span>•</span>
+                      <span>{runsLabel}</span>
+                      {servers.length > 0 ? (
+                        <>
+                          <span>•</span>
+                          <span>{servers.join(", ")}</span>
+                        </>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-6 sm:flex-col sm:items-end sm:gap-3">
+                    <div className="text-right">
+                      <div className="text-2xl font-semibold">
+                        {latestPassRate}%
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        Pass rate
+                      </div>
+                    </div>
+                    <ChartContainer
+                      config={chartConfig}
+                      className="aspect-auto h-20 w-40 sm:h-16 sm:w-48"
+                    >
+                      <AreaChart data={chartData} width={undefined} height={undefined}>
+                        <CartesianGrid
+                          strokeDasharray="3 3"
+                          vertical={false}
+                          stroke="hsl(var(--muted-foreground) / 0.2)"
+                        />
+                        <XAxis dataKey="run" hide />
+                        <YAxis domain={[0, 100]} hide />
+                        <ChartTooltip
+                          cursor={false}
+                          content={<ChartTooltipContent />}
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="passRate"
+                          stroke="var(--color-passRate)"
+                          fill="var(--color-passRate)"
+                          fillOpacity={0.15}
+                          strokeWidth={2}
+                          isAnimationActive={false}
+                        />
+                      </AreaChart>
+                    </ChartContainer>
+                  </div>
+                </div>
+              </button>
+              <div className="flex items-center justify-between border-t px-4 py-2.5">
+                <div className="text-xs text-muted-foreground">
+                  {totals.passed} passed · {totals.failed} failed
+                </div>
+                <button
+                  onClick={() => onRerun(suite)}
+                  disabled={!canRerun || isRerunning}
+                  className={cn(
+                    "text-xs font-medium text-primary hover:underline disabled:opacity-60",
+                    !canRerun && "cursor-not-allowed",
+                  )}
+                >
+                  {isRerunning
+                    ? "Rerunning..."
+                    : canRerun
+                      ? "Rerun suite"
+                      : `Missing servers: ${missingServers.join(", ")}`}
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="rounded-xl border">
+        <div className="border-b bg-muted/50 px-4 py-2 text-xs font-semibold text-muted-foreground">
+          Legacy view
         </div>
         <div className="divide-y">
-          {sortedSuites.map((suite) => (
+          {sortedOverview.map((entry) => (
             <SuiteRow
-              key={suite._id}
-              suite={suite}
+              key={`legacy-${entry.suite._id}`}
+              suite={entry.suite}
               onSelectSuite={onSelectSuite}
               onRerun={onRerun}
               connectedServerNames={connectedServerNames}

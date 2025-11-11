@@ -6,6 +6,7 @@ import {
   type DiscoveredTool,
 } from "../../services/eval-agent";
 import { runEvalSuiteWithAiSdk } from "../../services/evals-runner";
+import { startSuiteRunWithRecorder } from "../../services/evals/recorder";
 import type { MCPClientManager } from "@/sdk";
 import "../../types/hono";
 
@@ -71,6 +72,9 @@ async function collectToolsForServers(
 const evals = new Hono();
 
 const RunEvalsRequestSchema = z.object({
+  suiteId: z.string().optional(),
+  suiteName: z.string().optional(),
+  suiteDescription: z.string().optional(),
   tests: z.array(
     z.object({
       title: z.string(),
@@ -93,6 +97,7 @@ const RunEvalsRequestSchema = z.object({
   serverIds: z.array(z.string()).min(1, "At least one server must be selected"),
   modelApiKey: z.string().optional().nullable(),
   convexAuthToken: z.string(),
+  notes: z.string().optional(),
 });
 
 type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
@@ -112,8 +117,26 @@ evals.post("/run", async (c) => {
       );
     }
 
-    const { tests, serverIds, modelApiKey, convexAuthToken } =
+    const {
+      suiteId,
+      suiteName,
+      suiteDescription,
+      tests,
+      serverIds,
+      modelApiKey,
+      convexAuthToken,
+      notes,
+    } =
       validationResult.data as RunEvalsRequest;
+
+    if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
+      return c.json(
+        {
+          error: "Provide suiteId or suiteName",
+        },
+        400,
+      );
+    }
 
     const clientManager = c.mcpClientManager;
     const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
@@ -131,14 +154,64 @@ evals.post("/run", async (c) => {
     const convexClient = new ConvexHttpClient(convexUrl);
     convexClient.setAuth(convexAuthToken);
 
-    runEvalSuiteWithAiSdk({
+    const suiteConfigPayload = {
       tests,
-      serverIds: resolvedServerIds,
+      environment: { servers: resolvedServerIds },
+    };
+
+    let resolvedSuiteId = suiteId ?? null;
+
+    if (resolvedSuiteId) {
+      const updatedSuite = await convexClient.mutation(
+        "evals:updateSuite" as any,
+        {
+          suiteId: resolvedSuiteId,
+          name: suiteName,
+          description: suiteDescription,
+          config: suiteConfigPayload,
+        },
+      );
+
+      if (!updatedSuite || !updatedSuite.config) {
+        throw new Error("Failed to update suite config");
+      }
+    } else {
+      const createdSuite = await convexClient.mutation(
+        "evals:createSuite" as any,
+        {
+          name: suiteName!,
+          description: suiteDescription,
+          config: suiteConfigPayload,
+        },
+      );
+
+      if (!createdSuite?._id) {
+        throw new Error("Failed to create suite");
+      }
+
+      resolvedSuiteId = createdSuite._id as string;
+    }
+
+    const {
+      runId,
+      config: runConfig,
+      recorder,
+    } = await startSuiteRunWithRecorder({
+      convexClient,
+      suiteId: resolvedSuiteId,
+      notes,
+    });
+
+    runEvalSuiteWithAiSdk({
+      suiteId: resolvedSuiteId,
+      runId,
+      config: runConfig,
       modelApiKey: modelApiKey ?? undefined,
       convexClient,
       convexHttpUrl,
       convexAuthToken,
       mcpClientManager: clientManager,
+      recorder,
     }).catch((error) => {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
@@ -146,6 +219,8 @@ evals.post("/run", async (c) => {
     });
     return c.json({
       success: true,
+      suiteId: resolvedSuiteId,
+      runId,
       message: "Evals started successfully. Check the Evals tab for progress.",
     });
   } catch (runError) {

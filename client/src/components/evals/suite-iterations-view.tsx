@@ -6,14 +6,47 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+} from "@/components/ui/chart";
+import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { IterationDetails } from "./iteration-details";
+import { SuiteTestsConfig } from "./suite-tests-config";
 import { formatTime } from "./helpers";
-import { EvalCase, EvalIteration, EvalSuite, SuiteAggregate } from "./types";
+import {
+  EvalCase,
+  EvalIteration,
+  EvalSuite,
+  EvalSuiteRun,
+  SuiteAggregate,
+  EvalSuiteConfigTest,
+} from "./types";
+import { RUN_FILTER_ALL, RUN_FILTER_LEGACY, type RunFilterValue } from "./constants";
+import { useMutation } from "convex/react";
+import { toast } from "sonner";
 
 export function SuiteIterationsView({
   suite,
   cases,
   iterations,
+  allIterations,
+  legacyIterations,
+  runs,
+  runFilter,
+  onRunFilterChange,
+  selectedRun,
+  runsLoading,
   aggregate,
   onBack,
   onRerun,
@@ -23,6 +56,13 @@ export function SuiteIterationsView({
   suite: EvalSuite;
   cases: EvalCase[];
   iterations: EvalIteration[];
+  allIterations: EvalIteration[];
+  legacyIterations: EvalIteration[];
+  runs: EvalSuiteRun[];
+  runFilter: RunFilterValue;
+  onRunFilterChange: (value: RunFilterValue) => void;
+  selectedRun: EvalSuiteRun | null;
+  runsLoading: boolean;
   aggregate: SuiteAggregate | null;
   onBack: () => void;
   onRerun: (suite: EvalSuite) => void;
@@ -33,6 +73,166 @@ export function SuiteIterationsView({
   const [expandedQueries, setExpandedQueries] = useState<Set<string>>(
     new Set(),
   );
+  const [activeTab, setActiveTab] = useState<"results" | "tests">("results");
+
+  const updateSuite = useMutation("evals:updateSuite" as any);
+
+  const handleUpdateTests = async (tests: EvalSuiteConfigTest[]) => {
+    try {
+      await updateSuite({
+        suiteId: suite._id,
+        config: {
+          tests,
+          environment: suite.config?.environment || { servers: [] },
+        },
+      });
+      toast.success("Tests updated successfully");
+    } catch (error) {
+      toast.error("Failed to update tests");
+      console.error("Failed to update tests:", error);
+    }
+  };
+
+
+  const handleRunFilterChange = (value: string) => {
+    onRunFilterChange(value as RunFilterValue);
+  };
+
+  const runOptions = useMemo(
+    () => {
+      const options: Array<{ value: RunFilterValue; label: string }> = [];
+      const totalIterations = allIterations.length;
+
+      options.push({
+        value: RUN_FILTER_ALL,
+        label:
+          runs.length > 0
+            ? `All runs (${totalIterations})`
+            : `All iterations (${totalIterations})`,
+      });
+
+      if (legacyIterations.length > 0) {
+        options.push({
+          value: RUN_FILTER_LEGACY,
+          label: `Legacy iterations (${legacyIterations.length})`,
+        });
+      }
+
+      runs.forEach((run, index) => {
+        const runIndex = runs.length - index;
+        const timestamp = run.completedAt ?? run.createdAt;
+        const passRate =
+          run.summary != null
+            ? Math.round(run.summary.passRate * 100)
+            : null;
+        const labelParts = [
+          `Run ${runIndex}`,
+          passRate != null ? `${passRate}%` : "In progress",
+          formatTime(timestamp),
+        ];
+        options.push({
+          value: run._id,
+          label: labelParts.filter(Boolean).join(' • '),
+        });
+      });
+
+      return options;
+    },
+    [allIterations.length, legacyIterations.length, runs],
+  );
+
+  const summary = useMemo(() => {
+    const totals = aggregate?.totals;
+    if (selectedRun?.summary) {
+      const runTotals = selectedRun.summary;
+      const passRate = Math.round(runTotals.passRate * 100);
+      return {
+        passRate,
+        passed: runTotals.passed,
+        failed: runTotals.failed,
+        total: runTotals.total,
+        cancelled: totals?.cancelled ?? 0,
+        pending: totals?.pending ?? 0,
+      };
+    }
+
+    if (!totals) {
+      return {
+        passRate: 0,
+        passed: 0,
+        failed: 0,
+        total: 0,
+        cancelled: 0,
+        pending: 0,
+      };
+    }
+
+    const total =
+      totals.passed + totals.failed + totals.cancelled + totals.pending;
+
+    const passRate =
+      total > 0 ? Math.round((totals.passed / total) * 100) : 0;
+
+    return {
+      passRate,
+      passed: totals.passed,
+      failed: totals.failed,
+      total,
+      cancelled: totals.cancelled,
+      pending: totals.pending,
+    };
+  }, [aggregate, selectedRun]);
+
+  const { passRate, passed, failed, total, cancelled, pending } = summary;
+
+  const runTrendData = useMemo(() => {
+    const data = runs
+      .slice()
+      .reverse()
+      .map((run, index) => {
+        if (!run.summary) {
+          return null;
+        }
+        return {
+          runIndex: index + 1,
+          passRate: Math.round(run.summary.passRate * 100),
+          label: formatTime(run.completedAt ?? run.createdAt),
+        };
+      })
+      .filter(
+        (item): item is { runIndex: number; passRate: number; label: string } =>
+          item !== null,
+      );
+    console.log('[Evals] Run trend data:', data);
+    return data;
+  }, [runs]);
+
+  const chartConfig = {
+    passRate: {
+      label: "Pass rate",
+      color: "var(--chart-1)",
+    },
+  };
+
+  const runStatusLabel = selectedRun
+    ? selectedRun.status.charAt(0).toUpperCase() + selectedRun.status.slice(1)
+    : runFilter === RUN_FILTER_LEGACY
+      ? "Legacy iterations"
+      : runFilter === RUN_FILTER_ALL
+        ? runs.length > 0
+          ? "All runs"
+          : "All iterations"
+        : "All runs";
+
+  const runTimestampLabel = selectedRun
+    ? formatTime(selectedRun.completedAt ?? selectedRun.createdAt)
+    : runFilter === RUN_FILTER_LEGACY
+      ? `${legacyIterations.length} iteration${
+          legacyIterations.length === 1 ? "" : "s"
+        }`
+      : `${allIterations.length} iteration${
+          allIterations.length === 1 ? "" : "s"
+        }`;
   const caseGroups = useMemo(() => {
     const groups = new Map<
       string,
@@ -220,6 +420,89 @@ export function SuiteIterationsView({
           </TooltipContent>
         </Tooltip>
       </div>
+
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "results" | "tests")}>
+        <TabsList>
+          <TabsTrigger value="results">Results</TabsTrigger>
+          <TabsTrigger value="tests">Tests</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="results" className="mt-4">
+      <div className="rounded-xl border bg-card text-card-foreground">
+        <div className="flex flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="text-sm font-semibold">Run history</div>
+            <p className="text-xs text-muted-foreground">
+              Compare performance across runs and inspect regressions.
+            </p>
+          </div>
+          <Select value={runFilter} onValueChange={handleRunFilterChange}>
+            <SelectTrigger className="w-full sm:w-64">
+              <SelectValue placeholder="Select run" />
+            </SelectTrigger>
+            <SelectContent>
+              {runOptions.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="grid gap-4 px-4 py-4 lg:grid-cols-[1.5fr_2fr]">
+          <div className="grid gap-3 rounded-lg border bg-background/80 p-4">
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>{runTimestampLabel}</span>
+              <span className="font-medium text-foreground">{runStatusLabel}</span>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <RunMetric label="Pass rate" value={`${passRate}%`} />
+              <RunMetric label="Passed" value={passed.toLocaleString()} />
+              <RunMetric label="Failed" value={failed.toLocaleString()} />
+              <RunMetric label="Cancelled" value={cancelled.toLocaleString()} />
+              <RunMetric label="Pending" value={pending.toLocaleString()} />
+              <RunMetric label="Total" value={total.toLocaleString()} />
+            </div>
+          </div>
+          <div className="rounded-lg border bg-background/80 p-4">
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>Pass rate trend</span>
+              <span>
+                {runs.length} run{runs.length === 1 ? "" : "s"}
+              </span>
+            </div>
+            {runsLoading ? (
+              <Skeleton className="mt-4 h-28 w-full" />
+            ) : runTrendData.length > 0 ? (
+              <ChartContainer config={chartConfig} className="mt-4 aspect-auto h-32 w-full">
+                <AreaChart data={runTrendData} width={undefined} height={undefined}>
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    vertical={false}
+                    stroke="hsl(var(--muted-foreground) / 0.2)"
+                  />
+                  <XAxis dataKey="runIndex" hide />
+                  <YAxis domain={[0, 100]} hide />
+                  <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
+                  <Area
+                    type="monotone"
+                    dataKey="passRate"
+                    stroke="var(--color-passRate)"
+                    fill="var(--color-passRate)"
+                    fillOpacity={0.15}
+                    strokeWidth={2}
+                    isAnimationActive={false}
+                  />
+                </AreaChart>
+              </ChartContainer>
+            ) : (
+              <p className="mt-4 text-xs text-muted-foreground">
+                No completed runs yet.
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
       <div className="space-y-4">
         {caseGroups.map((group, index) => {
           const { testCase, iterations: groupIterations } = group;
@@ -380,6 +663,21 @@ export function SuiteIterationsView({
           );
         })}
       </div>
+        </TabsContent>
+
+        <TabsContent value="tests" className="mt-4">
+          <SuiteTestsConfig suite={suite} onUpdate={handleUpdateTests} />
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+function RunMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border bg-background px-3 py-2">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="text-base font-semibold">{value}</div>
     </div>
   );
 }
