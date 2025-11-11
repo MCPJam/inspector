@@ -218,7 +218,27 @@ export function ChatTabV2({
       ? undefined
       : lastAssistantMessageIsCompleteWithToolCalls,
   });
-  console.log('messages', messages);
+
+  // Token usage from the most recent assistant message metadata
+  const lastAssistantMessage = [...messages]
+    .reverse()
+    .find((message) => message.role === "assistant" && message.metadata);
+
+  const lastMetadata = lastAssistantMessage?.metadata as
+    | {
+        inputTokens?: number;
+        outputTokens?: number;
+        totalTokens?: number;
+      }
+    | undefined;
+
+  const tokenUsage = {
+    inputTokens: lastMetadata?.inputTokens ?? 0,
+    outputTokens: lastMetadata?.outputTokens ?? 0,
+    totalTokens:
+      lastMetadata?.totalTokens ??
+      (lastMetadata?.inputTokens ?? 0) + (lastMetadata?.outputTokens ?? 0),
+  };
   const resetChat = useCallback(() => {
     setChatSessionId(generateId());
     setMessages([]);
@@ -429,6 +449,7 @@ export function ChatTabV2({
     onTemperatureChange: setTemperature,
     onResetChat: resetChat,
     submitDisabled: submitBlocked,
+    tokenUsage,
   };
 
   const showStarterPrompts =
