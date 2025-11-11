@@ -16,13 +16,22 @@ interface SuiteTestsConfigProps {
 export function SuiteTestsConfig({ suite, onUpdate }: SuiteTestsConfigProps) {
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [tests, setTests] = useState<EvalSuiteConfigTest[]>(
-    suite.config?.tests || []
+    // Ensure all tests have expectedToolCalls array
+    (suite.config?.tests || []).map(test => ({
+      ...test,
+      expectedToolCalls: test.expectedToolCalls || []
+    }))
   );
   const [editForm, setEditForm] = useState<EvalSuiteConfigTest | null>(null);
 
   const startEdit = (index: number) => {
     setEditingIndex(index);
-    setEditForm({ ...tests[index] });
+    // Ensure expectedToolCalls is always an array
+    const test = tests[index];
+    setEditForm({
+      ...test,
+      expectedToolCalls: test.expectedToolCalls || []
+    });
   };
 
   const cancelEdit = () => {
@@ -150,7 +159,7 @@ export function SuiteTestsConfig({ suite, onUpdate }: SuiteTestsConfigProps) {
                   <div className="space-y-2">
                     <Label>Expected tool calls (comma-separated)</Label>
                     <Input
-                      value={editForm.expectedToolCalls.join(", ")}
+                      value={(editForm.expectedToolCalls || []).join(", ")}
                       onChange={(e) =>
                         setEditForm({
                           ...editForm,
@@ -187,9 +196,9 @@ export function SuiteTestsConfig({ suite, onUpdate }: SuiteTestsConfigProps) {
                           {test.provider} · {test.model}
                         </Badge>
                         <Badge variant="outline">{test.runs} runs</Badge>
-                        {test.expectedToolCalls.length > 0 && (
+                        {(test.expectedToolCalls || []).length > 0 && (
                           <Badge variant="outline">
-                            Expects: {test.expectedToolCalls.join(", ")}
+                            Expects: {(test.expectedToolCalls || []).join(", ")}
                           </Badge>
                         )}
                       </div>

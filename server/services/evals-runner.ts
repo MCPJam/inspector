@@ -112,6 +112,16 @@ const runIterationWithAiSdk = async ({
   const runStartedAt = Date.now();
   const iterationId = await recorder.startIteration({
     testCaseId: test.testCaseId ?? testCaseId,
+    testCaseSnapshot: {
+      title: test.title,
+      query: test.query,
+      provider: test.provider,
+      model: test.model,
+      runs: test.runs,
+      expectedToolCalls: test.expectedToolCalls,
+      judgeRequirement: test.judgeRequirement,
+      advancedConfig: test.advancedConfig,
+    },
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
   });
@@ -199,6 +209,16 @@ const runIterationViaBackend = async ({
   const runStartedAt = Date.now();
   const iterationId = await recorder.startIteration({
     testCaseId: test.testCaseId ?? testCaseId,
+    testCaseSnapshot: {
+      title: test.title,
+      query: test.query,
+      provider: test.provider,
+      model: test.model,
+      runs: test.runs,
+      expectedToolCalls: test.expectedToolCalls,
+      judgeRequirement: test.judgeRequirement,
+      advancedConfig: test.advancedConfig,
+    },
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
   });

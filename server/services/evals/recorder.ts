@@ -9,6 +9,16 @@ export type SuiteRunRecorder = {
   suiteId: string;
   startIteration(args: {
     testCaseId?: string;
+    testCaseSnapshot?: {
+      title: string;
+      query: string;
+      provider: string;
+      model: string;
+      runs?: number;
+      expectedToolCalls: string[];
+      judgeRequirement?: string;
+      advancedConfig?: Record<string, unknown>;
+    };
     iterationNumber: number;
     startedAt: number;
   }): Promise<string | undefined>;
@@ -47,13 +57,14 @@ export const createSuiteRunRecorder = ({
   return {
     runId,
     suiteId,
-    async startIteration({ testCaseId, iterationNumber, startedAt }) {
+    async startIteration({ testCaseId, testCaseSnapshot, iterationNumber, startedAt }) {
       try {
         const response = await convexClient.mutation(
           "evals:recordSuiteIterationStart" as any,
           {
             suiteRunId: runId,
             testCaseId,
+            testCaseSnapshot,
             iterationNumber,
             startedAt,
           },
