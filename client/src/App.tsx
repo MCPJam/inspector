@@ -33,11 +33,18 @@ import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
 import "./index.css";
 import { AuthUpperArea } from "./components/auth/auth-upper-area";
 import { detectEnvironment, detectPlatform } from "./logs/PosthogUtils";
+import {
+  getInitialThemeMode,
+  updateThemeMode,
+  getInitialThemePreset,
+  updateThemePreset,
+} from "./lib/theme-utils";
 import CompletingSignInLoading from "./components/CompletingSignInLoading";
 import LoadingScreen from "./components/LoadingScreen";
 import LoginPage from "./components/LoginPage";
 import { useLoginPage } from "./hooks/use-log-in-page";
 import { Header } from "./components/Header";
+import { ThemePreset } from "./types/preferences/theme";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
@@ -57,6 +64,14 @@ export default function App() {
       is_authenticated: isAuthenticated,
     });
   }, [isAuthLoading, isAuthenticated]);
+
+  // Set the initial theme mode and preset on page load
+  const initialThemeMode = getInitialThemeMode();
+  const initialThemePreset: ThemePreset = getInitialThemePreset();
+  useEffect(() => {
+    updateThemeMode(initialThemeMode);
+    updateThemePreset(initialThemePreset);
+  }, []);
 
   // Set up Electron OAuth callback handling
   useElectronOAuth();
@@ -272,7 +287,10 @@ export default function App() {
   );
 
   return (
-    <PreferencesStoreProvider themeMode="light" themePreset="default">
+    <PreferencesStoreProvider
+      themeMode={initialThemeMode}
+      themePreset={initialThemePreset}
+    >
       <RegistryStoreProvider>
         <Toaster />
         {shouldShowLoginPage && !isOAuthCallbackComplete ? (
