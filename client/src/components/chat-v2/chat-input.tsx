@@ -8,6 +8,15 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { ModelSelector } from "./model-selector";
 import { ModelDefinition } from "@/shared/types";
 import { SystemPromptSelector } from "./system-prompt-selector";
+import {
+  Context,
+  ContextTrigger,
+  ContextContent,
+  ContextContentHeader,
+  ContextContentBody,
+  ContextInputUsage,
+  ContextOutputUsage,
+} from "./context";
 
 interface ChatInputProps {
   value: string;
@@ -28,6 +37,11 @@ interface ChatInputProps {
   onTemperatureChange: (temperature: number) => void;
   hasMessages?: boolean;
   onResetChat: () => void;
+  tokenUsage?: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+  };
 }
 
 export function ChatInput({
@@ -49,6 +63,7 @@ export function ChatInput({
   onTemperatureChange,
   onResetChat,
   hasMessages = false,
+  tokenUsage,
 }: ChatInputProps) {
   const formRef = useRef<HTMLFormElement>(null);
 
@@ -116,7 +131,27 @@ export function ChatInput({
             />
           </div>
 
-          <div className="flex items-center">
+          <div className="flex items-center gap-2">
+            {tokenUsage && tokenUsage.totalTokens > 0 && (
+              <Context
+                usedTokens={tokenUsage.totalTokens}
+                usage={{
+                  inputTokens: tokenUsage.inputTokens,
+                  outputTokens: tokenUsage.outputTokens,
+                  totalTokens: tokenUsage.totalTokens,
+                }}
+                modelId={String(currentModel.id)}
+              >
+                <ContextTrigger />
+                <ContextContent>
+                  <ContextContentHeader />
+                  <ContextContentBody>
+                      <ContextInputUsage />
+                      <ContextOutputUsage />
+                  </ContextContentBody>
+                </ContextContent>
+              </Context>
+            )}
             {isLoading ? (
               <Tooltip>
                 <TooltipTrigger asChild>

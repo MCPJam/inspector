@@ -130,7 +130,6 @@ chatV2.post("/", async (c) => {
                 tools: toolDefs,
               }),
             });
-            console.log('res', res);
 
             if (!res.ok) {
               const errorText = await res.text().catch(() => "step failed");
@@ -252,6 +251,15 @@ chatV2.post("/", async (c) => {
     });
 
     return result.toUIMessageStreamResponse({
+      messageMetadata: ({ part }) => {
+        if (part.type === "finish") {
+          return {
+            inputTokens: part.totalUsage.inputTokens,
+            outputTokens: part.totalUsage.outputTokens,
+            totalTokens: part.totalUsage.totalTokens,
+          }
+        }
+      },
       onError: (error) => {
         console.error("[mcp/chat-v2] stream error:", error);
         // Return detailed error message to be sent to the client
