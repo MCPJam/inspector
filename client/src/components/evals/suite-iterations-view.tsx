@@ -541,7 +541,14 @@ export function SuiteIterationsView({
                     vertical={false}
                     stroke="hsl(var(--muted-foreground) / 0.2)"
                   />
-                  <XAxis dataKey="runIndex" hide />
+                  <XAxis
+                    dataKey="runIndex"
+                    tickLine={false}
+                    axisLine={false}
+                    tickMargin={8}
+                    tick={{ fontSize: 12 }}
+                    label={{ value: "Run", position: "insideBottom", offset: -5, fontSize: 12 }}
+                  />
                   <YAxis domain={[0, 100]} hide />
                   <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
                   <Area
@@ -552,6 +559,7 @@ export function SuiteIterationsView({
                     fillOpacity={0.15}
                     strokeWidth={2}
                     isAnimationActive={false}
+                    dot={runTrendData.length > 1}
                   />
                 </AreaChart>
               </ChartContainer>

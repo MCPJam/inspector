@@ -1,7 +1,6 @@
 import { useMemo } from "react";
-import { Trash2 } from "lucide-react";
+import { Trash2, Loader2 } from "lucide-react";
 import type { EvalSuite, EvalSuiteOverviewEntry } from "./types";
-import { SuiteRow } from "./SuiteRow";
 import {
   ChartContainer,
   ChartTooltip,
@@ -104,6 +103,11 @@ export function SuitesOverview({
           const runsLabel =
             totals.runs === 1 ? "1 run" : `${totals.runs} runs total`;
 
+          const numberOfTestCases = suite.config?.tests?.length ?? 0;
+
+          const isRunInProgress =
+            latestRun?.status === "running" || latestRun?.status === "pending";
+
           const lastRunTimestamp =
             latestRun?.completedAt ??
             latestRun?.createdAt ??
@@ -135,9 +139,28 @@ export function SuitesOverview({
                       </p>
                     </div>
                     <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                      {isRunInProgress ? (
+                        <>
+                          <span className="flex items-center gap-1.5 text-primary font-medium">
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                            Run in progress
+                          </span>
+                          <span>•</span>
+                        </>
+                      ) : null}
                       <span>{lastRunLabel}</span>
                       <span>•</span>
                       <span>{runsLabel}</span>
+                      {numberOfTestCases > 0 ? (
+                        <>
+                          <span>•</span>
+                          <span>
+                            {numberOfTestCases === 1
+                              ? "1 test case"
+                              : `${numberOfTestCases} test cases`}
+                          </span>
+                        </>
+                      ) : null}
                       {servers.length > 0 ? (
                         <>
                           <span>•</span>
@@ -165,7 +188,13 @@ export function SuitesOverview({
                           vertical={false}
                           stroke="hsl(var(--muted-foreground) / 0.2)"
                         />
-                        <XAxis dataKey="run" hide />
+                        <XAxis
+                          dataKey="run"
+                          tickLine={false}
+                          axisLine={false}
+                          tickMargin={8}
+                          tick={{ fontSize: 12 }}
+                        />
                         <YAxis domain={[0, 100]} hide />
                         <ChartTooltip
                           cursor={false}
@@ -179,6 +208,7 @@ export function SuitesOverview({
                           fillOpacity={0.15}
                           strokeWidth={2}
                           isAnimationActive={false}
+                          dot={chartData.length > 1}
                         />
                       </AreaChart>
                     </ChartContainer>
