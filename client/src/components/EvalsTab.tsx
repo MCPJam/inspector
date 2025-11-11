@@ -363,8 +363,8 @@ export function EvalsTab() {
               {view === "run"
                 ? "Create evaluation run"
                 : selectedSuiteId
-                  ? "Evaluation results"
-                  : "Evaluation results"}
+                  ? "Test suite results"
+                  : "Test suites"}
             </h1>
           </div>
           {view === "results" && !selectedSuiteId && (

@@ -110,6 +110,8 @@ export function EvalRunner({
   const [modelTab, setModelTab] = useState<"mcpjam" | "yours">("mcpjam");
   const [suiteName, setSuiteName] = useState("");
   const [suiteDescription, setSuiteDescription] = useState("");
+  const [isEditingSuiteName, setIsEditingSuiteName] = useState(false);
+  const [editedSuiteName, setEditedSuiteName] = useState("");
 
   const connectedServers = useMemo(
     () =>
@@ -383,12 +385,37 @@ export function EvalRunner({
   const handleNext = () => {
     if (currentStep >= steps.length - 1) return;
     if (!canAdvance) return;
+    setIsEditingSuiteName(false);
     setCurrentStep((prev) => Math.min(prev + 1, steps.length - 1));
   };
 
   const handleBack = () => {
     if (currentStep === 0) return;
+    setIsEditingSuiteName(false);
     setCurrentStep((prev) => Math.max(prev - 1, 0));
+  };
+
+  const handleSuiteNameClick = () => {
+    setIsEditingSuiteName(true);
+    setEditedSuiteName(suiteName);
+  };
+
+  const handleSuiteNameBlur = () => {
+    setIsEditingSuiteName(false);
+    if (editedSuiteName.trim() && editedSuiteName !== suiteName) {
+      setSuiteName(editedSuiteName.trim());
+    } else {
+      setEditedSuiteName(suiteName);
+    }
+  };
+
+  const handleSuiteNameKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      handleSuiteNameBlur();
+    } else if (e.key === "Escape") {
+      setIsEditingSuiteName(false);
+      setEditedSuiteName(suiteName);
+    }
   };
 
   const handleSubmit = async () => {
@@ -486,6 +513,8 @@ export function EvalRunner({
       setTestCases([buildBlankTestCase(selectedModel)]);
       setSuiteName("");
       setSuiteDescription("");
+      setIsEditingSuiteName(false);
+      setEditedSuiteName("");
       setCurrentStep(3);
     } catch (error) {
       toast.error(
@@ -771,28 +800,38 @@ export function EvalRunner({
       case "review":
         return (
           <div className="space-y-6">
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-2">
-                <Label className="text-xs uppercase text-muted-foreground">
-                  Suite name
-                </Label>
-                <Input
-                  value={suiteName}
-                  onChange={(event) => setSuiteName(event.target.value)}
-                  placeholder="e.g. Workspace smoke tests"
+            <div className="space-y-4">
+              {isEditingSuiteName ? (
+                <input
+                  type="text"
+                  value={editedSuiteName}
+                  onChange={(e) => setEditedSuiteName(e.target.value)}
+                  onBlur={handleSuiteNameBlur}
+                  onKeyDown={handleSuiteNameKeyDown}
+                  autoFocus
+                  className="w-full px-3 py-2 text-lg font-semibold border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring bg-background"
+                  placeholder="New Test Suite"
                 />
-              </div>
-              <div className="space-y-2">
-                <Label className="text-xs uppercase text-muted-foreground">
-                  Description (optional)
-                </Label>
-                <Textarea
-                  value={suiteDescription}
-                  onChange={(event) => setSuiteDescription(event.target.value)}
-                  rows={3}
-                  placeholder="What does this suite cover?"
-                />
-              </div>
+              ) : (
+                <Button
+                  variant="ghost"
+                  onClick={handleSuiteNameClick}
+                  className="w-full justify-start px-3 py-2 h-auto text-lg font-semibold hover:bg-accent border border-transparent hover:border-input rounded-md"
+                >
+                  {suiteName || (
+                    <span className="text-muted-foreground">
+                      New Test Suite
+                    </span>
+                  )}
+                </Button>
+              )}
+              <Textarea
+                value={suiteDescription}
+                onChange={(event) => setSuiteDescription(event.target.value)}
+                rows={3}
+                placeholder="What does this suite cover?"
+                className="resize-none"
+              />
             </div>
             <div className="space-y-2">
               <h3 className="text-lg">Review your tests</h3>
