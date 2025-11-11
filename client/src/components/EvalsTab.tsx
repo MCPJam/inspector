@@ -1,10 +1,18 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
-import { useConvexAuth, useQuery } from "convex/react";
-import { FlaskConical, Plus, ArrowLeft } from "lucide-react";
+import { useConvexAuth, useQuery, useMutation } from "convex/react";
+import { FlaskConical, Plus, ArrowLeft, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import type {
   EvalCase,
   EvalIteration,
@@ -39,6 +47,8 @@ export function EvalsTab() {
 
   const [selectedRunFilter, setSelectedRunFilter] =
     useState<RunFilterValue>(RUN_FILTER_ALL);
+  const [deletingSuiteId, setDeletingSuiteId] = useState<string | null>(null);
+  const [suiteToDelete, setSuiteToDelete] = useState<EvalSuite | null>(null);
 
   const { availableModels } = useChat({
     systemPrompt: "",
@@ -48,6 +58,8 @@ export function EvalsTab() {
 
   const { appState } = useAppState();
   const { getToken, hasToken } = useAiProviderKeys();
+
+  const deleteSuiteMutation = useMutation("evals:deleteSuite" as any);
 
   useEffect(() => {
     posthog.capture("evals_tab_viewed", {
@@ -287,6 +299,41 @@ export function EvalsTab() {
     ],
   );
 
+  // Delete handler - opens confirmation modal
+  const handleDelete = useCallback(
+    (suite: EvalSuite) => {
+      if (deletingSuiteId) return;
+      setSuiteToDelete(suite);
+    },
+    [deletingSuiteId],
+  );
+
+  // Confirm deletion - actually performs the deletion
+  const confirmDelete = useCallback(async () => {
+    if (!suiteToDelete || deletingSuiteId) return;
+
+    setDeletingSuiteId(suiteToDelete._id);
+
+    try {
+      await deleteSuiteMutation({ suiteId: suiteToDelete._id });
+      toast.success("Test suite deleted successfully");
+
+      // If we're viewing this suite, go back to the overview
+      if (selectedSuiteId === suiteToDelete._id) {
+        setSelectedSuiteId(null);
+      }
+
+      setSuiteToDelete(null);
+    } catch (error) {
+      console.error("Failed to delete suite:", error);
+      toast.error(
+        error instanceof Error ? error.message : "Failed to delete test suite",
+      );
+    } finally {
+      setDeletingSuiteId(null);
+    }
+  }, [suiteToDelete, deletingSuiteId, deleteSuiteMutation, selectedSuiteId]);
+
   // Handle back navigation
   const handleBack = () => {
     if (view === "run") {
@@ -399,8 +446,10 @@ export function EvalsTab() {
             overview={suiteOverview || []}
             onSelectSuite={setSelectedSuiteId}
             onRerun={handleRerun}
+            onDelete={handleDelete}
             connectedServerNames={connectedServerNames}
             rerunningSuiteId={rerunningSuiteId}
+            deletingSuiteId={deletingSuiteId}
           />
         ) : isSuiteDetailsLoading ? (
           <div className="flex h-64 items-center justify-center">
@@ -426,11 +475,52 @@ export function EvalsTab() {
             aggregate={suiteAggregate}
             onBack={() => setSelectedSuiteId(null)}
             onRerun={handleRerun}
+            onDelete={handleDelete}
             connectedServerNames={connectedServerNames}
             rerunningSuiteId={rerunningSuiteId}
+            deletingSuiteId={deletingSuiteId}
           />
         )}
       </div>
+
+      {/* Delete Confirmation Modal */}
+      <Dialog open={!!suiteToDelete} onOpenChange={(open) => !open && setSuiteToDelete(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-destructive" />
+              Delete Test Suite
+            </DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete the test suite{" "}
+              <span className="font-semibold">
+                "{suiteToDelete?.name || "Untitled suite"}"
+              </span>
+              ?
+              <br />
+              <br />
+              This will permanently delete all test cases, runs, and iterations
+              associated with this suite. This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setSuiteToDelete(null)}
+              disabled={!!deletingSuiteId}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={confirmDelete}
+              disabled={!!deletingSuiteId}
+            >
+              {deletingSuiteId ? "Deleting..." : "Delete Suite"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

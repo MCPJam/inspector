@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ChevronDown, ChevronRight, Loader2, RotateCw } from "lucide-react";
+import { ChevronDown, ChevronRight, Loader2, RotateCw, Trash2 } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -51,8 +51,10 @@ export function SuiteIterationsView({
   aggregate,
   onBack,
   onRerun,
+  onDelete,
   connectedServerNames,
   rerunningSuiteId,
+  deletingSuiteId,
 }: {
   suite: EvalSuite;
   cases: EvalCase[];
@@ -67,8 +69,10 @@ export function SuiteIterationsView({
   aggregate: SuiteAggregate | null;
   onBack: () => void;
   onRerun: (suite: EvalSuite) => void;
+  onDelete: (suite: EvalSuite) => void;
   connectedServerNames: Set<string>;
   rerunningSuiteId: string | null;
+  deletingSuiteId: string | null;
 }) {
   const [openIterationId, setOpenIterationId] = useState<string | null>(null);
   const [expandedQueries, setExpandedQueries] = useState<Set<string>>(
@@ -427,35 +431,54 @@ export function SuiteIterationsView({
   const canRerun = missingServers.length === 0;
   const isRerunning = rerunningSuiteId === suite._id;
 
+  const isDeleting = deletingSuiteId === suite._id;
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <Button variant="ghost" size="sm" onClick={onBack}>
           ← Back to suites
         </Button>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span>
+        <div className="flex items-center gap-2">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onRerun(suite)}
+                  disabled={!canRerun || isRerunning}
+                  className="gap-2"
+                >
+                  <RotateCw
+                    className={`h-4 w-4 ${isRerunning ? "animate-spin" : ""}`}
+                  />
+                  Rerun
+                </Button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              {!canRerun
+                ? `Connect the following servers: ${missingServers.join(", ")}`
+                : "Rerun evaluation"}
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => onRerun(suite)}
-                disabled={!canRerun || isRerunning}
+                onClick={() => onDelete(suite)}
+                disabled={isDeleting}
                 className="gap-2"
               >
-                <RotateCw
-                  className={`h-4 w-4 ${isRerunning ? "animate-spin" : ""}`}
-                />
-                Rerun
+                <Trash2 className="h-4 w-4" />
+                {isDeleting ? "Deleting..." : "Delete"}
               </Button>
-            </span>
-          </TooltipTrigger>
-          <TooltipContent>
-            {!canRerun
-              ? `Connect the following servers: ${missingServers.join(", ")}`
-              : "Rerun evaluation"}
-          </TooltipContent>
-        </Tooltip>
+            </TooltipTrigger>
+            <TooltipContent>Delete this test suite</TooltipContent>
+          </Tooltip>
+        </div>
       </div>
 
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "results" | "tests")}>
