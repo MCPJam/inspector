@@ -1,17 +1,14 @@
 import {
   generateText,
   type ModelMessage,
-  type ToolSet,
   type Tool as AiTool,
   type ToolChoice,
 } from "ai";
 import {
-  createRunRecorderWithAuth,
-  type RunRecorder,
-  type SuiteConfig,
+  evaluateResults,
+  type EvaluationResult,
   type UsageTotals,
-} from "../../evals-cli/src/db/tests";
-import { evaluateResults } from "../../evals-cli/src/evals/evaluator";
+} from "./evals/types";
 import type { MCPClientManager } from "@/sdk";
 import { createLlmModel } from "../utils/chat-helpers";
 import {
@@ -26,6 +23,10 @@ import {
   hasUnresolvedToolCalls,
 } from "@/shared/http-tool-calls";
 import type { ConvexHttpClient } from "convex/browser";
+import {
+  createSuiteRunRecorder,
+  type SuiteRunRecorder,
+} from "./evals/recorder";
 
 export type EvalTestCase = {
   title: string;
@@ -40,19 +41,27 @@ export type EvalTestCase = {
     temperature?: number;
     toolChoice?: string;
   } & Record<string, unknown>;
+  testCaseId?: string;
 };
 
 export type RunEvalSuiteOptions = {
-  tests: EvalTestCase[];
-  serverIds: string[];
+  suiteId: string;
+  runId: string;
+  config: {
+    tests: EvalTestCase[];
+    environment: { servers: string[] };
+  };
   modelApiKey?: string | null;
   convexClient: ConvexHttpClient;
   convexHttpUrl: string;
   convexAuthToken: string;
   mcpClientManager: MCPClientManager;
+  recorder?: SuiteRunRecorder;
 };
 
 const MAX_STEPS = 20;
+
+type ToolSet = Record<string, any>;
 
 const extractToolNames = (toolCalls: Array<{ toolName?: string }> = []) => {
   return toolCalls
@@ -64,7 +73,7 @@ type RunIterationBaseParams = {
   test: EvalTestCase;
   runIndex: number;
   tools: ToolSet;
-  recorder: RunRecorder;
+  recorder: SuiteRunRecorder;
   testCaseId?: string;
 };
 
@@ -102,7 +111,7 @@ const runIterationWithAiSdk = async ({
 
   const runStartedAt = Date.now();
   const iterationId = await recorder.startIteration({
-    testCaseId,
+    testCaseId: test.testCaseId ?? testCaseId,
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
   });
@@ -144,6 +153,8 @@ const runIterationWithAiSdk = async ({
       toolsCalled,
       usage,
       messages: finalMessages,
+      status: 'completed',
+      startedAt: runStartedAt,
     });
 
     return evaluation;
@@ -159,6 +170,8 @@ const runIterationWithAiSdk = async ({
         totalTokens: undefined,
       },
       messages: baseMessages,
+      status: 'failed',
+      startedAt: runStartedAt,
     });
     return evaluateResults(expectedToolCalls, []);
   }
@@ -185,7 +198,7 @@ const runIterationViaBackend = async ({
   const toolsCalled: string[] = [];
   const runStartedAt = Date.now();
   const iterationId = await recorder.startIteration({
-    testCaseId,
+    testCaseId: test.testCaseId ?? testCaseId,
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
   });
@@ -311,6 +324,8 @@ const runIterationViaBackend = async ({
       totalTokens: undefined,
     },
     messages: messageHistory,
+    status: 'completed',
+    startedAt: runStartedAt,
   });
 
   return evaluation;
@@ -318,29 +333,23 @@ const runIterationViaBackend = async ({
 
 const runTestCase = async (params: {
   test: EvalTestCase;
-  index: number;
   tools: ToolSet;
-  recorder: RunRecorder;
+  recorder: SuiteRunRecorder;
   modelApiKey?: string | null;
   convexHttpUrl: string;
   convexAuthToken: string;
 }) => {
-  const {
-    test,
-    index,
-    tools,
-    recorder,
-    modelApiKey,
-    convexHttpUrl,
-    convexAuthToken,
-  } = params;
-  const testCaseId = await recorder.recordTestCase(test, index + 1);
+  const { test, tools, recorder, modelApiKey, convexHttpUrl, convexAuthToken } =
+    params;
+  const testCaseId = test.testCaseId;
   const modelDefinition = buildModelDefinition(test);
   const isJamModel = isMCPJamProvidedModel(String(modelDefinition.id));
 
+  const evaluations: EvaluationResult[] = [];
+
   for (let runIndex = 0; runIndex < test.runs; runIndex++) {
     if (isJamModel) {
-      await runIterationViaBackend({
+      const evaluation = await runIterationViaBackend({
         test,
         runIndex,
         tools,
@@ -349,6 +358,7 @@ const runTestCase = async (params: {
         convexHttpUrl,
         convexAuthToken,
       });
+      evaluations.push(evaluation);
       continue;
     }
 
@@ -358,7 +368,7 @@ const runTestCase = async (params: {
       );
     }
 
-    await runIterationWithAiSdk({
+    const evaluation = await runIterationWithAiSdk({
       test,
       runIndex,
       tools,
@@ -367,42 +377,96 @@ const runTestCase = async (params: {
       modelDefinition,
       apiKey: modelApiKey,
     });
+    evaluations.push(evaluation);
   }
+
+  return evaluations;
 };
 
 export const runEvalSuiteWithAiSdk = async ({
-  tests,
-  serverIds,
+  suiteId,
+  runId,
+  config,
   modelApiKey,
   convexClient,
   convexHttpUrl,
   convexAuthToken,
   mcpClientManager,
+  recorder: providedRecorder,
 }: RunEvalSuiteOptions) => {
+  const tests = config.tests ?? [];
+  const serverIds = config.environment?.servers ?? [];
+
   if (!tests.length) {
     throw new Error("No tests supplied for eval run");
   }
 
-  const suiteConfig: SuiteConfig = {
-    tests,
-    environment: { servers: serverIds },
-  };
+  const recorder =
+    providedRecorder ??
+    createSuiteRunRecorder({
+      convexClient,
+      suiteId,
+      runId,
+    });
 
-  const recorder = createRunRecorderWithAuth(convexClient, suiteConfig);
   const tools = (await mcpClientManager.getToolsForAiSdk(serverIds)) as ToolSet;
 
-  await recorder.ensureSuite();
+  const summary = {
+    total: 0,
+    passed: 0,
+    failed: 0,
+  };
 
-  for (let i = 0; i < tests.length; i++) {
-    const test = tests[i];
-    await runTestCase({
-      test,
-      index: i,
-      tools,
-      recorder,
-      modelApiKey,
-      convexHttpUrl,
-      convexAuthToken,
+  try {
+    for (const test of tests) {
+      const evaluations = await runTestCase({
+        test,
+        tools,
+        recorder,
+        modelApiKey,
+        convexHttpUrl,
+        convexAuthToken,
+      });
+
+      for (const evaluation of evaluations) {
+        summary.total += 1;
+        if (evaluation.passed) {
+          summary.passed += 1;
+        } else {
+          summary.failed += 1;
+        }
+      }
+    }
+
+    const passRate =
+      summary.total > 0 ? summary.passed / summary.total : 0;
+
+    await recorder.finalize({
+      status: "completed",
+      summary: {
+        total: summary.total,
+        passed: summary.passed,
+        failed: summary.failed,
+        passRate,
+      },
     });
+  } catch (error) {
+    const passRate =
+      summary.total > 0 ? summary.passed / summary.total : 0;
+
+    await recorder.finalize({
+      status: "failed",
+      summary:
+        summary.total > 0
+          ? {
+              total: summary.total,
+              passed: summary.passed,
+              failed: summary.failed,
+              passRate,
+            }
+          : undefined,
+    });
+
+    throw error;
   }
 };

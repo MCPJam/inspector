@@ -5,7 +5,13 @@ import { FlaskConical, Plus, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import type { EvalCase, EvalIteration, EvalSuite } from "./evals/types";
+import type {
+  EvalCase,
+  EvalIteration,
+  EvalSuite,
+  EvalSuiteOverviewEntry,
+  EvalSuiteRun,
+} from "./evals/types";
 import { aggregateSuite } from "./evals/helpers";
 import { SuitesOverview } from "./evals/suites-overview";
 import { SuiteIterationsView } from "./evals/suite-iterations-view";
@@ -19,6 +25,7 @@ import {
 import { isMCPJamProvidedModel } from "@/shared/types";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import posthog from "posthog-js";
+import { RUN_FILTER_ALL, RUN_FILTER_LEGACY, type RunFilterValue } from "./evals/constants";
 
 type View = "results" | "run";
 
@@ -29,6 +36,9 @@ export function EvalsTab() {
   const [view, setView] = useState<View>("results");
   const [selectedSuiteId, setSelectedSuiteId] = useState<string | null>(null);
   const [rerunningSuiteId, setRerunningSuiteId] = useState<string | null>(null);
+
+  const [selectedRunFilter, setSelectedRunFilter] =
+    useState<RunFilterValue>(RUN_FILTER_ALL);
 
   const { availableModels } = useChat({
     systemPrompt: "",
@@ -47,6 +57,10 @@ export function EvalsTab() {
     });
   }, []);
 
+  useEffect(() => {
+    setSelectedRunFilter(RUN_FILTER_ALL);
+  }, [selectedSuiteId]);
+
   // Get connected server names
   const connectedServerNames = useMemo(
     () =>
@@ -59,15 +73,10 @@ export function EvalsTab() {
   );
 
   const enableOverviewQuery = isAuthenticated && !!user;
-  const overviewData = useQuery(
-    "evals:getCurrentUserEvalTestSuitesWithMetadata" as any,
+  const suiteOverview = useQuery(
+    "evals:getSuiteOverview" as any,
     enableOverviewQuery ? ({} as any) : "skip",
-  ) as unknown as
-    | {
-        testSuites: EvalSuite[];
-        metadata: { iterationsPassed: number; iterationsFailed: number };
-      }
-    | undefined;
+  ) as EvalSuiteOverviewEntry[] | undefined;
 
   const enableSuiteDetailsQuery =
     isAuthenticated && !!user && !!selectedSuiteId;
@@ -78,31 +87,108 @@ export function EvalsTab() {
     | { testCases: EvalCase[]; iterations: EvalIteration[] }
     | undefined;
 
-  const suites = overviewData?.testSuites;
-  const isOverviewLoading = overviewData === undefined;
+  const suiteRuns = useQuery(
+    "evals:getSuiteRuns" as any,
+    enableSuiteDetailsQuery
+      ? ({ suiteId: selectedSuiteId, limit: 20 } as any)
+      : "skip",
+  ) as EvalSuiteRun[] | undefined;
+
+  const isOverviewLoading = suiteOverview === undefined;
   const isSuiteDetailsLoading =
     enableSuiteDetailsQuery && suiteDetails === undefined;
 
-  const selectedSuite = useMemo(() => {
-    if (!selectedSuiteId || !suites) return null;
-    return suites.find((suite) => suite._id === selectedSuiteId) ?? null;
-  }, [selectedSuiteId, suites]);
+  const isSuiteRunsLoading =
+    enableSuiteDetailsQuery && suiteRuns === undefined;
 
-  const iterationsForSelectedSuite = useMemo(() => {
+  const selectedSuiteEntry = useMemo(() => {
+    if (!selectedSuiteId || !suiteOverview) return null;
+    return (
+      suiteOverview.find((entry) => entry.suite._id === selectedSuiteId) ?? null
+    );
+  }, [selectedSuiteId, suiteOverview]);
+
+  const selectedSuite = selectedSuiteEntry?.suite ?? null;
+
+  const sortedIterations = useMemo(() => {
     if (!suiteDetails) return [];
     return [...suiteDetails.iterations].sort(
       (a, b) => (b.startedAt || b.createdAt) - (a.startedAt || a.createdAt),
     );
   }, [suiteDetails]);
 
+  const legacyIterations = useMemo(
+    () => sortedIterations.filter((iteration) => !iteration.suiteRunId),
+    [sortedIterations],
+  );
+
+  const filteredIterations = useMemo(() => {
+    if (selectedRunFilter === RUN_FILTER_ALL) {
+      return sortedIterations;
+    }
+    if (selectedRunFilter === RUN_FILTER_LEGACY) {
+      return legacyIterations;
+    }
+    return sortedIterations.filter(
+      (iteration) => iteration.suiteRunId === selectedRunFilter,
+    );
+  }, [selectedRunFilter, sortedIterations, legacyIterations]);
+
+  const runsForSelectedSuite = useMemo(
+    () => (suiteRuns ? [...suiteRuns] : []),
+    [suiteRuns],
+  );
+
+  const selectedRun =
+    selectedRunFilter !== RUN_FILTER_ALL &&
+    selectedRunFilter !== RUN_FILTER_LEGACY
+      ? runsForSelectedSuite.find((run) => run._id === selectedRunFilter) ?? null
+      : null;
+
   const suiteAggregate = useMemo(() => {
     if (!selectedSuite || !suiteDetails) return null;
     return aggregateSuite(
       selectedSuite,
       suiteDetails.testCases,
-      suiteDetails.iterations,
+      filteredIterations,
     );
-  }, [selectedSuite, suiteDetails]);
+  }, [selectedSuite, suiteDetails, filteredIterations]);
+
+  useEffect(() => {
+    setSelectedRunFilter((current) => {
+      if (current === RUN_FILTER_LEGACY) {
+        if (legacyIterations.length > 0) {
+          return current;
+        }
+        if (runsForSelectedSuite.length > 0) {
+          return runsForSelectedSuite[0]._id;
+        }
+        return RUN_FILTER_ALL;
+      }
+
+      if (current === RUN_FILTER_ALL) {
+        return current;
+      }
+
+      const runExists = runsForSelectedSuite.some(
+        (run) => run._id === current,
+      );
+
+      if (runExists) {
+        return current;
+      }
+
+      if (runsForSelectedSuite.length > 0) {
+        return runsForSelectedSuite[0]._id;
+      }
+
+      if (legacyIterations.length > 0) {
+        return RUN_FILTER_LEGACY;
+      }
+
+      return RUN_FILTER_ALL;
+    });
+  }, [runsForSelectedSuite, legacyIterations.length]);
 
   // Rerun handler
   const handleRerun = useCallback(
@@ -156,19 +242,21 @@ export function EvalsTab() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            suiteId: suite._id,
+            suiteName: suite.name,
+            suiteDescription: suite.description,
             tests: tests.map((test) => ({
               title: test.title,
               query: test.query,
-              runs: 1, // Default to 1 run for rerun
+              runs: test.runs ?? 1,
               model: test.model,
               provider: test.provider,
               expectedToolCalls: test.expectedToolCalls,
+              judgeRequirement: test.judgeRequirement,
+              advancedConfig: test.advancedConfig,
             })),
             serverIds: suiteServers,
-            llmConfig: {
-              provider,
-              apiKey: currentModelIsJam ? "router" : apiKey || "router",
-            },
+            modelApiKey: currentModelIsJam ? null : apiKey || null,
             convexAuthToken: accessToken,
           }),
         });
@@ -293,7 +381,7 @@ export function EvalsTab() {
               size="sm"
             >
               <Plus className="h-4 w-4" />
-              Create new run
+              Create new test suite
             </Button>
           )}
         </div>
@@ -308,7 +396,7 @@ export function EvalsTab() {
           />
         ) : !selectedSuite ? (
           <SuitesOverview
-            suites={suites || []}
+            overview={suiteOverview || []}
             onSelectSuite={setSelectedSuiteId}
             onRerun={handleRerun}
             connectedServerNames={connectedServerNames}
@@ -327,7 +415,14 @@ export function EvalsTab() {
           <SuiteIterationsView
             suite={selectedSuite}
             cases={suiteDetails?.testCases || []}
-            iterations={iterationsForSelectedSuite}
+            iterations={filteredIterations}
+            allIterations={sortedIterations}
+            legacyIterations={legacyIterations}
+            runs={runsForSelectedSuite}
+            runFilter={selectedRunFilter}
+            onRunFilterChange={setSelectedRunFilter}
+            selectedRun={selectedRun}
+            runsLoading={isSuiteRunsLoading}
             aggregate={suiteAggregate}
             onBack={() => setSelectedSuiteId(null)}
             onRerun={handleRerun}

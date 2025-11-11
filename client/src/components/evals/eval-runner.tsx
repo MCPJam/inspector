@@ -1,13 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import {
-  AlertCircle,
-  ChevronLeft,
-  ChevronRight,
-  Info,
-  Plus,
-  Sparkles,
-  X,
-} from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
@@ -30,7 +22,6 @@ import {
   useAiProviderKeys,
   type ProviderTokens,
 } from "@/hooks/use-ai-provider-keys";
-import { ModelSelector } from "@/components/chat/model-selector";
 import { cn } from "@/lib/utils";
 import { ModelDefinition, isMCPJamProvidedModel } from "@/shared/types";
 import { ServerSelectionCard } from "./ServerSelectionCard";
@@ -117,6 +108,8 @@ export function EvalRunner({
     buildBlankTestCase(null),
   ]);
   const [modelTab, setModelTab] = useState<"mcpjam" | "yours">("mcpjam");
+  const [suiteName, setSuiteName] = useState("");
+  const [suiteDescription, setSuiteDescription] = useState("");
 
   const connectedServers = useMemo(
     () =>
@@ -207,7 +200,7 @@ export function EvalRunner({
   useEffect(() => {
     setTestCases((prev) => {
       if (!selectedModel) return prev;
-      return prev.map((testCase, index) => {
+      return prev.map((testCase) => {
         if (
           testCase.model === selectedModel.id &&
           testCase.provider === selectedModel.provider
@@ -436,6 +429,12 @@ export function EvalRunner({
       return;
     }
 
+    if (!suiteName.trim()) {
+      toast.error("Please provide a name for this test suite");
+      setCurrentStep(3);
+      return;
+    }
+
     // Switch view immediately before starting the API call
     if (!inline) {
       setOpen(false);
@@ -462,6 +461,8 @@ export function EvalRunner({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          suiteName: suiteName.trim(),
+          suiteDescription: suiteDescription.trim() || undefined,
           tests: testsWithModelInfo,
           serverIds: selectedServers,
           modelApiKey,
@@ -483,6 +484,8 @@ export function EvalRunner({
       const result = await response.json();
       toast.success(result.message || "Evals started successfully!");
       setTestCases([buildBlankTestCase(selectedModel)]);
+      setSuiteName("");
+      setSuiteDescription("");
       setCurrentStep(3);
     } catch (error) {
       toast.error(
@@ -768,6 +771,29 @@ export function EvalRunner({
       case "review":
         return (
           <div className="space-y-6">
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label className="text-xs uppercase text-muted-foreground">
+                  Suite name
+                </Label>
+                <Input
+                  value={suiteName}
+                  onChange={(event) => setSuiteName(event.target.value)}
+                  placeholder="e.g. Workspace smoke tests"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs uppercase text-muted-foreground">
+                  Description (optional)
+                </Label>
+                <Textarea
+                  value={suiteDescription}
+                  onChange={(event) => setSuiteDescription(event.target.value)}
+                  rows={3}
+                  placeholder="What does this suite cover?"
+                />
+              </div>
+            </div>
             <div className="space-y-2">
               <h3 className="text-lg">Review your tests</h3>
               <p className="text-sm text-muted-foreground">
