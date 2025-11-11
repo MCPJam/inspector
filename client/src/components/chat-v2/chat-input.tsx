@@ -146,8 +146,8 @@ export function ChatInput({
                 <ContextContent>
                   <ContextContentHeader />
                   <ContextContentBody>
-                      <ContextInputUsage />
-                      <ContextOutputUsage />
+                    <ContextInputUsage />
+                    <ContextOutputUsage />
                   </ContextContentBody>
                 </ContextContent>
               </Context>
