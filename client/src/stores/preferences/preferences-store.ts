@@ -9,8 +9,8 @@ export type PreferencesState = {
   setThemePreset: (preset: ThemePreset) => void;
 };
 
-const THEME_MODE_KEY = "themeMode";
-const THEME_PRESET_KEY = "themePreset";
+export const THEME_MODE_KEY = "themeMode";
+export const THEME_PRESET_KEY = "themePreset";
 
 export const createPreferencesStore = (init?: Partial<PreferencesState>) =>
   createStore<PreferencesState>()((set) => ({

@@ -1,4 +1,8 @@
 import {
+  THEME_MODE_KEY,
+  THEME_PRESET_KEY,
+} from "@/stores/preferences/preferences-store";
+import {
   THEME_PRESET_OPTIONS,
   ThemeMode,
   ThemePreset,
@@ -6,8 +10,12 @@ import {
 
 // Utility to get the initial theme mode from localStorage or fallback to 'light'.
 export function getInitialThemeMode(): ThemeMode {
-  const stored = localStorage.getItem("themeMode");
-  if (stored === "dark" || stored === "light") return stored;
+  try {
+    const stored = localStorage.getItem(THEME_MODE_KEY);
+    if (stored === "dark" || stored === "light") return stored;
+  } catch (error) {
+    console.warn("Cannot access localStorage for theme mode:", error);
+  }
   return "light";
 }
 
@@ -22,10 +30,14 @@ export function updateThemeMode(value: ThemeMode) {
 
 // Utility to get the initial theme preset from localStorage or fallback to 'default'.
 export function getInitialThemePreset(): ThemePreset {
-  const stored = localStorage.getItem("themePreset");
-  const validPresets = THEME_PRESET_OPTIONS.map((p) => p.value);
-  if (stored && validPresets.includes(stored as ThemePreset)) {
-    return stored as ThemePreset;
+  try {
+    const stored = localStorage.getItem(THEME_PRESET_KEY);
+    const validPresets = THEME_PRESET_OPTIONS.map((p) => p.value);
+    if (stored && validPresets.includes(stored as ThemePreset)) {
+      return stored as ThemePreset;
+    }
+  } catch (error) {
+    console.warn("Cannot access localStorage for theme preset:", error);
   }
   return "default";
 }
