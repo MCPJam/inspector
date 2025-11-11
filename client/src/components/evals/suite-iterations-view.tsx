@@ -107,7 +107,7 @@ export function SuiteIterationsView({
         value: RUN_FILTER_ALL,
         label:
           runs.length > 0
-            ? `All runs (${totalIterations})`
+            ? `All runs (${runs.length})`
             : `All iterations (${totalIterations})`,
       });
 
