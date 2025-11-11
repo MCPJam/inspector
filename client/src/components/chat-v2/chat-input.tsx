@@ -16,6 +16,7 @@ import {
   ContextContentBody,
   ContextInputUsage,
   ContextOutputUsage,
+  ContextMCPServerUsage,
 } from "./context";
 
 interface ChatInputProps {
@@ -42,6 +43,10 @@ interface ChatInputProps {
     outputTokens: number;
     totalTokens: number;
   };
+  selectedServers?: string[];
+  mcpToolsTokenCount?: Record<string, number> | null;
+  mcpToolsTokenCountLoading?: boolean;
+  connectedServerConfigs?: Record<string, { name: string }>;
 }
 
 export function ChatInput({
@@ -64,6 +69,10 @@ export function ChatInput({
   onResetChat,
   hasMessages = false,
   tokenUsage,
+  selectedServers,
+  mcpToolsTokenCount,
+  mcpToolsTokenCountLoading = false,
+  connectedServerConfigs,
 }: ChatInputProps) {
   const formRef = useRef<HTMLFormElement>(null);
 
@@ -132,26 +141,40 @@ export function ChatInput({
           </div>
 
           <div className="flex items-center gap-2">
-            {tokenUsage && tokenUsage.totalTokens > 0 && (
-              <Context
-                usedTokens={tokenUsage.totalTokens}
-                usage={{
-                  inputTokens: tokenUsage.inputTokens,
-                  outputTokens: tokenUsage.outputTokens,
-                  totalTokens: tokenUsage.totalTokens,
-                }}
-                modelId={String(currentModel.id)}
-              >
-                <ContextTrigger />
-                <ContextContent>
+            <Context
+              usedTokens={tokenUsage?.totalTokens ?? 0}
+              usage={
+                tokenUsage && tokenUsage.totalTokens > 0
+                  ? {
+                      inputTokens: tokenUsage.inputTokens,
+                      outputTokens: tokenUsage.outputTokens,
+                      totalTokens: tokenUsage.totalTokens,
+                    }
+                  : undefined
+              }
+              modelId={`${currentModel.provider}/${currentModel.id}`}
+              selectedServers={selectedServers}
+              mcpToolsTokenCount={mcpToolsTokenCount}
+              mcpToolsTokenCountLoading={mcpToolsTokenCountLoading}
+              connectedServerConfigs={connectedServerConfigs}
+              hasMessages={hasMessages}
+            >
+              <ContextTrigger />
+              <ContextContent>
+                {hasMessages && tokenUsage && tokenUsage.totalTokens > 0 && (
                   <ContextContentHeader />
-                  <ContextContentBody>
-                    <ContextInputUsage />
-                    <ContextOutputUsage />
-                  </ContextContentBody>
-                </ContextContent>
-              </Context>
-            )}
+                )}
+                <ContextContentBody>
+                  {hasMessages && tokenUsage && tokenUsage.totalTokens > 0 && (
+                    <>
+                      <ContextInputUsage />
+                      <ContextOutputUsage />
+                    </>
+                  )}
+                  <ContextMCPServerUsage />
+                </ContextContentBody>
+              </ContextContent>
+            </Context>
             {isLoading ? (
               <Tooltip>
                 <TooltipTrigger asChild>

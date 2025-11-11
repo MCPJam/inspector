@@ -7,12 +7,14 @@ import {
   HoverCardTrigger,
 } from "../ui/hover-card";
 import { Progress } from "../ui/progress";
+import { Separator } from "../ui/separator";
 import { cn } from "../../lib/utils";
 import type { LanguageModelUsage } from "ai";
 import { type ComponentProps, createContext, useContext } from "react";
 import { getContext, getUsage } from "tokenlens";
 import { useModelMetadata } from "@/hooks/use-model-metadata";
 import { isMCPJamProvidedModel } from "@/shared/types";
+import { Loader2 } from "lucide-react";
 
 const PERCENT_MAX = 100;
 const ICON_RADIUS = 10;
@@ -27,6 +29,10 @@ type ContextSchema = {
   maxTokens: number;
   usage?: LanguageModelUsage;
   modelId: ModelId;
+  selectedServers?: string[];
+  mcpToolsTokenCount?: Record<string, number> | null;
+  mcpToolsTokenCountLoading?: boolean;
+  connectedServerConfigs?: Record<string, { name: string }>;
 };
 
 const ContextContext = createContext<ContextSchema | null>(null);
@@ -45,12 +51,21 @@ export type ContextProps = ComponentProps<typeof HoverCard> & {
   usedTokens: number;
   usage?: LanguageModelUsage;
   modelId: ModelId;
+  selectedServers?: string[];
+  mcpToolsTokenCount?: Record<string, number> | null;
+  mcpToolsTokenCountLoading?: boolean;
+  connectedServerConfigs?: Record<string, { name: string }>;
+  hasMessages?: boolean;
 };
 
 export const Context = ({
   usedTokens,
   usage,
   modelId,
+  selectedServers,
+  mcpToolsTokenCount,
+  mcpToolsTokenCountLoading = false,
+  connectedServerConfigs,
   ...props
 }: ContextProps) => {
   const { models: metadataModels } = useModelMetadata();
@@ -81,6 +96,10 @@ export const Context = ({
         maxTokens: derivedMaxTokens,
         usage,
         modelId,
+        selectedServers,
+        mcpToolsTokenCount,
+        mcpToolsTokenCountLoading,
+        connectedServerConfigs,
       }}
     >
       <HoverCard closeDelay={0} openDelay={0} {...props} />
@@ -132,10 +151,20 @@ const ContextIcon = () => {
 export type ContextTriggerProps = ComponentProps<typeof Button>;
 
 export const ContextTrigger = ({ children, ...props }: ContextTriggerProps) => {
+  const { usedTokens, maxTokens } = useContextValue();
+  const usedPercent = usedTokens / maxTokens;
+  const displayPct = new Intl.NumberFormat("en-US", {
+    style: "percent",
+    maximumFractionDigits: 1,
+  }).format(usedPercent);
+
   return (
     <HoverCardTrigger asChild>
       {children ?? (
         <Button type="button" variant="ghost" {...props}>
+          <span className="text-xs text-muted-foreground mr-1.5">
+            {displayPct}
+          </span>
           <ContextIcon />
         </Button>
       )}
@@ -279,6 +308,100 @@ export const ContextOutputUsage = ({
       <span className="text-muted-foreground">Output</span>
       <TokensWithCost costUSD={outputCost} tokens={outputTokens} />
     </div>
+  );
+};
+
+export type ContextMCPServerUsageProps = ComponentProps<"div">;
+
+export const ContextMCPServerUsage = ({
+  className,
+  children,
+  ...props
+}: ContextMCPServerUsageProps) => {
+  const {
+    mcpToolsTokenCount,
+    mcpToolsTokenCountLoading,
+    selectedServers,
+    connectedServerConfigs,
+    usage,
+  } = useContextValue();
+
+  if (children) {
+    return children;
+  }
+
+  // Don't show if no servers selected
+  if (!selectedServers || selectedServers.length === 0) {
+    return null;
+  }
+
+  // Show loading spinner if loading
+  if (mcpToolsTokenCountLoading) {
+    const hasInputOrOutput =
+      (usage?.inputTokens ?? 0) > 0 || (usage?.outputTokens ?? 0) > 0;
+    return (
+      <>
+        {hasInputOrOutput && <Separator className="my-2" />}
+        <div className="space-y-1">
+          <div className="text-xs text-muted-foreground">MCP Tools</div>
+          <div
+            className={cn(
+              "flex items-center justify-between text-xs",
+              className,
+            )}
+            {...props}
+          >
+            <span className="text-muted-foreground">Counting tokens...</span>
+            <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  // Don't show if no token counts
+  if (!mcpToolsTokenCount || Object.keys(mcpToolsTokenCount).length === 0) {
+    return null;
+  }
+
+  // Filter out servers with 0 tokens and sort by server name
+  const serversWithTokens = selectedServers
+    .filter((serverId) => (mcpToolsTokenCount[serverId] ?? 0) > 0)
+    .map((serverId) => ({
+      serverId,
+      name: connectedServerConfigs?.[serverId]?.name || serverId,
+      tokenCount: mcpToolsTokenCount[serverId] ?? 0,
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  if (serversWithTokens.length === 0) {
+    return null;
+  }
+
+  // Check if there's input or output usage to show separator
+  const hasInputOrOutput =
+    (usage?.inputTokens ?? 0) > 0 || (usage?.outputTokens ?? 0) > 0;
+
+  return (
+    <>
+      {hasInputOrOutput && <Separator className="my-2" />}
+      <div className="space-y-1">
+        <div className="text-xs text-muted-foreground">MCP Tools</div>
+        {serversWithTokens.map(({ serverId, name, tokenCount }) => (
+          <div
+            key={serverId}
+            className={cn(
+              "flex items-center justify-between text-xs",
+              className,
+            )}
+            {...props}
+          >
+            <span className="text-muted-foreground">{name}</span>
+            <TokensWithCost tokens={tokenCount} />
+          </div>
+        ))}
+      </div>
+    </>
   );
 };
 
