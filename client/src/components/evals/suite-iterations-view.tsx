@@ -549,7 +549,14 @@ export function SuiteIterationsView({
                     tick={{ fontSize: 12 }}
                     label={{ value: "Run", position: "insideBottom", offset: -5, fontSize: 12 }}
                   />
-                  <YAxis domain={[0, 100]} hide />
+                  <YAxis
+                    domain={[0, 100]}
+                    tickLine={false}
+                    axisLine={false}
+                    tickMargin={8}
+                    tick={{ fontSize: 12 }}
+                    tickFormatter={(value) => `${value}%`}
+                  />
                   <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
                   <Area
                     type="monotone"
