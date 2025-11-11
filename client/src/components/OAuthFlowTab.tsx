@@ -43,6 +43,8 @@ import {
   ResizablePanelGroup,
 } from "./ui/resizable";
 import { EditServerModal } from "./connection/EditServerModal";
+import posthog from "posthog-js";
+import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 
 interface StatusMessageProps {
   message: StatusMessage;
@@ -547,6 +549,14 @@ export const OAuthFlowTab = ({
   // Only HTTP servers support OAuth (STDIO servers use process-based auth)
   const supportsOAuth = isHttpServer;
 
+  useEffect(() => {
+    posthog.capture("oauth_flow_tab_viewed", {
+      location: "oauth_flow_tab",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+    });
+  }, []);
+
   if (!serverConfig) {
     return (
       <EmptyState
@@ -774,6 +784,14 @@ export const OAuthFlowTab = ({
               <Button
                 onClick={async () => {
                   // If we're about to do authorization or already at it, handle the modal
+                  posthog.capture("oauth_flow_tab_next_step_button_clicked", {
+                    location: "oauth_flow_tab",
+                    platform: detectPlatform(),
+                    environment: detectEnvironment(),
+                    currentStep: oauthFlowState.currentStep,
+                    protocolVersion: protocolVersion,
+                    registrationStrategy: registrationStrategy,
+                  });
                   if (
                     oauthFlowState.currentStep === "authorization_request" ||
                     oauthFlowState.currentStep === "generate_pkce_parameters"
