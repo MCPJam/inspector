@@ -46,6 +46,7 @@ import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import { ErrorBox } from "@/components/chat-v2/error";
 import { usePersistedModel } from "@/hooks/use-persisted-model";
+import { countMCPToolsTokens } from "@/lib/mcp-tokenizer-api";
 
 const DEFAULT_SYSTEM_PROMPT =
   "You are a helpful assistant with access to MCP tools.";
@@ -110,6 +111,12 @@ export function ChatTabV2({
     Record<string, Record<string, any>>
   >({});
   const [toolServerMap, setToolServerMap] = useState<ToolServerMap>({});
+  const [mcpToolsTokenCount, setMcpToolsTokenCount] = useState<Record<
+    string,
+    number
+  > | null>(null);
+  const [mcpToolsTokenCountLoading, setMcpToolsTokenCountLoading] =
+    useState(false);
   const availableModels = useMemo(() => {
     return buildAvailableModels({
       hasToken,
@@ -359,6 +366,39 @@ export function ChatTabV2({
     fetchToolsMetadata();
   }, [selectedConnectedServerNames]);
 
+  useEffect(() => {
+    const fetchMcpToolsTokenCount = async () => {
+      if (
+        selectedConnectedServerNames.length === 0 ||
+        !selectedModel?.id ||
+        !selectedModel?.provider
+      ) {
+        setMcpToolsTokenCount(null);
+        setMcpToolsTokenCountLoading(false);
+        return;
+      }
+
+      setMcpToolsTokenCountLoading(true);
+      try {
+        const modelId = isMCPJamProvidedModel(String(selectedModel.id))
+          ? String(selectedModel.id)
+          : `${selectedModel.provider}/${selectedModel.id}`;
+        const counts = await countMCPToolsTokens(
+          selectedConnectedServerNames,
+          modelId,
+        );
+        setMcpToolsTokenCount(counts);
+      } catch (error) {
+        console.warn("[ChatTabV2] Failed to count MCP tools tokens:", error);
+        setMcpToolsTokenCount(null);
+      } finally {
+        setMcpToolsTokenCountLoading(false);
+      }
+    };
+
+    fetchMcpToolsTokenCount();
+  }, [selectedConnectedServerNames, selectedModel]);
+
   const disableForAuthentication = !isAuthenticated && isMcpJamModel;
   const disableForServers = noServersConnected;
   const isStreaming = status === "streaming" || status === "submitted";
@@ -450,6 +490,10 @@ export function ChatTabV2({
     onResetChat: resetChat,
     submitDisabled: submitBlocked,
     tokenUsage,
+    selectedServers: selectedConnectedServerNames,
+    mcpToolsTokenCount,
+    mcpToolsTokenCountLoading,
+    connectedServerConfigs,
   };
 
   const showStarterPrompts =
