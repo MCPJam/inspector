@@ -514,10 +514,10 @@ export class MCPClientManager {
     const mergedOptions = this.withTimeout(serverId, options);
     if (!mergedOptions.onprogress) {
       mergedOptions.onprogress = () => {
-		// register an empty on progress so that the client will send
-		// progress notifications...the notifications will be sent through the
-		// rpc logger
-	  };
+        // register an empty on progress so that the client will send
+        // progress notifications...the notifications will be sent through the
+        // rpc logger
+      };
     }
 
     return client.callTool(
@@ -559,14 +559,14 @@ export class MCPClientManager {
   ) {
     await this.ensureConnected(serverId);
     const client = this.getClientById(serverId);
-	 // Merge global progress handler with any provided options
+    // Merge global progress handler with any provided options
     const mergedOptions = this.withTimeout(serverId, options);
     if (!mergedOptions.onprogress) {
       mergedOptions.onprogress = () => {
-		// register an empty on progress so that the client will send
-		// progress notifications...the notifications will be sent through the
-		// rpc logger
-	  };
+        // register an empty on progress so that the client will send
+        // progress notifications...the notifications will be sent through the
+        // rpc logger
+      };
     }
     return client.readResource(params, mergedOptions);
   }
@@ -639,14 +639,14 @@ export class MCPClientManager {
   ) {
     await this.ensureConnected(serverId);
     const client = this.getClientById(serverId);
-	 // Merge global progress handler with any provided options
+    // Merge global progress handler with any provided options
     const mergedOptions = this.withTimeout(serverId, options);
     if (!mergedOptions.onprogress) {
       mergedOptions.onprogress = () => {
-		// register an empty on progress so that the client will send
-		// progress notifications...the notifications will be sent through the
-		// rpc logger
-	  };
+        // register an empty on progress so that the client will send
+        // progress notifications...the notifications will be sent through the
+        // rpc logger
+      };
     }
     return client.getPrompt(params, mergedOptions);
   }
