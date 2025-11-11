@@ -21,7 +21,10 @@ interface ModelCardProps {
 /**
  * Format large numbers with K/M/B suffix
  */
-function formatNumber(num: number): string {
+function formatNumber(num: number | null | undefined): string {
+  if (num == null || isNaN(num)) {
+    return "N/A";
+  }
   if (num >= 1_000_000_000) {
     return `${(num / 1_000_000_000).toFixed(1)}B`;
   }
@@ -77,12 +80,20 @@ export function ModelCard({ model, isSelected, onSelect }: ModelCardProps) {
   const outputPrice = formatPrice(model.pricing.completion);
 
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={() => onSelect(model)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect(model);
+        }
+      }}
       className={cn(
-        "group relative w-full rounded-lg border text-left transition-all duration-200",
+        "group relative w-full rounded-lg border text-left transition-all duration-200 cursor-pointer",
         "hover:border-primary/50 hover:shadow-md",
+        "focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2",
         isSelected
           ? "border-primary bg-primary/5 shadow-md"
           : "border-border bg-background",
@@ -122,17 +133,25 @@ export function ModelCard({ model, isSelected, onSelect }: ModelCardProps) {
             <h3 className="font-semibold text-foreground line-clamp-1">
               {model.name}
             </h3>
-            <button
-              type="button"
+            <div
+              role="button"
+              tabIndex={0}
               onClick={(e) => {
                 e.stopPropagation();
                 setShowDetails(true);
               }}
-              className="flex-shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setShowDetails(true);
+                }
+              }}
+              className="flex-shrink-0 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
               aria-label="View model details"
             >
               <Info className="h-3.5 w-3.5" />
-            </button>
+            </div>
           </div>
           {providerName && (
             <p className="text-xs text-muted-foreground">by {providerName}</p>
@@ -179,6 +198,6 @@ export function ModelCard({ model, isSelected, onSelect }: ModelCardProps) {
         open={showDetails}
         onOpenChange={setShowDetails}
       />
-    </button>
+    </div>
   );
 }
