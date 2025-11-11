@@ -289,6 +289,7 @@ export function SuiteIterationsView({
       return summary;
     };
 
+    // Initialize groups for all test cases from database
     cases.forEach((testCase) => {
       groups.set(testCase._id, {
         testCase,
@@ -331,32 +332,68 @@ export function SuiteIterationsView({
       },
     };
 
+    // Group iterations - use snapshot if available, otherwise use testCaseId
     iterations.forEach((iteration) => {
-      const targetGroup = iteration.testCaseId
-        ? groups.get(iteration.testCaseId)
-        : undefined;
-
-      if (targetGroup) {
-        targetGroup.iterations.push(iteration);
+      // For iterations with snapshots, group by snapshot content
+      if (iteration.testCaseSnapshot) {
+        // Create a key based on the test content to group similar tests together
+        const snapshotKey = `snapshot-${iteration.testCaseSnapshot.title}-${iteration.testCaseSnapshot.query}`;
+        if (!groups.has(snapshotKey)) {
+          // Create a virtual test case from the snapshot
+          const virtualTestCase: EvalCase = {
+            _id: snapshotKey,
+            evalTestSuiteId: suite._id,
+            createdBy: iteration.createdBy || "",
+            title: iteration.testCaseSnapshot.title,
+            query: iteration.testCaseSnapshot.query,
+            provider: iteration.testCaseSnapshot.provider,
+            model: iteration.testCaseSnapshot.model,
+            expectedToolCalls: iteration.testCaseSnapshot.expectedToolCalls,
+          };
+          groups.set(snapshotKey, {
+            testCase: virtualTestCase,
+            iterations: [],
+            summary: {
+              runs: 0,
+              passed: 0,
+              failed: 0,
+              cancelled: 0,
+              pending: 0,
+              tokens: 0,
+              avgDuration: null,
+            },
+          });
+        }
+        groups.get(snapshotKey)!.iterations.push(iteration);
+      } else if (iteration.testCaseId) {
+        // Fall back to testCaseId for legacy iterations
+        const group = groups.get(iteration.testCaseId);
+        if (group) {
+          group.iterations.push(iteration);
+        } else {
+          unassigned.iterations.push(iteration);
+        }
       } else {
         unassigned.iterations.push(iteration);
       }
     });
 
-    const orderedGroups = cases.map((testCase) => {
-      const group = groups.get(testCase._id)!;
-      const sortedIterations = [...group.iterations].sort((a, b) => {
-        if (a.iterationNumber != null && b.iterationNumber != null) {
-          return a.iterationNumber - b.iterationNumber;
-        }
-        return (a.createdAt ?? 0) - (b.createdAt ?? 0);
+    // Build ordered groups
+    const orderedGroups = Array.from(groups.values())
+      .filter((group) => group.iterations.length > 0)
+      .map((group) => {
+        const sortedIterations = [...group.iterations].sort((a, b) => {
+          if (a.iterationNumber != null && b.iterationNumber != null) {
+            return a.iterationNumber - b.iterationNumber;
+          }
+          return (a.createdAt ?? 0) - (b.createdAt ?? 0);
+        });
+        return {
+          ...group,
+          iterations: sortedIterations,
+          summary: computeSummary(sortedIterations),
+        };
       });
-      return {
-        ...group,
-        iterations: sortedIterations,
-        summary: computeSummary(sortedIterations),
-      };
-    });
 
     if (unassigned.iterations.length > 0) {
       const sortedUnassigned = [...unassigned.iterations].sort((a, b) => {
@@ -373,7 +410,7 @@ export function SuiteIterationsView({
     }
 
     return orderedGroups;
-  }, [cases, iterations]);
+  }, [cases, iterations, suite._id]);
 
   const getIterationBorderColor = (result: string) => {
     if (result === "passed") return "bg-emerald-500/50";

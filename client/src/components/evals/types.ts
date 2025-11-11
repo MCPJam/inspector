@@ -41,6 +41,16 @@ export type EvalCase = {
 export type EvalIteration = {
   _id: string;
   testCaseId?: string;
+  testCaseSnapshot?: {
+    title: string;
+    query: string;
+    provider: string;
+    model: string;
+    runs?: number;
+    expectedToolCalls: string[];
+    judgeRequirement?: string;
+    advancedConfig?: Record<string, unknown>;
+  };
   suiteRunId?: string;
   configRevision?: string;
   createdBy: string;
