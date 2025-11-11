@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { Trash2 } from "lucide-react";
 import type { EvalSuite, EvalSuiteOverviewEntry } from "./types";
 import { SuiteRow } from "./SuiteRow";
 import {
@@ -13,16 +14,20 @@ interface SuitesOverviewProps {
   overview: EvalSuiteOverviewEntry[];
   onSelectSuite: (id: string) => void;
   onRerun: (suite: EvalSuite) => void;
+  onDelete: (suite: EvalSuite) => void;
   connectedServerNames: Set<string>;
   rerunningSuiteId: string | null;
+  deletingSuiteId: string | null;
 }
 
 export function SuitesOverview({
   overview,
   onSelectSuite,
   onRerun,
+  onDelete,
   connectedServerNames,
   rerunningSuiteId,
+  deletingSuiteId,
 }: SuitesOverviewProps) {
   if (overview.length === 0) {
     return (
@@ -184,20 +189,37 @@ export function SuitesOverview({
                 <div className="text-xs text-muted-foreground">
                   {totals.passed} passed · {totals.failed} failed
                 </div>
-                <button
-                  onClick={() => onRerun(suite)}
-                  disabled={!canRerun || isRerunning}
-                  className={cn(
-                    "text-xs font-medium text-primary hover:underline disabled:opacity-60",
-                    !canRerun && "cursor-not-allowed",
-                  )}
-                >
-                  {isRerunning
-                    ? "Rerunning..."
-                    : canRerun
-                      ? "Rerun suite"
-                      : `Missing servers: ${missingServers.join(", ")}`}
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => onRerun(suite)}
+                    disabled={!canRerun || isRerunning}
+                    className={cn(
+                      "text-xs font-medium text-primary hover:underline disabled:opacity-60",
+                      !canRerun && "cursor-not-allowed",
+                    )}
+                  >
+                    {isRerunning
+                      ? "Rerunning..."
+                      : canRerun
+                        ? "Rerun suite"
+                        : `Missing servers: ${missingServers.join(", ")}`}
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDelete(suite);
+                    }}
+                    disabled={deletingSuiteId === suite._id}
+                    className="text-xs font-medium text-destructive hover:underline disabled:opacity-60"
+                    title="Delete suite"
+                  >
+                    {deletingSuiteId === suite._id ? (
+                      "Deleting..."
+                    ) : (
+                      <Trash2 className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                </div>
               </div>
             </div>
           );
