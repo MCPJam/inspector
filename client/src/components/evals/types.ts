@@ -77,6 +77,7 @@ export type EvalSuiteRun = {
   _id: string;
   suiteId: string;
   createdBy: string;
+  runNumber: number;
   configRevision: string;
   configSnapshot: {
     tests: EvalSuiteConfigTest[];
