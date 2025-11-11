@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { ChevronDown, ChevronRight, Loader2, RotateCw } from "lucide-react";
 import {
   Tooltip,
@@ -118,15 +119,14 @@ export function SuiteIterationsView({
         });
       }
 
-      runs.forEach((run, index) => {
-        const runIndex = runs.length - index;
+      runs.forEach((run) => {
         const timestamp = run.completedAt ?? run.createdAt;
         const passRate =
           run.summary != null
             ? Math.round(run.summary.passRate * 100)
             : null;
         const labelParts = [
-          `Run ${runIndex}`,
+          `Run ${run.runNumber}`,
           passRate != null ? `${passRate}%` : "In progress",
           formatTime(timestamp),
         ];
@@ -189,12 +189,12 @@ export function SuiteIterationsView({
     const data = runs
       .slice()
       .reverse()
-      .map((run, index) => {
+      .map((run) => {
         if (!run.summary) {
           return null;
         }
         return {
-          runIndex: index + 1,
+          runIndex: run.runNumber,
           passRate: Math.round(run.summary.passRate * 100),
           label: formatTime(run.completedAt ?? run.createdAt),
         };
@@ -622,6 +622,24 @@ export function SuiteIterationsView({
                         : null;
                     const isPending = iteration.result === "pending";
 
+                    // Find the run this iteration belongs to
+                    const iterationRun = iteration.suiteRunId
+                      ? runs.find(r => r._id === iteration.suiteRunId)
+                      : null;
+
+                    // Get run number directly from the run object
+                    const runNumber = iterationRun?.runNumber ?? null;
+
+                    // Get run timestamp for display
+                    const runTimestamp = iterationRun
+                      ? new Date(iterationRun.createdAt).toLocaleString(undefined, {
+                          month: 'short',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })
+                      : null;
+
                     return (
                       <div
                         key={iteration._id}
@@ -657,13 +675,33 @@ export function SuiteIterationsView({
                                 <ChevronRight className="h-4 w-4" />
                               )}
                             </div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-3">
                               <span className="text-sm font-medium">
-                                Iteration #{iteration.iterationNumber}
+                                Run #{runNumber ?? iteration.iterationNumber ?? '?'}
                               </span>
-                              {isPending ? (
-                                <Loader2 className="h-4 w-4 animate-spin text-amber-600" />
-                              ) : null}
+                              <div className="flex items-center gap-2">
+                                {runTimestamp && (
+                                  <Badge variant="secondary" className="text-xs font-normal">
+                                    {runTimestamp}
+                                  </Badge>
+                                )}
+                                {iterationRun && !isPending && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-6 text-xs px-2"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      onRunFilterChange(iterationRun._id);
+                                    }}
+                                  >
+                                    Run details
+                                  </Button>
+                                )}
+                                {isPending && (
+                                  <Loader2 className="h-4 w-4 animate-spin text-amber-600" />
+                                )}
+                              </div>
                             </div>
                             <div className="text-sm text-muted-foreground">
                               {isPending
