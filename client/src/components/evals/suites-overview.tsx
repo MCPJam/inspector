@@ -1,12 +1,6 @@
 import { useMemo } from "react";
 import { Trash2, Loader2 } from "lucide-react";
 import type { EvalSuite, EvalSuiteOverviewEntry } from "./types";
-import {
-  ChartContainer,
-  ChartTooltip,
-  ChartTooltipContent,
-} from "@/components/ui/chart";
-import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { cn } from "@/lib/utils";
 
 interface SuitesOverviewProps {
@@ -65,29 +59,7 @@ export function SuitesOverview({
     <div className="space-y-4">
       <div className="space-y-3">
         {sortedOverview.map((entry) => {
-          const { suite, latestRun, passRateTrend, totals } = entry;
-          const chartData =
-            passRateTrend.length > 0
-              ? passRateTrend.map((rate, index) => ({
-                  run: index + 1,
-                  passRate: Math.round(rate * 100),
-                }))
-              : latestRun?.summary
-                ? [
-                    {
-                      run: 1,
-                      passRate: Math.round(latestRun.summary.passRate * 100),
-                    },
-                  ]
-                : [{ run: 1, passRate: 0 }];
-          console.log('[Evals] Suite overview chart data for', suite.name, ':', chartData);
-
-          const chartConfig = {
-            passRate: {
-              label: "Pass rate",
-              color: "var(--chart-1)",
-            },
-          };
+          const { suite, latestRun, totals } = entry;
 
           const servers = suite.config?.environment?.servers ?? [];
           const missingServers = servers.filter(
@@ -98,7 +70,12 @@ export function SuitesOverview({
 
           const latestPassRate = latestRun?.summary
             ? Math.round(latestRun.summary.passRate * 100)
-            : chartData.at(-1)?.passRate ?? 0;
+            : 0;
+          
+          const lastRunPassed = latestRun?.summary?.passed ?? 0;
+          const lastRunFailed = latestRun?.summary?.failed ?? 0;
+          const lastRunTotal = latestRun?.summary?.total ?? 0;
+          const lastRunNumber = latestRun?.runNumber;
 
           const runsLabel =
             totals.runs === 1 ? "1 run" : `${totals.runs} runs total`;
@@ -175,50 +152,23 @@ export function SuitesOverview({
                         {latestPassRate}%
                       </div>
                       <div className="text-xs text-muted-foreground">
-                        Pass rate
+                        Last run {lastRunLabel}
                       </div>
                     </div>
-                    <ChartContainer
-                      config={chartConfig}
-                      className="aspect-auto h-20 w-40 sm:h-16 sm:w-48"
-                    >
-                      <AreaChart data={chartData} width={undefined} height={undefined}>
-                        <CartesianGrid
-                          strokeDasharray="3 3"
-                          vertical={false}
-                          stroke="hsl(var(--muted-foreground) / 0.2)"
-                        />
-                        <XAxis
-                          dataKey="run"
-                          tickLine={false}
-                          axisLine={false}
-                          tickMargin={8}
-                          tick={{ fontSize: 12 }}
-                        />
-                        <YAxis domain={[0, 100]} hide />
-                        <ChartTooltip
-                          cursor={false}
-                          content={<ChartTooltipContent />}
-                        />
-                        <Area
-                          type="monotone"
-                          dataKey="passRate"
-                          stroke="var(--color-passRate)"
-                          fill="var(--color-passRate)"
-                          fillOpacity={0.15}
-                          strokeWidth={2}
-                          isAnimationActive={false}
-                          dot={chartData.length > 1}
-                        />
-                      </AreaChart>
-                    </ChartContainer>
+                    {latestRun && latestRun.summary ? (
+                      <div className="text-right">
+                        <div className="text-xs text-muted-foreground">
+                          {lastRunPassed} passed · {lastRunFailed} failed
+                          {lastRunTotal > 0 && (
+                            <span> · {lastRunTotal} total</span>
+                          )}
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               </button>
               <div className="flex items-center justify-between border-t px-4 py-2.5">
-                <div className="text-xs text-muted-foreground">
-                  {totals.passed} passed · {totals.failed} failed
-                </div>
                 <div className="flex items-center gap-3">
                   <button
                     onClick={() => onRerun(suite)}
