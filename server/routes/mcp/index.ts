@@ -14,6 +14,7 @@ import { adapterHttp, managerHttp } from "./http-adapters";
 import elicitation from "./elicitation";
 import openai from "./openai";
 import registry from "./registry";
+import models from "./models";
 
 const mcp = new Hono();
 
@@ -71,5 +72,8 @@ mcp.route("/manager-http", managerHttp);
 
 // Registry endpoints - MCP server registry integration
 mcp.route("/registry", registry);
+
+// Models endpoints - fetch model metadata from Convex backend
+mcp.route("/models", models);
 
 export default mcp;

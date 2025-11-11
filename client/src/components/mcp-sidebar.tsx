@@ -5,8 +5,7 @@ import {
   Settings,
   MessageSquareCode,
   BookOpen,
-  CirclePlayIcon,
-  ListChecks,
+  FlaskConical,
   HandMetal,
   Workflow,
   Box,
@@ -71,14 +70,9 @@ const navigationSections = [
         icon: Workflow,
       },
       {
-        title: "Run evals",
+        title: "Evals",
         url: "#evals",
-        icon: CirclePlayIcon,
-      },
-      {
-        title: "Eval results",
-        url: "#eval-results",
-        icon: ListChecks,
+        icon: FlaskConical,
       },
       {
         title: "MCP Registry",
