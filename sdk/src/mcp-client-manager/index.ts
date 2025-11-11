@@ -509,13 +509,24 @@ export class MCPClientManager {
   ) {
     await this.ensureConnected(serverId);
     const client = this.getClientById(serverId);
+
+    // Merge global progress handler with any provided options
+    const mergedOptions = this.withTimeout(serverId, options);
+    if (!mergedOptions.onprogress) {
+      mergedOptions.onprogress = () => {
+		// register an empty on progress so that the client will send
+		// progress notifications...the notifications will be sent through the
+		// rpc logger
+	  };
+    }
+
     return client.callTool(
       {
         name: toolName,
         arguments: args,
       },
       CallToolResultSchema,
-      this.withTimeout(serverId, options),
+      mergedOptions,
     );
   }
 
@@ -548,7 +559,16 @@ export class MCPClientManager {
   ) {
     await this.ensureConnected(serverId);
     const client = this.getClientById(serverId);
-    return client.readResource(params, this.withTimeout(serverId, options));
+	 // Merge global progress handler with any provided options
+    const mergedOptions = this.withTimeout(serverId, options);
+    if (!mergedOptions.onprogress) {
+      mergedOptions.onprogress = () => {
+		// register an empty on progress so that the client will send
+		// progress notifications...the notifications will be sent through the
+		// rpc logger
+	  };
+    }
+    return client.readResource(params, mergedOptions);
   }
 
   async subscribeResource(
@@ -619,7 +639,16 @@ export class MCPClientManager {
   ) {
     await this.ensureConnected(serverId);
     const client = this.getClientById(serverId);
-    return client.getPrompt(params, this.withTimeout(serverId, options));
+	 // Merge global progress handler with any provided options
+    const mergedOptions = this.withTimeout(serverId, options);
+    if (!mergedOptions.onprogress) {
+      mergedOptions.onprogress = () => {
+		// register an empty on progress so that the client will send
+		// progress notifications...the notifications will be sent through the
+		// rpc logger
+	  };
+    }
+    return client.getPrompt(params, mergedOptions);
   }
 
   getSessionIdByServer(serverId: string): string | undefined {
