@@ -140,7 +140,10 @@ chatV2.post("/", async (c) => {
             // Parse SSE stream from Convex
             const reader = res.body?.getReader();
             if (!reader) {
-              writer.write({ type: "error", errorText: "No response body" } as any);
+              writer.write({
+                type: "error",
+                errorText: "No response body",
+              } as any);
               break;
             }
 
@@ -173,12 +176,20 @@ chatV2.post("/", async (c) => {
                     const event = JSON.parse(data);
 
                     // Forward stream events to client
-                    if (event.type === "text-start" || event.type === "text-delta" || event.type === "text-end") {
+                    if (
+                      event.type === "text-start" ||
+                      event.type === "text-delta" ||
+                      event.type === "text-end"
+                    ) {
                       writer.write(event);
                       if (event.type === "text-delta") {
                         currentText += event.delta;
                       }
-                    } else if (event.type === "tool-call-start" || event.type === "tool-call" || event.type === "tool-call-delta") {
+                    } else if (
+                      event.type === "tool-call-start" ||
+                      event.type === "tool-call" ||
+                      event.type === "tool-call-delta"
+                    ) {
                       writer.write(event);
                       hasToolCalls = true;
                     } else if (event.type === "finish") {
@@ -189,7 +200,11 @@ chatV2.post("/", async (c) => {
                         type: "finish",
                         messageMetadata: stepMetadata,
                       } as any);
-                    } else if (event.type === "start" || event.type === "start-step" || event.type === "finish-step") {
+                    } else if (
+                      event.type === "start" ||
+                      event.type === "start-step" ||
+                      event.type === "finish-step"
+                    ) {
                       // Forward control events
                       writer.write(event);
                     }
@@ -257,7 +272,7 @@ chatV2.post("/", async (c) => {
             inputTokens: part.totalUsage.inputTokens,
             outputTokens: part.totalUsage.outputTokens,
             totalTokens: part.totalUsage.totalTokens,
-          }
+          };
         }
       },
       onError: (error) => {

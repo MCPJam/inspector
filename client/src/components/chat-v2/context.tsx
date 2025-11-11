@@ -47,20 +47,26 @@ export type ContextProps = ComponentProps<typeof HoverCard> & {
   modelId: ModelId;
 };
 
-export const Context = ({ usedTokens, usage, modelId, ...props }: ContextProps) => {
+export const Context = ({
+  usedTokens,
+  usage,
+  modelId,
+  ...props
+}: ContextProps) => {
   const { models: metadataModels } = useModelMetadata();
   const contextData = getContext({ modelId });
   const metadataModel = isMCPJamProvidedModel(modelId)
     ? metadataModels.find(
-        (model) =>
-          model.id === modelId || model.canonical_slug === modelId
+        (model) => model.id === modelId || model.canonical_slug === modelId,
       )
     : undefined;
   // For MCPJam provided models, use context_length directly (as specified by user)
   // Fallback to top_provider.context_length if context_length is not available
-  const metadataMaxTokens = isMCPJamProvidedModel(modelId) && metadataModel
-    ? (metadataModel.context_length ?? metadataModel.top_provider?.context_length)
-    : undefined;
+  const metadataMaxTokens =
+    isMCPJamProvidedModel(modelId) && metadataModel
+      ? (metadataModel.context_length ??
+        metadataModel.top_provider?.context_length)
+      : undefined;
   const derivedMaxTokens =
     metadataMaxTokens ??
     contextData?.maxTotal ??
@@ -298,7 +304,7 @@ export const ContextContentFooter = ({
     <div
       className={cn(
         "flex w-full items-center justify-between gap-3 bg-secondary p-3 text-xs",
-        className
+        className,
       )}
       {...props}
     >
