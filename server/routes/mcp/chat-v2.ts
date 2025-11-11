@@ -121,7 +121,6 @@ chatV2.post("/", async (c) => {
                 ...(authHeader ? { authorization: authHeader } : {}),
               },
               body: JSON.stringify({
-                mode: "step",
                 messages: JSON.stringify(messageHistory),
                 model: String(modelDefinition.id),
                 systemPrompt,
@@ -131,6 +130,7 @@ chatV2.post("/", async (c) => {
                 tools: toolDefs,
               }),
             });
+            console.log('res', res);
 
             if (!res.ok) {
               const errorText = await res.text().catch(() => "step failed");
@@ -138,64 +138,92 @@ chatV2.post("/", async (c) => {
               break;
             }
 
-            const json: any = await res.json();
-            if (!json?.ok || !Array.isArray(json.messages)) {
+            // Parse SSE stream from Convex
+            const reader = res.body?.getReader();
+            if (!reader) {
+              writer.write({ type: "error", errorText: "No response body" } as any);
               break;
             }
 
-            for (const m of json.messages as any[]) {
-              if (m?.role === "assistant" && Array.isArray(m.content)) {
-                for (const item of m.content) {
-                  if (item?.type === "text" && typeof item.text === "string") {
-                    writer.write({ type: "text-start", id: msgId } as any);
-                    writer.write({
-                      type: "text-delta",
-                      id: msgId,
-                      delta: item.text,
-                    } as any);
-                    writer.write({ type: "text-end", id: msgId } as any);
-                  } else if (item?.type === "tool-call") {
-                    // Normalize tool-call
-                    if (item.input == null)
-                      item.input = item.parameters ?? item.args ?? {};
-                    if (!item.toolCallId)
-                      item.toolCallId = `tc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-                    writer.write({
-                      type: "tool-input-available",
-                      toolCallId: item.toolCallId,
-                      toolName: item.toolName ?? item.name,
-                      input: item.input,
-                    } as any);
+            const decoder = new TextDecoder();
+            let buffer = "";
+            let currentText = "";
+            let hasToolCalls = false;
+            let stepMetadata: any;
+            let isFinished = false;
+
+            try {
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split("\n");
+                buffer = lines.pop() || "";
+
+                for (const line of lines) {
+                  if (!line.startsWith("data: ")) continue;
+                  const data = line.slice(6).trim();
+                  if (!data) continue;
+                  if (data === "[DONE]") {
+                    isFinished = true;
+                    continue;
+                  }
+
+                  try {
+                    const event = JSON.parse(data);
+
+                    // Forward stream events to client
+                    if (event.type === "text-start" || event.type === "text-delta" || event.type === "text-end") {
+                      writer.write(event);
+                      if (event.type === "text-delta") {
+                        currentText += event.delta;
+                      }
+                    } else if (event.type === "tool-call-start" || event.type === "tool-call" || event.type === "tool-call-delta") {
+                      writer.write(event);
+                      hasToolCalls = true;
+                    } else if (event.type === "finish") {
+                      // Capture metadata from finish event
+                      stepMetadata = event.messageMetadata;
+                      // Forward finish event with metadata to client
+                      writer.write({
+                        type: "finish",
+                        messageMetadata: stepMetadata,
+                      } as any);
+                    } else if (event.type === "start" || event.type === "start-step" || event.type === "finish-step") {
+                      // Forward control events
+                      writer.write(event);
+                    }
+                  } catch (e) {
+                    console.warn("[chat-v2] Failed to parse SSE event:", data);
                   }
                 }
               }
-              messageHistory.push(m);
+            } finally {
+              reader.releaseLock();
             }
 
-            const beforeLen = messageHistory.length;
-            if (hasUnresolvedToolCalls(messageHistory as any)) {
-              await executeToolCallsFromMessages(messageHistory, {
-                clientManager: mcpClientManager,
+            // Build message from accumulated text/tool calls
+            const assistantMessage: any = {
+              role: "assistant",
+              content: [],
+            };
+
+            if (currentText) {
+              assistantMessage.content.push({
+                type: "text",
+                text: currentText,
               });
             }
-            const newMessages = messageHistory.slice(beforeLen);
-            for (const msg of newMessages) {
-              if (msg?.role === "tool" && Array.isArray((msg as any).content)) {
-                for (const item of (msg as any).content) {
-                  if (item?.type === "tool-result") {
-                    writer.write({
-                      type: "tool-output-available",
-                      toolCallId: item.toolCallId,
-                      output: item.output ?? item.result ?? item.value,
-                    } as any);
-                  }
-                }
-              }
+
+            if (assistantMessage.content.length > 0) {
+              messageHistory.push(assistantMessage);
             }
+
             steps++;
 
-            const finishReason: string | undefined = json.finishReason;
-            if (finishReason && finishReason !== "tool-calls") {
+            // Continue if there were tool calls
+            if (!hasToolCalls || isFinished) {
               break;
             }
           }
