@@ -20,7 +20,10 @@ interface ModelDetailsModalProps {
 /**
  * Format large numbers with K/M/B suffix
  */
-function formatNumber(num: number): string {
+function formatNumber(num: number | null | undefined): string {
+  if (num == null || isNaN(num)) {
+    return "N/A";
+  }
   if (num >= 1_000_000_000) {
     return `${(num / 1_000_000_000).toFixed(1)}B`;
   }
