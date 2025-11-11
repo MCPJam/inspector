@@ -17,11 +17,19 @@ export const createPreferencesStore = (init?: Partial<PreferencesState>) =>
     themeMode: init?.themeMode ?? "light",
     themePreset: init?.themePreset ?? "default",
     setThemeMode: (mode) => {
-      localStorage.setItem(THEME_MODE_KEY, mode);
+      try {
+        localStorage.setItem(THEME_MODE_KEY, mode);
+      } catch (error) {
+        console.warn("Failed to persist theme mode:", error);
+      }
       set({ themeMode: mode });
     },
     setThemePreset: (preset) => {
-      localStorage.setItem(THEME_PRESET_KEY, preset);
+      try {
+        localStorage.setItem(THEME_PRESET_KEY, preset);
+      } catch (error) {
+        console.warn("Failed to persist theme preset:", error);
+      }
       set({ themePreset: preset });
     },
   }));

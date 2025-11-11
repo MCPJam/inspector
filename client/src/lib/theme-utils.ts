@@ -1,4 +1,8 @@
-import { ThemeMode, ThemePreset } from "@/types/preferences/theme";
+import {
+  THEME_PRESET_OPTIONS,
+  ThemeMode,
+  ThemePreset,
+} from "@/types/preferences/theme";
 
 // Utility to get the initial theme mode from localStorage or fallback to 'light'.
 export function getInitialThemeMode(): ThemeMode {
@@ -18,8 +22,12 @@ export function updateThemeMode(value: ThemeMode) {
 
 // Utility to get the initial theme preset from localStorage or fallback to 'default'.
 export function getInitialThemePreset(): ThemePreset {
-  const stored = localStorage.getItem("themePreset") as ThemePreset;
-  return stored || "default";
+  const stored = localStorage.getItem("themePreset");
+  const validPresets = THEME_PRESET_OPTIONS.map((p) => p.value);
+  if (stored && validPresets.includes(stored as ThemePreset)) {
+    return stored as ThemePreset;
+  }
+  return "default";
 }
 
 export function updateThemePreset(value: ThemePreset) {
