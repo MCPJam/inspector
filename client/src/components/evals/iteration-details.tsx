@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { useEffect, useState } from "react";
 import { formatTime } from "./helpers";
 import { EvalIteration, EvalCase } from "./types";
+import { TraceViewer } from "./trace-viewer";
 
 export function IterationDetails({
   iteration,
@@ -85,15 +86,20 @@ export function IterationDetails({
       {iteration.blob && (
         <div className="space-y-1.5">
           <div className="text-xs font-semibold">Trace</div>
-          <div className="rounded-md bg-muted/20 p-3">
+          <div className="rounded-md bg-muted/20 p-3 max-h-[480px] overflow-y-auto">
             {loading ? (
               <div className="text-xs text-muted-foreground">Loading trace</div>
             ) : error ? (
               <div className="text-xs text-red-600">{error}</div>
             ) : (
-              <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap break-words text-xs">
-                {JSON.stringify(blob, null, 2)}
-              </pre>
+              <TraceViewer
+                trace={blob}
+                modelProvider={
+                  testCase?.provider ||
+                  iteration.testCaseSnapshot?.provider ||
+                  "openai"
+                }
+              />
             )}
           </div>
         </div>
