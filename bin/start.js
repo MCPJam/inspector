@@ -124,24 +124,6 @@ function isPortAvailable(port) {
   });
 }
 
-async function findAvailablePort(startPort = 3000, maxPort = 65535) {
-  logProgress(`Scanning for available ports starting from ${startPort}...`);
-
-  for (let port = startPort; port <= maxPort; port++) {
-    if (await isPortAvailable(port)) {
-      return port;
-    }
-
-    // Show progress every 10 ports to avoid spam
-    if (port % 10 === 0) {
-      logProgress(`Checked port ${port}, continuing search...`);
-    }
-  }
-  throw new Error(
-    `No available ports found between ${startPort} and ${maxPort}`,
-  );
-}
-
 function spawnPromise(command, args, options) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -494,7 +476,6 @@ async function main() {
   // Apply parsed environment variables to process.env first
   Object.assign(process.env, envVars);
 
-  // Port configuration (fixed default to 3000)
   const requestedPort = parseInt(process.env.PORT ?? "6274", 10);
   let PORT;
 
@@ -515,7 +496,6 @@ async function main() {
         throw new Error(`Port ${requestedPort} is already in use`);
       }
     } else {
-      // Fixed port policy: use default port 3000 and fail fast if unavailable
       logInfo("No specific port requested, using fixed default port 6274");
       if (await isPortAvailable(requestedPort)) {
         PORT = requestedPort.toString();

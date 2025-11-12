@@ -51,7 +51,7 @@ export function getRedirectUri(): string {
   }
 
   // Default fallback
-  return "http://localhost:3000/oauth/callback";
+  return "http://localhost:6274/oauth/callback";
 }
 
 /**
