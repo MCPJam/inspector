@@ -84,15 +84,14 @@ export const Context = ({
       : undefined;
   const derivedMaxTokens = metadataMaxTokens ?? contextData?.maxTotal;
 
-  // Don't render if we don't have maxTokens
   if (!derivedMaxTokens) {
     return null;
   }
 
-  // Don't render if mcpToolsTokenCount is null or an empty object
   if (
-    mcpToolsTokenCount === null ||
-    (mcpToolsTokenCount && Object.keys(mcpToolsTokenCount).length === 0)
+    !mcpToolsTokenCountLoading &&
+    (mcpToolsTokenCount === null ||
+      (mcpToolsTokenCount && Object.keys(mcpToolsTokenCount).length === 0))
   ) {
     return null;
   }
@@ -389,7 +388,6 @@ export const ContextMCPServerUsage = ({
     return null;
   }
 
-  // Check if there's input or output usage to show separator
   const hasInputOrOutput =
     (usage?.inputTokens ?? 0) > 0 || (usage?.outputTokens ?? 0) > 0;
 
