@@ -408,6 +408,7 @@ export function EvalsTab() {
             connectedServerNames={connectedServerNames}
             rerunningSuiteId={rerunningSuiteId}
             deletingSuiteId={deletingSuiteId}
+            availableModels={availableModels}
           />
         )}
       </div>
