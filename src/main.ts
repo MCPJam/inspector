@@ -38,7 +38,7 @@ let serverPort: number = 0;
 
 const isDev = process.env.NODE_ENV === "development";
 
-async function findAvailablePort(startPort = 3000): Promise<number> {
+async function findAvailablePort(startPort = 6274): Promise<number> {
   return new Promise((resolve, reject) => {
     const net = require("net");
     const server = net.createServer();
@@ -61,7 +61,7 @@ async function findAvailablePort(startPort = 3000): Promise<number> {
 
 async function startHonoServer(): Promise<number> {
   try {
-    const port = app.isPackaged ? 3000 : await findAvailablePort(3000);
+    const port = app.isPackaged ? 6274 : await findAvailablePort(6274);
 
     // Set environment variables to tell the server it's running in Electron
     process.env.ELECTRON_APP = "true";

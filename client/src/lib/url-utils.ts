@@ -19,7 +19,7 @@ export function getBaseUrl(): string {
   }
 
   // Fallback: construct from PORT environment variable
-  const port = process.env.PORT || "3000";
+  const port = process.env.PORT || "6274";
   return `http://localhost:${port}`;
 }
 
@@ -34,5 +34,5 @@ export function getOAuthCallbackUrl(): string {
  * Gets the current port number
  */
 export function getPort(): string {
-  return process.env.PORT || "3000";
+  return process.env.PORT || "6274";
 }
