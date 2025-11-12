@@ -176,12 +176,6 @@ export enum Model {
   GEMINI_2_5_FLASH = "gemini-2.5-flash",
   GEMINI_2_5_FLASH_LITE = "gemini-2.5-flash-lite",
   GEMINI_2_0_FLASH_EXP = "gemini-2.0-flash-exp",
-  GEMINI_1_5_PRO = "gemini-1.5-pro",
-  GEMINI_1_5_PRO_002 = "gemini-1.5-pro-002",
-  GEMINI_1_5_FLASH = "gemini-1.5-flash",
-  GEMINI_1_5_FLASH_002 = "gemini-1.5-flash-002",
-  GEMINI_1_5_FLASH_8B = "gemini-1.5-flash-8b",
-  GEMINI_1_5_FLASH_8B_001 = "gemini-1.5-flash-8b-001",
   // Google Gemma models
   GEMMA_3_2B = "gemma-3-2b",
   GEMMA_3_9B = "gemma-3-9b",
@@ -261,26 +255,6 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
   {
     id: Model.GEMINI_2_0_FLASH_EXP,
     name: "Gemini 2.0 Flash Experimental",
-    provider: "google",
-  },
-  {
-    id: Model.GEMINI_1_5_PRO_002,
-    name: "Gemini 1.5 Pro 002",
-    provider: "google",
-  },
-  {
-    id: Model.GEMINI_1_5_PRO,
-    name: "Gemini 1.5 Pro",
-    provider: "google",
-  },
-  {
-    id: Model.GEMINI_1_5_FLASH_002,
-    name: "Gemini 1.5 Flash 002",
-    provider: "google",
-  },
-  {
-    id: Model.GEMINI_1_5_FLASH,
-    name: "Gemini 1.5 Flash",
     provider: "google",
   },
   {
