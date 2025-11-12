@@ -692,15 +692,28 @@ export function SuiteIterationsView({
               </div>
             ) : (
               runs.map((run) => {
-                const passRate = run.summary
-                  ? Math.round(run.summary.passRate * 100)
-                  : null;
+                // Calculate real-time stats from iterations for this run
+                const runIterations = allIterations.filter((iter) => iter.suiteRunId === run._id);
+                const realTimePassed = runIterations.filter((i) => i.result === "passed").length;
+                const realTimeFailed = runIterations.filter((i) => i.result === "failed").length;
+                const realTimeTotal = runIterations.length;
+
+                // Use real-time data if available, otherwise fall back to summary
+                const passed = realTimePassed > 0 ? realTimePassed : (run.summary?.passed ?? 0);
+                const failed = realTimeFailed > 0 ? realTimeFailed : (run.summary?.failed ?? 0);
+                const total = realTimeTotal > 0 ? realTimeTotal : (run.summary?.total ?? 0);
+                const passRate = total > 0 ? Math.round((passed / total) * 100) : null;
+
                 const timestamp = formatTime(run.completedAt ?? run.createdAt);
+
+                // Calculate duration - use current time for in-progress runs
                 const duration = run.completedAt && run.createdAt
                   ? formatDuration(run.completedAt - run.createdAt)
-                  : "—";
-                const passed = run.summary?.passed ?? 0;
-                const failed = run.summary?.failed ?? 0;
+                  : run.createdAt && run.status === "running"
+                    ? formatDuration(Date.now() - run.createdAt)
+                    : "—";
+
+                const isRunning = run.status === "running";
 
                 return (
                   <button
@@ -712,9 +725,17 @@ export function SuiteIterationsView({
                     className="flex w-full flex-col gap-2 px-4 py-3 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
                   >
                     <div className="flex items-center justify-between">
-                      <div className="flex flex-col gap-0.5">
-                        <span className="text-sm font-medium">Run #{run.runNumber}</span>
-                        <span className="text-xs text-muted-foreground">{timestamp}</span>
+                      <div className="flex items-center gap-2">
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-sm font-medium">Run #{run.runNumber}</span>
+                          <span className="text-xs text-muted-foreground">{timestamp}</span>
+                        </div>
+                        {isRunning && (
+                          <div className="flex items-center gap-1.5 rounded-full bg-amber-100 dark:bg-amber-950 px-2 py-0.5">
+                            <div className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+                            <span className="text-xs font-medium text-amber-700 dark:text-amber-400">Running</span>
+                          </div>
+                        )}
                       </div>
                       {passRate !== null && (
                         <span className="text-sm font-semibold tabular-nums">
