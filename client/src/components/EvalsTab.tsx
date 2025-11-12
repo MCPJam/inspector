@@ -341,13 +341,11 @@ export function EvalsTab() {
                 <ArrowLeft className="h-4 w-4" />
               </Button>
             )}
-            <h1 className="text-2xl font-semibold">
-              {view === "run"
-                ? "Create evaluation run"
-                : selectedSuiteId
-                  ? selectedSuite?.name || "Test suite results"
-                  : "Test suites"}
-            </h1>
+            {!selectedSuiteId && (
+              <h1 className="text-2xl font-semibold">
+                {view === "run" ? "Create evaluation run" : "Test suites"}
+              </h1>
+            )}
           </div>
           {view === "results" && !selectedSuiteId && (
             <Button
