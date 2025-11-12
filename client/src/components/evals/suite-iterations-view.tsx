@@ -202,12 +202,25 @@ export function SuiteIterationsView({
       .slice()
       .reverse()
       .map((run) => {
-        if (!run.summary) {
+        // Calculate real-time stats from iterations for this run
+        const runIterations = allIterations.filter((iter) => iter.suiteRunId === run._id);
+        const realTimePassed = runIterations.filter((i) => i.result === "passed").length;
+        const realTimeTotal = runIterations.length;
+
+        // Use real-time data if available, otherwise fall back to summary
+        let passRate: number;
+        if (realTimeTotal > 0) {
+          passRate = Math.round((realTimePassed / realTimeTotal) * 100);
+        } else if (run.summary) {
+          passRate = Math.round(run.summary.passRate * 100);
+        } else {
+          // Skip runs with no data yet
           return null;
         }
+
         return {
           runIndex: run.runNumber,
-          passRate: Math.round(run.summary.passRate * 100),
+          passRate,
           label: formatTime(run.completedAt ?? run.createdAt),
         };
       })
@@ -217,7 +230,7 @@ export function SuiteIterationsView({
       );
     console.log('[Evals] Run trend data:', data);
     return data;
-  }, [runs]);
+  }, [runs, allIterations]);
 
   const chartConfig = {
     passRate: {
@@ -604,7 +617,7 @@ export function SuiteIterationsView({
 
   return (
     <div className="space-y-4">
-      {/* Consolidated header with back button, editable name, and actions */}
+      {/* Consolidated header with back button, editable name, description, and actions */}
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3 flex-1 min-w-0 overflow-visible">
           <Button variant="ghost" size="sm" onClick={onBack} className="shrink-0">
@@ -619,18 +632,36 @@ export function SuiteIterationsView({
               onBlur={handleNameBlur}
               onKeyDown={handleNameKeyDown}
               autoFocus
-              className="flex-1 px-3 py-1.5 text-xl font-semibold border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring min-w-0"
+              className="px-3 py-1.5 text-xl font-semibold border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring min-w-0"
             />
           ) : (
-            <div className="flex-1 min-w-0">
-              <Button
-                variant="ghost"
-                onClick={handleNameClick}
-                className="px-3 py-1.5 h-auto text-xl font-semibold hover:bg-accent truncate max-w-full"
-              >
-                {suite.name}
-              </Button>
-            </div>
+            <Button
+              variant="ghost"
+              onClick={handleNameClick}
+              className="px-3 py-1.5 h-auto text-xl font-semibold hover:bg-accent shrink-0"
+            >
+              {suite.name}
+            </Button>
+          )}
+          {/* Description Editor */}
+          {isEditingDescription ? (
+            <Textarea
+              value={editedDescription}
+              onChange={(e) => setEditedDescription(e.target.value)}
+              onBlur={handleDescriptionBlur}
+              onKeyDown={handleDescriptionKeyDown}
+              autoFocus
+              placeholder="Add a description for this test suite"
+              className="flex-1 min-w-0 min-h-[40px] resize-none"
+            />
+          ) : (
+            <Button
+              variant="ghost"
+              onClick={handleDescriptionClick}
+              className="flex-1 min-w-0 px-3 py-1.5 h-auto text-left justify-start hover:bg-accent text-sm text-muted-foreground"
+            >
+              {suite.description || "Add a description for this test suite"}
+            </Button>
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -675,12 +706,63 @@ export function SuiteIterationsView({
         </div>
       </div>
 
-      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "general" | "runs" | "test-cases" | "edit")}>
+      <Tabs value={activeTab} onValueChange={(v) => {
+        const newTab = v as "general" | "runs" | "test-cases" | "edit";
+
+        // If clicking the same tab, reset to list view
+        if (newTab === activeTab) {
+          if (newTab === "runs" && viewMode === "run-detail") {
+            setViewMode("overview");
+            setSelectedRunId(null);
+          } else if (newTab === "test-cases" && viewMode === "test-detail") {
+            setViewMode("overview");
+            setSelectedTestId(null);
+          }
+          return;
+        }
+
+        setActiveTab(newTab);
+
+        // Reset view mode when switching tabs
+        if (newTab === "general" || newTab === "edit") {
+          setViewMode("overview");
+          setSelectedRunId(null);
+          setSelectedTestId(null);
+        } else if (newTab === "runs" && viewMode === "test-detail") {
+          setViewMode("overview");
+          setSelectedTestId(null);
+        } else if (newTab === "test-cases" && viewMode === "run-detail") {
+          setViewMode("overview");
+          setSelectedRunId(null);
+        }
+      }}>
         <TabsList>
-          <TabsTrigger value="general">General</TabsTrigger>
-          <TabsTrigger value="runs">Runs</TabsTrigger>
-          <TabsTrigger value="test-cases">Test Cases</TabsTrigger>
-          <TabsTrigger value="edit">Edit</TabsTrigger>
+          <TabsTrigger value="general" onClick={() => {
+            if (activeTab === "general") {
+              setViewMode("overview");
+              setSelectedRunId(null);
+              setSelectedTestId(null);
+            }
+          }}>General</TabsTrigger>
+          <TabsTrigger value="runs" onClick={() => {
+            if (activeTab === "runs" && viewMode === "run-detail") {
+              setViewMode("overview");
+              setSelectedRunId(null);
+            }
+          }}>Runs</TabsTrigger>
+          <TabsTrigger value="test-cases" onClick={() => {
+            if (activeTab === "test-cases" && viewMode === "test-detail") {
+              setViewMode("overview");
+              setSelectedTestId(null);
+            }
+          }}>Test Cases</TabsTrigger>
+          <TabsTrigger value="edit" onClick={() => {
+            if (activeTab === "edit") {
+              setViewMode("overview");
+              setSelectedRunId(null);
+              setSelectedTestId(null);
+            }
+          }}>Edit</TabsTrigger>
         </TabsList>
 
         <TabsContent value="general" className="mt-4 space-y-4">
@@ -912,17 +994,6 @@ export function SuiteIterationsView({
         </TabsContent>
 
         <TabsContent value="runs" className="mt-4 space-y-4">
-          {viewMode === "run-detail" && (
-            <div className="mb-4">
-              <Button variant="ghost" size="sm" onClick={() => {
-                setViewMode("overview");
-                setSelectedRunId(null);
-              }}>
-                ← Back to runs list
-              </Button>
-            </div>
-          )}
-
           {viewMode === "overview" ? (
             <div className="rounded-xl border bg-card text-card-foreground">
               <div className="border-b px-4 py-3">
@@ -1198,17 +1269,6 @@ export function SuiteIterationsView({
         </TabsContent>
 
         <TabsContent value="test-cases" className="mt-4 space-y-4">
-          {viewMode === "test-detail" && (
-            <div className="mb-4">
-              <Button variant="ghost" size="sm" onClick={() => {
-                setViewMode("overview");
-                setSelectedTestId(null);
-              }}>
-                ← Back to test cases list
-              </Button>
-            </div>
-          )}
-
           {viewMode === "overview" ? (
             <div className="rounded-xl border bg-card text-card-foreground">
               <div className="border-b px-4 py-3">
@@ -1500,30 +1560,6 @@ export function SuiteIterationsView({
         </TabsContent>
 
         <TabsContent value="edit" className="mt-4 space-y-4">
-          {/* Description Editor */}
-          <div className="space-y-2">
-            <div className="text-sm font-semibold">Description</div>
-            {isEditingDescription ? (
-              <Textarea
-                value={editedDescription}
-                onChange={(e) => setEditedDescription(e.target.value)}
-                onBlur={handleDescriptionBlur}
-                onKeyDown={handleDescriptionKeyDown}
-                autoFocus
-                placeholder="Add a description for this test suite"
-                className="min-h-[100px] resize-none"
-              />
-            ) : (
-              <Button
-                variant="ghost"
-                onClick={handleDescriptionClick}
-                className="w-full px-3 py-2 h-auto text-left justify-start hover:bg-accent"
-              >
-                {suite.description || "Add a description for this test suite"}
-              </Button>
-            )}
-          </div>
-
           {/* Tests Config */}
           <SuiteTestsConfig suite={suite} onUpdate={handleUpdateTests} />
         </TabsContent>
