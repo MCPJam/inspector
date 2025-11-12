@@ -17,6 +17,7 @@ import {
   ContextInputUsage,
   ContextOutputUsage,
   ContextMCPServerUsage,
+  ContextSystemPromptUsage,
 } from "./context";
 
 interface ChatInputProps {
@@ -47,6 +48,8 @@ interface ChatInputProps {
   mcpToolsTokenCount?: Record<string, number> | null;
   mcpToolsTokenCountLoading?: boolean;
   connectedServerConfigs?: Record<string, { name: string }>;
+  systemPromptTokenCount?: number | null;
+  systemPromptTokenCountLoading?: boolean;
 }
 
 export function ChatInput({
@@ -73,6 +76,8 @@ export function ChatInput({
   mcpToolsTokenCount,
   mcpToolsTokenCountLoading = false,
   connectedServerConfigs,
+  systemPromptTokenCount,
+  systemPromptTokenCountLoading = false,
 }: ChatInputProps) {
   const formRef = useRef<HTMLFormElement>(null);
 
@@ -157,6 +162,8 @@ export function ChatInput({
               mcpToolsTokenCount={mcpToolsTokenCount}
               mcpToolsTokenCountLoading={mcpToolsTokenCountLoading}
               connectedServerConfigs={connectedServerConfigs}
+              systemPromptTokenCount={systemPromptTokenCount}
+              systemPromptTokenCountLoading={systemPromptTokenCountLoading}
               hasMessages={hasMessages}
             >
               <ContextTrigger />
@@ -171,6 +178,7 @@ export function ChatInput({
                       <ContextOutputUsage />
                     </>
                   )}
+                  <ContextSystemPromptUsage />
                   <ContextMCPServerUsage />
                 </ContextContentBody>
               </ContextContent>

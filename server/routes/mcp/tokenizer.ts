@@ -251,4 +251,126 @@ tokenizer.post("/count-tools", async (c) => {
   }
 });
 
+/**
+ * Proxy endpoint to count tokens for arbitrary text
+ * POST /api/mcp/tokenizer/count-text
+ * Body: { text: string, modelId: string }
+ */
+tokenizer.post("/count-text", async (c) => {
+  try {
+    const body = (await c.req.json()) as {
+      text?: string;
+      modelId?: string;
+    };
+
+    const { text, modelId } = body;
+
+    if (!text || typeof text !== "string") {
+      return c.json(
+        {
+          ok: false,
+          error: "text is required and must be a string",
+        },
+        400,
+      );
+    }
+
+    if (!modelId || typeof modelId !== "string") {
+      return c.json(
+        {
+          ok: false,
+          error: "modelId is required",
+        },
+        400,
+      );
+    }
+
+    const convexHttpUrl = process.env.CONVEX_HTTP_URL;
+    if (!convexHttpUrl) {
+      return c.json(
+        {
+          ok: false,
+          error: "Server missing CONVEX_HTTP_URL configuration",
+        },
+        500,
+      );
+    }
+
+    const mappedModelId = mapModelIdToTokenizerBackend(modelId);
+    const useBackendTokenizer = mappedModelId !== null;
+
+    if (useBackendTokenizer && mappedModelId) {
+      try {
+        // Use backend tokenizer API for mapped models
+        const response = await fetch(`${convexHttpUrl}/tokenizer/count`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            text,
+            model: mappedModelId,
+          }),
+        });
+
+        if (response.ok) {
+          const data = (await response.json()) as {
+            ok?: boolean;
+            tokenCount?: number;
+            error?: string;
+          };
+          if (data.ok) {
+            return c.json({
+              ok: true,
+              tokenCount: data.tokenCount || 0,
+            });
+          } else {
+            console.warn(
+              `[tokenizer] Failed to count tokens for text:`,
+              data.error,
+            );
+            // Fallback to character-based estimation on backend error
+            return c.json({
+              ok: true,
+              tokenCount: estimateTokensFromChars(text),
+            });
+          }
+        } else {
+          console.warn(
+            `[tokenizer] Failed to count tokens for text:`,
+            response.status,
+          );
+          // Fallback to character-based estimation on HTTP error
+          return c.json({
+            ok: true,
+            tokenCount: estimateTokensFromChars(text),
+          });
+        }
+      } catch (error) {
+        console.warn(`[tokenizer] Error counting tokens for text:`, error);
+        // Fallback to character-based estimation on error
+        return c.json({
+          ok: true,
+          tokenCount: estimateTokensFromChars(text),
+        });
+      }
+    } else {
+      // Use character-based fallback for unmapped models
+      return c.json({
+        ok: true,
+        tokenCount: estimateTokensFromChars(text),
+      });
+    }
+  } catch (error) {
+    console.error("[tokenizer] Error counting text tokens:", error);
+    return c.json(
+      {
+        ok: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
+      500,
+    );
+  }
+});
+
 export default tokenizer;

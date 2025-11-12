@@ -196,7 +196,6 @@ chatV2.post("/", async (c) => {
 
             const finishReason: string | undefined = json.finishReason;
             if (finishReason && finishReason !== "tool-calls") {
-              console.log(json.messages[json.messages.length - 1].metadata);
               writer.write({
                 type: "finish",
                 messageMetadata: {

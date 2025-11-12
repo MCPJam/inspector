@@ -46,7 +46,7 @@ import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import { ErrorBox } from "@/components/chat-v2/error";
 import { usePersistedModel } from "@/hooks/use-persisted-model";
-import { countMCPToolsTokens } from "@/lib/mcp-tokenizer-api";
+import { countMCPToolsTokens, countTextTokens } from "@/lib/mcp-tokenizer-api";
 
 const DEFAULT_SYSTEM_PROMPT =
   "You are a helpful assistant with access to MCP tools.";
@@ -116,6 +116,11 @@ export function ChatTabV2({
     number
   > | null>(null);
   const [mcpToolsTokenCountLoading, setMcpToolsTokenCountLoading] =
+    useState(false);
+  const [systemPromptTokenCount, setSystemPromptTokenCount] = useState<
+    number | null
+  >(null);
+  const [systemPromptTokenCountLoading, setSystemPromptTokenCountLoading] =
     useState(false);
   const availableModels = useMemo(() => {
     return buildAvailableModels({
@@ -413,6 +418,35 @@ export function ChatTabV2({
     fetchMcpToolsTokenCount();
   }, [selectedConnectedServerNames, selectedModel]);
 
+  useEffect(() => {
+    const fetchSystemPromptTokenCount = async () => {
+      if (!systemPrompt || !selectedModel?.id || !selectedModel?.provider) {
+        setSystemPromptTokenCount(null);
+        setSystemPromptTokenCountLoading(false);
+        return;
+      }
+
+      setSystemPromptTokenCountLoading(true);
+      try {
+        const modelId = isMCPJamProvidedModel(String(selectedModel.id))
+          ? String(selectedModel.id)
+          : `${selectedModel.provider}/${selectedModel.id}`;
+        const count = await countTextTokens(systemPrompt, modelId);
+        setSystemPromptTokenCount(count > 0 ? count : null);
+      } catch (error) {
+        console.warn(
+          "[ChatTabV2] Failed to count system prompt tokens:",
+          error,
+        );
+        setSystemPromptTokenCount(null);
+      } finally {
+        setSystemPromptTokenCountLoading(false);
+      }
+    };
+
+    fetchSystemPromptTokenCount();
+  }, [systemPrompt, selectedModel]);
+
   const disableForAuthentication = !isAuthenticated && isMcpJamModel;
   const disableForServers = noServersConnected;
   const isStreaming = status === "streaming" || status === "submitted";
@@ -508,6 +542,8 @@ export function ChatTabV2({
     mcpToolsTokenCount,
     mcpToolsTokenCountLoading,
     connectedServerConfigs,
+    systemPromptTokenCount,
+    systemPromptTokenCountLoading,
   };
 
   const showStarterPrompts =
