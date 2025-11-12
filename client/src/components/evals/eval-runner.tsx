@@ -104,6 +104,7 @@ export function EvalRunner({
   const [suiteDescription, setSuiteDescription] = useState("");
   const [isEditingSuiteName, setIsEditingSuiteName] = useState(false);
   const [editedSuiteName, setEditedSuiteName] = useState("");
+  const [hasRestoredPreferences, setHasRestoredPreferences] = useState(false);
 
   const connectedServers = useMemo(
     () =>
@@ -150,8 +151,10 @@ export function EvalRunner({
   }, [savedPreferences, connectedServerNames]);
 
   useEffect(() => {
+    // Only restore preferences once on initial load
+    if (hasRestoredPreferences) return;
+
     if (availableModels.length === 0) {
-      setSelectedModels([]);
       return;
     }
 
@@ -161,13 +164,11 @@ export function EvalRunner({
       );
       if (matches.length > 0) {
         setSelectedModels(matches);
-        return;
       }
     }
 
-    // Don't auto-select any models, let user choose
-    setSelectedModels([]);
-  }, [availableModels, savedPreferences]);
+    setHasRestoredPreferences(true);
+  }, [availableModels, savedPreferences, hasRestoredPreferences]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -185,6 +186,7 @@ export function EvalRunner({
   useEffect(() => {
     if (!inline && !open) {
       setCurrentStep(0);
+      setHasRestoredPreferences(false);
     }
   }, [inline, open]);
 
@@ -656,16 +658,129 @@ export function EvalRunner({
             </div>
 
             {!stepCompletion.servers || !stepCompletion.model ? (
-              <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
-                <p className="font-medium text-foreground">
-                  Finish previous steps first
-                </p>
-                <p className="mt-2">
-                  Select at least one server and choose a model to unlock test
-                  authoring. That ensures generated tests know which stack to
-                  target.
-                </p>
-              </div>
+              testTemplates.length > 0 && testTemplates.some(t => t.query.trim().length > 0) ? (
+                // If tests already exist (e.g., after generation), show them even if prereqs changed
+                <div className="space-y-12">
+                  {testTemplates.map((template, index) => (
+                    <div
+                      key={index}
+                      className="space-y-3 rounded-lg border bg-background p-4"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex flex-col flex-1 space-y-2">
+                          <Label className="text-xs uppercase text-muted-foreground">
+                            Title
+                          </Label>
+                          <Input
+                            className="w-full"
+                            value={template.title}
+                            onChange={(event) =>
+                              handleUpdateTestTemplate(
+                                index,
+                                "title",
+                                event.target.value,
+                              )
+                            }
+                            placeholder="(Paypal) List transactions"
+                          />
+                        </div>
+                        {testTemplates.length > 1 && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleRemoveTestTemplate(index)}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label className="text-xs uppercase text-muted-foreground">
+                          Query
+                        </Label>
+                        <Textarea
+                          value={template.query}
+                          onChange={(event) =>
+                            handleUpdateTestTemplate(
+                              index,
+                              "query",
+                              event.target.value,
+                            )
+                          }
+                          placeholder="Can you find the most recent Paypal transactions, then create an invoice?"
+                          rows={3}
+                        />
+                      </div>
+
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <div className="space-y-2">
+                          <Label className="text-xs uppercase text-muted-foreground">
+                            Runs
+                          </Label>
+                          <Input
+                            type="number"
+                            min={1}
+                            value={template.runs}
+                            onChange={(event) =>
+                              handleUpdateTestTemplate(
+                                index,
+                                "runs",
+                                Number(event.target.value) > 0
+                                  ? Number(event.target.value)
+                                  : 1,
+                              )
+                            }
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="text-xs uppercase text-muted-foreground">
+                            Expected tools (comma separated)
+                          </Label>
+                          <Input
+                            value={template.expectedToolCalls.join(", ")}
+                            onChange={(event) => {
+                              // Split and process but keep empty strings to preserve commas being typed
+                              const rawValue = event.target.value;
+                              const processed = rawValue
+                                .split(",")
+                                .map((entry) => entry.trim());
+                              handleUpdateTestTemplate(
+                                index,
+                                "expectedToolCalls",
+                                processed,
+                              );
+                            }}
+                            placeholder="paypal_list_transactions, paypal_create_invoice"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleAddTestTemplate}
+                    aria-label="Add test template"
+                    className="w-full"
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Add test template
+                  </Button>
+                </div>
+              ) : (
+                <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
+                  <p className="font-medium text-foreground">
+                    Finish previous steps first
+                  </p>
+                  <p className="mt-2">
+                    Select at least one server and choose a model to unlock test
+                    authoring. That ensures generated tests know which stack to
+                    target.
+                  </p>
+                </div>
+              )
             ) : (
               <>
                 {isGenerating && (

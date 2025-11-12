@@ -294,9 +294,12 @@ function TracePart({ part }: { part: ContentPart }) {
     );
   }
 
-  if (part.type === "reasoning") {
-    // Skip reasoning parts for now
-    return null;
+  if (part.type === "reasoning" && part.text) {
+    return (
+      <div className="rounded-lg border border-border/30 bg-muted/10 p-3 text-xs text-muted-foreground">
+        <pre className="whitespace-pre-wrap break-words">{part.text}</pre>
+      </div>
+    );
   }
 
   // Unknown part type - show raw JSON
