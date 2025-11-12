@@ -33,7 +33,6 @@ import {
 import { isMCPJamProvidedModel } from "@/shared/types";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import posthog from "posthog-js";
-import { RUN_FILTER_ALL, RUN_FILTER_LEGACY, type RunFilterValue } from "./evals/constants";
 
 type View = "results" | "run";
 
@@ -45,8 +44,6 @@ export function EvalsTab() {
   const [selectedSuiteId, setSelectedSuiteId] = useState<string | null>(null);
   const [rerunningSuiteId, setRerunningSuiteId] = useState<string | null>(null);
 
-  const [selectedRunFilter, setSelectedRunFilter] =
-    useState<RunFilterValue>(RUN_FILTER_ALL);
   const [deletingSuiteId, setDeletingSuiteId] = useState<string | null>(null);
   const [suiteToDelete, setSuiteToDelete] = useState<EvalSuite | null>(null);
 
@@ -69,9 +66,6 @@ export function EvalsTab() {
     });
   }, []);
 
-  useEffect(() => {
-    setSelectedRunFilter(RUN_FILTER_ALL);
-  }, [selectedSuiteId]);
 
   // Get connected server names
   const connectedServerNames = useMemo(
@@ -129,78 +123,19 @@ export function EvalsTab() {
     );
   }, [suiteDetails]);
 
-  const legacyIterations = useMemo(
-    () => sortedIterations.filter((iteration) => !iteration.suiteRunId),
-    [sortedIterations],
-  );
-
-  const filteredIterations = useMemo(() => {
-    if (selectedRunFilter === RUN_FILTER_ALL) {
-      return sortedIterations;
-    }
-    if (selectedRunFilter === RUN_FILTER_LEGACY) {
-      return legacyIterations;
-    }
-    return sortedIterations.filter(
-      (iteration) => iteration.suiteRunId === selectedRunFilter,
-    );
-  }, [selectedRunFilter, sortedIterations, legacyIterations]);
-
   const runsForSelectedSuite = useMemo(
     () => (suiteRuns ? [...suiteRuns] : []),
     [suiteRuns],
   );
-
-  const selectedRun =
-    selectedRunFilter !== RUN_FILTER_ALL &&
-    selectedRunFilter !== RUN_FILTER_LEGACY
-      ? runsForSelectedSuite.find((run) => run._id === selectedRunFilter) ?? null
-      : null;
 
   const suiteAggregate = useMemo(() => {
     if (!selectedSuite || !suiteDetails) return null;
     return aggregateSuite(
       selectedSuite,
       suiteDetails.testCases,
-      filteredIterations,
+      sortedIterations,
     );
-  }, [selectedSuite, suiteDetails, filteredIterations]);
-
-  useEffect(() => {
-    setSelectedRunFilter((current) => {
-      if (current === RUN_FILTER_LEGACY) {
-        if (legacyIterations.length > 0) {
-          return current;
-        }
-        if (runsForSelectedSuite.length > 0) {
-          return runsForSelectedSuite[0]._id;
-        }
-        return RUN_FILTER_ALL;
-      }
-
-      if (current === RUN_FILTER_ALL) {
-        return current;
-      }
-
-      const runExists = runsForSelectedSuite.some(
-        (run) => run._id === current,
-      );
-
-      if (runExists) {
-        return current;
-      }
-
-      if (runsForSelectedSuite.length > 0) {
-        return runsForSelectedSuite[0]._id;
-      }
-
-      if (legacyIterations.length > 0) {
-        return RUN_FILTER_LEGACY;
-      }
-
-      return RUN_FILTER_ALL;
-    });
-  }, [runsForSelectedSuite, legacyIterations.length]);
+  }, [selectedSuite, suiteDetails, sortedIterations]);
 
   // Rerun handler
   const handleRerun = useCallback(
@@ -410,7 +345,7 @@ export function EvalsTab() {
               {view === "run"
                 ? "Create evaluation run"
                 : selectedSuiteId
-                  ? "Test suite results"
+                  ? selectedSuite?.name || "Test suite results"
                   : "Test suites"}
             </h1>
           </div>
@@ -464,13 +399,9 @@ export function EvalsTab() {
           <SuiteIterationsView
             suite={selectedSuite}
             cases={suiteDetails?.testCases || []}
-            iterations={filteredIterations}
+            iterations={sortedIterations}
             allIterations={sortedIterations}
-            legacyIterations={legacyIterations}
             runs={runsForSelectedSuite}
-            runFilter={selectedRunFilter}
-            onRunFilterChange={setSelectedRunFilter}
-            selectedRun={selectedRun}
             runsLoading={isSuiteRunsLoading}
             aggregate={suiteAggregate}
             onBack={() => setSelectedSuiteId(null)}
