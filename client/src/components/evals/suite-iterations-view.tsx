@@ -837,40 +837,18 @@ export function SuiteIterationsView({
         </TabsList>
 
         <TabsContent value="general" className="mt-4 space-y-4">
-          {/* Section 1: General History */}
-          <div className="rounded-xl border bg-card text-card-foreground">
-            <div className="border-b px-4 py-3">
-              <div className="text-sm font-semibold">General overview</div>
-              <p className="text-xs text-muted-foreground">
-                Overall performance across all runs and test cases.
-              </p>
-            </div>
-            <div className="grid gap-4 px-4 py-4 lg:grid-cols-[1.5fr_2fr]">
-              <div className="grid gap-3 rounded-lg border bg-background/80 p-4">
-                <div className="flex items-center justify-between text-xs text-muted-foreground">
-                  <span>{allIterations.length} iteration{allIterations.length === 1 ? "" : "s"}</span>
-                  <span className="font-medium text-foreground">All runs</span>
-                </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <RunMetric label="Pass rate" value={`${generalSummary.passRate}%`} />
-                  <RunMetric label="Passed" value={generalSummary.passed.toLocaleString()} />
-                  <RunMetric label="Failed" value={generalSummary.failed.toLocaleString()} />
-                  <RunMetric label="Cancelled" value={generalSummary.cancelled.toLocaleString()} />
-                  <RunMetric label="Pending" value={generalSummary.pending.toLocaleString()} />
-                  <RunMetric label="Total" value={generalSummary.total.toLocaleString()} />
-                </div>
+          {/* Charts Side by Side */}
+          <div className="grid gap-4 lg:grid-cols-2">
+            {/* Pass Rate Trend */}
+            <div className="rounded-xl border bg-card text-card-foreground">
+              <div className="px-4 pt-3 pb-2">
+                <div className="text-xs font-medium text-muted-foreground">Pass rate trend</div>
               </div>
-              <div className="rounded-lg border bg-background/80 p-4">
-                <div className="flex items-center justify-between text-xs text-muted-foreground">
-                  <span>Pass rate trend</span>
-                  <span>
-                    {runs.length} run{runs.length === 1 ? "" : "s"}
-                  </span>
-                </div>
+              <div className="px-4 pb-4">
                 {runsLoading ? (
-                  <Skeleton className="mt-4 h-28 w-full" />
+                  <Skeleton className="h-32 w-full" />
                 ) : runTrendData.length > 0 ? (
-                  <ChartContainer config={chartConfig} className="mt-4 aspect-auto h-32 w-full">
+                  <ChartContainer config={chartConfig} className="aspect-auto h-32 w-full">
                     <AreaChart data={runTrendData} width={undefined} height={undefined}>
                       <CartesianGrid
                         strokeDasharray="3 3"
@@ -883,7 +861,6 @@ export function SuiteIterationsView({
                         axisLine={false}
                         tickMargin={8}
                         tick={{ fontSize: 12 }}
-                        label={{ value: "Run", position: "insideBottom", offset: -5, fontSize: 12 }}
                       />
                       <YAxis
                         domain={[0, 100]}
@@ -907,85 +884,81 @@ export function SuiteIterationsView({
                     </AreaChart>
                   </ChartContainer>
                 ) : (
-                  <p className="mt-4 text-xs text-muted-foreground">
+                  <p className="text-xs text-muted-foreground">
                     No completed runs yet.
                   </p>
                 )}
               </div>
             </div>
-          </div>
 
-          {/* Per-Model Performance */}
-          {modelStats.length > 1 && (
-            <div className="rounded-xl border bg-card text-card-foreground">
-              <div className="border-b px-4 py-3">
-                <div className="text-sm font-semibold">Performance by model</div>
-                <p className="text-xs text-muted-foreground">
-                  Pass rate comparison across {modelStats.length} models.
-                </p>
-              </div>
-              <div className="p-4">
-                <ChartContainer config={modelChartConfig} className="aspect-auto h-64 w-full">
-                  <BarChart data={modelStats} width={undefined} height={undefined}>
-                    <CartesianGrid
-                      strokeDasharray="3 3"
-                      vertical={false}
-                      stroke="hsl(var(--muted-foreground) / 0.2)"
-                    />
-                    <XAxis
-                      dataKey="model"
-                      tickLine={false}
-                      axisLine={false}
-                      tickMargin={8}
-                      tick={{ fontSize: 12 }}
-                      interval={0}
-                      angle={-45}
-                      textAnchor="end"
-                      height={80}
-                    />
-                    <YAxis
-                      domain={[0, 100]}
-                      tickLine={false}
-                      axisLine={false}
-                      tickMargin={8}
-                      tick={{ fontSize: 12 }}
-                      tickFormatter={(value) => `${value}%`}
-                      label={{ value: "Pass Rate", angle: -90, position: "insideLeft", fontSize: 12 }}
-                    />
-                    <ChartTooltip
-                      cursor={false}
-                      content={({ active, payload }) => {
-                        if (!active || !payload || payload.length === 0) return null;
-                        const data = payload[0].payload;
-                        return (
-                          <div className="rounded-lg border bg-background p-2 shadow-sm">
-                            <div className="grid gap-2">
-                              <div className="flex flex-col">
-                                <span className="text-xs font-semibold">{data.model}</span>
-                                <span className="text-xs text-muted-foreground mt-0.5">
-                                  {data.passed} passed · {data.failed} failed
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <div className="h-2 w-2 rounded-full" style={{ backgroundColor: 'var(--color-passRate)' }} />
-                                <span className="text-sm font-semibold">{data.passRate}%</span>
+            {/* Per-Model Performance */}
+            {modelStats.length > 1 && (
+              <div className="rounded-xl border bg-card text-card-foreground">
+                <div className="px-4 pt-3 pb-2">
+                  <div className="text-xs font-medium text-muted-foreground">Performance by model</div>
+                </div>
+                <div className="px-4 pb-4">
+                  <ChartContainer config={modelChartConfig} className="aspect-auto h-32 w-full">
+                    <BarChart data={modelStats} width={undefined} height={undefined}>
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        vertical={false}
+                        stroke="hsl(var(--muted-foreground) / 0.2)"
+                      />
+                      <XAxis
+                        dataKey="model"
+                        tickLine={false}
+                        axisLine={false}
+                        tickMargin={8}
+                        tick={{ fontSize: 12 }}
+                        interval={0}
+                        angle={-45}
+                        textAnchor="end"
+                        height={80}
+                      />
+                      <YAxis
+                        domain={[0, 100]}
+                        tickLine={false}
+                        axisLine={false}
+                        tickMargin={8}
+                        tick={{ fontSize: 12 }}
+                        tickFormatter={(value) => `${value}%`}
+                      />
+                      <ChartTooltip
+                        cursor={false}
+                        content={({ active, payload }) => {
+                          if (!active || !payload || payload.length === 0) return null;
+                          const data = payload[0].payload;
+                          return (
+                            <div className="rounded-lg border bg-background p-2 shadow-sm">
+                              <div className="grid gap-2">
+                                <div className="flex flex-col">
+                                  <span className="text-xs font-semibold">{data.model}</span>
+                                  <span className="text-xs text-muted-foreground mt-0.5">
+                                    {data.passed} passed · {data.failed} failed
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <div className="h-2 w-2 rounded-full" style={{ backgroundColor: 'var(--color-passRate)' }} />
+                                  <span className="text-sm font-semibold">{data.passRate}%</span>
+                                </div>
                               </div>
                             </div>
-                          </div>
-                        );
-                      }}
-                    />
-                    <Bar
-                      dataKey="passRate"
-                      fill="var(--color-passRate)"
-                      radius={[4, 4, 0, 0]}
-                      isAnimationActive={false}
-                    />
-                  </BarChart>
-                </ChartContainer>
+                          );
+                        }}
+                      />
+                      <Bar
+                        dataKey="passRate"
+                        fill="var(--color-passRate)"
+                        radius={[4, 4, 0, 0]}
+                        isAnimationActive={false}
+                      />
+                    </BarChart>
+                  </ChartContainer>
+                </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
 
           {/* Sections 2 & 3: Runs and Test Cases Side by Side */}
           <div className="grid gap-4 lg:grid-cols-2">
