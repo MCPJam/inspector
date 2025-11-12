@@ -26,7 +26,7 @@ type ModelId = string;
 
 type ContextSchema = {
   usedTokens: number;
-  maxTokens: number;
+  maxTokens?: number;
   usage?: LanguageModelUsage;
   modelId: ModelId;
   selectedServers?: string[];
@@ -82,12 +82,20 @@ export const Context = ({
       ? (metadataModel.context_length ??
         metadataModel.top_provider?.context_length)
       : undefined;
-  const derivedMaxTokens =
-    metadataMaxTokens ??
-    contextData?.maxTotal ??
-    contextData?.maxInput ??
-    contextData?.maxOutput ??
-    Math.max(usedTokens, 1);
+  const derivedMaxTokens = metadataMaxTokens ?? contextData?.maxTotal;
+
+  // Don't render if we don't have maxTokens
+  if (!derivedMaxTokens) {
+    return null;
+  }
+
+  // Don't render if mcpToolsTokenCount is null or an empty object
+  if (
+    mcpToolsTokenCount === null ||
+    (mcpToolsTokenCount && Object.keys(mcpToolsTokenCount).length === 0)
+  ) {
+    return null;
+  }
 
   return (
     <ContextContext.Provider
@@ -109,6 +117,7 @@ export const Context = ({
 
 const ContextIcon = () => {
   const { usedTokens, maxTokens } = useContextValue();
+  if (!maxTokens) return null;
   const circumference = 2 * Math.PI * ICON_RADIUS;
   const usedPercent = usedTokens / maxTokens;
   const dashOffset = circumference * (1 - usedPercent);
@@ -152,6 +161,7 @@ export type ContextTriggerProps = ComponentProps<typeof Button>;
 
 export const ContextTrigger = ({ children, ...props }: ContextTriggerProps) => {
   const { usedTokens, maxTokens } = useContextValue();
+  if (!maxTokens) return null;
   const usedPercent = usedTokens / maxTokens;
   const displayPct = new Intl.NumberFormat("en-US", {
     style: "percent",
@@ -192,6 +202,7 @@ export const ContextContentHeader = ({
   ...props
 }: ContextContentHeaderProps) => {
   const { usedTokens, maxTokens } = useContextValue();
+  if (!maxTokens) return null;
   const usedPercent = usedTokens / maxTokens;
   const displayPct = new Intl.NumberFormat("en-US", {
     style: "percent",
