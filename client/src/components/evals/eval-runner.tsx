@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, Plus, Sparkles, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, Sparkles, X, Check } from "lucide-react";
 import { toast } from "sonner";
 import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
@@ -25,17 +25,13 @@ import {
 import { cn } from "@/lib/utils";
 import { ModelDefinition, isMCPJamProvidedModel } from "@/shared/types";
 import { ServerSelectionCard } from "./ServerSelectionCard";
-import { EvalModelSelector } from "./eval-model-selector";
-import { UserModelSelector } from "./user-model-selector";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import posthog from "posthog-js";
 
-interface TestCase {
+interface TestTemplate {
   title: string;
   query: string;
   runs: number;
-  model: string;
-  provider: string;
   expectedToolCalls: string[];
 }
 
@@ -73,12 +69,10 @@ const steps = [
 
 type StepKey = (typeof steps)[number]["key"];
 
-const buildBlankTestCase = (model: ModelDefinition | null): TestCase => ({
+const buildBlankTestTemplate = (): TestTemplate => ({
   title: ``,
   query: "",
   runs: 1,
-  model: model?.id ?? "",
-  provider: model?.provider ?? "",
   expectedToolCalls: [],
 });
 
@@ -93,7 +87,7 @@ export function EvalRunner({
   const [currentStep, setCurrentStep] = useState(0);
   const [savedPreferences, setSavedPreferences] = useState<{
     servers: string[];
-    modelId: string | null;
+    modelIds: string[];
   } | null>(null);
   const { isAuthenticated } = useConvexAuth();
   const { getAccessToken } = useAuth();
@@ -101,11 +95,9 @@ export function EvalRunner({
   const { getToken, hasToken } = useAiProviderKeys();
 
   const [selectedServers, setSelectedServers] = useState<string[]>([]);
-  const [selectedModel, setSelectedModel] = useState<ModelDefinition | null>(
-    null,
-  );
-  const [testCases, setTestCases] = useState<TestCase[]>([
-    buildBlankTestCase(null),
+  const [selectedModels, setSelectedModels] = useState<ModelDefinition[]>([]);
+  const [testTemplates, setTestTemplates] = useState<TestTemplate[]>([
+    buildBlankTestTemplate(),
   ]);
   const [modelTab, setModelTab] = useState<"mcpjam" | "yours">("mcpjam");
   const [suiteName, setSuiteName] = useState("");
@@ -133,11 +125,11 @@ export function EvalRunner({
       if (!stored) return;
       const parsed = JSON.parse(stored) as {
         servers?: string[];
-        modelId?: string | null;
+        modelIds?: string[];
       };
       setSavedPreferences({
         servers: parsed.servers ?? [],
-        modelId: parsed.modelId ?? null,
+        modelIds: parsed.modelIds ?? [],
       });
     } catch (error) {
       console.warn("Failed to load eval runner preferences", error);
@@ -159,31 +151,22 @@ export function EvalRunner({
 
   useEffect(() => {
     if (availableModels.length === 0) {
-      setSelectedModel(null);
+      setSelectedModels([]);
       return;
     }
 
-    if (savedPreferences?.modelId) {
-      const match = availableModels.find(
-        (model) => model.id === savedPreferences.modelId,
+    if (savedPreferences?.modelIds && savedPreferences.modelIds.length > 0) {
+      const matches = availableModels.filter((model) =>
+        savedPreferences.modelIds.includes(model.id),
       );
-      if (match) {
-        setSelectedModel(match);
+      if (matches.length > 0) {
+        setSelectedModels(matches);
         return;
       }
     }
 
-    setSelectedModel((previous) => {
-      if (previous) {
-        const stillExists = availableModels.some(
-          (model) => model.id === previous.id,
-        );
-        if (stillExists) {
-          return previous;
-        }
-      }
-      return availableModels[0];
-    });
+    // Don't auto-select any models, let user choose
+    setSelectedModels([]);
   }, [availableModels, savedPreferences]);
 
   useEffect(() => {
@@ -191,33 +174,13 @@ export function EvalRunner({
     try {
       const payload = {
         servers: selectedServers,
-        modelId: selectedModel?.id ?? null,
+        modelIds: selectedModels.map((m) => m.id),
       };
       localStorage.setItem(PREFERENCE_STORAGE_KEY, JSON.stringify(payload));
     } catch (error) {
       console.warn("Failed to persist eval runner preferences", error);
     }
-  }, [selectedServers, selectedModel]);
-
-  useEffect(() => {
-    setTestCases((prev) => {
-      if (!selectedModel) return prev;
-      return prev.map((testCase) => {
-        if (
-          testCase.model === selectedModel.id &&
-          testCase.provider === selectedModel.provider
-        ) {
-          return testCase;
-        }
-        return {
-          ...testCase,
-          model: selectedModel.id,
-          provider: selectedModel.provider,
-          // Preserve title/query/expected tools while aligning model info
-        };
-      });
-    });
-  }, [selectedModel]);
+  }, [selectedServers, selectedModels]);
 
   useEffect(() => {
     if (!inline && !open) {
@@ -225,40 +188,24 @@ export function EvalRunner({
     }
   }, [inline, open]);
 
-  const isMCPJamModel = selectedModel
-    ? isMCPJamProvidedModel(selectedModel.id)
-    : false;
-
-  const selectedModelProvider = selectedModel?.provider as
-    | keyof ProviderTokens
-    | undefined;
-
-  const providerHasToken = selectedModelProvider
-    ? hasToken(selectedModelProvider)
-    : false;
-
-  const validTestCases = useMemo(
-    () => testCases.filter((testCase) => testCase.query.trim().length > 0),
-    [testCases],
+  const validTestTemplates = useMemo(
+    () => testTemplates.filter((template) => template.query.trim().length > 0),
+    [testTemplates],
   );
 
-  const stepCompletion = useMemo(
-    () => ({
+  const stepCompletion = useMemo(() => {
+    // Check that all selected models have credentials
+    const allModelsHaveCredentials = selectedModels.every((model) => {
+      const isJam = isMCPJamProvidedModel(model.id);
+      return isJam || hasToken(model.provider as keyof ProviderTokens);
+    });
+
+    return {
       servers: selectedServers.length > 0,
-      model:
-        !!selectedModel &&
-        (isMCPJamModel || (selectedModelProvider && providerHasToken)),
-      tests: validTestCases.length > 0,
-    }),
-    [
-      validTestCases.length,
-      selectedModel,
-      isMCPJamModel,
-      selectedModelProvider,
-      providerHasToken,
-      selectedServers.length,
-    ],
-  );
+      model: selectedModels.length > 0 && allModelsHaveCredentials,
+      tests: validTestTemplates.length > 0,
+    };
+  }, [selectedServers, selectedModels, validTestTemplates, hasToken]);
 
   const highestAvailableStep = useMemo(() => {
     if (!stepCompletion.servers) return 0;
@@ -293,20 +240,20 @@ export function EvalRunner({
     });
   };
 
-  const handleAddTestCase = () => {
-    setTestCases((prev) => [...prev, buildBlankTestCase(selectedModel)]);
+  const handleAddTestTemplate = () => {
+    setTestTemplates((prev) => [...prev, buildBlankTestTemplate()]);
   };
 
-  const handleRemoveTestCase = (index: number) => {
-    setTestCases((prev) => prev.filter((_, i) => i !== index));
+  const handleRemoveTestTemplate = (index: number) => {
+    setTestTemplates((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const handleUpdateTestCase = (
+  const handleUpdateTestTemplate = (
     index: number,
-    field: keyof TestCase,
+    field: keyof TestTemplate,
     value: string | number | string[],
   ) => {
-    setTestCases((prev) => {
+    setTestTemplates((prev) => {
       const next = [...prev];
       next[index] = {
         ...next[index],
@@ -355,20 +302,18 @@ export function EvalRunner({
       }
 
       if (result.tests && result.tests.length > 0) {
-        const generatedTests = result.tests.map((test: any, index: number) => ({
+        const generatedTemplates = result.tests.map((test: any, index: number) => ({
           title: test.title || `Generated test ${index + 1}`,
           query: test.query || "",
           runs: Number(test.runs) > 0 ? Number(test.runs) : 1,
-          model: selectedModel?.id || "",
-          provider: selectedModel?.provider || "",
           expectedToolCalls: Array.isArray(test.expectedToolCalls)
             ? test.expectedToolCalls
             : [],
         }));
 
-        setTestCases(generatedTests);
+        setTestTemplates(generatedTemplates);
         setCurrentStep(2);
-        toast.success(`Generated ${generatedTests.length} test case(s).`);
+        toast.success(`Generated ${generatedTemplates.length} test template(s).`);
       }
     } catch (error) {
       console.error("Failed to generate tests:", error);
@@ -430,28 +375,30 @@ export function EvalRunner({
       return;
     }
 
-    if (!selectedModel) {
-      toast.error("Please select a model");
+    if (selectedModels.length === 0) {
+      toast.error("Please select at least one model");
       setCurrentStep(1);
       return;
     }
 
-    const currentModelIsJam = isMCPJamProvidedModel(selectedModel.id);
-    const apiKey =
-      !currentModelIsJam && selectedModelProvider
-        ? getToken(selectedModelProvider)
-        : "";
-
-    if (!currentModelIsJam && (!selectedModelProvider || !apiKey)) {
-      toast.error(
-        `Please configure your ${selectedModel.provider} API key in Settings`,
-      );
-      setCurrentStep(1);
-      return;
+    // Collect API keys for all selected models
+    const modelApiKeys: Record<string, string> = {};
+    for (const model of selectedModels) {
+      if (!isMCPJamProvidedModel(model.id)) {
+        const key = getToken(model.provider as keyof ProviderTokens);
+        if (!key) {
+          toast.error(
+            `Please configure your ${model.provider} API key in Settings`,
+          );
+          setCurrentStep(1);
+          return;
+        }
+        modelApiKeys[model.provider] = key;
+      }
     }
 
-    if (validTestCases.length === 0) {
-      toast.error("Please add at least one test case with a query");
+    if (validTestTemplates.length === 0) {
+      toast.error("Please add at least one test template with a query");
       setCurrentStep(2);
       return;
     }
@@ -476,13 +423,17 @@ export function EvalRunner({
     try {
       const accessToken = await getAccessToken();
 
-      const testsWithModelInfo = validTestCases.map((testCase) => ({
-        ...testCase,
-        model: selectedModel.id,
-        provider: selectedModel.provider,
-      }));
-
-      const modelApiKey = currentModelIsJam ? null : apiKey || null;
+      // Expand the matrix: each test template × each model
+      const expandedTests = validTestTemplates.flatMap((template) =>
+        selectedModels.map((model) => ({
+          title: `${template.title} [${model.name}]`,
+          query: template.query,
+          runs: template.runs,
+          model: model.id,
+          provider: model.provider,
+          expectedToolCalls: template.expectedToolCalls,
+        }))
+      );
 
       const response = await fetch("/api/mcp/evals/run", {
         method: "POST",
@@ -490,9 +441,9 @@ export function EvalRunner({
         body: JSON.stringify({
           suiteName: suiteName.trim(),
           suiteDescription: suiteDescription.trim() || undefined,
-          tests: testsWithModelInfo,
+          tests: expandedTests,
           serverIds: selectedServers,
-          modelApiKey,
+          modelApiKeys,
           convexAuthToken: accessToken,
         }),
       });
@@ -510,7 +461,7 @@ export function EvalRunner({
 
       const result = await response.json();
       toast.success(result.message || "Evals started successfully!");
-      setTestCases([buildBlankTestCase(selectedModel)]);
+      setTestTemplates([buildBlankTestTemplate()]);
       setSuiteName("");
       setSuiteDescription("");
       setIsEditingSuiteName(false);
@@ -582,10 +533,9 @@ export function EvalRunner({
         return (
           <div className="space-y-4">
             <div>
-              <h3 className="text-lg pb-2">Choose your evaluation model</h3>
+              <h3 className="text-lg pb-2">Choose evaluation models</h3>
               <p className="text-sm text-muted-foreground">
-                Select a model to run your evaluations. MCPJam models are free
-                to use.
+                Select one or more models. Each test will run against all selected models.
               </p>
             </div>
 
@@ -617,23 +567,67 @@ export function EvalRunner({
               </button>
             </div>
 
-            {/* Tab Content */}
-            {modelTab === "mcpjam" ? (
-              <EvalModelSelector
-                selectedModel={selectedModel}
-                availableModels={availableModels}
-                onModelChange={setSelectedModel}
-              />
-            ) : (
-              <UserModelSelector
-                selectedModel={selectedModel}
-                availableModels={availableModels}
-                onModelChange={setSelectedModel}
-                missingApiKey={
-                  !isMCPJamModel && !providerHasToken && !!selectedModelProvider
-                }
-                providerName={selectedModel?.provider}
-              />
+            {/* Multi-select model cards */}
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3">
+              {availableModels
+                .filter((model) =>
+                  modelTab === "mcpjam"
+                    ? isMCPJamProvidedModel(model.id)
+                    : !isMCPJamProvidedModel(model.id)
+                )
+                .map((model) => {
+                  const isSelected = selectedModels.some((m) => m.id === model.id);
+                  const isJam = isMCPJamProvidedModel(model.id);
+                  const needsApiKey = !isJam && !hasToken(model.provider as keyof ProviderTokens);
+
+                  return (
+                    <button
+                      key={model.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedModels((prev) =>
+                          isSelected
+                            ? prev.filter((m) => m.id !== model.id)
+                            : [...prev, model]
+                        );
+                      }}
+                      className={cn(
+                        "rounded-xl border p-4 text-left transition-colors relative",
+                        isSelected
+                          ? "border-primary bg-primary/5"
+                          : "hover:border-primary/40",
+                        needsApiKey && "opacity-60"
+                      )}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <h4 className="font-semibold text-sm">{model.name}</h4>
+                            {isSelected && (
+                              <Check className="h-4 w-4 text-primary shrink-0" />
+                            )}
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            by {model.provider}
+                          </p>
+                          {needsApiKey && (
+                            <p className="text-xs text-destructive mt-2">
+                              Missing API key
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+            </div>
+
+            {selectedModels.length > 0 && (
+              <div className="rounded-lg border bg-muted/30 p-3">
+                <p className="text-sm font-medium">
+                  {selectedModels.length} model{selectedModels.length === 1 ? "" : "s"} selected
+                </p>
+              </div>
             )}
           </div>
         );
@@ -684,7 +678,7 @@ export function EvalRunner({
 
                 {!isGenerating && (
                   <div className="space-y-12">
-                    {testCases.map((testCase, index) => (
+                    {testTemplates.map((template, index) => (
                       <div
                         key={index}
                         className="space-y-3 rounded-lg border bg-background p-4"
@@ -696,9 +690,9 @@ export function EvalRunner({
                             </Label>
                             <Input
                               className="w-full"
-                              value={testCase.title}
+                              value={template.title}
                               onChange={(event) =>
-                                handleUpdateTestCase(
+                                handleUpdateTestTemplate(
                                   index,
                                   "title",
                                   event.target.value,
@@ -707,12 +701,12 @@ export function EvalRunner({
                               placeholder="(Paypal) List transactions"
                             />
                           </div>
-                          {testCases.length > 1 && (
+                          {testTemplates.length > 1 && (
                             <Button
                               type="button"
                               variant="ghost"
                               size="sm"
-                              onClick={() => handleRemoveTestCase(index)}
+                              onClick={() => handleRemoveTestTemplate(index)}
                             >
                               <X className="h-4 w-4" />
                             </Button>
@@ -724,9 +718,9 @@ export function EvalRunner({
                             Query
                           </Label>
                           <Textarea
-                            value={testCase.query}
+                            value={template.query}
                             onChange={(event) =>
-                              handleUpdateTestCase(
+                              handleUpdateTestTemplate(
                                 index,
                                 "query",
                                 event.target.value,
@@ -745,9 +739,9 @@ export function EvalRunner({
                             <Input
                               type="number"
                               min={1}
-                              value={testCase.runs}
+                              value={template.runs}
                               onChange={(event) =>
-                                handleUpdateTestCase(
+                                handleUpdateTestTemplate(
                                   index,
                                   "runs",
                                   Number(event.target.value) > 0
@@ -762,14 +756,14 @@ export function EvalRunner({
                               Expected tools (comma separated)
                             </Label>
                             <Input
-                              value={testCase.expectedToolCalls.join(", ")}
+                              value={template.expectedToolCalls.join(", ")}
                               onChange={(event) => {
                                 // Split and process but keep empty strings to preserve commas being typed
                                 const rawValue = event.target.value;
                                 const processed = rawValue
                                   .split(",")
                                   .map((entry) => entry.trim());
-                                handleUpdateTestCase(
+                                handleUpdateTestTemplate(
                                   index,
                                   "expectedToolCalls",
                                   processed,
@@ -784,12 +778,12 @@ export function EvalRunner({
                     <Button
                       type="button"
                       variant="outline"
-                      onClick={handleAddTestCase}
-                      aria-label="Add test"
+                      onClick={handleAddTestTemplate}
+                      aria-label="Add test template"
                       className="w-full"
                     >
                       <Plus className="h-4 w-4 mr-2" />
-                      Add test case
+                      Add test template
                     </Button>
                   </div>
                 )}
@@ -798,6 +792,8 @@ export function EvalRunner({
           </div>
         );
       case "review":
+        const totalTestCases = validTestTemplates.length * selectedModels.length;
+
         return (
           <div className="space-y-6">
             <div className="space-y-4">
@@ -833,8 +829,16 @@ export function EvalRunner({
                 className="resize-none"
               />
             </div>
+
+            <div className="rounded-lg border bg-muted/30 p-4">
+              <div className="text-sm font-medium">Test Matrix</div>
+              <p className="text-xs text-muted-foreground mt-1">
+                {validTestTemplates.length} test{validTestTemplates.length === 1 ? "" : "s"} × {selectedModels.length} model{selectedModels.length === 1 ? "" : "s"} = <strong>{totalTestCases} total test cases</strong>
+              </p>
+            </div>
+
             <div className="space-y-2">
-              <h3 className="text-lg">Review your tests</h3>
+              <h3 className="text-lg">Review your configuration</h3>
               <p className="text-sm text-muted-foreground">
                 After confirming the run, you will see your run begin in the
                 eval results tab.
@@ -868,15 +872,19 @@ export function EvalRunner({
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">
-                    Model
+                    Models
                   </p>
-                  {selectedModel ? (
-                    <div className="mt-2 flex items-center gap-2">
-                      <Badge variant="outline">{selectedModel.name}</Badge>
+                  {selectedModels.length > 0 ? (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {selectedModels.map((model) => (
+                        <Badge key={model.id} variant="outline">
+                          {model.name}
+                        </Badge>
+                      ))}
                     </div>
                   ) : (
                     <p className="mt-2 text-sm text-muted-foreground">
-                      No model selected
+                      No models selected
                     </p>
                   )}
                 </div>
@@ -893,27 +901,27 @@ export function EvalRunner({
               <div className="flex items-start justify-between gap-6">
                 <div className="flex-1">
                   <p className="text-sm font-medium text-muted-foreground">
-                    Tests
+                    Test Templates
                   </p>
                   <div className="mt-3 space-y-3">
-                    {validTestCases.map((testCase, index) => (
+                    {validTestTemplates.map((template, index) => (
                       <div
                         key={index}
                         className="rounded-md border bg-muted/30 p-3"
                       >
                         <p className="text-sm font-semibold text-foreground">
-                          {testCase.title}
+                          {template.title}
                         </p>
                         <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
-                          {testCase.query}
+                          {template.query}
                         </p>
                         <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
                           <span>
-                            {testCase.runs} run{testCase.runs === 1 ? "" : "s"}
+                            {template.runs} run{template.runs === 1 ? "" : "s"}
                           </span>
-                          {testCase.expectedToolCalls.length > 0 && (
+                          {template.expectedToolCalls.length > 0 && (
                             <span>
-                              Tools: {testCase.expectedToolCalls.join(", ")}
+                              Tools: {template.expectedToolCalls.join(", ")}
                             </span>
                           )}
                         </div>

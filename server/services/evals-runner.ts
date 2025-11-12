@@ -51,7 +51,7 @@ export type RunEvalSuiteOptions = {
     tests: EvalTestCase[];
     environment: { servers: string[] };
   };
-  modelApiKey?: string | null;
+  modelApiKeys?: Record<string, string>;
   convexClient: ConvexHttpClient;
   convexHttpUrl: string;
   convexAuthToken: string;
@@ -75,11 +75,11 @@ type RunIterationBaseParams = {
   tools: ToolSet;
   recorder: SuiteRunRecorder;
   testCaseId?: string;
+  modelApiKeys?: Record<string, string>;
 };
 
 type RunIterationAiSdkParams = RunIterationBaseParams & {
   modelDefinition: ModelDefinition;
-  apiKey: string;
 };
 
 type RunIterationBackendParams = RunIterationBaseParams & {
@@ -104,10 +104,18 @@ const runIterationWithAiSdk = async ({
   recorder,
   testCaseId,
   modelDefinition,
-  apiKey,
+  modelApiKeys,
 }: RunIterationAiSdkParams) => {
   const { advancedConfig, query, expectedToolCalls } = test;
   const { system, temperature, toolChoice } = advancedConfig ?? {};
+
+  // Get API key for this model's provider
+  const apiKey = modelApiKeys?.[test.provider] ?? "";
+  if (!apiKey) {
+    throw new Error(
+      `Missing API key for provider ${test.provider} (test: ${test.title})`
+    );
+  }
 
   const runStartedAt = Date.now();
   const iterationId = await recorder.startIteration({
@@ -133,7 +141,7 @@ const runIterationWithAiSdk = async ({
   baseMessages.push({ role: "user", content: query });
 
   try {
-    const llmModel = createLlmModel(modelDefinition, apiKey ?? "");
+    const llmModel = createLlmModel(modelDefinition, apiKey);
 
     const result = await generateText({
       model: llmModel,
@@ -355,11 +363,11 @@ const runTestCase = async (params: {
   test: EvalTestCase;
   tools: ToolSet;
   recorder: SuiteRunRecorder;
-  modelApiKey?: string | null;
+  modelApiKeys?: Record<string, string>;
   convexHttpUrl: string;
   convexAuthToken: string;
 }) => {
-  const { test, tools, recorder, modelApiKey, convexHttpUrl, convexAuthToken } =
+  const { test, tools, recorder, modelApiKeys, convexHttpUrl, convexAuthToken } =
     params;
   const testCaseId = test.testCaseId;
   const modelDefinition = buildModelDefinition(test);
@@ -377,15 +385,10 @@ const runTestCase = async (params: {
         testCaseId,
         convexHttpUrl,
         convexAuthToken,
+        modelApiKeys,
       });
       evaluations.push(evaluation);
       continue;
-    }
-
-    if (!modelApiKey) {
-      throw new Error(
-        `Missing API key for provider ${modelDefinition.provider} while running evals`,
-      );
     }
 
     const evaluation = await runIterationWithAiSdk({
@@ -395,7 +398,7 @@ const runTestCase = async (params: {
       recorder,
       testCaseId,
       modelDefinition,
-      apiKey: modelApiKey,
+      modelApiKeys,
     });
     evaluations.push(evaluation);
   }
@@ -407,7 +410,7 @@ export const runEvalSuiteWithAiSdk = async ({
   suiteId,
   runId,
   config,
-  modelApiKey,
+  modelApiKeys,
   convexClient,
   convexHttpUrl,
   convexAuthToken,
@@ -443,7 +446,7 @@ export const runEvalSuiteWithAiSdk = async ({
         test,
         tools,
         recorder,
-        modelApiKey,
+        modelApiKeys,
         convexHttpUrl,
         convexAuthToken,
       });

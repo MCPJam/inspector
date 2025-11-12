@@ -95,7 +95,7 @@ const RunEvalsRequestSchema = z.object({
     }),
   ),
   serverIds: z.array(z.string()).min(1, "At least one server must be selected"),
-  modelApiKey: z.string().optional().nullable(),
+  modelApiKeys: z.record(z.string()).optional(),
   convexAuthToken: z.string(),
   notes: z.string().optional(),
 });
@@ -123,7 +123,7 @@ evals.post("/run", async (c) => {
       suiteDescription,
       tests,
       serverIds,
-      modelApiKey,
+      modelApiKeys,
       convexAuthToken,
       notes,
     } =
@@ -206,7 +206,7 @@ evals.post("/run", async (c) => {
       suiteId: resolvedSuiteId,
       runId,
       config: runConfig,
-      modelApiKey: modelApiKey ?? undefined,
+      modelApiKeys: modelApiKeys ?? undefined,
       convexClient,
       convexHttpUrl,
       convexAuthToken,

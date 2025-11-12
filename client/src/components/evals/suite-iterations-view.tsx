@@ -44,6 +44,7 @@ export function SuiteIterationsView({
   connectedServerNames,
   rerunningSuiteId,
   deletingSuiteId,
+  availableModels,
 }: {
   suite: EvalSuite;
   cases: EvalCase[];
@@ -58,6 +59,7 @@ export function SuiteIterationsView({
   connectedServerNames: Set<string>;
   rerunningSuiteId: string | null;
   deletingSuiteId: string | null;
+  availableModels: any[];
 }) {
   const [openIterationId, setOpenIterationId] = useState<string | null>(null);
   const [expandedQueries, setExpandedQueries] = useState<Set<string>>(
@@ -235,6 +237,46 @@ export function SuiteIterationsView({
   const chartConfig = {
     passRate: {
       label: "Pass rate",
+      color: "var(--chart-1)",
+    },
+  };
+
+  // Calculate per-model statistics
+  const modelStats = useMemo(() => {
+    const modelMap = new Map<string, { passed: number; failed: number; total: number; modelName: string }>();
+
+    iterations.forEach((iteration) => {
+      const model = iteration.testCaseSnapshot?.model || 'Unknown';
+      const modelName = iteration.testCaseSnapshot?.model || 'Unknown Model';
+
+      if (!modelMap.has(model)) {
+        modelMap.set(model, { passed: 0, failed: 0, total: 0, modelName });
+      }
+
+      const stats = modelMap.get(model)!;
+      stats.total += 1;
+
+      if (iteration.result === 'passed') {
+        stats.passed += 1;
+      } else if (iteration.result === 'failed') {
+        stats.failed += 1;
+      }
+    });
+
+    const data = Array.from(modelMap.entries()).map(([model, stats]) => ({
+      model: stats.modelName,
+      passRate: stats.total > 0 ? Math.round((stats.passed / stats.total) * 100) : 0,
+      passed: stats.passed,
+      failed: stats.failed,
+      total: stats.total,
+    }));
+
+    return data.sort((a, b) => b.passRate - a.passRate);
+  }, [iterations]);
+
+  const modelChartConfig = {
+    passRate: {
+      label: "Pass Rate",
       color: "var(--chart-1)",
     },
   };
@@ -489,7 +531,7 @@ export function SuiteIterationsView({
   // Data for run detail charts
   const selectedRunChartData = useMemo(() => {
     if (!selectedRunId || caseGroupsForSelectedRun.length === 0) {
-      return { donutData: [], durationData: [] };
+      return { donutData: [], durationData: [], modelData: [] };
     }
 
     // Calculate overall pass/fail for donut chart
@@ -497,6 +539,35 @@ export function SuiteIterationsView({
     let totalFailed = 0;
     let totalPending = 0;
     let totalCancelled = 0;
+
+    // Calculate per-model stats for this run
+    const modelMap = new Map<string, { passed: number; failed: number; total: number; modelName: string }>();
+
+    iterationsForSelectedRun.forEach((iteration) => {
+      const model = iteration.testCaseSnapshot?.model || 'Unknown';
+      const modelName = iteration.testCaseSnapshot?.model || 'Unknown Model';
+
+      if (!modelMap.has(model)) {
+        modelMap.set(model, { passed: 0, failed: 0, total: 0, modelName });
+      }
+
+      const stats = modelMap.get(model)!;
+      stats.total += 1;
+
+      if (iteration.result === 'passed') {
+        stats.passed += 1;
+      } else if (iteration.result === 'failed') {
+        stats.failed += 1;
+      }
+    });
+
+    const modelData = Array.from(modelMap.entries()).map(([model, stats]) => ({
+      model: stats.modelName,
+      passRate: stats.total > 0 ? Math.round((stats.passed / stats.total) * 100) : 0,
+      passed: stats.passed,
+      failed: stats.failed,
+      total: stats.total,
+    })).sort((a, b) => b.passRate - a.passRate);
 
     // Calculate duration per test for bar chart
     const durationData = caseGroupsForSelectedRun.map((group, index) => {
@@ -546,8 +617,8 @@ export function SuiteIterationsView({
       donutData.push({ name: "Cancelled", value: totalCancelled, fill: "hsl(240 3.7% 15.9%)" });
     }
 
-    return { donutData, durationData };
-  }, [selectedRunId, caseGroupsForSelectedRun]);
+    return { donutData, durationData, modelData };
+  }, [selectedRunId, caseGroupsForSelectedRun, iterationsForSelectedRun]);
 
   // Iterations for selected test (across all runs)
   const iterationsForSelectedTest = useMemo(() => {
@@ -843,6 +914,78 @@ export function SuiteIterationsView({
               </div>
             </div>
           </div>
+
+          {/* Per-Model Performance */}
+          {modelStats.length > 1 && (
+            <div className="rounded-xl border bg-card text-card-foreground">
+              <div className="border-b px-4 py-3">
+                <div className="text-sm font-semibold">Performance by model</div>
+                <p className="text-xs text-muted-foreground">
+                  Pass rate comparison across {modelStats.length} models.
+                </p>
+              </div>
+              <div className="p-4">
+                <ChartContainer config={modelChartConfig} className="aspect-auto h-64 w-full">
+                  <BarChart data={modelStats} width={undefined} height={undefined}>
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      vertical={false}
+                      stroke="hsl(var(--muted-foreground) / 0.2)"
+                    />
+                    <XAxis
+                      dataKey="model"
+                      tickLine={false}
+                      axisLine={false}
+                      tickMargin={8}
+                      tick={{ fontSize: 12 }}
+                      interval={0}
+                      angle={-45}
+                      textAnchor="end"
+                      height={80}
+                    />
+                    <YAxis
+                      domain={[0, 100]}
+                      tickLine={false}
+                      axisLine={false}
+                      tickMargin={8}
+                      tick={{ fontSize: 12 }}
+                      tickFormatter={(value) => `${value}%`}
+                      label={{ value: "Pass Rate", angle: -90, position: "insideLeft", fontSize: 12 }}
+                    />
+                    <ChartTooltip
+                      cursor={false}
+                      content={({ active, payload }) => {
+                        if (!active || !payload || payload.length === 0) return null;
+                        const data = payload[0].payload;
+                        return (
+                          <div className="rounded-lg border bg-background p-2 shadow-sm">
+                            <div className="grid gap-2">
+                              <div className="flex flex-col">
+                                <span className="text-xs font-semibold">{data.model}</span>
+                                <span className="text-xs text-muted-foreground mt-0.5">
+                                  {data.passed} passed · {data.failed} failed
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <div className="h-2 w-2 rounded-full" style={{ backgroundColor: 'var(--color-passRate)' }} />
+                                <span className="text-sm font-semibold">{data.passRate}%</span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      }}
+                    />
+                    <Bar
+                      dataKey="passRate"
+                      fill="var(--color-passRate)"
+                      radius={[4, 4, 0, 0]}
+                      isAnimationActive={false}
+                    />
+                  </BarChart>
+                </ChartContainer>
+              </div>
+            </div>
+          )}
 
           {/* Sections 2 & 3: Runs and Test Cases Side by Side */}
           <div className="grid gap-4 lg:grid-cols-2">
@@ -1205,6 +1348,80 @@ export function SuiteIterationsView({
                 </div>
               </div>
             )}
+
+            {/* Per-Model Performance for this run */}
+            {selectedRunChartData.modelData.length > 1 && (
+              <div className="border-b px-4 py-4">
+                <div className="rounded-lg border bg-background/50 p-4">
+                  <div className="text-xs font-medium text-muted-foreground mb-3">
+                    Performance by model
+                  </div>
+                  <ChartContainer
+                    config={{
+                      passRate: { label: "Pass Rate", color: "var(--chart-1)" },
+                    }}
+                    className="aspect-auto h-48 w-full"
+                  >
+                    <BarChart data={selectedRunChartData.modelData} width={undefined} height={undefined}>
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        vertical={false}
+                        stroke="hsl(var(--muted-foreground) / 0.2)"
+                      />
+                      <XAxis
+                        dataKey="model"
+                        tickLine={false}
+                        axisLine={false}
+                        tickMargin={8}
+                        tick={{ fontSize: 11 }}
+                        interval={0}
+                        angle={-45}
+                        textAnchor="end"
+                        height={60}
+                      />
+                      <YAxis
+                        domain={[0, 100]}
+                        tickLine={false}
+                        axisLine={false}
+                        tickMargin={8}
+                        tick={{ fontSize: 11 }}
+                        tickFormatter={(value) => `${value}%`}
+                      />
+                      <ChartTooltip
+                        cursor={false}
+                        content={({ active, payload }) => {
+                          if (!active || !payload || payload.length === 0) return null;
+                          const data = payload[0].payload;
+                          return (
+                            <div className="rounded-lg border bg-background p-2 shadow-sm">
+                              <div className="grid gap-2">
+                                <div className="flex flex-col">
+                                  <span className="text-xs font-semibold">{data.model}</span>
+                                  <span className="text-xs text-muted-foreground mt-0.5">
+                                    {data.passed} passed · {data.failed} failed
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <div className="h-2 w-2 rounded-full" style={{ backgroundColor: 'var(--color-passRate)' }} />
+                                  <span className="text-sm font-semibold">{data.passRate}%</span>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        }}
+                      />
+                      <Bar
+                        dataKey="passRate"
+                        fill="var(--color-passRate)"
+                        radius={[4, 4, 0, 0]}
+                        isAnimationActive={false}
+                      />
+                    </BarChart>
+                  </ChartContainer>
+                </div>
+              </div>
+            )}
+
             <div className="px-4 py-4">
               <div className="grid gap-3 rounded-lg border bg-background/80 p-4">
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
@@ -1561,7 +1778,7 @@ export function SuiteIterationsView({
 
         <TabsContent value="edit" className="mt-4 space-y-4">
           {/* Tests Config */}
-          <SuiteTestsConfig suite={suite} onUpdate={handleUpdateTests} />
+          <SuiteTestsConfig suite={suite} onUpdate={handleUpdateTests} availableModels={availableModels} />
         </TabsContent>
       </Tabs>
     </div>
