@@ -1,6 +1,7 @@
 import { useMemo, useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
 import { ChevronDown, ChevronRight, Loader2, RotateCw, Trash2 } from "lucide-react";
 import {
   Tooltip,
@@ -62,12 +63,21 @@ export function SuiteIterationsView({
   const [expandedQueries, setExpandedQueries] = useState<Set<string>>(
     new Set(),
   );
-  const [activeTab, setActiveTab] = useState<"results" | "tests">("results");
+  const [activeTab, setActiveTab] = useState<"general" | "runs" | "test-cases" | "edit">("general");
   const [viewMode, setViewMode] = useState<"overview" | "run-detail" | "test-detail">("overview");
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [selectedTestId, setSelectedTestId] = useState<string | null>(null);
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [isEditingDescription, setIsEditingDescription] = useState(false);
+  const [editedName, setEditedName] = useState(suite.name);
+  const [editedDescription, setEditedDescription] = useState(suite.description || "");
 
   const updateSuite = useMutation("evals:updateSuite" as any);
+
+  useEffect(() => {
+    setEditedName(suite.name);
+    setEditedDescription(suite.description || "");
+  }, [suite.name, suite.description]);
 
   const handleUpdateTests = async (tests: EvalSuiteConfigTest[]) => {
     try {
@@ -82,6 +92,70 @@ export function SuiteIterationsView({
     } catch (error) {
       toast.error("Failed to update tests");
       console.error("Failed to update tests:", error);
+    }
+  };
+
+  const handleNameClick = () => {
+    setIsEditingName(true);
+    setEditedName(suite.name);
+  };
+
+  const handleNameBlur = async () => {
+    setIsEditingName(false);
+    if (editedName.trim() && editedName !== suite.name) {
+      try {
+        await updateSuite({
+          suiteId: suite._id,
+          name: editedName.trim(),
+        });
+        toast.success("Suite name updated");
+      } catch (error) {
+        toast.error("Failed to update suite name");
+        console.error("Failed to update suite name:", error);
+        setEditedName(suite.name);
+      }
+    } else {
+      setEditedName(suite.name);
+    }
+  };
+
+  const handleNameKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      handleNameBlur();
+    } else if (e.key === "Escape") {
+      setIsEditingName(false);
+      setEditedName(suite.name);
+    }
+  };
+
+  const handleDescriptionClick = () => {
+    setIsEditingDescription(true);
+    setEditedDescription(suite.description || "");
+  };
+
+  const handleDescriptionBlur = async () => {
+    setIsEditingDescription(false);
+    if (editedDescription.trim() !== (suite.description || "")) {
+      try {
+        await updateSuite({
+          suiteId: suite._id,
+          description: editedDescription.trim(),
+        });
+        toast.success("Suite description updated");
+      } catch (error) {
+        toast.error("Failed to update suite description");
+        console.error("Failed to update suite description:", error);
+        setEditedDescription(suite.description || "");
+      }
+    } else {
+      setEditedDescription(suite.description || "");
+    }
+  };
+
+  const handleDescriptionKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape") {
+      setIsEditingDescription(false);
+      setEditedDescription(suite.description || "");
     }
   };
 
@@ -530,11 +604,36 @@ export function SuiteIterationsView({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <Button variant="ghost" size="sm" onClick={onBack}>
-          ← Back to suites
-        </Button>
-        <div className="flex items-center gap-2">
+      {/* Consolidated header with back button, editable name, and actions */}
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3 flex-1 min-w-0 overflow-visible">
+          <Button variant="ghost" size="sm" onClick={onBack} className="shrink-0">
+            ← Back
+          </Button>
+          {/* Inline-editable suite name */}
+          {isEditingName ? (
+            <input
+              type="text"
+              value={editedName}
+              onChange={(e) => setEditedName(e.target.value)}
+              onBlur={handleNameBlur}
+              onKeyDown={handleNameKeyDown}
+              autoFocus
+              className="flex-1 px-3 py-1.5 text-xl font-semibold border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring min-w-0"
+            />
+          ) : (
+            <div className="flex-1 min-w-0">
+              <Button
+                variant="ghost"
+                onClick={handleNameClick}
+                className="px-3 py-1.5 h-auto text-xl font-semibold hover:bg-accent truncate max-w-full"
+              >
+                {suite.name}
+              </Button>
+            </div>
+          )}
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
           <Tooltip>
             <TooltipTrigger asChild>
               <span>
@@ -576,116 +675,263 @@ export function SuiteIterationsView({
         </div>
       </div>
 
-      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "results" | "tests")}>
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "general" | "runs" | "test-cases" | "edit")}>
         <TabsList>
-          <TabsTrigger value="results">Results</TabsTrigger>
-          <TabsTrigger value="tests">Tests</TabsTrigger>
+          <TabsTrigger value="general">General</TabsTrigger>
+          <TabsTrigger value="runs">Runs</TabsTrigger>
+          <TabsTrigger value="test-cases">Test Cases</TabsTrigger>
+          <TabsTrigger value="edit">Edit</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="results" className="mt-4 space-y-4">
-      {(viewMode === "run-detail" || viewMode === "test-detail") && (
-        <div className="mb-4">
-          <Button variant="ghost" size="sm" onClick={() => {
-            setViewMode("overview");
-            setSelectedRunId(null);
-            setSelectedTestId(null);
-          }}>
-            ← Back to overview
-          </Button>
-        </div>
-      )}
-
-      {viewMode === "overview" ? (
-        <>
-      {/* Section 1: General History */}
-      <div className="rounded-xl border bg-card text-card-foreground">
-        <div className="border-b px-4 py-3">
-          <div className="text-sm font-semibold">General overview</div>
-          <p className="text-xs text-muted-foreground">
-            Overall performance across all runs and test cases.
-          </p>
-        </div>
-        <div className="grid gap-4 px-4 py-4 lg:grid-cols-[1.5fr_2fr]">
-          <div className="grid gap-3 rounded-lg border bg-background/80 p-4">
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>{allIterations.length} iteration{allIterations.length === 1 ? "" : "s"}</span>
-              <span className="font-medium text-foreground">All runs</span>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <RunMetric label="Pass rate" value={`${generalSummary.passRate}%`} />
-              <RunMetric label="Passed" value={generalSummary.passed.toLocaleString()} />
-              <RunMetric label="Failed" value={generalSummary.failed.toLocaleString()} />
-              <RunMetric label="Cancelled" value={generalSummary.cancelled.toLocaleString()} />
-              <RunMetric label="Pending" value={generalSummary.pending.toLocaleString()} />
-              <RunMetric label="Total" value={generalSummary.total.toLocaleString()} />
-            </div>
-          </div>
-          <div className="rounded-lg border bg-background/80 p-4">
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>Pass rate trend</span>
-              <span>
-                {runs.length} run{runs.length === 1 ? "" : "s"}
-              </span>
-            </div>
-            {runsLoading ? (
-              <Skeleton className="mt-4 h-28 w-full" />
-            ) : runTrendData.length > 0 ? (
-              <ChartContainer config={chartConfig} className="mt-4 aspect-auto h-32 w-full">
-                <AreaChart data={runTrendData} width={undefined} height={undefined}>
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    vertical={false}
-                    stroke="hsl(var(--muted-foreground) / 0.2)"
-                  />
-                  <XAxis
-                    dataKey="runIndex"
-                    tickLine={false}
-                    axisLine={false}
-                    tickMargin={8}
-                    tick={{ fontSize: 12 }}
-                    label={{ value: "Run", position: "insideBottom", offset: -5, fontSize: 12 }}
-                  />
-                  <YAxis
-                    domain={[0, 100]}
-                    tickLine={false}
-                    axisLine={false}
-                    tickMargin={8}
-                    tick={{ fontSize: 12 }}
-                    tickFormatter={(value) => `${value}%`}
-                  />
-                  <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
-                  <Area
-                    type="monotone"
-                    dataKey="passRate"
-                    stroke="var(--color-passRate)"
-                    fill="var(--color-passRate)"
-                    fillOpacity={0.15}
-                    strokeWidth={2}
-                    isAnimationActive={false}
-                    dot={runTrendData.length > 1}
-                  />
-                </AreaChart>
-              </ChartContainer>
-            ) : (
-              <p className="mt-4 text-xs text-muted-foreground">
-                No completed runs yet.
+        <TabsContent value="general" className="mt-4 space-y-4">
+          {/* Section 1: General History */}
+          <div className="rounded-xl border bg-card text-card-foreground">
+            <div className="border-b px-4 py-3">
+              <div className="text-sm font-semibold">General overview</div>
+              <p className="text-xs text-muted-foreground">
+                Overall performance across all runs and test cases.
               </p>
-            )}
+            </div>
+            <div className="grid gap-4 px-4 py-4 lg:grid-cols-[1.5fr_2fr]">
+              <div className="grid gap-3 rounded-lg border bg-background/80 p-4">
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span>{allIterations.length} iteration{allIterations.length === 1 ? "" : "s"}</span>
+                  <span className="font-medium text-foreground">All runs</span>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <RunMetric label="Pass rate" value={`${generalSummary.passRate}%`} />
+                  <RunMetric label="Passed" value={generalSummary.passed.toLocaleString()} />
+                  <RunMetric label="Failed" value={generalSummary.failed.toLocaleString()} />
+                  <RunMetric label="Cancelled" value={generalSummary.cancelled.toLocaleString()} />
+                  <RunMetric label="Pending" value={generalSummary.pending.toLocaleString()} />
+                  <RunMetric label="Total" value={generalSummary.total.toLocaleString()} />
+                </div>
+              </div>
+              <div className="rounded-lg border bg-background/80 p-4">
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span>Pass rate trend</span>
+                  <span>
+                    {runs.length} run{runs.length === 1 ? "" : "s"}
+                  </span>
+                </div>
+                {runsLoading ? (
+                  <Skeleton className="mt-4 h-28 w-full" />
+                ) : runTrendData.length > 0 ? (
+                  <ChartContainer config={chartConfig} className="mt-4 aspect-auto h-32 w-full">
+                    <AreaChart data={runTrendData} width={undefined} height={undefined}>
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        vertical={false}
+                        stroke="hsl(var(--muted-foreground) / 0.2)"
+                      />
+                      <XAxis
+                        dataKey="runIndex"
+                        tickLine={false}
+                        axisLine={false}
+                        tickMargin={8}
+                        tick={{ fontSize: 12 }}
+                        label={{ value: "Run", position: "insideBottom", offset: -5, fontSize: 12 }}
+                      />
+                      <YAxis
+                        domain={[0, 100]}
+                        tickLine={false}
+                        axisLine={false}
+                        tickMargin={8}
+                        tick={{ fontSize: 12 }}
+                        tickFormatter={(value) => `${value}%`}
+                      />
+                      <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
+                      <Area
+                        type="monotone"
+                        dataKey="passRate"
+                        stroke="var(--color-passRate)"
+                        fill="var(--color-passRate)"
+                        fillOpacity={0.15}
+                        strokeWidth={2}
+                        isAnimationActive={false}
+                        dot={runTrendData.length > 1}
+                      />
+                    </AreaChart>
+                  </ChartContainer>
+                ) : (
+                  <p className="mt-4 text-xs text-muted-foreground">
+                    No completed runs yet.
+                  </p>
+                )}
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
 
-      {/* Sections 2 & 3: Runs and Test Cases Side by Side */}
-      <div className="grid gap-4 lg:grid-cols-2">
-        {/* Section 2: Runs */}
-        <div className="rounded-xl border bg-card text-card-foreground">
-          <div className="border-b px-4 py-3">
-            <div className="text-sm font-semibold">Runs</div>
-            <p className="text-xs text-muted-foreground">
-              Click on a run to view its test breakdown and results.
-            </p>
+          {/* Sections 2 & 3: Runs and Test Cases Side by Side */}
+          <div className="grid gap-4 lg:grid-cols-2">
+            {/* Section 2: Runs */}
+            <div className="rounded-xl border bg-card text-card-foreground">
+              <div className="border-b px-4 py-3">
+                <div className="text-sm font-semibold">Runs</div>
+                <p className="text-xs text-muted-foreground">
+                  Click on a run to view its test breakdown and results.
+                </p>
+              </div>
+              <div className="divide-y">
+                {runs.length === 0 ? (
+                  <div className="px-4 py-12 text-center text-sm text-muted-foreground">
+                    No runs found.
+                  </div>
+                ) : (
+                  runs.map((run) => {
+                    // Calculate real-time stats from iterations for this run
+                    const runIterations = allIterations.filter((iter) => iter.suiteRunId === run._id);
+                    const realTimePassed = runIterations.filter((i) => i.result === "passed").length;
+                    const realTimeFailed = runIterations.filter((i) => i.result === "failed").length;
+                    const realTimeTotal = runIterations.length;
+
+                    // Use real-time data if available, otherwise fall back to summary
+                    const passed = realTimePassed > 0 ? realTimePassed : (run.summary?.passed ?? 0);
+                    const failed = realTimeFailed > 0 ? realTimeFailed : (run.summary?.failed ?? 0);
+                    const total = realTimeTotal > 0 ? realTimeTotal : (run.summary?.total ?? 0);
+                    const passRate = total > 0 ? Math.round((passed / total) * 100) : null;
+
+                    const timestamp = formatTime(run.completedAt ?? run.createdAt);
+
+                    // Calculate duration - use current time for in-progress runs
+                    const duration = run.completedAt && run.createdAt
+                      ? formatDuration(run.completedAt - run.createdAt)
+                      : run.createdAt && run.status === "running"
+                        ? formatDuration(Date.now() - run.createdAt)
+                        : "—";
+
+                    const isRunning = run.status === "running";
+
+                    return (
+                      <button
+                        key={run._id}
+                        onClick={() => {
+                          setSelectedRunId(run._id);
+                          setViewMode("run-detail");
+                          setActiveTab("runs");
+                        }}
+                        className="flex w-full flex-col gap-2 px-4 py-3 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="flex flex-col gap-0.5">
+                              <span className="text-sm font-medium">Run #{run.runNumber}</span>
+                              <span className="text-xs text-muted-foreground">{timestamp}</span>
+                            </div>
+                            {isRunning && (
+                              <div className="flex items-center gap-1.5 rounded-full bg-amber-100 dark:bg-amber-950 px-2 py-0.5">
+                                <div className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+                                <span className="text-xs font-medium text-amber-700 dark:text-amber-400">Running</span>
+                              </div>
+                            )}
+                          </div>
+                          {passRate !== null && (
+                            <span className="text-sm font-semibold tabular-nums">
+                              {passRate}%
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                          <div className="flex items-center gap-1">
+                            <span className="font-medium">Duration:</span>
+                            <span className="font-mono">{duration}</span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <span className="font-medium">Passed:</span>
+                            <span className="font-mono text-emerald-600">{passed}</span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <span className="font-medium">Failed:</span>
+                            <span className="font-mono text-red-600">{failed}</span>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            {/* Section 3: Test Cases */}
+            <div className="rounded-xl border bg-card text-card-foreground">
+              <div className="border-b px-4 py-3">
+                <div className="text-sm font-semibold">Test cases</div>
+                <p className="text-xs text-muted-foreground">
+                  Click on a test to view iterations across all runs.
+                </p>
+              </div>
+              <div className="divide-y">
+                {caseGroups.filter((g) => g.testCase !== null).length === 0 ? (
+                  <div className="px-4 py-12 text-center text-sm text-muted-foreground">
+                    No test cases found.
+                  </div>
+                ) : (
+                  caseGroups
+                    .filter((g) => g.testCase !== null)
+                    .map((group) => {
+                      const testCase = group.testCase!;
+                      const passedCount = group.summary.passed;
+                      const totalCount = group.summary.runs;
+                      const passRate = totalCount > 0
+                        ? Math.round((passedCount / totalCount) * 100)
+                        : 0;
+
+                      return (
+                        <button
+                          key={testCase._id}
+                          onClick={() => {
+                            setSelectedTestId(testCase._id);
+                            setViewMode("test-detail");
+                            setActiveTab("test-cases");
+                          }}
+                          className="flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="flex flex-col gap-1">
+                              <span className="text-sm font-medium">{testCase.title}</span>
+                              <span className="text-xs text-muted-foreground">
+                                {testCase.provider} • {testCase.model}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-4">
+                            <span className="text-xs text-muted-foreground">
+                              {totalCount} iteration{totalCount === 1 ? "" : "s"}
+                            </span>
+                            <span className="text-sm font-medium">
+                              {passRate}%
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })
+                )}
+              </div>
+            </div>
           </div>
-          <div className="divide-y">
+        </TabsContent>
+
+        <TabsContent value="runs" className="mt-4 space-y-4">
+          {viewMode === "run-detail" && (
+            <div className="mb-4">
+              <Button variant="ghost" size="sm" onClick={() => {
+                setViewMode("overview");
+                setSelectedRunId(null);
+              }}>
+                ← Back to runs list
+              </Button>
+            </div>
+          )}
+
+          {viewMode === "overview" ? (
+            <div className="rounded-xl border bg-card text-card-foreground">
+              <div className="border-b px-4 py-3">
+                <div className="text-sm font-semibold">Runs</div>
+                <p className="text-xs text-muted-foreground">
+                  Click on a run to view its test breakdown and results.
+                </p>
+              </div>
+              <div className="divide-y">
             {runs.length === 0 ? (
               <div className="px-4 py-12 text-center text-sm text-muted-foreground">
                 No runs found.
@@ -761,68 +1007,10 @@ export function SuiteIterationsView({
                 );
               })
             )}
-          </div>
-        </div>
-
-        {/* Section 3: Test Cases */}
-        <div className="rounded-xl border bg-card text-card-foreground">
-          <div className="border-b px-4 py-3">
-            <div className="text-sm font-semibold">Test cases</div>
-            <p className="text-xs text-muted-foreground">
-              Click on a test to view iterations across all runs.
-            </p>
-          </div>
-          <div className="divide-y">
-            {caseGroups.filter((g) => g.testCase !== null).length === 0 ? (
-              <div className="px-4 py-12 text-center text-sm text-muted-foreground">
-                No test cases found.
               </div>
-            ) : (
-              caseGroups
-                .filter((g) => g.testCase !== null)
-                .map((group) => {
-                  const testCase = group.testCase!;
-                  const passedCount = group.summary.passed;
-                  const totalCount = group.summary.runs;
-                  const passRate = totalCount > 0
-                    ? Math.round((passedCount / totalCount) * 100)
-                    : 0;
-
-                  return (
-                    <button
-                      key={testCase._id}
-                      onClick={() => {
-                        setSelectedTestId(testCase._id);
-                        setViewMode("test-detail");
-                      }}
-                      className="flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="flex flex-col gap-1">
-                          <span className="text-sm font-medium">{testCase.title}</span>
-                          <span className="text-xs text-muted-foreground">
-                            {testCase.provider} • {testCase.model}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-4">
-                        <span className="text-xs text-muted-foreground">
-                          {totalCount} iteration{totalCount === 1 ? "" : "s"}
-                        </span>
-                        <span className="text-sm font-medium">
-                          {passRate}%
-                        </span>
-                      </div>
-                    </button>
-                  );
-                })
-            )}
-          </div>
-        </div>
-      </div>
-        </>
-      ) : viewMode === "run-detail" && selectedRunDetails ? (
-        <>
+            </div>
+          ) : viewMode === "run-detail" && selectedRunDetails ? (
+            <>
           {/* Run Detail View */}
           <div className="rounded-xl border bg-card text-card-foreground">
             <div className="border-b px-4 py-3">
@@ -1005,9 +1193,79 @@ export function SuiteIterationsView({
               ))
             )}
           </div>
-        </>
-      ) : viewMode === "test-detail" && selectedTestDetails ? (
-        <>
+            </>
+          ) : null}
+        </TabsContent>
+
+        <TabsContent value="test-cases" className="mt-4 space-y-4">
+          {viewMode === "test-detail" && (
+            <div className="mb-4">
+              <Button variant="ghost" size="sm" onClick={() => {
+                setViewMode("overview");
+                setSelectedTestId(null);
+              }}>
+                ← Back to test cases list
+              </Button>
+            </div>
+          )}
+
+          {viewMode === "overview" ? (
+            <div className="rounded-xl border bg-card text-card-foreground">
+              <div className="border-b px-4 py-3">
+                <div className="text-sm font-semibold">Test cases</div>
+                <p className="text-xs text-muted-foreground">
+                  Click on a test to view iterations across all runs.
+                </p>
+              </div>
+              <div className="divide-y">
+                {caseGroups.filter((g) => g.testCase !== null).length === 0 ? (
+                  <div className="px-4 py-12 text-center text-sm text-muted-foreground">
+                    No test cases found.
+                  </div>
+                ) : (
+                  caseGroups
+                    .filter((g) => g.testCase !== null)
+                    .map((group) => {
+                      const testCase = group.testCase!;
+                      const passedCount = group.summary.passed;
+                      const totalCount = group.summary.runs;
+                      const passRate = totalCount > 0
+                        ? Math.round((passedCount / totalCount) * 100)
+                        : 0;
+
+                      return (
+                        <button
+                          key={testCase._id}
+                          onClick={() => {
+                            setSelectedTestId(testCase._id);
+                            setViewMode("test-detail");
+                          }}
+                          className="flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="flex flex-col gap-1">
+                              <span className="text-sm font-medium">{testCase.title}</span>
+                              <span className="text-xs text-muted-foreground">
+                                {testCase.provider} • {testCase.model}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-4">
+                            <span className="text-xs text-muted-foreground">
+                              {totalCount} iteration{totalCount === 1 ? "" : "s"}
+                            </span>
+                            <span className="text-sm font-medium">
+                              {passRate}%
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })
+                )}
+              </div>
+            </div>
+          ) : viewMode === "test-detail" && selectedTestDetails ? (
+            <>
           {/* Test Detail View */}
           <div className="rounded-xl border bg-card text-card-foreground">
             <div className="border-b px-4 py-3">
@@ -1237,11 +1495,36 @@ export function SuiteIterationsView({
               })
             )}
           </div>
-        </>
-      ) : null}
+            </>
+          ) : null}
         </TabsContent>
 
-        <TabsContent value="tests" className="mt-4">
+        <TabsContent value="edit" className="mt-4 space-y-4">
+          {/* Description Editor */}
+          <div className="space-y-2">
+            <div className="text-sm font-semibold">Description</div>
+            {isEditingDescription ? (
+              <Textarea
+                value={editedDescription}
+                onChange={(e) => setEditedDescription(e.target.value)}
+                onBlur={handleDescriptionBlur}
+                onKeyDown={handleDescriptionKeyDown}
+                autoFocus
+                placeholder="Add a description for this test suite"
+                className="min-h-[100px] resize-none"
+              />
+            ) : (
+              <Button
+                variant="ghost"
+                onClick={handleDescriptionClick}
+                className="w-full px-3 py-2 h-auto text-left justify-start hover:bg-accent"
+              >
+                {suite.description || "Add a description for this test suite"}
+              </Button>
+            )}
+          </div>
+
+          {/* Tests Config */}
           <SuiteTestsConfig suite={suite} onUpdate={handleUpdateTests} />
         </TabsContent>
       </Tabs>
