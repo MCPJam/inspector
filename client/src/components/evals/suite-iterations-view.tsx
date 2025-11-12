@@ -847,14 +847,14 @@ export function SuiteIterationsView({
           {/* Sections 2 & 3: Runs and Test Cases Side by Side */}
           <div className="grid gap-4 lg:grid-cols-2">
             {/* Section 2: Runs */}
-            <div className="rounded-xl border bg-card text-card-foreground">
-              <div className="border-b px-4 py-3">
+            <div className="rounded-xl border bg-card text-card-foreground flex flex-col max-h-[600px]">
+              <div className="border-b px-4 py-3 shrink-0">
                 <div className="text-sm font-semibold">Runs</div>
                 <p className="text-xs text-muted-foreground">
                   Click on a run to view its test breakdown and results.
                 </p>
               </div>
-              <div className="divide-y">
+              <div className="divide-y overflow-y-auto">
                 {runs.length === 0 ? (
                   <div className="px-4 py-12 text-center text-sm text-muted-foreground">
                     No runs found.
@@ -935,14 +935,14 @@ export function SuiteIterationsView({
             </div>
 
             {/* Section 3: Test Cases */}
-            <div className="rounded-xl border bg-card text-card-foreground">
-              <div className="border-b px-4 py-3">
+            <div className="rounded-xl border bg-card text-card-foreground flex flex-col max-h-[600px]">
+              <div className="border-b px-4 py-3 shrink-0">
                 <div className="text-sm font-semibold">Test cases</div>
                 <p className="text-xs text-muted-foreground">
                   Click on a test to view iterations across all runs.
                 </p>
               </div>
-              <div className="divide-y">
+              <div className="divide-y overflow-y-auto">
                 {caseGroups.filter((g) => g.testCase !== null).length === 0 ? (
                   <div className="px-4 py-12 text-center text-sm text-muted-foreground">
                     No test cases found.
@@ -995,14 +995,14 @@ export function SuiteIterationsView({
 
         <TabsContent value="runs" className="mt-4 space-y-4">
           {viewMode === "overview" ? (
-            <div className="rounded-xl border bg-card text-card-foreground">
-              <div className="border-b px-4 py-3">
+            <div className="rounded-xl border bg-card text-card-foreground flex flex-col max-h-[600px]">
+              <div className="border-b px-4 py-3 shrink-0">
                 <div className="text-sm font-semibold">Runs</div>
                 <p className="text-xs text-muted-foreground">
                   Click on a run to view its test breakdown and results.
                 </p>
               </div>
-              <div className="divide-y">
+              <div className="divide-y overflow-y-auto">
             {runs.length === 0 ? (
               <div className="px-4 py-12 text-center text-sm text-muted-foreground">
                 No runs found.
@@ -1270,14 +1270,14 @@ export function SuiteIterationsView({
 
         <TabsContent value="test-cases" className="mt-4 space-y-4">
           {viewMode === "overview" ? (
-            <div className="rounded-xl border bg-card text-card-foreground">
-              <div className="border-b px-4 py-3">
+            <div className="rounded-xl border bg-card text-card-foreground flex flex-col max-h-[600px]">
+              <div className="border-b px-4 py-3 shrink-0">
                 <div className="text-sm font-semibold">Test cases</div>
                 <p className="text-xs text-muted-foreground">
                   Click on a test to view iterations across all runs.
                 </p>
               </div>
-              <div className="divide-y">
+              <div className="divide-y overflow-y-auto">
                 {caseGroups.filter((g) => g.testCase !== null).length === 0 ? (
                   <div className="px-4 py-12 text-center text-sm text-muted-foreground">
                     No test cases found.
