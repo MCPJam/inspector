@@ -152,7 +152,7 @@ export function ChatInput({
                     }
                   : undefined
               }
-              modelId={`${currentModel.provider}/${currentModel.id}`}
+              modelId={`${currentModel.id}`}
               selectedServers={selectedServers}
               mcpToolsTokenCount={mcpToolsTokenCount}
               mcpToolsTokenCountLoading={mcpToolsTokenCountLoading}

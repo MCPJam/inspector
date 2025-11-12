@@ -226,26 +226,40 @@ export function ChatTabV2({
       : lastAssistantMessageIsCompleteWithToolCalls,
   });
 
-  // Token usage from the most recent assistant message metadata
-  const lastAssistantMessage = [...messages]
-    .reverse()
-    .find((message) => message.role === "assistant" && message.metadata);
+  // Sum token usage from all assistant messages with metadata
+  const tokenUsage = useMemo(() => {
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+    let totalTokens = 0;
 
-  const lastMetadata = lastAssistantMessage?.metadata as
-    | {
-        inputTokens?: number;
-        outputTokens?: number;
-        totalTokens?: number;
+    for (const message of messages) {
+      if (message.role === "assistant" && message.metadata) {
+        const metadata = message.metadata as
+          | {
+              inputTokens?: number;
+              outputTokens?: number;
+              totalTokens?: number;
+            }
+          | undefined;
+
+        if (metadata) {
+          totalInputTokens += metadata.inputTokens ?? 0;
+          totalOutputTokens += metadata.outputTokens ?? 0;
+          const messageTotal =
+            metadata.totalTokens ??
+            (metadata.inputTokens ?? 0) + (metadata.outputTokens ?? 0);
+          totalTokens += messageTotal;
+        }
       }
-    | undefined;
+    }
 
-  const tokenUsage = {
-    inputTokens: lastMetadata?.inputTokens ?? 0,
-    outputTokens: lastMetadata?.outputTokens ?? 0,
-    totalTokens:
-      lastMetadata?.totalTokens ??
-      (lastMetadata?.inputTokens ?? 0) + (lastMetadata?.outputTokens ?? 0),
-  };
+    return {
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
+      totalTokens:
+        totalTokens > 0 ? totalTokens : totalInputTokens + totalOutputTokens,
+    };
+  }, [messages]);
   const resetChat = useCallback(() => {
     setChatSessionId(generateId());
     setMessages([]);
@@ -301,8 +315,6 @@ export function ChatTabV2({
     const interval = setInterval(checkOllama, 30000);
     return () => clearInterval(interval);
   }, [getOllamaBaseUrl]);
-
-  // selectedModelId defaults via effectiveModel; no effect needed
 
   useEffect(() => {
     const es = new EventSource("/api/mcp/elicitation/stream");
@@ -387,7 +399,9 @@ export function ChatTabV2({
           selectedConnectedServerNames,
           modelId,
         );
-        setMcpToolsTokenCount(counts);
+        setMcpToolsTokenCount(
+          counts && Object.keys(counts).length > 0 ? counts : null,
+        );
       } catch (error) {
         console.warn("[ChatTabV2] Failed to count MCP tools tokens:", error);
         setMcpToolsTokenCount(null);
