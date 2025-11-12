@@ -1,102 +1,95 @@
 import { Hono } from "hono";
 import "../../types/hono";
+import { getModelById } from "../../../shared/types";
 
 const tokenizer = new Hono();
-
-/**
- * Mapping from application model IDs to tokenizer backend model IDs.
- * This includes:
- * - Model enum values (e.g., "gpt-5" → "openai/gpt-5")
- * - MCPJam provided models (e.g., "meta-llama/llama-3.3-70b-instruct" → "meta/llama-3.3-70b")
- * - Provider-prefixed models that need normalization
- */
-const MODEL_ID_MAPPING = new Map<string, string>([
-  // Anthropic models
-  ["claude-opus-4-0", "anthropic/claude-opus-4"],
-  ["claude-sonnet-4-0", "anthropic/claude-sonnet-4"],
-  ["claude-3-7-sonnet-latest", "anthropic/claude-3.7-sonnet"],
-  ["claude-3-5-sonnet-latest", "anthropic/claude-3.5-sonnet"],
-  ["claude-3-5-haiku-latest", "anthropic/claude-3.5-haiku"],
-  ["anthropic/claude-sonnet-4.5", "anthropic/claude-sonnet-4.5"],
-  ["anthropic/claude-haiku-4.5", "anthropic/claude-sonnet-4.5"], // Fallback to sonnet-4.5 if haiku-4.5 not available
-
-  // OpenAI models
-  ["gpt-5", "openai/gpt-5"],
-  ["gpt-5-mini", "openai/gpt-5-mini"],
-  ["gpt-5-nano", "openai/gpt-5-nano"],
-  ["gpt-5-pro", "openai/gpt-5-pro"],
-  ["gpt-5-codex", "openai/gpt-5-codex"],
-  ["openai/gpt-5", "openai/gpt-5"],
-  ["openai/gpt-5-mini", "openai/gpt-5-mini"],
-  ["openai/gpt-5-nano", "openai/gpt-5-nano"],
-  ["openai/gpt-5-codex", "openai/gpt-5-codex"],
-  ["gpt-4.1", "openai/gpt-4.1"],
-  ["gpt-4.1-mini", "openai/gpt-4.1-mini"],
-  ["gpt-4.1-nano", "openai/gpt-4.1-nano"],
-  ["openai/gpt-4.1", "openai/gpt-4.1"],
-  ["openai/gpt-4.1-mini", "openai/gpt-4.1-mini"],
-  ["gpt-4o", "openai/gpt-4o"],
-  ["gpt-4o-mini", "openai/gpt-4o-mini"],
-  ["openai/gpt-4o", "openai/gpt-4o"],
-  ["openai/gpt-4o-mini", "openai/gpt-4o-mini"],
-  ["gpt-4-turbo", "openai/gpt-4-turbo"],
-  ["openai/gpt-4-turbo", "openai/gpt-4-turbo"],
-  ["gpt-4", "openai/gpt-4-turbo"], // Fallback to turbo
-  ["openai/gpt-oss-120b", "openai/gpt-oss-120b"],
-
-  // Google Gemini models
-  ["gemini-2.5-pro", "google/gemini-2.5-pro"],
-  ["google/gemini-2.5-pro", "google/gemini-2.5-pro"],
-  ["gemini-2.5-flash", "google/gemini-2.5-flash"],
-  ["google/gemini-2.5-flash", "google/gemini-2.5-flash"],
-  [
-    "google/gemini-2.5-flash-preview-09-2025",
-    "google/gemini-2.5-flash-preview-09-2025",
-  ],
-  ["gemini-2.5-flash-lite", "google/gemini-2.5-flash-lite"],
-  ["google/gemini-2.5-flash-lite", "google/gemini-2.5-flash-lite"],
-  ["gemini-2.0-flash-exp", "google/gemini-2.0-flash"],
-  ["gemini-1.5-pro-002", "google/gemini-2.5-pro"], // Fallback to 2.5-pro
-  ["gemini-1.5-pro", "google/gemini-2.5-pro"], // Fallback to 2.5-pro
-  ["gemini-1.5-flash-002", "google/gemini-2.5-flash"], // Fallback to 2.5-flash
-  ["gemini-1.5-flash", "google/gemini-2.5-flash"], // Fallback to 2.5-flash
-
-  // Meta models
-  ["meta-llama/llama-3.3-70b-instruct", "meta/llama-3.3-70b"],
-
-  // DeepSeek models
-  ["deepseek-chat", "deepseek/deepseek-v3.1"],
-  ["deepseek-reasoner", "deepseek/deepseek-r1"],
-
-  // Mistral models
-  ["mistral-large-latest", "mistral/mistral-large"],
-  ["mistral-small-latest", "mistral/mistral-small"],
-  ["codestral-latest", "mistral/codestral"],
-  ["ministral-8b-latest", "mistral/mistral-small"], // Fallback
-  ["ministral-3b-latest", "mistral/mistral-small"], // Fallback
-
-  // xAI models
-  ["grok-3", "xai/grok-3"],
-  ["grok-3-mini", "xai/grok-3-mini"],
-  ["grok-code-fast-1", "xai/grok-code-fast-1"],
-  ["grok-4-fast-non-reasoning", "xai/grok-4-fast-non-reasoning"],
-  ["grok-4-fast-reasoning", "xai/grok-4-fast-reasoning"],
-  ["x-ai/grok-4-fast", "xai/grok-4-fast-reasoning"], // Map to reasoning version
-
-  // MoonshotAI models
-  ["moonshotai/kimi-k2-0905", "moonshotai/kimi-k2-0905"],
-
-  // Z-AI models
-  ["z-ai/glm-4.6", "zai/glm-4.5"], // Map to closest available version
-]);
 
 /**
  * Maps application model IDs to tokenizer backend model IDs.
  * Maps to model IDs recognized by the ai-tokenizer backend.
  * Returns null if no mapping exists (should use character-based fallback).
+ *
+ * This function handles:
+ * - Special mappings (name transformations, fallbacks, provider normalization)
+ * - Dynamic construction for simple cases using provider info from types.ts
+ * - Models that already have provider prefixes
  */
 function mapModelIdToTokenizerBackend(modelId: string): string | null {
-  return MODEL_ID_MAPPING.get(modelId) || null;
+  // Handle special cases that require transformations or fallbacks
+  switch (modelId) {
+    // Anthropic special cases
+    case "claude-opus-4-0":
+      return "anthropic/claude-opus-4";
+    case "claude-sonnet-4-0":
+      return "anthropic/claude-sonnet-4";
+    case "claude-3-7-sonnet-latest":
+      return "anthropic/claude-3.7-sonnet";
+    case "claude-3-5-sonnet-latest":
+      return "anthropic/claude-3.5-sonnet";
+    case "claude-3-5-haiku-latest":
+      return "anthropic/claude-3.5-haiku";
+
+    // OpenAI special cases
+    case "gpt-4":
+      // Fallback to turbo
+      return "openai/gpt-4-turbo";
+
+    // Google Gemini special cases
+    case "gemini-2.0-flash-exp":
+      return "google/gemini-2.0-flash";
+
+    // Meta special cases
+    case "meta-llama/llama-3.3-70b-instruct":
+      return "meta/llama-3.3-70b";
+
+    // DeepSeek special cases
+    case "deepseek-chat":
+      return "deepseek/deepseek-v3.1";
+    case "deepseek-reasoner":
+      return "deepseek/deepseek-r1";
+
+    // Mistral special cases
+    case "mistral-large-latest":
+      return "mistral/mistral-large";
+    case "mistral-small-latest":
+      return "mistral/mistral-small";
+    case "codestral-latest":
+      return "mistral/codestral";
+    case "ministral-8b-latest":
+      // Fallback
+      return "mistral/mistral-small";
+    case "ministral-3b-latest":
+      // Fallback
+      return "mistral/mistral-small";
+
+    // xAI special cases
+    case "x-ai/grok-4-fast":
+      // Map to reasoning version
+      return "xai/grok-4-fast-reasoning";
+
+    default:
+      // Handle models that already have provider prefix
+      if (modelId.includes("/")) {
+        // Normalize provider prefixes (x-ai → xai, z-ai → zai)
+        if (modelId.startsWith("x-ai/")) {
+          return modelId.replace("x-ai/", "xai/");
+        }
+        if (modelId.startsWith("z-ai/")) {
+          return modelId.replace("z-ai/", "zai/");
+        }
+        // Already prefixed and doesn't need normalization, return as-is
+        return modelId;
+      }
+
+      // For models without prefix, look up provider and construct the string
+      const modelDef = getModelById(modelId);
+      if (modelDef) {
+        return `${modelDef.provider}/${modelId}`;
+      }
+
+      // No mapping found
+      return null;
+  }
 }
 
 /**
@@ -166,6 +159,7 @@ tokenizer.post("/count-tools", async (c) => {
 
     // Map model ID to backend-recognized format
     const mappedModelId = mapModelIdToTokenizerBackend(modelId);
+    console.log("mappedModelId", mappedModelId);
     const useBackendTokenizer = mappedModelId !== null;
 
     await Promise.all(
