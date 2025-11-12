@@ -424,7 +424,7 @@ export const ContextSystemPromptUsage = ({
   children,
   ...props
 }: ContextSystemPromptUsageProps) => {
-  const { systemPromptTokenCount, systemPromptTokenCountLoading, usage } =
+  const { systemPromptTokenCount, systemPromptTokenCountLoading } =
     useContextValue();
 
   if (children) {
@@ -434,7 +434,7 @@ export const ContextSystemPromptUsage = ({
   if (systemPromptTokenCountLoading) {
     return (
       <>
-        <div className="space-y-1">
+        <div className="flex justify-between">
           <div className="text-xs text-muted-foreground">System Prompt</div>
           <div
             className={cn(
@@ -443,7 +443,6 @@ export const ContextSystemPromptUsage = ({
             )}
             {...props}
           >
-            <span className="text-muted-foreground">Counting tokens...</span>
             <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
           </div>
         </div>
