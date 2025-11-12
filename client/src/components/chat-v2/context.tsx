@@ -33,6 +33,8 @@ type ContextSchema = {
   mcpToolsTokenCount?: Record<string, number> | null;
   mcpToolsTokenCountLoading?: boolean;
   connectedServerConfigs?: Record<string, { name: string }>;
+  systemPromptTokenCount?: number | null;
+  systemPromptTokenCountLoading?: boolean;
 };
 
 const ContextContext = createContext<ContextSchema | null>(null);
@@ -55,6 +57,8 @@ export type ContextProps = ComponentProps<typeof HoverCard> & {
   mcpToolsTokenCount?: Record<string, number> | null;
   mcpToolsTokenCountLoading?: boolean;
   connectedServerConfigs?: Record<string, { name: string }>;
+  systemPromptTokenCount?: number | null;
+  systemPromptTokenCountLoading?: boolean;
   hasMessages?: boolean;
 };
 
@@ -66,6 +70,8 @@ export const Context = ({
   mcpToolsTokenCount,
   mcpToolsTokenCountLoading = false,
   connectedServerConfigs,
+  systemPromptTokenCount,
+  systemPromptTokenCountLoading = false,
   ...props
 }: ContextProps) => {
   const { models: metadataModels } = useModelMetadata();
@@ -88,14 +94,6 @@ export const Context = ({
     return null;
   }
 
-  if (
-    !mcpToolsTokenCountLoading &&
-    (mcpToolsTokenCount === null ||
-      (mcpToolsTokenCount && Object.keys(mcpToolsTokenCount).length === 0))
-  ) {
-    return null;
-  }
-
   return (
     <ContextContext.Provider
       value={{
@@ -107,6 +105,8 @@ export const Context = ({
         mcpToolsTokenCount,
         mcpToolsTokenCountLoading,
         connectedServerConfigs,
+        systemPromptTokenCount,
+        systemPromptTokenCountLoading,
       }}
     >
       <HoverCard closeDelay={0} openDelay={0} {...props} />
@@ -345,13 +345,16 @@ export const ContextMCPServerUsage = ({
     return null;
   }
 
-  // Show loading spinner if loading
   if (mcpToolsTokenCountLoading) {
+    const { systemPromptTokenCount } = useContextValue();
     const hasInputOrOutput =
       (usage?.inputTokens ?? 0) > 0 || (usage?.outputTokens ?? 0) > 0;
+    const hasSystemPrompt = (systemPromptTokenCount ?? 0) > 0;
     return (
       <>
-        {hasInputOrOutput && <Separator className="my-2" />}
+        {(hasInputOrOutput || hasSystemPrompt) && (
+          <Separator className="my-2" />
+        )}
         <div className="space-y-1">
           <div className="text-xs text-muted-foreground">MCP Tools</div>
           <div
@@ -369,12 +372,10 @@ export const ContextMCPServerUsage = ({
     );
   }
 
-  // Don't show if no token counts
   if (!mcpToolsTokenCount || Object.keys(mcpToolsTokenCount).length === 0) {
     return null;
   }
 
-  // Filter out servers with 0 tokens and sort by server name
   const serversWithTokens = selectedServers
     .filter((serverId) => (mcpToolsTokenCount[serverId] ?? 0) > 0)
     .map((serverId) => ({
@@ -388,12 +389,14 @@ export const ContextMCPServerUsage = ({
     return null;
   }
 
+  const { systemPromptTokenCount } = useContextValue();
   const hasInputOrOutput =
     (usage?.inputTokens ?? 0) > 0 || (usage?.outputTokens ?? 0) > 0;
+  const hasSystemPrompt = (systemPromptTokenCount ?? 0) > 0;
 
   return (
     <>
-      {hasInputOrOutput && <Separator className="my-2" />}
+      {(hasInputOrOutput || hasSystemPrompt) && <Separator className="my-2" />}
       <div className="space-y-1">
         <div className="text-xs text-muted-foreground">MCP Tools</div>
         {serversWithTokens.map(({ serverId, name, tokenCount }) => (
@@ -409,6 +412,60 @@ export const ContextMCPServerUsage = ({
             <TokensWithCost tokens={tokenCount} />
           </div>
         ))}
+      </div>
+    </>
+  );
+};
+
+export type ContextSystemPromptUsageProps = ComponentProps<"div">;
+
+export const ContextSystemPromptUsage = ({
+  className,
+  children,
+  ...props
+}: ContextSystemPromptUsageProps) => {
+  const { systemPromptTokenCount, systemPromptTokenCountLoading, usage } =
+    useContextValue();
+
+  if (children) {
+    return children;
+  }
+
+  if (systemPromptTokenCountLoading) {
+    return (
+      <>
+        <div className="space-y-1">
+          <div className="text-xs text-muted-foreground">System Prompt</div>
+          <div
+            className={cn(
+              "flex items-center justify-end gap-2 text-xs",
+              className,
+            )}
+            {...props}
+          >
+            <span className="text-muted-foreground">Counting tokens...</span>
+            <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  // Don't show if no system prompt tokens
+  if (!systemPromptTokenCount || systemPromptTokenCount === 0) {
+    return null;
+  }
+
+  return (
+    <>
+      <div className="flex justify-between">
+        <div className="text-xs text-muted-foreground">System Prompt</div>
+        <div
+          className={cn("flex items-center justify-end text-xs", className)}
+          {...props}
+        >
+          <TokensWithCost tokens={systemPromptTokenCount} />
+        </div>
       </div>
     </>
   );
