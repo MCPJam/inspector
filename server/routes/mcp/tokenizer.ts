@@ -17,18 +17,6 @@ const tokenizer = new Hono();
 function mapModelIdToTokenizerBackend(modelId: string): string | null {
   // Handle special cases that require transformations or fallbacks
   switch (modelId) {
-    // Anthropic special cases
-    case "claude-opus-4-0":
-      return "anthropic/claude-opus-4";
-    case "claude-sonnet-4-0":
-      return "anthropic/claude-sonnet-4";
-    case "claude-3-7-sonnet-latest":
-      return "anthropic/claude-3.7-sonnet";
-    case "claude-3-5-sonnet-latest":
-      return "anthropic/claude-3.5-sonnet";
-    case "claude-3-5-haiku-latest":
-      return "anthropic/claude-3.5-haiku";
-
     // OpenAI special cases
     case "gpt-4":
       // Fallback to turbo
