@@ -28,6 +28,7 @@ import { ServerSelectionCard } from "./ServerSelectionCard";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import posthog from "posthog-js";
 import { ExpectedToolsEditor } from "./expected-tools-editor";
+import { PassCriteriaSelector } from "./pass-criteria-selector";
 
 interface TestTemplate {
   title: string;
@@ -111,6 +112,9 @@ export function EvalRunner({
   const [hasRestoredPreferences, setHasRestoredPreferences] = useState(false);
   const [availableTools, setAvailableTools] = useState<Array<{ name: string; description?: string; inputSchema?: any }>>([]);
 
+  // Pass/fail criteria state
+  const [minimumPassRate, setMinimumPassRate] = useState(100);
+
   const connectedServers = useMemo(
     () =>
       Object.entries(appState.servers).filter(
@@ -132,11 +136,21 @@ export function EvalRunner({
       const parsed = JSON.parse(stored) as {
         servers?: string[];
         modelIds?: string[];
+        passCriteria?: {
+          minimumPassRate?: number;
+        };
       };
       setSavedPreferences({
         servers: parsed.servers ?? [],
         modelIds: parsed.modelIds ?? [],
       });
+
+      // Restore pass criteria preferences
+      if (parsed.passCriteria) {
+        if (parsed.passCriteria.minimumPassRate !== undefined) {
+          setMinimumPassRate(parsed.passCriteria.minimumPassRate);
+        }
+      }
     } catch (error) {
       console.warn("Failed to load eval runner preferences", error);
     }
@@ -181,12 +195,15 @@ export function EvalRunner({
       const payload = {
         servers: selectedServers,
         modelIds: selectedModels.map((m) => m.id),
+        passCriteria: {
+          minimumPassRate,
+        },
       };
       localStorage.setItem(PREFERENCE_STORAGE_KEY, JSON.stringify(payload));
     } catch (error) {
       console.warn("Failed to persist eval runner preferences", error);
     }
-  }, [selectedServers, selectedModels]);
+  }, [selectedServers, selectedModels, minimumPassRate]);
 
   // Fetch available tools from selected servers
   useEffect(() => {
@@ -473,6 +490,9 @@ export function EvalRunner({
         }));
       });
 
+      // Build pass criteria description for notes
+      const criteriaNote = `Pass Criteria: Min ${minimumPassRate}% pass rate`;
+
       const response = await fetch("/api/mcp/evals/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -483,6 +503,10 @@ export function EvalRunner({
           serverIds: selectedServers,
           modelApiKeys,
           convexAuthToken: accessToken,
+          passCriteria: {
+            minimumPassRate: minimumPassRate,
+          },
+          notes: criteriaNote,
         }),
       });
 
@@ -974,6 +998,12 @@ export function EvalRunner({
                 className="resize-none"
               />
             </div>
+
+            {/* Pass/Fail Criteria Section */}
+            <PassCriteriaSelector
+              minimumPassRate={minimumPassRate}
+              onMinimumPassRateChange={setMinimumPassRate}
+            />
 
             <div className="space-y-2">
               <h3 className="text-lg">Review your configuration</h3>

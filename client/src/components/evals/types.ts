@@ -99,6 +99,10 @@ export type EvalSuiteRun = {
   };
   status: "pending" | "running" | "completed" | "failed" | "cancelled";
   summary?: EvalSuiteRunSummary;
+  passCriteria?: {
+    minimumPassRate: number;
+  };
+  result?: "pending" | "passed" | "failed" | "cancelled";
   notes?: string;
   createdAt: number;
   completedAt?: number;

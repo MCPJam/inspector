@@ -158,7 +158,13 @@ export function SuiteTestsConfig({ suite, onUpdate, availableModels }: SuiteTest
     if (editingTemplateIndex === null || !editForm) return;
 
     const updated = [...templates];
-    updated[editingTemplateIndex] = editForm;
+    if (editingTemplateIndex >= templates.length) {
+      // Adding a new template
+      updated.push(editForm);
+    } else {
+      // Editing existing template
+      updated[editingTemplateIndex] = editForm;
+    }
     setTemplates(updated);
     saveChanges(updated, models);
     cancelEdit();
@@ -177,9 +183,9 @@ export function SuiteTestsConfig({ suite, onUpdate, availableModels }: SuiteTest
       runs: 1,
       expectedToolCalls: [],
     };
-    const updated = [...templates, newTemplate];
-    setTemplates(updated);
-    startEdit(updated.length - 1);
+    // Set up editing state for new template, but don't add to templates array yet
+    setEditingTemplateIndex(templates.length); // Will be the index after adding
+    setEditForm(newTemplate);
   };
 
   const deleteModel = (modelToDelete: string) => {
@@ -616,6 +622,76 @@ export function SuiteTestsConfig({ suite, onUpdate, availableModels }: SuiteTest
                 )}
               </Card>
             ))}
+
+            {/* Render new template form if adding */}
+            {editingTemplateIndex !== null && editingTemplateIndex >= templates.length && editForm && (
+              <Card className="p-4">
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Title</Label>
+                    <Input
+                      value={editForm.title}
+                      onChange={(e) =>
+                        setEditForm({ ...editForm, title: e.target.value })
+                      }
+                      placeholder="e.g., Add two numbers"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Query</Label>
+                    <Textarea
+                      value={editForm.query}
+                      onChange={(e) =>
+                        setEditForm({ ...editForm, query: e.target.value })
+                      }
+                      rows={3}
+                      placeholder="e.g., Add 5 and 7 together"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Runs per test</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      value={editForm.runs}
+                      onChange={(e) =>
+                        setEditForm({
+                          ...editForm,
+                          runs: parseInt(e.target.value) || 1,
+                        })
+                      }
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Expected tool calls</Label>
+                    <ExpectedToolsEditor
+                      toolCalls={editForm.expectedToolCalls || []}
+                      onChange={(toolCalls) =>
+                        setEditForm({
+                          ...editForm,
+                          expectedToolCalls: toolCalls,
+                        })
+                      }
+                      availableTools={availableTools}
+                    />
+                  </div>
+
+                  <div className="flex gap-2">
+                    <Button onClick={saveEdit} size="sm">
+                      <Check className="h-4 w-4 mr-2" />
+                      Save
+                    </Button>
+                    <Button onClick={cancelEdit} size="sm" variant="outline">
+                      <X className="h-4 w-4 mr-2" />
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              </Card>
+            )}
           </div>
         )}
       </div>
