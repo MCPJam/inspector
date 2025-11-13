@@ -382,8 +382,8 @@ export function EvalsTab() {
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      <div className="flex-shrink-0 p-6 pb-4">
-        <div className="flex items-center justify-between">
+      {!selectedSuiteId && (
+        <div className="flex items-center justify-between px-6 pt-6 pb-4">
           <div className="flex items-center gap-3">
             {showBackButton && (
               <Button
@@ -395,13 +395,11 @@ export function EvalsTab() {
                 <ArrowLeft className="h-4 w-4" />
               </Button>
             )}
-            {!selectedSuiteId && (
-              <h1 className="text-2xl font-semibold">
-                {view === "run" ? "Create evaluation run" : "Test suites"}
-              </h1>
-            )}
+            <h1 className="text-2xl font-semibold">
+              {view === "run" ? "Create evaluation run" : "Test suites"}
+            </h1>
           </div>
-          {view === "results" && !selectedSuiteId && (
+          {view === "results" && (
             <Button
               onClick={() => {
                 posthog.capture("create_new_run_button_clicked", {
@@ -419,9 +417,9 @@ export function EvalsTab() {
             </Button>
           )}
         </div>
-      </div>
+      )}
 
-      <div className="flex-1 overflow-y-auto px-6 pb-6">
+      <div className={`flex-1 overflow-y-auto px-6 pb-6 ${selectedSuiteId ? 'pt-6' : ''}`}>
         {view === "run" ? (
           <EvalRunner
             availableModels={availableModels}
