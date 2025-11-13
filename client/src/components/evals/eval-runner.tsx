@@ -27,6 +27,7 @@ import { ModelDefinition, isMCPJamProvidedModel } from "@/shared/types";
 import { ServerSelectionCard } from "./ServerSelectionCard";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import posthog from "posthog-js";
+import { ExpectedToolsEditor } from "./expected-tools-editor";
 
 interface TestTemplate {
   title: string;
@@ -721,84 +722,43 @@ export function EvalRunner({
                         />
                       </div>
 
-                      <div className="grid gap-4 md:grid-cols-2">
-                        <div className="space-y-2">
-                          <Label className="text-xs uppercase text-muted-foreground">
-                            Runs
-                          </Label>
-                          <Input
-                            type="number"
-                            min={1}
-                            value={template.runs}
-                            onChange={(event) =>
-                              handleUpdateTestTemplate(
-                                index,
-                                "runs",
-                                Number(event.target.value) > 0
-                                  ? Number(event.target.value)
-                                  : 1,
-                              )
-                            }
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label className="text-xs uppercase text-muted-foreground">
-                            Expected tools (JSON format)
-                          </Label>
-                          <Textarea
-                            defaultValue={
-                              template.expectedToolCalls.length === 0
-                                ? ""
-                                : JSON.stringify(template.expectedToolCalls, null, 2)
-                            }
-                            onBlur={(event) => {
-                              const value = event.target.value.trim();
-                              if (value === "") {
-                                handleUpdateTestTemplate(
-                                  index,
-                                  "expectedToolCalls",
-                                  [],
-                                );
-                                return;
-                              }
+                      <div className="space-y-2">
+                        <Label className="text-xs uppercase text-muted-foreground">
+                          Runs
+                        </Label>
+                        <Input
+                          type="number"
+                          min={1}
+                          value={template.runs}
+                          onChange={(event) =>
+                            handleUpdateTestTemplate(
+                              index,
+                              "runs",
+                              Number(event.target.value) > 0
+                                ? Number(event.target.value)
+                                : 1,
+                            )
+                          }
+                        />
+                      </div>
 
-                              try {
-                                const parsed = JSON.parse(value);
-                                if (Array.isArray(parsed)) {
-                                  // Validate structure
-                                  const valid = parsed.every(
-                                    (item) =>
-                                      typeof item === "object" &&
-                                      item !== null &&
-                                      typeof item.toolName === "string"
-                                  );
-                                  if (valid) {
-                                    // Ensure arguments field exists
-                                    const normalized = parsed.map((item) => ({
-                                      toolName: item.toolName,
-                                      arguments: item.arguments || {},
-                                    }));
-                                    handleUpdateTestTemplate(
-                                      index,
-                                      "expectedToolCalls",
-                                      normalized,
-                                    );
-                                  }
-                                }
-                              } catch {
-                                // Invalid JSON, keep existing value
-                              }
-                            }}
-                            placeholder={`[
-  { "toolName": "add", "arguments": { "a": 5, "b": 3 } }
-]`}
-                            rows={6}
-                            className="font-mono text-xs"
-                          />
-                          <p className="text-xs text-muted-foreground">
-                            Specify tool names and their expected arguments. Leave arguments empty {} to skip argument checking.
-                          </p>
-                        </div>
+                      <div className="space-y-2">
+                        <Label className="text-xs uppercase text-muted-foreground">
+                          Expected tools
+                        </Label>
+                        <ExpectedToolsEditor
+                          toolCalls={template.expectedToolCalls}
+                          onChange={(toolCalls) =>
+                            handleUpdateTestTemplate(
+                              index,
+                              "expectedToolCalls",
+                              toolCalls,
+                            )
+                          }
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Specify tool names and their expected arguments. Leave arguments empty to skip argument checking.
+                        </p>
                       </div>
                     </div>
                   ))}
@@ -890,84 +850,43 @@ export function EvalRunner({
                           />
                         </div>
 
-                        <div className="grid gap-4 md:grid-cols-2">
-                          <div className="space-y-2">
-                            <Label className="text-xs uppercase text-muted-foreground">
-                              Runs
-                            </Label>
-                            <Input
-                              type="number"
-                              min={1}
-                              value={template.runs}
-                              onChange={(event) =>
-                                handleUpdateTestTemplate(
-                                  index,
-                                  "runs",
-                                  Number(event.target.value) > 0
-                                    ? Number(event.target.value)
-                                    : 1,
-                                )
-                              }
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label className="text-xs uppercase text-muted-foreground">
-                              Expected tools (JSON format)
-                            </Label>
-                            <Textarea
-                              defaultValue={
-                                template.expectedToolCalls.length === 0
-                                  ? ""
-                                  : JSON.stringify(template.expectedToolCalls, null, 2)
-                              }
-                              onBlur={(event) => {
-                                const value = event.target.value.trim();
-                                if (value === "") {
-                                  handleUpdateTestTemplate(
-                                    index,
-                                    "expectedToolCalls",
-                                    [],
-                                  );
-                                  return;
-                                }
+                        <div className="space-y-2">
+                          <Label className="text-xs uppercase text-muted-foreground">
+                            Runs
+                          </Label>
+                          <Input
+                            type="number"
+                            min={1}
+                            value={template.runs}
+                            onChange={(event) =>
+                              handleUpdateTestTemplate(
+                                index,
+                                "runs",
+                                Number(event.target.value) > 0
+                                  ? Number(event.target.value)
+                                  : 1,
+                              )
+                            }
+                          />
+                        </div>
 
-                                try {
-                                  const parsed = JSON.parse(value);
-                                  if (Array.isArray(parsed)) {
-                                    // Validate structure
-                                    const valid = parsed.every(
-                                      (item) =>
-                                        typeof item === "object" &&
-                                        item !== null &&
-                                        typeof item.toolName === "string"
-                                    );
-                                    if (valid) {
-                                      // Ensure arguments field exists
-                                      const normalized = parsed.map((item) => ({
-                                        toolName: item.toolName,
-                                        arguments: item.arguments || {},
-                                      }));
-                                      handleUpdateTestTemplate(
-                                        index,
-                                        "expectedToolCalls",
-                                        normalized,
-                                      );
-                                    }
-                                  }
-                                } catch {
-                                  // Invalid JSON, keep existing value
-                                }
-                              }}
-                              placeholder={`[
-  { "toolName": "add", "arguments": { "a": 5, "b": 3 } }
-]`}
-                              rows={6}
-                              className="font-mono text-xs"
-                            />
-                            <p className="text-xs text-muted-foreground">
-                              Specify tool names and their expected arguments. Leave arguments empty {} to skip argument checking.
-                            </p>
-                          </div>
+                        <div className="space-y-2">
+                          <Label className="text-xs uppercase text-muted-foreground">
+                            Expected tools
+                          </Label>
+                          <ExpectedToolsEditor
+                            toolCalls={template.expectedToolCalls}
+                            onChange={(toolCalls) =>
+                              handleUpdateTestTemplate(
+                                index,
+                                "expectedToolCalls",
+                                toolCalls,
+                              )
+                            }
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            Specify tool names and their expected arguments. Leave arguments empty to skip argument checking.
+                          </p>
                         </div>
                       </div>
                     ))}
