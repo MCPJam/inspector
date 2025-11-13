@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { formatTime } from "./helpers";
 import { EvalIteration, EvalCase } from "./types";
 import { TraceViewer } from "./trace-viewer";
+import { ToolCallsDisplay } from "./tool-calls-display";
 
 export function IterationDetails({
   iteration,
@@ -56,8 +57,13 @@ export function IterationDetails({
           <div className="text-xs font-semibold">Expected tools</div>
           <div className="flex flex-wrap gap-1.5">
             {testCase?.expectedToolCalls.map((tool, idx) => (
-              <Badge key={idx} variant="outline" className="font-mono text-xs">
-                {tool}
+              <Badge
+                key={idx}
+                variant="outline"
+                className="font-mono text-xs"
+                title={Object.keys(tool.arguments || {}).length > 0 ? JSON.stringify(tool.arguments, null, 2) : undefined}
+              >
+                {tool.toolName}
               </Badge>
             ))}
           </div>
@@ -67,19 +73,7 @@ export function IterationDetails({
       {iteration.actualToolCalls.length > 0 && (
         <div className="space-y-1.5">
           <div className="text-xs font-semibold">Actual tools called</div>
-          <div className="flex flex-wrap gap-1.5">
-            {iteration.actualToolCalls.map((tool, idx) => {
-              return (
-                <Badge
-                  key={idx}
-                  variant="outline"
-                  className="font-mono text-xs"
-                >
-                  {tool}
-                </Badge>
-              );
-            })}
-          </div>
+          <ToolCallsDisplay toolCalls={iteration.actualToolCalls} />
         </div>
       )}
 

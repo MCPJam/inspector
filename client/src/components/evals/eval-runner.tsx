@@ -32,7 +32,10 @@ interface TestTemplate {
   title: string;
   query: string;
   runs: number;
-  expectedToolCalls: string[];
+  expectedToolCalls: Array<{
+    toolName: string;
+    arguments: Record<string, any>;
+  }>;
 }
 
 interface EvalRunnerProps {
@@ -740,24 +743,61 @@ export function EvalRunner({
                         </div>
                         <div className="space-y-2">
                           <Label className="text-xs uppercase text-muted-foreground">
-                            Expected tools (comma separated)
+                            Expected tools (JSON format)
                           </Label>
-                          <Input
-                            value={template.expectedToolCalls.join(", ")}
-                            onChange={(event) => {
-                              // Split and process but keep empty strings to preserve commas being typed
-                              const rawValue = event.target.value;
-                              const processed = rawValue
-                                .split(",")
-                                .map((entry) => entry.trim());
-                              handleUpdateTestTemplate(
-                                index,
-                                "expectedToolCalls",
-                                processed,
-                              );
+                          <Textarea
+                            defaultValue={
+                              template.expectedToolCalls.length === 0
+                                ? ""
+                                : JSON.stringify(template.expectedToolCalls, null, 2)
+                            }
+                            onBlur={(event) => {
+                              const value = event.target.value.trim();
+                              if (value === "") {
+                                handleUpdateTestTemplate(
+                                  index,
+                                  "expectedToolCalls",
+                                  [],
+                                );
+                                return;
+                              }
+
+                              try {
+                                const parsed = JSON.parse(value);
+                                if (Array.isArray(parsed)) {
+                                  // Validate structure
+                                  const valid = parsed.every(
+                                    (item) =>
+                                      typeof item === "object" &&
+                                      item !== null &&
+                                      typeof item.toolName === "string"
+                                  );
+                                  if (valid) {
+                                    // Ensure arguments field exists
+                                    const normalized = parsed.map((item) => ({
+                                      toolName: item.toolName,
+                                      arguments: item.arguments || {},
+                                    }));
+                                    handleUpdateTestTemplate(
+                                      index,
+                                      "expectedToolCalls",
+                                      normalized,
+                                    );
+                                  }
+                                }
+                              } catch {
+                                // Invalid JSON, keep existing value
+                              }
                             }}
-                            placeholder="paypal_list_transactions, paypal_create_invoice"
+                            placeholder={`[
+  { "toolName": "add", "arguments": { "a": 5, "b": 3 } }
+]`}
+                            rows={6}
+                            className="font-mono text-xs"
                           />
+                          <p className="text-xs text-muted-foreground">
+                            Specify tool names and their expected arguments. Leave arguments empty {} to skip argument checking.
+                          </p>
                         </div>
                       </div>
                     </div>
@@ -872,24 +912,61 @@ export function EvalRunner({
                           </div>
                           <div className="space-y-2">
                             <Label className="text-xs uppercase text-muted-foreground">
-                              Expected tools (comma separated)
+                              Expected tools (JSON format)
                             </Label>
-                            <Input
-                              value={template.expectedToolCalls.join(", ")}
-                              onChange={(event) => {
-                                // Split and process but keep empty strings to preserve commas being typed
-                                const rawValue = event.target.value;
-                                const processed = rawValue
-                                  .split(",")
-                                  .map((entry) => entry.trim());
-                                handleUpdateTestTemplate(
-                                  index,
-                                  "expectedToolCalls",
-                                  processed,
-                                );
+                            <Textarea
+                              defaultValue={
+                                template.expectedToolCalls.length === 0
+                                  ? ""
+                                  : JSON.stringify(template.expectedToolCalls, null, 2)
+                              }
+                              onBlur={(event) => {
+                                const value = event.target.value.trim();
+                                if (value === "") {
+                                  handleUpdateTestTemplate(
+                                    index,
+                                    "expectedToolCalls",
+                                    [],
+                                  );
+                                  return;
+                                }
+
+                                try {
+                                  const parsed = JSON.parse(value);
+                                  if (Array.isArray(parsed)) {
+                                    // Validate structure
+                                    const valid = parsed.every(
+                                      (item) =>
+                                        typeof item === "object" &&
+                                        item !== null &&
+                                        typeof item.toolName === "string"
+                                    );
+                                    if (valid) {
+                                      // Ensure arguments field exists
+                                      const normalized = parsed.map((item) => ({
+                                        toolName: item.toolName,
+                                        arguments: item.arguments || {},
+                                      }));
+                                      handleUpdateTestTemplate(
+                                        index,
+                                        "expectedToolCalls",
+                                        normalized,
+                                      );
+                                    }
+                                  }
+                                } catch {
+                                  // Invalid JSON, keep existing value
+                                }
                               }}
-                              placeholder="paypal_list_transactions, paypal_create_invoice"
+                              placeholder={`[
+  { "toolName": "add", "arguments": { "a": 5, "b": 3 } }
+]`}
+                              rows={6}
+                              className="font-mono text-xs"
                             />
+                            <p className="text-xs text-muted-foreground">
+                              Specify tool names and their expected arguments. Leave arguments empty {} to skip argument checking.
+                            </p>
                           </div>
                         </div>
                       </div>
@@ -1033,7 +1110,7 @@ export function EvalRunner({
                           </span>
                           {template.expectedToolCalls.length > 0 && (
                             <span>
-                              Tools: {template.expectedToolCalls.join(", ")}
+                              Tools: {template.expectedToolCalls.map(tc => tc.toolName).join(", ")}
                             </span>
                           )}
                         </div>

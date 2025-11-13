@@ -34,7 +34,10 @@ export type EvalTestCase = {
   runs: number;
   model: string;
   provider: string;
-  expectedToolCalls: string[];
+  expectedToolCalls: Array<{
+    toolName: string;
+    arguments: Record<string, any>;
+  }>;
   judgeRequirement?: string;
   advancedConfig?: {
     system?: string;
@@ -63,10 +66,13 @@ const MAX_STEPS = 20;
 
 type ToolSet = Record<string, any>;
 
-const extractToolNames = (toolCalls: Array<{ toolName?: string }> = []) => {
+const extractToolCalls = (toolCalls: Array<{ toolName?: string; args?: any; input?: any }> = []) => {
   return toolCalls
-    .map((call) => call.toolName)
-    .filter((name): name is string => Boolean(name));
+    .map((call) => ({
+      toolName: call.toolName || '',
+      arguments: call.args || call.input || {},
+    }))
+    .filter((call) => Boolean(call.toolName));
 };
 
 type RunIterationBaseParams = {
@@ -153,7 +159,7 @@ const runIterationWithAiSdk = async ({
         : {}),
     });
 
-    const toolsCalled = extractToolNames((result.toolCalls ?? []) as any);
+    const toolsCalled = extractToolCalls((result.toolCalls ?? []) as any);
     const evaluation = evaluateResults(expectedToolCalls, toolsCalled);
 
     const usage: UsageTotals = {
@@ -213,7 +219,7 @@ const runIterationViaBackend = async ({
       content: query,
     },
   ];
-  const toolsCalled: string[] = [];
+  const toolsCalled: Array<{ toolName: string; arguments: Record<string, any> }> = [];
   const runStartedAt = Date.now();
   const iterationId = await recorder.startIteration({
     testCaseId: test.testCaseId ?? testCaseId,
@@ -308,7 +314,10 @@ const runIterationViaBackend = async ({
             if (item?.type === "tool-call") {
               const name = item.toolName ?? item.name;
               if (name) {
-                toolsCalled.push(name);
+                toolsCalled.push({
+                  toolName: name,
+                  arguments: item.input ?? item.parameters ?? item.args ?? {},
+                });
               }
               if (!item.toolCallId) {
                 item.toolCallId = `tc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
