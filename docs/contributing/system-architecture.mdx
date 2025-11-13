@@ -79,26 +79,26 @@ flowchart TD
     NodeEnvCheck{"NODE_ENV?"}
 
     EProd["Electron Production Mode
-    • Server: 127.0.0.1:3000
+    • Server: 127.0.0.1:6274
     • Resources: process.resourcesPath
     • Client: Bundled in resources/client
     • Static: Serve from bundle"]
 
     EDev["Electron Development Mode
-    • Server: localhost:3000
+    • Server: localhost:6274
     • Resources: app.getAppPath
-    • Client: Vite dev server :8080
+    • Client: Vite dev server :5173
     • Static: Redirect to Vite"]
 
     WProd["Web Production Mode
-    • Server: 0.0.0.0:3001
+    • Server: 0.0.0.0:6274
     • Client: dist/client
     • Static: Serve bundled files
     • SPA: Fallback to index.html"]
 
     WDev["Web Development Mode
-    • Server: localhost:3000
-    • Client: Vite dev server :8080
+    • Server: localhost:6274
+    • Client: Vite dev server :5173
     • Static: API only, CORS enabled
     • SPA: No static serving"]
 
