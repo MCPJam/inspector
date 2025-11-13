@@ -1,7 +1,6 @@
 import { useMemo, useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Textarea } from "@/components/ui/textarea";
 import { ChevronDown, ChevronRight, Loader2, RotateCw, Trash2, X } from "lucide-react";
 import {
   Tooltip,
@@ -77,9 +76,7 @@ export function SuiteIterationsView({
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [selectedTestId, setSelectedTestId] = useState<string | null>(null);
   const [isEditingName, setIsEditingName] = useState(false);
-  const [isEditingDescription, setIsEditingDescription] = useState(false);
   const [editedName, setEditedName] = useState(suite.name);
-  const [editedDescription, setEditedDescription] = useState(suite.description || "");
 
   // Default pass criteria for new runs (stored in localStorage per suite)
   const [defaultMinimumPassRate, setDefaultMinimumPassRate] = useState(100);
@@ -88,8 +85,7 @@ export function SuiteIterationsView({
 
   useEffect(() => {
     setEditedName(suite.name);
-    setEditedDescription(suite.description || "");
-  }, [suite.name, suite.description]);
+  }, [suite.name]);
 
   // Load default pass criteria from localStorage
   useEffect(() => {
@@ -152,36 +148,6 @@ export function SuiteIterationsView({
     }
   };
 
-  const handleDescriptionClick = () => {
-    setIsEditingDescription(true);
-    setEditedDescription(suite.description || "");
-  };
-
-  const handleDescriptionBlur = async () => {
-    setIsEditingDescription(false);
-    if (editedDescription.trim() !== (suite.description || "")) {
-      try {
-        await updateSuite({
-          suiteId: suite._id,
-          description: editedDescription.trim(),
-        });
-        toast.success("Suite description updated");
-      } catch (error) {
-        toast.error("Failed to update suite description");
-        console.error("Failed to update suite description:", error);
-        setEditedDescription(suite.description || "");
-      }
-    } else {
-      setEditedDescription(suite.description || "");
-    }
-  };
-
-  const handleDescriptionKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Escape") {
-      setIsEditingDescription(false);
-      setEditedDescription(suite.description || "");
-    }
-  };
 
 
 
@@ -932,122 +898,6 @@ export function SuiteIterationsView({
 
   return (
     <div className="space-y-4">
-      {/* Consolidated header with back button, editable name, description, and actions */}
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3 flex-1 min-w-0 overflow-visible">
-          <Button variant="ghost" size="sm" onClick={onBack} className="shrink-0">
-            ← Back
-          </Button>
-          {/* Inline-editable suite name */}
-          {isEditingName ? (
-            <input
-              type="text"
-              value={editedName}
-              onChange={(e) => setEditedName(e.target.value)}
-              onBlur={handleNameBlur}
-              onKeyDown={handleNameKeyDown}
-              autoFocus
-              className="px-3 py-1.5 text-xl font-semibold border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring min-w-0"
-            />
-          ) : (
-            <Button
-              variant="ghost"
-              onClick={handleNameClick}
-              className="px-3 py-1.5 h-auto text-xl font-semibold hover:bg-accent shrink-0"
-            >
-              {suite.name}
-            </Button>
-          )}
-          {/* Description Editor */}
-          {isEditingDescription ? (
-            <Textarea
-              value={editedDescription}
-              onChange={(e) => setEditedDescription(e.target.value)}
-              onBlur={handleDescriptionBlur}
-              onKeyDown={handleDescriptionKeyDown}
-              autoFocus
-              placeholder="Add a description for this test suite"
-              className="flex-1 min-w-0 min-h-[40px] resize-none"
-            />
-          ) : (
-            <Button
-              variant="ghost"
-              onClick={handleDescriptionClick}
-              className="flex-1 min-w-0 px-3 py-1.5 h-auto text-left justify-start hover:bg-accent text-sm text-muted-foreground"
-            >
-              {suite.description || "Add a description for this test suite"}
-            </Button>
-          )}
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {isRunInProgress && latestRun ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => onCancelRun(latestRun._id)}
-                  disabled={isCancelling}
-                  className="gap-2"
-                >
-                  {isCancelling ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Cancelling...
-                    </>
-                  ) : (
-                    <>
-                      <X className="h-4 w-4" />
-                      Cancel run
-                    </>
-                  )}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Cancel the current evaluation run</TooltipContent>
-            </Tooltip>
-          ) : (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => onRerun(suite)}
-                    disabled={!canRerun || isRerunning}
-                    className="gap-2"
-                  >
-                    <RotateCw
-                      className={`h-4 w-4 ${isRerunning ? "animate-spin" : ""}`}
-                    />
-                    Rerun
-                  </Button>
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>
-                {!canRerun
-                  ? `Connect the following servers: ${missingServers.join(", ")}`
-                  : "Rerun evaluation"}
-              </TooltipContent>
-            </Tooltip>
-          )}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => onDelete(suite)}
-                disabled={isDeleting}
-                className="gap-2"
-              >
-                <Trash2 className="h-4 w-4" />
-                {isDeleting ? "Deleting..." : "Delete"}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Delete this test suite</TooltipContent>
-          </Tooltip>
-        </div>
-      </div>
-
       <Tabs value={activeTab} onValueChange={(v) => {
         const newTab = v as "general" | "runs" | "test-cases" | "edit";
 
@@ -1078,7 +928,34 @@ export function SuiteIterationsView({
           setSelectedRunId(null);
         }
       }}>
-        <TabsList>
+        {/* Consolidated header with back button, editable name, tabs, and actions */}
+        <div className="flex items-center justify-between gap-4 mb-4">
+          <div className="flex items-center gap-3 flex-1 min-w-0 overflow-visible">
+            <Button variant="ghost" size="sm" onClick={onBack} className="shrink-0">
+              ← Back
+            </Button>
+            {/* Inline-editable suite name */}
+            {isEditingName ? (
+              <input
+                type="text"
+                value={editedName}
+                onChange={(e) => setEditedName(e.target.value)}
+                onBlur={handleNameBlur}
+                onKeyDown={handleNameKeyDown}
+                autoFocus
+                className="px-3 py-1.5 text-xl font-semibold border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring min-w-0"
+              />
+            ) : (
+              <Button
+                variant="ghost"
+                onClick={handleNameClick}
+                className="px-3 py-1.5 h-auto text-xl font-semibold hover:bg-accent shrink-0"
+              >
+                {suite.name}
+              </Button>
+            )}
+            {/* Tabs in header */}
+            <TabsList className="ml-2">
           <TabsTrigger value="general" onClick={() => {
             if (activeTab === "general") {
               setViewMode("overview");
@@ -1105,7 +982,76 @@ export function SuiteIterationsView({
               setSelectedTestId(null);
             }
           }}>Edit</TabsTrigger>
-        </TabsList>
+            </TabsList>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {isRunInProgress && latestRun ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onCancelRun(latestRun._id)}
+                    disabled={isCancelling}
+                    className="gap-2"
+                  >
+                    {isCancelling ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Cancelling...
+                      </>
+                    ) : (
+                      <>
+                        <X className="h-4 w-4" />
+                        Cancel run
+                      </>
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Cancel the current evaluation run</TooltipContent>
+              </Tooltip>
+            ) : (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => onRerun(suite)}
+                      disabled={!canRerun || isRerunning}
+                      className="gap-2"
+                    >
+                      <RotateCw
+                        className={`h-4 w-4 ${isRerunning ? "animate-spin" : ""}`}
+                      />
+                      Rerun
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {!canRerun
+                    ? `Connect the following servers: ${missingServers.join(", ")}`
+                    : "Rerun evaluation"}
+                </TooltipContent>
+              </Tooltip>
+            )}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onDelete(suite)}
+                  disabled={isDeleting}
+                  className="gap-2"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  {isDeleting ? "Deleting..." : "Delete"}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Delete this test suite</TooltipContent>
+            </Tooltip>
+          </div>
+        </div>
 
         <TabsContent value="general" className="mt-4 space-y-4">
           {/* Pass/Fail Criteria Badge for Latest Run */}

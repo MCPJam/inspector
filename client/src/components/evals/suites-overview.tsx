@@ -116,9 +116,6 @@ export function SuitesOverview({
                       <h2 className="text-base font-semibold">
                         {suite.name || "Untitled suite"}
                       </h2>
-                      <p className="text-xs text-muted-foreground">
-                        {suite.description || "No description provided"}
-                      </p>
                     </div>
                     <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
                       {isRunInProgress ? (
