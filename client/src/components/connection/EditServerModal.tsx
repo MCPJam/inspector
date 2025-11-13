@@ -529,9 +529,9 @@ export function EditServerModal({
                         </h4>
 
                         <ul className="space-y-3">
-                          {server.initializationInfo.serverVersion.icons.map((icon) => (
+                          {server.initializationInfo.serverVersion.icons.map((icon, index) => (
                             <li
-                              key={icon.src}
+                              key={index}
                               className="flex items-center justify-between p-3 rounded-lg border border-border bg-muted/30 hover:bg-muted/50 transition-colors"
                             >
                               <span className="font-mono text-xs break-all mr-4 flex-1">
