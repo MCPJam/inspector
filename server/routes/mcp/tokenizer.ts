@@ -15,7 +15,6 @@ const tokenizer = new Hono();
  * - Models that already have provider prefixes
  */
 function mapModelIdToTokenizerBackend(modelId: string): string | null {
-  console.log("before modelId", modelId);
   // Handle special cases that require transformations or fallbacks
   switch (modelId) {
     // OpenAI special cases
@@ -73,8 +72,6 @@ function mapModelIdToTokenizerBackend(modelId: string): string | null {
       // For models without prefix, look up provider and construct the string
       const modelDef = getModelById(modelId);
       if (modelDef) {
-        console.log("modelProvider", modelDef.provider);
-        console.log("modelDef", modelDef);
         return `${modelDef.provider}/${modelId}`;
       }
 
@@ -282,7 +279,6 @@ tokenizer.post("/count-text", async (c) => {
     }
 
     const mappedModelId = mapModelIdToTokenizerBackend(modelId);
-    console.log("mappedModelId count-text: ", mappedModelId);
     const useBackendTokenizer = mappedModelId !== null;
 
     if (useBackendTokenizer && mappedModelId) {
@@ -298,9 +294,6 @@ tokenizer.post("/count-text", async (c) => {
             model: mappedModelId,
           }),
         });
-
-        const result = await response.json();
-        console.log("result count-text: ", JSON.stringify(result, null, 2));
 
         if (response.ok) {
           const data = (await response.json()) as {

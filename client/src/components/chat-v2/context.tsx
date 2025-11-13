@@ -101,9 +101,10 @@ const ContextIcon = () => {
   const hasMaxTokens = maxTokens !== undefined;
   const circumference = 2 * Math.PI * ICON_RADIUS;
   const usedPercent = hasMaxTokens ? usedTokens / maxTokens : undefined;
-  const dashOffset = hasMaxTokens && usedPercent !== undefined
-    ? circumference * (1 - usedPercent)
-    : undefined;
+  const dashOffset =
+    hasMaxTokens && usedPercent !== undefined
+      ? circumference * (1 - usedPercent)
+      : undefined;
 
   return (
     <svg
@@ -148,12 +149,13 @@ export const ContextTrigger = ({ children, ...props }: ContextTriggerProps) => {
   const { usedTokens, maxTokens } = useContextValue();
   const hasMaxTokens = maxTokens !== undefined;
   const usedPercent = hasMaxTokens ? usedTokens / maxTokens : undefined;
-  const displayPct = hasMaxTokens && usedPercent !== undefined
-    ? new Intl.NumberFormat("en-US", {
-        style: "percent",
-        maximumFractionDigits: 1,
-      }).format(usedPercent)
-    : undefined;
+  const displayPct =
+    hasMaxTokens && usedPercent !== undefined
+      ? new Intl.NumberFormat("en-US", {
+          style: "percent",
+          maximumFractionDigits: 1,
+        }).format(usedPercent)
+      : undefined;
 
   return (
     <HoverCardTrigger asChild>
