@@ -185,6 +185,11 @@ export function EvalsTab() {
       try {
         const accessToken = await getAccessToken();
 
+        // Get pass criteria from the latest run, or default to 100%
+        const latestRun = selectedSuiteEntry?.latestRun;
+        const minimumPassRate = latestRun?.passCriteria?.minimumPassRate ?? 100;
+        const criteriaNote = `Pass Criteria: Min ${minimumPassRate}% pass rate`;
+
         const response = await fetch("/api/mcp/evals/run", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -205,6 +210,10 @@ export function EvalsTab() {
             serverIds: suiteServers,
             modelApiKey: currentModelIsJam ? null : apiKey || null,
             convexAuthToken: accessToken,
+            passCriteria: {
+              minimumPassRate: minimumPassRate,
+            },
+            notes: criteriaNote,
           }),
         });
 
@@ -228,6 +237,7 @@ export function EvalsTab() {
     [
       rerunningSuiteId,
       connectedServerNames,
+      selectedSuiteEntry,
       getAccessToken,
       hasToken,
       getToken,

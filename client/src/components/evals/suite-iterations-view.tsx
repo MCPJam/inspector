@@ -29,6 +29,9 @@ import {
 } from "./types";
 import { useMutation } from "convex/react";
 import { toast } from "sonner";
+import { PassCriteriaBadge } from "./pass-criteria-badge";
+import { PassCriteriaSelector } from "./pass-criteria-selector";
+import { computeIterationPassed } from "./pass-criteria";
 
 export function SuiteIterationsView({
   suite,
@@ -74,12 +77,27 @@ export function SuiteIterationsView({
   const [editedName, setEditedName] = useState(suite.name);
   const [editedDescription, setEditedDescription] = useState(suite.description || "");
 
+  // Default pass criteria for new runs (stored in localStorage per suite)
+  const [defaultMinimumPassRate, setDefaultMinimumPassRate] = useState(100);
+
   const updateSuite = useMutation("evals:updateSuite" as any);
 
   useEffect(() => {
     setEditedName(suite.name);
     setEditedDescription(suite.description || "");
   }, [suite.name, suite.description]);
+
+  // Load default pass criteria from localStorage
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const rate = localStorage.getItem(`suite-${suite._id}-criteria-rate`);
+
+      if (rate) setDefaultMinimumPassRate(Number(rate));
+    } catch (error) {
+      console.warn("Failed to load default pass criteria", error);
+    }
+  }, [suite._id]);
 
   const handleUpdateTests = async (tests: EvalSuiteConfigTest[]) => {
     try {
@@ -209,7 +227,7 @@ export function SuiteIterationsView({
       .map((run) => {
         // Calculate real-time stats from iterations for this run
         const runIterations = allIterations.filter((iter) => iter.suiteRunId === run._id);
-        const realTimePassed = runIterations.filter((i) => i.result === "passed").length;
+        const realTimePassed = runIterations.filter((i) => computeIterationPassed(i)).length;
         const realTimeTotal = runIterations.length;
 
         // Use real-time data if available, otherwise fall back to summary
@@ -259,9 +277,11 @@ export function SuiteIterationsView({
       const stats = modelMap.get(model)!;
       stats.total += 1;
 
-      if (iteration.result === 'passed') {
+      // Compute pass/fail using our evaluation logic
+      const passed = computeIterationPassed(iteration);
+      if (passed) {
         stats.passed += 1;
-      } else if (iteration.result === 'failed') {
+      } else {
         stats.failed += 1;
       }
     });
@@ -1042,6 +1062,14 @@ export function SuiteIterationsView({
         </TabsList>
 
         <TabsContent value="general" className="mt-4 space-y-4">
+          {/* Pass/Fail Criteria Badge for Latest Run */}
+          {runs.length > 0 && runs[0] && (
+            <PassCriteriaBadge
+              run={runs[0]}
+              variant="detailed"
+            />
+          )}
+
           {/* Charts Side by Side */}
           <div className="grid gap-4 lg:grid-cols-2">
             {/* Pass Rate Trend */}
@@ -1605,7 +1633,13 @@ export function SuiteIterationsView({
             <div className="px-4 py-4">
               <div className="grid gap-3 rounded-lg border bg-background/80 p-4">
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
-                  <span>Run #{selectedRunDetails.runNumber}</span>
+                  <div className="flex items-center gap-3">
+                    <span>Run #{selectedRunDetails.runNumber}</span>
+                    <PassCriteriaBadge
+                      run={selectedRunDetails}
+                      variant="compact"
+                    />
+                  </div>
                   <span className="font-medium text-foreground capitalize">{selectedRunDetails.status}</span>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -2003,6 +2037,23 @@ export function SuiteIterationsView({
         </TabsContent>
 
         <TabsContent value="edit" className="mt-4 space-y-4">
+          {/* Default Pass/Fail Criteria for New Runs */}
+          <div className="space-y-3">
+            <div>
+              <h3 className="text-base font-semibold">Default Pass/Fail Criteria</h3>
+              <p className="text-sm text-muted-foreground mt-1">
+                Set the default criteria for <strong>new</strong> evaluation runs of this suite. These settings will be pre-selected when you click "Rerun". Existing runs keep their original criteria.
+              </p>
+            </div>
+            <PassCriteriaSelector
+              minimumPassRate={defaultMinimumPassRate}
+              onMinimumPassRateChange={(rate) => {
+                setDefaultMinimumPassRate(rate);
+                localStorage.setItem(`suite-${suite._id}-criteria-rate`, String(rate));
+              }}
+            />
+          </div>
+
           {/* Tests Config */}
           <SuiteTestsConfig suite={suite} onUpdate={handleUpdateTests} availableModels={availableModels} />
         </TabsContent>

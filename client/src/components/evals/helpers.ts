@@ -1,4 +1,5 @@
 import { EvalCase, EvalIteration, EvalSuite, SuiteAggregate } from "./types";
+import { computeIterationResult } from "./pass-criteria";
 
 export function formatTime(ts?: number) {
   return ts ? new Date(ts).toLocaleString() : "—";
@@ -12,15 +13,16 @@ export function aggregateSuite(
   // Backend already filters iterations by suite, so we use them directly
   const totals = iterations.reduce(
     (acc, it) => {
-      if (
-        it.status === "pending" ||
-        it.status === "running" ||
-        it.result === "pending"
-      ) {
+      const result = computeIterationResult(it);
+      if (result === "pending") {
         acc.pending += 1;
-      } else if (it.result === "passed") acc.passed += 1;
-      else if (it.result === "failed") acc.failed += 1;
-      else if (it.result === "cancelled") acc.cancelled += 1;
+      } else if (result === "passed") {
+        acc.passed += 1;
+      } else if (result === "failed") {
+        acc.failed += 1;
+      } else if (result === "cancelled") {
+        acc.cancelled += 1;
+      }
       acc.tokens += it.tokensUsed || 0;
       return acc;
     },
@@ -50,15 +52,16 @@ export function aggregateSuite(
       });
     }
     const entry = byCaseMap.get(id)!;
-    if (
-      it.status === "pending" ||
-      it.status === "running" ||
-      it.result === "pending"
-    ) {
+    const result = computeIterationResult(it);
+    if (result === "pending") {
       // do not count pending/running
-    } else if (it.result === "passed") entry.passed += 1;
-    else if (it.result === "failed") entry.failed += 1;
-    else if (it.result === "cancelled") entry.cancelled += 1;
+    } else if (result === "passed") {
+      entry.passed += 1;
+    } else if (result === "failed") {
+      entry.failed += 1;
+    } else if (result === "cancelled") {
+      entry.cancelled += 1;
+    }
     entry.tokens += it.tokensUsed || 0;
   }
 
