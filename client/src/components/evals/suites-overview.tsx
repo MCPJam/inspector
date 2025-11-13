@@ -79,7 +79,6 @@ export function SuitesOverview({
           const lastRunPassed = latestRun?.summary?.passed ?? 0;
           const lastRunFailed = latestRun?.summary?.failed ?? 0;
           const lastRunTotal = latestRun?.summary?.total ?? 0;
-          const lastRunNumber = latestRun?.runNumber;
 
           const runsLabel =
             totals.runs === 1 ? "1 run" : `${totals.runs} runs total`;

@@ -106,6 +106,7 @@ export type EvalSuiteRun = {
   notes?: string;
   createdAt: number;
   completedAt?: number;
+  isActive?: boolean; // Mark runs as inactive when suite is edited
   _creationTime?: number;
 };
 
