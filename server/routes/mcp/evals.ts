@@ -207,27 +207,36 @@ evals.post("/run", async (c) => {
       notes,
     });
 
-    runEvalSuiteWithAiSdk({
-      suiteId: resolvedSuiteId,
-      runId,
-      config: runConfig,
-      modelApiKeys: modelApiKeys ?? undefined,
-      convexClient,
-      convexHttpUrl,
-      convexAuthToken,
-      mcpClientManager: clientManager,
-      recorder,
-    }).catch((error) => {
+    try {
+      await runEvalSuiteWithAiSdk({
+        suiteId: resolvedSuiteId,
+        runId,
+        config: runConfig,
+        modelApiKeys: modelApiKeys ?? undefined,
+        convexClient,
+        convexHttpUrl,
+        convexAuthToken,
+        mcpClientManager: clientManager,
+        recorder,
+      });
+
+      return c.json({
+        success: true,
+        suiteId: resolvedSuiteId,
+        runId,
+        message: "Evals completed successfully. Check the Evals tab for results.",
+      });
+    } catch (evalError) {
       const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      console.error("[Error running evals:", errorMessage);
-    });
-    return c.json({
-      success: true,
-      suiteId: resolvedSuiteId,
-      runId,
-      message: "Evals started successfully. Check the Evals tab for progress.",
-    });
+        evalError instanceof Error ? evalError.message : String(evalError);
+      console.error("[Error running evals]:", errorMessage);
+      return c.json(
+        {
+          error: errorMessage,
+        },
+        500,
+      );
+    }
   } catch (runError) {
     const errorMessage =
       runError instanceof Error ? runError.message : String(runError);
