@@ -43,6 +43,7 @@ export function EvalsTab() {
   const [view, setView] = useState<View>("results");
   const [selectedSuiteId, setSelectedSuiteId] = useState<string | null>(null);
   const [rerunningSuiteId, setRerunningSuiteId] = useState<string | null>(null);
+  const [cancellingRunId, setCancellingRunId] = useState<string | null>(null);
 
   const [deletingSuiteId, setDeletingSuiteId] = useState<string | null>(null);
   const [suiteToDelete, setSuiteToDelete] = useState<EvalSuite | null>(null);
@@ -285,6 +286,43 @@ export function EvalsTab() {
     }
   }, [suiteToDelete, deletingSuiteId, deleteSuiteMutation, selectedSuiteId]);
 
+  // Cancel handler
+  const handleCancelRun = useCallback(
+    async (runId: string) => {
+      if (cancellingRunId) return;
+
+      setCancellingRunId(runId);
+
+      try {
+        const accessToken = await getAccessToken();
+
+        const response = await fetch("/api/mcp/evals/cancel", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            runId,
+            convexAuthToken: accessToken,
+          }),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || "Failed to cancel run");
+        }
+
+        toast.success("Run cancelled successfully");
+      } catch (error) {
+        console.error("Failed to cancel run:", error);
+        toast.error(
+          error instanceof Error ? error.message : "Failed to cancel run",
+        );
+      } finally {
+        setCancellingRunId(null);
+      }
+    },
+    [cancellingRunId, getAccessToken],
+  );
+
   // Handle back navigation
   const handleBack = () => {
     if (view === "run") {
@@ -395,9 +433,11 @@ export function EvalsTab() {
             overview={suiteOverview || []}
             onSelectSuite={setSelectedSuiteId}
             onRerun={handleRerun}
+            onCancelRun={handleCancelRun}
             onDelete={handleDelete}
             connectedServerNames={connectedServerNames}
             rerunningSuiteId={rerunningSuiteId}
+            cancellingRunId={cancellingRunId}
             deletingSuiteId={deletingSuiteId}
           />
         ) : isSuiteDetailsLoading ? (
@@ -420,9 +460,11 @@ export function EvalsTab() {
             aggregate={suiteAggregate}
             onBack={() => setSelectedSuiteId(null)}
             onRerun={handleRerun}
+            onCancelRun={handleCancelRun}
             onDelete={handleDelete}
             connectedServerNames={connectedServerNames}
             rerunningSuiteId={rerunningSuiteId}
+            cancellingRunId={cancellingRunId}
             deletingSuiteId={deletingSuiteId}
             availableModels={availableModels}
           />

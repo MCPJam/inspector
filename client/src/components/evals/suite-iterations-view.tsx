@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import { ChevronDown, ChevronRight, Loader2, RotateCw, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Loader2, RotateCw, Trash2, X } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -43,9 +43,11 @@ export function SuiteIterationsView({
   aggregate,
   onBack,
   onRerun,
+  onCancelRun,
   onDelete,
   connectedServerNames,
   rerunningSuiteId,
+  cancellingRunId,
   deletingSuiteId,
   availableModels,
 }: {
@@ -58,9 +60,11 @@ export function SuiteIterationsView({
   aggregate: SuiteAggregate | null;
   onBack: () => void;
   onRerun: (suite: EvalSuite) => void;
+  onCancelRun: (runId: string) => void;
   onDelete: (suite: EvalSuite) => void;
   connectedServerNames: Set<string>;
   rerunningSuiteId: string | null;
+  cancellingRunId: string | null;
   deletingSuiteId: string | null;
   availableModels: any[];
 }) {
@@ -911,6 +915,12 @@ export function SuiteIterationsView({
 
   const isDeleting = deletingSuiteId === suite._id;
 
+  // Find the latest run that's in progress
+  const latestRun = runs && runs.length > 0 ? runs[0] : null;
+  const isRunInProgress =
+    latestRun?.status === "running" || latestRun?.status === "pending";
+  const isCancelling = cancellingRunId === latestRun?._id;
+
   return (
     <div className="space-y-4">
       {/* Consolidated header with back button, editable name, description, and actions */}
@@ -961,29 +971,56 @@ export function SuiteIterationsView({
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span>
+          {isRunInProgress && latestRun ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => onRerun(suite)}
-                  disabled={!canRerun || isRerunning}
+                  onClick={() => onCancelRun(latestRun._id)}
+                  disabled={isCancelling}
                   className="gap-2"
                 >
-                  <RotateCw
-                    className={`h-4 w-4 ${isRerunning ? "animate-spin" : ""}`}
-                  />
-                  Rerun
+                  {isCancelling ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Cancelling...
+                    </>
+                  ) : (
+                    <>
+                      <X className="h-4 w-4" />
+                      Cancel run
+                    </>
+                  )}
                 </Button>
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>
-              {!canRerun
-                ? `Connect the following servers: ${missingServers.join(", ")}`
-                : "Rerun evaluation"}
-            </TooltipContent>
-          </Tooltip>
+              </TooltipTrigger>
+              <TooltipContent>Cancel the current evaluation run</TooltipContent>
+            </Tooltip>
+          ) : (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onRerun(suite)}
+                    disabled={!canRerun || isRerunning}
+                    className="gap-2"
+                  >
+                    <RotateCw
+                      className={`h-4 w-4 ${isRerunning ? "animate-spin" : ""}`}
+                    />
+                    Rerun
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                {!canRerun
+                  ? `Connect the following servers: ${missingServers.join(", ")}`
+                  : "Rerun evaluation"}
+              </TooltipContent>
+            </Tooltip>
+          )}
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -1961,7 +1998,15 @@ export function SuiteIterationsView({
                         <div className="flex min-w-0 flex-1 flex-col gap-1">
                           <div className="flex items-center gap-2">
                             <Badge
-                              variant={iteration.result === "passed" ? "default" : iteration.result === "failed" ? "destructive" : "secondary"}
+                              variant={
+                                iteration.result === "passed"
+                                  ? "default"
+                                  : iteration.result === "failed"
+                                    ? "destructive"
+                                    : iteration.result === "cancelled"
+                                      ? "outline"
+                                      : "secondary"
+                              }
                               className="text-xs font-mono uppercase"
                             >
                               {iteration.result}
@@ -2241,7 +2286,15 @@ function TestCaseGroup({
                     <div className="flex min-w-0 flex-1 flex-col gap-1">
                       <div className="flex items-center gap-2">
                         <Badge
-                          variant={iteration.result === "passed" ? "default" : iteration.result === "failed" ? "destructive" : "secondary"}
+                          variant={
+                            iteration.result === "passed"
+                              ? "default"
+                              : iteration.result === "failed"
+                                ? "destructive"
+                                : iteration.result === "cancelled"
+                                  ? "outline"
+                                  : "secondary"
+                          }
                           className="text-xs font-mono uppercase"
                         >
                           {iteration.result}
