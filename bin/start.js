@@ -494,8 +494,8 @@ async function main() {
   // Apply parsed environment variables to process.env first
   Object.assign(process.env, envVars);
 
-  // Port configuration (fixed default to 3000)
-  const requestedPort = parseInt(process.env.PORT ?? "6274", 10);
+  // Port configuration (fixed default to 6274)
+  const requestedPort = 6274;
   let PORT;
 
   try {
