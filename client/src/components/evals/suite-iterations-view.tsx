@@ -18,7 +18,7 @@ import {
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Pie, PieChart, XAxis, YAxis, Cell, Label } from "recharts";
 import { IterationDetails } from "./iteration-details";
 import { SuiteTestsConfig } from "./suite-tests-config";
-import { formatTime } from "./helpers";
+import { formatTime, formatRunId } from "./helpers";
 import {
   EvalCase,
   EvalIteration,
@@ -246,13 +246,14 @@ export function SuiteIterationsView({
         }
 
         return {
-          runIndex: run.runNumber,
+          runId: run._id,
+          runIdDisplay: formatRunId(run._id),
           passRate,
           label: formatTime(run.completedAt ?? run.createdAt),
         };
       })
       .filter(
-        (item): item is { runIndex: number; passRate: number; label: string } =>
+        (item): item is { runId: string; runIdDisplay: string; passRate: number; label: string } =>
           item !== null,
       );
     console.log('[Evals] Run trend data:', data);
@@ -808,7 +809,7 @@ export function SuiteIterationsView({
     });
 
     // Calculate pass rate for each run
-    const data: Array<{ runIndex: number; passRate: number; label: string }> = [];
+    const data: Array<{ runId: string; runIdDisplay: string; passRate: number; label: string }> = [];
     runs.forEach((run) => {
       const runIters = iterationsByRun.get(run._id);
       if (runIters && runIters.length > 0) {
@@ -817,14 +818,22 @@ export function SuiteIterationsView({
         const passRate = total > 0 ? Math.round((passed / total) * 100) : 0;
 
         data.push({
-          runIndex: run.runNumber,
+          runId: run._id,
+          runIdDisplay: formatRunId(run._id),
           passRate,
           label: formatTime(run.completedAt ?? run.createdAt),
         });
       }
     });
 
-    return data.sort((a, b) => a.runIndex - b.runIndex);
+    // Sort by creation time (most recent first, then reverse for display)
+    return data.sort((a, b) => {
+      const runA = runs.find(r => r._id === a.runId);
+      const runB = runs.find(r => r._id === b.runId);
+      const timeA = runA?.createdAt ?? 0;
+      const timeB = runB?.createdAt ?? 0;
+      return timeA - timeB;
+    });
   }, [selectedTestId, iterationsForSelectedTest, runs]);
 
   // Per-model breakdown for selected test
@@ -1126,7 +1135,7 @@ export function SuiteIterationsView({
                         stroke="hsl(var(--muted-foreground) / 0.2)"
                       />
                       <XAxis
-                        dataKey="runIndex"
+                        dataKey="runIdDisplay"
                         tickLine={false}
                         axisLine={false}
                         tickMargin={8}
@@ -1287,7 +1296,7 @@ export function SuiteIterationsView({
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
                             <div className="flex flex-col gap-0.5">
-                              <span className="text-sm font-medium">Run #{run.runNumber}</span>
+                              <span className="text-sm font-medium">Run {formatRunId(run._id)}</span>
                               <span className="text-xs text-muted-foreground">{timestamp}</span>
                             </div>
                             {isRunning && (
@@ -1432,7 +1441,7 @@ export function SuiteIterationsView({
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <div className="flex flex-col gap-0.5">
-                          <span className="text-sm font-medium">Run #{run.runNumber}</span>
+                          <span className="text-sm font-medium">Run {formatRunId(run._id)}</span>
                           <span className="text-xs text-muted-foreground">{timestamp}</span>
                         </div>
                         {isRunning && (
@@ -1473,7 +1482,7 @@ export function SuiteIterationsView({
           {/* Run Detail View */}
           <div className="rounded-xl border bg-card text-card-foreground">
             <div className="border-b px-4 py-3">
-              <div className="text-sm font-semibold">Run #{selectedRunDetails.runNumber}</div>
+              <div className="text-sm font-semibold">Run {formatRunId(selectedRunDetails._id)}</div>
               <p className="text-xs text-muted-foreground">
                 {formatTime(selectedRunDetails.completedAt ?? selectedRunDetails.createdAt)}
               </p>
@@ -1671,7 +1680,7 @@ export function SuiteIterationsView({
               <div className="grid gap-3 rounded-lg border bg-background/80 p-4">
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
                   <div className="flex items-center gap-3">
-                    <span>Run #{selectedRunDetails.runNumber}</span>
+                    <span>Run {formatRunId(selectedRunDetails._id)}</span>
                     <PassCriteriaBadge
                       run={selectedRunDetails}
                       variant="compact"
@@ -1814,7 +1823,7 @@ export function SuiteIterationsView({
                       stroke="hsl(var(--muted-foreground) / 0.2)"
                     />
                     <XAxis
-                      dataKey="runIndex"
+                      dataKey="runIdDisplay"
                       tickLine={false}
                       axisLine={false}
                       tickMargin={8}
@@ -1945,7 +1954,6 @@ export function SuiteIterationsView({
                   ? runs.find((r) => r._id === iteration.suiteRunId)
                   : null;
 
-                const runNumber = iterationRun?.runNumber ?? null;
                 const runTimestamp = iterationRun
                   ? new Date(iterationRun.createdAt).toLocaleString(undefined, {
                       month: "short",
@@ -2034,7 +2042,7 @@ export function SuiteIterationsView({
                                   setActiveTab("runs");
                                 }}
                               >
-                                View Run #{runNumber}
+                                View Run {formatRunId(iterationRun._id)}
                               </Button>
                             )}
                           </div>
@@ -2242,8 +2250,6 @@ function TestCaseGroup({
             const iterationRun = iteration.suiteRunId
               ? runs.find((r) => r._id === iteration.suiteRunId)
               : null;
-
-            const runNumber = iterationRun?.runNumber ?? null;
 
             // Get test info from snapshot or testCase
             const testInfo = iteration.testCaseSnapshot || testCase;

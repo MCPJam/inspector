@@ -5,6 +5,11 @@ export function formatTime(ts?: number) {
   return ts ? new Date(ts).toLocaleString() : "—";
 }
 
+export function formatRunId(runId: string): string {
+  // Format Convex ID for display (e.g., "j1234567890abcdef" -> "j1234567")
+  return runId.substring(0, 8);
+}
+
 export function aggregateSuite(
   suite: EvalSuite,
   cases: EvalCase[],
