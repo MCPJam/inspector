@@ -10,6 +10,27 @@ import { startSuiteRunWithRecorder } from "../../services/evals/recorder";
 import type { MCPClientManager } from "@/sdk";
 import "../../types/hono";
 
+// Helper to compute config revision (same as in Convex)
+function normalizeForSignature(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(normalizeForSignature);
+  }
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, val]) => [key, normalizeForSignature(val)]);
+    return Object.fromEntries(entries);
+  }
+  return value;
+}
+
+function computeConfigRevision(config: {
+  tests: Array<Record<string, unknown>>;
+  environment: Record<string, unknown>;
+}): string {
+  return JSON.stringify(normalizeForSignature(config));
+}
+
 function resolveServerIdsOrThrow(
   requestedIds: string[],
   clientManager: MCPClientManager,
@@ -167,18 +188,41 @@ evals.post("/run", async (c) => {
     let resolvedSuiteId = suiteId ?? null;
 
     if (resolvedSuiteId) {
-      const updatedSuite = await convexClient.mutation(
-        "evals:updateSuite" as any,
-        {
-          suiteId: resolvedSuiteId,
-          name: suiteName,
-          description: suiteDescription,
-          config: suiteConfigPayload,
-        },
-      );
+      // Compute revision of new config to compare with current
+      const newConfigRevision = computeConfigRevision(suiteConfigPayload);
 
-      if (!updatedSuite || !updatedSuite.config) {
-        throw new Error("Failed to update suite config");
+      // Get current suite data to access its configRevision
+      // We'll fetch the suite details which includes the config
+      const suiteOverview = await convexClient.query("evals:getSuiteOverview" as any, {});
+      const currentSuite = suiteOverview?.find((entry: any) => entry.suite._id === resolvedSuiteId)?.suite;
+      const currentConfigRevision = currentSuite?.configRevision || null;
+
+      // Check if config actually changed by comparing revisions
+      const configChanged = currentConfigRevision !== newConfigRevision;
+
+      if (configChanged) {
+        // Config changed: update suite (this will mark old runs as inactive)
+        await convexClient.mutation(
+          "evals:updateSuite" as any,
+          {
+            suiteId: resolvedSuiteId,
+            name: suiteName,
+            description: suiteDescription,
+            config: suiteConfigPayload,
+          },
+        );
+      } else {
+        // Config unchanged: just update name/description
+        // This keeps old runs active for trend continuity
+        await convexClient.mutation(
+          "evals:updateSuite" as any,
+          {
+            suiteId: resolvedSuiteId,
+            name: suiteName,
+            description: suiteDescription,
+            // Don't pass config - preserves run history
+          },
+        );
       }
     } else {
       const createdSuite = await convexClient.mutation(
