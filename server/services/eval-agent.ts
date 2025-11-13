@@ -141,7 +141,7 @@ ${toolsContext}
       Authorization: `Bearer ${convexAuthToken}`,
     },
     body: JSON.stringify({
-      model: "meta-llama/llama-3.3-70b-instruct",
+      model: "anthropic/claude-haiku-4.5",
       tools: [],
       messages: JSON.stringify(messageHistory),
     }),

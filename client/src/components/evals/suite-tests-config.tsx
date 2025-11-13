@@ -19,12 +19,16 @@ import type { EvalSuite, EvalSuiteConfigTest } from "./types";
 import type { ModelDefinition } from "@/shared/types";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import { ProviderLogo } from "@/components/chat-v2/provider-logo";
+import { ExpectedToolsEditor } from "./expected-tools-editor";
 
 interface TestTemplate {
   title: string;
   query: string;
   runs: number;
-  expectedToolCalls: string[];
+  expectedToolCalls: Array<{
+    toolName: string;
+    arguments: Record<string, any>;
+  }>;
   judgeRequirement?: string;
   advancedConfig?: Record<string, unknown>;
 }
@@ -517,19 +521,15 @@ export function SuiteTestsConfig({ suite, onUpdate, availableModels }: SuiteTest
                     </div>
 
                     <div className="space-y-2">
-                      <Label>Expected tool calls (comma-separated)</Label>
-                      <Input
-                        value={(editForm.expectedToolCalls || []).join(", ")}
-                        onChange={(e) =>
+                      <Label>Expected tool calls</Label>
+                      <ExpectedToolsEditor
+                        toolCalls={editForm.expectedToolCalls || []}
+                        onChange={(toolCalls) =>
                           setEditForm({
                             ...editForm,
-                            expectedToolCalls: e.target.value
-                              .split(",")
-                              .map((s) => s.trim())
-                              .filter(Boolean),
+                            expectedToolCalls: toolCalls,
                           })
                         }
-                        placeholder="e.g., add, calculator"
                       />
                     </div>
 
@@ -556,7 +556,7 @@ export function SuiteTestsConfig({ suite, onUpdate, availableModels }: SuiteTest
                           <Badge variant="outline">{template.runs} runs</Badge>
                           {(template.expectedToolCalls || []).length > 0 && (
                             <Badge variant="outline">
-                              Expects: {(template.expectedToolCalls || []).join(", ")}
+                              Expects: {(template.expectedToolCalls || []).map(t => t.toolName).join(", ")}
                             </Badge>
                           )}
                           <Badge variant="secondary">
