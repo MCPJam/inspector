@@ -91,10 +91,9 @@ export function createHonoApp() {
     "*",
     cors({
       origin: [
-        "http://localhost:6274",
-        "http://127.0.0.1:6274",
-        "http://localhost:6275",
-        "http://127.0.0.1:6275",
+        "http://localhost:5173", // Vite dev server
+        "http://localhost:6274", // Hono server
+        "http://127.0.0.1:6274", // Hono server production
       ],
       credentials: true,
     }),

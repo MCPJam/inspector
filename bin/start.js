@@ -124,24 +124,6 @@ function isPortAvailable(port) {
   });
 }
 
-async function findAvailablePort(startPort = 3000, maxPort = 65535) {
-  logProgress(`Scanning for available ports starting from ${startPort}...`);
-
-  for (let port = startPort; port <= maxPort; port++) {
-    if (await isPortAvailable(port)) {
-      return port;
-    }
-
-    // Show progress every 10 ports to avoid spam
-    if (port % 10 === 0) {
-      logProgress(`Checked port ${port}, continuing search...`);
-    }
-  }
-  throw new Error(
-    `No available ports found between ${startPort} and ${maxPort}`,
-  );
-}
-
 function spawnPromise(command, args, options) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
