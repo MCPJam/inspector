@@ -97,7 +97,7 @@ export function SuiteTestsConfig({ suite, onUpdate, availableModels }: SuiteTest
   const saveChanges = (newTemplates: TestTemplate[], newModels: ModelInfo[]) => {
     const expandedTests: EvalSuiteConfigTest[] = newTemplates.flatMap(template =>
       newModels.map(modelInfo => ({
-        title: `${template.title} [${modelInfo.displayName}]`,
+        title: template.title, // Use template title without model name
         query: template.query,
         runs: template.runs,
         model: modelInfo.model,
@@ -105,6 +105,7 @@ export function SuiteTestsConfig({ suite, onUpdate, availableModels }: SuiteTest
         expectedToolCalls: template.expectedToolCalls,
         judgeRequirement: template.judgeRequirement,
         advancedConfig: template.advancedConfig,
+        testTemplateKey: template.templateKey, // Add template key for grouping
       }))
     );
     onUpdate(expandedTests);

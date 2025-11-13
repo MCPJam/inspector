@@ -200,7 +200,10 @@ export function SuiteIterationsView({
   }, [selectedRunId, runs]);
 
   const runTrendData = useMemo(() => {
-    const data = runs
+    // Filter to only active runs for the trend chart
+    const activeRuns = runs.filter((run) => run.isActive !== false);
+
+    const data = activeRuns
       .slice()
       .reverse()
       .map((run) => {
@@ -245,7 +248,7 @@ export function SuiteIterationsView({
   const modelStats = useMemo(() => {
     const modelMap = new Map<string, { passed: number; failed: number; total: number; modelName: string }>();
 
-    iterations.forEach((iteration) => {
+    allIterations.forEach((iteration) => {
       const model = iteration.testCaseSnapshot?.model || 'Unknown';
       const modelName = iteration.testCaseSnapshot?.model || 'Unknown Model';
 
@@ -272,7 +275,7 @@ export function SuiteIterationsView({
     }));
 
     return data.sort((a, b) => b.passRate - a.passRate);
-  }, [iterations]);
+  }, [allIterations]);
 
   const modelChartConfig = {
     passRate: {
@@ -1094,12 +1097,12 @@ export function SuiteIterationsView({
             </div>
 
             {/* Per-Model Performance */}
-            {modelStats.length > 1 && (
-              <div className="rounded-xl border bg-card text-card-foreground">
-                <div className="px-4 pt-3 pb-2">
-                  <div className="text-xs font-medium text-muted-foreground">Performance by model</div>
-                </div>
-                <div className="px-4 pb-4">
+            <div className="rounded-xl border bg-card text-card-foreground">
+              <div className="px-4 pt-3 pb-2">
+                <div className="text-xs font-medium text-muted-foreground">Performance by model</div>
+              </div>
+              <div className="px-4 pb-4">
+                {modelStats.length > 0 ? (
                   <ChartContainer config={modelChartConfig} className="aspect-auto h-32 w-full">
                     <BarChart data={modelStats} width={undefined} height={undefined}>
                       <CartesianGrid
@@ -1157,9 +1160,13 @@ export function SuiteIterationsView({
                       />
                     </BarChart>
                   </ChartContainer>
-                </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    No model data available.
+                  </p>
+                )}
               </div>
-            )}
+            </div>
           </div>
 
           {/* Sections 2 & 3: Runs and Test Cases Side by Side */}
