@@ -24,13 +24,9 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
-      port: 8080,
-      hmr: {
-        port: 8081,
-      },
       proxy: {
         "/api": {
-          target: "http://localhost:3000", // the port need to be the same as the server port
+          target: "http://localhost:6274", // Server port 6275
           changeOrigin: true,
         },
       },
