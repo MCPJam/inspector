@@ -1945,6 +1945,7 @@ export function SuiteIterationsView({
                                   setSelectedRunId(iterationRun._id);
                                   setSelectedTestId(null);
                                   setViewMode("run-detail");
+                                  setActiveTab("runs");
                                 }}
                               >
                                 View Run #{runNumber}
