@@ -355,9 +355,9 @@ sequenceDiagram
     Note over Main: Set environment variables:<br/>ELECTRON_APP=true<br/>IS_PACKAGED<br/>ELECTRON_RESOURCES_PATH
 
     Main->>Server: startHonoServer()
-    Server->>Server: Find available port
+    Server->>Server: Use port 6274
     Server->>Server: createHonoApp()
-    Server-->>Main: Return port (e.g., 3000)
+    Server-->>Main: Return port 6274
 
     Main->>Window: createMainWindow(serverUrl)
     Window->>Window: Create BrowserWindow
