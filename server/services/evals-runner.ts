@@ -116,7 +116,8 @@ const runIterationWithAiSdk = async ({
   const { system, temperature, toolChoice } = advancedConfig ?? {};
 
   // Get API key for this model's provider
-  const apiKey = modelApiKeys?.[test.provider] ?? "";
+  // Try exact match first, then lowercase
+  const apiKey = modelApiKeys?.[test.provider] ?? modelApiKeys?.[test.provider.toLowerCase()] ?? "";
   if (!apiKey) {
     throw new Error(
       `Missing API key for provider ${test.provider} (test: ${test.title})`

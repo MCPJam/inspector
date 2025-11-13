@@ -161,15 +161,18 @@ export function EvalsTab() {
         return;
       }
 
-      // Check if we have the model and API keys
-      const firstTest = tests[0];
-      const modelId = firstTest.model;
-      const provider = firstTest.provider;
+      // Collect API keys for all providers used in the tests
+      const modelApiKeys: Record<string, string> = {};
+      const providersNeeded = new Set<string>();
 
-      const currentModelIsJam = isMCPJamProvidedModel(modelId);
-      let apiKey: string | undefined;
+      for (const test of tests) {
+        if (!isMCPJamProvidedModel(test.model)) {
+          providersNeeded.add(test.provider);
+        }
+      }
 
-      if (!currentModelIsJam) {
+      // Check that we have all required API keys
+      for (const provider of providersNeeded) {
         const tokenKey = provider.toLowerCase() as keyof ProviderTokens;
         if (!hasToken(tokenKey)) {
           toast.error(
@@ -177,7 +180,10 @@ export function EvalsTab() {
           );
           return;
         }
-        apiKey = getToken(tokenKey) || undefined;
+        const key = getToken(tokenKey);
+        if (key) {
+          modelApiKeys[provider] = key;
+        }
       }
 
       setRerunningSuiteId(suite._id);
@@ -208,7 +214,7 @@ export function EvalsTab() {
               advancedConfig: test.advancedConfig,
             })),
             serverIds: suiteServers,
-            modelApiKey: currentModelIsJam ? null : apiKey || null,
+            modelApiKeys: Object.keys(modelApiKeys).length > 0 ? modelApiKeys : undefined,
             convexAuthToken: accessToken,
             passCriteria: {
               minimumPassRate: minimumPassRate,
