@@ -552,6 +552,18 @@ export function EditServerModal({
                       </div>
                     )}
 
+                    {/* Server Instructions */}
+                    {server.initializationInfo.instructions && (
+                      <div className="space-y-3 pt-2 border-t border-border/50">
+                        <h4 className="text-xs font-semibold text-foreground uppercase tracking-wide">
+                          Server Instructions
+                        </h4>
+                        <p className="text-sm text-muted-foreground leading-relaxed">
+                          {server.initializationInfo.instructions}
+                        </p>
+                      </div>
+                    )}
+
                     {/* Server Capabilities */}
                     {server.initializationInfo.serverCapabilities && (
                       <div className="space-y-3 pt-2 border-t border-border/50">
