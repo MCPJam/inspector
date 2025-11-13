@@ -185,10 +185,9 @@ app.use("*", async (c, next) => {
 // Middleware
 app.use("*", logger());
 const corsOrigins = [
-  "http://localhost:6274",
-  "http://localhost:6275",
-  "http://127.0.0.1:6274",
-  "http://127.0.0.1:6275",
+  "http://localhost:5173", // Vite dev server
+  "http://localhost:6274", // Hono server
+  "http://127.0.0.1:6274", // Hono server production
 ];
 
 app.use(
@@ -360,12 +359,13 @@ if (process.env.NODE_ENV === "production") {
 
 // Default to localhost unless explicitly running in production
 const hostname = process.env.ENVIRONMENT === "dev" ? "localhost" : "127.0.0.1";
-logBox(`http://${hostname}:6274`, "🚀 Inspector Launched");
+const port = process.env.ENVIRONMENT === "dev" ? 5173 : 6274;
+logBox(`http://${hostname}:${port}`, "🚀 Inspector Launched");
 
-// Hono server should be served on 6275
+// Hono server should be served on 6274
 const server = serve({
   fetch: app.fetch,
-  port: 6275,
+  port: 6274,
   hostname: "0.0.0.0", // Bind to all interfaces for Docker
 });
 
