@@ -11,9 +11,8 @@ import { Separator } from "../ui/separator";
 import { cn } from "../../lib/utils";
 import type { LanguageModelUsage } from "ai";
 import { type ComponentProps, createContext, useContext } from "react";
-import { getContext, getUsage } from "tokenlens";
-import { useModelMetadata } from "@/hooks/use-model-metadata";
-import { isMCPJamProvidedModel } from "@/shared/types";
+import { getUsage } from "tokenlens";
+import { getModelById } from "@/shared/types";
 import { Loader2 } from "lucide-react";
 
 const PERCENT_MAX = 100;
@@ -74,31 +73,14 @@ export const Context = ({
   systemPromptTokenCountLoading = false,
   ...props
 }: ContextProps) => {
-  const { models: metadataModels } = useModelMetadata();
-  const contextData = getContext({ modelId });
-  const metadataModel = isMCPJamProvidedModel(modelId)
-    ? metadataModels.find(
-        (model) => model.id === modelId || model.canonical_slug === modelId,
-      )
-    : undefined;
-  // For MCPJam provided models, use context_length directly (as specified by user)
-  // Fallback to top_provider.context_length if context_length is not available
-  const metadataMaxTokens =
-    isMCPJamProvidedModel(modelId) && metadataModel
-      ? (metadataModel.context_length ??
-        metadataModel.top_provider?.context_length)
-      : undefined;
-  const derivedMaxTokens = metadataMaxTokens ?? contextData?.maxTotal;
-
-  if (!derivedMaxTokens) {
-    return null;
-  }
+  const model = getModelById(modelId);
+  const maxTokens = model?.contextLength;
 
   return (
     <ContextContext.Provider
       value={{
         usedTokens,
-        maxTokens: derivedMaxTokens,
+        maxTokens,
         usage,
         modelId,
         selectedServers,
@@ -116,10 +98,13 @@ export const Context = ({
 
 const ContextIcon = () => {
   const { usedTokens, maxTokens } = useContextValue();
-  if (!maxTokens) return null;
+  const hasMaxTokens = maxTokens !== undefined;
   const circumference = 2 * Math.PI * ICON_RADIUS;
-  const usedPercent = usedTokens / maxTokens;
-  const dashOffset = circumference * (1 - usedPercent);
+  const usedPercent = hasMaxTokens ? usedTokens / maxTokens : undefined;
+  const dashOffset =
+    hasMaxTokens && usedPercent !== undefined
+      ? circumference * (1 - usedPercent)
+      : undefined;
 
   return (
     <svg
@@ -139,19 +124,21 @@ const ContextIcon = () => {
         stroke="currentColor"
         strokeWidth={ICON_STROKE_WIDTH}
       />
-      <circle
-        cx={ICON_CENTER}
-        cy={ICON_CENTER}
-        fill="none"
-        opacity="0.7"
-        r={ICON_RADIUS}
-        stroke="currentColor"
-        strokeDasharray={`${circumference} ${circumference}`}
-        strokeDashoffset={dashOffset}
-        strokeLinecap="round"
-        strokeWidth={ICON_STROKE_WIDTH}
-        style={{ transformOrigin: "center", transform: "rotate(-90deg)" }}
-      />
+      {hasMaxTokens && dashOffset !== undefined && (
+        <circle
+          cx={ICON_CENTER}
+          cy={ICON_CENTER}
+          fill="none"
+          opacity="0.7"
+          r={ICON_RADIUS}
+          stroke="currentColor"
+          strokeDasharray={`${circumference} ${circumference}`}
+          strokeDashoffset={dashOffset}
+          strokeLinecap="round"
+          strokeWidth={ICON_STROKE_WIDTH}
+          style={{ transformOrigin: "center", transform: "rotate(-90deg)" }}
+        />
+      )}
     </svg>
   );
 };
@@ -160,20 +147,25 @@ export type ContextTriggerProps = ComponentProps<typeof Button>;
 
 export const ContextTrigger = ({ children, ...props }: ContextTriggerProps) => {
   const { usedTokens, maxTokens } = useContextValue();
-  if (!maxTokens) return null;
-  const usedPercent = usedTokens / maxTokens;
-  const displayPct = new Intl.NumberFormat("en-US", {
-    style: "percent",
-    maximumFractionDigits: 1,
-  }).format(usedPercent);
+  const hasMaxTokens = maxTokens !== undefined;
+  const usedPercent = hasMaxTokens ? usedTokens / maxTokens : undefined;
+  const displayPct =
+    hasMaxTokens && usedPercent !== undefined
+      ? new Intl.NumberFormat("en-US", {
+          style: "percent",
+          maximumFractionDigits: 1,
+        }).format(usedPercent)
+      : undefined;
 
   return (
     <HoverCardTrigger asChild>
       {children ?? (
         <Button type="button" variant="ghost" {...props}>
-          <span className="text-xs text-muted-foreground mr-1.5">
-            {displayPct}
-          </span>
+          {displayPct && (
+            <span className="text-xs text-muted-foreground mr-1.5">
+              {displayPct}
+            </span>
+          )}
           <ContextIcon />
         </Button>
       )}
