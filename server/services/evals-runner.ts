@@ -452,6 +452,26 @@ export const runEvalSuiteWithAiSdk = async ({
 
   try {
     for (const test of tests) {
+      // Check if run has been cancelled before processing next test
+      const currentRun = await convexClient.query("evals:getSuiteRunStatus" as any, {
+        runId,
+      });
+
+      if (currentRun?.status === 'cancelled') {
+        const passRate = summary.total > 0 ? summary.passed / summary.total : 0;
+        await recorder.finalize({
+          status: "cancelled",
+          summary: summary.total > 0 ? {
+            total: summary.total,
+            passed: summary.passed,
+            failed: summary.failed,
+            passRate,
+          } : undefined,
+          notes: "Run cancelled by user",
+        });
+        return;
+      }
+
       const evaluations = await runTestCase({
         test,
         tools,

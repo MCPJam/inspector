@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Trash2, Loader2 } from "lucide-react";
+import { Trash2, Loader2, X } from "lucide-react";
 import type { EvalSuite, EvalSuiteOverviewEntry } from "./types";
 import { cn } from "@/lib/utils";
 
@@ -7,9 +7,11 @@ interface SuitesOverviewProps {
   overview: EvalSuiteOverviewEntry[];
   onSelectSuite: (id: string) => void;
   onRerun: (suite: EvalSuite) => void;
+  onCancelRun: (runId: string) => void;
   onDelete: (suite: EvalSuite) => void;
   connectedServerNames: Set<string>;
   rerunningSuiteId: string | null;
+  cancellingRunId: string | null;
   deletingSuiteId: string | null;
 }
 
@@ -17,9 +19,11 @@ export function SuitesOverview({
   overview,
   onSelectSuite,
   onRerun,
+  onCancelRun,
   onDelete,
   connectedServerNames,
   rerunningSuiteId,
+  cancellingRunId,
   deletingSuiteId,
 }: SuitesOverviewProps) {
   if (overview.length === 0) {
@@ -84,6 +88,8 @@ export function SuitesOverview({
 
           const isRunInProgress =
             latestRun?.status === "running" || latestRun?.status === "pending";
+
+          const isCancelling = cancellingRunId === latestRun?._id;
 
           const lastRunTimestamp =
             latestRun?.completedAt ??
@@ -170,20 +176,43 @@ export function SuitesOverview({
               </button>
               <div className="flex items-center justify-between border-t px-4 py-2.5">
                 <div className="flex items-center gap-3">
-                  <button
-                    onClick={() => onRerun(suite)}
-                    disabled={!canRerun || isRerunning}
-                    className={cn(
-                      "text-xs font-medium text-primary hover:underline disabled:opacity-60",
-                      !canRerun && "cursor-not-allowed",
-                    )}
-                  >
-                    {isRerunning
-                      ? "Rerunning..."
-                      : canRerun
-                        ? "Rerun suite"
-                        : `Missing servers: ${missingServers.join(", ")}`}
-                  </button>
+                  {isRunInProgress && latestRun ? (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onCancelRun(latestRun._id);
+                      }}
+                      disabled={isCancelling}
+                      className="flex items-center gap-1.5 text-xs font-medium text-destructive hover:underline disabled:opacity-60"
+                    >
+                      {isCancelling ? (
+                        <>
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          Cancelling...
+                        </>
+                      ) : (
+                        <>
+                          <X className="h-3 w-3" />
+                          Cancel run
+                        </>
+                      )}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => onRerun(suite)}
+                      disabled={!canRerun || isRerunning}
+                      className={cn(
+                        "text-xs font-medium text-primary hover:underline disabled:opacity-60",
+                        !canRerun && "cursor-not-allowed",
+                      )}
+                    >
+                      {isRerunning
+                        ? "Rerunning..."
+                        : canRerun
+                          ? "Rerun suite"
+                          : `Missing servers: ${missingServers.join(", ")}`}
+                    </button>
+                  )}
                   <button
                     onClick={(e) => {
                       e.stopPropagation();

@@ -250,6 +250,51 @@ evals.post("/run", async (c) => {
   }
 });
 
+evals.post("/cancel", async (c) => {
+  try {
+    const body = await c.req.json();
+    const { runId, convexAuthToken } = body;
+
+    if (!runId) {
+      return c.json({ error: "runId is required" }, 400);
+    }
+
+    if (!convexAuthToken) {
+      return c.json({ error: "convexAuthToken is required" }, 401);
+    }
+
+    const convexUrl = process.env.CONVEX_URL;
+    if (!convexUrl) {
+      throw new Error("CONVEX_URL is not set");
+    }
+
+    const convexClient = new ConvexHttpClient(convexUrl);
+    convexClient.setAuth(convexAuthToken);
+
+    await convexClient.mutation("evals:cancelSuiteRun" as any, {
+      runId,
+    });
+
+    return c.json({
+      success: true,
+      message: "Run cancelled successfully",
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error("[Error cancelling run]:", errorMessage);
+
+    // Check for specific error messages
+    if (errorMessage.includes("Cannot cancel run")) {
+      return c.json({ error: errorMessage }, 400);
+    }
+    if (errorMessage.includes("not found or unauthorized")) {
+      return c.json({ error: errorMessage }, 404);
+    }
+
+    return c.json({ error: errorMessage }, 500);
+  }
+});
+
 const GenerateTestsRequestSchema = z.object({
   serverIds: z.array(z.string()).min(1, "At least one server must be selected"),
   convexAuthToken: z.string(),
