@@ -460,6 +460,102 @@ export function SuiteIterationsView({
     return orderedGroups;
   }, [cases, iterations, suite._id]);
 
+  // Template groups - group test cases by testTemplateKey
+  const templateGroups = useMemo(() => {
+    const groups = new Map<
+      string,
+      {
+        title: string;
+        query: string;
+        testCaseIds: string[];
+        iterations: EvalIteration[];
+        summary: {
+          runs: number;
+          passed: number;
+          failed: number;
+          cancelled: number;
+          pending: number;
+          tokens: number;
+          avgDuration: number | null;
+        };
+      }
+    >();
+
+    const computeSummary = (items: EvalIteration[]) => {
+      const summary = {
+        runs: items.length,
+        passed: 0,
+        failed: 0,
+        cancelled: 0,
+        pending: 0,
+        tokens: 0,
+        avgDuration: null as number | null,
+      };
+
+      let totalDuration = 0;
+      let durationCount = 0;
+
+      items.forEach((iteration) => {
+        if (iteration.result === "passed") summary.passed += 1;
+        else if (iteration.result === "failed") summary.failed += 1;
+        else if (iteration.result === "cancelled") summary.cancelled += 1;
+        else summary.pending += 1;
+
+        summary.tokens += iteration.tokensUsed || 0;
+
+        const startedAt = iteration.startedAt ?? iteration.createdAt;
+        const completedAt = iteration.updatedAt ?? iteration.createdAt;
+        if (startedAt && completedAt) {
+          const duration = Math.max(completedAt - startedAt, 0);
+          totalDuration += duration;
+          durationCount += 1;
+        }
+      });
+
+      if (durationCount > 0) {
+        summary.avgDuration = totalDuration / durationCount;
+      }
+
+      return summary;
+    };
+
+    // Group by testTemplateKey from schema
+    caseGroups.forEach((group) => {
+      if (!group.testCase) return;
+
+      // Use testTemplateKey if available, otherwise use testCaseId as unique key (backward compatibility)
+      const templateKey = group.testCase.testTemplateKey || `fallback:${group.testCase._id}`;
+
+      if (!groups.has(templateKey)) {
+        groups.set(templateKey, {
+          title: group.testCase.title,
+          query: group.testCase.query,
+          testCaseIds: [],
+          iterations: [],
+          summary: {
+            runs: 0,
+            passed: 0,
+            failed: 0,
+            cancelled: 0,
+            pending: 0,
+            tokens: 0,
+            avgDuration: null,
+          },
+        });
+      }
+
+      const templateGroup = groups.get(templateKey)!;
+      templateGroup.testCaseIds.push(group.testCase._id);
+      templateGroup.iterations.push(...group.iterations);
+    });
+
+    // Compute summaries and return as array
+    return Array.from(groups.values()).map((group) => ({
+      ...group,
+      summary: computeSummary(group.iterations),
+    }));
+  }, [caseGroups]);
+
   // Iterations for selected run (for runs section)
   const iterationsForSelectedRun = useMemo(() => {
     if (!selectedRunId) return [];
@@ -620,19 +716,54 @@ export function SuiteIterationsView({
     return { donutData, durationData, modelData };
   }, [selectedRunId, caseGroupsForSelectedRun, iterationsForSelectedRun]);
 
-  // Iterations for selected test (across all runs)
+  // Iterations for selected test (across all runs) - aggregate across all models
   const iterationsForSelectedTest = useMemo(() => {
     if (!selectedTestId) return [];
+
+    // Find the template group that contains this test case
+    const templateGroup = templateGroups.find((tg) =>
+      tg.testCaseIds.includes(selectedTestId)
+    );
+
+    if (templateGroup) {
+      return templateGroup.iterations;
+    }
+
+    // Fallback to single test case
     const group = caseGroups.find((g) => g.testCase?._id === selectedTestId);
     return group ? group.iterations : [];
-  }, [selectedTestId, caseGroups]);
+  }, [selectedTestId, caseGroups, templateGroups]);
 
-  // Selected test details
+  // Selected test details - aggregate across all models for the template
   const selectedTestDetails = useMemo(() => {
     if (!selectedTestId) return null;
     const group = caseGroups.find((g) => g.testCase?._id === selectedTestId);
-    return group ?? null;
-  }, [selectedTestId, caseGroups]);
+    if (!group || !group.testCase) return null;
+
+    // Find the template group that contains this test case
+    const templateGroup = templateGroups.find((tg) =>
+      tg.testCaseIds.includes(selectedTestId)
+    );
+
+    if (!templateGroup) return group;
+
+    // Return aggregated data for the template
+    return {
+      testCase: {
+        ...group.testCase,
+        // Remove model from the display
+        model: '',
+        provider: '',
+      },
+      iterations: templateGroup.iterations,
+      summary: templateGroup.summary,
+      templateInfo: {
+        title: templateGroup.title,
+        query: templateGroup.query,
+        modelCount: templateGroup.testCaseIds.length,
+      },
+    };
+  }, [selectedTestId, caseGroups, templateGroups]);
 
   // Trend data for selected test (showing how this test performed across runs)
   const selectedTestTrendData = useMemo(() => {
@@ -668,6 +799,77 @@ export function SuiteIterationsView({
 
     return data.sort((a, b) => a.runIndex - b.runIndex);
   }, [selectedTestId, iterationsForSelectedTest, runs]);
+
+  // Per-model breakdown for selected test
+  const selectedTestModelBreakdown = useMemo(() => {
+    if (!selectedTestId || !selectedTestDetails?.templateInfo) return [];
+
+    const templateGroup = templateGroups.find((tg) =>
+      tg.testCaseIds.includes(selectedTestId)
+    );
+
+    if (!templateGroup) return [];
+
+    // Group iterations by model and compute stats
+    const modelMap = new Map<string, {
+      provider: string;
+      model: string;
+      passed: number;
+      failed: number;
+      cancelled: number;
+      pending: number;
+      total: number;
+      passRate: number;
+    }>();
+
+    // Get model info from test cases
+    const testCaseMap = new Map<string, { provider: string; model: string }>();
+    caseGroups.forEach((group) => {
+      if (group.testCase && templateGroup.testCaseIds.includes(group.testCase._id)) {
+        testCaseMap.set(group.testCase._id, {
+          provider: group.testCase.provider,
+          model: group.testCase.model,
+        });
+      }
+    });
+
+    // Group iterations by model
+    templateGroup.iterations.forEach((iteration) => {
+      const testCaseInfo = iteration.testCaseId ? testCaseMap.get(iteration.testCaseId) : null;
+      if (!testCaseInfo) return;
+
+      const key = `${testCaseInfo.provider}/${testCaseInfo.model}`;
+
+      if (!modelMap.has(key)) {
+        modelMap.set(key, {
+          provider: testCaseInfo.provider,
+          model: testCaseInfo.model,
+          passed: 0,
+          failed: 0,
+          cancelled: 0,
+          pending: 0,
+          total: 0,
+          passRate: 0,
+        });
+      }
+
+      const stats = modelMap.get(key)!;
+      stats.total += 1;
+
+      if (iteration.result === "passed") stats.passed += 1;
+      else if (iteration.result === "failed") stats.failed += 1;
+      else if (iteration.result === "cancelled") stats.cancelled += 1;
+      else stats.pending += 1;
+    });
+
+    // Compute pass rates
+    return Array.from(modelMap.values())
+      .map((stats) => ({
+        ...stats,
+        passRate: stats.total > 0 ? Math.round((stats.passed / stats.total) * 100) : 0,
+      }))
+      .sort((a, b) => b.passRate - a.passRate);
+  }, [selectedTestId, selectedTestDetails, templateGroups, caseGroups]);
 
   const getIterationBorderColor = (result: string) => {
     if (result === "passed") return "bg-emerald-500/50";
@@ -1059,15 +1261,12 @@ export function SuiteIterationsView({
                 </p>
               </div>
               <div className="divide-y overflow-y-auto">
-                {caseGroups.filter((g) => g.testCase !== null).length === 0 ? (
+                {templateGroups.length === 0 ? (
                   <div className="px-4 py-12 text-center text-sm text-muted-foreground">
                     No test cases found.
                   </div>
                 ) : (
-                  caseGroups
-                    .filter((g) => g.testCase !== null)
-                    .map((group) => {
-                      const testCase = group.testCase!;
+                  templateGroups.map((group, index) => {
                       const passedCount = group.summary.passed;
                       const totalCount = group.summary.runs;
                       const passRate = totalCount > 0
@@ -1076,9 +1275,10 @@ export function SuiteIterationsView({
 
                       return (
                         <button
-                          key={testCase._id}
+                          key={index}
                           onClick={() => {
-                            setSelectedTestId(testCase._id);
+                            // Set the first test case ID for this template
+                            setSelectedTestId(group.testCaseIds[0]);
                             setViewMode("test-detail");
                             setActiveTab("test-cases");
                           }}
@@ -1086,9 +1286,9 @@ export function SuiteIterationsView({
                         >
                           <div className="flex items-center gap-3">
                             <div className="flex flex-col gap-1">
-                              <span className="text-sm font-medium">{testCase.title}</span>
+                              <span className="text-sm font-medium">{group.title}</span>
                               <span className="text-xs text-muted-foreground">
-                                {testCase.provider} • {testCase.model}
+                                {group.testCaseIds.length} model{group.testCaseIds.length === 1 ? "" : "s"}
                               </span>
                             </div>
                           </div>
@@ -1468,15 +1668,12 @@ export function SuiteIterationsView({
                 </p>
               </div>
               <div className="divide-y overflow-y-auto">
-                {caseGroups.filter((g) => g.testCase !== null).length === 0 ? (
+                {templateGroups.length === 0 ? (
                   <div className="px-4 py-12 text-center text-sm text-muted-foreground">
                     No test cases found.
                   </div>
                 ) : (
-                  caseGroups
-                    .filter((g) => g.testCase !== null)
-                    .map((group) => {
-                      const testCase = group.testCase!;
+                  templateGroups.map((group, index) => {
                       const passedCount = group.summary.passed;
                       const totalCount = group.summary.runs;
                       const passRate = totalCount > 0
@@ -1485,18 +1682,19 @@ export function SuiteIterationsView({
 
                       return (
                         <button
-                          key={testCase._id}
+                          key={index}
                           onClick={() => {
-                            setSelectedTestId(testCase._id);
+                            // Set the first test case ID for this template
+                            setSelectedTestId(group.testCaseIds[0]);
                             setViewMode("test-detail");
                           }}
                           className="flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
                         >
                           <div className="flex items-center gap-3">
                             <div className="flex flex-col gap-1">
-                              <span className="text-sm font-medium">{testCase.title}</span>
+                              <span className="text-sm font-medium">{group.title}</span>
                               <span className="text-xs text-muted-foreground">
-                                {testCase.provider} • {testCase.model}
+                                {group.testCaseIds.length} model{group.testCaseIds.length === 1 ? "" : "s"}
                               </span>
                             </div>
                           </div>
@@ -1519,9 +1717,12 @@ export function SuiteIterationsView({
           {/* Test Detail View */}
           <div className="rounded-xl border bg-card text-card-foreground">
             <div className="border-b px-4 py-3">
-              <div className="text-sm font-semibold">{selectedTestDetails.testCase?.title}</div>
+              <div className="text-sm font-semibold">{selectedTestDetails.templateInfo?.title || selectedTestDetails.testCase?.title}</div>
               <p className="text-xs text-muted-foreground">
-                {selectedTestDetails.testCase?.provider} • {selectedTestDetails.testCase?.model}
+                {selectedTestDetails.templateInfo
+                  ? `${selectedTestDetails.templateInfo.modelCount} model${selectedTestDetails.templateInfo.modelCount === 1 ? "" : "s"}`
+                  : `${selectedTestDetails.testCase?.provider} • ${selectedTestDetails.testCase?.model}`
+                }
               </p>
             </div>
             {selectedTestTrendData.length > 0 && (
@@ -1572,44 +1773,78 @@ export function SuiteIterationsView({
                   <p className="text-sm italic">"{selectedTestDetails.testCase.query}"</p>
                 </div>
               )}
-              <div className="grid gap-3 rounded-lg border bg-background/80 p-4">
-                <div className="flex items-center justify-between text-xs text-muted-foreground">
-                  <span>Test Performance</span>
-                  <span className="font-medium text-foreground">Across all runs</span>
-                </div>
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  <RunMetric
-                    label="Pass rate"
-                    value={`${selectedTestDetails.summary.runs > 0 ? Math.round((selectedTestDetails.summary.passed / selectedTestDetails.summary.runs) * 100) : 0}%`}
-                  />
-                  <RunMetric
-                    label="Passed"
-                    value={selectedTestDetails.summary.passed.toLocaleString()}
-                  />
-                  <RunMetric
-                    label="Failed"
-                    value={selectedTestDetails.summary.failed.toLocaleString()}
-                  />
-                  <RunMetric
-                    label="Cancelled"
-                    value={selectedTestDetails.summary.cancelled.toLocaleString()}
-                  />
-                  <RunMetric
-                    label="Total iterations"
-                    value={selectedTestDetails.summary.runs.toLocaleString()}
-                  />
-                  <RunMetric
-                    label="Avg duration"
-                    value={
-                      selectedTestDetails.summary.avgDuration !== null
-                        ? formatDuration(selectedTestDetails.summary.avgDuration)
-                        : "—"
-                    }
-                  />
-                </div>
-              </div>
             </div>
           </div>
+
+          {/* Per-Model Breakdown */}
+          {selectedTestModelBreakdown.length > 1 && (
+            <div className="rounded-xl border bg-card text-card-foreground">
+              <div className="border-b px-4 py-3">
+                <div className="text-sm font-semibold">Performance by model</div>
+                <p className="text-xs text-muted-foreground">
+                  Pass rate comparison across {selectedTestModelBreakdown.length} model{selectedTestModelBreakdown.length === 1 ? "" : "s"}.
+                </p>
+              </div>
+              <div className="px-4 py-4">
+                <ChartContainer config={chartConfig} className="aspect-auto h-48 w-full">
+                  <BarChart
+                    data={selectedTestModelBreakdown}
+                    layout="vertical"
+                    margin={{ left: 0, right: 40 }}
+                  >
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      horizontal={false}
+                      stroke="hsl(var(--muted-foreground) / 0.2)"
+                    />
+                    <XAxis
+                      type="number"
+                      domain={[0, 100]}
+                      tickLine={false}
+                      axisLine={false}
+                      tickMargin={8}
+                      tick={{ fontSize: 11 }}
+                      tickFormatter={(value) => `${value}%`}
+                    />
+                    <YAxis
+                      type="category"
+                      dataKey="model"
+                      tickLine={false}
+                      axisLine={false}
+                      tickMargin={8}
+                      tick={{ fontSize: 11 }}
+                      width={120}
+                    />
+                    <ChartTooltip
+                      cursor={false}
+                      content={({ active, payload }) => {
+                        if (!active || !payload || !payload.length) return null;
+                        const data = payload[0].payload;
+                        return (
+                          <div className="rounded-lg border bg-background p-2 shadow-sm">
+                            <div className="text-xs font-medium">{data.model}</div>
+                            <div className="text-xs text-muted-foreground">{data.provider}</div>
+                            <div className="mt-1 text-xs">
+                              Pass rate: <span className="font-medium">{data.passRate}%</span>
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              {data.passed}/{data.total} passed
+                            </div>
+                          </div>
+                        );
+                      }}
+                    />
+                    <Bar
+                      dataKey="passRate"
+                      fill="hsl(var(--chart-1))"
+                      radius={[0, 4, 4, 0]}
+                      isAnimationActive={false}
+                    />
+                  </BarChart>
+                </ChartContainer>
+              </div>
+            </div>
+          )}
 
           {/* Iterations for this Test */}
           <div className="space-y-4">
@@ -1643,6 +1878,11 @@ export function SuiteIterationsView({
                   : null;
 
                 const actualToolCalls = iteration.actualToolCalls || [];
+
+                // Get model info for this iteration
+                const iterationTestCase = iteration.testCaseId
+                  ? caseGroups.find((g) => g.testCase?._id === iteration.testCaseId)?.testCase
+                  : null;
 
                 return (
                   <div
@@ -1685,6 +1925,11 @@ export function SuiteIterationsView({
                             >
                               {iteration.result}
                             </Badge>
+                            {iterationTestCase && (
+                              <span className="text-xs font-medium">
+                                {iterationTestCase.model}
+                              </span>
+                            )}
                             {runTimestamp && (
                               <span className="text-xs text-muted-foreground">
                                 {runTimestamp}

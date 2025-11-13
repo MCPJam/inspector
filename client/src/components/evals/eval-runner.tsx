@@ -426,16 +426,20 @@ export function EvalRunner({
       const accessToken = await getAccessToken();
 
       // Expand the matrix: each test template × each model
-      const expandedTests = validTestTemplates.flatMap((template) =>
-        selectedModels.map((model) => ({
-          title: `${template.title} [${model.name}]`,
+      const expandedTests = validTestTemplates.flatMap((template) => {
+        // Generate a UUID for this test template to group variants
+        const testTemplateKey = crypto.randomUUID();
+
+        return selectedModels.map((model) => ({
+          title: template.title,
           query: template.query,
           runs: template.runs,
           model: model.id,
           provider: model.provider,
           expectedToolCalls: template.expectedToolCalls,
-        }))
-      );
+          testTemplateKey,
+        }));
+      });
 
       const response = await fetch("/api/mcp/evals/run", {
         method: "POST",
@@ -943,13 +947,6 @@ export function EvalRunner({
                 placeholder="What does this suite cover?"
                 className="resize-none"
               />
-            </div>
-
-            <div className="rounded-lg border bg-muted/30 p-4">
-              <div className="text-sm font-medium">Test Matrix</div>
-              <p className="text-xs text-muted-foreground mt-1">
-                {validTestTemplates.length} test{validTestTemplates.length === 1 ? "" : "s"} × {selectedModels.length} model{selectedModels.length === 1 ? "" : "s"} = <strong>{totalTestCases} total test cases</strong>
-              </p>
             </div>
 
             <div className="space-y-2">

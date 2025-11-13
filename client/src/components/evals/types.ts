@@ -35,6 +35,8 @@ export type EvalCase = {
   provider: string;
   model: string;
   expectedToolCalls: string[];
+  // Template grouping - UUID to link test cases that are variants of the same base test
+  testTemplateKey?: string; // UUID generated on frontend
   _creationTime?: number; // Convex auto field
 };
 
