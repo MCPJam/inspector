@@ -61,7 +61,7 @@ export function ExpectedToolsEditor({
 
   const addArgument = (toolIndex: number, argKey?: string) => {
     const updated = [...toolCalls];
-    const existingArgs = updated[toolIndex].arguments;
+    const existingArgs = updated[toolIndex].arguments || {};
 
     // If no key provided, generate a temporary one
     let newKey = argKey || "arg";
@@ -82,7 +82,7 @@ export function ExpectedToolsEditor({
 
   const removeArgument = (toolIndex: number, argKey: string) => {
     const updated = [...toolCalls];
-    const newArgs = { ...updated[toolIndex].arguments };
+    const newArgs = { ...(updated[toolIndex].arguments || {}) };
     delete newArgs[argKey];
     updated[toolIndex] = { ...updated[toolIndex], arguments: newArgs };
     onChange(updated);
@@ -94,7 +94,7 @@ export function ExpectedToolsEditor({
     newKey: string
   ) => {
     const updated = [...toolCalls];
-    const args = { ...updated[toolIndex].arguments };
+    const args = { ...(updated[toolIndex].arguments || {}) };
     if (oldKey !== newKey) {
       const value = args[oldKey];
       delete args[oldKey];
@@ -110,7 +110,7 @@ export function ExpectedToolsEditor({
     value: string
   ) => {
     const updated = [...toolCalls];
-    const args = { ...updated[toolIndex].arguments };
+    const args = { ...(updated[toolIndex].arguments || {}) };
 
     // Try to parse as JSON if it looks like a number, boolean, array, or object
     let parsedValue: any = value;
@@ -314,7 +314,7 @@ export function ExpectedToolsEditor({
               )}
             </div>
 
-            {Object.entries(toolCall.arguments).length === 0 ? (
+            {!toolCall.arguments || Object.entries(toolCall.arguments).length === 0 ? (
               <div className="text-xs text-muted-foreground italic py-2">
                 {getAvailableArguments(toolIndex).length > 0
                   ? "No arguments selected. Click \"Add argument\" to select from available options."
@@ -322,7 +322,7 @@ export function ExpectedToolsEditor({
               </div>
             ) : (
               <div className="space-y-2">
-                {Object.entries(toolCall.arguments).map(([key, value]) => {
+                {Object.entries(toolCall.arguments || {}).map(([key, value]) => {
                   const argSchema = getArgumentSchema(toolIndex, key);
                   return (
                     <div key={key} className="flex items-start gap-2">

@@ -17,7 +17,10 @@ export interface GeneratedTestCase {
   title: string;
   query: string;
   runs: number;
-  expectedToolCalls: string[];
+  expectedToolCalls: Array<{
+    toolName: string;
+    arguments: Record<string, any>;
+  }>;
   judgeRequirement?: string;
 }
 
@@ -45,27 +48,63 @@ Generate 6 test cases with varying complexity levels that mimic how real users w
 **Output Format (CRITICAL):**
 Respond with ONLY a valid JSON array. No explanations, no markdown code blocks, just the raw JSON array.
 
+Each test case must include:
+- title: Clear, descriptive title (no difficulty prefix)
+- query: Natural language user query
+- runs: Number of times to run (usually 1)
+- expectedToolCalls: Array of tool calls with toolName and arguments
+  - toolName: Name of the tool to call
+  - arguments: Object with expected arguments (can be empty {} if you don't want to validate specific values)
+- judgeRequirement: Description of what success looks like
+
 Example:
 [
   {
     "title": "Read project configuration",
     "query": "Show me the contents of config.json in the current project",
     "runs": 1,
-    "expectedToolCalls": ["read_file"],
+    "expectedToolCalls": [
+      {
+        "toolName": "read_file",
+        "arguments": {}
+      }
+    ],
     "judgeRequirement": "Successfully reads and returns the file contents"
   },
   {
     "title": "Find and analyze recent tasks",
     "query": "Find all tasks created this week and summarize their status",
     "runs": 1,
-    "expectedToolCalls": ["list_tasks", "get_task_details"],
+    "expectedToolCalls": [
+      {
+        "toolName": "list_tasks",
+        "arguments": {}
+      },
+      {
+        "toolName": "get_task_details",
+        "arguments": {}
+      }
+    ],
     "judgeRequirement": "First lists tasks filtered by date, then retrieves details for each task found"
   },
   {
     "title": "Cross-server project setup",
     "query": "Create a new project folder, initialize a git repository, and create a task to track the project setup",
     "runs": 1,
-    "expectedToolCalls": ["create_directory", "git_init", "create_task"],
+    "expectedToolCalls": [
+      {
+        "toolName": "create_directory",
+        "arguments": {}
+      },
+      {
+        "toolName": "git_init",
+        "arguments": {}
+      },
+      {
+        "toolName": "create_task",
+        "arguments": {}
+      }
+    ],
     "judgeRequirement": "Successfully creates directory, initializes git, and creates a tracking task with appropriate details"
   }
 ]`;
@@ -187,16 +226,39 @@ ${toolsContext}
       throw new Error("Response is not an array");
     }
 
-    // Validate structure
-    const validatedTests: GeneratedTestCase[] = testCases.map((tc: any) => ({
-      title: tc.title || "Untitled Test",
-      query: tc.query || "",
-      runs: typeof tc.runs === "number" ? tc.runs : 1,
-      expectedToolCalls: Array.isArray(tc.expectedToolCalls)
-        ? tc.expectedToolCalls
-        : [],
-      judgeRequirement: tc.judgeRequirement,
-    }));
+    // Validate structure and normalize expectedToolCalls format
+    const validatedTests: GeneratedTestCase[] = testCases.map((tc: any) => {
+      let normalizedToolCalls: Array<{ toolName: string; arguments: Record<string, any> }> = [];
+
+      if (Array.isArray(tc.expectedToolCalls)) {
+        normalizedToolCalls = tc.expectedToolCalls.map((call: any) => {
+          // Handle new format: { toolName, arguments }
+          if (typeof call === "object" && call !== null && call.toolName) {
+            return {
+              toolName: call.toolName,
+              arguments: call.arguments || {},
+            };
+          }
+          // Handle old format: string (just tool name)
+          if (typeof call === "string") {
+            return {
+              toolName: call,
+              arguments: {},
+            };
+          }
+          // Invalid format, skip
+          return null;
+        }).filter((call: any) => call !== null);
+      }
+
+      return {
+        title: tc.title || "Untitled Test",
+        query: tc.query || "",
+        runs: typeof tc.runs === "number" ? tc.runs : 1,
+        expectedToolCalls: normalizedToolCalls,
+        judgeRequirement: tc.judgeRequirement,
+      };
+    });
 
     return validatedTests;
   } catch (parseError) {
