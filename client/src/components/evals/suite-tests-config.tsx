@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -47,6 +47,7 @@ interface SuiteTestsConfigProps {
 
 export function SuiteTestsConfig({ suite, onUpdate, availableModels }: SuiteTestsConfigProps) {
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
+  const [availableTools, setAvailableTools] = useState<Array<{ name: string; description?: string; inputSchema?: any }>>([]);
 
   // Extract templates and models from expanded tests
   const { templates: initialTemplates, models: initialModels } = useMemo(() => {
@@ -96,6 +97,34 @@ export function SuiteTestsConfig({ suite, onUpdate, availableModels }: SuiteTest
   const [models, setModels] = useState<ModelInfo[]>(initialModels);
   const [editingTemplateIndex, setEditingTemplateIndex] = useState<number | null>(null);
   const [editForm, setEditForm] = useState<TestTemplate | null>(null);
+
+  // Fetch available tools from selected servers
+  useEffect(() => {
+    async function fetchTools() {
+      const serverIds = suite.config?.environment?.servers || [];
+      if (serverIds.length === 0) {
+        setAvailableTools([]);
+        return;
+      }
+
+      try {
+        const response = await fetch("/api/mcp/list-tools", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ serverIds }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          setAvailableTools(data.tools || []);
+        }
+      } catch (error) {
+        console.error("Failed to fetch tools:", error);
+      }
+    }
+
+    fetchTools();
+  }, [suite.config?.environment?.servers]);
 
   // Re-expand matrix and save
   const saveChanges = (newTemplates: TestTemplate[], newModels: ModelInfo[]) => {
@@ -530,6 +559,7 @@ export function SuiteTestsConfig({ suite, onUpdate, availableModels }: SuiteTest
                             expectedToolCalls: toolCalls,
                           })
                         }
+                        availableTools={availableTools}
                       />
                     </div>
 

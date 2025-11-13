@@ -1,21 +1,48 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Plus, X } from "lucide-react";
+import { useState } from "react";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+} from "@/components/ui/command";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Check, ChevronsUpDown } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 type ToolCall = {
   toolName: string;
   arguments: Record<string, any>;
 };
 
+type AvailableTool = {
+  name: string;
+  description?: string;
+  inputSchema?: any;
+};
+
 type ExpectedToolsEditorProps = {
   toolCalls: ToolCall[];
   onChange: (toolCalls: ToolCall[]) => void;
+  availableTools?: AvailableTool[];
 };
 
 export function ExpectedToolsEditor({
   toolCalls,
   onChange,
+  availableTools = [],
 }: ExpectedToolsEditorProps) {
+  const [openCombobox, setOpenCombobox] = useState<number | null>(null);
+  const [openArgCombobox, setOpenArgCombobox] = useState<string | null>(null);
+
   const addToolCall = () => {
     onChange([...toolCalls, { toolName: "", arguments: {} }]);
   };
@@ -27,18 +54,25 @@ export function ExpectedToolsEditor({
   const updateToolName = (index: number, toolName: string) => {
     const updated = [...toolCalls];
     updated[index] = { ...updated[index], toolName };
+
+    // Don't auto-populate arguments anymore - user will select from dropdown
     onChange(updated);
   };
 
-  const addArgument = (toolIndex: number) => {
+  const addArgument = (toolIndex: number, argKey?: string) => {
     const updated = [...toolCalls];
     const existingArgs = updated[toolIndex].arguments;
-    let newKey = "arg";
-    let counter = 1;
-    while (existingArgs[newKey] !== undefined) {
-      newKey = `arg${counter}`;
-      counter++;
+
+    // If no key provided, generate a temporary one
+    let newKey = argKey || "arg";
+    if (!argKey) {
+      let counter = 1;
+      while (existingArgs[newKey] !== undefined) {
+        newKey = `arg${counter}`;
+        counter++;
+      }
     }
+
     updated[toolIndex] = {
       ...updated[toolIndex],
       arguments: { ...existingArgs, [newKey]: "" },
@@ -105,6 +139,25 @@ export function ExpectedToolsEditor({
     onChange(updated);
   };
 
+  const getArgumentSchema = (toolIndex: number, argKey: string) => {
+    const toolCall = toolCalls[toolIndex];
+    const tool = availableTools.find(t => t.name === toolCall.toolName);
+    if (!tool?.inputSchema?.properties) return null;
+    return tool.inputSchema.properties[argKey];
+  };
+
+  const getAvailableArguments = (toolIndex: number) => {
+    const toolCall = toolCalls[toolIndex];
+    const tool = availableTools.find(t => t.name === toolCall.toolName);
+    if (!tool?.inputSchema?.properties) return [];
+
+    const properties = tool.inputSchema.properties;
+    return Object.keys(properties).map(key => ({
+      key,
+      schema: properties[key],
+    }));
+  };
+
   return (
     <div className="space-y-4">
       {toolCalls.map((toolCall, toolIndex) => (
@@ -117,12 +170,69 @@ export function ExpectedToolsEditor({
               <label className="text-xs font-medium text-muted-foreground mb-1 block">
                 Tool name
               </label>
-              <Input
-                value={toolCall.toolName}
-                onChange={(e) => updateToolName(toolIndex, e.target.value)}
-                placeholder="e.g. get_transactions"
-                className="font-mono text-sm"
-              />
+
+              {availableTools.length > 0 ? (
+                <Popover
+                  open={openCombobox === toolIndex}
+                  onOpenChange={(open) => setOpenCombobox(open ? toolIndex : null)}
+                >
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={openCombobox === toolIndex}
+                      className="w-full justify-between font-mono text-sm h-9"
+                    >
+                      {toolCall.toolName || "Select tool..."}
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-full p-0" align="start">
+                    <Command>
+                      <CommandInput placeholder="Search tools..." className="h-9" />
+                      <ScrollArea className="max-h-60">
+                        <CommandEmpty>No tool found.</CommandEmpty>
+                        <CommandGroup>
+                          {availableTools.map((tool) => (
+                            <CommandItem
+                              key={tool.name}
+                              value={tool.name}
+                              onSelect={() => {
+                                updateToolName(toolIndex, tool.name);
+                                setOpenCombobox(null);
+                              }}
+                            >
+                              <div className="flex flex-col flex-1">
+                                <span className="font-mono text-sm">{tool.name}</span>
+                                {tool.description && (
+                                  <span className="text-xs text-muted-foreground">
+                                    {tool.description}
+                                  </span>
+                                )}
+                              </div>
+                              <Check
+                                className={cn(
+                                  "ml-2 h-4 w-4",
+                                  toolCall.toolName === tool.name
+                                    ? "opacity-100"
+                                    : "opacity-0"
+                                )}
+                              />
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </ScrollArea>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
+              ) : (
+                <Input
+                  value={toolCall.toolName}
+                  onChange={(e) => updateToolName(toolIndex, e.target.value)}
+                  placeholder="e.g. get_transactions"
+                  className="font-mono text-sm"
+                />
+              )}
             </div>
             <Button
               variant="ghost"
@@ -139,55 +249,131 @@ export function ExpectedToolsEditor({
               <label className="text-xs font-medium text-muted-foreground">
                 Arguments
               </label>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => addArgument(toolIndex)}
-                className="h-7 text-xs"
-              >
-                <Plus className="h-3 w-3 mr-1" />
-                Add argument
-              </Button>
+              {getAvailableArguments(toolIndex).length > 0 ? (
+                <Popover
+                  open={openArgCombobox === `${toolIndex}`}
+                  onOpenChange={(open) => setOpenArgCombobox(open ? `${toolIndex}` : null)}
+                >
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs"
+                    >
+                      <Plus className="h-3 w-3 mr-1" />
+                      Add argument
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-full p-0" align="end">
+                    <Command>
+                      <CommandInput placeholder="Search arguments..." className="h-9" />
+                      <ScrollArea className="max-h-60">
+                        <CommandEmpty>No argument found.</CommandEmpty>
+                        <CommandGroup>
+                          {getAvailableArguments(toolIndex)
+                            .filter(arg => !toolCall.arguments.hasOwnProperty(arg.key))
+                            .map((arg) => (
+                              <CommandItem
+                                key={arg.key}
+                                value={arg.key}
+                                onSelect={() => {
+                                  addArgument(toolIndex, arg.key);
+                                  setOpenArgCombobox(null);
+                                }}
+                              >
+                                <div className="flex flex-col flex-1">
+                                  <span className="font-mono text-sm">{arg.key}</span>
+                                  {arg.schema?.description && (
+                                    <span className="text-xs text-muted-foreground">
+                                      {arg.schema.description}
+                                    </span>
+                                  )}
+                                  {arg.schema?.type && (
+                                    <span className="text-xs text-muted-foreground">
+                                      Type: {arg.schema.type}
+                                    </span>
+                                  )}
+                                </div>
+                              </CommandItem>
+                            ))}
+                        </CommandGroup>
+                      </ScrollArea>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => addArgument(toolIndex)}
+                  className="h-7 text-xs"
+                >
+                  <Plus className="h-3 w-3 mr-1" />
+                  Add argument
+                </Button>
+              )}
             </div>
 
             {Object.entries(toolCall.arguments).length === 0 ? (
               <div className="text-xs text-muted-foreground italic py-2">
-                No arguments. Click "Add argument" to add one.
+                {getAvailableArguments(toolIndex).length > 0
+                  ? "No arguments selected. Click \"Add argument\" to select from available options."
+                  : "No arguments. Click \"Add argument\" to add one."}
               </div>
             ) : (
               <div className="space-y-2">
-                {Object.entries(toolCall.arguments).map(([key, value]) => (
-                  <div key={key} className="flex items-center gap-2">
-                    <Input
-                      value={key}
-                      onChange={(e) =>
-                        updateArgumentKey(toolIndex, key, e.target.value)
-                      }
-                      placeholder="Key"
-                      className="flex-1 font-mono text-sm"
-                    />
-                    <Input
-                      value={
-                        typeof value === "string"
-                          ? value
-                          : JSON.stringify(value)
-                      }
-                      onChange={(e) =>
-                        updateArgumentValue(toolIndex, key, e.target.value)
-                      }
-                      placeholder="Value"
-                      className="flex-[2] font-mono text-sm"
-                    />
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => removeArgument(toolIndex, key)}
-                      className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                    >
-                      <X className="h-4 w-4" />
-                    </Button>
-                  </div>
-                ))}
+                {Object.entries(toolCall.arguments).map(([key, value]) => {
+                  const argSchema = getArgumentSchema(toolIndex, key);
+                  return (
+                    <div key={key} className="flex items-start gap-2">
+                      <div className="flex-1">
+                        {argSchema ? (
+                          <div>
+                            <div className="font-mono text-sm font-medium px-3 py-2 bg-muted/30 rounded-md border border-border/40">
+                              {key}
+                            </div>
+                            {argSchema.description && (
+                              <p className="text-xs text-muted-foreground mt-1">
+                                {argSchema.description}
+                              </p>
+                            )}
+                          </div>
+                        ) : (
+                          <Input
+                            value={key}
+                            onChange={(e) =>
+                              updateArgumentKey(toolIndex, key, e.target.value)
+                            }
+                            placeholder="Key"
+                            className="font-mono text-sm"
+                          />
+                        )}
+                      </div>
+                      <div className="flex-[2]">
+                        <Input
+                          value={
+                            typeof value === "string"
+                              ? value
+                              : JSON.stringify(value)
+                          }
+                          onChange={(e) =>
+                            updateArgumentValue(toolIndex, key, e.target.value)
+                          }
+                          placeholder={argSchema?.type ? `${argSchema.type}` : "Value"}
+                          className="font-mono text-sm"
+                        />
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => removeArgument(toolIndex, key)}
+                        className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>

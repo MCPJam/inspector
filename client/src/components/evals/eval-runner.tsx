@@ -109,6 +109,7 @@ export function EvalRunner({
   const [isEditingSuiteName, setIsEditingSuiteName] = useState(false);
   const [editedSuiteName, setEditedSuiteName] = useState("");
   const [hasRestoredPreferences, setHasRestoredPreferences] = useState(false);
+  const [availableTools, setAvailableTools] = useState<Array<{ name: string; description?: string; inputSchema?: any }>>([]);
 
   const connectedServers = useMemo(
     () =>
@@ -186,6 +187,33 @@ export function EvalRunner({
       console.warn("Failed to persist eval runner preferences", error);
     }
   }, [selectedServers, selectedModels]);
+
+  // Fetch available tools from selected servers
+  useEffect(() => {
+    async function fetchTools() {
+      if (selectedServers.length === 0) {
+        setAvailableTools([]);
+        return;
+      }
+
+      try {
+        const response = await fetch("/api/mcp/list-tools", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ serverIds: selectedServers }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          setAvailableTools(data.tools || []);
+        }
+      } catch (error) {
+        console.error("Failed to fetch tools:", error);
+      }
+    }
+
+    fetchTools();
+  }, [selectedServers]);
 
   useEffect(() => {
     if (!inline && !open) {
@@ -755,6 +783,7 @@ export function EvalRunner({
                               toolCalls,
                             )
                           }
+                          availableTools={availableTools}
                         />
                         <p className="text-xs text-muted-foreground">
                           Specify tool names and their expected arguments. Leave arguments empty to skip argument checking.
@@ -883,6 +912,7 @@ export function EvalRunner({
                                 toolCalls,
                               )
                             }
+                            availableTools={availableTools}
                           />
                           <p className="text-xs text-muted-foreground">
                             Specify tool names and their expected arguments. Leave arguments empty to skip argument checking.
