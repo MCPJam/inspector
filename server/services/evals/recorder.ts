@@ -25,7 +25,10 @@ export type SuiteRunRecorder = {
   finishIteration(args: {
     iterationId?: string;
     passed: boolean;
-    toolsCalled: string[];
+    toolsCalled: Array<{
+      toolName: string;
+      arguments: Record<string, any>;
+    }>;
     usage: UsageTotals;
     messages: ModelMessage[];
     status?: IterationStatus;

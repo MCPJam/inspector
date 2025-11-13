@@ -82,7 +82,12 @@ const RunEvalsRequestSchema = z.object({
       runs: z.number().int().positive(),
       model: z.string(),
       provider: z.string(),
-      expectedToolCalls: z.array(z.string()),
+      expectedToolCalls: z.array(
+        z.object({
+          toolName: z.string(),
+          arguments: z.record(z.any()),
+        })
+      ),
       judgeRequirement: z.string().optional(),
       advancedConfig: z
         .object({

@@ -4,7 +4,10 @@ export type EvalSuiteConfigTest = {
   provider: string;
   model: string;
   runs: number;
-  expectedToolCalls: string[];
+  expectedToolCalls: Array<{
+    toolName: string;
+    arguments: Record<string, any>;
+  }>;
   judgeRequirement?: string;
   advancedConfig?: Record<string, unknown>;
   testCaseId?: string;
@@ -34,7 +37,10 @@ export type EvalCase = {
   query: string;
   provider: string;
   model: string;
-  expectedToolCalls: string[];
+  expectedToolCalls: Array<{
+    toolName: string;
+    arguments: Record<string, any>;
+  }>;
   // Template grouping - UUID to link test cases that are variants of the same base test
   testTemplateKey?: string; // UUID generated on frontend
   _creationTime?: number; // Convex auto field
@@ -49,7 +55,10 @@ export type EvalIteration = {
     provider: string;
     model: string;
     runs?: number;
-    expectedToolCalls: string[];
+    expectedToolCalls: Array<{
+      toolName: string;
+      arguments: Record<string, any>;
+    }>;
     judgeRequirement?: string;
     advancedConfig?: Record<string, unknown>;
   };
@@ -63,7 +72,10 @@ export type EvalIteration = {
   blob?: string;
   status: "pending" | "running" | "completed" | "failed" | "cancelled";
   result: "pending" | "passed" | "failed" | "cancelled";
-  actualToolCalls: string[];
+  actualToolCalls: Array<{
+    toolName: string;
+    arguments: Record<string, any>;
+  }>;
   tokensUsed: number;
   _creationTime?: number; // Convex auto field
 };
