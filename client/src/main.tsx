@@ -50,7 +50,13 @@ const convex = new ConvexReactClient(convexUrl);
 const root = createRoot(document.getElementById("root")!);
 
 const Providers = (
-  <AuthKitProvider clientId={workosClientId} redirectUri={workosRedirectUri}>
+  <AuthKitProvider
+    clientId={workosClientId}
+    redirectUri={workosRedirectUri}
+    apiHostname={window.location.hostname}
+    https={window.location.protocol === "https:"}
+    port={window.location.port ? Number(window.location.port) : undefined}
+  >
     <ConvexProviderWithAuthKit client={convex} useAuth={useAuth}>
       <App />
     </ConvexProviderWithAuthKit>

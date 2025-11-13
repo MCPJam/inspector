@@ -71,6 +71,12 @@ export default defineConfig({
           });
         },
       },
+      // Proxy WorkOS API calls during local dev to avoid browser CORS errors
+      "/user_management": {
+        target: "https://api.workos.com",
+        changeOrigin: true,
+        secure: true,
+      },
       ...(() => {
         const siteUrlFromEnv = process.env.VITE_CONVEX_SITE_URL;
         const cloudUrl = process.env.VITE_CONVEX_URL || "";
