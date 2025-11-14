@@ -39,9 +39,9 @@ The playground uses a **resizable split-panel layout** powered by `ResizablePane
   <ResizablePanel defaultSize={70} minSize={40}>
     {/* Chat interface with messages and input */}
   </ResizablePanel>
-  
+
   <ResizableHandle withHandle />
-  
+
   <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
     <JsonRpcLoggerView /> {/* Real-time MCP protocol viewer */}
   </ResizablePanel>
@@ -49,6 +49,7 @@ The playground uses a **resizable split-panel layout** powered by `ResizablePane
 ```
 
 **Key Features**:
+
 - Chat panel (left): Message history, tool execution, input form
 - Logger panel (right): JSON-RPC messages from MCP servers
 - Resizable divider: Users can adjust panel sizes
@@ -1058,14 +1059,14 @@ The implementation uses the basic component library from `@mcp-ui/client`:
 
 MCPJam Inspector supports both MCP-UI and OpenAI Apps SDK for custom UI rendering:
 
-| Feature | MCP-UI | OpenAI Apps SDK |
-|---------|--------|-----------------|
-| Specification | MCP-UI (open standard) | OpenAI proprietary |
-| Rendering | RemoteDOM components | Sandboxed iframes |
-| Tool calls | Via action handlers | Via `window.openai.callTool()` |
-| State persistence | Not supported | Via `window.openai.setWidgetState()` |
-| Security | Component-level isolation | Full iframe sandbox |
-| Use case | Simple interactive components | Complex web applications |
+| Feature           | MCP-UI                        | OpenAI Apps SDK                      |
+| ----------------- | ----------------------------- | ------------------------------------ |
+| Specification     | MCP-UI (open standard)        | OpenAI proprietary                   |
+| Rendering         | RemoteDOM components          | Sandboxed iframes                    |
+| Tool calls        | Via action handlers           | Via `window.openai.callTool()`       |
+| State persistence | Not supported                 | Via `window.openai.setWidgetState()` |
+| Security          | Component-level isolation     | Full iframe sandbox                  |
+| Use case          | Simple interactive components | Complex web applications             |
 
 See [OpenAI SDK Architecture](./openai-sdk-architecture) for details on OpenAI Apps SDK implementation.
 
