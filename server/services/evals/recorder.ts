@@ -140,16 +140,21 @@ export const startSuiteRunWithRecorder = async ({
   convexClient,
   suiteId,
   notes,
+  passCriteria,
 }: {
   convexClient: ConvexHttpClient;
   suiteId: string;
   notes?: string;
+  passCriteria?: {
+    minimumPassRate: number;
+  };
 }) => {
   const response = await convexClient.mutation(
     "evals:startSuiteRun" as any,
     {
       suiteId,
       notes,
+      passCriteria,
     },
   );
 

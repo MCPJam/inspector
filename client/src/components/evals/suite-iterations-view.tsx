@@ -161,31 +161,46 @@ export function SuiteIterationsView({
     }
   }, [activeTab, suite._id, selectedTestId, viewResetKey]);
 
-  // Load default pass criteria from localStorage
+  // Load default pass criteria from suite (database) first, then fall back to localStorage
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const rate = localStorage.getItem(`suite-${suite._id}-criteria-rate`);
-
-      if (rate) setDefaultMinimumPassRate(Number(rate));
-    } catch (error) {
-      console.warn("Failed to load default pass criteria", error);
+    // Prioritize suite's defaultPassCriteria from database
+    if (suite.defaultPassCriteria?.minimumPassRate !== undefined) {
+      setDefaultMinimumPassRate(suite.defaultPassCriteria.minimumPassRate);
+      // Sync to localStorage for backward compatibility
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.setItem(`suite-${suite._id}-criteria-rate`, String(suite.defaultPassCriteria.minimumPassRate));
+        } catch (error) {
+          console.warn("Failed to sync default pass criteria to localStorage", error);
+        }
+      }
+    } else if (typeof window !== "undefined") {
+      // Fall back to localStorage if not set in database
+      try {
+        const rate = localStorage.getItem(`suite-${suite._id}-criteria-rate`);
+        if (rate) setDefaultMinimumPassRate(Number(rate));
+      } catch (error) {
+        console.warn("Failed to load default pass criteria", error);
+      }
     }
-  }, [suite._id]);
+  }, [suite._id, suite.defaultPassCriteria]);
 
   const handleUpdateTests = async (tests: EvalSuiteConfigTest[]) => {
     try {
-      await updateSuite({
+      const result = await updateSuite({
         suiteId: suite._id,
         config: {
           tests,
           environment: suite.config?.environment || { servers: [] },
         },
       });
-      toast.success("Tests updated successfully");
+      if (result) {
+        toast.success("Suite updated successfully");
+      }
     } catch (error) {
-      toast.error("Failed to update tests");
-      console.error("Failed to update tests:", error);
+      toast.error("Failed to update suite");
+      console.error("Failed to update suite:", error);
+      throw error; // Re-throw so SuiteTestsConfig can handle it if needed
     }
   };
 
@@ -1864,7 +1879,7 @@ export function SuiteIterationsView({
                 {/* Metrics */}
                 <div className="flex gap-6 flex-1">
                   <div className="space-y-0.5">
-                    <div className="text-xs text-muted-foreground">Pass rate</div>
+                    <div className="text-xs text-muted-foreground">Accuracy</div>
                     <div className="text-sm font-semibold">{selectedRunDetails.summary ? `${Math.round(selectedRunDetails.summary.passRate * 100)}%` : "—"}</div>
                   </div>
                   <div className="space-y-0.5">
@@ -2208,9 +2223,23 @@ export function SuiteIterationsView({
             </div>
             <PassCriteriaSelector
               minimumPassRate={defaultMinimumPassRate}
-              onMinimumPassRateChange={(rate) => {
+              onMinimumPassRateChange={async (rate) => {
                 setDefaultMinimumPassRate(rate);
                 localStorage.setItem(`suite-${suite._id}-criteria-rate`, String(rate));
+                try {
+                  await updateSuite({
+                    suiteId: suite._id,
+                    defaultPassCriteria: {
+                      minimumPassRate: rate,
+                    },
+                  });
+                  toast.success("Suite updated successfully");
+                } catch (error) {
+                  toast.error("Failed to update suite");
+                  console.error("Failed to update suite:", error);
+                  // Revert the local state on error
+                  setDefaultMinimumPassRate(suite.defaultPassCriteria?.minimumPassRate ?? 100);
+                }
               }}
             />
           </div>

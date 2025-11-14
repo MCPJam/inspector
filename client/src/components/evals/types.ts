@@ -26,6 +26,9 @@ export type EvalSuite = {
   createdAt?: number;
   updatedAt?: number;
   latestRunId?: string;
+  defaultPassCriteria?: {
+    minimumPassRate: number;
+  };
   _creationTime?: number; // Convex auto field
 };
 
