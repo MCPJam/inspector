@@ -1463,24 +1463,15 @@ export function SuiteIterationsView({
                     />
                     <button
                       onClick={() => {
-                        if (!isPending) {
-                          setOpenIterationId((current) =>
-                            current === iteration._id ? null : iteration._id
-                          );
-                        }
+                        setOpenIterationId((current) =>
+                          current === iteration._id ? null : iteration._id
+                        );
                       }}
-                      disabled={isPending}
-                      className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
-                        isPending
-                          ? "cursor-not-allowed"
-                          : "cursor-pointer hover:bg-muted/50"
-                      }`}
+                      className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 cursor-pointer hover:bg-muted/50"
                     >
                       <div className="flex min-w-0 flex-1 items-center gap-3 pl-2">
                         <div className="text-muted-foreground shrink-0">
-                          {isPending ? (
-                            <ChevronRight className="h-3.5 w-3.5" />
-                          ) : isOpen ? (
+                          {isOpen ? (
                             <ChevronDown className="h-3.5 w-3.5" />
                           ) : (
                             <ChevronRight className="h-3.5 w-3.5" />
@@ -1555,7 +1546,7 @@ export function SuiteIterationsView({
                         )}
                       </div>
                     </button>
-                    {isOpen && !isPending ? (
+                    {isOpen ? (
                       <div className="border-t bg-muted/20 px-4 pb-4 pt-3 pl-8">
                         <IterationDetails
                           iteration={iteration}
@@ -2331,23 +2322,12 @@ function IterationRow({
         className={`absolute left-0 top-0 h-full w-1 ${getIterationBorderColor(iteration.result)}`}
       />
       <button
-        onClick={() => {
-          if (!isPending) {
-            onToggle();
-          }
-        }}
-        disabled={isPending}
-        className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
-          isPending
-            ? "cursor-not-allowed"
-            : "cursor-pointer hover:bg-muted/50"
-        }`}
+        onClick={onToggle}
+        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 cursor-pointer hover:bg-muted/50"
       >
         <div className="flex min-w-0 flex-1 items-center gap-3 pl-2">
           <div className="text-muted-foreground shrink-0">
-            {isPending ? (
-              <ChevronRight className="h-3.5 w-3.5" />
-            ) : isOpen ? (
+            {isOpen ? (
               <ChevronDown className="h-3.5 w-3.5" />
             ) : (
               <ChevronRight className="h-3.5 w-3.5" />
@@ -2383,7 +2363,7 @@ function IterationRow({
           )}
         </div>
       </button>
-      {isOpen && !isPending ? (
+      {isOpen ? (
         <div className="border-t bg-muted/20 px-4 pb-4 pt-3 pl-8">
           <IterationDetails iteration={iteration} testCase={null} />
         </div>
@@ -2498,22 +2478,13 @@ function TestCaseGroup({
                 />
                 <button
                   onClick={() => {
-                    if (!isPending) {
-                      setOpenIterationId(openIterationId === iteration._id ? null : iteration._id);
-                    }
+                    setOpenIterationId(openIterationId === iteration._id ? null : iteration._id);
                   }}
-                  disabled={isPending}
-                  className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
-                    isPending
-                      ? "cursor-not-allowed"
-                      : "cursor-pointer hover:bg-muted/50"
-                  }`}
+                  className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 cursor-pointer hover:bg-muted/50"
                 >
                   <div className="flex min-w-0 flex-1 items-center gap-3 pl-2">
                     <div className="text-muted-foreground shrink-0">
-                      {isPending ? (
-                        <ChevronRight className="h-3.5 w-3.5" />
-                      ) : isOpen ? (
+                      {isOpen ? (
                         <ChevronDown className="h-3.5 w-3.5" />
                       ) : (
                         <ChevronRight className="h-3.5 w-3.5" />
@@ -2546,7 +2517,7 @@ function TestCaseGroup({
                     )}
                   </div>
                 </button>
-                {isOpen && !isPending ? (
+                {isOpen ? (
                   <div className="border-t bg-muted/20 px-4 pb-4 pt-3 pl-8">
                     <IterationDetails iteration={iteration} testCase={testCase} />
                   </div>
