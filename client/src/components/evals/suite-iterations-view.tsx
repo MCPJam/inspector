@@ -1452,7 +1452,17 @@ export function SuiteIterationsView({
                       <Skeleton className="h-32 w-full" />
                     ) : runTrendData.length > 0 ? (
                       <ChartContainer config={chartConfig} className="aspect-auto h-32 w-full">
-                        <AreaChart data={runTrendData} width={undefined} height={undefined}>
+                        <AreaChart 
+                          data={runTrendData} 
+                          width={undefined} 
+                          height={undefined}
+                          onClick={(data: any) => {
+                            if (data?.activePayload?.[0]?.payload?.runId) {
+                              setSelectedRunId(data.activePayload[0].payload.runId);
+                              setViewMode("run-detail");
+                            }
+                          }}
+                        >
                           <CartesianGrid
                             strokeDasharray="3 3"
                             vertical={false}
@@ -1482,7 +1492,8 @@ export function SuiteIterationsView({
                             fillOpacity={0.15}
                             strokeWidth={2}
                             isAnimationActive={false}
-                            dot={runTrendData.length > 1}
+                            dot={runTrendData.length > 1 ? { cursor: "pointer" } : false}
+                            activeDot={{ cursor: "pointer", r: 6 }}
                           />
                         </AreaChart>
                       </ChartContainer>
