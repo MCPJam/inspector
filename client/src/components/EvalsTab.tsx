@@ -424,14 +424,27 @@ export function EvalsTab() {
     [suiteRuns],
   );
 
+  // Filter iterations to only include those from active runs
+  const activeIterations = useMemo(() => {
+    if (!suiteRuns || sortedIterations.length === 0) return sortedIterations;
+    
+    const activeRunIds = new Set(
+      suiteRuns.filter((run) => run.isActive !== false).map((run) => run._id)
+    );
+    
+    return sortedIterations.filter((iteration) => 
+      !iteration.suiteRunId || activeRunIds.has(iteration.suiteRunId)
+    );
+  }, [sortedIterations, suiteRuns]);
+
   const suiteAggregate = useMemo(() => {
     if (!selectedSuite || !suiteDetails) return null;
     return aggregateSuite(
       selectedSuite,
       suiteDetails.testCases,
-      sortedIterations,
+      activeIterations,
     );
-  }, [selectedSuite, suiteDetails, sortedIterations]);
+  }, [selectedSuite, suiteDetails, activeIterations]);
 
   // Rerun handler
   const handleRerun = useCallback(
@@ -806,8 +819,8 @@ export function EvalsTab() {
                 <SuiteIterationsView
                   suite={selectedSuite}
                   cases={suiteDetails?.testCases || []}
-                  iterations={sortedIterations}
-                  allIterations={sortedIterations}
+                  iterations={activeIterations}
+                  allIterations={activeIterations}
                   runs={runsForSelectedSuite}
                   runsLoading={isSuiteRunsLoading}
                   aggregate={suiteAggregate}
