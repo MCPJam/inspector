@@ -279,6 +279,12 @@ const runIterationViaBackend = async ({
     ? { Authorization: `Bearer ${convexAuthToken}` }
     : ({} as Record<string, string>);
 
+  let accumulatedUsage: UsageTotals = {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+  };
+
   let steps = 0;
   while (steps < MAX_STEPS) {
     try {
@@ -307,6 +313,13 @@ const runIterationViaBackend = async ({
       if (!json?.ok || !Array.isArray(json.messages)) {
         console.error("[evals] invalid backend response payload");
         break;
+      }
+
+      // Accumulate usage from this step
+      if (json.usage) {
+        accumulatedUsage.inputTokens = (accumulatedUsage.inputTokens || 0) + (json.usage.promptTokens || 0);
+        accumulatedUsage.outputTokens = (accumulatedUsage.outputTokens || 0) + (json.usage.completionTokens || 0);
+        accumulatedUsage.totalTokens = (accumulatedUsage.totalTokens || 0) + (json.usage.totalTokens || 0);
       }
 
       for (const msg of json.messages as any[]) {
@@ -356,11 +369,7 @@ const runIterationViaBackend = async ({
     iterationId,
     passed: evaluation.passed,
     toolsCalled,
-    usage: {
-      inputTokens: undefined,
-      outputTokens: undefined,
-      totalTokens: undefined,
-    },
+    usage: accumulatedUsage,
     messages: messageHistory,
     status: 'completed',
     startedAt: runStartedAt,
