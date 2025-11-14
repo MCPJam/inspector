@@ -2017,12 +2017,12 @@ export function SuiteIterationsView({
             <>
               {/* Backdrop */}
               <div 
-                className="fixed inset-0 bg-black/50 z-40" 
+                className="fixed inset-0 bg-black/50 z-40 animate-in fade-in duration-200" 
                 onClick={() => setShowRunSummarySidebar(false)}
               />
               
               {/* Sidebar */}
-              <div className="fixed right-0 top-0 bottom-0 w-[500px] bg-background border-l z-50 overflow-y-auto">
+              <div className="fixed right-0 top-0 bottom-0 w-[500px] bg-background border-l z-50 overflow-y-auto animate-in slide-in-from-right duration-300">
                 <div className="sticky top-0 bg-background border-b px-4 py-3 flex items-center justify-between z-10">
                   <div className="text-sm font-semibold">Run Summary</div>
                   <Button

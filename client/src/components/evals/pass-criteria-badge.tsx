@@ -19,17 +19,28 @@ export function PassCriteriaBadge({
   // Get criteria and result from DB fields
   const minimumPassRate = run.passCriteria?.minimumPassRate ?? 100;
   const result = run.result ?? "pending";
-  const passRate = run.summary?.passRate ?? 0;
+  const status = run.status ?? "pending";
+  // passRate is stored as decimal (0-1), convert to percentage (0-100)
+  const passRateDecimal = run.summary?.passRate ?? 0;
+  const passRate = passRateDecimal * 100;
 
   const passed = result === "passed";
+  const isRunning = status === "running" || status === "pending";
+
+  // Don't show pass/fail badge while run is in progress
+  if (isRunning) {
+    return null;
+  }
 
   if (variant === "compact") {
     return (
       <Tooltip>
         <TooltipTrigger asChild>
           <Badge
-            variant={passed ? "default" : "outline"}
-            className={passed ? "gap-1" : "gap-1 bg-red-500/50 text-white border-red-500/50 hover:bg-red-500/70"}
+            variant="outline"
+            className={passed 
+              ? "gap-1 bg-emerald-500/50 text-white border-emerald-500/50 hover:bg-emerald-500/70" 
+              : "gap-1 bg-red-500/50 text-white border-red-500/50 hover:bg-red-500/70"}
           >
             {passed ? (
               <CheckCircle2 className="h-3 w-3" />
@@ -61,7 +72,7 @@ export function PassCriteriaBadge({
     <div className="space-y-3 rounded-lg border bg-muted/30 p-4">
       <div className="flex items-center gap-2">
         {passed ? (
-          <CheckCircle2 className="h-5 w-5 text-green-600" />
+          <CheckCircle2 className="h-5 w-5 text-emerald-500" />
         ) : (
           <XCircle className="h-5 w-5 text-destructive" />
         )}
