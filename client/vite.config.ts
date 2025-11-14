@@ -55,7 +55,7 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": {
-        target: "http://localhost:3001",
+        target: "http://localhost:6274",
         changeOrigin: true,
         secure: false,
         ws: true,
@@ -70,6 +70,12 @@ export default defineConfig({
             // no-op
           });
         },
+      },
+      // Proxy WorkOS API calls during local dev to avoid browser CORS errors
+      "/user_management": {
+        target: "https://api.workos.com",
+        changeOrigin: true,
+        secure: true,
       },
       ...(() => {
         const siteUrlFromEnv = process.env.VITE_CONVEX_SITE_URL;
@@ -97,5 +103,8 @@ export default defineConfig({
     outDir: path.resolve(rootDir, "dist/client"),
     sourcemap: true,
     emptyOutDir: true,
+  },
+  define: {
+    __APP_VERSION__: JSON.stringify(process.env.npm_package_version),
   },
 });

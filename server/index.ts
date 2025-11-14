@@ -184,11 +184,10 @@ app.use("*", async (c, next) => {
 
 // Middleware
 app.use("*", logger());
-// Dynamic CORS origin based on PORT environment variable
-const serverPort = process.env.PORT || "3001";
 const corsOrigins = [
-  `http://localhost:${serverPort}`,
-  "http://localhost:3000", // Keep for frontend development
+  "http://localhost:5173", // Vite dev server
+  "http://localhost:6274", // Hono server
+  "http://127.0.0.1:6274", // Hono server production
 ];
 
 app.use(
@@ -353,21 +352,20 @@ if (process.env.NODE_ENV === "production") {
     return c.json({
       message: "MCPJam API Server",
       environment: "development",
-      frontend: `http://localhost:${serverPort}`,
+      frontend: `http://localhost:6274`,
     });
   });
 }
 
-const port = parseInt(process.env.PORT || "3001");
-
 // Default to localhost unless explicitly running in production
 const hostname = process.env.ENVIRONMENT === "dev" ? "localhost" : "127.0.0.1";
+const port = process.env.ENVIRONMENT === "dev" ? 5173 : 6274;
 logBox(`http://${hostname}:${port}`, "🚀 Inspector Launched");
 
-// Graceful shutdown handling
+// Hono server should be served on 6274
 const server = serve({
   fetch: app.fetch,
-  port,
+  port: 6274,
   hostname: "0.0.0.0", // Bind to all interfaces for Docker
 });
 

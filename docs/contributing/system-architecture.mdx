@@ -79,26 +79,26 @@ flowchart TD
     NodeEnvCheck{"NODE_ENV?"}
 
     EProd["Electron Production Mode
-    • Server: 127.0.0.1:3000
+    • Server: 127.0.0.1:6274
     • Resources: process.resourcesPath
     • Client: Bundled in resources/client
     • Static: Serve from bundle"]
 
     EDev["Electron Development Mode
-    • Server: localhost:3000
+    • Server: localhost:6274
     • Resources: app.getAppPath
-    • Client: Vite dev server :8080
+    • Client: Vite dev server :5173
     • Static: Redirect to Vite"]
 
     WProd["Web Production Mode
-    • Server: 0.0.0.0:3001
+    • Server: 0.0.0.0:6274
     • Client: dist/client
     • Static: Serve bundled files
     • SPA: Fallback to index.html"]
 
     WDev["Web Development Mode
-    • Server: localhost:3000
-    • Client: Vite dev server :8080
+    • Server: localhost:6274
+    • Client: Vite dev server :5173
     • Static: API only, CORS enabled
     • SPA: No static serving"]
 
@@ -122,8 +122,8 @@ flowchart TD
     **When:** `NODE_ENV=development` (no Electron)
 
     **Characteristics:**
-    - Backend: Hono server on `localhost:3000`
-    - Frontend: Vite dev server on `localhost:8080`
+    - Backend: Hono server on `localhost:6274`
+    - Frontend: Vite dev server on `localhost:5173`
     - CORS enabled for cross-origin requests
     - Hot module replacement (HMR)
     - API-only server (no static file serving)
@@ -138,7 +138,7 @@ flowchart TD
     **When:** `NODE_ENV=production` (no Electron)
 
     **Characteristics:**
-    - Backend: Hono server on `0.0.0.0:3001`
+    - Backend: Hono server on `0.0.0.0:6274`
     - Frontend: Served from `dist/client`
     - SPA fallback to `index.html`
     - Optimized production bundles
@@ -154,7 +154,7 @@ flowchart TD
     **When:** `ELECTRON_APP=true` and `IS_PACKAGED=false`
 
     **Characteristics:**
-    - Embedded Hono server on `localhost:3000`
+    - Embedded Hono server on `localhost:6274`
     - Frontend: Vite dev server redirects
     - Resources from `app.getAppPath()`
     - DevTools enabled
@@ -170,7 +170,7 @@ flowchart TD
     **When:** `ELECTRON_APP=true` and `IS_PACKAGED=true`
 
     **Characteristics:**
-    - Embedded Hono server on `127.0.0.1:3000`
+    - Embedded Hono server on `127.0.0.1:6274`
     - Frontend: Bundled in `resources/client`
     - Resources from `process.resourcesPath`
     - Code signing enabled
@@ -355,9 +355,9 @@ sequenceDiagram
     Note over Main: Set environment variables:<br/>ELECTRON_APP=true<br/>IS_PACKAGED<br/>ELECTRON_RESOURCES_PATH
 
     Main->>Server: startHonoServer()
-    Server->>Server: Find available port
+    Server->>Server: Use port 6274
     Server->>Server: createHonoApp()
-    Server-->>Main: Return port (e.g., 3000)
+    Server-->>Main: Return port 6274
 
     Main->>Window: createMainWindow(serverUrl)
     Window->>Window: Create BrowserWindow
@@ -366,7 +366,7 @@ sequenceDiagram
     alt Development Mode
         Renderer->>Renderer: Load from Vite<br/>MAIN_WINDOW_VITE_DEV_SERVER_URL
     else Production Mode
-        Renderer->>Renderer: Load from server<br/>http://127.0.0.1:3000
+        Renderer->>Renderer: Load from server<br/>http://127.0.0.1:6274
     end
 
     Main->>Main: registerListeners()
@@ -382,7 +382,7 @@ sequenceDiagram
   </Step>
 
 <Step title="Server Start" icon="server">
-  `src/main.ts:62-92` starts the embedded Hono server on an available port
+  `src/main.ts:62-92` starts the embedded Hono server on port 6274
 </Step>
 
 <Step title="Window Creation" icon="window">
@@ -694,7 +694,7 @@ flowchart TD
 | `IS_PACKAGED`             | Indicates packaged app     | Main process | Auto                     |
 | `ELECTRON_RESOURCES_PATH` | Resources directory        | Main process | Auto                     |
 | `NODE_ENV`                | Runtime environment        | Build/User   | Auto                     |
-| `PORT`                    | Server port                | User         | Optional (default: 3001) |
+| `PORT`                    | Server port                | User         | Optional (default: 6274) |
 | `DEBUG_MCP_SELECTION`     | Enable debug logs          | User         | Optional                 |
 
 ## Build & Deployment
@@ -761,7 +761,7 @@ flowchart LR
 
     **Run Container:**
     ```bash
-    docker run -p 3001:3001 mcpjam/inspector
+    docker run -p 6274:6274 mcpjam/inspector
     ```
 
     **Includes:** Complete application in Alpine Linux

@@ -39,8 +39,13 @@ import { EnvVarsSection } from "./shared/EnvVarsSection";
 interface EditServerModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (formData: ServerFormData, originalServerName: string) => void;
+  onSubmit: (
+    formData: ServerFormData,
+    originalServerName: string,
+    skipAutoConnect?: boolean,
+  ) => void;
   server: ServerWithName;
+  skipAutoConnect?: boolean;
 }
 
 export function EditServerModal({
@@ -48,6 +53,7 @@ export function EditServerModal({
   onClose,
   onSubmit,
   server,
+  skipAutoConnect = false,
 }: EditServerModalProps) {
   const posthog = usePostHog();
   const [activeTab, setActiveTab] = useState<"config" | "auth" | "tools">(
@@ -186,7 +192,7 @@ export function EditServerModal({
     }
 
     const finalFormData = buildFormData();
-    onSubmit(finalFormData, server.name);
+    onSubmit(finalFormData, server.name, skipAutoConnect);
     handleClose();
   };
 

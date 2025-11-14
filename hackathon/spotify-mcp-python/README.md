@@ -1,1 +1,0 @@
-# Spotify MCP Hackathon

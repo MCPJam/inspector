@@ -24,6 +24,8 @@ import {
   generateCodeChallenge,
   loadPreregisteredCredentials,
   buildResourceMetadataUrl,
+  markLatestHttpEntryAsError,
+  toLogErrorDetails,
 } from "./shared/helpers";
 
 // Re-export types for backward compatibility
@@ -1094,9 +1096,9 @@ export const createDebugOAuthStateMachine = (
                 state.authorizationServerMetadata.registration_endpoint,
                 {
                   method: "POST",
-                  headers: {
+                  headers: mergeHeaders({
                     "Content-Type": "application/json",
-                  },
+                  }),
                   body: JSON.stringify(state.lastRequest.body),
                 },
               );
@@ -1454,9 +1456,9 @@ export const createDebugOAuthStateMachine = (
                 state.authorizationServerMetadata.token_endpoint,
                 {
                   method: "POST",
-                  headers: {
+                  headers: mergeHeaders({
                     "Content-Type": "application/x-www-form-urlencoded",
-                  },
+                  }),
                   body: tokenRequestBody.toString(),
                 },
               );
@@ -1512,6 +1514,7 @@ export const createDebugOAuthStateMachine = (
                   {
                     id: "auth-code",
                     step: "token_request",
+                    level: "info",
                     label: "Authorization Code",
                     data: {
                       code: state.authorizationCode,
@@ -1535,6 +1538,7 @@ export const createDebugOAuthStateMachine = (
                   {
                     id: "oauth-tokens",
                     step: "token_request",
+                    level: "info",
                     label: "OAuth Tokens",
                     data: tokenData,
                     timestamp: Date.now(),
@@ -1592,6 +1596,7 @@ export const createDebugOAuthStateMachine = (
                     {
                       id: "token",
                       step: "token_request",
+                      level: "info",
                       label: "Access Token (Decoded JWT)",
                       data: audienceNote,
                       timestamp: Date.now(),
@@ -1628,6 +1633,7 @@ export const createDebugOAuthStateMachine = (
                     {
                       id: "id-token",
                       step: "token_request",
+                      level: "info",
                       label: "ID Token (OIDC - Decoded JWT)",
                       data: formattedIdToken,
                       timestamp: Date.now(),
@@ -1750,10 +1756,10 @@ export const createDebugOAuthStateMachine = (
             try {
               const response = await proxyFetch(state.serverUrl, {
                 method: "POST",
-                headers: {
+                headers: mergeHeaders({
                   Authorization: `Bearer ${state.accessToken}`,
                   "Content-Type": "application/json",
-                },
+                }),
                 body: JSON.stringify({
                   jsonrpc: "2.0",
                   method: "initialize",
@@ -1900,29 +1906,49 @@ export const createDebugOAuthStateMachine = (
                 isInitiatingAuth: false,
               });
             } catch (error) {
-              // Capture the error
+              const errorDetails = toLogErrorDetails(error);
               const errorResponse = {
                 status: 0,
                 statusText: "Network Error",
                 headers: mergeHeaders({}),
                 body: {
-                  error: error instanceof Error ? error.message : String(error),
+                  error: errorDetails.message,
+                  details: errorDetails.details,
                 },
               };
 
               const updatedHistoryError = [...(state.httpHistory || [])];
               if (updatedHistoryError.length > 0) {
-                const lastEntry =
-                  updatedHistoryError[updatedHistoryError.length - 1];
-                lastEntry.response = errorResponse;
-                lastEntry.duration =
-                  Date.now() - (lastEntry.timestamp || Date.now());
+                const lastEntry = {
+                  ...updatedHistoryError[updatedHistoryError.length - 1],
+                  response: errorResponse,
+                  duration:
+                    Date.now() -
+                    (updatedHistoryError[updatedHistoryError.length - 1]
+                      ?.timestamp || Date.now()),
+                  error: errorDetails,
+                };
+                updatedHistoryError[updatedHistoryError.length - 1] = lastEntry;
               }
+
+              const currentState = getCurrentState();
+              const infoLogs = addInfoLog(
+                currentState,
+                "authenticated_mcp_request",
+                `error-authenticated_mcp_request-${Date.now()}`,
+                "Authenticated MCP request failed",
+                {
+                  request: currentState.lastRequest,
+                  error: errorDetails,
+                },
+                { level: "error", error: errorDetails },
+              );
 
               updateState({
                 lastResponse: errorResponse,
                 httpHistory: updatedHistoryError,
-                error: `Authenticated MCP request failed: ${error instanceof Error ? error.message : String(error)}`,
+                infoLogs,
+                error: `Authenticated MCP request failed: ${errorDetails.message}`,
                 isInitiatingAuth: false,
               });
             }
@@ -1938,10 +1964,38 @@ export const createDebugOAuthStateMachine = (
             break;
         }
       } catch (error) {
-        updateState({
-          error: error instanceof Error ? error.message : String(error),
+        const currentState = getCurrentState();
+        const errorDetails = toLogErrorDetails(error);
+        const infoLogs = addInfoLog(
+          currentState,
+          currentState.currentStep,
+          `error-${currentState.currentStep}-${Date.now()}`,
+          "Step failed",
+          {
+            step: currentState.currentStep,
+            request: currentState.lastRequest,
+            response: currentState.lastResponse,
+            error: errorDetails,
+          },
+          { level: "error", error: errorDetails },
+        );
+
+        const updatedHistory = markLatestHttpEntryAsError(
+          currentState.httpHistory,
+          errorDetails,
+        );
+
+        const updates: Partial<OAuthFlowState> = {
+          error: errorDetails.message,
+          infoLogs,
           isInitiatingAuth: false,
-        });
+        };
+
+        if (updatedHistory) {
+          updates.httpHistory = updatedHistory;
+        }
+
+        updateState(updates);
       }
     },
 

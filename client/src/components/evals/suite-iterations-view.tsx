@@ -1,6 +1,11 @@
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Loader2, RotateCw } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { IterationDetails } from "./iteration-details";
 import { formatTime } from "./helpers";
 import { EvalCase, EvalIteration, EvalSuite, SuiteAggregate } from "./types";
@@ -11,12 +16,18 @@ export function SuiteIterationsView({
   iterations,
   aggregate,
   onBack,
+  onRerun,
+  connectedServerNames,
+  rerunningSuiteId,
 }: {
   suite: EvalSuite;
   cases: EvalCase[];
   iterations: EvalIteration[];
   aggregate: SuiteAggregate | null;
   onBack: () => void;
+  onRerun: (suite: EvalSuite) => void;
+  connectedServerNames: Set<string>;
+  rerunningSuiteId: string | null;
 }) {
   const [openIterationId, setOpenIterationId] = useState<string | null>(null);
   const [expandedQueries, setExpandedQueries] = useState<Set<string>>(
@@ -171,12 +182,43 @@ export function SuiteIterationsView({
     return "bg-amber-500/50"; // pending
   };
 
+  // Check if all servers are connected
+  const suiteServers = suite.config?.environment?.servers || [];
+  const missingServers = suiteServers.filter(
+    (server) => !connectedServerNames.has(server),
+  );
+  const canRerun = missingServers.length === 0;
+  const isRerunning = rerunningSuiteId === suite._id;
+
   return (
     <div className="space-y-4">
-      <div>
+      <div className="flex items-center justify-between">
         <Button variant="ghost" size="sm" onClick={onBack}>
           ← Back to suites
         </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onRerun(suite)}
+                disabled={!canRerun || isRerunning}
+                className="gap-2"
+              >
+                <RotateCw
+                  className={`h-4 w-4 ${isRerunning ? "animate-spin" : ""}`}
+                />
+                Rerun
+              </Button>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>
+            {!canRerun
+              ? `Connect the following servers: ${missingServers.join(", ")}`
+              : "Rerun evaluation"}
+          </TooltipContent>
+        </Tooltip>
       </div>
       <div className="space-y-4">
         {caseGroups.map((group, index) => {
