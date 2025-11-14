@@ -526,6 +526,11 @@ export function EvalsTab() {
 
       setRerunningSuiteId(suite._id);
 
+      // Show toast immediately when user clicks rerun
+      toast.success(
+        "Eval run started successfully! Results will appear shortly.",
+      );
+
       try {
         const accessToken = await getAccessToken();
 
@@ -566,9 +571,8 @@ export function EvalsTab() {
           throw new Error(errorText || "Failed to start eval run");
         }
 
-        toast.success(
-          "Eval run started successfully! Results will appear shortly.",
-        );
+        // Optionally show completion toast
+        toast.success("Eval run completed!");
       } catch (error) {
         console.error("Failed to rerun evals:", error);
         toast.error(
