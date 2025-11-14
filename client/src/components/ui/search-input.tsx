@@ -25,7 +25,7 @@ export const SearchInput = React.forwardRef<HTMLInputElement, SearchInputProps>(
     ref,
   ) => {
     return (
-      <div className="relative">
+      <div className={cn("relative", className)}>
         <Search
           className={cn(
             "absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground",
@@ -42,20 +42,17 @@ export const SearchInput = React.forwardRef<HTMLInputElement, SearchInputProps>(
           aria-label={placeholder}
           autoComplete="off"
           spellCheck={false}
-          className={cn(
-            "pl-7 h-8 bg-background border-border hover:border-border/80 text-xs md:text-xs leading-4 text-foreground placeholder:text-muted-foreground/70",
-            className,
-          )}
+          className="pl-7 pr-9 h-8 bg-background border-border hover:border-border/80 text-xs md:text-xs leading-4 text-foreground placeholder:text-muted-foreground/70 [&::-webkit-search-cancel-button]:hidden [&::-webkit-search-decoration]:hidden w-full"
           {...props}
         />
         {clearable && value && (
           <button
             type="button"
             onClick={() => onValueChange("")}
-            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors z-10 pointer-events-auto"
             aria-label="Clear search"
           >
-            <X className="h-3 w-3" />
+            <X className="h-3.5 w-3.5" />
           </button>
         )}
       </div>

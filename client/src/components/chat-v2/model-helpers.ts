@@ -79,6 +79,7 @@ export const getDefaultModel = (
   availableModels: ModelDefinition[],
 ): ModelDefinition => {
   const modelIdsByPriority: Array<Model | string> = [
+    "openai/gpt-5",
     "meta-llama/llama-3.3-70b-instruct",
     Model.CLAUDE_3_7_SONNET_LATEST, // anthropic
     Model.GPT_4_1, // openai

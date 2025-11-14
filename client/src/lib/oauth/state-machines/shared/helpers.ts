@@ -2,7 +2,14 @@
  * Shared helper functions for OAuth state machines
  */
 
-import type { InfoLogEntry, OAuthFlowState, OAuthFlowStep } from "../types";
+import type {
+  HttpHistoryEntry,
+  InfoLogEntry,
+  InfoLogLevel,
+  LogErrorDetails,
+  OAuthFlowState,
+  OAuthFlowStep,
+} from "../types";
 
 /**
  * Helper function to make requests via backend debug proxy (bypasses CORS)
@@ -80,13 +87,21 @@ export async function proxyFetch(
 /**
  * Helper function to add an info log to the state
  */
+export interface AddInfoLogOptions {
+  level?: InfoLogLevel;
+  error?: LogErrorDetails;
+}
+
 export function addInfoLog(
   state: OAuthFlowState,
   step: OAuthFlowStep,
   id: string,
   label: string,
   data: any,
+  options: AddInfoLogOptions = {},
 ): Array<InfoLogEntry> {
+  const { level = "info", error } = options;
+
   return [
     ...(state.infoLogs || []),
     {
@@ -95,8 +110,66 @@ export function addInfoLog(
       label,
       data,
       timestamp: Date.now(),
+      level,
+      error,
     },
   ];
+}
+
+/**
+ * Convert an unknown error into structured log details
+ */
+export function toLogErrorDetails(error: unknown): LogErrorDetails {
+  if (error instanceof Error) {
+    return {
+      message: error.message,
+      details: {
+        name: error.name,
+        stack: error.stack,
+      },
+    };
+  }
+
+  if (typeof error === "string") {
+    return { message: error };
+  }
+
+  try {
+    return {
+      message: "Unexpected error",
+      details: error,
+    };
+  } catch {
+    return {
+      message: "Unexpected error",
+    };
+  }
+}
+
+/**
+ * Mark the most recent HTTP history entry with an error description
+ */
+export function markLatestHttpEntryAsError(
+  history: OAuthFlowState["httpHistory"],
+  error: LogErrorDetails,
+): Array<HttpHistoryEntry> | undefined {
+  if (!history || history.length === 0) {
+    return history || undefined;
+  }
+
+  const updatedHistory = [...history];
+  const lastEntry = { ...updatedHistory[updatedHistory.length - 1] };
+
+  updatedHistory[updatedHistory.length - 1] = {
+    ...lastEntry,
+    error,
+    duration:
+      lastEntry.duration !== undefined
+        ? lastEntry.duration
+        : Date.now() - lastEntry.timestamp,
+  };
+
+  return updatedHistory;
 }
 
 /**

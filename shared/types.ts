@@ -145,6 +145,7 @@ export interface ModelDefinition {
   id: Model | string;
   name: string;
   provider: ModelProvider;
+  contextLength?: number;
   disabled?: boolean;
   disabledReason?: string;
 }
@@ -176,12 +177,6 @@ export enum Model {
   GEMINI_2_5_FLASH = "gemini-2.5-flash",
   GEMINI_2_5_FLASH_LITE = "gemini-2.5-flash-lite",
   GEMINI_2_0_FLASH_EXP = "gemini-2.0-flash-exp",
-  GEMINI_1_5_PRO = "gemini-1.5-pro",
-  GEMINI_1_5_PRO_002 = "gemini-1.5-pro-002",
-  GEMINI_1_5_FLASH = "gemini-1.5-flash",
-  GEMINI_1_5_FLASH_002 = "gemini-1.5-flash-002",
-  GEMINI_1_5_FLASH_8B = "gemini-1.5-flash-8b",
-  GEMINI_1_5_FLASH_8B_001 = "gemini-1.5-flash-8b-001",
   // Google Gemma models
   GEMMA_3_2B = "gemma-3-2b",
   GEMMA_3_9B = "gemma-3-9b",
@@ -210,195 +205,257 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     id: Model.CLAUDE_OPUS_4_0,
     name: "Claude Opus 4",
     provider: "anthropic",
+    contextLength: 200000,
   },
   {
     id: Model.CLAUDE_SONNET_4_0,
     name: "Claude Sonnet 4",
     provider: "anthropic",
+    contextLength: 200000,
   },
   {
     id: Model.CLAUDE_3_7_SONNET_LATEST,
     name: "Claude Sonnet 3.7",
     provider: "anthropic",
+    contextLength: 200000,
   },
   {
     id: Model.CLAUDE_3_5_SONNET_LATEST,
     name: "Claude Sonnet 3.5",
     provider: "anthropic",
+    contextLength: 200000,
   },
   {
     id: Model.CLAUDE_3_5_HAIKU_LATEST,
     name: "Claude Haiku 3.5",
     provider: "anthropic",
+    contextLength: 200000,
   },
-  { id: Model.GPT_5, name: "GPT-5", provider: "openai" },
-  { id: Model.GPT_5_MINI, name: "GPT-5 Mini", provider: "openai" },
-  { id: Model.GPT_5_NANO, name: "GPT-5 Nano", provider: "openai" },
-  { id: Model.GPT_5_PRO, name: "GPT-5 Pro", provider: "openai" },
-  { id: Model.GPT_5_CODEX, name: "GPT-5 Codex", provider: "openai" },
-  { id: Model.GPT_4_1, name: "GPT-4.1", provider: "openai" },
-  { id: Model.GPT_4_1_MINI, name: "GPT-4.1 Mini", provider: "openai" },
-  { id: Model.GPT_4_1_NANO, name: "GPT-4.1 Nano", provider: "openai" },
-  { id: Model.GPT_4O, name: "GPT-4o", provider: "openai" },
-  { id: Model.GPT_4O_MINI, name: "GPT-4o Mini", provider: "openai" },
-  { id: Model.DEEPSEEK_CHAT, name: "DeepSeek Chat", provider: "deepseek" },
+  { id: Model.GPT_5, name: "GPT-5", provider: "openai", contextLength: 400000 },
+  {
+    id: Model.GPT_5_MINI,
+    name: "GPT-5 Mini",
+    provider: "openai",
+    contextLength: 200000,
+  },
+  {
+    id: Model.GPT_5_NANO,
+    name: "GPT-5 Nano",
+    provider: "openai",
+    contextLength: 128000,
+  },
+  {
+    id: Model.GPT_5_PRO,
+    name: "GPT-5 Pro",
+    provider: "openai",
+    contextLength: 400000,
+  },
+  {
+    id: Model.GPT_5_CODEX,
+    name: "GPT-5 Codex",
+    provider: "openai",
+    contextLength: 400000,
+  },
+  {
+    id: Model.GPT_4_1,
+    name: "GPT-4.1",
+    provider: "openai",
+    contextLength: 1047576,
+  },
+  {
+    id: Model.GPT_4_1_MINI,
+    name: "GPT-4.1 Mini",
+    provider: "openai",
+    contextLength: 1047576,
+  },
+  {
+    id: Model.GPT_4_1_NANO,
+    name: "GPT-4.1 Nano",
+    provider: "openai",
+    contextLength: 1047576,
+  },
+  {
+    id: Model.GPT_4O,
+    name: "GPT-4o",
+    provider: "openai",
+    contextLength: 128000,
+  },
+  {
+    id: Model.GPT_4O_MINI,
+    name: "GPT-4o Mini",
+    provider: "openai",
+    contextLength: 128000,
+  },
+  {
+    id: Model.DEEPSEEK_CHAT,
+    name: "DeepSeek Chat",
+    provider: "deepseek",
+    contextLength: 128000,
+  },
   {
     id: Model.DEEPSEEK_REASONER,
     name: "DeepSeek Reasoner",
     provider: "deepseek",
+    contextLength: 128000,
   },
   // Google Gemini models (latest first)
   {
     id: Model.GEMINI_2_5_PRO,
     name: "Gemini 2.5 Pro",
     provider: "google",
+    contextLength: 2000000,
   },
   {
     id: Model.GEMINI_2_5_FLASH,
     name: "Gemini 2.5 Flash",
     provider: "google",
+    contextLength: 1000000,
   },
   {
     id: Model.GEMINI_2_0_FLASH_EXP,
     name: "Gemini 2.0 Flash Experimental",
     provider: "google",
-  },
-  {
-    id: Model.GEMINI_1_5_PRO_002,
-    name: "Gemini 1.5 Pro 002",
-    provider: "google",
-  },
-  {
-    id: Model.GEMINI_1_5_PRO,
-    name: "Gemini 1.5 Pro",
-    provider: "google",
-  },
-  {
-    id: Model.GEMINI_1_5_FLASH_002,
-    name: "Gemini 1.5 Flash 002",
-    provider: "google",
-  },
-  {
-    id: Model.GEMINI_1_5_FLASH,
-    name: "Gemini 1.5 Flash",
-    provider: "google",
+    contextLength: 1048576,
   },
   {
     id: "meta-llama/llama-3.3-70b-instruct",
     name: "Llama 3.3 70B (Free)",
     provider: "meta",
+    contextLength: 128000,
   },
   {
     id: "openai/gpt-oss-120b",
     name: "GPT-OSS 120B (Free)",
     provider: "openai",
+    contextLength: 131072,
   },
   {
     id: "x-ai/grok-4-fast",
     name: "Grok 4 Fast (Free)",
     provider: "xai",
+    contextLength: 2000000,
   },
   {
     id: "openai/gpt-5-nano",
     name: "GPT-5 Nano (Free)",
     provider: "openai",
+    contextLength: 16000,
   },
   {
     id: "anthropic/claude-sonnet-4.5",
     name: "Claude Sonnet 4.5 (Free)",
     provider: "anthropic",
+    contextLength: 1000000,
   },
   {
     id: "anthropic/claude-haiku-4.5",
     name: "Claude Haiku 4.5 (Free)",
     provider: "anthropic",
+    contextLength: 200000,
   },
   {
     id: "openai/gpt-5-codex",
     name: "GPT-5 Codex (Free)",
     provider: "openai",
+    contextLength: 400000,
   },
   {
     id: "openai/gpt-5",
     name: "GPT-5 (Free)",
     provider: "openai",
+    contextLength: 400000,
   },
   {
     id: "openai/gpt-5-mini",
     name: "GPT-5 Mini (Free)",
     provider: "openai",
+    contextLength: 128000,
   },
   {
     id: "google/gemini-2.5-flash-preview-09-2025",
     name: "Gemini 2.5 Flash Preview (Free)",
     provider: "google",
+    contextLength: 1048576,
   },
   {
     id: "moonshotai/kimi-k2-0905",
     name: "Kimi K2 (Free)",
     provider: "moonshotai",
+    contextLength: 262144,
   },
   {
     id: "google/gemini-2.5-flash",
     name: "Gemini 2.5 Flash (Free)",
     provider: "google",
+    contextLength: 1048576,
   },
   {
     id: "z-ai/glm-4.6",
     name: "GLM 4.6 (Free)",
     provider: "z-ai",
+    contextLength: 200000,
   },
   // Mistral models
   {
     id: Model.MISTRAL_LARGE_LATEST,
     name: "Mistral Large",
     provider: "mistral",
+    contextLength: 131072,
   },
   {
     id: Model.MISTRAL_SMALL_LATEST,
     name: "Mistral Small",
     provider: "mistral",
+    contextLength: 128000,
   },
   {
     id: Model.CODESTRAL_LATEST,
     name: "Codestral",
     provider: "mistral",
+    contextLength: 256000,
   },
   {
     id: Model.MINISTRAL_8B_LATEST,
     name: "Ministral 8B",
     provider: "mistral",
+    contextLength: 128000,
   },
   {
     id: Model.MINISTRAL_3B_LATEST,
     name: "Ministral 3B",
     provider: "mistral",
+    contextLength: 128000,
   },
   // xAI models
   {
     id: Model.GROK_3,
     name: "Grok 3",
     provider: "xai",
+    contextLength: 131072,
   },
   {
     id: Model.GROK_3_MINI,
     name: "Grok 3 Mini",
     provider: "xai",
+    contextLength: 131072,
   },
   {
     id: Model.GROK_CODE_FAST_1,
     name: "Grok Code Fast 1",
     provider: "xai",
+    contextLength: 128000,
   },
   {
     id: Model.GROK_4_FAST_NON_REASONING,
     name: "Grok 4 Fast Non-Reasoning",
     provider: "xai",
+    contextLength: 2000000,
   },
   {
     id: Model.GROK_4_FAST_REASONING,
     name: "Grok 4 Fast Reasoning",
     provider: "xai",
+    contextLength: 2000000,
   },
 ];
 
@@ -569,4 +626,117 @@ export interface ServerStatus {
   status: "ok" | "error";
   timestamp: string;
   service?: string;
+}
+
+// MCP Registry types
+export interface RegistryPackage {
+  registryType: "npm" | "pypi" | "go" | "mcpb" | "oci" | "nuget" | string;
+  identifier: string;
+  version?: string;
+  registryBaseUrl?: string;
+  runtimeHint?: string;
+  runtimeArguments?: string[];
+  packageArguments?: string[];
+  environmentVariables?: Array<{
+    name: string;
+    value?: string;
+    description?: string;
+    isRequired?: boolean;
+    isSecret?: boolean;
+  }>;
+  fileSha256?: string;
+  transport?: {
+    type: string;
+    url?: string;
+    headers?: Array<{
+      name: string;
+      value?: string;
+      description?: string;
+      isRequired?: boolean;
+      isSecret?: boolean;
+    }>;
+  };
+}
+
+export interface RegistryRemote {
+  type: "stdio" | "sse" | "streamable-http" | "streamableHttp";
+  url?: string;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  headers?: Array<{
+    name: string;
+    value?: string;
+    description?: string;
+    isRequired?: boolean;
+    isSecret?: boolean;
+  }>;
+}
+
+export interface RegistryIcon {
+  src: string;
+  sizes?: string[];
+  mimeType?: string;
+  theme?: "light" | "dark";
+}
+
+export interface RegistryRepository {
+  url?: string;
+  id?: string;
+  source?: string;
+  subfolder?: string;
+}
+
+export interface RegistryServer {
+  $schema?: string;
+  name: string;
+  description: string;
+  status?: "active" | "deleted" | "deprecated" | string;
+  version: string;
+  title?: string;
+  websiteUrl?: string;
+  icons?: RegistryIcon[];
+  packages?: RegistryPackage[];
+  remotes?: RegistryRemote[];
+  repository?: RegistryRepository;
+  _meta?: {
+    "io.modelcontextprotocol.registry/official"?: {
+      publishedAt?: string;
+      updatedAt?: string;
+      isLatest?: boolean;
+      status?: string;
+    };
+    "io.modelcontextprotocol.registry/publisher-provided"?: Record<string, any>;
+    [key: string]: any;
+  };
+}
+
+export interface RegistryServerVersion {
+  name: string;
+  version: string;
+  description: string;
+  status: string;
+  packages?: RegistryPackage[];
+  remotes?: RegistryRemote[];
+  _meta?: Record<string, any>;
+}
+
+export interface RegistryServerWrapper {
+  server: RegistryServer;
+  _meta?: Record<string, any>;
+}
+
+export interface RegistryServerListResponse {
+  servers: RegistryServerWrapper[];
+  metadata: {
+    count: number;
+    nextCursor?: string;
+  };
+}
+
+export interface RegistryVersionListResponse {
+  versions: string[];
+  metadata: {
+    count: number;
+  };
 }

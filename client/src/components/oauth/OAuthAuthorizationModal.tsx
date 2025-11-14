@@ -71,7 +71,7 @@ export const OAuthAuthorizationModal = ({
 
       // Use unique window name each time to prevent reusing old popup with stale auth code
       const uniqueWindowName = `oauth_authorization_${Date.now()}`;
-
+      console.log("authorizationUrl", authorizationUrl);
       popupRef.current = window.open(
         authorizationUrl,
         uniqueWindowName,

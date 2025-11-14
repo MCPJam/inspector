@@ -46,6 +46,7 @@ import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import { ErrorBox } from "@/components/chat-v2/error";
 import { usePersistedModel } from "@/hooks/use-persisted-model";
+import { countMCPToolsTokens, countTextTokens } from "@/lib/mcp-tokenizer-api";
 
 const DEFAULT_SYSTEM_PROMPT =
   "You are a helpful assistant with access to MCP tools.";
@@ -110,6 +111,17 @@ export function ChatTabV2({
     Record<string, Record<string, any>>
   >({});
   const [toolServerMap, setToolServerMap] = useState<ToolServerMap>({});
+  const [mcpToolsTokenCount, setMcpToolsTokenCount] = useState<Record<
+    string,
+    number
+  > | null>(null);
+  const [mcpToolsTokenCountLoading, setMcpToolsTokenCountLoading] =
+    useState(false);
+  const [systemPromptTokenCount, setSystemPromptTokenCount] = useState<
+    number | null
+  >(null);
+  const [systemPromptTokenCountLoading, setSystemPromptTokenCountLoading] =
+    useState(false);
   const availableModels = useMemo(() => {
     return buildAvailableModels({
       hasToken,
@@ -218,6 +230,41 @@ export function ChatTabV2({
       ? undefined
       : lastAssistantMessageIsCompleteWithToolCalls,
   });
+
+  // Sum token usage from all assistant messages with metadata
+  const tokenUsage = useMemo(() => {
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+    let totalTokens = 0;
+
+    for (const message of messages) {
+      if (message.role === "assistant" && message.metadata) {
+        const metadata = message.metadata as
+          | {
+              inputTokens?: number;
+              outputTokens?: number;
+              totalTokens?: number;
+            }
+          | undefined;
+
+        if (metadata) {
+          totalInputTokens += metadata.inputTokens ?? 0;
+          totalOutputTokens += metadata.outputTokens ?? 0;
+          const messageTotal =
+            metadata.totalTokens ??
+            (metadata.inputTokens ?? 0) + (metadata.outputTokens ?? 0);
+          totalTokens += messageTotal;
+        }
+      }
+    }
+
+    return {
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
+      totalTokens:
+        totalTokens > 0 ? totalTokens : totalInputTokens + totalOutputTokens,
+    };
+  }, [messages]);
   const resetChat = useCallback(() => {
     setChatSessionId(generateId());
     setMessages([]);
@@ -273,8 +320,6 @@ export function ChatTabV2({
     const interval = setInterval(checkOllama, 30000);
     return () => clearInterval(interval);
   }, [getOllamaBaseUrl]);
-
-  // selectedModelId defaults via effectiveModel; no effect needed
 
   useEffect(() => {
     const es = new EventSource("/api/mcp/elicitation/stream");
@@ -337,6 +382,70 @@ export function ChatTabV2({
     };
     fetchToolsMetadata();
   }, [selectedConnectedServerNames]);
+
+  useEffect(() => {
+    const fetchMcpToolsTokenCount = async () => {
+      if (
+        selectedConnectedServerNames.length === 0 ||
+        !selectedModel?.id ||
+        !selectedModel?.provider
+      ) {
+        setMcpToolsTokenCount(null);
+        setMcpToolsTokenCountLoading(false);
+        return;
+      }
+
+      setMcpToolsTokenCountLoading(true);
+      try {
+        const modelId = isMCPJamProvidedModel(String(selectedModel.id))
+          ? String(selectedModel.id)
+          : `${selectedModel.provider}/${selectedModel.id}`;
+        const counts = await countMCPToolsTokens(
+          selectedConnectedServerNames,
+          modelId,
+        );
+        setMcpToolsTokenCount(
+          counts && Object.keys(counts).length > 0 ? counts : null,
+        );
+      } catch (error) {
+        console.warn("[ChatTabV2] Failed to count MCP tools tokens:", error);
+        setMcpToolsTokenCount(null);
+      } finally {
+        setMcpToolsTokenCountLoading(false);
+      }
+    };
+
+    fetchMcpToolsTokenCount();
+  }, [selectedConnectedServerNames, selectedModel]);
+
+  useEffect(() => {
+    const fetchSystemPromptTokenCount = async () => {
+      if (!systemPrompt || !selectedModel?.id || !selectedModel?.provider) {
+        setSystemPromptTokenCount(null);
+        setSystemPromptTokenCountLoading(false);
+        return;
+      }
+
+      setSystemPromptTokenCountLoading(true);
+      try {
+        const modelId = isMCPJamProvidedModel(String(selectedModel.id))
+          ? String(selectedModel.id)
+          : `${selectedModel.provider}/${selectedModel.id}`;
+        const count = await countTextTokens(systemPrompt, modelId);
+        setSystemPromptTokenCount(count > 0 ? count : null);
+      } catch (error) {
+        console.warn(
+          "[ChatTabV2] Failed to count system prompt tokens:",
+          error,
+        );
+        setSystemPromptTokenCount(null);
+      } finally {
+        setSystemPromptTokenCountLoading(false);
+      }
+    };
+
+    fetchSystemPromptTokenCount();
+  }, [systemPrompt, selectedModel]);
 
   const disableForAuthentication = !isAuthenticated && isMcpJamModel;
   const disableForServers = noServersConnected;
@@ -428,6 +537,13 @@ export function ChatTabV2({
     onTemperatureChange: setTemperature,
     onResetChat: resetChat,
     submitDisabled: submitBlocked,
+    tokenUsage,
+    selectedServers: selectedConnectedServerNames,
+    mcpToolsTokenCount,
+    mcpToolsTokenCountLoading,
+    connectedServerConfigs,
+    systemPromptTokenCount,
+    systemPromptTokenCountLoading,
   };
 
   const showStarterPrompts =

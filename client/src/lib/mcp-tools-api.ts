@@ -134,7 +134,7 @@ export async function getToolsMetadata(
       const toolsMetadata = data.toolsMetadata ?? {};
 
       for (const [toolName, meta] of Object.entries(toolsMetadata)) {
-        aggregate.metadata[toolName] = meta;
+        aggregate.metadata[toolName] = meta as Record<string, unknown>;
         aggregate.toolServerMap[toolName] = serverId;
       }
     }),

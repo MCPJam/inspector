@@ -26,6 +26,8 @@ COPY vite.preload.config.ts ./
 COPY .env.production ./
 # Set environment variable for Docker platform detection
 ENV VITE_DOCKER=true
+# Increase Node.js memory limit for the build process
+ENV NODE_OPTIONS="--max-old-space-size=4096"
 RUN npm run build:client
 
 # Stage 3: Build SDK (required by server)
@@ -85,16 +87,16 @@ RUN groupadd --gid 1001 nodejs && \
 RUN chown -R mcpjam:nodejs /app
 USER mcpjam
 
-# Expose port
-EXPOSE 3001
+# Expose port (matching .env.production)
+EXPOSE 6274
 
 # Set environment variables
-ENV PORT=3001
+ENV PORT=6274
 ENV NODE_ENV=production
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD node -e "require('http').request('http://localhost:3001/health', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).end()"
+    CMD node -e "require('http').request('http://localhost:6274/health', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).end()"
 
 # Use dumb-init to handle signals properly
 ENTRYPOINT ["dumb-init", "--"]

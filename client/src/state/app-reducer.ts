@@ -47,18 +47,31 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case "CONNECT_SUCCESS": {
       const existing = state.servers[action.name];
       if (!existing) return state;
+      const nextServer = setStatus(existing, "connected", {
+        config: action.config,
+        lastConnectionTime: new Date(),
+        retryCount: 0,
+        lastError: undefined,
+        oauthTokens: action.tokens,
+        enabled: true,
+      });
+      const activeWorkspace = state.workspaces[state.activeWorkspaceId];
       return {
         ...state,
         servers: {
           ...state.servers,
-          [action.name]: setStatus(existing, "connected", {
-            config: action.config,
-            lastConnectionTime: new Date(),
-            retryCount: 0,
-            lastError: undefined,
-            oauthTokens: action.tokens,
-            enabled: true,
-          }),
+          [action.name]: nextServer,
+        },
+        workspaces: {
+          ...state.workspaces,
+          [state.activeWorkspaceId]: {
+            ...activeWorkspace,
+            servers: {
+              ...activeWorkspace.servers,
+              [action.name]: nextServer,
+            },
+            updatedAt: new Date(),
+          },
         },
       };
     }
@@ -113,6 +126,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
 
     case "REMOVE_SERVER": {
       const { [action.name]: _, ...rest } = state.servers;
+      const activeWorkspace = state.workspaces[state.activeWorkspaceId];
+      const { [action.name]: __, ...restWorkspaceServers } =
+        activeWorkspace.servers;
       return {
         ...state,
         servers: rest,
@@ -121,6 +137,14 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         selectedMultipleServers: state.selectedMultipleServers.filter(
           (n) => n !== action.name,
         ),
+        workspaces: {
+          ...state.workspaces,
+          [state.activeWorkspaceId]: {
+            ...activeWorkspace,
+            servers: restWorkspaceServers,
+            updatedAt: new Date(),
+          },
+        },
       };
     }
 
@@ -161,14 +185,127 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case "SET_INITIALIZATION_INFO": {
       const existing = state.servers[action.name];
       if (!existing) return state;
+      const nextServer = {
+        ...existing,
+        initializationInfo: action.initInfo,
+      };
+      const activeWorkspace = state.workspaces[state.activeWorkspaceId];
       return {
         ...state,
         servers: {
           ...state.servers,
-          [action.name]: {
-            ...existing,
-            initializationInfo: action.initInfo,
+          [action.name]: nextServer,
+        },
+        workspaces: {
+          ...state.workspaces,
+          [state.activeWorkspaceId]: {
+            ...activeWorkspace,
+            servers: {
+              ...activeWorkspace.servers,
+              [action.name]: nextServer,
+            },
+            updatedAt: new Date(),
           },
+        },
+      };
+    }
+
+    case "CREATE_WORKSPACE": {
+      return {
+        ...state,
+        workspaces: {
+          ...state.workspaces,
+          [action.workspace.id]: action.workspace,
+        },
+      };
+    }
+
+    case "UPDATE_WORKSPACE": {
+      const workspace = state.workspaces[action.workspaceId];
+      if (!workspace) return state;
+      return {
+        ...state,
+        workspaces: {
+          ...state.workspaces,
+          [action.workspaceId]: {
+            ...workspace,
+            ...action.updates,
+            updatedAt: new Date(),
+          },
+        },
+      };
+    }
+
+    case "DELETE_WORKSPACE": {
+      const { [action.workspaceId]: _, ...remainingWorkspaces } =
+        state.workspaces;
+      return {
+        ...state,
+        workspaces: remainingWorkspaces,
+      };
+    }
+
+    case "SWITCH_WORKSPACE": {
+      const targetWorkspace = state.workspaces[action.workspaceId];
+      if (!targetWorkspace) return state;
+
+      // Mark all servers as disconnected when switching workspaces
+      // since we disconnect them before switching
+      const disconnectedServers = Object.fromEntries(
+        Object.entries(targetWorkspace.servers).map(([name, server]) => [
+          name,
+          { ...server, connectionStatus: "disconnected" as ConnectionStatus },
+        ]),
+      );
+
+      return {
+        ...state,
+        activeWorkspaceId: action.workspaceId,
+        servers: disconnectedServers,
+        selectedServer: "none",
+        selectedMultipleServers: [],
+      };
+    }
+
+    case "SET_DEFAULT_WORKSPACE": {
+      const updatedWorkspaces = Object.fromEntries(
+        Object.entries(state.workspaces).map(([id, workspace]) => [
+          id,
+          { ...workspace, isDefault: id === action.workspaceId },
+        ]),
+      );
+      return {
+        ...state,
+        workspaces: updatedWorkspaces,
+      };
+    }
+
+    case "IMPORT_WORKSPACE": {
+      return {
+        ...state,
+        workspaces: {
+          ...state.workspaces,
+          [action.workspace.id]: action.workspace,
+        },
+      };
+    }
+
+    case "DUPLICATE_WORKSPACE": {
+      const sourceWorkspace = state.workspaces[action.workspaceId];
+      if (!sourceWorkspace) return state;
+      const newWorkspace = {
+        ...sourceWorkspace,
+        id: `workspace_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+        name: action.newName,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        isDefault: false,
+      };
+      return {
+        ...state,
+        workspaces: {
+          ...state.workspaces,
+          [newWorkspace.id]: newWorkspace,
         },
       };
     }

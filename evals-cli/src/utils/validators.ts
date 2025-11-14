@@ -37,11 +37,11 @@ export function validateTestCase(value: unknown): TestCase[] | undefined {
     return result;
   } catch (error) {
     if (error instanceof z.ZodError) {
-      Logger.errorWithExit(
+      throw new Error(
         `Your tests.json file is incorrectly configured: ${error.message}`,
       );
     }
-    Logger.errorWithExit(
+    throw new Error(
       `Your tests.json file is incorrectly configured: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
@@ -117,13 +117,11 @@ export function validateAndNormalizeMCPClientConfiguration(
         }
       } catch (error) {
         if (error instanceof z.ZodError) {
-          Logger.errorWithExit(
+          throw new Error(
             `Invalid server configuration for '${name}': ${error.message}`,
           );
         }
-        Logger.errorWithExit(
-          `Invalid server configuration for '${name}': ${error}`,
-        );
+        throw new Error(`Invalid server configuration for '${name}': ${error}`);
       }
     }
 
@@ -132,7 +130,7 @@ export function validateAndNormalizeMCPClientConfiguration(
       servers: normalizedServers,
     };
   } catch (error) {
-    Logger.errorWithExit(
+    throw new Error(
       `Your environment.json file is incorrectly configured: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
@@ -153,23 +151,23 @@ export type LlmsConfig = z.infer<typeof LlmsConfigSchema>;
 export function validateLlms(value: unknown): LlmsConfig | undefined {
   try {
     const result = LlmsConfigSchema.parse(value);
-    if (
-      !isValidLlmApiKey(result.anthropic) &&
-      !isValidLlmApiKey(result.openai) &&
-      !isValidLlmApiKey(result.openrouter)
-    ) {
-      Logger.errorWithExit(
+
+    // Check if at least one valid API key is provided
+    const hasValidKey = Object.values(result).some(
+      (key) => typeof key === "string" && isValidLlmApiKey(key),
+    );
+
+    if (!hasValidKey) {
+      throw new Error(
         "You must provide at least one valid LLM API key in your env",
       );
     }
     return result;
   } catch (error) {
     if (error instanceof z.ZodError) {
-      Logger.errorWithExit(`Invalid LLMs configuration: ${error.message}`);
+      throw new Error(`Invalid LLMs configuration: ${error.message}`);
     }
-    Logger.errorWithExit(
-      error instanceof Error ? error.message : String(error),
-    );
+    throw new Error(error instanceof Error ? error.message : String(error));
   }
 }
 
