@@ -40,7 +40,7 @@ import {
 import { isMCPJamProvidedModel } from "@/shared/types";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import posthog from "posthog-js";
-import { useTemplateGroups, useTemplateGroupsCount } from "./evals/use-template-groups";
+import { useTemplateGroups } from "./evals/use-template-groups";
 
 // Component to render a single suite in the sidebar with its own data loading
 function SuiteSidebarItem({
@@ -79,19 +79,12 @@ function SuiteSidebarItem({
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
 
-  const latestPassRate = latestRun?.summary
-    ? Math.round(latestRun.summary.passRate * 100)
-    : 0;
-
   // Load suite details only when expanded
   const enableSuiteDetailsQuery = isAuthenticated && !!user && isExpanded;
   const suiteDetails = useQuery(
     "evals:getAllTestCasesAndIterationsBySuite" as any,
     enableSuiteDetailsQuery ? ({ suiteId: suite._id } as any) : "skip",
   ) as SuiteDetailsQueryResponse | undefined;
-
-  // Compute unique template groups count from config (for collapsed state)
-  const uniqueTemplateGroupsCount = useTemplateGroupsCount(suite.config);
 
   // Compute template groups for this suite
   const { templateGroups } = useTemplateGroups(suiteDetails, isExpanded);
@@ -110,7 +103,7 @@ function SuiteSidebarItem({
     <div>
       <div
         className={cn(
-          "group w-full flex items-center gap-1 px-4 py-2 text-left text-sm transition-colors",
+          "group w-full flex items-center gap-1 px-4 py-2 text-left text-sm transition-colors hover:bg-accent/50",
           isSelected && !selectedTestId && "bg-accent"
         )}
       >
@@ -128,22 +121,19 @@ function SuiteSidebarItem({
         <button
           onClick={() => onSelectSuite(suite._id)}
           className={cn(
-            "flex-1 min-w-0 text-left hover:bg-accent/50 rounded px-2 py-1 transition-colors",
+            "flex-1 min-w-0 text-left rounded px-2 py-1 transition-colors",
             isSelected && !selectedTestId && "font-medium"
           )}
         >
           <div className="truncate font-medium">
             {suite.name || "Untitled suite"}
           </div>
-          <div className="text-xs text-muted-foreground">
-            {latestPassRate}% • {isExpanded && suiteDetails ? templateGroups.length : uniqueTemplateGroupsCount} test{(isExpanded && suiteDetails ? templateGroups.length : uniqueTemplateGroupsCount) === 1 ? "" : "s"}
-          </div>
         </button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
               onClick={(e) => e.stopPropagation()}
-              className="shrink-0 p-1 hover:bg-accent/50 rounded transition-colors opacity-0 group-hover:opacity-100"
+              className="shrink-0 p-1 hover:bg-accent/50 rounded transition-colors"
               aria-label="Suite options"
             >
               <MoreVertical className="h-4 w-4" />
@@ -220,11 +210,6 @@ function SuiteSidebarItem({
             </div>
           ) : (
             templateGroups.map((group, index) => {
-              const passedCount = group.summary.passed;
-              const totalCount = group.summary.runs;
-              const passRate = totalCount > 0
-                ? Math.round((passedCount / totalCount) * 100)
-                : 0;
               const isTestSelected = selectedTestId && group.testCaseIds.includes(selectedTestId);
 
               return (
@@ -238,18 +223,12 @@ function SuiteSidebarItem({
                     onSelectTest(group.testCaseIds[0]);
                   }}
                   className={cn(
-                    "w-full flex items-center justify-between px-6 py-2 text-left text-xs hover:bg-accent/50 transition-colors",
+                    "w-full flex items-center px-6 py-2 text-left text-xs hover:bg-accent/50 transition-colors",
                     isTestSelected && "bg-accent/70 font-medium"
                   )}
                 >
                   <div className="flex-1 min-w-0">
                     <div className="truncate">{group.title}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {group.testCaseIds.length} model{group.testCaseIds.length === 1 ? "" : "s"} • {totalCount} iteration{totalCount === 1 ? "" : "s"}
-                    </div>
-                  </div>
-                  <div className="ml-2 text-xs font-medium shrink-0">
-                    {passRate}%
                   </div>
                 </button>
               );
