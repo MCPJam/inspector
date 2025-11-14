@@ -1,7 +1,8 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery, useMutation } from "convex/react";
-import { FlaskConical, Plus, AlertTriangle, ChevronDown, ChevronRight } from "lucide-react";
+import { FlaskConical, Plus, AlertTriangle, ChevronDown, ChevronRight, MoreVertical, RotateCw, Trash2, X } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -14,9 +15,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import type {
-  EvalCase,
-  EvalIteration,
   EvalSuite,
   EvalSuiteOverviewEntry,
   EvalSuiteRun,
@@ -47,6 +52,13 @@ function SuiteSidebarItem({
   onSelectSuite,
   onToggleExpanded,
   onSelectTest,
+  onRerun,
+  onCancelRun,
+  onDelete,
+  isRerunning,
+  isCancelling,
+  isDeleting,
+  connectedServerNames,
 }: {
   suite: EvalSuite;
   latestRun: EvalSuiteRun | null | undefined;
@@ -56,6 +68,13 @@ function SuiteSidebarItem({
   onSelectSuite: (suiteId: string) => void;
   onToggleExpanded: (suiteId: string) => void;
   onSelectTest: (testId: string) => void;
+  onRerun: (suite: EvalSuite) => void;
+  onCancelRun: (runId: string) => void;
+  onDelete: (suite: EvalSuite) => void;
+  isRerunning: boolean;
+  isCancelling: boolean;
+  isDeleting: boolean;
+  connectedServerNames: Set<string>;
 }) {
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
@@ -77,11 +96,21 @@ function SuiteSidebarItem({
   // Compute template groups for this suite
   const { templateGroups } = useTemplateGroups(suiteDetails, isExpanded);
 
+  // Check for missing servers
+  const suiteServers = suite.config?.environment?.servers || [];
+  const missingServers = suiteServers.filter(
+    (server) => !connectedServerNames.has(server),
+  );
+  const hasMissingServers = missingServers.length > 0;
+
+  // Check if there's an active run (pending or running)
+  const hasActiveRun = latestRun && (latestRun.status === "pending" || latestRun.status === "running");
+
   return (
     <div>
       <div
         className={cn(
-          "w-full flex items-center gap-1 px-4 py-2 text-left text-sm transition-colors",
+          "group w-full flex items-center gap-1 px-4 py-2 text-left text-sm transition-colors",
           isSelected && !selectedTestId && "bg-accent"
         )}
       >
@@ -110,6 +139,76 @@ function SuiteSidebarItem({
             {latestPassRate}% • {isExpanded && suiteDetails ? templateGroups.length : uniqueTemplateGroupsCount} test{(isExpanded && suiteDetails ? templateGroups.length : uniqueTemplateGroupsCount) === 1 ? "" : "s"}
           </div>
         </button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              onClick={(e) => e.stopPropagation()}
+              className="shrink-0 p-1 hover:bg-accent/50 rounded transition-colors opacity-0 group-hover:opacity-100"
+              aria-label="Suite options"
+            >
+              <MoreVertical className="h-4 w-4" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {hasActiveRun ? (
+              <DropdownMenuItem
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (latestRun && !isCancelling) {
+                    onCancelRun(latestRun._id);
+                  }
+                }}
+                disabled={isCancelling}
+              >
+                <X className={cn(
+                  "h-4 w-4 mr-2 text-foreground",
+                  isCancelling && "opacity-50"
+                )} />
+                {isCancelling ? "Cancelling..." : "Cancel run"}
+              </DropdownMenuItem>
+            ) : (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div>
+                    <DropdownMenuItem
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (!hasMissingServers && !isRerunning) {
+                          onRerun(suite);
+                        }
+                      }}
+                      disabled={hasMissingServers || isRerunning}
+                      className={hasMissingServers ? "cursor-not-allowed" : ""}
+                    >
+                      <RotateCw className={cn(
+                        "h-4 w-4 mr-2 text-foreground",
+                        (hasMissingServers || isRerunning) && "opacity-50",
+                        isRerunning && "animate-spin"
+                      )} />
+                      {isRerunning ? "Rerunning..." : "Rerun"}
+                    </DropdownMenuItem>
+                  </div>
+                </TooltipTrigger>
+                {hasMissingServers && (
+                  <TooltipContent>
+                    Missing servers: {missingServers.join(", ")}
+                  </TooltipContent>
+                )}
+              </Tooltip>
+            )}
+            <DropdownMenuItem
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(suite);
+              }}
+              disabled={isDeleting}
+              variant="destructive"
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              {isDeleting ? "Deleting..." : "Delete"}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
       
       {/* Test Cases Dropdown */}
@@ -215,6 +314,7 @@ export function EvalsTab() {
   const { getToken, hasToken } = useAiProviderKeys();
 
   const deleteSuiteMutation = useMutation("evals:deleteSuite" as any);
+  const cancelRunMutation = useMutation("evals:cancelSuiteRun" as any);
 
   useEffect(() => {
     posthog.capture("evals_tab_viewed", {
@@ -449,22 +549,7 @@ export function EvalsTab() {
       setCancellingRunId(runId);
 
       try {
-        const accessToken = await getAccessToken();
-
-        const response = await fetch("/api/mcp/evals/cancel", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            runId,
-            convexAuthToken: accessToken,
-          }),
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || "Failed to cancel run");
-        }
-
+        await cancelRunMutation({ runId });
         toast.success("Run cancelled successfully");
       } catch (error) {
         console.error("Failed to cancel run:", error);
@@ -475,7 +560,7 @@ export function EvalsTab() {
         setCancellingRunId(null);
       }
     },
-    [cancellingRunId, getAccessToken],
+    [cancellingRunId, cancelRunMutation],
   );
 
   // Handle eval run success - navigate back to results view
@@ -617,6 +702,13 @@ export function EvalsTab() {
                           pendingTestSelection.current = testId;
                           setSelectedTestId(testId);
                         }}
+                        onRerun={handleRerun}
+                        onCancelRun={handleCancelRun}
+                        onDelete={handleDelete}
+                        isRerunning={rerunningSuiteId === suite._id}
+                        isCancelling={cancellingRunId === latestRun?._id}
+                        isDeleting={deletingSuiteId === suite._id}
+                        connectedServerNames={connectedServerNames}
                       />
                     );
                   })}
