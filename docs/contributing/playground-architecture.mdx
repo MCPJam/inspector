@@ -20,7 +20,8 @@ The **Playground** (Chat Tab) is MCPJam Inspector's interactive testing environm
 
 **Location**:
 
-- Frontend: `client/src/components/ChatTab.tsx`
+- Frontend: `client/src/components/ChatTabV2.tsx` (new resizable layout)
+- Legacy: `client/src/components/ChatTab.tsx` (original single-panel layout)
 - Backend: `server/routes/mcp/chat.ts`
 - Hook: `client/src/hooks/use-chat.ts`
 
@@ -28,22 +29,51 @@ The **Playground** (Chat Tab) is MCPJam Inspector's interactive testing environm
 
 ## Architecture Overview
 
+### UI Layout (ChatTabV2)
+
+The playground uses a **resizable split-panel layout** powered by `ResizablePanelGroup`:
+
+```typescript
+// client/src/components/ChatTabV2.tsx
+<ResizablePanelGroup direction="horizontal">
+  <ResizablePanel defaultSize={70} minSize={40}>
+    {/* Chat interface with messages and input */}
+  </ResizablePanel>
+  
+  <ResizableHandle withHandle />
+  
+  <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
+    <JsonRpcLoggerView /> {/* Real-time MCP protocol viewer */}
+  </ResizablePanel>
+</ResizablePanelGroup>
+```
+
+**Key Features**:
+- Chat panel (left): Message history, tool execution, input form
+- Logger panel (right): JSON-RPC messages from MCP servers
+- Resizable divider: Users can adjust panel sizes
+- Responsive: Minimum widths prevent UI collapse
+
 ### System Components
 
 ```mermaid
 graph TB
     subgraph Frontend["Chat Frontend"]
-        ChatTab["ChatTab Component"]
+        ChatTabV2["ChatTabV2 Component
+        (Resizable Layout)"]
         UseChat["use-chat Hook"]
         ChatAPI["POST /api/mcp/chat
         SSE streaming"]
         ElicitUI["Elicitation UI"]
         SSEParser["SSE Event Parser"]
+        JsonRpcLogger["JsonRpcLoggerView
+        (Right Panel)"]
 
-        ChatTab --> UseChat
+        ChatTabV2 --> UseChat
+        ChatTabV2 --> JsonRpcLogger
         UseChat --> ChatAPI
         UseChat --> SSEParser
-        ChatTab --> ElicitUI
+        ChatTabV2 --> ElicitUI
     end
 
     subgraph Backend["Chat Backend - Hono"]
@@ -779,7 +809,10 @@ body: JSON.stringify({
 
 ### Frontend
 
-- `client/src/components/ChatTab.tsx` - Main chat UI
+- `client/src/components/ChatTabV2.tsx` - Main chat UI with resizable layout
+- `client/src/components/ChatTab.tsx` - Legacy single-panel layout
+- `client/src/components/logging/json-rpc-logger-view.tsx` - MCP protocol viewer
+- `client/src/components/ui/resizable.tsx` - Resizable panel components
 - `client/src/hooks/use-chat.ts` - Chat state management
 - `client/src/components/chat/message.tsx` - Message rendering
 - `client/src/components/chat/chat-input.tsx` - Input component
