@@ -100,6 +100,7 @@ export function SuiteIterationsView({
   const [viewMode, setViewMode] = useState<"overview" | "run-detail" | "test-detail">("overview");
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [showRunSummarySidebar, setShowRunSummarySidebar] = useState(false);
+  const [runDetailSortBy, setRunDetailSortBy] = useState<"model" | "test" | "result">("model");
 
   // Handlers for batch run selection
   const toggleRunSelection = (runId: string) => {
@@ -601,96 +602,61 @@ export function SuiteIterationsView({
     return allIterations.filter((iteration) => iteration.suiteRunId === selectedRunId);
   }, [selectedRunId, allIterations]);
 
-  // Case groups for selected run - grouped by model
+  // Flat list of iterations for selected run with sorting
   const caseGroupsForSelectedRun = useMemo(() => {
     if (!selectedRunId) return [];
 
-    // First, group by model
-    const modelGroups = new Map<
-      string,
-      {
-        model: string;
-        provider: string;
-        testGroups: Map<string, {
-        testCase: EvalCase | null;
-        iterations: EvalIteration[];
-        }>;
-      }
-    >();
-
-    // Group iterations by model, then by test
-    iterationsForSelectedRun.forEach((iteration) => {
+    // Create a flat list of iterations with model info
+    const iterationsWithModel = iterationsForSelectedRun.map((iteration) => {
       const snapshot = iteration.testCaseSnapshot;
-      if (!snapshot) return;
+      return {
+        iteration,
+        model: snapshot?.model || "",
+        provider: snapshot?.provider || "",
+        title: snapshot?.title || "",
+        query: snapshot?.query || "",
+        result: iteration.result,
+      };
+    });
 
-      const modelKey = `${snapshot.provider}/${snapshot.model}`;
-      
-      if (!modelGroups.has(modelKey)) {
-        modelGroups.set(modelKey, {
-          model: snapshot.model,
-          provider: snapshot.provider,
-          testGroups: new Map(),
-        });
+    // Sort based on runDetailSortBy
+    const sorted = [...iterationsWithModel].sort((a, b) => {
+      if (runDetailSortBy === "model") {
+        const modelA = `${a.provider}/${a.model}`;
+        const modelB = `${b.provider}/${b.model}`;
+        if (modelA !== modelB) return modelA.localeCompare(modelB);
+        // Secondary sort by test title
+        if (a.title !== b.title) return a.title.localeCompare(b.title);
+        // Tertiary sort by iteration number
+        const numA = a.iteration.iterationNumber ?? 0;
+        const numB = b.iteration.iterationNumber ?? 0;
+        return numA - numB;
+      } else if (runDetailSortBy === "test") {
+        if (a.title !== b.title) return a.title.localeCompare(b.title);
+        // Secondary sort by model
+        const modelA = `${a.provider}/${a.model}`;
+        const modelB = `${b.provider}/${b.model}`;
+        if (modelA !== modelB) return modelA.localeCompare(modelB);
+        // Tertiary sort by iteration number
+        const numA = a.iteration.iterationNumber ?? 0;
+        const numB = b.iteration.iterationNumber ?? 0;
+        return numA - numB;
+      } else { // result
+        const resultOrder = { passed: 0, failed: 1, cancelled: 2, pending: 3 };
+        const orderA = resultOrder[a.result as keyof typeof resultOrder] ?? 4;
+        const orderB = resultOrder[b.result as keyof typeof resultOrder] ?? 4;
+        if (orderA !== orderB) return orderA - orderB;
+        // Secondary sort by test title
+        if (a.title !== b.title) return a.title.localeCompare(b.title);
+        // Tertiary sort by model
+        const modelA = `${a.provider}/${a.model}`;
+        const modelB = `${b.provider}/${b.model}`;
+        return modelA.localeCompare(modelB);
       }
-
-      const modelGroup = modelGroups.get(modelKey)!;
-      const testKey = `${snapshot.title}-${snapshot.query}`;
-
-      if (!modelGroup.testGroups.has(testKey)) {
-          const virtualTestCase: EvalCase = {
-          _id: `${modelKey}-${testKey}`,
-            evalTestSuiteId: suite._id,
-            createdBy: iteration.createdBy || "",
-          title: snapshot.title,
-          query: snapshot.query,
-          provider: snapshot.provider,
-          model: snapshot.model,
-          expectedToolCalls: snapshot.expectedToolCalls,
-          };
-        modelGroup.testGroups.set(testKey, {
-            testCase: virtualTestCase,
-            iterations: [],
-          });
-        }
-
-      modelGroup.testGroups.get(testKey)!.iterations.push(iteration);
     });
 
-    // Flatten into an array with model headers
-    const result: Array<{
-      testCase: EvalCase | null;
-      iterations: EvalIteration[];
-      isModelHeader?: boolean;
-      modelName?: string;
-      providerName?: string;
-    }> = [];
-
-    modelGroups.forEach((modelGroup) => {
-      // Add model header
-      result.push({
-        testCase: null,
-        iterations: [],
-        isModelHeader: true,
-        modelName: modelGroup.model,
-        providerName: modelGroup.provider,
-      });
-
-      // Add test groups for this model
-      modelGroup.testGroups.forEach((testGroup) => {
-        result.push({
-          testCase: testGroup.testCase,
-          iterations: [...testGroup.iterations].sort((a, b) => {
-          if (a.iterationNumber != null && b.iterationNumber != null) {
-            return a.iterationNumber - b.iterationNumber;
-          }
-          return (a.createdAt ?? 0) - (b.createdAt ?? 0);
-        }),
-        });
-      });
-    });
-
-    return result;
-  }, [selectedRunId, iterationsForSelectedRun, suite._id]);
+    return sorted.map(item => item.iteration);
+  }, [selectedRunId, iterationsForSelectedRun, runDetailSortBy]);
 
   // Data for run detail charts
   const selectedRunChartData = useMemo(() => {
@@ -735,34 +701,59 @@ export function SuiteIterationsView({
       total: stats.total,
     })).sort((a, b) => b.passRate - a.passRate);
 
-    // Calculate duration per test for bar chart
-    const durationData = caseGroupsForSelectedRun.map((group, index) => {
-      const iterations = group.iterations;
-      const passed = iterations.filter((i) => i.result === "passed").length;
-      const failed = iterations.filter((i) => i.result === "failed").length;
-      const pending = iterations.filter((i) => i.result === "pending").length;
-      const cancelled = iterations.filter((i) => i.result === "cancelled").length;
+    // Calculate pass/fail totals and duration data from iterations
+    const testMap = new Map<string, { 
+      title: string; 
+      durations: number[]; 
+      passed: number;
+      failed: number;
+      pending: number;
+      cancelled: number;
+    }>();
 
-      totalPassed += passed;
-      totalFailed += failed;
-      totalPending += pending;
-      totalCancelled += cancelled;
+    caseGroupsForSelectedRun.forEach((iteration) => {
+      const testKey = iteration.testCaseSnapshot?.title || "Unknown";
+      
+      if (!testMap.has(testKey)) {
+        testMap.set(testKey, {
+          title: testKey,
+          durations: [],
+          passed: 0,
+          failed: 0,
+          pending: 0,
+          cancelled: 0,
+        });
+      }
 
-      // Calculate average duration for this test
-      let totalDuration = 0;
-      let durationCount = 0;
-      iterations.forEach((iter) => {
-        const startedAt = iter.startedAt ?? iter.createdAt;
-        const completedAt = iter.updatedAt ?? iter.createdAt;
-        if (startedAt && completedAt && iter.result !== "pending") {
-          totalDuration += Math.max(completedAt - startedAt, 0);
-          durationCount++;
-        }
-      });
-      const avgDuration = durationCount > 0 ? totalDuration / durationCount : 0;
+      const test = testMap.get(testKey)!;
+      
+      if (iteration.result === "passed") test.passed++;
+      else if (iteration.result === "failed") test.failed++;
+      else if (iteration.result === "pending") test.pending++;
+      else if (iteration.result === "cancelled") test.cancelled++;
+
+      const startedAt = iteration.startedAt ?? iteration.createdAt;
+      const completedAt = iteration.updatedAt ?? iteration.createdAt;
+      if (startedAt && completedAt && iteration.result !== "pending") {
+        test.durations.push(Math.max(completedAt - startedAt, 0));
+      }
+    });
+
+    // Calculate totals
+    testMap.forEach((test) => {
+      totalPassed += test.passed;
+      totalFailed += test.failed;
+      totalPending += test.pending;
+      totalCancelled += test.cancelled;
+    });
+
+    const durationData = Array.from(testMap.values()).map((test) => {
+      const avgDuration = test.durations.length > 0 
+        ? test.durations.reduce((sum, d) => sum + d, 0) / test.durations.length 
+        : 0;
 
       return {
-        name: group.testCase?.title || `Test ${index + 1}`,
+        name: test.title,
         duration: avgDuration,
         durationSeconds: avgDuration / 1000,
       };
@@ -1951,45 +1942,56 @@ export function SuiteIterationsView({
             </div>
 
           {/* Test Cases for this Run */}
-          <div className="space-y-4 mt-4">
+          <div className="rounded-xl border bg-card text-card-foreground mt-4">
+            <div className="border-b px-4 py-2 shrink-0 flex items-center justify-between">
+              <div>
+                <div className="text-xs font-semibold">All Iterations</div>
+                <p className="text-xs text-muted-foreground">
+                  All test iterations from this run
+                </p>
+              </div>
+              <select
+                value={runDetailSortBy}
+                onChange={(e) => setRunDetailSortBy(e.target.value as "model" | "test" | "result")}
+                className="text-xs border rounded px-2 py-1 bg-background"
+              >
+                <option value="model">Sort by Model</option>
+                <option value="test">Sort by Test</option>
+                <option value="result">Sort by Result</option>
+              </select>
+            </div>
+            {/* Column Headers */}
+            {caseGroupsForSelectedRun.length > 0 && (
+              <div className="flex items-center gap-4 w-full px-4 py-1.5 bg-muted/30 border-b text-xs font-medium text-muted-foreground pl-7">
+                <div className="flex-1">Test</div>
+                <div className="flex items-center gap-4 shrink-0">
+                  <div className="min-w-[120px]">Model</div>
+                  <div className="min-w-[50px]">Tools</div>
+                  <div className="min-w-[60px]">Tokens</div>
+                  <div className="min-w-[40px] text-right">Duration</div>
+                </div>
+              </div>
+            )}
+            <div className="divide-y">
             {caseGroupsForSelectedRun.length === 0 ? (
-              <div className="rounded-xl border bg-card text-card-foreground px-4 py-12 text-center text-sm text-muted-foreground">
+              <div className="px-4 py-12 text-center text-sm text-muted-foreground">
                 No test cases found for this run.
               </div>
             ) : (
-              caseGroupsForSelectedRun.map((group, index) => {
-                // Render model header
-                if ((group as any).isModelHeader) {
-                  // Find if this is the first model header
-                  const isFirstHeader = index === 0 || !caseGroupsForSelectedRun.slice(0, index).some((g: any) => g.isModelHeader);
-                  return (
-                    <div 
-                      key={`model-header-${index}`} 
-                      className={cn("flex items-center gap-2 px-1", !isFirstHeader && "pt-4")}
-                    >
-                      <h3 className="text-base font-semibold">{(group as any).modelName}</h3>
-                    </div>
-                  );
-                }
-                
-                // Render test case group
+              caseGroupsForSelectedRun.map((iteration) => {
                 return (
-                <TestCaseGroup
-                  key={group.testCase?._id ?? `unassigned-${index}`}
-                  group={group}
-                  index={index}
-                  runs={runs}
-                  openIterationId={openIterationId}
-                  setOpenIterationId={setOpenIterationId}
-                  expandedQueries={expandedQueries}
-                  setExpandedQueries={setExpandedQueries}
-                  getIterationBorderColor={getIterationBorderColor}
-                  showRunLink={false}
-                    hideModelInfo={true}
-                />
+                  <IterationRow
+                    key={iteration._id}
+                    iteration={iteration}
+                    isOpen={openIterationId === iteration._id}
+                    onToggle={() => setOpenIterationId(openIterationId === iteration._id ? null : iteration._id)}
+                    getIterationBorderColor={getIterationBorderColor}
+                    showModelInfo={true}
+                  />
                 );
               })
             )}
+            </div>
           </div>
 
           {/* Run Summary Sidebar */}
@@ -2266,6 +2268,101 @@ function formatDuration(durationMs: number) {
   const hours = Math.floor(minutes / 60);
   const remainingMinutes = minutes % 60;
   return remainingMinutes ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+}
+
+// Simple iteration row component for flat list display
+function IterationRow({
+  iteration,
+  isOpen,
+  onToggle,
+  getIterationBorderColor,
+  showModelInfo = false,
+}: {
+  iteration: EvalIteration;
+  isOpen: boolean;
+  onToggle: () => void;
+  getIterationBorderColor: (result: string) => string;
+  showModelInfo?: boolean;
+}) {
+  const startedAt = iteration.startedAt ?? iteration.createdAt;
+  const completedAt = iteration.updatedAt ?? iteration.createdAt;
+  const durationMs =
+    startedAt && completedAt
+      ? Math.max(completedAt - startedAt, 0)
+      : null;
+  const isPending = iteration.result === "pending";
+  
+  const testInfo = iteration.testCaseSnapshot;
+  const actualToolCalls = iteration.actualToolCalls || [];
+  const modelName = testInfo?.model || "—";
+
+  return (
+    <div
+      className={`relative ${isPending ? "opacity-60" : ""}`}
+    >
+      <div
+        className={`absolute left-0 top-0 h-full w-1 ${getIterationBorderColor(iteration.result)}`}
+      />
+      <button
+        onClick={() => {
+          if (!isPending) {
+            onToggle();
+          }
+        }}
+        disabled={isPending}
+        className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
+          isPending
+            ? "cursor-not-allowed"
+            : "cursor-pointer hover:bg-muted/50"
+        }`}
+      >
+        <div className="flex min-w-0 flex-1 items-center gap-3 pl-2">
+          <div className="text-muted-foreground shrink-0">
+            {isPending ? (
+              <ChevronRight className="h-3.5 w-3.5" />
+            ) : isOpen ? (
+              <ChevronDown className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5" />
+            )}
+          </div>
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <span className="text-xs font-medium truncate">
+              {testInfo?.title || "Iteration"}
+            </span>
+          </div>
+        </div>
+        <div className="flex items-center gap-4 text-xs text-muted-foreground shrink-0">
+          {!isPending && (
+            <>
+              {showModelInfo && (
+                <div className="min-w-[120px] text-left truncate">
+                  <span className="font-mono text-xs">{modelName}</span>
+                </div>
+              )}
+              <div className="min-w-[50px]">
+                <span className="font-mono">{actualToolCalls.length}</span>
+              </div>
+              <div className="min-w-[60px]">
+                <span className="font-mono">{Number(iteration.tokensUsed || 0).toLocaleString()}</span>
+              </div>
+              <div className="font-mono min-w-[40px] text-right">
+                {durationMs !== null ? formatDuration(durationMs) : "—"}
+              </div>
+            </>
+          )}
+          {isPending && (
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-600" />
+          )}
+        </div>
+      </button>
+      {isOpen && !isPending ? (
+        <div className="border-t bg-muted/20 px-4 pb-4 pt-3 pl-8">
+          <IterationDetails iteration={iteration} testCase={null} />
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function TestCaseGroup({
