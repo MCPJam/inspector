@@ -7,7 +7,7 @@ import {
   isMCPJamProvidedModel,
 } from "../../../shared/types";
 import { TextEncoder } from "util";
-import { getDefaultTemperatureByProvider } from "../../../client/src/lib/chat-utils";
+import { getDefaultTemperatureByProvider } from "../../../shared/chat-utils";
 import { createLlmModel } from "../../utils/chat-helpers";
 import { SSEvent } from "../../../shared/sse";
 import type { ModelMessage, ToolSet } from "ai";
