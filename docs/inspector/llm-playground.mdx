@@ -139,6 +139,19 @@ You can configure the system prompt and temperature, just like you would buildin
 
 MCPJam has elicitation support in the LLM playground. Any elicitation requests will be shown as a popup modal.
 
+## MCP-UI support
+
+The playground supports rendering custom UI components from MCP servers using the [MCP-UI specification](https://github.com/modelcontextprotocol/mcp-ui). When an MCP tool returns a UI resource, it will be rendered inline in the chat with interactive capabilities.
+
+MCP-UI components can:
+- Display rich, interactive visualizations
+- Trigger tool calls through button actions
+- Send follow-up messages to the chat
+- Open external links
+- Show notifications
+
+This enables MCP server developers to create custom user experiences beyond plain text responses.
+
 ## OpenAI Apps SDK support
 
 The playground supports rendering custom UI components from MCP tools using the [OpenAI Apps SDK](https://developers.openai.com/apps-sdk). When a tool includes an `openai/outputTemplate` metadata field pointing to a resource URI, the playground will render the custom HTML interface in an isolated iframe with access to the `window.openai` API.
