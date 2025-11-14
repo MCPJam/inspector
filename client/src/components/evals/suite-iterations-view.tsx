@@ -1442,10 +1442,10 @@ export function SuiteIterationsView({
             <>
               {/* Charts Side by Side */}
               <div className="grid gap-4 lg:grid-cols-2">
-                {/* Pass Rate Trend */}
+                {/* Accuracy */}
                 <div className="rounded-xl border bg-card text-card-foreground">
                   <div className="px-4 pt-3 pb-2">
-                    <div className="text-xs font-medium text-muted-foreground">Pass rate trend</div>
+                    <div className="text-xs font-medium text-muted-foreground">Accuracy</div>
                   </div>
                   <div className="px-4 pb-4">
                     {runsLoading ? (
@@ -1513,11 +1513,16 @@ export function SuiteIterationsView({
                             tickLine={false}
                             axisLine={false}
                             tickMargin={8}
-                            tick={{ fontSize: 12 }}
+                            tick={{ fontSize: 11 }}
                             interval={0}
-                            angle={-45}
-                            textAnchor="end"
-                            height={80}
+                            height={40}
+                            tickFormatter={(value) => {
+                              // Truncate long model names
+                              if (value.length > 15) {
+                                return value.substring(0, 12) + '...';
+                              }
+                              return value;
+                            }}
                           />
                           <YAxis
                             domain={[0, 100]}
