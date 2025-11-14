@@ -1,7 +1,6 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { Button } from "@/components/ui/button";
-import { Workflow, CheckCircle2 } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
+import { CheckCircle2 } from "lucide-react";
 import { EMPTY_OAUTH_FLOW_STATE_V2 } from "@/lib/oauth/state-machines/debug-oauth-2025-06-18";
 import {
   OAuthFlowState,
@@ -14,7 +13,6 @@ import {
 } from "@/lib/oauth/state-machines/factory";
 import { DebugMCPOAuthClientProvider } from "@/lib/debug-oauth-provider";
 import { OAuthSequenceDiagram } from "@/components/oauth/OAuthSequenceDiagram";
-import { OAuthFlowLogger } from "@/components/oauth/OAuthFlowLogger";
 import { OAuthAuthorizationModal } from "@/components/oauth/OAuthAuthorizationModal";
 import {
   ResizableHandle,
@@ -29,6 +27,7 @@ import {
   type OAuthTestProfile,
   type OAuthRegistrationStrategy,
 } from "./oauth/types";
+import { OAuthFlowLogger } from "./oauth/OAuthFlowLogger";
 
 const PROFILE_STORAGE_KEY = "mcp-oauth-flow-profile";
 const CLIENT_STORAGE_PREFIX = "mcp-client-";
@@ -272,6 +271,54 @@ export const OAuthFlowTab = () => {
     }
   }, [oauthStateMachine]);
 
+  const handleAdvance = useCallback(async () => {
+    posthog.capture("oauth_flow_tab_next_step_button_clicked", {
+      location: "oauth_flow_tab",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+      currentStep: oauthFlowState.currentStep,
+      protocolVersion,
+      registrationStrategy,
+      hasProfile,
+      targetUrlConfigured: Boolean(profile.serverUrl),
+    });
+
+    if (
+      oauthFlowState.currentStep === "authorization_request" ||
+      oauthFlowState.currentStep === "generate_pkce_parameters"
+    ) {
+      if (oauthFlowState.currentStep === "generate_pkce_parameters") {
+        await proceedToNextStep();
+      }
+      setIsAuthModalOpen(true);
+    } else {
+      await proceedToNextStep();
+    }
+  }, [
+    hasProfile,
+    oauthFlowState.currentStep,
+    proceedToNextStep,
+    profile.serverUrl,
+    protocolVersion,
+    registrationStrategy,
+  ]);
+
+  const continueLabel = !hasProfile
+    ? "Configure Target"
+    : oauthFlowState.currentStep === "complete"
+      ? "Flow Complete"
+      : oauthFlowState.isInitiatingAuth
+        ? "Processing..."
+        : oauthFlowState.currentStep === "authorization_request" ||
+            oauthFlowState.currentStep === "generate_pkce_parameters"
+          ? "Authorize"
+          : "Continue";
+  const continueDisabled =
+    !hasProfile ||
+    !oauthStateMachine ||
+    oauthFlowState.isInitiatingAuth ||
+    oauthFlowState.currentStep === "complete";
+
   useEffect(() => {
     const processOAuthCallback = (code: string, state: string | undefined) => {
       if (processedCodeRef.current === code) {
@@ -364,142 +411,46 @@ export const OAuthFlowTab = () => {
 
   return (
     <div className="h-[calc(100vh-120px)] flex flex-col bg-background">
-      <div className="px-6 py-4 border-b border-border bg-background">
-        <div className="flex flex-wrap items-start justify-between gap-4 max-w-5xl">
-          <div className="flex-1 space-y-2">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-semibold text-foreground">
-                  {hasProfile ? serverIdentifier : "No target configured"}
-                </p>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setIsProfileModalOpen(true)}
-              >
-                {hasProfile ? "Edit Server" : "Configure"}
-              </Button>
-            </div>
-            {hasProfile && (
-              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <span className="rounded-full bg-muted px-2 py-1">
-                  Protocol {protocolVersion}
-                </span>
-                <span className="rounded-full bg-muted px-2 py-1">
-                  {describeRegistrationStrategy(registrationStrategy)}
-                </span>
-              </div>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => resetOAuthFlow()}
-              disabled={oauthFlowState.isInitiatingAuth}
-              aria-label="Reset flow"
-            >
-              ↺
-            </Button>
-            <Button
-              onClick={async () => {
-                posthog.capture("oauth_flow_tab_next_step_button_clicked", {
-                  location: "oauth_flow_tab",
-                  platform: detectPlatform(),
-                  environment: detectEnvironment(),
-                  currentStep: oauthFlowState.currentStep,
-                  protocolVersion,
-                  registrationStrategy,
-                  hasProfile,
-                  targetUrlConfigured: Boolean(profile.serverUrl),
-                });
-
-                if (
-                  oauthFlowState.currentStep === "authorization_request" ||
-                  oauthFlowState.currentStep === "generate_pkce_parameters"
-                ) {
-                  if (
-                    oauthFlowState.currentStep === "generate_pkce_parameters"
-                  ) {
-                    await proceedToNextStep();
-                  }
-                  setIsAuthModalOpen(true);
-                } else {
-                  await proceedToNextStep();
-                }
-              }}
-              disabled={
-                !oauthStateMachine ||
-                oauthFlowState.isInitiatingAuth ||
-                oauthFlowState.currentStep === "complete"
-              }
-              className={`min-w-[140px] ${oauthFlowState.currentStep === "complete" ? "bg-green-600 hover:bg-green-600" : ""}`}
-            >
-              {oauthFlowState.currentStep === "complete" ? (
-                <>
-                  <CheckCircle2 className="mr-2 h-4 w-4" />
-                  Flow Complete
-                </>
-              ) : oauthFlowState.isInitiatingAuth ? (
-                "Processing..."
-              ) : oauthFlowState.currentStep === "authorization_request" ||
-                oauthFlowState.currentStep === "generate_pkce_parameters" ? (
-                "Authorize"
-              ) : (
-                "Next Step"
-              )}
-            </Button>
-          </div>
-        </div>
-      </div>
-
       <div className="flex-1 overflow-hidden">
-        {hasProfile ? (
-          <ResizablePanelGroup direction="horizontal" className="h-full">
-            <ResizablePanel defaultSize={50} minSize={30}>
-              <OAuthSequenceDiagram
-                flowState={oauthFlowState}
-                registrationStrategy={registrationStrategy}
-                protocolVersion={protocolVersion}
-                focusedStep={focusedStep}
-              />
-            </ResizablePanel>
+        <ResizablePanelGroup direction="horizontal" className="h-full">
+          <ResizablePanel defaultSize={50} minSize={30}>
+            <OAuthSequenceDiagram
+              flowState={oauthFlowState}
+              registrationStrategy={registrationStrategy}
+              protocolVersion={protocolVersion}
+              focusedStep={focusedStep}
+            />
+          </ResizablePanel>
 
-            <ResizableHandle withHandle />
+          <ResizableHandle withHandle />
 
-            <ResizablePanel defaultSize={50} minSize={20} maxSize={50}>
-              <OAuthFlowLogger
-                oauthFlowState={oauthFlowState}
-                onClearLogs={clearInfoLogs}
-                onClearHttpHistory={clearHttpHistory}
-                activeStep={focusedStep ?? oauthFlowState.currentStep}
-                onFocusStep={setFocusedStep}
-              />
-            </ResizablePanel>
-          </ResizablePanelGroup>
-        ) : (
-          <div className="h-full flex items-center justify-center">
-            <Card className="max-w-lg">
-              <CardContent className="pt-12 pb-12 text-center space-y-4">
-                <div className="mx-auto w-12 h-12 bg-muted rounded-full flex items-center justify-center">
-                  <Workflow className="h-6 w-6 text-muted-foreground" />
-                </div>
-                <div className="space-y-2">
-                  <h3 className="text-lg font-medium">No target configured</h3>
-                  <p className="text-sm text-muted-foreground">
-                    Provide an MCP server URL to visualize the OAuth
-                    authorization sequence. You can paste any URL and supply
-                    optional client credentials.
-                  </p>
-                </div>
-                <Button onClick={() => setIsProfileModalOpen(true)}>
-                  Configure OAuth target
-                </Button>
-              </CardContent>
-            </Card>
-          </div>
-        )}
+          <ResizablePanel defaultSize={50} minSize={20} maxSize={50}>
+            <OAuthFlowLogger
+              oauthFlowState={oauthFlowState}
+              onClearLogs={clearInfoLogs}
+              onClearHttpHistory={clearHttpHistory}
+              activeStep={focusedStep ?? oauthFlowState.currentStep}
+              onFocusStep={setFocusedStep}
+              summary={{
+                label: hasProfile ? serverIdentifier : "No target configured",
+                description: headerDescription,
+                protocol: hasProfile ? protocolVersion : undefined,
+                registration: hasProfile
+                  ? describeRegistrationStrategy(registrationStrategy)
+                  : undefined,
+                step: oauthFlowState.currentStep,
+              }}
+              actions={{
+                onConfigure: () => setIsProfileModalOpen(true),
+                onReset: hasProfile ? () => resetOAuthFlow() : undefined,
+                onContinue: continueDisabled ? undefined : handleAdvance,
+                continueLabel,
+                continueDisabled,
+                resetDisabled: !hasProfile || oauthFlowState.isInitiatingAuth,
+              }}
+            />
+          </ResizablePanel>
+        </ResizablePanelGroup>
       </div>
 
       {oauthFlowState.authorizationUrl && (

@@ -176,7 +176,6 @@ export default function App() {
             activeTab === "resources" ||
             activeTab === "prompts" ||
             activeTab === "auth" ||
-            activeTab === "oauth-flow" ||
             activeTab === "chat" ||
             activeTab === "chat-v2" ||
             activeTab === "interceptor") && (
@@ -190,7 +189,7 @@ export default function App() {
               }
               onMultiServerToggle={toggleServerSelection}
               selectedMultipleServers={appState.selectedMultipleServers}
-              showOnlyOAuthServers={activeTab === "oauth-flow"}
+              showOnlyOAuthServers={false}
             />
           )}
 
