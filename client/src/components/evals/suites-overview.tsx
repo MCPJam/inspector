@@ -204,7 +204,7 @@ export function SuitesOverview({
                       )}
                     >
                       {isRerunning
-                        ? "Rerunning..."
+                        ? "Running..."
                         : canRerun
                           ? "Rerun suite"
                           : `Missing servers: ${missingServers.join(", ")}`}
