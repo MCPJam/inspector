@@ -9,9 +9,10 @@ icon: "lock"
 The OAuth implementation uses:
 
 - **Client-side state machine** for flow orchestration
-- **CORS proxy server** for metadata discovery
+- **CORS proxy server** for metadata discovery and SSE handling
 - **localStorage** for persistence
 - **MCP SDK** for OAuth operations
+- **Multi-protocol support** for 2025-03-26, 2025-06-18, and 2025-11-25 specifications
 
 ## Complete OAuth Flow
 
@@ -204,6 +205,32 @@ graph LR
     style B fill:#fff4e1
 ```
 
+## Protocol Versions
+
+The OAuth debugger supports three MCP OAuth protocol versions:
+
+### 2025-03-26 (Original)
+
+- Direct RFC8414 discovery from MCP server base URL
+- Fallback to default endpoints (`/authorize`, `/token`, `/register`)
+- PKCE **required** for all clients
+- No Protected Resource Metadata (RFC9728)
+- Registration: DCR (SHOULD) or pre-registered
+
+### 2025-06-18 (Current)
+
+- Protected Resource Metadata (RFC9728) required
+- RFC8414 discovery with root fallback
+- PKCE recommended but not strictly enforced
+- Registration: DCR (SHOULD) or pre-registered
+
+### 2025-11-25 (Draft)
+
+- Client ID Metadata Documents (CIMD) support
+- RFC8414 or OIDC discovery without root fallback
+- PKCE strictly required and enforced
+- Registration: CIMD (SHOULD), DCR, or pre-registered
+
 ## Key Components
 
 ### 1. MCPOAuthProvider
@@ -249,16 +276,19 @@ Manages the step-by-step OAuth flow:
 - Updates UI state via callbacks
 - Validates preconditions before transitions
 
-### 3. CORS Proxy
+### 3. Debug Proxy
 
 **Location:** `server/routes/mcp/oauth.ts:10`
 
-Proxies OAuth metadata requests to bypass CORS:
+Proxies OAuth and MCP requests to bypass CORS:
 
 - Enforces HTTPS for security
 - Adds proper CORS headers
 - Validates URL format
 - Returns OAuth metadata JSON
+- Handles SSE (Server-Sent Events) responses
+- Detects legacy HTTP+SSE transport (2024-11-05)
+- Parses SSE streams and extracts endpoint events
 
 ### 4. Fetch Interceptor
 
@@ -397,12 +427,17 @@ clearOAuthData(serverName);
 
 ## File References
 
-| Component        | Location                                |
-| ---------------- | --------------------------------------- |
-| OAuth Flow Types | `client/src/lib/oauth-flow-types.ts`    |
-| State Machine    | `client/src/lib/oauth-state-machine.ts` |
-| OAuth Provider   | `client/src/lib/mcp-oauth.ts`           |
-| CORS Proxy       | `server/routes/mcp/oauth.ts`            |
+| Component                  | Location                                                      |
+| -------------------------- | ------------------------------------------------------------- |
+| OAuth Flow Types           | `client/src/lib/oauth/state-machines/types.ts`                |
+| State Machine Factory      | `client/src/lib/oauth/state-machines/factory.ts`              |
+| 2025-03-26 State Machine   | `client/src/lib/oauth/state-machines/debug-oauth-2025-03-26.ts` |
+| 2025-06-18 State Machine   | `client/src/lib/oauth/state-machines/debug-oauth-2025-06-18.ts` |
+| 2025-11-25 State Machine   | `client/src/lib/oauth/state-machines/debug-oauth-2025-11-25.ts` |
+| OAuth Provider             | `client/src/lib/mcp-oauth.ts`                                 |
+| Debug Proxy                | `server/routes/mcp/oauth.ts`                                  |
+| OAuth Flow UI              | `client/src/components/OAuthFlowTab.tsx`                      |
+| OAuth Sequence Diagram     | `client/src/components/OAuthSequenceDiagram.tsx`              |
 
 <Note>
   The OAuth implementation follows the MCP specification and uses PKCE for
