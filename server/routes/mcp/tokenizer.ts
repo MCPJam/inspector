@@ -17,6 +17,18 @@ const tokenizer = new Hono();
 function mapModelIdToTokenizerBackend(modelId: string): string | null {
   // Handle special cases that require transformations or fallbacks
   switch (modelId) {
+    // Anthropic special cases
+    case "anthropic/claude-opus-4-0":
+      return "anthropic/claude-opus-4";
+    case "anthropic/claude-sonnet-4-0":
+      return "anthropic/claude-sonnet-4";
+    case "anthropic/claude-3-7-sonnet-latest":
+      return "anthropic/claude-3.7-sonnet";
+    case "anthropic/claude-3-5-sonnet-latest":
+      return "anthropic/claude-3.5-sonnet";
+    case "anthropic/claude-3-5-haiku-latest":
+      return "anthropic/claude-3.5-haiku";
+
     // OpenAI special cases
     case "gpt-4":
       // Fallback to turbo
@@ -147,7 +159,6 @@ tokenizer.post("/count-tools", async (c) => {
 
     // Map model ID to backend-recognized format
     const mappedModelId = mapModelIdToTokenizerBackend(modelId);
-    console.log("mappedModelId", mappedModelId);
     const useBackendTokenizer = mappedModelId !== null;
 
     await Promise.all(
