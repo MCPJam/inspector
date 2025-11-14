@@ -125,6 +125,7 @@ const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
   "openai/gpt-5",
   "openai/gpt-5-mini",
   "google/gemini-2.5-flash-preview-09-2025",
+  "moonshotai/kimi-k2-thinking",
   "moonshotai/kimi-k2-0905",
   "google/gemini-2.5-flash",
   "z-ai/glm-4.6",
@@ -432,6 +433,12 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     name: "Gemini 2.5 Flash Preview (Free)",
     provider: "google",
     contextLength: 1048576,
+  },
+  {
+    id: "moonshotai/kimi-k2-thinking",
+    name: "Kimi K2 Thinking (Free)",
+    provider: "moonshotai",
+    contextLength: 262144,
   },
   {
     id: "moonshotai/kimi-k2-0905",
