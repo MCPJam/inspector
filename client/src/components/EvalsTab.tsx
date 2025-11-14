@@ -314,6 +314,8 @@ export function EvalsTab() {
 
   const [deletingSuiteId, setDeletingSuiteId] = useState<string | null>(null);
   const [suiteToDelete, setSuiteToDelete] = useState<EvalSuite | null>(null);
+  const [deletingRunId, setDeletingRunId] = useState<string | null>(null);
+  const [runToDelete, setRunToDelete] = useState<string | null>(null);
   const [selectedTestId, setSelectedTestId] = useState<string | null>(null);
   const [expandedSuites, setExpandedSuites] = useState<Set<string>>(new Set());
 
@@ -354,6 +356,7 @@ export function EvalsTab() {
   const { getToken, hasToken } = useAiProviderKeys();
 
   const deleteSuiteMutation = useMutation("evals:deleteSuite" as any);
+  const deleteRunMutation = useMutation("evals:deleteSuiteRun" as any);
   const cancelRunMutation = useMutation("evals:cancelSuiteRun" as any);
 
   useEffect(() => {
@@ -616,6 +619,45 @@ export function EvalsTab() {
     [cancellingRunId, cancelRunMutation],
   );
 
+  // Delete run handler - opens confirmation modal (for single run from detail view)
+  const handleDeleteRun = useCallback(
+    (runId: string) => {
+      if (deletingRunId) return;
+      setRunToDelete(runId);
+    },
+    [deletingRunId],
+  );
+
+  // Direct delete function - actually performs the deletion (for batch delete)
+  const directDeleteRun = useCallback(async (runId: string) => {
+    try {
+      await deleteRunMutation({ runId });
+    } catch (error) {
+      console.error("Failed to delete run:", error);
+      throw error;
+    }
+  }, [deleteRunMutation]);
+
+  // Confirm run deletion - actually performs the deletion
+  const confirmDeleteRun = useCallback(async () => {
+    if (!runToDelete || deletingRunId) return;
+
+    setDeletingRunId(runToDelete);
+
+    try {
+      await deleteRunMutation({ runId: runToDelete });
+      toast.success("Run deleted successfully");
+      setRunToDelete(null);
+    } catch (error) {
+      console.error("Failed to delete run:", error);
+      toast.error(
+        error instanceof Error ? error.message : "Failed to delete run",
+      );
+    } finally {
+      setDeletingRunId(null);
+    }
+  }, [runToDelete, deletingRunId, deleteRunMutation]);
+
   // Handle eval run success - navigate back to results view
   const handleEvalRunSuccess = useCallback(() => {
     setView("results");
@@ -827,10 +869,13 @@ export function EvalsTab() {
                   onRerun={handleRerun}
                   onCancelRun={handleCancelRun}
                   onDelete={handleDelete}
+                  onDeleteRun={handleDeleteRun}
+                  onDirectDeleteRun={directDeleteRun}
                   connectedServerNames={connectedServerNames}
                   rerunningSuiteId={rerunningSuiteId}
                   cancellingRunId={cancellingRunId}
                   deletingSuiteId={deletingSuiteId}
+                  deletingRunId={deletingRunId}
                   availableModels={availableModels}
                   selectedTestId={selectedTestId}
                   onTestIdChange={setSelectedTestId}
@@ -842,7 +887,7 @@ export function EvalsTab() {
       )}
 
 
-      {/* Delete Confirmation Modal */}
+      {/* Delete Suite Confirmation Modal */}
       <Dialog open={!!suiteToDelete} onOpenChange={(open) => !open && setSuiteToDelete(null)}>
         <DialogContent>
           <DialogHeader>
@@ -876,6 +921,41 @@ export function EvalsTab() {
               disabled={!!deletingSuiteId}
             >
               {deletingSuiteId ? "Deleting..." : "Delete Suite"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Run Confirmation Modal */}
+      <Dialog open={!!runToDelete} onOpenChange={(open) => !open && setRunToDelete(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-destructive" />
+              Delete Run
+            </DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete this run?
+              <br />
+              <br />
+              This will permanently delete all iterations and results
+              associated with this run. This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setRunToDelete(null)}
+              disabled={!!deletingRunId}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={confirmDeleteRun}
+              disabled={!!deletingRunId}
+            >
+              {deletingRunId ? "Deleting..." : "Delete Run"}
             </Button>
           </DialogFooter>
         </DialogContent>

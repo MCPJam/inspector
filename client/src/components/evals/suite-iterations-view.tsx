@@ -1,13 +1,22 @@
 import { useMemo, useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
-import { ChevronDown, ChevronRight, Loader2, RotateCw, Trash2, X } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, Loader2, RotateCw, Trash2, X } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -44,10 +53,13 @@ export function SuiteIterationsView({
   onRerun,
   onCancelRun,
   onDelete,
+  onDeleteRun,
+  onDirectDeleteRun,
   connectedServerNames,
   rerunningSuiteId,
   cancellingRunId,
   deletingSuiteId,
+  deletingRunId,
   availableModels,
   selectedTestId,
   onTestIdChange,
@@ -62,10 +74,13 @@ export function SuiteIterationsView({
   onRerun: (suite: EvalSuite) => void;
   onCancelRun: (runId: string) => void;
   onDelete: (suite: EvalSuite) => void;
+  onDeleteRun: (runId: string) => void;
+  onDirectDeleteRun: (runId: string) => Promise<void>;
   connectedServerNames: Set<string>;
   rerunningSuiteId: string | null;
   cancellingRunId: string | null;
   deletingSuiteId: string | null;
+  deletingRunId: string | null;
   availableModels: any[];
   selectedTestId: string | null;
   onTestIdChange: (testId: string | null) => void;
@@ -75,8 +90,49 @@ export function SuiteIterationsView({
     new Set(),
   );
   const [activeTab, setActiveTab] = useState<"runs" | "edit">("runs");
+  const [selectedRunIds, setSelectedRunIds] = useState<Set<string>>(new Set());
+  const [showBatchDeleteModal, setShowBatchDeleteModal] = useState(false);
   const [viewMode, setViewMode] = useState<"overview" | "run-detail" | "test-detail">("overview");
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+
+  // Handlers for batch run selection
+  const toggleRunSelection = (runId: string) => {
+    setSelectedRunIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(runId)) {
+        next.delete(runId);
+      } else {
+        next.add(runId);
+      }
+      return next;
+    });
+  };
+
+  const toggleAllRuns = () => {
+    if (selectedRunIds.size === runs.length) {
+      setSelectedRunIds(new Set());
+    } else {
+      setSelectedRunIds(new Set(runs.map((r) => r._id)));
+    }
+  };
+
+  const confirmBatchDeleteRuns = () => {
+    const runIds = Array.from(selectedRunIds);
+    if (runIds.length === 0) return;
+
+    // Delete all selected runs using the direct delete function
+    Promise.all(runIds.map((runId) => onDirectDeleteRun(runId)))
+      .then(() => {
+        setSelectedRunIds(new Set());
+        setShowBatchDeleteModal(false);
+        toast.success(`Deleted ${runIds.length} run(s) successfully`);
+      })
+      .catch((error) => {
+        console.error("Failed to delete runs:", error);
+        toast.error("Failed to delete some runs");
+        setShowBatchDeleteModal(false);
+      });
+  };
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState(suite.name);
 
@@ -1513,12 +1569,42 @@ export function SuiteIterationsView({
 
               {/* Runs List */}
             <div className="rounded-xl border bg-card text-card-foreground flex flex-col max-h-[600px]">
-              <div className="border-b px-4 py-3 shrink-0">
-                <div className="text-sm font-semibold">Runs</div>
-                <p className="text-xs text-muted-foreground">
-                  Click on a run to view its test breakdown and results.
-                </p>
-              </div>
+              {selectedRunIds.size > 0 ? (
+                <div className="border-b px-4 py-3 shrink-0 bg-muted/50 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <Checkbox
+                      checked={selectedRunIds.size === runs.length}
+                      onCheckedChange={toggleAllRuns}
+                      aria-label="Select all runs"
+                    />
+                    <span className="text-sm font-medium">{selectedRunIds.size} {selectedRunIds.size === 1 ? 'item' : 'items'} selected</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setSelectedRunIds(new Set())}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => setShowBatchDeleteModal(true)}
+                      disabled={deletingRunId !== null}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="border-b px-4 py-3 shrink-0">
+                  <div className="text-sm font-semibold">Runs</div>
+                  <p className="text-xs text-muted-foreground">
+                    Click on a run to view its test breakdown and results.
+                  </p>
+                </div>
+              )}
               <div className="divide-y overflow-y-auto">
             {runs.length === 0 ? (
               <div className="px-4 py-12 text-center text-sm text-muted-foreground">
@@ -1556,48 +1642,60 @@ export function SuiteIterationsView({
                   : run.status === "cancelled" ? "cancelled" : "pending");
                 const runBorderColor = getIterationBorderColor(runResult);
 
+                const isSelected = selectedRunIds.has(run._id);
+
                 const runButton = (
-                  <button
-                    onClick={() => {
-                      setSelectedRunId(run._id);
-                      setViewMode("run-detail");
-                    }}
-                    className="flex w-full flex-col gap-2 px-4 py-3 pl-5 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-sm font-medium">Run {formatRunId(run._id)}</span>
-                          <span className="text-xs text-muted-foreground">{timestamp}</span>
-                        </div>
-                        {isRunning && (
-                          <div className="flex items-center gap-1.5 rounded-full bg-amber-100 dark:bg-amber-950 px-2 py-0.5">
-                            <div className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
-                            <span className="text-xs font-medium text-amber-700 dark:text-amber-400">Running</span>
+                  <div className="flex items-start gap-3 w-full">
+                    <div className="pt-3 pl-4">
+                      <Checkbox
+                        checked={isSelected}
+                        onCheckedChange={() => toggleRunSelection(run._id)}
+                        onClick={(e) => e.stopPropagation()}
+                        aria-label={`Select run ${formatRunId(run._id)}`}
+                      />
+                    </div>
+                    <button
+                      onClick={() => {
+                        setSelectedRunId(run._id);
+                        setViewMode("run-detail");
+                      }}
+                      className="flex flex-1 flex-col gap-2 py-3 pr-4 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-sm font-medium">Run {formatRunId(run._id)}</span>
+                            <span className="text-xs text-muted-foreground">{timestamp}</span>
                           </div>
+                          {isRunning && (
+                            <div className="flex items-center gap-1.5 rounded-full bg-amber-100 dark:bg-amber-950 px-2 py-0.5">
+                              <div className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+                              <span className="text-xs font-medium text-amber-700 dark:text-amber-400">Running</span>
+                            </div>
+                          )}
+                        </div>
+                        {passRate !== null && (
+                          <span className="text-sm font-semibold tabular-nums">
+                            {passRate}%
+                          </span>
                         )}
                       </div>
-                      {passRate !== null && (
-                        <span className="text-sm font-semibold tabular-nums">
-                          {passRate}%
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                      <div className="flex items-center gap-1">
-                        <span className="font-medium">Duration:</span>
-                        <span className="font-mono">{duration}</span>
+                      <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                        <div className="flex items-center gap-1">
+                          <span className="font-medium">Duration:</span>
+                          <span className="font-mono">{duration}</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="font-medium">Passed:</span>
+                          <span className="font-mono text-emerald-600">{passed}</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="font-medium">Failed:</span>
+                          <span className="font-mono text-red-600">{failed}</span>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-1">
-                        <span className="font-medium">Passed:</span>
-                        <span className="font-mono text-emerald-600">{passed}</span>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <span className="font-medium">Failed:</span>
-                        <span className="font-mono text-red-600">{failed}</span>
-                      </div>
-                    </div>
-                  </button>
+                    </button>
+                  </div>
                 );
 
                 return (
@@ -1634,11 +1732,37 @@ export function SuiteIterationsView({
             <>
           {/* Run Detail View */}
           <div className="rounded-xl border bg-card text-card-foreground">
-            <div className="border-b px-4 py-3">
-              <div className="text-sm font-semibold">Run {formatRunId(selectedRunDetails._id)}</div>
-              <p className="text-xs text-muted-foreground">
-                {formatTime(selectedRunDetails.completedAt ?? selectedRunDetails.createdAt)}
-              </p>
+            <div className="border-b px-4 py-3 flex items-center justify-between">
+              <div>
+                <div className="text-sm font-semibold">Run {formatRunId(selectedRunDetails._id)}</div>
+                <p className="text-xs text-muted-foreground">
+                  {formatTime(selectedRunDetails.completedAt ?? selectedRunDetails.createdAt)}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setViewMode("overview");
+                    setSelectedRunId(null);
+                  }}
+                  className="gap-2"
+                >
+                  <X className="h-4 w-4" />
+                  Close
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onDeleteRun(selectedRunDetails._id)}
+                  disabled={deletingRunId === selectedRunDetails._id}
+                  className="gap-2 text-destructive hover:text-destructive"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  {deletingRunId === selectedRunDetails._id ? "Deleting..." : "Delete"}
+                </Button>
+              </div>
             </div>
             {(selectedRunChartData.donutData.length > 0 || selectedRunChartData.durationData.length > 0) && (
               <div className="border-b px-4 py-4">
@@ -1920,6 +2044,41 @@ export function SuiteIterationsView({
           <SuiteTestsConfig suite={suite} onUpdate={handleUpdateTests} availableModels={availableModels} />
         </TabsContent>
       </Tabs>
+
+      {/* Batch Delete Runs Confirmation Modal */}
+      <Dialog open={showBatchDeleteModal} onOpenChange={setShowBatchDeleteModal}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-destructive" />
+              Delete {selectedRunIds.size} Run{selectedRunIds.size !== 1 ? 's' : ''}
+            </DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete {selectedRunIds.size} run{selectedRunIds.size !== 1 ? 's' : ''}?
+              <br />
+              <br />
+              This will permanently delete all iterations and results
+              associated with {selectedRunIds.size === 1 ? 'this run' : 'these runs'}. This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowBatchDeleteModal(false)}
+              disabled={deletingRunId !== null}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={confirmBatchDeleteRuns}
+              disabled={deletingRunId !== null}
+            >
+              {deletingRunId ? "Deleting..." : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
