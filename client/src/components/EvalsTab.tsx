@@ -820,7 +820,7 @@ export function EvalsTab() {
                   suite={selectedSuite}
                   cases={suiteDetails?.testCases || []}
                   iterations={activeIterations}
-                  allIterations={activeIterations}
+                  allIterations={sortedIterations}
                   runs={runsForSelectedSuite}
                   runsLoading={isSuiteRunsLoading}
                   aggregate={suiteAggregate}
