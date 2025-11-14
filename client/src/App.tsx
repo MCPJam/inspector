@@ -248,14 +248,7 @@ export default function App() {
             />
           )}
 
-          {activeTab === "oauth-flow" && (
-            <OAuthFlowTab
-              serverConfig={selectedMCPConfig}
-              serverEntry={appState.servers[appState.selectedServer]}
-              serverName={appState.selectedServer}
-              onUpdate={handleUpdate}
-            />
-          )}
+          {activeTab === "oauth-flow" && <OAuthFlowTab />}
 
           {activeTab === "chat" && (
             <ChatTab
