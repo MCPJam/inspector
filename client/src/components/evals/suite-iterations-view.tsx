@@ -1073,16 +1073,43 @@ export function SuiteIterationsView({
                 <BarChart3 className="h-4 w-4" />
                 View run summary
               </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => onRerun(suite)}
-                disabled={rerunningSuiteId === suite._id}
-                className="gap-2"
-              >
-                <RotateCw className={cn("h-4 w-4", rerunningSuiteId === suite._id && "animate-spin")} />
-                {rerunningSuiteId === suite._id ? "Running..." : "Rerun"}
-              </Button>
+              {selectedRunDetails.status === "running" || selectedRunDetails.status === "pending" ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => onCancelRun(selectedRunDetails._id)}
+                      disabled={cancellingRunId === selectedRunDetails._id}
+                      className="gap-2"
+                    >
+                      {cancellingRunId === selectedRunDetails._id ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Cancelling...
+                        </>
+                      ) : (
+                        <>
+                          <X className="h-4 w-4" />
+                          Cancel run
+                        </>
+                      )}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Cancel the current evaluation run</TooltipContent>
+                </Tooltip>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onRerun(suite)}
+                  disabled={rerunningSuiteId === suite._id}
+                  className="gap-2"
+                >
+                  <RotateCw className={cn("h-4 w-4", rerunningSuiteId === suite._id && "animate-spin")} />
+                  {rerunningSuiteId === suite._id ? "Running..." : "Rerun"}
+                </Button>
+              )}
               <Button
                 variant="outline"
                 size="sm"
