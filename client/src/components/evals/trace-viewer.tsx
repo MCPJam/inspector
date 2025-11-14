@@ -294,10 +294,26 @@ function TracePart({ part }: { part: ContentPart }) {
     );
   }
 
-  if (part.type === "reasoning" && part.text) {
+  if (part.type === "reasoning") {
+    // Reasoning parts may have empty text - they're just hidden reasoning tokens
+    // OpenAI o1 models return these with encrypted/hidden content
+    if (!part.text) {
+      return (
+        <div className="rounded-lg border border-border/30 bg-muted/10 px-3 py-2 text-xs text-muted-foreground italic flex items-center gap-2">
+          <span className="inline-block h-2 w-2 rounded-full bg-purple-500/60 animate-pulse" />
+          Model used internal reasoning (content not visible)
+        </div>
+      );
+    }
     return (
-      <div className="rounded-lg border border-border/30 bg-muted/10 p-3 text-xs text-muted-foreground">
-        <pre className="whitespace-pre-wrap break-words">{part.text}</pre>
+      <div className="rounded-lg border border-purple-500/20 bg-purple-500/5 p-3 text-xs">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="inline-block h-2 w-2 rounded-full bg-purple-500/60" />
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-purple-700 dark:text-purple-400">
+            Reasoning
+          </span>
+        </div>
+        <pre className="whitespace-pre-wrap break-words text-muted-foreground leading-relaxed">{part.text}</pre>
       </div>
     );
   }

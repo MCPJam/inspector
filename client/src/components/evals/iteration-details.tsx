@@ -1,11 +1,8 @@
 import { useAction } from "convex/react";
-import { Badge } from "@/components/ui/badge";
 import { useEffect, useState } from "react";
-import { formatTime } from "./helpers";
 import { EvalIteration, EvalCase } from "./types";
 import { TraceViewer } from "./trace-viewer";
-import { ToolCallsDisplay } from "./tool-calls-display";
-import { CheckCircle2, XCircle, AlertCircle } from "lucide-react";
+import { MessageSquare, Code2 } from "lucide-react";
 
 export function IterationDetails({
   iteration,
@@ -21,6 +18,7 @@ export function IterationDetails({
   const [blob, setBlob] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [toolViewMode, setToolViewMode] = useState<"formatted" | "raw">("formatted");
 
   useEffect(() => {
     let cancelled = false;
@@ -54,117 +52,156 @@ export function IterationDetails({
   const expectedToolCalls = testCase?.expectedToolCalls || iteration.testCaseSnapshot?.expectedToolCalls || [];
   const actualToolCalls = iteration.actualToolCalls || [];
 
-  // Check if arguments match for each tool
-  const getToolStatus = (toolName: string) => {
-    const expected = expectedToolCalls.find((t) => t.toolName === toolName);
-    const actual = actualToolCalls.find((t) => t.toolName === toolName);
-
-    if (!expected && actual) return "unexpected";
-    if (expected && !actual) return "missing";
-    if (expected && actual) {
-      // Check if arguments match
-      const expectedArgs = expected.arguments || {};
-      const actualArgs = actual.arguments || {};
-
-      // If no expected args, any args are fine
-      if (Object.keys(expectedArgs).length === 0) return "match";
-
-      // Check if all expected args match
-      for (const [key, value] of Object.entries(expectedArgs)) {
-        if (JSON.stringify(actualArgs[key]) !== JSON.stringify(value)) {
-          return "argument-mismatch";
-        }
-      }
-      return "match";
+  // Helper to render arguments in a readable format
+  const renderArguments = (args: Record<string, any>) => {
+    const entries = Object.entries(args);
+    if (entries.length === 0) {
+      return <span className="text-muted-foreground italic">No arguments</span>;
     }
-    return "unknown";
+    return (
+      <div className="space-y-1">
+        {entries.map(([key, value]) => (
+          <div key={key} className="flex items-start gap-2">
+            <span className="font-medium text-foreground">{key}:</span>
+            <span className="font-mono text-muted-foreground">
+              {typeof value === 'object' ? JSON.stringify(value) : String(value)}
+            </span>
+          </div>
+        ))}
+      </div>
+    );
   };
 
   return (
     <div className="space-y-4 py-2">
-      {/* Tool Calls Comparison */}
-      <div className="space-y-2">
-        <div className="text-xs font-semibold">Tool Calls Comparison</div>
-        <div className="grid gap-3 md:grid-cols-2">
-          {/* Expected */}
-          <div className="rounded-md border border-border/40 bg-muted/10 p-3 space-y-2">
-            <div className="text-xs font-medium text-muted-foreground uppercase">
-              Expected
-            </div>
-            {expectedToolCalls.length === 0 ? (
-              <div className="text-xs text-muted-foreground italic">
-                No expected tool calls
-              </div>
-            ) : (
-              <pre className="text-xs font-mono bg-background/50 rounded p-2 overflow-x-auto">
-                {JSON.stringify(expectedToolCalls, null, 2)}
-              </pre>
-            )}
-          </div>
-
-          {/* Actual */}
-          <div className="rounded-md border border-border/40 bg-muted/10 p-3 space-y-2">
-            <div className="text-xs font-medium text-muted-foreground uppercase">
-              Actual
-            </div>
-            {actualToolCalls.length === 0 ? (
-              <div className="text-xs text-muted-foreground italic">
-                No tool calls made
-              </div>
-            ) : (
-              <pre className="text-xs font-mono bg-background/50 rounded p-2 overflow-x-auto">
-                {JSON.stringify(actualToolCalls, null, 2)}
-              </pre>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Status Indicators */}
+      {/* Tool Calls Comparison & Status */}
       {(expectedToolCalls.length > 0 || actualToolCalls.length > 0) && (
         <div className="space-y-2">
-          <div className="text-xs font-semibold">Status</div>
-          <div className="space-y-1.5">
-            {/* Check each expected tool */}
-            {expectedToolCalls.map((tool, idx) => {
-              const status = getToolStatus(tool.toolName);
-              return (
-                <div
-                  key={`expected-${idx}`}
-                  className="flex items-start gap-2 text-xs"
-                >
-                  <div>
-                    <span className="font-mono font-medium">{tool.toolName}</span>
-                    {status === "match" && (
-                      <span className="text-green-600 ml-2">Called with correct arguments</span>
-                    )}
-                    {status === "missing" && (
-                      <span className="text-red-600 ml-2">Not called</span>
-                    )}
-                    {status === "argument-mismatch" && (
-                      <span className="text-yellow-600 ml-2">Called with incorrect arguments</span>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-
-            {/* Check for unexpected tools */}
-            {actualToolCalls
-              .filter((actual) => !expectedToolCalls.some((exp) => exp.toolName === actual.toolName))
-              .map((tool, idx) => (
-                <div
-                  key={`unexpected-${idx}`}
-                  className="flex items-start gap-2 text-xs"
-                >
-                  <AlertCircle className="h-4 w-4 text-yellow-600 flex-shrink-0 mt-0.5" />
-                  <div>
-                    <span className="font-mono font-medium">{tool.toolName}</span>
-                    <span className="text-yellow-600 ml-2">⚠ Unexpected tool call</span>
-                  </div>
-                </div>
-              ))}
+          <div className="flex items-center justify-between border-b border-border/40 pb-2">
+            <div className="text-xs font-semibold">Tool Calls</div>
+            <div className="flex items-center gap-1 rounded-md border border-border/40 bg-background p-0.5">
+              <button
+                type="button"
+                onClick={() => setToolViewMode("formatted")}
+                className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
+                  toolViewMode === "formatted"
+                    ? "bg-primary/10 text-foreground font-medium"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+                title="Formatted view"
+              >
+                <MessageSquare className="h-3 w-3" />
+                Formatted
+              </button>
+              <button
+                type="button"
+                onClick={() => setToolViewMode("raw")}
+                className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
+                  toolViewMode === "raw"
+                    ? "bg-primary/10 text-foreground font-medium"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+                title="Raw JSON view"
+              >
+                <Code2 className="h-3 w-3" />
+                Raw
+              </button>
+            </div>
           </div>
+
+          {toolViewMode === "raw" ? (
+            <div className="grid gap-3 md:grid-cols-2">
+              {/* Expected */}
+              <div className="rounded-md border border-border/40 bg-muted/10 p-3 space-y-2">
+                <div className="text-xs font-medium text-muted-foreground uppercase">
+                  Expected
+                </div>
+                {expectedToolCalls.length === 0 ? (
+                  <div className="text-xs text-muted-foreground italic">
+                    No expected tool calls
+                  </div>
+                ) : (
+                  <pre className="text-xs font-mono bg-background/50 rounded p-2 overflow-x-auto">
+                    {JSON.stringify(expectedToolCalls, null, 2)}
+                  </pre>
+                )}
+              </div>
+
+              {/* Actual */}
+              <div className="rounded-md border border-border/40 bg-muted/10 p-3 space-y-2">
+                <div className="text-xs font-medium text-muted-foreground uppercase">
+                  Actual
+                </div>
+                {actualToolCalls.length === 0 ? (
+                  <div className="text-xs text-muted-foreground italic">
+                    No tool calls made
+                  </div>
+                ) : (
+                  <pre className="text-xs font-mono bg-background/50 rounded p-2 overflow-x-auto">
+                    {JSON.stringify(actualToolCalls, null, 2)}
+                  </pre>
+                )}
+              </div>
+            </div>
+              ) : (
+                <div className="grid gap-2 md:grid-cols-2">
+                  {/* Expected */}
+                  <div className="rounded-md border border-border/40 bg-muted/10 p-2 space-y-2">
+                    <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+                      Expected
+                    </div>
+                    {expectedToolCalls.length === 0 ? (
+                      <div className="text-xs text-muted-foreground italic">
+                        No expected tool calls
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {expectedToolCalls.map((tool, idx) => (
+                          <div
+                            key={`expected-${idx}`}
+                            className="rounded border border-border/30 bg-background/50 p-1.5 space-y-1"
+                          >
+                            <div className="font-mono text-xs font-medium">{tool.toolName}</div>
+                            {Object.keys(tool.arguments || {}).length > 0 && (
+                              <div className="text-xs bg-muted/30 rounded p-1.5">
+                                {renderArguments(tool.arguments || {})}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Actual */}
+                  <div className="rounded-md border border-border/40 bg-muted/10 p-2 space-y-2">
+                    <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+                      Actual
+                    </div>
+                    {actualToolCalls.length === 0 ? (
+                      <div className="text-xs text-muted-foreground italic">
+                        No tool calls made
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {actualToolCalls.map((tool, idx) => (
+                          <div
+                            key={`actual-${idx}`}
+                            className="rounded border border-border/30 bg-background/50 p-1.5 space-y-1"
+                          >
+                            <div className="font-mono text-xs font-medium">{tool.toolName}</div>
+                            {Object.keys(tool.arguments || {}).length > 0 && (
+                              <div className="text-xs bg-muted/30 rounded p-1.5">
+                                {renderArguments(tool.arguments || {})}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
         </div>
       )}
 
