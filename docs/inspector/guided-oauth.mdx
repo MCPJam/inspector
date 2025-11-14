@@ -15,6 +15,16 @@ Guided OAuth lets you test your OAuth implementation step-by-step. The feature w
   />
 </Frame>
 
+## Protocol Versions
+
+The debugger supports multiple MCP OAuth protocol versions:
+
+- **2025-03-26** - Original MCP OAuth specification with direct discovery from MCP server base URL
+- **2025-06-18** - Current specification with Protected Resource Metadata (RFC9728)
+- **2025-11-25** - Draft specification with Client ID Metadata Documents (CIMD) support
+
+Select your protocol version in the OAuth debugger to test against the appropriate specification.
+
 ## OAuth Steps
 
 1. Metadata Discovery
