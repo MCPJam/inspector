@@ -28,8 +28,8 @@ export function PassCriteriaBadge({
       <Tooltip>
         <TooltipTrigger asChild>
           <Badge
-            variant={passed ? "default" : "destructive"}
-            className="gap-1"
+            variant={passed ? "default" : "outline"}
+            className={passed ? "gap-1" : "gap-1 bg-red-500/50 text-white border-red-500/50 hover:bg-red-500/70"}
           >
             {passed ? (
               <CheckCircle2 className="h-3 w-3" />
@@ -45,16 +45,11 @@ export function PassCriteriaBadge({
               {passed ? "✓ Suite Passed" : "✗ Suite Failed"}
             </div>
             <div className="text-muted-foreground">
-              Criteria: Min {minimumPassRate}% pass rate
+              Required: {minimumPassRate}% pass rate
             </div>
             <div className="text-muted-foreground">
-              Pass Rate: {passRate.toFixed(1)}% (threshold: {minimumPassRate}%)
+              Actual: {passRate.toFixed(1)}%
             </div>
-            {!passed && passRate < minimumPassRate && (
-              <div className="text-muted-foreground">
-                Pass rate {passRate.toFixed(1)}% below threshold {minimumPassRate}%
-              </div>
-            )}
           </div>
         </TooltipContent>
       </Tooltip>
