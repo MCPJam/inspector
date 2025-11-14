@@ -439,15 +439,53 @@ export function SuiteIterationsView({
       }
     >();
 
-    // Group by testTemplateKey from schema
+    // First, add templates from suite config (even if they haven't been run)
+    const configTests = suite.config?.tests || [];
+    configTests.forEach((test: any) => {
+      const templateTitle = test.title.replace(/\s*\[.*?\]\s*$/, '').trim();
+      const templateKey = `template:${templateTitle}-${test.query}`;
+      
+      if (!groups.has(templateKey)) {
+        groups.set(templateKey, {
+          title: templateTitle,
+          query: test.query,
+          testCaseIds: [],
+          iterations: [],
+          summary: {
+            runs: 0,
+            passed: 0,
+            failed: 0,
+            cancelled: 0,
+            pending: 0,
+            tokens: 0,
+            avgDuration: null,
+          },
+        });
+      }
+      
+      // Add testCaseId if available
+      if (test.testCaseId) {
+        const group = groups.get(templateKey)!;
+        if (!group.testCaseIds.includes(test.testCaseId)) {
+          group.testCaseIds.push(test.testCaseId);
+        }
+      }
+    });
+
+    // Then, group by testTemplateKey from schema (for templates that have been run)
     caseGroups.forEach((group) => {
       if (!group.testCase) return;
 
       const templateKey = getTemplateKey(group.testCase);
+      const templateTitle = group.testCase.title.replace(/\s*\[.*?\]\s*$/, '').trim();
+      const configTemplateKey = `template:${templateTitle}-${group.testCase.query}`;
 
-      if (!groups.has(templateKey)) {
-        groups.set(templateKey, {
-          title: group.testCase.title,
+      // Use config template key if it exists, otherwise use the computed template key
+      const keyToUse = groups.has(configTemplateKey) ? configTemplateKey : templateKey;
+
+      if (!groups.has(keyToUse)) {
+        groups.set(keyToUse, {
+          title: templateTitle,
           query: group.testCase.query,
           testCaseIds: [],
           iterations: [],
@@ -463,8 +501,10 @@ export function SuiteIterationsView({
         });
       }
 
-      const templateGroup = groups.get(templateKey)!;
-      templateGroup.testCaseIds.push(group.testCase._id);
+      const templateGroup = groups.get(keyToUse)!;
+      if (!templateGroup.testCaseIds.includes(group.testCase._id)) {
+        templateGroup.testCaseIds.push(group.testCase._id);
+      }
       templateGroup.iterations.push(...group.iterations);
     });
 
@@ -473,7 +513,7 @@ export function SuiteIterationsView({
       ...group,
       summary: computeIterationSummary(group.iterations),
     }));
-  }, [caseGroups]);
+  }, [caseGroups, suite.config?.tests]);
 
   // Iterations for selected run (for runs section)
   const iterationsForSelectedRun = useMemo(() => {
@@ -657,12 +697,67 @@ export function SuiteIterationsView({
   const selectedTestDetails = useMemo(() => {
     if (!selectedTestId) return null;
     
+    // Check if selectedTestId is a template key (for templates without testCaseIds)
+    const isTemplateKey = selectedTestId.startsWith('template:');
+    
     // Find the template group that contains this test case
-    const templateGroup = templateGroups.find((tg) =>
-      tg.testCaseIds.includes(selectedTestId)
-    );
+    let templateGroup;
+    if (isTemplateKey) {
+      // Extract title and query from template key (format: "template:Title-Query")
+      const keyParts = selectedTestId.replace('template:', '').split('-');
+      // Find template by matching title and query
+      templateGroup = templateGroups.find((tg) => {
+        const tgKey = `${tg.title}-${tg.query}`;
+        return tgKey === keyParts.join('-') || selectedTestId === `template:${tgKey}`;
+      });
+    } else {
+      // Find by testCaseId
+      templateGroup = templateGroups.find((tg) =>
+        tg.testCaseIds.includes(selectedTestId)
+      );
+    }
 
     if (!templateGroup) return null;
+
+    // If template has no testCaseIds (hasn't been run yet), create a minimal test case from config
+    if (templateGroup.testCaseIds.length === 0) {
+      // Try to find a test case from suite config that matches this template
+      const configTest = suite.config?.tests?.find((test: any) => {
+        const templateTitle = test.title.replace(/\s*\[.*?\]\s*$/, '').trim();
+        return templateTitle === templateGroup.title && test.query === templateGroup.query;
+      });
+
+      if (configTest) {
+        return {
+          testCase: {
+            _id: selectedTestId, // Use template key as ID
+            evalTestSuiteId: suite._id,
+            createdBy: suite.createdBy || '',
+            title: templateGroup.title,
+            query: templateGroup.query,
+            provider: configTest.provider || '',
+            model: configTest.model || '',
+            expectedToolCalls: configTest.expectedToolCalls || [],
+          },
+          iterations: [],
+          summary: {
+            runs: 0,
+            passed: 0,
+            failed: 0,
+            cancelled: 0,
+            pending: 0,
+            tokens: 0,
+            avgDuration: null,
+          },
+          templateInfo: {
+            title: templateGroup.title,
+            query: templateGroup.query,
+            modelCount: 0, // No models run yet
+          },
+        };
+      }
+      return null;
+    }
 
     // Find a caseGroup that matches any of the test case IDs in the template group
     // This handles cases where caseGroups might be grouped by snapshot
@@ -703,7 +798,7 @@ export function SuiteIterationsView({
         modelCount: templateGroup.testCaseIds.length,
       },
     };
-  }, [selectedTestId, caseGroups, templateGroups, cases]);
+  }, [selectedTestId, caseGroups, templateGroups, cases, suite]);
 
   // Trend data for selected test (showing how this test performed across runs)
   const selectedTestTrendData = useMemo(() => {

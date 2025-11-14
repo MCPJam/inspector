@@ -66,7 +66,7 @@ function SuiteSidebarItem({
   selectedTestId: string | null;
   onSelectSuite: (suiteId: string) => void;
   onToggleExpanded: (suiteId: string) => void;
-  onSelectTest: (testId: string) => void;
+  onSelectTest: (testId: string | null) => void;
   onRerun: (suite: EvalSuite) => void;
   onCancelRun: (runId: string) => void;
   onDelete: (suite: EvalSuite) => void;
@@ -85,8 +85,63 @@ function SuiteSidebarItem({
     enableSuiteDetailsQuery ? ({ suiteId: suite._id } as any) : "skip",
   ) as SuiteDetailsQueryResponse | undefined;
 
-  // Compute template groups for this suite
-  const { templateGroups } = useTemplateGroups(suiteDetails, isExpanded);
+  // Compute template groups from suite config (not just from iterations)
+  const templateGroupsFromConfig = useMemo(() => {
+    const tests = suite.config?.tests || [];
+    if (tests.length === 0) return [];
+
+    // Extract templates by de-duplicating (remove model suffix from title)
+    const templateMap = new Map<string, { title: string; query: string; testCaseIds: string[]; templateKey: string }>();
+    tests.forEach((test: any) => {
+      // Remove model suffix like " [ModelName]" from title
+      const templateTitle = test.title.replace(/\s*\[.*?\]\s*$/, '').trim();
+      const key = `${templateTitle}-${test.query}`;
+
+      if (!templateMap.has(key)) {
+        templateMap.set(key, {
+          title: templateTitle,
+          query: test.query,
+          testCaseIds: [],
+          templateKey: `template:${key}`, // Synthetic key for templates without testCaseIds
+        });
+      }
+
+      // Add testCaseId if available
+      if (test.testCaseId) {
+        templateMap.get(key)!.testCaseIds.push(test.testCaseId);
+      }
+    });
+
+    return Array.from(templateMap.values());
+  }, [suite.config?.tests]);
+
+  // Also get template groups from iterations (for cases where we have run data)
+  const { templateGroups: templateGroupsFromIterations } = useTemplateGroups(suiteDetails, isExpanded);
+
+  // Merge: prefer config templates, but use iteration data if available for testCaseIds
+  const templateGroups = useMemo(() => {
+    if (templateGroupsFromConfig.length > 0) {
+      // Use config templates as the source of truth
+      return templateGroupsFromConfig.map(configTemplate => {
+        // Try to find matching iteration template to get testCaseIds
+        const iterationTemplate = templateGroupsFromIterations.find(
+          it => it.title === configTemplate.title && it.query === configTemplate.query
+        );
+        return {
+          ...configTemplate,
+          testCaseIds: iterationTemplate?.testCaseIds || configTemplate.testCaseIds,
+          // Preserve templateKey from config
+          templateKey: configTemplate.templateKey,
+        };
+      });
+    }
+    // Fallback to iteration templates if no config templates
+    // Add templateKey for iteration templates that don't have testCaseIds
+    return templateGroupsFromIterations.map(tg => ({
+      ...tg,
+      templateKey: tg.testCaseIds.length === 0 ? `template:${tg.title}-${tg.query}` : undefined,
+    }));
+  }, [templateGroupsFromConfig, templateGroupsFromIterations]);
 
   // Check for missing servers
   const suiteServers = suite.config?.environment?.servers || [];
@@ -201,25 +256,32 @@ function SuiteSidebarItem({
       </div>
       
       {/* Test Cases Dropdown */}
-      {isExpanded && suiteDetails && (
+      {isExpanded && (
         <div className="pb-2">
           {templateGroups.length === 0 ? (
             <div className="px-4 py-4 text-center text-xs text-muted-foreground">
-              {suiteDetails === undefined ? "Loading..." : "No test cases"}
+              {enableSuiteDetailsQuery && suiteDetails === undefined ? "Loading..." : "No test cases"}
             </div>
           ) : (
             templateGroups.map((group, index) => {
-              const isTestSelected = selectedTestId && group.testCaseIds.includes(selectedTestId);
+              const hasTestCaseIds = group.testCaseIds.length > 0;
+              // Use templateKey as identifier if no testCaseIds, otherwise use first testCaseId
+              const groupIdentifier = hasTestCaseIds ? group.testCaseIds[0] : (group as any).templateKey;
+              const isTestSelected = selectedTestId && (
+                (hasTestCaseIds && group.testCaseIds.includes(selectedTestId)) ||
+                (!hasTestCaseIds && selectedTestId === (group as any).templateKey)
+              );
 
               return (
                 <button
                   key={index}
                   onClick={() => {
-                    // First select the suite if needed, then the test
+                    // First select the suite if needed
                     if (!isSelected) {
                       onSelectSuite(suite._id);
                     }
-                    onSelectTest(group.testCaseIds[0]);
+                    // Use templateKey if no testCaseIds, otherwise use first testCaseId
+                    onSelectTest(groupIdentifier || null);
                   }}
                   className={cn(
                     "w-full flex items-center px-6 py-2 text-left text-xs hover:bg-accent/50 transition-colors",
