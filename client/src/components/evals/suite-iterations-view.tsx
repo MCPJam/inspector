@@ -1463,9 +1463,9 @@ export function SuiteIterationsView({
                     />
                     <button
                       onClick={() => {
-                        setOpenIterationId((current) =>
-                          current === iteration._id ? null : iteration._id
-                        );
+                          setOpenIterationId((current) =>
+                            current === iteration._id ? null : iteration._id
+                          );
                       }}
                       className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 cursor-pointer hover:bg-muted/50"
                     >
@@ -2003,9 +2003,9 @@ export function SuiteIterationsView({
                     iteration={iteration}
                     isOpen={openIterationId === iteration._id}
                     onToggle={() => setOpenIterationId(openIterationId === iteration._id ? null : iteration._id)}
-                    getIterationBorderColor={getIterationBorderColor}
+                  getIterationBorderColor={getIterationBorderColor}
                     showModelInfo={true}
-                  />
+                />
                 );
               })
             )}
@@ -2478,7 +2478,7 @@ function TestCaseGroup({
                 />
                 <button
                   onClick={() => {
-                    setOpenIterationId(openIterationId === iteration._id ? null : iteration._id);
+                      setOpenIterationId(openIterationId === iteration._id ? null : iteration._id);
                   }}
                   className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 cursor-pointer hover:bg-muted/50"
                 >
