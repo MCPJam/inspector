@@ -13,11 +13,22 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 #### Added
 
+- **OAuth Debugger Enhancements**
+  - Edit Config button to modify server settings without reconnecting
+  - Copy logs feature with guide and raw formats for debugging
+  - Deprecated transport detection with migration guidance for HTTP+SSE servers
+  - RFC 8707 compliant resource URL canonicalization
+
 - **GPT-5 Model Support**
   - Added support for GPT-5 model variants: `gpt-5`, `gpt-5-mini`, `gpt-5-nano`, `gpt-5-chat-latest`, `gpt-5-pro`, `gpt-5-codex`
   - Organization verification notice for GPT-5 access
 
 #### Improved
+
+- **OAuth Flow**
+  - Refined diagram focusing and zoom behavior for better step visualization
+  - Improved error handling for expected 4xx responses during transport detection
+  - Enhanced header merging in OAuth state machines across all protocol versions
 
 - **Error Handling**
   - Enhanced streaming error handling in chat interface
