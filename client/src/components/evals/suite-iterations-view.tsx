@@ -235,11 +235,20 @@ export function SuiteIterationsView({
     },
   };
 
-  // Calculate per-model statistics
+  // Calculate per-model statistics (only from active runs)
   const modelStats = useMemo(() => {
+    const activeRunIds = new Set(
+      runs.filter((run) => run.isActive !== false).map((run) => run._id)
+    );
+    
+    // Filter iterations to only include those from active runs
+    const activeIterations = allIterations.filter((iteration) => 
+      !iteration.suiteRunId || activeRunIds.has(iteration.suiteRunId)
+    );
+
     const modelMap = new Map<string, { passed: number; failed: number; total: number; modelName: string }>();
 
-    allIterations.forEach((iteration) => {
+    activeIterations.forEach((iteration) => {
       const model = iteration.testCaseSnapshot?.model || 'Unknown';
       const modelName = iteration.testCaseSnapshot?.model || 'Unknown Model';
 
@@ -268,7 +277,7 @@ export function SuiteIterationsView({
     }));
 
     return data.sort((a, b) => b.passRate - a.passRate);
-  }, [allIterations]);
+  }, [allIterations, runs]);
 
   const modelChartConfig = {
     passRate: {
@@ -1375,14 +1384,6 @@ export function SuiteIterationsView({
             </>
           ) : viewMode === "overview" ? (
             <>
-              {/* Pass/Fail Criteria Badge for Latest Run */}
-              {runs.length > 0 && runs[0] && (
-                <PassCriteriaBadge
-                  run={runs[0]}
-                  variant="detailed"
-                />
-              )}
-
               {/* Charts Side by Side */}
               <div className="grid gap-4 lg:grid-cols-2">
                 {/* Pass Rate Trend */}
@@ -1547,15 +1548,21 @@ export function SuiteIterationsView({
                     : "—";
 
                 const isRunning = run.status === "running";
+                const isInactive = run.isActive === false;
+                
+                // Determine run result for border color
+                const runResult = run.result || (run.status === "completed" && passRate !== null
+                  ? (passRate >= (run.passCriteria?.minimumPassRate ?? 100) ? "passed" : "failed")
+                  : run.status === "cancelled" ? "cancelled" : "pending");
+                const runBorderColor = getIterationBorderColor(runResult);
 
-                return (
+                const runButton = (
                   <button
-                    key={run._id}
                     onClick={() => {
                       setSelectedRunId(run._id);
                       setViewMode("run-detail");
                     }}
-                    className="flex w-full flex-col gap-2 px-4 py-3 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                    className="flex w-full flex-col gap-2 px-4 py-3 pl-5 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
@@ -1591,6 +1598,32 @@ export function SuiteIterationsView({
                       </div>
                     </div>
                   </button>
+                );
+
+                return (
+                  <div
+                    key={run._id}
+                    className={cn(
+                      "relative overflow-hidden",
+                      isInactive && "opacity-50"
+                    )}
+                  >
+                    <div
+                      className={`absolute left-0 top-0 h-full w-1 ${runBorderColor}`}
+                    />
+                    {isInactive ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          {runButton}
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p className="text-xs">Run is inactive since testsuite schema changed</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : (
+                      runButton
+                    )}
+                  </div>
                 );
               })
             )}
