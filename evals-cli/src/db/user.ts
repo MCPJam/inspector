@@ -8,7 +8,7 @@ export const getUserIdFromApiKeyOrNull = async (apiKey: string) => {
     { apiKey },
   );
   if (!user) {
-    Logger.errorWithExit(
+    throw new Error(
       "Invalid MCPJam API key. Please check your API key and try again.",
     );
   }

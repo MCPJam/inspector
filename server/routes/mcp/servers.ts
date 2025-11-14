@@ -58,6 +58,40 @@ servers.get("/status/:serverId", async (c) => {
   }
 });
 
+// Get initialization metadata for a server
+servers.get("/init-info/:serverId", async (c) => {
+  try {
+    const serverId = c.req.param("serverId");
+    const mcpClientManager = c.mcpClientManager;
+    const initInfo = mcpClientManager.getInitializationInfo(serverId);
+
+    if (!initInfo) {
+      return c.json(
+        {
+          success: false,
+          error: `Server "${serverId}" is not connected or initialization info not available`,
+        },
+        404,
+      );
+    }
+
+    return c.json({
+      success: true,
+      serverId,
+      initInfo,
+    });
+  } catch (error) {
+    console.error("Error getting initialization info:", error);
+    return c.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
+      500,
+    );
+  }
+});
+
 // Disconnect from a server
 servers.delete("/:serverId", async (c) => {
   try {

@@ -1,8 +1,26 @@
 import { AuthUpperArea } from "./auth/auth-upper-area";
 import { SidebarTrigger } from "./ui/sidebar";
 import { useHeaderIpc } from "./ipc/use-header-ipc";
+import { WorkspaceSelector } from "./connection/WorkspaceSelector";
+import { Workspace } from "@/state/app-types";
 
-export const Header = () => {
+interface HeaderProps {
+  workspaces: Record<string, Workspace>;
+  activeWorkspaceId: string;
+  onSwitchWorkspace: (workspaceId: string) => void;
+  onCreateWorkspace: (name: string, switchTo?: boolean) => string;
+  onUpdateWorkspace: (workspaceId: string, updates: Partial<Workspace>) => void;
+  onDeleteWorkspace: (workspaceId: string) => void;
+}
+
+export const Header = ({
+  workspaces,
+  activeWorkspaceId,
+  onSwitchWorkspace,
+  onCreateWorkspace,
+  onUpdateWorkspace,
+  onDeleteWorkspace,
+}: HeaderProps) => {
   const { activeIpc, dismissActiveIpc } = useHeaderIpc();
 
   return (
@@ -10,6 +28,14 @@ export const Header = () => {
       <div className="flex h-12 shrink-0 items-center gap-2 px-4 lg:px-6 drag">
         <div className="flex items-center gap-1 lg:gap-2 no-drag">
           <SidebarTrigger className="-ml-1" />
+          <WorkspaceSelector
+            activeWorkspaceId={activeWorkspaceId}
+            workspaces={workspaces}
+            onSwitchWorkspace={onSwitchWorkspace}
+            onCreateWorkspace={onCreateWorkspace}
+            onUpdateWorkspace={onUpdateWorkspace}
+            onDeleteWorkspace={onDeleteWorkspace}
+          />
         </div>
         <div className="ml-auto flex items-center gap-2 no-drag">
           <AuthUpperArea />
