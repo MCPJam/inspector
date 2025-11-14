@@ -153,6 +153,29 @@ function SuiteSidebarItem({
   // Check if there's an active run (pending or running)
   const hasActiveRun = latestRun && (latestRun.status === "pending" || latestRun.status === "running");
 
+  // Determine status for the dot indicator
+  const getStatusColor = () => {
+    if (!latestRun) return "bg-gray-400"; // cancelled/no runs
+    
+    // Use result if available, otherwise infer from status
+    if (latestRun.result === "passed") return "bg-emerald-500";
+    if (latestRun.result === "failed") return "bg-red-500";
+    if (latestRun.result === "cancelled") return "bg-gray-400";
+    if (latestRun.result === "pending" || latestRun.status === "pending") return "bg-amber-400";
+    if (latestRun.status === "running") return "bg-amber-400";
+    
+    // Fallback based on status
+    if (latestRun.status === "completed") {
+      // Check pass rate
+      const passRate = latestRun.summary?.passRate ?? 0;
+      const minimumPassRate = latestRun.passCriteria?.minimumPassRate ?? 100;
+      return passRate >= minimumPassRate ? "bg-emerald-500" : "bg-red-500";
+    }
+    if (latestRun.status === "cancelled") return "bg-gray-400";
+    
+    return "bg-gray-400";
+  };
+
   return (
     <div>
       <div
@@ -179,8 +202,11 @@ function SuiteSidebarItem({
             isSelected && !selectedTestId && "font-medium"
           )}
         >
-          <div className="truncate font-medium">
-            {suite.name || "Untitled suite"}
+          <div className="flex items-center gap-1.5 truncate">
+            <span className="truncate font-medium">
+              {suite.name || "Untitled suite"}
+            </span>
+            <div className={cn("h-1.5 w-1.5 rounded-full shrink-0", getStatusColor())} />
           </div>
         </button>
         <DropdownMenu>
@@ -741,7 +767,7 @@ export function EvalsTab() {
           <div className="w-64 shrink-0 border-r bg-muted/30 flex flex-col">
             {/* Header */}
             <div className="p-4 border-b flex items-center justify-between">
-              <h2 className="text-sm font-semibold">Test Suites</h2>
+              <h2 className="text-sm font-semibold">Testsuites</h2>
               <Button
                 variant="ghost"
                 size="sm"

@@ -1605,6 +1605,18 @@ export function SuiteIterationsView({
                   </p>
                 </div>
               )}
+              {/* Column Headers */}
+              {runs.length > 0 && (
+                <div className="flex items-center gap-8 w-full px-4 py-2 bg-muted/30 border-b text-xs font-medium text-muted-foreground">
+                  <div className="w-4"></div> {/* Checkbox column */}
+                  <div className="min-w-[140px]">Run ID</div>
+                  <div className="min-w-[180px]">Start time</div>
+                  <div className="min-w-[80px]">Duration</div>
+                  <div className="min-w-[80px]">Passed</div>
+                  <div className="min-w-[80px]">Failed</div>
+                  <div className="min-w-[80px]">Accuracy</div>
+                </div>
+              )}
               <div className="divide-y overflow-y-auto">
             {runs.length === 0 ? (
               <div className="px-4 py-12 text-center text-sm text-muted-foreground">
@@ -1633,7 +1645,6 @@ export function SuiteIterationsView({
                     ? formatDuration(Date.now() - run.createdAt)
                     : "—";
 
-                const isRunning = run.status === "running";
                 const isInactive = run.isActive === false;
                 
                 // Determine run result for border color
@@ -1645,8 +1656,8 @@ export function SuiteIterationsView({
                 const isSelected = selectedRunIds.has(run._id);
 
                 const runButton = (
-                  <div className="flex items-start gap-3 w-full">
-                    <div className="pt-3 pl-4">
+                  <div className="flex items-center gap-8 w-full">
+                    <div className="pl-4">
                       <Checkbox
                         checked={isSelected}
                         onCheckedChange={() => toggleRunSelection(run._id)}
@@ -1659,41 +1670,14 @@ export function SuiteIterationsView({
                         setSelectedRunId(run._id);
                         setViewMode("run-detail");
                       }}
-                      className="flex flex-1 flex-col gap-2 py-3 pr-4 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                      className="flex flex-1 items-center gap-8 py-2 pr-4 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
                     >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <div className="flex flex-col gap-0.5">
-                            <span className="text-sm font-medium">Run {formatRunId(run._id)}</span>
-                            <span className="text-xs text-muted-foreground">{timestamp}</span>
-                          </div>
-                          {isRunning && (
-                            <div className="flex items-center gap-1.5 rounded-full bg-amber-100 dark:bg-amber-950 px-2 py-0.5">
-                              <div className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
-                              <span className="text-xs font-medium text-amber-700 dark:text-amber-400">Running</span>
-                            </div>
-                          )}
-                        </div>
-                        {passRate !== null && (
-                          <span className="text-sm font-semibold tabular-nums">
-                            {passRate}%
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                        <div className="flex items-center gap-1">
-                          <span className="font-medium">Duration:</span>
-                          <span className="font-mono">{duration}</span>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <span className="font-medium">Passed:</span>
-                          <span className="font-mono text-emerald-600">{passed}</span>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <span className="font-medium">Failed:</span>
-                          <span className="font-mono text-red-600">{failed}</span>
-                        </div>
-                      </div>
+                      <span className="text-sm font-medium min-w-[140px]">Run {formatRunId(run._id)}</span>
+                      <span className="text-xs text-muted-foreground min-w-[180px]">{timestamp}</span>
+                      <span className="text-xs text-muted-foreground font-mono min-w-[80px]">{duration}</span>
+                      <span className="text-xs font-mono text-muted-foreground min-w-[80px]">{passed}</span>
+                      <span className="text-xs font-mono text-muted-foreground min-w-[80px]">{failed}</span>
+                      <span className="text-xs font-mono text-muted-foreground min-w-[80px]">{passRate !== null ? `${passRate}%` : "—"}</span>
                     </button>
                   </div>
                 );
