@@ -124,6 +124,9 @@ const RunEvalsRequestSchema = z.object({
   modelApiKeys: z.record(z.string()).optional(),
   convexAuthToken: z.string(),
   notes: z.string().optional(),
+  passCriteria: z.object({
+    minimumPassRate: z.number(),
+  }).optional(),
 });
 
 type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
@@ -152,6 +155,7 @@ evals.post("/run", async (c) => {
       modelApiKeys,
       convexAuthToken,
       notes,
+      passCriteria,
     } =
       validationResult.data as RunEvalsRequest;
 
@@ -231,6 +235,7 @@ evals.post("/run", async (c) => {
           name: suiteName!,
           description: suiteDescription,
           config: suiteConfigPayload,
+          defaultPassCriteria: passCriteria, // Use passCriteria from request as default for new suite
         },
       );
 
@@ -249,6 +254,7 @@ evals.post("/run", async (c) => {
       convexClient,
       suiteId: resolvedSuiteId,
       notes,
+      passCriteria,
     });
 
     try {

@@ -547,9 +547,10 @@ export function EvalsTab() {
       try {
         const accessToken = await getAccessToken();
 
-        // Get pass criteria from the latest run, or default to 100%
+        // Get pass criteria from suite's defaultPassCriteria, or fall back to latest run, or default to 100%
+        const suiteDefault = suite.defaultPassCriteria?.minimumPassRate;
         const latestRun = selectedSuiteEntry?.latestRun;
-        const minimumPassRate = latestRun?.passCriteria?.minimumPassRate ?? 100;
+        const minimumPassRate = suiteDefault ?? latestRun?.passCriteria?.minimumPassRate ?? 100;
         const criteriaNote = `Pass Criteria: Min ${minimumPassRate}% pass rate`;
 
         const response = await fetch("/api/mcp/evals/run", {

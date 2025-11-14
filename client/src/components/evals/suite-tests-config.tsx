@@ -41,7 +41,7 @@ interface ModelInfo {
 
 interface SuiteTestsConfigProps {
   suite: EvalSuite;
-  onUpdate: (tests: EvalSuiteConfigTest[]) => void;
+  onUpdate: (tests: EvalSuiteConfigTest[]) => Promise<void>;
   availableModels: ModelDefinition[];
 }
 
@@ -127,7 +127,7 @@ export function SuiteTestsConfig({ suite, onUpdate, availableModels }: SuiteTest
   }, [suite.config?.environment?.servers]);
 
   // Re-expand matrix and save
-  const saveChanges = (newTemplates: TestTemplate[], newModels: ModelInfo[]) => {
+  const saveChanges = async (newTemplates: TestTemplate[], newModels: ModelInfo[]) => {
     const expandedTests: EvalSuiteConfigTest[] = newTemplates.flatMap(template =>
       newModels.map(modelInfo => ({
         title: template.title, // Use template title without model name
@@ -141,7 +141,7 @@ export function SuiteTestsConfig({ suite, onUpdate, availableModels }: SuiteTest
         testTemplateKey: template.templateKey, // Add template key for grouping
       }))
     );
-    onUpdate(expandedTests);
+    await onUpdate(expandedTests);
   };
 
   const startEdit = (index: number) => {
@@ -154,7 +154,7 @@ export function SuiteTestsConfig({ suite, onUpdate, availableModels }: SuiteTest
     setEditForm(null);
   };
 
-  const saveEdit = () => {
+  const saveEdit = async () => {
     if (editingTemplateIndex === null || !editForm) return;
 
     const updated = [...templates];
@@ -166,14 +166,14 @@ export function SuiteTestsConfig({ suite, onUpdate, availableModels }: SuiteTest
       updated[editingTemplateIndex] = editForm;
     }
     setTemplates(updated);
-    saveChanges(updated, models);
+    await saveChanges(updated, models);
     cancelEdit();
   };
 
-  const deleteTemplate = (index: number) => {
+  const deleteTemplate = async (index: number) => {
     const updated = templates.filter((_, i) => i !== index);
     setTemplates(updated);
-    saveChanges(updated, models);
+    await saveChanges(updated, models);
   };
 
   const addTemplate = () => {
@@ -188,13 +188,13 @@ export function SuiteTestsConfig({ suite, onUpdate, availableModels }: SuiteTest
     setEditForm(newTemplate);
   };
 
-  const deleteModel = (modelToDelete: string) => {
+  const deleteModel = async (modelToDelete: string) => {
     const updated = models.filter(m => m.model !== modelToDelete);
     setModels(updated);
-    saveChanges(templates, updated);
+    await saveChanges(templates, updated);
   };
 
-  const handleAddModel = (selectedModel: ModelDefinition) => {
+  const handleAddModel = async (selectedModel: ModelDefinition) => {
     // Check if model already exists
     if (models.some(m => m.model === selectedModel.id)) {
       setIsModelDropdownOpen(false);
@@ -209,7 +209,7 @@ export function SuiteTestsConfig({ suite, onUpdate, availableModels }: SuiteTest
 
     const updated = [...models, newModel];
     setModels(updated);
-    saveChanges(templates, updated);
+    await saveChanges(templates, updated);
     setIsModelDropdownOpen(false);
   };
 
