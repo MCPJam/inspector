@@ -28,7 +28,6 @@ import type {
   SuiteDetailsQueryResponse,
 } from "./evals/types";
 import { aggregateSuite } from "./evals/helpers";
-import { SuitesOverview } from "./evals/suites-overview";
 import { SuiteIterationsView } from "./evals/suite-iterations-view";
 import { EvalRunner } from "./evals/eval-runner";
 import { useChat } from "@/hooks/use-chat";
@@ -701,39 +700,36 @@ export function EvalsTab() {
           {/* Main Content Area */}
           <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
             {!selectedSuiteId ? (
-              <>
-                <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b">
-                  <h1 className="text-2xl font-semibold">Test suites</h1>
-                  <Button
-                    onClick={() => {
-                      posthog.capture("create_new_run_button_clicked", {
-                        location: "evals_tab",
-                        platform: detectPlatform(),
-                        environment: detectEnvironment(),
-                      });
-                      setView("run");
-                    }}
-                    className="gap-2"
-                    size="sm"
-                  >
-                    <Plus className="h-4 w-4" />
-                    Create new test suite
-                  </Button>
+              <div className="flex-1 flex items-center justify-center">
+                <div className="text-center max-w-md mx-auto p-8">
+                  <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center mx-auto mb-6">
+                    <FlaskConical className="h-10 w-10 text-muted-foreground" />
+                  </div>
+                  <h2 className="text-2xl font-semibold text-foreground mb-2">
+                    Select a test suite
+                  </h2>
+                  <p className="text-sm text-muted-foreground mb-6">
+                    Choose a test suite from the sidebar to view its runs, test cases, and performance metrics.
+                  </p>
+                  {sortedSuites.length === 0 && (
+                    <Button
+                      onClick={() => {
+                        posthog.capture("create_new_run_button_clicked", {
+                          location: "evals_tab",
+                          platform: detectPlatform(),
+                          environment: detectEnvironment(),
+                        });
+                        setView("run");
+                      }}
+                      className="gap-2"
+                      size="sm"
+                    >
+                      <Plus className="h-4 w-4" />
+                      Create your first test suite
+                    </Button>
+                  )}
                 </div>
-                <div className="flex-1 overflow-y-auto px-6 pb-6 pt-6">
-                  <SuitesOverview
-                    overview={suiteOverview || []}
-                    onSelectSuite={setSelectedSuiteId}
-                    onRerun={handleRerun}
-                    onCancelRun={handleCancelRun}
-                    onDelete={handleDelete}
-                    connectedServerNames={connectedServerNames}
-                    rerunningSuiteId={rerunningSuiteId}
-                    cancellingRunId={cancellingRunId}
-                    deletingSuiteId={deletingSuiteId}
-                  />
-                </div>
-              </>
+              </div>
             ) : isSuiteDetailsLoading ? (
               <div className="flex h-full items-center justify-center">
                 <div className="text-center">
@@ -753,7 +749,6 @@ export function EvalsTab() {
                   runs={runsForSelectedSuite}
                   runsLoading={isSuiteRunsLoading}
                   aggregate={suiteAggregate}
-                  onBack={() => setSelectedSuiteId(null)}
                   onRerun={handleRerun}
                   onCancelRun={handleCancelRun}
                   onDelete={handleDelete}

@@ -41,7 +41,6 @@ export function SuiteIterationsView({
   runs,
   runsLoading,
   aggregate,
-  onBack,
   onRerun,
   onCancelRun,
   onDelete,
@@ -60,7 +59,6 @@ export function SuiteIterationsView({
   runs: EvalSuiteRun[];
   runsLoading: boolean;
   aggregate: SuiteAggregate | null;
-  onBack: () => void;
   onRerun: (suite: EvalSuite) => void;
   onCancelRun: (runId: string) => void;
   onDelete: (suite: EvalSuite) => void;
@@ -900,12 +898,9 @@ export function SuiteIterationsView({
           }
         }
       }}>
-        {/* Header with back button, tabs, and actions */}
+        {/* Header with tabs and actions */}
         <div className="flex items-center justify-between gap-4 mb-4">
           <div className="flex items-center gap-3 flex-1 min-w-0 overflow-visible">
-            <Button variant="ghost" size="sm" onClick={onBack} className="shrink-0">
-              ← Back
-            </Button>
             {/* Tabs */}
             <TabsList>
           <TabsTrigger value="runs" onClick={() => {
