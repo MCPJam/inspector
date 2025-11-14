@@ -143,3 +143,9 @@ export type SuiteAggregate = {
     tokens: number;
   }>;
 };
+
+// Query response types for Convex queries
+export type SuiteDetailsQueryResponse = {
+  testCases: EvalCase[];
+  iterations: EvalIteration[];
+};
