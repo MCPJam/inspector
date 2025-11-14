@@ -6,6 +6,9 @@ import {
   OAuthProtectedResourceMetadata,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
 
+// OAuth protocol versions
+export type OAuthProtocolVersion = "2025-06-18" | "2025-11-25";
+
 // OAuth flow steps
 export type OAuthStep =
   | "metadata_discovery"
@@ -14,6 +17,15 @@ export type OAuthStep =
   | "authorization_code"
   | "token_request"
   | "complete";
+
+// Client registration methods
+export type RegistrationMethod =
+  | "client_id_metadata"
+  | "dynamic"
+  | "pre_registered";
+
+// Discovery types
+export type DiscoveryType = "oauth2" | "oidc";
 
 // Message types for inline feedback
 export type MessageType = "success" | "error" | "info";
@@ -39,6 +51,13 @@ export interface OAuthFlowState {
   latestError: Error | null;
   statusMessage: StatusMessage | null;
   validationError: string | null;
+
+  // Protocol version and discovery tracking (added for 2025-11-25 support)
+  protocolVersion: OAuthProtocolVersion;
+  registrationMethod: RegistrationMethod | null;
+  discoveryType: DiscoveryType | null;
+  discoveryEndpointUsed: string | null;
+  pkceSupported: boolean;
 }
 
 export const EMPTY_OAUTH_FLOW_STATE: OAuthFlowState = {
@@ -56,6 +75,13 @@ export const EMPTY_OAUTH_FLOW_STATE: OAuthFlowState = {
   latestError: null,
   statusMessage: null,
   validationError: null,
+
+  // Protocol version defaults (default to latest 2025-11-25 spec)
+  protocolVersion: "2025-11-25",
+  registrationMethod: null,
+  discoveryType: null,
+  discoveryEndpointUsed: null,
+  pkceSupported: false,
 };
 
 // OAuth flow management interface

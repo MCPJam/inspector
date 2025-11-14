@@ -1,11 +1,20 @@
-import { FormEvent, useMemo, useState, useEffect } from "react";
+import {
+  FormEvent,
+  useMemo,
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+} from "react";
 import { useChat } from "@ai-sdk/react";
 import {
   DefaultChatTransport,
   lastAssistantMessageIsCompleteWithToolCalls,
+  generateId,
 } from "ai";
 import { useAuth } from "@workos-inc/authkit-react";
-import { ModelDefinition } from "@/shared/types";
+import { useConvexAuth } from "convex/react";
+import { ModelDefinition, isGPT5Model } from "@/shared/types";
 import {
   ProviderTokens,
   useAiProviderKeys,
@@ -29,9 +38,57 @@ import {
 import { isMCPJamProvidedModel } from "@/shared/types";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { Thread } from "@/components/chat-v2/thread";
+import { ServerWithName } from "@/hooks/use-app-state";
+import { getToolsMetadata, ToolServerMap } from "@/lib/mcp-tools-api";
+import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
+import { ConnectMcpServerCallout } from "@/components/chat-v2/connect-mcp-server-callout";
+import { usePostHog } from "posthog-js/react";
+import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
+import { ErrorBox } from "@/components/chat-v2/error";
+import { usePersistedModel } from "@/hooks/use-persisted-model";
+import { countMCPToolsTokens, countTextTokens } from "@/lib/mcp-tokenizer-api";
 
-export function ChatTabV2() {
-  const { getAccessToken } = useAuth();
+const DEFAULT_SYSTEM_PROMPT =
+  "You are a helpful assistant with access to MCP tools.";
+
+const STARTER_PROMPTS: Array<{ label: string; text: string }> = [
+  {
+    label: "Show me connected tools",
+    text: "List my connected MCP servers and their available tools.",
+  },
+  {
+    label: "Suggest an automation",
+    text: "Suggest an automation I can build with my current MCP setup.",
+  },
+  {
+    label: "Summarize recent activity",
+    text: "Summarize the most recent activity across my MCP servers.",
+  },
+];
+
+interface ChatTabProps {
+  connectedServerConfigs: Record<string, ServerWithName>;
+  selectedServerNames: string[];
+}
+
+function formatErrorMessage(error: unknown): string | null {
+  if (!error) return null;
+  if (typeof error === "string") return error;
+  if (error instanceof Error) return error.message;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
+export function ChatTabV2({
+  connectedServerConfigs,
+  selectedServerNames,
+}: ChatTabProps) {
+  const { getAccessToken, signUp } = useAuth();
+  const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
+  const posthog = usePostHog();
   const {
     hasToken,
     getToken,
@@ -47,7 +104,24 @@ export function ChatTabV2() {
   const [authHeaders, setAuthHeaders] = useState<
     Record<string, string> | undefined
   >(undefined);
-
+  const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
+  const [temperature, setTemperature] = useState(0.7);
+  const [chatSessionId, setChatSessionId] = useState(generateId());
+  const [toolsMetadata, setToolsMetadata] = useState<
+    Record<string, Record<string, any>>
+  >({});
+  const [toolServerMap, setToolServerMap] = useState<ToolServerMap>({});
+  const [mcpToolsTokenCount, setMcpToolsTokenCount] = useState<Record<
+    string,
+    number
+  > | null>(null);
+  const [mcpToolsTokenCountLoading, setMcpToolsTokenCountLoading] =
+    useState(false);
+  const [systemPromptTokenCount, setSystemPromptTokenCount] = useState<
+    number | null
+  >(null);
+  const [systemPromptTokenCountLoading, setSystemPromptTokenCountLoading] =
+    useState(false);
   const availableModels = useMemo(() => {
     return buildAvailableModels({
       hasToken,
@@ -65,8 +139,7 @@ export function ChatTabV2() {
     isOllamaRunning,
     ollamaModels,
   ]);
-
-  const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
+  const { selectedModelId, setSelectedModelId } = usePersistedModel();
   const selectedModel = useMemo<ModelDefinition>(() => {
     const fallback = getDefaultModel(availableModels);
     if (!selectedModelId) return fallback;
@@ -79,18 +152,47 @@ export function ChatTabV2() {
   );
   const [elicitationLoading, setElicitationLoading] = useState(false);
 
+  const selectedConnectedServerNames = useMemo(
+    () =>
+      selectedServerNames.filter(
+        (name) =>
+          connectedServerConfigs[name]?.connectionStatus === "connected",
+      ),
+    [selectedServerNames, connectedServerConfigs],
+  );
+  const noServersConnected = selectedConnectedServerNames.length === 0;
+
   const transport = useMemo(() => {
     const apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
+    const isGpt5 = isGPT5Model(selectedModel.id);
+
     return new DefaultChatTransport({
       api: "/api/mcp/chat-v2",
       body: {
         model: selectedModel,
         apiKey: apiKey,
-        temperature: 0.7,
+        ...(isGpt5 ? {} : { temperature }),
+        systemPrompt,
+        selectedServers: selectedConnectedServerNames,
       },
       headers: authHeaders,
     });
-  }, [selectedModel, getToken, authHeaders]);
+  }, [
+    selectedModel,
+    getToken,
+    authHeaders,
+    temperature,
+    systemPrompt,
+    selectedConnectedServerNames,
+  ]);
+
+  useEffect(() => {
+    posthog.capture("chat_tab_viewed", {
+      location: "chat_tab",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+    });
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -107,6 +209,7 @@ export function ChatTabV2() {
         if (!active) return;
         setAuthHeaders(undefined);
       }
+      resetChat();
     })();
     return () => {
       active = false;
@@ -119,14 +222,76 @@ export function ChatTabV2() {
       : false;
   }, [selectedModel]);
 
-  const { messages, sendMessage, stop, status } = useChat({
-    id: `chat-${selectedModel.provider}-${selectedModel.id}`,
+  const { messages, sendMessage, stop, status, error, setMessages } = useChat({
+    id: chatSessionId,
     transport: transport!,
     // Disable client auto-send for MCPJam-provided models; server handles tool loop
     sendAutomaticallyWhen: isMcpJamModel
       ? undefined
       : lastAssistantMessageIsCompleteWithToolCalls,
   });
+
+  // Sum token usage from all assistant messages with metadata
+  const tokenUsage = useMemo(() => {
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+    let totalTokens = 0;
+
+    for (const message of messages) {
+      if (message.role === "assistant" && message.metadata) {
+        const metadata = message.metadata as
+          | {
+              inputTokens?: number;
+              outputTokens?: number;
+              totalTokens?: number;
+            }
+          | undefined;
+
+        if (metadata) {
+          totalInputTokens += metadata.inputTokens ?? 0;
+          totalOutputTokens += metadata.outputTokens ?? 0;
+          const messageTotal =
+            metadata.totalTokens ??
+            (metadata.inputTokens ?? 0) + (metadata.outputTokens ?? 0);
+          totalTokens += messageTotal;
+        }
+      }
+    }
+
+    return {
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
+      totalTokens:
+        totalTokens > 0 ? totalTokens : totalInputTokens + totalOutputTokens,
+    };
+  }, [messages]);
+  const resetChat = useCallback(() => {
+    setChatSessionId(generateId());
+    setMessages([]);
+    setInput("");
+  }, [setMessages]);
+
+  useEffect(() => {
+    resetChat();
+  }, [resetChat]);
+
+  const previousSelectedServersRef = useRef<string[]>(
+    selectedConnectedServerNames,
+  );
+
+  useEffect(() => {
+    const previousNames = previousSelectedServersRef.current;
+    const currentNames = selectedConnectedServerNames;
+    const hasChanged =
+      previousNames.length !== currentNames.length ||
+      previousNames.some((name, index) => name !== currentNames[index]);
+
+    if (hasChanged) {
+      resetChat();
+    }
+
+    previousSelectedServersRef.current = currentNames;
+  }, [selectedConnectedServerNames, resetChat]);
 
   useEffect(() => {
     const checkOllama = async () => {
@@ -155,8 +320,6 @@ export function ChatTabV2() {
     const interval = setInterval(checkOllama, 30000);
     return () => clearInterval(interval);
   }, [getOllamaBaseUrl]);
-
-  // selectedModelId defaults via effectiveModel; no effect needed
 
   useEffect(() => {
     const es = new EventSource("/api/mcp/elicitation/stream");
@@ -209,13 +372,182 @@ export function ChatTabV2() {
     }
   };
 
+  useEffect(() => {
+    const fetchToolsMetadata = async () => {
+      const { metadata, toolServerMap } = await getToolsMetadata(
+        selectedConnectedServerNames,
+      );
+      setToolsMetadata(metadata);
+      setToolServerMap(toolServerMap);
+    };
+    fetchToolsMetadata();
+  }, [selectedConnectedServerNames]);
+
+  useEffect(() => {
+    const fetchMcpToolsTokenCount = async () => {
+      if (
+        selectedConnectedServerNames.length === 0 ||
+        !selectedModel?.id ||
+        !selectedModel?.provider
+      ) {
+        setMcpToolsTokenCount(null);
+        setMcpToolsTokenCountLoading(false);
+        return;
+      }
+
+      setMcpToolsTokenCountLoading(true);
+      try {
+        const modelId = isMCPJamProvidedModel(String(selectedModel.id))
+          ? String(selectedModel.id)
+          : `${selectedModel.provider}/${selectedModel.id}`;
+        const counts = await countMCPToolsTokens(
+          selectedConnectedServerNames,
+          modelId,
+        );
+        setMcpToolsTokenCount(
+          counts && Object.keys(counts).length > 0 ? counts : null,
+        );
+      } catch (error) {
+        console.warn("[ChatTabV2] Failed to count MCP tools tokens:", error);
+        setMcpToolsTokenCount(null);
+      } finally {
+        setMcpToolsTokenCountLoading(false);
+      }
+    };
+
+    fetchMcpToolsTokenCount();
+  }, [selectedConnectedServerNames, selectedModel]);
+
+  useEffect(() => {
+    const fetchSystemPromptTokenCount = async () => {
+      if (!systemPrompt || !selectedModel?.id || !selectedModel?.provider) {
+        setSystemPromptTokenCount(null);
+        setSystemPromptTokenCountLoading(false);
+        return;
+      }
+
+      setSystemPromptTokenCountLoading(true);
+      try {
+        const modelId = isMCPJamProvidedModel(String(selectedModel.id))
+          ? String(selectedModel.id)
+          : `${selectedModel.provider}/${selectedModel.id}`;
+        const count = await countTextTokens(systemPrompt, modelId);
+        setSystemPromptTokenCount(count > 0 ? count : null);
+      } catch (error) {
+        console.warn(
+          "[ChatTabV2] Failed to count system prompt tokens:",
+          error,
+        );
+        setSystemPromptTokenCount(null);
+      } finally {
+        setSystemPromptTokenCountLoading(false);
+      }
+    };
+
+    fetchSystemPromptTokenCount();
+  }, [systemPrompt, selectedModel]);
+
+  const disableForAuthentication = !isAuthenticated && isMcpJamModel;
+  const disableForServers = noServersConnected;
+  const isStreaming = status === "streaming" || status === "submitted";
+  const submitBlocked = disableForAuthentication || disableForServers;
+  const inputDisabled = status !== "ready" || submitBlocked;
+
+  let placeholder = "Ask something…";
+  if (disableForServers) {
+    placeholder = "Connect an MCP server to send your first message";
+  }
+  if (disableForAuthentication) {
+    placeholder = "Sign in to use free chat";
+  }
+
+  // Show loading state while auth is initializing
+  const shouldShowUpsell = disableForAuthentication && !isAuthLoading;
+  const shouldShowConnectCallout =
+    disableForServers && !shouldShowUpsell && !isAuthLoading;
+  const showDisabledCallout =
+    messages.length === 0 && (shouldShowUpsell || shouldShowConnectCallout);
+
+  const errorMessage = formatErrorMessage(error);
+
+  const handleSignUp = () => {
+    posthog.capture("sign_up_button_clicked", {
+      location: "chat_tab",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+    });
+    signUp();
+  };
+
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (input.trim() && status === "ready") {
+    if (
+      input.trim() &&
+      status === "ready" &&
+      !disableForAuthentication &&
+      !disableForServers
+    ) {
+      posthog.capture("send_message", {
+        location: "chat_tab",
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+        model_id: selectedModel?.id ?? null,
+        model_name: selectedModel?.name ?? null,
+        model_provider: selectedModel?.provider ?? null,
+      });
       sendMessage({ text: input });
       setInput("");
     }
   };
+
+  const handleStarterPrompt = (prompt: string) => {
+    if (submitBlocked || inputDisabled) {
+      setInput(prompt);
+      return;
+    }
+    posthog.capture("send_message", {
+      location: "chat_tab",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+      model_id: selectedModel?.id ?? null,
+      model_name: selectedModel?.name ?? null,
+      model_provider: selectedModel?.provider ?? null,
+    });
+    sendMessage({ text: prompt });
+    setInput("");
+  };
+
+  const sharedChatInputProps = {
+    value: input,
+    onChange: setInput,
+    onSubmit,
+    stop,
+    disabled: inputDisabled,
+    isLoading: isStreaming,
+    placeholder,
+    currentModel: selectedModel,
+    availableModels,
+    onModelChange: (model: ModelDefinition) => {
+      setSelectedModelId(String(model.id));
+      resetChat();
+    },
+    systemPrompt,
+    onSystemPromptChange: setSystemPrompt,
+    temperature,
+    onTemperatureChange: setTemperature,
+    onResetChat: resetChat,
+    submitDisabled: submitBlocked,
+    tokenUsage,
+    selectedServers: selectedConnectedServerNames,
+    mcpToolsTokenCount,
+    mcpToolsTokenCountLoading,
+    connectedServerConfigs,
+    systemPromptTokenCount,
+    systemPromptTokenCountLoading,
+  };
+
+  const showStarterPrompts =
+    !showDisabledCallout && messages.length === 0 && !isAuthLoading;
 
   return (
     <div className="flex flex-1 h-full min-h-0 flex-col overflow-hidden">
@@ -225,31 +557,88 @@ export function ChatTabV2() {
       >
         <ResizablePanel defaultSize={70} minSize={40} className="min-w-0">
           <div className="flex flex-col bg-background h-full min-h-0 overflow-hidden">
-            <Thread
-              messages={messages}
-              sendFollowUpMessage={(text: string) => sendMessage({ text })}
-              model={selectedModel}
-              isLoading={status === "submitted"}
-            />
-            <div className="bg-background/80 backdrop-blur-sm flex-shrink-0">
-              <div className="max-w-4xl mx-auto p-4">
-                <ChatInput
-                  value={input}
-                  onChange={setInput}
-                  onSubmit={onSubmit}
-                  stop={stop}
-                  disabled={status !== "ready"}
-                  isLoading={status === "streaming" || status === "submitted"}
-                  placeholder="Ask something…"
-                  currentModel={selectedModel}
-                  availableModels={availableModels}
-                  onModelChange={(model) =>
-                    setSelectedModelId(String(model.id))
-                  }
-                  hasMessages={messages.length > 0}
-                />
+            {messages.length === 0 ? (
+              <div className="flex-1 flex items-center justify-center overflow-y-auto px-4">
+                <div className="w-full max-w-3xl space-y-6 py-8">
+                  {isAuthLoading ? (
+                    <div className="text-center space-y-4">
+                      <div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-primary" />
+                      <p className="text-sm text-muted-foreground">
+                        Loading...
+                      </p>
+                    </div>
+                  ) : showDisabledCallout ? (
+                    <div className="space-y-4">
+                      {shouldShowUpsell ? (
+                        <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
+                      ) : (
+                        <ConnectMcpServerCallout />
+                      )}
+                    </div>
+                  ) : null}
+
+                  <div className="space-y-4">
+                    {showStarterPrompts && (
+                      <div className="text-center">
+                        <p className="text-sm text-muted-foreground mb-3">
+                          Try one of these to get started
+                        </p>
+                        <div className="flex flex-wrap justify-center gap-2">
+                          {STARTER_PROMPTS.map((prompt) => (
+                            <button
+                              key={prompt.text}
+                              type="button"
+                              onClick={() => handleStarterPrompt(prompt.text)}
+                              className="rounded-full border border-border bg-background px-4 py-2 text-sm text-foreground transition hover:border-foreground hover:bg-accent cursor-pointer font-light"
+                            >
+                              {prompt.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {!isAuthLoading && (
+                      <ChatInput
+                        {...sharedChatInputProps}
+                        hasMessages={false}
+                      />
+                    )}
+                  </div>
+                </div>
               </div>
-            </div>
+            ) : (
+              <>
+                <div className="flex flex-1 flex-col min-h-0 animate-in fade-in duration-300">
+                  <div className="flex-1 overflow-y-auto">
+                    <Thread
+                      messages={messages}
+                      sendFollowUpMessage={(text: string) =>
+                        sendMessage({ text })
+                      }
+                      model={selectedModel}
+                      isLoading={status === "submitted"}
+                      toolsMetadata={toolsMetadata}
+                      toolServerMap={toolServerMap}
+                    />
+                  </div>
+                  {errorMessage && (
+                    <div className="px-4 pb-4 pt-4">
+                      <ErrorBox
+                        message={errorMessage}
+                        onResetChat={resetChat}
+                      />
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0 animate-in slide-in-from-bottom duration-500">
+                  <div className="max-w-4xl mx-auto p-4">
+                    <ChatInput {...sharedChatInputProps} hasMessages />
+                  </div>
+                </div>
+              </>
+            )}
 
             <ElicitationDialog
               elicitationRequest={elicitation}

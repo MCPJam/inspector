@@ -12,6 +12,10 @@ import interceptor from "./interceptor";
 import evals from "./evals";
 import { adapterHttp, managerHttp } from "./http-adapters";
 import elicitation from "./elicitation";
+import openai from "./openai";
+import registry from "./registry";
+import models from "./models";
+import tokenizer from "./tokenizer";
 
 const mcp = new Hono();
 
@@ -48,6 +52,9 @@ mcp.route("/evals", evals);
 // Resources endpoints - REAL IMPLEMENTATION
 mcp.route("/resources", resources);
 
+// OpenAI Apps SDK widget endpoints
+mcp.route("/openai", openai);
+
 // Prompts endpoints - REAL IMPLEMENTATION
 mcp.route("/prompts", prompts);
 
@@ -63,5 +70,14 @@ mcp.route("/interceptor", interceptor);
 // Unified HTTP bridges (SSE + POST) for connected servers
 mcp.route("/adapter-http", adapterHttp);
 mcp.route("/manager-http", managerHttp);
+
+// Registry endpoints - MCP server registry integration
+mcp.route("/registry", registry);
+
+// Models endpoints - fetch model metadata from Convex backend
+mcp.route("/models", models);
+
+// Tokenizer endpoints - count tokens for MCP tools
+mcp.route("/tokenizer", tokenizer);
 
 export default mcp;

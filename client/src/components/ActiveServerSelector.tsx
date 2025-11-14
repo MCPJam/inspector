@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { cn } from "@/lib/utils";
-import { ServerModal } from "./connection/ServerModal";
+import { AddServerModal } from "./connection/AddServerModal";
 import { ServerFormData } from "@/shared/types.js";
 import { Check } from "lucide-react";
 import { usePostHog } from "posthog-js/react";
@@ -81,10 +81,6 @@ export function ActiveServerSelector({
       // If we only want OAuth servers, filter for those
       if (showOnlyOAuthServers && !isOAuthServer(server)) return false;
 
-      // For non-OAuth filtering, only show connected servers
-      if (!showOnlyOAuthServers && server.connectionStatus !== "connected")
-        return false;
-
       return true;
     },
   );
@@ -161,8 +157,7 @@ export function ActiveServerSelector({
         </button>
       </div>
 
-      <ServerModal
-        mode="add"
+      <AddServerModal
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
         onSubmit={(formData) => {

@@ -20,9 +20,7 @@ const __dirname = dirname(__filename);
 export function createHonoApp() {
   // Load environment variables early so route handlers can read CONVEX_HTTP_URL
   const envFile =
-    process.env.NODE_ENV === "production"
-      ? ".env.production"
-      : ".env.development";
+    process.env.NODE_ENV === "production" ? ".env.production" : ".env.local";
 
   // Determine where to look for .env file:
   // 1. Electron packaged: use process.resourcesPath directly
@@ -93,11 +91,9 @@ export function createHonoApp() {
     "*",
     cors({
       origin: [
-        "http://localhost:8080",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:5173",
-        "http://localhost:3000",
+        "http://localhost:5173", // Vite dev server
+        "http://localhost:6274", // Hono server
+        "http://127.0.0.1:6274", // Hono server production
       ],
       credentials: true,
     }),
