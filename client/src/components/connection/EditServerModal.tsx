@@ -493,7 +493,8 @@ export function EditServerModal({
                               Server Title
                             </span>
                             <span className="text-sm font-mono">
-                              {server.initializationInfo.serverVersion.title || "None"}
+                              {server.initializationInfo.serverVersion.title ||
+                                "None"}
                             </span>
                           </div>
                           <div className="flex items-center justify-between">
@@ -501,7 +502,8 @@ export function EditServerModal({
                               Homepage URL
                             </span>
                             <span className="text-sm font-mono">
-                              {server.initializationInfo.serverVersion.websiteUrl || "None"}
+                              {server.initializationInfo.serverVersion
+                                .websiteUrl || "None"}
                             </span>
                           </div>
                           <div className="flex items-center justify-between">
@@ -521,36 +523,37 @@ export function EditServerModal({
 
                     {/* Server Icons */}
                     {server.initializationInfo.serverVersion &&
-                     server.initializationInfo.serverVersion.icons && 
-                     (
-                      <div className="space-y-3 pt-2 border-t border-border/50">
-                        <h4 className="text-xs font-semibold text-foreground uppercase tracking-wide">
-                          Server Icons
-                        </h4>
+                      server.initializationInfo.serverVersion.icons && (
+                        <div className="space-y-3 pt-2 border-t border-border/50">
+                          <h4 className="text-xs font-semibold text-foreground uppercase tracking-wide">
+                            Server Icons
+                          </h4>
 
-                        <ul className="space-y-3">
-                          {server.initializationInfo.serverVersion.icons.map((icon, index) => (
-                            <li
-                              key={index}
-                              className="flex items-center justify-between p-3 rounded-lg border border-border bg-muted/30 hover:bg-muted/50 transition-colors"
-                            >
-                              <span className="font-mono text-xs break-all mr-4 flex-1">
-                                {icon.src}
-                              </span>
+                          <ul className="space-y-3">
+                            {server.initializationInfo.serverVersion.icons.map(
+                              (icon, index) => (
+                                <li
+                                  key={index}
+                                  className="flex items-center justify-between p-3 rounded-lg border border-border bg-muted/30 hover:bg-muted/50 transition-colors"
+                                >
+                                  <span className="font-mono text-xs break-all mr-4 flex-1">
+                                    {icon.src}
+                                  </span>
 
-                              <div className="w-12 h-12 rounded-md overflow-hidden bg-background border border-border/50 flex items-center justify-center">
-                                <img
-                                  src={icon.src}
-                                  alt=""
-                                  className="w-full h-full object-contain"
-                                  loading="lazy"
-                                />
-                              </div>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
+                                  <div className="w-12 h-12 rounded-md overflow-hidden bg-background border border-border/50 flex items-center justify-center">
+                                    <img
+                                      src={icon.src}
+                                      alt=""
+                                      className="w-full h-full object-contain"
+                                      loading="lazy"
+                                    />
+                                  </div>
+                                </li>
+                              ),
+                            )}
+                          </ul>
+                        </div>
+                      )}
 
                     {/* Server Instructions */}
                     {server.initializationInfo.instructions && (
