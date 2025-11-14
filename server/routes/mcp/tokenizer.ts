@@ -147,7 +147,6 @@ tokenizer.post("/count-tools", async (c) => {
 
     // Map model ID to backend-recognized format
     const mappedModelId = mapModelIdToTokenizerBackend(modelId);
-    console.log("mappedModelId", mappedModelId);
     const useBackendTokenizer = mappedModelId !== null;
 
     await Promise.all(
