@@ -17,7 +17,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   ChartContainer,
@@ -63,6 +62,8 @@ export function SuiteIterationsView({
   availableModels,
   selectedTestId,
   onTestIdChange,
+  mode,
+  onModeChange,
 }: {
   suite: EvalSuite;
   cases: EvalCase[];
@@ -84,12 +85,14 @@ export function SuiteIterationsView({
   availableModels: any[];
   selectedTestId: string | null;
   onTestIdChange: (testId: string | null) => void;
+  mode?: "runs" | "edit";
+  onModeChange?: (mode: "runs" | "edit") => void;
 }) {
   const [openIterationId, setOpenIterationId] = useState<string | null>(null);
   const [expandedQueries, setExpandedQueries] = useState<Set<string>>(
     new Set(),
   );
-  const [activeTab, setActiveTab] = useState<"runs" | "edit">("runs");
+  const activeTab = mode || "runs";
   const [selectedRunIds, setSelectedRunIds] = useState<Set<string>>(new Set());
   const [showBatchDeleteModal, setShowBatchDeleteModal] = useState(false);
   const [viewMode, setViewMode] = useState<"overview" | "run-detail" | "test-detail">("overview");
@@ -1009,79 +1012,74 @@ export function SuiteIterationsView({
   useEffect(() => {
     if (selectedTestId) {
       setViewMode("test-detail");
-      // Use functional update to avoid stale closure issues
-      setActiveTab((current) => current !== "runs" ? "runs" : current);
+      // Switch to runs mode when a test is selected
+      if (onModeChange && activeTab !== "runs") {
+        onModeChange("runs");
+      }
     } else {
       // Use functional update to check current viewMode
       setViewMode((current) => current === "test-detail" ? "overview" : current);
     }
-  }, [selectedTestId]);
+  }, [selectedTestId, activeTab, onModeChange]);
 
   return (
     <div className="space-y-4">
-        <Tabs value={activeTab} onValueChange={(v) => {
-        const newTab = v as "runs" | "edit";
-
-        // If clicking the same tab, reset to list view
-        if (newTab === activeTab) {
-          if (newTab === "runs" && (viewMode === "run-detail" || viewMode === "test-detail")) {
-            setViewMode("overview");
-            setSelectedRunId(null);
-            onTestIdChange(null);
-          }
-          return;
-        }
-
-        setActiveTab(newTab);
-
-        // Reset view mode when switching tabs
-        if (newTab === "edit") {
-          setViewMode("overview");
-          setSelectedRunId(null);
-          onTestIdChange(null);
-        } else if (newTab === "runs") {
-          // When switching to runs, clear test detail but keep run detail if applicable
-          if (viewMode === "test-detail") {
-            setViewMode("overview");
-            onTestIdChange(null);
-          } else if (viewMode === "run-detail") {
-            // Keep run detail view
-          } else {
-            setViewMode("overview");
-            setSelectedRunId(null);
-          }
-        } else if (newTab === "general") {
-          // When switching to general, only reset if we're not showing test detail
-          if (viewMode === "test-detail") {
-            // Keep test detail view - don't reset
-          } else {
-            setViewMode("overview");
-            setSelectedRunId(null);
-            onTestIdChange(null);
-          }
-        }
-      }}>
-        {/* Header with tabs and actions */}
-        <div className="flex items-center justify-between gap-4 mb-4">
-          <div className="flex items-center gap-3 flex-1 min-w-0 overflow-visible">
-            {/* Tabs */}
-            <TabsList>
-          <TabsTrigger value="runs" onClick={() => {
-            if (activeTab === "runs" && viewMode === "run-detail") {
-              setViewMode("overview");
-              setSelectedRunId(null);
-            }
-          }}>Runs</TabsTrigger>
-          <TabsTrigger value="edit" onClick={() => {
-            if (activeTab === "edit") {
-              setViewMode("overview");
-              setSelectedRunId(null);
-              onTestIdChange(null);
-            }
-          }}>Edit</TabsTrigger>
-            </TabsList>
+        {/* Header with actions */}
+        {activeTab === "edit" ? (
+          <div className="flex items-center justify-between gap-4 mb-4">
+            <h2 className="text-lg font-semibold">Edit Test Suite</h2>
           </div>
-          {viewMode !== "run-detail" && (
+        ) : viewMode === "run-detail" && selectedRunDetails ? (
+          <div className="flex items-center justify-between gap-4 mb-4">
+            <h2 className="text-lg font-semibold">Run {formatRunId(selectedRunDetails._id)}</h2>
+            <div className="flex items-center gap-2 shrink-0">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowRunSummarySidebar(!showRunSummarySidebar)}
+                className="gap-2"
+              >
+                <BarChart3 className="h-4 w-4" />
+                View run summary
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onRerun(suite)}
+                disabled={rerunningSuiteId === suite._id}
+                className="gap-2"
+              >
+                <RotateCw className={cn("h-4 w-4", rerunningSuiteId === suite._id && "animate-spin")} />
+                {rerunningSuiteId === suite._id ? "Rerunning..." : "Rerun"}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onDeleteRun(selectedRunDetails._id)}
+                disabled={deletingRunId === selectedRunDetails._id}
+                className="gap-2"
+              >
+                <Trash2 className="h-4 w-4" />
+                {deletingRunId === selectedRunDetails._id ? "Deleting..." : "Delete"}
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => {
+                  setViewMode("overview");
+                  setSelectedRunId(null);
+                  setShowRunSummarySidebar(false);
+                }}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        ) : viewMode === "test-detail" && selectedTestDetails ? (
+          <div className="flex items-center justify-between gap-4 mb-4">
+            <h2 className="text-lg font-semibold">
+              {selectedTestDetails.templateInfo?.title || selectedTestDetails.testCase?.title}
+            </h2>
             <div className="flex items-center gap-2 shrink-0">
               {isRunInProgress && latestRun ? (
                 <Tooltip>
@@ -1149,11 +1147,83 @@ export function SuiteIterationsView({
                 <TooltipContent>Delete this test suite</TooltipContent>
               </Tooltip>
             </div>
-          )}
-        </div>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between gap-4 mb-4">
+            <h2 className="text-lg font-semibold">Runs</h2>
+            <div className="flex items-center gap-2 shrink-0">
+              {isRunInProgress && latestRun ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => onCancelRun(latestRun._id)}
+                      disabled={isCancelling}
+                      className="gap-2"
+                    >
+                      {isCancelling ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Cancelling...
+                        </>
+                      ) : (
+                        <>
+                          <X className="h-4 w-4" />
+                          Cancel run
+                        </>
+                      )}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Cancel the current evaluation run</TooltipContent>
+                </Tooltip>
+              ) : (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => onRerun(suite)}
+                        disabled={!canRerun || isRerunning}
+                        className="gap-2"
+                      >
+                        <RotateCw
+                          className={`h-4 w-4 ${isRerunning ? "animate-spin" : ""}`}
+                        />
+                        Rerun
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {!canRerun
+                      ? `Connect the following servers: ${missingServers.join(", ")}`
+                      : "Rerun evaluation"}
+                  </TooltipContent>
+                </Tooltip>
+              )}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onDelete(suite)}
+                    disabled={isDeleting}
+                    className="gap-2"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    {isDeleting ? "Deleting..." : "Delete"}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Delete this test suite</TooltipContent>
+              </Tooltip>
+            </div>
+          </div>
+        )}
 
 
-        <TabsContent value="runs" className="space-y-4">
+        {activeTab === "runs" && (
+          <div className="space-y-4">
           {viewMode === "test-detail" && selectedTestDetails ? (
             <>
           {/* Test Detail View - shown when a test is selected from sidebar */}
@@ -1394,7 +1464,7 @@ export function SuiteIterationsView({
                                   setSelectedRunId(iterationRun._id);
                                   onTestIdChange(null);
                                   setViewMode("run-detail");
-                                  setActiveTab("runs");
+                                  if (onModeChange) onModeChange("runs");
                                 }}
                               >
                                 View Run {formatRunId(iterationRun._id)}
@@ -1738,65 +1808,9 @@ export function SuiteIterationsView({
             <>
           {/* Run Detail View */}
           <div className="relative">
-            <div className="rounded-xl border bg-card text-card-foreground">
-              <div className="border-b px-4 py-3 flex items-center justify-between">
-                <div>
-                  <div className="text-sm font-semibold">Run {formatRunId(selectedRunDetails._id)}</div>
-                  <p className="text-xs text-muted-foreground">
-                    {formatTime(selectedRunDetails.completedAt ?? selectedRunDetails.createdAt)}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setShowRunSummarySidebar(!showRunSummarySidebar)}
-                    className="gap-2"
-                  >
-                    <BarChart3 className="h-4 w-4" />
-                    View run summary
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => onRerun(suite)}
-                    disabled={rerunningSuiteId === suite._id}
-                    className="gap-2"
-                  >
-                    <RotateCw className={cn("h-4 w-4", rerunningSuiteId === suite._id && "animate-spin")} />
-                    {rerunningSuiteId === suite._id ? "Rerunning..." : "Rerun"}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => onDeleteRun(selectedRunDetails._id)}
-                    disabled={deletingRunId === selectedRunDetails._id}
-                    className="gap-2"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                    {deletingRunId === selectedRunDetails._id ? "Deleting..." : "Delete"}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    onClick={() => {
-                      setViewMode("overview");
-                      setSelectedRunId(null);
-                      setShowRunSummarySidebar(false);
-                    }}
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            </div>
-
             {/* Run Metrics and Chart */}
-            <div className="rounded-lg border bg-background/80 px-3 py-2 mt-4">
+            <div className="rounded-lg border bg-background/80 px-3 py-2">
               <div className="flex items-center gap-6">
-                {/* Run Info */}
-                <span className="text-xs text-muted-foreground">Run {formatRunId(selectedRunDetails._id)}</span>
-
                 {/* Metrics */}
                 <div className="flex gap-6 flex-1">
                   <div className="space-y-0.5">
@@ -2100,9 +2114,11 @@ export function SuiteIterationsView({
           </div>
             </>
           ) : null}
-        </TabsContent>
+          </div>
+        )}
 
-        <TabsContent value="edit" className="space-y-4">
+        {activeTab === "edit" && (
+          <div className="space-y-4">
           {/* Default Pass/Fail Criteria for New Runs */}
           <div className="space-y-3">
             <div>
@@ -2122,8 +2138,8 @@ export function SuiteIterationsView({
 
           {/* Tests Config */}
           <SuiteTestsConfig suite={suite} onUpdate={handleUpdateTests} availableModels={availableModels} />
-        </TabsContent>
-      </Tabs>
+          </div>
+        )}
 
       {/* Batch Delete Runs Confirmation Modal */}
       <Dialog open={showBatchDeleteModal} onOpenChange={setShowBatchDeleteModal}>

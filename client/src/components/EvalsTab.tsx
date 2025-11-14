@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery, useMutation } from "convex/react";
-import { FlaskConical, Plus, AlertTriangle, ChevronDown, ChevronRight, MoreVertical, RotateCw, Trash2, X } from "lucide-react";
+import { FlaskConical, Plus, AlertTriangle, ChevronDown, ChevronRight, MoreVertical, RotateCw, Trash2, X, Pencil } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -54,6 +54,7 @@ function SuiteSidebarItem({
   onRerun,
   onCancelRun,
   onDelete,
+  onEdit,
   isRerunning,
   isCancelling,
   isDeleting,
@@ -70,6 +71,7 @@ function SuiteSidebarItem({
   onRerun: (suite: EvalSuite) => void;
   onCancelRun: (runId: string) => void;
   onDelete: (suite: EvalSuite) => void;
+  onEdit: (suite: EvalSuite) => void;
   isRerunning: boolean;
   isCancelling: boolean;
   isDeleting: boolean;
@@ -255,7 +257,7 @@ function SuiteSidebarItem({
                         (hasMissingServers || isRerunning) && "opacity-50",
                         isRerunning && "animate-spin"
                       )} />
-                      {isRerunning ? "Rerunning..." : "Rerun"}
+                      {isRerunning ? "Running..." : "Rerun"}
                     </DropdownMenuItem>
                   </div>
                 </TooltipTrigger>
@@ -266,6 +268,15 @@ function SuiteSidebarItem({
                 )}
               </Tooltip>
             )}
+            <DropdownMenuItem
+              onClick={(e) => {
+                e.stopPropagation();
+                onEdit(suite);
+              }}
+            >
+              <Pencil className="h-4 w-4 mr-2 text-foreground" />
+              Edit
+            </DropdownMenuItem>
             <DropdownMenuItem
               onClick={(e) => {
                 e.stopPropagation();
@@ -344,6 +355,7 @@ export function EvalsTab() {
   const [runToDelete, setRunToDelete] = useState<string | null>(null);
   const [selectedTestId, setSelectedTestId] = useState<string | null>(null);
   const [expandedSuites, setExpandedSuites] = useState<Set<string>>(new Set());
+  const [suiteMode, setSuiteMode] = useState<"runs" | "edit">("runs");
 
   // Reset selectedTestId only when suite changes without a test being explicitly selected
   // We track this by checking if the test selection was intentional
@@ -818,6 +830,8 @@ export function EvalsTab() {
                           // Clear test selection when clicking on suite name
                           setSelectedTestId(null);
                           setSelectedSuiteId(suiteId);
+                          // Reset to runs mode when clicking suite name
+                          setSuiteMode("runs");
                           if (selectedSuiteId !== suiteId) {
                             // Auto-expand when selecting a new suite
                             setExpandedSuites((prev) => new Set(prev).add(suiteId));
@@ -832,6 +846,11 @@ export function EvalsTab() {
                         onRerun={handleRerun}
                         onCancelRun={handleCancelRun}
                         onDelete={handleDelete}
+                        onEdit={(suite) => {
+                          setSelectedSuiteId(suite._id);
+                          setSuiteMode("edit");
+                          setSelectedTestId(null);
+                        }}
                         isRerunning={rerunningSuiteId === suite._id}
                         isCancelling={cancellingRunId === latestRun?._id}
                         isDeleting={deletingSuiteId === suite._id}
@@ -909,6 +928,8 @@ export function EvalsTab() {
                   availableModels={availableModels}
                   selectedTestId={selectedTestId}
                   onTestIdChange={setSelectedTestId}
+                  mode={suiteMode}
+                  onModeChange={setSuiteMode}
                 />
               </div>
             ) : null}
