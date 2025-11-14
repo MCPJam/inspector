@@ -215,6 +215,43 @@ export class MCPClientManager {
     return this.clientStates.get(serverId)?.config;
   }
 
+  getInitializationInfo(serverId: string) {
+    const state = this.clientStates.get(serverId);
+    const client = state?.client;
+    if (!client) {
+      return undefined;
+    }
+
+    // Determine transport type from config
+    const config = state.config;
+    let transportType: string;
+    if (this.isStdioConfig(config)) {
+      transportType = "stdio";
+    } else {
+      // Check if using SSE or Streamable HTTP based on URL or preference
+      transportType =
+        config.preferSSE || config.url.pathname.endsWith("/sse")
+          ? "sse"
+          : "streamable-http";
+    }
+
+    // Try to get protocol version from transport if available
+    let protocolVersion: string | undefined;
+    if (state.transport) {
+      // Access internal protocol version if available
+      protocolVersion = (state.transport as any)._protocolVersion;
+    }
+
+    return {
+      protocolVersion,
+      transport: transportType,
+      serverCapabilities: client.getServerCapabilities(),
+      serverVersion: client.getServerVersion(),
+      instructions: client.getInstructions(),
+      clientCapabilities: this.buildCapabilities(config),
+    };
+  }
+
   async connectToServer(
     serverId: string,
     config: MCPServerConfig,
@@ -472,13 +509,24 @@ export class MCPClientManager {
   ) {
     await this.ensureConnected(serverId);
     const client = this.getClientById(serverId);
+
+    // Merge global progress handler with any provided options
+    const mergedOptions = this.withTimeout(serverId, options);
+    if (!mergedOptions.onprogress) {
+      mergedOptions.onprogress = () => {
+        // register an empty on progress so that the client will send
+        // progress notifications...the notifications will be sent through the
+        // rpc logger
+      };
+    }
+
     return client.callTool(
       {
         name: toolName,
         arguments: args,
       },
       CallToolResultSchema,
-      this.withTimeout(serverId, options),
+      mergedOptions,
     );
   }
 
@@ -511,7 +559,16 @@ export class MCPClientManager {
   ) {
     await this.ensureConnected(serverId);
     const client = this.getClientById(serverId);
-    return client.readResource(params, this.withTimeout(serverId, options));
+    // Merge global progress handler with any provided options
+    const mergedOptions = this.withTimeout(serverId, options);
+    if (!mergedOptions.onprogress) {
+      mergedOptions.onprogress = () => {
+        // register an empty on progress so that the client will send
+        // progress notifications...the notifications will be sent through the
+        // rpc logger
+      };
+    }
+    return client.readResource(params, mergedOptions);
   }
 
   async subscribeResource(
@@ -582,7 +639,16 @@ export class MCPClientManager {
   ) {
     await this.ensureConnected(serverId);
     const client = this.getClientById(serverId);
-    return client.getPrompt(params, this.withTimeout(serverId, options));
+    // Merge global progress handler with any provided options
+    const mergedOptions = this.withTimeout(serverId, options);
+    if (!mergedOptions.onprogress) {
+      mergedOptions.onprogress = () => {
+        // register an empty on progress so that the client will send
+        // progress notifications...the notifications will be sent through the
+        // rpc logger
+      };
+    }
+    return client.getPrompt(params, mergedOptions);
   }
 
   getSessionIdByServer(serverId: string): string | undefined {

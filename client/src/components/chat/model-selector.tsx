@@ -58,7 +58,7 @@ const getProviderDisplayName = (provider: ModelProvider): string => {
       return "Ollama";
     case "meta":
       return "Meta";
-    case "x-ai":
+    case "xai":
       return "xAI";
     case "litellm":
       return "LiteLLM";

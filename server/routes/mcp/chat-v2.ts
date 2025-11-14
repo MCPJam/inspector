@@ -8,7 +8,7 @@ import {
 } from "ai";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { createLlmModel } from "../../utils/chat-helpers";
-import { isMCPJamProvidedModel } from "@/shared/types";
+import { isGPT5Model, isMCPJamProvidedModel } from "@/shared/types";
 import zodToJsonSchema from "zod-to-json-schema";
 import {
   hasUnresolvedToolCalls,
@@ -23,7 +23,14 @@ chatV2.post("/", async (c) => {
   try {
     const body = (await c.req.json()) as ChatV2Request;
     const mcpClientManager = c.mcpClientManager;
-    const { messages, apiKey, model } = body;
+    const {
+      messages,
+      apiKey,
+      model,
+      systemPrompt,
+      temperature,
+      selectedServers,
+    } = body;
 
     if (!Array.isArray(messages) || messages.length === 0) {
       return c.json({ error: "messages are required" }, 400);
@@ -33,8 +40,10 @@ chatV2.post("/", async (c) => {
     if (!modelDefinition) {
       return c.json({ error: "model is not supported" }, 400);
     }
-
-    const mcpTools = await mcpClientManager.getToolsForAiSdk();
+    const mcpTools = await mcpClientManager.getToolsForAiSdk(selectedServers);
+    const resolvedTemperature = isGPT5Model(modelDefinition.id)
+      ? undefined
+      : (temperature ?? DEFAULT_TEMPERATURE);
 
     // If model is MCPJam-provided, delegate to backend free-chat endpoint
     if (modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id)) {
@@ -115,7 +124,10 @@ chatV2.post("/", async (c) => {
                 mode: "step",
                 messages: JSON.stringify(messageHistory),
                 model: String(modelDefinition.id),
-                temperature: body.temperature ?? DEFAULT_TEMPERATURE,
+                systemPrompt,
+                ...(resolvedTemperature == undefined
+                  ? {}
+                  : { temperature: resolvedTemperature }),
                 tools: toolDefs,
               }),
             });
@@ -162,7 +174,7 @@ chatV2.post("/", async (c) => {
 
             const beforeLen = messageHistory.length;
             if (hasUnresolvedToolCalls(messageHistory as any)) {
-              await executeToolCallsFromMessages(messageHistory as any, {
+              await executeToolCallsFromMessages(messageHistory, {
                 clientManager: mcpClientManager,
               });
             }
@@ -184,6 +196,20 @@ chatV2.post("/", async (c) => {
 
             const finishReason: string | undefined = json.finishReason;
             if (finishReason && finishReason !== "tool-calls") {
+              writer.write({
+                type: "finish",
+                messageMetadata: {
+                  inputTokens:
+                    json.messages[json.messages.length - 1].metadata
+                      .inputTokens,
+                  outputTokens:
+                    json.messages[json.messages.length - 1].metadata
+                      .outputTokens,
+                  totalTokens:
+                    json.messages[json.messages.length - 1].metadata
+                      .totalTokens,
+                },
+              });
               break;
             }
           }
@@ -203,12 +229,33 @@ chatV2.post("/", async (c) => {
     const result = streamText({
       model: llmModel,
       messages: convertToModelMessages(messages),
-      temperature: body.temperature ?? DEFAULT_TEMPERATURE,
+      ...(resolvedTemperature == undefined
+        ? {}
+        : { temperature: resolvedTemperature }),
+      system: systemPrompt,
       tools: mcpTools,
       stopWhen: stepCountIs(20),
     });
 
-    return result.toUIMessageStreamResponse();
+    return result.toUIMessageStreamResponse({
+      messageMetadata: ({ part }) => {
+        if (part.type === "finish") {
+          return {
+            inputTokens: part.totalUsage.inputTokens,
+            outputTokens: part.totalUsage.outputTokens,
+            totalTokens: part.totalUsage.totalTokens,
+          };
+        }
+      },
+      onError: (error) => {
+        console.error("[mcp/chat-v2] stream error:", error);
+        // Return detailed error message to be sent to the client
+        if (error instanceof Error) {
+          return error.message;
+        }
+        return String(error);
+      },
+    });
   } catch (error) {
     console.error("[mcp/chat-v2] failed to process chat request", error);
     return c.json({ error: "Unexpected error" }, 500);

@@ -1,55 +1,50 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { Button } from "@/components/ui/button";
-import {
-  AlertCircle,
-  RefreshCw,
-  Shield,
-  Workflow,
-  ChevronDown,
-  ChevronRight,
-  ArrowDownToLine,
-  ArrowUpFromLine,
-  ExternalLink,
-  CheckCircle2,
-  Trash2,
-} from "lucide-react";
-import { EmptyState } from "./ui/empty-state";
+import { AlertCircle, Workflow, CheckCircle2 } from "lucide-react";
+import { EmptyState } from "@/components/ui/empty-state";
 import {
   AuthSettings,
   DEFAULT_AUTH_SETTINGS,
   StatusMessage,
 } from "@/shared/types.js";
-import { Card, CardContent } from "./ui/card";
-import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
-import { Input } from "./ui/input";
-import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "./ui/resizable";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "./ui/select";
-import { getStoredTokens } from "../lib/mcp-oauth";
-import { ServerWithName } from "../hooks/use-app-state";
+} from "@/components/ui/select";
+import { getStoredTokens } from "@/lib/mcp-oauth";
+import { ServerWithName } from "@/hooks/use-app-state";
+import { EMPTY_OAUTH_FLOW_STATE_V2 } from "@/lib/oauth/state-machines/debug-oauth-2025-06-18";
 import {
-  OauthFlowStateJune2025,
-  EMPTY_OAUTH_FLOW_STATE_V2,
-  createDebugOAuthStateMachine,
-} from "../lib/debug-oauth-state-machine";
-import { DebugMCPOAuthClientProvider } from "../lib/debug-oauth-provider";
-import { OAuthSequenceDiagram } from "./OAuthSequenceDiagram";
-import { OAuthAuthorizationModal } from "./OAuthAuthorizationModal";
-import { ServerModal } from "./connection/ServerModal";
+  OAuthFlowState,
+  OAuthProtocolVersion,
+  RegistrationStrategy2025_11_25,
+  RegistrationStrategy2025_06_18,
+  type OAuthFlowStep,
+} from "@/lib/oauth/state-machines/types";
+import {
+  createOAuthStateMachine,
+  getDefaultRegistrationStrategy,
+  getSupportedRegistrationStrategies,
+} from "@/lib/oauth/state-machines/factory";
+import { DebugMCPOAuthClientProvider } from "@/lib/debug-oauth-provider";
+import { OAuthSequenceDiagram } from "@/components/oauth/OAuthSequenceDiagram";
+import { OAuthFlowLogger } from "@/components/oauth/OAuthFlowLogger";
+import { OAuthAuthorizationModal } from "@/components/oauth/OAuthAuthorizationModal";
 import { ServerFormData } from "@/shared/types";
 import { MCPServerConfig } from "@/sdk";
-import JsonView from "react18-json-view";
-import "react18-json-view/src/style.css";
-import "react18-json-view/src/dark.css";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "./ui/resizable";
+import { EditServerModal } from "./connection/EditServerModal";
+import posthog from "posthog-js";
+import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 
 interface StatusMessageProps {
   message: StatusMessage;
@@ -95,7 +90,11 @@ interface OAuthFlowTabProps {
   serverConfig?: MCPServerConfig;
   serverEntry?: ServerWithName;
   serverName?: string;
-  onUpdate?: (originalServerName: string, formData: ServerFormData) => void;
+  onUpdate?: (
+    originalServerName: string,
+    formData: ServerFormData,
+    skipAutoConnect?: boolean,
+  ) => void;
 }
 
 export const OAuthFlowTab = ({
@@ -107,23 +106,16 @@ export const OAuthFlowTab = ({
   const [authSettings, setAuthSettings] = useState<AuthSettings>(
     DEFAULT_AUTH_SETTINGS,
   );
-  const [oauthFlowState, setOAuthFlowState] = useState<OauthFlowStateJune2025>(
+  const [oauthFlowState, setOAuthFlowState] = useState<OAuthFlowState>(
     EMPTY_OAUTH_FLOW_STATE_V2,
   );
+  const [focusedStep, setFocusedStep] = useState<OAuthFlowStep | null>(null);
 
   // Track if we've initialized the flow for the current server
   const initializedServerRef = useRef<string | null>(null);
 
   // Track if user manually reset (don't auto-restart in this case)
   const manualResetRef = useRef(false);
-
-  // Track which HTTP blocks are expanded
-  const [expandedBlocks, setExpandedBlocks] = useState<Set<string>>(new Set());
-
-  // Track which info logs have been deleted
-  const [deletedInfoLogs, setDeletedInfoLogs] = useState<Set<string>>(
-    new Set(),
-  );
 
   // Track if authorization modal is open
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
@@ -134,10 +126,89 @@ export const OAuthFlowTab = ({
   // Track custom scopes input
   const [customScopes, setCustomScopes] = useState("");
 
-  // Track client registration strategy
-  type RegistrationStrategy = "dcr" | "preregistered";
-  const [registrationStrategy, setRegistrationStrategy] =
-    useState<RegistrationStrategy>("dcr");
+  const [serverUrlInput, setServerUrlInput] = useState(() => {
+    if (serverConfig && "url" in serverConfig) {
+      return (serverConfig as any).url.toString();
+    }
+    return "";
+  });
+
+  const isHttpServer = Boolean(serverConfig && "url" in serverConfig);
+
+  const previousServerIdentityRef = useRef<string | null>(null);
+  const lastConfigUrlRef = useRef<string | null>(null);
+  useEffect(() => {
+    const identity = serverName ?? serverEntry?.name ?? null;
+    const configUrl =
+      serverConfig && "url" in serverConfig
+        ? (serverConfig as any).url.toString()
+        : null;
+
+    const identityChanged = identity !== previousServerIdentityRef.current;
+
+    if (identityChanged) {
+      previousServerIdentityRef.current = identity;
+      lastConfigUrlRef.current = configUrl;
+      setServerUrlInput(configUrl ?? "");
+      return;
+    }
+
+    if (configUrl !== lastConfigUrlRef.current) {
+      const previousConfigUrl = lastConfigUrlRef.current;
+      lastConfigUrlRef.current = configUrl;
+      if (
+        !previousConfigUrl ||
+        serverUrlInput.trim() === (previousConfigUrl ?? "")
+      ) {
+        setServerUrlInput(configUrl ?? "");
+      }
+    }
+
+    if (!serverConfig && serverUrlInput !== "") {
+      lastConfigUrlRef.current = null;
+      setServerUrlInput("");
+    }
+  }, [serverConfig, serverEntry, serverName, serverUrlInput]);
+
+  // Track protocol version (load from localStorage or default to latest)
+  const [protocolVersion, setProtocolVersion] = useState<OAuthProtocolVersion>(
+    () => {
+      try {
+        const saved = localStorage.getItem("mcp-oauth-flow-preferences");
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          return parsed.protocolVersion || "2025-11-25";
+        }
+      } catch (e) {
+        console.error("Failed to load OAuth flow preferences:", e);
+      }
+      return "2025-11-25";
+    },
+  );
+
+  // Track client registration strategy (load from localStorage or default)
+  const [registrationStrategy, setRegistrationStrategy] = useState<
+    RegistrationStrategy2025_06_18 | RegistrationStrategy2025_11_25
+  >(() => {
+    try {
+      const saved = localStorage.getItem("mcp-oauth-flow-preferences");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // If we have a saved strategy, validate it's supported for the protocol
+        if (parsed.registrationStrategy && parsed.protocolVersion) {
+          const supportedStrategies = getSupportedRegistrationStrategies(
+            parsed.protocolVersion,
+          );
+          if (supportedStrategies.includes(parsed.registrationStrategy)) {
+            return parsed.registrationStrategy;
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Failed to load OAuth flow preferences:", e);
+    }
+    return getDefaultRegistrationStrategy("2025-11-25");
+  });
 
   // Use ref to always have access to the latest state
   const oauthFlowStateRef = useRef(oauthFlowState);
@@ -145,29 +216,29 @@ export const OAuthFlowTab = ({
     oauthFlowStateRef.current = oauthFlowState;
   }, [oauthFlowState]);
 
-  const toggleExpanded = (id: string) => {
-    setExpandedBlocks((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
+  useEffect(() => {
+    setFocusedStep(null);
+  }, [oauthFlowState.currentStep]);
+
+  // Save protocol version and registration strategy to localStorage whenever they change
+  useEffect(() => {
+    try {
+      const preferences = {
+        protocolVersion,
+        registrationStrategy,
+      };
+      localStorage.setItem(
+        "mcp-oauth-flow-preferences",
+        JSON.stringify(preferences),
+      );
+    } catch (e) {
+      console.error("Failed to save OAuth flow preferences:", e);
+    }
+  }, [protocolVersion, registrationStrategy]);
 
   const clearInfoLogs = () => {
-    // Clear all info logs by marking all as deleted
-    const allInfoLogIds = new Set<string>([
-      "www-authenticate",
-      "authorization-servers",
-      "as-metadata",
-      "dcr",
-      "pkce-generation",
-      "auth-url",
-      "auth-code",
-      "oauth-tokens",
-      "token",
-    ]);
-    setDeletedInfoLogs(allInfoLogIds);
+    // Clear all info logs from state
+    updateOAuthFlowState({ infoLogs: [] });
   };
 
   const clearHttpHistory = () => {
@@ -178,8 +249,16 @@ export const OAuthFlowTab = ({
     setAuthSettings((prev) => ({ ...prev, ...updates }));
   }, []);
 
+  const handleServerUrlChange = useCallback(
+    (value: string) => {
+      setServerUrlInput(value);
+      updateAuthSettings({ serverUrl: value });
+    },
+    [updateAuthSettings],
+  );
+
   const updateOAuthFlowState = useCallback(
-    (updates: Partial<OauthFlowStateJune2025>) => {
+    (updates: Partial<OAuthFlowState>) => {
       setOAuthFlowState((prev) => ({ ...prev, ...updates }));
     },
     [],
@@ -205,22 +284,21 @@ export const OAuthFlowTab = ({
       clearTimeout(exchangeTimeoutRef.current); // Clear any pending exchange
       exchangeTimeoutRef.current = null;
     }
-    setExpandedBlocks(new Set());
-    setDeletedInfoLogs(new Set());
-    setCustomScopes(""); // Clear custom scopes
-    // Headers will remain from server config (not cleared on reset)
+    // Don't clear custom scopes - they should persist from server config
+    // Headers and scopes will remain from server config (not cleared on reset)
   }, [updateOAuthFlowState]);
 
-  // Update auth settings when server config changes
+  // Update auth settings when server config changes or server URL is overridden
   useEffect(() => {
-    if (serverConfig && serverConfig.url && serverName) {
-      const serverUrl = serverConfig.url.toString();
+    if (serverConfig && serverName && isHttpServer) {
+      const configUrl = (serverConfig as any).url.toString();
+      const effectiveUrl = serverUrlInput.trim() || configUrl;
 
       // Check for existing tokens using the real OAuth system
       const existingTokens = getStoredTokens(serverName);
 
       updateAuthSettings({
-        serverUrl,
+        serverUrl: effectiveUrl,
         tokens: existingTokens,
         error: null,
         statusMessage: null,
@@ -265,9 +343,16 @@ export const OAuthFlowTab = ({
     } else {
       updateAuthSettings(DEFAULT_AUTH_SETTINGS);
     }
-  }, [serverConfig, serverName, updateAuthSettings, customScopes]);
+  }, [
+    serverConfig,
+    serverName,
+    updateAuthSettings,
+    customScopes,
+    isHttpServer,
+    serverUrlInput,
+  ]);
 
-  // Initialize Debug OAuth state machine
+  // Initialize Debug OAuth state machine with protocol version support
   const oauthStateMachine = useMemo(() => {
     if (!serverConfig || !serverName || !authSettings.serverUrl) return null;
 
@@ -289,7 +374,8 @@ export const OAuthFlowTab = ({
       );
     }
 
-    return createDebugOAuthStateMachine({
+    return createOAuthStateMachine({
+      protocolVersion,
       state: oauthFlowStateRef.current,
       getState: () => oauthFlowStateRef.current,
       updateState: updateOAuthFlowState,
@@ -301,6 +387,7 @@ export const OAuthFlowTab = ({
       registrationStrategy,
     });
   }, [
+    protocolVersion,
     serverConfig,
     serverName,
     authSettings.serverUrl,
@@ -460,8 +547,15 @@ export const OAuthFlowTab = ({
 
   // Check if server supports OAuth
   // Only HTTP servers support OAuth (STDIO servers use process-based auth)
-  const isHttpServer = serverConfig && "url" in serverConfig;
   const supportsOAuth = isHttpServer;
+
+  useEffect(() => {
+    posthog.capture("oauth_flow_tab_viewed", {
+      location: "oauth_flow_tab",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+    });
+  }, []);
 
   if (!serverConfig) {
     return (
@@ -550,117 +644,197 @@ export const OAuthFlowTab = ({
     <div className="h-[calc(100vh-120px)] flex flex-col bg-background">
       {/* Header */}
       <div className="px-6 py-4 border-b border-border bg-background">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="flex items-center gap-2">
-              <Workflow className="h-5 w-5" />
-              <h3 className="text-lg font-medium">OAuth Authentication Flow</h3>
-              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
-                BETA
-              </span>
-            </div>
-            <p className="text-sm text-muted-foreground">
-              {serverEntry?.name || "Unknown Server"} •{" "}
-              {isHttpServer && (serverConfig as any).url.toString()}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-2 border-r border-border pr-4">
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="flex-1 min-w-[220px] space-y-2">
               <label
-                htmlFor="registration-strategy"
-                className="text-xs text-muted-foreground whitespace-nowrap"
+                htmlFor="oauth-flow-server-url"
+                className="text-xs uppercase tracking-wide text-muted-foreground"
               >
-                Registration:
+                Server URL
               </label>
-              <Select
-                value={registrationStrategy}
-                onValueChange={(value: RegistrationStrategy) =>
-                  setRegistrationStrategy(value)
-                }
-                disabled={oauthFlowState.isInitiatingAuth}
-              >
-                <SelectTrigger
-                  id="registration-strategy"
-                  className="w-[180px] h-9 text-xs"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="dcr" className="text-xs">
-                    Dynamic (DCR)
-                  </SelectItem>
-                  <SelectItem value="preregistered" className="text-xs">
-                    Pre-registered
-                  </SelectItem>
-                </SelectContent>
-              </Select>
+              <Input
+                id="oauth-flow-server-url"
+                value={serverUrlInput}
+                onChange={(event) => handleServerUrlChange(event.target.value)}
+                placeholder="https://example.com"
+                className="h-9"
+                spellCheck={false}
+                autoComplete="off"
+              />
             </div>
-            <p className="text-xs text-muted-foreground">
-              Protocol Revision: 2025-06-18
-            </p>
-            {serverEntry && (
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="min-w-[150px] space-y-1">
+                <label
+                  htmlFor="protocol-version"
+                  className="text-xs uppercase tracking-wide text-muted-foreground"
+                >
+                  Protocol
+                </label>
+                <Select
+                  value={protocolVersion}
+                  onValueChange={(value: OAuthProtocolVersion) => {
+                    setProtocolVersion(value);
+                    // Reset registration strategy to default for new protocol
+                    setRegistrationStrategy(
+                      getDefaultRegistrationStrategy(value) as
+                        | RegistrationStrategy2025_06_18
+                        | RegistrationStrategy2025_11_25,
+                    );
+                  }}
+                  disabled={oauthFlowState.isInitiatingAuth}
+                >
+                  <SelectTrigger
+                    id="protocol-version"
+                    className="h-9 w-full text-xs"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="2025-03-26" className="text-xs">
+                      2025-03-26
+                    </SelectItem>
+                    <SelectItem value="2025-06-18" className="text-xs">
+                      2025-06-18 (Latest)
+                    </SelectItem>
+                    <SelectItem value="2025-11-25" className="text-xs">
+                      2025-11-25 (Draft)
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="min-w-[180px] space-y-1">
+                <label
+                  htmlFor="registration-strategy"
+                  className="text-xs uppercase tracking-wide text-muted-foreground"
+                >
+                  Registration
+                </label>
+                <Select
+                  value={registrationStrategy}
+                  onValueChange={(value: string) =>
+                    setRegistrationStrategy(
+                      value as
+                        | RegistrationStrategy2025_06_18
+                        | RegistrationStrategy2025_11_25,
+                    )
+                  }
+                  disabled={oauthFlowState.isInitiatingAuth}
+                >
+                  <SelectTrigger
+                    id="registration-strategy"
+                    className="h-9 w-full text-xs"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {getSupportedRegistrationStrategies(protocolVersion).map(
+                      (strategy) => (
+                        <SelectItem
+                          key={strategy}
+                          value={strategy}
+                          className="text-xs"
+                        >
+                          {strategy === "cimd"
+                            ? "CIMD (URL-based)"
+                            : strategy === "dcr"
+                              ? "Dynamic (DCR)"
+                              : "Pre-registered"}
+                        </SelectItem>
+                      ),
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="flex items-end gap-2">
+              {serverEntry && onUpdate && (
+                <Button
+                  variant="outline"
+                  onClick={() => setIsEditingServer(true)}
+                  disabled={oauthFlowState.isInitiatingAuth}
+                >
+                  Edit Config
+                </Button>
+              )}
               <Button
                 variant="outline"
-                onClick={() => setIsEditingServer(true)}
+                onClick={() => {
+                  // Mark this as a manual reset (don't auto-restart)
+                  manualResetRef.current = true;
+
+                  if (oauthStateMachine) {
+                    oauthStateMachine.resetFlow();
+                  }
+
+                  // Reset the initialized server ref to allow manual restart
+                  initializedServerRef.current = null;
+
+                  // Clear processed code tracker and any pending exchanges
+                  processedCodeRef.current = null;
+                  if (exchangeTimeoutRef.current) {
+                    clearTimeout(exchangeTimeoutRef.current);
+                    exchangeTimeoutRef.current = null;
+                  }
+                }}
                 disabled={oauthFlowState.isInitiatingAuth}
               >
-                Edit Config
+                Reset
               </Button>
-            )}
-            <Button
-              variant="outline"
-              onClick={() => {
-                // Mark this as a manual reset (don't auto-restart)
-                manualResetRef.current = true;
-
-                if (oauthStateMachine) {
-                  oauthStateMachine.resetFlow();
+              <Button
+                onClick={async () => {
+                  // If we're about to do authorization or already at it, handle the modal
+                  posthog.capture("oauth_flow_tab_next_step_button_clicked", {
+                    location: "oauth_flow_tab",
+                    platform: detectPlatform(),
+                    environment: detectEnvironment(),
+                    currentStep: oauthFlowState.currentStep,
+                    protocolVersion: protocolVersion,
+                    registrationStrategy: registrationStrategy,
+                  });
+                  if (
+                    oauthFlowState.currentStep === "authorization_request" ||
+                    oauthFlowState.currentStep === "generate_pkce_parameters"
+                  ) {
+                    // First proceed to authorization_request if needed
+                    if (
+                      oauthFlowState.currentStep === "generate_pkce_parameters"
+                    ) {
+                      await proceedToNextStep();
+                    }
+                    // Then open modal
+                    setIsAuthModalOpen(true);
+                  } else {
+                    // Otherwise proceed to next step
+                    await proceedToNextStep();
+                  }
+                }}
+                disabled={
+                  oauthFlowState.isInitiatingAuth ||
+                  oauthFlowState.currentStep === "complete"
                 }
-
-                // Reset the initialized server ref to allow manual restart
-                initializedServerRef.current = null;
-
-                // Clear processed code tracker and any pending exchanges
-                processedCodeRef.current = null;
-                if (exchangeTimeoutRef.current) {
-                  clearTimeout(exchangeTimeoutRef.current);
-                  exchangeTimeoutRef.current = null;
-                }
-              }}
-              disabled={oauthFlowState.isInitiatingAuth}
-            >
-              Reset
-            </Button>
-            <Button
-              onClick={() => {
-                // If we're at authorization step, open the popup
-                if (oauthFlowState.currentStep === "authorization_request") {
-                  setIsAuthModalOpen(true);
-                } else {
-                  // Otherwise proceed to next step
-                  void proceedToNextStep();
-                }
-              }}
-              disabled={
-                oauthFlowState.isInitiatingAuth ||
-                oauthFlowState.currentStep === "complete"
-              }
-              className={`min-w-[180px] ${oauthFlowState.currentStep === "complete" ? "bg-green-600 hover:bg-green-600" : ""}`}
-            >
-              {oauthFlowState.currentStep === "complete" ? (
-                <>
-                  <CheckCircle2 className="mr-2 h-4 w-4" />
-                  Flow Complete
-                </>
-              ) : oauthFlowState.isInitiatingAuth ? (
-                "Processing..."
-              ) : oauthFlowState.currentStep === "authorization_request" ? (
-                "Ready to authorize"
-              ) : (
-                "Next Step"
-              )}
-            </Button>
+                className={`min-w-[180px] ${oauthFlowState.currentStep === "complete" ? "bg-green-600 hover:bg-green-600" : ""}`}
+              >
+                {oauthFlowState.currentStep === "complete" ? (
+                  <>
+                    <CheckCircle2 className="mr-2 h-4 w-4" />
+                    Flow Complete
+                  </>
+                ) : oauthFlowState.isInitiatingAuth ? (
+                  "Processing..."
+                ) : oauthFlowState.currentStep === "authorization_request" ||
+                  oauthFlowState.currentStep === "generate_pkce_parameters" ? (
+                  "Ready to authorize"
+                ) : (
+                  "Next Step"
+                )}
+              </Button>
+            </div>
           </div>
+          <p className="text-xs text-muted-foreground">
+            Set the target URL, pick your protocol version, and confirm the
+            registration strategy before continuing.
+          </p>
         </div>
       </div>
 
@@ -683,308 +857,31 @@ export const OAuthFlowTab = ({
       ) : null}
 
       {/* Flow Visualization - Takes up all remaining space */}
-      <div className="flex-1 overflow-hidden flex flex-row">
-        {/* ReactFlow Sequence Diagram */}
-        <div className="flex-1">
-          <OAuthSequenceDiagram
-            flowState={oauthFlowState}
-            registrationStrategy={registrationStrategy}
-          />
-        </div>
+      <div className="flex-1 overflow-hidden">
+        <ResizablePanelGroup direction="horizontal" className="h-full">
+          {/* ReactFlow Sequence Diagram */}
+          <ResizablePanel defaultSize={50} minSize={30}>
+            <OAuthSequenceDiagram
+              flowState={oauthFlowState}
+              registrationStrategy={registrationStrategy}
+              protocolVersion={protocolVersion}
+              focusedStep={focusedStep}
+            />
+          </ResizablePanel>
 
-        {/* Side Panel with Details - Split into two resizable sections */}
-        <div className="w-96 border-l border-border flex flex-col">
-          <ResizablePanelGroup direction="vertical" className="flex-1">
-            {/* Top Panel - Info */}
-            <ResizablePanel defaultSize={40} minSize={20} maxSize={80}>
-              <div className="h-full bg-muted/30 overflow-auto">
-                <div className="sticky top-0 z-10 bg-muted/30 backdrop-blur-sm border-b border-border px-4 py-3 flex items-center justify-between">
-                  <h3 className="text-sm font-semibold">Info</h3>
-                  <button
-                    onClick={clearInfoLogs}
-                    className="p-1 hover:bg-muted rounded transition-colors"
-                    title="Clear all logs"
-                  >
-                    <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive transition-colors" />
-                  </button>
-                </div>
-                <div className="p-4 space-y-3">
-                  {/* Error Display */}
-                  {oauthFlowState.error && (
-                    <Alert variant="destructive" className="py-2">
-                      <AlertCircle className="h-4 w-4" />
-                      <AlertDescription className="text-xs">
-                        {oauthFlowState.error}
-                      </AlertDescription>
-                    </Alert>
-                  )}
+          <ResizableHandle withHandle />
 
-                  {/* OAuth Flow Info Logs */}
-                  {(() => {
-                    // Get logs from state
-                    const infoLogs = oauthFlowState.infoLogs || [];
-
-                    return infoLogs
-                      .slice()
-                      .reverse()
-                      .filter((log) => !deletedInfoLogs.has(log.id))
-                      .map((log) => {
-                        const isExpanded = expandedBlocks.has(log.id);
-                        return (
-                          <div
-                            key={log.id}
-                            className="group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card"
-                          >
-                            <div
-                              className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
-                              onClick={() => toggleExpanded(log.id)}
-                            >
-                              <div className="flex-shrink-0">
-                                {isExpanded ? (
-                                  <ChevronDown className="h-3 w-3 text-muted-foreground transition-transform" />
-                                ) : (
-                                  <ChevronRight className="h-3 w-3 text-muted-foreground transition-transform" />
-                                )}
-                              </div>
-                              <span className="text-xs font-medium text-foreground">
-                                {log.label}
-                              </span>
-                            </div>
-                            {isExpanded && (
-                              <div className="border-t bg-muted/20">
-                                <div className="p-3">
-                                  <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
-                                    <JsonView
-                                      src={log.data}
-                                      dark={true}
-                                      theme="atom"
-                                      enableClipboard={true}
-                                      displaySize={false}
-                                      collapsed={false}
-                                      style={{
-                                        fontSize: "11px",
-                                        fontFamily:
-                                          "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                                        backgroundColor: "transparent",
-                                        padding: "0",
-                                        borderRadius: "0",
-                                        border: "none",
-                                      }}
-                                    />
-                                  </div>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      });
-                  })()}
-
-                  {/* Empty state when no logs */}
-                  {!oauthFlowState.codeChallenge && (
-                    <div className="text-center py-8 text-muted-foreground text-sm">
-                      No flow information yet
-                    </div>
-                  )}
-                </div>
-              </div>
-            </ResizablePanel>
-
-            <ResizableHandle withHandle />
-
-            {/* Bottom Panel - HTTP History */}
-            <ResizablePanel defaultSize={60} minSize={20}>
-              <div className="h-full bg-muted/30 overflow-auto">
-                <div className="sticky top-0 z-10 bg-muted/30 backdrop-blur-sm border-b border-border px-4 py-3 flex items-center justify-between">
-                  <h3 className="text-sm font-semibold">HTTP History</h3>
-                  <button
-                    onClick={clearHttpHistory}
-                    className="p-1 hover:bg-muted rounded transition-colors"
-                    title="Clear all history"
-                  >
-                    <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive transition-colors" />
-                  </button>
-                </div>
-                <div className="p-4 space-y-3">
-                  {oauthFlowState.httpHistory &&
-                  oauthFlowState.httpHistory.length > 0 ? (
-                    (() => {
-                      // Flatten entries into individual messages and reverse
-                      const messages: Array<{
-                        type: "request" | "response";
-                        data: any;
-                        id: string;
-                      }> = [];
-
-                      oauthFlowState.httpHistory.forEach(
-                        (entry, entryIndex) => {
-                          if (entry.request) {
-                            messages.push({
-                              type: "request",
-                              data: entry.request,
-                              id: `request-${entryIndex}`,
-                            });
-                          }
-                          if (entry.response) {
-                            messages.push({
-                              type: "response",
-                              data: entry.response,
-                              id: `response-${entryIndex}`,
-                            });
-                          }
-                        },
-                      );
-
-                      return messages.reverse().map((message) => {
-                        const isExpanded = expandedBlocks.has(message.id);
-
-                        if (message.type === "request") {
-                          const request = message.data;
-                          return (
-                            <div
-                              key={message.id}
-                              className="group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card"
-                            >
-                              <div
-                                className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
-                                onClick={() => toggleExpanded(message.id)}
-                              >
-                                <div className="flex-shrink-0">
-                                  {isExpanded ? (
-                                    <ChevronDown className="h-3 w-3 text-muted-foreground transition-transform" />
-                                  ) : (
-                                    <ChevronRight className="h-3 w-3 text-muted-foreground transition-transform" />
-                                  )}
-                                </div>
-                                <div className="flex items-center gap-2 flex-1 min-w-0">
-                                  <span
-                                    className="flex items-center justify-center px-1 py-0.5 rounded bg-green-500/10 text-green-600 dark:text-green-400"
-                                    title="Outgoing"
-                                  >
-                                    <ArrowUpFromLine className="h-3 w-3" />
-                                  </span>
-                                  <span className="text-xs font-mono text-foreground truncate">
-                                    {request.method} {request.url}
-                                  </span>
-                                </div>
-                              </div>
-                              {isExpanded && (
-                                <div className="border-t bg-muted/20">
-                                  <div className="p-3">
-                                    <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
-                                      <JsonView
-                                        src={{
-                                          method: request.method,
-                                          url: request.url,
-                                          headers: request.headers,
-                                          body: request.body,
-                                        }}
-                                        dark={true}
-                                        theme="atom"
-                                        enableClipboard={true}
-                                        displaySize={false}
-                                        collapseStringsAfterLength={100}
-                                        style={{
-                                          fontSize: "11px",
-                                          fontFamily:
-                                            "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                                          backgroundColor: "transparent",
-                                          padding: "0",
-                                          borderRadius: "0",
-                                          border: "none",
-                                        }}
-                                      />
-                                    </div>
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          );
-                        } else {
-                          const response = message.data;
-                          return (
-                            <div
-                              key={message.id}
-                              className="group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card"
-                            >
-                              <div
-                                className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
-                                onClick={() => toggleExpanded(message.id)}
-                              >
-                                <div className="flex-shrink-0">
-                                  {isExpanded ? (
-                                    <ChevronDown className="h-3 w-3 text-muted-foreground transition-transform" />
-                                  ) : (
-                                    <ChevronRight className="h-3 w-3 text-muted-foreground transition-transform" />
-                                  )}
-                                </div>
-                                <div className="flex items-center gap-2 flex-1 min-w-0">
-                                  <span
-                                    className="flex items-center justify-center px-1 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400"
-                                    title="Incoming"
-                                  >
-                                    <ArrowDownToLine className="h-3 w-3" />
-                                  </span>
-                                  <span
-                                    className={`text-xs px-1.5 py-0.5 rounded font-mono flex-shrink-0 ${
-                                      response.status >= 200 &&
-                                      response.status < 300
-                                        ? "bg-green-500/10 text-green-600 dark:text-green-400"
-                                        : "bg-red-500/10 text-red-600 dark:text-red-400"
-                                    }`}
-                                  >
-                                    {response.status}
-                                  </span>
-                                  <span className="text-xs font-mono text-foreground truncate">
-                                    {response.statusText}
-                                  </span>
-                                </div>
-                              </div>
-                              {isExpanded && (
-                                <div className="border-t bg-muted/20">
-                                  <div className="p-3">
-                                    <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
-                                      <JsonView
-                                        src={{
-                                          status: response.status,
-                                          statusText: response.statusText,
-                                          headers: response.headers,
-                                          body: response.body,
-                                        }}
-                                        dark={true}
-                                        theme="atom"
-                                        enableClipboard={true}
-                                        displaySize={false}
-                                        collapseStringsAfterLength={100}
-                                        style={{
-                                          fontSize: "11px",
-                                          fontFamily:
-                                            "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                                          backgroundColor: "transparent",
-                                          padding: "0",
-                                          borderRadius: "0",
-                                          border: "none",
-                                        }}
-                                      />
-                                    </div>
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          );
-                        }
-                      });
-                    })()
-                  ) : (
-                    <div className="text-center py-8 text-muted-foreground text-sm">
-                      No HTTP requests yet
-                    </div>
-                  )}
-                </div>
-              </div>
-            </ResizablePanel>
-          </ResizablePanelGroup>
-        </div>
+          {/* Side Panel with Details - Combined Info and HTTP History */}
+          <ResizablePanel defaultSize={50} minSize={20} maxSize={50}>
+            <OAuthFlowLogger
+              oauthFlowState={oauthFlowState}
+              onClearLogs={clearInfoLogs}
+              onClearHttpHistory={clearHttpHistory}
+              activeStep={focusedStep ?? oauthFlowState.currentStep}
+              onFocusStep={setFocusedStep}
+            />
+          </ResizablePanel>
+        </ResizablePanelGroup>
       </div>
 
       {/* OAuth Authorization Modal */}
@@ -998,14 +895,16 @@ export const OAuthFlowTab = ({
 
       {/* Edit Server Modal */}
       {serverEntry && onUpdate && (
-        <ServerModal
-          mode="edit"
+        <EditServerModal
           isOpen={isEditingServer}
           onClose={() => setIsEditingServer(false)}
-          onSubmit={(formData, originalName) =>
-            onUpdate(originalName!, formData)
-          }
+          onSubmit={(formData, originalName, skipAutoConnect) => {
+            onUpdate(originalName, formData, skipAutoConnect);
+            // Reset OAuth flow to regenerate authorization URL with new config
+            resetOAuthFlow();
+          }}
           server={serverEntry}
+          skipAutoConnect={true}
         />
       )}
     </div>

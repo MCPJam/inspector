@@ -3,14 +3,12 @@ import {
   Hammer,
   MessageCircle,
   Settings,
-  Signature,
   MessageSquareCode,
   BookOpen,
-  Activity,
-  CirclePlayIcon,
-  ListChecks,
+  FlaskConical,
   HandMetal,
   Workflow,
+  Box,
 } from "lucide-react";
 
 import { NavMain } from "@/components/sidebar/nav-main";
@@ -32,24 +30,19 @@ const navigationSections = [
     id: "connection",
     items: [
       {
-        title: "MCP Servers",
+        title: "Workspaces",
         url: "#servers",
         icon: MCPIcon,
       },
       {
         title: "Playground",
-        url: "#chat",
-        icon: MessageCircle,
-      },
-      {
-        title: "Playground V2",
         url: "#chat-v2",
         icon: MessageCircle,
       },
     ],
   },
   {
-    id: "tools",
+    id: "primitives",
     items: [
       {
         title: "Tools",
@@ -66,30 +59,25 @@ const navigationSections = [
         url: "#prompts",
         icon: MessageSquareCode,
       },
-      {
-        title: "Auth",
-        url: "#auth",
-        icon: Signature,
-      },
-      {
-        title: "OAuth Flow",
-        url: "#oauth-flow",
-        icon: Workflow,
-      },
     ],
   },
   {
-    id: "evals",
+    id: "others",
     items: [
       {
-        title: "Run evals",
-        url: "#evals",
-        icon: CirclePlayIcon,
+        title: "OAuth Debugger",
+        url: "#oauth-flow",
+        icon: Workflow,
       },
       {
-        title: "Eval results",
-        url: "#eval-results",
-        icon: ListChecks,
+        title: "Evals",
+        url: "#evals",
+        icon: FlaskConical,
+      },
+      {
+        title: "MCP Registry",
+        url: "#registry",
+        icon: Box,
       },
     ],
   },

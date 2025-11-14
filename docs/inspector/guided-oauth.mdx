@@ -15,9 +15,56 @@ Guided OAuth lets you test your OAuth implementation step-by-step. The feature w
   />
 </Frame>
 
+## Interactive Flow Guide
+
+The OAuth debugger provides an interactive guide that walks you through each step of the OAuth flow:
+
+- **Step-by-step breakdown**: Each step shows its title, description, and current status (Pending, In Progress, or Complete)
+- **Educational hints**: Learn what to pay attention to at each step with contextual "teachable moments"
+- **Tips and best practices**: Get helpful tips for common issues and configuration recommendations
+- **Synchronized diagram**: Click "Show in diagram" to focus on a specific step in the sequence diagram
+- **HTTP request/response logs**: Inspect the actual HTTP traffic for each step, including headers and body content
+- **Console output**: View detailed JSON data for metadata, tokens, and other OAuth artifacts
+
+The guide automatically scrolls to show the latest activity and highlights the current step, making it easy to follow along as the flow progresses.
+
+## Protocol Versions
+
+The debugger supports multiple MCP OAuth protocol versions:
+
+- **2025-03-26** - Original MCP OAuth specification with direct discovery from MCP server base URL
+- **2025-06-18** - Current specification with Protected Resource Metadata (RFC9728)
+- **2025-11-25** - Draft specification with Client ID Metadata Documents (CIMD) support
+
+Select your protocol version in the OAuth debugger to test against the appropriate specification.
+
 ## OAuth Steps
 
 1. Metadata Discovery
 2. Client Registration
 3. Request & fetch auth code
 4. Request access token
+
+## Features
+
+### Edit Configuration
+
+You can edit your server configuration during OAuth testing without reconnecting. Click the **Edit Config** button to modify settings like:
+
+- Server URL
+- OAuth scopes
+- Custom headers
+- Environment variables
+
+Changes update the OAuth flow immediately, regenerating the authorization URL with your new configuration.
+
+### Copy Logs
+
+Export OAuth logs for debugging or sharing with your team. Click **Copy logs** to copy in two formats:
+
+- **Guide view** - Step-by-step explanation with teachable moments and tips
+- **Raw view** - Complete timeline with all HTTP requests and responses
+
+### Transport Detection
+
+The debugger automatically detects deprecated HTTP+SSE transport and displays a warning. If your server uses this older transport, you'll see a yellow badge with migration guidance to the modern Streamable HTTP transport (2025-03-26).
