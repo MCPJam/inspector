@@ -674,9 +674,11 @@ export function SuiteIterationsView({
       const stats = modelMap.get(model)!;
       stats.total += 1;
 
-      if (iteration.result === 'passed') {
+      // Compute pass/fail using our evaluation logic
+      const passed = computeIterationPassed(iteration);
+      if (passed) {
         stats.passed += 1;
-      } else if (iteration.result === 'failed') {
+      } else {
         stats.failed += 1;
       }
     });
@@ -1078,73 +1080,75 @@ export function SuiteIterationsView({
           }}>Edit</TabsTrigger>
             </TabsList>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {isRunInProgress && latestRun ? (
+          {viewMode !== "run-detail" && (
+            <div className="flex items-center gap-2 shrink-0">
+              {isRunInProgress && latestRun ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => onCancelRun(latestRun._id)}
+                      disabled={isCancelling}
+                      className="gap-2"
+                    >
+                      {isCancelling ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Cancelling...
+                        </>
+                      ) : (
+                        <>
+                          <X className="h-4 w-4" />
+                          Cancel run
+                        </>
+                      )}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Cancel the current evaluation run</TooltipContent>
+                </Tooltip>
+              ) : (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => onRerun(suite)}
+                        disabled={!canRerun || isRerunning}
+                        className="gap-2"
+                      >
+                        <RotateCw
+                          className={`h-4 w-4 ${isRerunning ? "animate-spin" : ""}`}
+                        />
+                        Rerun
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {!canRerun
+                      ? `Connect the following servers: ${missingServers.join(", ")}`
+                      : "Rerun evaluation"}
+                  </TooltipContent>
+                </Tooltip>
+              )}
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => onCancelRun(latestRun._id)}
-                    disabled={isCancelling}
+                    onClick={() => onDelete(suite)}
+                    disabled={isDeleting}
                     className="gap-2"
                   >
-                    {isCancelling ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Cancelling...
-                      </>
-                    ) : (
-                      <>
-                        <X className="h-4 w-4" />
-                        Cancel run
-                      </>
-                    )}
+                    <Trash2 className="h-4 w-4" />
+                    {isDeleting ? "Deleting..." : "Delete"}
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>Cancel the current evaluation run</TooltipContent>
+                <TooltipContent>Delete this test suite</TooltipContent>
               </Tooltip>
-            ) : (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => onRerun(suite)}
-                      disabled={!canRerun || isRerunning}
-                      className="gap-2"
-                    >
-                      <RotateCw
-                        className={`h-4 w-4 ${isRerunning ? "animate-spin" : ""}`}
-                      />
-                      Rerun
-                    </Button>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {!canRerun
-                    ? `Connect the following servers: ${missingServers.join(", ")}`
-                    : "Rerun evaluation"}
-                </TooltipContent>
-              </Tooltip>
-            )}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => onDelete(suite)}
-                  disabled={isDeleting}
-                  className="gap-2"
-                >
-                  <Trash2 className="h-4 w-4" />
-                  {isDeleting ? "Deleting..." : "Delete"}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Delete this test suite</TooltipContent>
-            </Tooltip>
-          </div>
+            </div>
+          )}
         </div>
 
 
@@ -1571,6 +1575,7 @@ export function SuiteIterationsView({
                             fill="var(--color-passRate)"
                             radius={[4, 4, 0, 0]}
                             isAnimationActive={false}
+                            minPointSize={8}
                           />
                         </BarChart>
                       </ChartContainer>
@@ -1743,24 +1748,32 @@ export function SuiteIterationsView({
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => {
-                    setViewMode("overview");
-                    setSelectedRunId(null);
-                  }}
+                  onClick={() => onRerun(suite)}
+                  disabled={rerunningSuiteId === suite._id}
                   className="gap-2"
                 >
-                  <X className="h-4 w-4" />
-                  Close
+                  <RotateCw className={cn("h-4 w-4", rerunningSuiteId === suite._id && "animate-spin")} />
+                  {rerunningSuiteId === suite._id ? "Running..." : "Rerun"}
                 </Button>
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={() => onDeleteRun(selectedRunDetails._id)}
                   disabled={deletingRunId === selectedRunDetails._id}
-                  className="gap-2 text-destructive hover:text-destructive"
+                  className="gap-2"
                 >
                   <Trash2 className="h-4 w-4" />
                   {deletingRunId === selectedRunDetails._id ? "Deleting..." : "Delete"}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={() => {
+                    setViewMode("overview");
+                    setSelectedRunId(null);
+                  }}
+                >
+                  <X className="h-4 w-4" />
                 </Button>
               </div>
             </div>
@@ -1881,7 +1894,7 @@ export function SuiteIterationsView({
             )}
 
             {/* Per-Model Performance for this run */}
-            {selectedRunChartData.modelData.length > 1 && (
+            {selectedRunChartData.modelData.length > 0 && (
               <div className="border-b px-4 py-4">
                 <div className="rounded-lg border bg-background/50 p-4">
                   <div className="text-xs font-medium text-muted-foreground mb-3">
@@ -1906,16 +1919,21 @@ export function SuiteIterationsView({
                         tickMargin={8}
                         tick={{ fontSize: 11 }}
                         interval={0}
-                        angle={-45}
-                        textAnchor="end"
-                        height={60}
+                        height={40}
+                        tickFormatter={(value) => {
+                          // Truncate long model names
+                          if (value.length > 15) {
+                            return value.substring(0, 12) + '...';
+                          }
+                          return value;
+                        }}
                       />
                       <YAxis
                         domain={[0, 100]}
                         tickLine={false}
                         axisLine={false}
                         tickMargin={8}
-                        tick={{ fontSize: 11 }}
+                        tick={{ fontSize: 12 }}
                         tickFormatter={(value) => `${value}%`}
                       />
                       <ChartTooltip
@@ -1946,6 +1964,7 @@ export function SuiteIterationsView({
                         fill="var(--color-passRate)"
                         radius={[4, 4, 0, 0]}
                         isAnimationActive={false}
+                        minPointSize={8}
                       />
                     </BarChart>
                   </ChartContainer>
