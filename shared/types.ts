@@ -151,10 +151,12 @@ export interface ModelDefinition {
 }
 
 export enum Model {
+  CLAUDE_OPUS_4_1 = "claude-opus-4-1",
   CLAUDE_OPUS_4_0 = "claude-opus-4-0",
+  CLAUDE_SONNET_4_5 = "claude-sonnet-4-5",
   CLAUDE_SONNET_4_0 = "claude-sonnet-4-0",
   CLAUDE_3_7_SONNET_LATEST = "claude-3-7-sonnet-latest",
-  CLAUDE_3_5_SONNET_LATEST = "claude-3-5-sonnet-latest",
+  CLAUDE_HAIKU_4_5 = "claude-haiku-4-5",
   CLAUDE_3_5_HAIKU_LATEST = "claude-3-5-haiku-latest",
   GPT_4_1 = "gpt-4.1",
   GPT_4_1_MINI = "gpt-4.1-mini",
@@ -169,6 +171,10 @@ export enum Model {
   GPT_5_MAIN = "openai/gpt-5",
   GPT_5_PRO = "gpt-5-pro",
   GPT_5_CODEX = "gpt-5-codex",
+  GPT_5_1 = "gpt-5.1",
+  GPT_5_1_CHAT = "gpt-5.1-chat-latest",
+  GPT_5_1_CODEX = "gpt-5.1-codex",
+  GPT_5_1_CODEX_MINI = "gpt-5.1-codex-mini",
   GPT_3_5_TURBO = "gpt-3.5-turbo",
   DEEPSEEK_CHAT = "deepseek-chat",
   DEEPSEEK_REASONER = "deepseek-reasoner",
@@ -202,8 +208,20 @@ export enum Model {
 
 export const SUPPORTED_MODELS: ModelDefinition[] = [
   {
+    id: Model.CLAUDE_OPUS_4_1,
+    name: "Claude Opus 4.1",
+    provider: "anthropic",
+    contextLength: 200000,
+  },
+  {
     id: Model.CLAUDE_OPUS_4_0,
     name: "Claude Opus 4",
+    provider: "anthropic",
+    contextLength: 200000,
+  },
+  {
+    id: Model.CLAUDE_SONNET_4_5,
+    name: "Claude Sonnet 4.5",
     provider: "anthropic",
     contextLength: 200000,
   },
@@ -214,14 +232,14 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     contextLength: 200000,
   },
   {
-    id: Model.CLAUDE_3_7_SONNET_LATEST,
-    name: "Claude Sonnet 3.7",
+    id: Model.CLAUDE_HAIKU_4_5,
+    name: "Claude Haiku 4.5",
     provider: "anthropic",
     contextLength: 200000,
   },
   {
-    id: Model.CLAUDE_3_5_SONNET_LATEST,
-    name: "Claude Sonnet 3.5",
+    id: Model.CLAUDE_3_7_SONNET_LATEST,
+    name: "Claude Sonnet 3.7",
     provider: "anthropic",
     contextLength: 200000,
   },
@@ -229,6 +247,30 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     id: Model.CLAUDE_3_5_HAIKU_LATEST,
     name: "Claude Haiku 3.5",
     provider: "anthropic",
+    contextLength: 200000,
+  },
+  {
+    id: Model.GPT_5_1,
+    name: "GPT-5.1",
+    provider: "openai",
+    contextLength: 400000,
+  },
+  {
+    id: Model.GPT_5_1_CHAT,
+    name: "GPT-5.1 Chat",
+    provider: "openai",
+    contextLength: 400000,
+  },
+  {
+    id: Model.GPT_5_1_CODEX,
+    name: "GPT-5.1 Codex",
+    provider: "openai",
+    contextLength: 400000,
+  },
+  {
+    id: Model.GPT_5_1_CODEX_MINI,
+    name: "GPT-5.1 Codex Mini",
+    provider: "openai",
     contextLength: 200000,
   },
   { id: Model.GPT_5, name: "GPT-5", provider: "openai", contextLength: 400000 },
