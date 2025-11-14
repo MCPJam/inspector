@@ -1,7 +1,8 @@
-import { useMemo } from "react";
-import { Trash2, Loader2, X } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Trash2, Loader2, X, Search, TrendingUp, TrendingDown, Minus } from "lucide-react";
 import type { EvalSuite, EvalSuiteOverviewEntry } from "./types";
 import { cn } from "@/lib/utils";
+import { Input } from "@/components/ui/input";
 
 interface SuitesOverviewProps {
   overview: EvalSuiteOverviewEntry[];

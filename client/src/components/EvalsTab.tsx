@@ -1,9 +1,10 @@
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery, useMutation } from "convex/react";
-import { FlaskConical, Plus, ArrowLeft, AlertTriangle } from "lucide-react";
+import { FlaskConical, Plus, AlertTriangle, ChevronDown, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
   Dialog,
@@ -19,6 +20,7 @@ import type {
   EvalSuite,
   EvalSuiteOverviewEntry,
   EvalSuiteRun,
+  SuiteDetailsQueryResponse,
 } from "./evals/types";
 import { aggregateSuite } from "./evals/helpers";
 import { SuitesOverview } from "./evals/suites-overview";
@@ -33,6 +35,132 @@ import {
 import { isMCPJamProvidedModel } from "@/shared/types";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import posthog from "posthog-js";
+import { useTemplateGroups, useTemplateGroupsCount } from "./evals/use-template-groups";
+
+// Component to render a single suite in the sidebar with its own data loading
+function SuiteSidebarItem({
+  suite,
+  latestRun,
+  isSelected,
+  isExpanded,
+  selectedTestId,
+  onSelectSuite,
+  onToggleExpanded,
+  onSelectTest,
+}: {
+  suite: EvalSuite;
+  latestRun: EvalSuiteRun | null | undefined;
+  isSelected: boolean;
+  isExpanded: boolean;
+  selectedTestId: string | null;
+  onSelectSuite: (suiteId: string) => void;
+  onToggleExpanded: (suiteId: string) => void;
+  onSelectTest: (testId: string) => void;
+}) {
+  const { isAuthenticated } = useConvexAuth();
+  const { user } = useAuth();
+
+  const latestPassRate = latestRun?.summary
+    ? Math.round(latestRun.summary.passRate * 100)
+    : 0;
+
+  // Load suite details only when expanded
+  const enableSuiteDetailsQuery = isAuthenticated && !!user && isExpanded;
+  const suiteDetails = useQuery(
+    "evals:getAllTestCasesAndIterationsBySuite" as any,
+    enableSuiteDetailsQuery ? ({ suiteId: suite._id } as any) : "skip",
+  ) as SuiteDetailsQueryResponse | undefined;
+
+  // Compute unique template groups count from config (for collapsed state)
+  const uniqueTemplateGroupsCount = useTemplateGroupsCount(suite.config);
+
+  // Compute template groups for this suite
+  const { templateGroups } = useTemplateGroups(suiteDetails, isExpanded);
+
+  return (
+    <div>
+      <div
+        className={cn(
+          "w-full flex items-center gap-1 px-4 py-2 text-left text-sm transition-colors",
+          isSelected && !selectedTestId && "bg-accent"
+        )}
+      >
+        <button
+          onClick={() => onToggleExpanded(suite._id)}
+          className="shrink-0 p-1 hover:bg-accent/50 rounded transition-colors"
+          aria-label={isExpanded ? "Collapse suite" : "Expand suite"}
+        >
+          {isExpanded && suiteDetails ? (
+            <ChevronDown className="h-4 w-4" />
+          ) : (
+            <ChevronRight className="h-4 w-4 opacity-50" />
+          )}
+        </button>
+        <button
+          onClick={() => onSelectSuite(suite._id)}
+          className={cn(
+            "flex-1 min-w-0 text-left hover:bg-accent/50 rounded px-2 py-1 transition-colors",
+            isSelected && !selectedTestId && "font-medium"
+          )}
+        >
+          <div className="truncate font-medium">
+            {suite.name || "Untitled suite"}
+          </div>
+          <div className="text-xs text-muted-foreground">
+            {latestPassRate}% • {isExpanded && suiteDetails ? templateGroups.length : uniqueTemplateGroupsCount} test{(isExpanded && suiteDetails ? templateGroups.length : uniqueTemplateGroupsCount) === 1 ? "" : "s"}
+          </div>
+        </button>
+      </div>
+      
+      {/* Test Cases Dropdown */}
+      {isExpanded && suiteDetails && (
+        <div className="pb-2">
+          {templateGroups.length === 0 ? (
+            <div className="px-4 py-4 text-center text-xs text-muted-foreground">
+              {suiteDetails === undefined ? "Loading..." : "No test cases"}
+            </div>
+          ) : (
+            templateGroups.map((group, index) => {
+              const passedCount = group.summary.passed;
+              const totalCount = group.summary.runs;
+              const passRate = totalCount > 0
+                ? Math.round((passedCount / totalCount) * 100)
+                : 0;
+              const isTestSelected = selectedTestId && group.testCaseIds.includes(selectedTestId);
+
+              return (
+                <button
+                  key={index}
+                  onClick={() => {
+                    // First select the suite if needed, then the test
+                    if (!isSelected) {
+                      onSelectSuite(suite._id);
+                    }
+                    onSelectTest(group.testCaseIds[0]);
+                  }}
+                  className={cn(
+                    "w-full flex items-center justify-between px-6 py-2 text-left text-xs hover:bg-accent/50 transition-colors",
+                    isTestSelected && "bg-accent/70 font-medium"
+                  )}
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="truncate">{group.title}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {group.testCaseIds.length} model{group.testCaseIds.length === 1 ? "" : "s"} • {totalCount} iteration{totalCount === 1 ? "" : "s"}
+                    </div>
+                  </div>
+                  <div className="ml-2 text-xs font-medium shrink-0">
+                    {passRate}%
+                  </div>
+                </button>
+              );
+            })
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 type View = "results" | "run";
 
@@ -47,6 +175,35 @@ export function EvalsTab() {
 
   const [deletingSuiteId, setDeletingSuiteId] = useState<string | null>(null);
   const [suiteToDelete, setSuiteToDelete] = useState<EvalSuite | null>(null);
+  const [selectedTestId, setSelectedTestId] = useState<string | null>(null);
+  const [expandedSuites, setExpandedSuites] = useState<Set<string>>(new Set());
+
+  // Reset selectedTestId only when suite changes without a test being explicitly selected
+  // We track this by checking if the test selection was intentional
+  const pendingTestSelection = useRef<string | null>(null);
+
+  useEffect(() => {
+    // Only reset if there's no pending test selection
+    if (!pendingTestSelection.current) {
+      setSelectedTestId(null);
+    } else {
+      setSelectedTestId(pendingTestSelection.current);
+      pendingTestSelection.current = null;
+    }
+  }, [selectedSuiteId]);
+
+  // Toggle expanded state for a specific suite
+  const toggleSuiteExpanded = useCallback((suiteId: string) => {
+    setExpandedSuites((prev) => {
+      const next = new Set(prev);
+      if (next.has(suiteId)) {
+        next.delete(suiteId);
+      } else {
+        next.add(suiteId);
+      }
+      return next;
+    });
+  }, []);
 
   const { availableModels } = useChat({
     systemPrompt: "",
@@ -90,9 +247,7 @@ export function EvalsTab() {
   const suiteDetails = useQuery(
     "evals:getAllTestCasesAndIterationsBySuite" as any,
     enableSuiteDetailsQuery ? ({ suiteId: selectedSuiteId } as any) : "skip",
-  ) as unknown as
-    | { testCases: EvalCase[]; iterations: EvalIteration[] }
-    | undefined;
+  ) as SuiteDetailsQueryResponse | undefined;
 
   const suiteRuns = useQuery(
     "evals:getSuiteRuns" as any,
@@ -323,21 +478,31 @@ export function EvalsTab() {
     [cancellingRunId, getAccessToken],
   );
 
-  // Handle back navigation
-  const handleBack = () => {
-    if (view === "run") {
-      setView("results");
-    }
-  };
-
   // Handle eval run success - navigate back to results view
   const handleEvalRunSuccess = useCallback(() => {
     setView("results");
     setSelectedSuiteId(null);
   }, []);
 
-  // Show back button only in run view (suite details has its own back button)
-  const showBackButton = view === "run";
+  // Sort suites for sidebar - MUST be before any early returns
+  const sortedSuites = useMemo(() => {
+    if (!suiteOverview) return [];
+    return [...suiteOverview].sort((a, b) => {
+      const aTime =
+        a.suite.updatedAt ??
+        a.latestRun?.completedAt ??
+        a.latestRun?.createdAt ??
+        a.suite._creationTime ??
+        0;
+      const bTime =
+        b.suite.updatedAt ??
+        b.latestRun?.completedAt ??
+        b.latestRun?.createdAt ??
+        b.suite._creationTime ??
+        0;
+      return bTime - aTime;
+    });
+  }, [suiteOverview]);
 
   if (isLoading) {
     return (
@@ -382,92 +547,157 @@ export function EvalsTab() {
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      {!selectedSuiteId && (
-        <div className="flex items-center justify-between px-6 pt-6 pb-4">
-          <div className="flex items-center gap-3">
-            {showBackButton && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleBack}
-                className="h-8 w-8 p-0"
-              >
-                <ArrowLeft className="h-4 w-4" />
-              </Button>
-            )}
-            <h1 className="text-2xl font-semibold">
-              {view === "run" ? "Create evaluation run" : "Test suites"}
-            </h1>
-          </div>
-          {view === "results" && (
-            <Button
-              onClick={() => {
-                posthog.capture("create_new_run_button_clicked", {
-                  location: "evals_tab",
-                  platform: detectPlatform(),
-                  environment: detectEnvironment(),
-                });
-                setView("run");
-              }}
-              className="gap-2"
-              size="sm"
-            >
-              <Plus className="h-4 w-4" />
-              Create new test suite
-            </Button>
-          )}
-        </div>
-      )}
-
-      <div className={`flex-1 overflow-y-auto px-6 pb-6 ${selectedSuiteId ? 'pt-6' : ''}`}>
-        {view === "run" ? (
+      {view === "run" ? (
+        <div className="flex-1 overflow-y-auto px-6 pb-6 pt-6">
           <EvalRunner
             availableModels={availableModels}
             inline={true}
             onSuccess={handleEvalRunSuccess}
           />
-        ) : !selectedSuite ? (
-          <SuitesOverview
-            overview={suiteOverview || []}
-            onSelectSuite={setSelectedSuiteId}
-            onRerun={handleRerun}
-            onCancelRun={handleCancelRun}
-            onDelete={handleDelete}
-            connectedServerNames={connectedServerNames}
-            rerunningSuiteId={rerunningSuiteId}
-            cancellingRunId={cancellingRunId}
-            deletingSuiteId={deletingSuiteId}
-          />
-        ) : isSuiteDetailsLoading ? (
-          <div className="flex h-64 items-center justify-center">
-            <div className="text-center">
-              <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
-              <p className="mt-4 text-muted-foreground">
-                Loading suite details...
-              </p>
+        </div>
+      ) : (
+        <div className="flex flex-1 overflow-hidden">
+          {/* Left Sidebar */}
+          <div className="w-64 shrink-0 border-r bg-muted/30 flex flex-col">
+            {/* Header */}
+            <div className="p-4 border-b flex items-center justify-between">
+              <h2 className="text-sm font-semibold">Test Suites</h2>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  posthog.capture("create_new_run_button_clicked", {
+                    location: "evals_tab",
+                    platform: detectPlatform(),
+                    environment: detectEnvironment(),
+                  });
+                  setView("run");
+                }}
+                className="h-7 w-7 p-0"
+                title="Create new test suite"
+              >
+                <Plus className="h-4 w-4" />
+              </Button>
+            </div>
+
+            {/* Suites List */}
+            <div className="flex-1 overflow-y-auto">
+              {isOverviewLoading ? (
+                <div className="p-4 text-center text-xs text-muted-foreground">
+                  Loading suites...
+                </div>
+              ) : sortedSuites.length === 0 ? (
+                <div className="p-4 text-center text-xs text-muted-foreground">
+                  No test suites yet
+                </div>
+              ) : (
+                <div className="py-2">
+                  {sortedSuites.map((entry) => {
+                    const { suite, latestRun } = entry;
+                    return (
+                      <SuiteSidebarItem
+                        key={suite._id}
+                        suite={suite}
+                        latestRun={latestRun}
+                        isSelected={selectedSuiteId === suite._id}
+                        isExpanded={expandedSuites.has(suite._id)}
+                        selectedTestId={selectedTestId}
+                        onSelectSuite={(suiteId) => {
+                          // Only clear pending test when explicitly clicking the suite (not via test selection)
+                          pendingTestSelection.current = null;
+                          setSelectedSuiteId(suiteId);
+                          if (selectedSuiteId !== suiteId) {
+                            // Auto-expand when selecting a new suite
+                            setExpandedSuites((prev) => new Set(prev).add(suiteId));
+                          }
+                        }}
+                        onToggleExpanded={toggleSuiteExpanded}
+                        onSelectTest={(testId) => {
+                          // Store the test ID to be selected after suite changes
+                          pendingTestSelection.current = testId;
+                          setSelectedTestId(testId);
+                        }}
+                      />
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
-        ) : (
-          <SuiteIterationsView
-            suite={selectedSuite}
-            cases={suiteDetails?.testCases || []}
-            iterations={sortedIterations}
-            allIterations={sortedIterations}
-            runs={runsForSelectedSuite}
-            runsLoading={isSuiteRunsLoading}
-            aggregate={suiteAggregate}
-            onBack={() => setSelectedSuiteId(null)}
-            onRerun={handleRerun}
-            onCancelRun={handleCancelRun}
-            onDelete={handleDelete}
-            connectedServerNames={connectedServerNames}
-            rerunningSuiteId={rerunningSuiteId}
-            cancellingRunId={cancellingRunId}
-            deletingSuiteId={deletingSuiteId}
-            availableModels={availableModels}
-          />
-        )}
-      </div>
+
+          {/* Main Content Area */}
+          <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+            {!selectedSuiteId ? (
+              <>
+                <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b">
+                  <h1 className="text-2xl font-semibold">Test suites</h1>
+                  <Button
+                    onClick={() => {
+                      posthog.capture("create_new_run_button_clicked", {
+                        location: "evals_tab",
+                        platform: detectPlatform(),
+                        environment: detectEnvironment(),
+                      });
+                      setView("run");
+                    }}
+                    className="gap-2"
+                    size="sm"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Create new test suite
+                  </Button>
+                </div>
+                <div className="flex-1 overflow-y-auto px-6 pb-6 pt-6">
+                  <SuitesOverview
+                    overview={suiteOverview || []}
+                    onSelectSuite={setSelectedSuiteId}
+                    onRerun={handleRerun}
+                    onCancelRun={handleCancelRun}
+                    onDelete={handleDelete}
+                    connectedServerNames={connectedServerNames}
+                    rerunningSuiteId={rerunningSuiteId}
+                    cancellingRunId={cancellingRunId}
+                    deletingSuiteId={deletingSuiteId}
+                  />
+                </div>
+              </>
+            ) : isSuiteDetailsLoading ? (
+              <div className="flex h-full items-center justify-center">
+                <div className="text-center">
+                  <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
+                  <p className="mt-4 text-muted-foreground">
+                    Loading suite details...
+                  </p>
+                </div>
+              </div>
+            ) : selectedSuite ? (
+              <div className="flex-1 overflow-y-auto px-6 pb-6 pt-6">
+                <SuiteIterationsView
+                  suite={selectedSuite}
+                  cases={suiteDetails?.testCases || []}
+                  iterations={sortedIterations}
+                  allIterations={sortedIterations}
+                  runs={runsForSelectedSuite}
+                  runsLoading={isSuiteRunsLoading}
+                  aggregate={suiteAggregate}
+                  onBack={() => setSelectedSuiteId(null)}
+                  onRerun={handleRerun}
+                  onCancelRun={handleCancelRun}
+                  onDelete={handleDelete}
+                  connectedServerNames={connectedServerNames}
+                  rerunningSuiteId={rerunningSuiteId}
+                  cancellingRunId={cancellingRunId}
+                  deletingSuiteId={deletingSuiteId}
+                  availableModels={availableModels}
+                  selectedTestId={selectedTestId}
+                  onTestIdChange={setSelectedTestId}
+                />
+              </div>
+            ) : null}
+          </div>
+        </div>
+      )}
+
 
       {/* Delete Confirmation Modal */}
       <Dialog open={!!suiteToDelete} onOpenChange={(open) => !open && setSuiteToDelete(null)}>

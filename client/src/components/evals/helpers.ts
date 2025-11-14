@@ -10,6 +10,62 @@ export function formatRunId(runId: string): string {
   return runId.substring(0, 8);
 }
 
+/**
+ * Compute summary statistics for a list of iterations
+ */
+export function computeIterationSummary(items: EvalIteration[]) {
+  const summary = {
+    runs: items.length,
+    passed: 0,
+    failed: 0,
+    cancelled: 0,
+    pending: 0,
+    tokens: 0,
+    avgDuration: null as number | null,
+  };
+
+  let totalDuration = 0;
+  let durationCount = 0;
+
+  items.forEach((iteration) => {
+    if (iteration.result === "passed") summary.passed += 1;
+    else if (iteration.result === "failed") summary.failed += 1;
+    else if (iteration.result === "cancelled") summary.cancelled += 1;
+    else summary.pending += 1;
+
+    summary.tokens += iteration.tokensUsed || 0;
+
+    const startedAt = iteration.startedAt ?? iteration.createdAt;
+    const completedAt = iteration.updatedAt ?? iteration.createdAt;
+    if (startedAt && completedAt) {
+      const duration = Math.max(completedAt - startedAt, 0);
+      totalDuration += duration;
+      durationCount += 1;
+    }
+  });
+
+  if (durationCount > 0) {
+    summary.avgDuration = totalDuration / durationCount;
+  }
+
+  return summary;
+}
+
+/**
+ * Get the template key for a test case or config test
+ * Falls back to a unique identifier if no explicit template key exists
+ */
+export function getTemplateKey(test: {
+  testTemplateKey?: string;
+  title?: string;
+  query?: string;
+  _id?: string;
+}): string {
+  if (test.testTemplateKey) return test.testTemplateKey;
+  if (test._id) return `fallback:${test._id}`;
+  return `fallback:${test.title}-${test.query}`;
+}
+
 export function aggregateSuite(
   suite: EvalSuite,
   cases: EvalCase[],
