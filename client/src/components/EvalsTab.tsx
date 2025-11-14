@@ -669,6 +669,8 @@ export function EvalsTab() {
                         onSelectSuite={(suiteId) => {
                           // Only clear pending test when explicitly clicking the suite (not via test selection)
                           pendingTestSelection.current = null;
+                          // Clear test selection when clicking on suite name
+                          setSelectedTestId(null);
                           setSelectedSuiteId(suiteId);
                           if (selectedSuiteId !== suiteId) {
                             // Auto-expand when selecting a new suite
