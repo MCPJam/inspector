@@ -176,7 +176,6 @@ export default function App() {
             activeTab === "resources" ||
             activeTab === "prompts" ||
             activeTab === "auth" ||
-            activeTab === "oauth-flow" ||
             activeTab === "chat" ||
             activeTab === "chat-v2" ||
             activeTab === "interceptor") && (
@@ -190,7 +189,7 @@ export default function App() {
               }
               onMultiServerToggle={toggleServerSelection}
               selectedMultipleServers={appState.selectedMultipleServers}
-              showOnlyOAuthServers={activeTab === "oauth-flow"}
+              showOnlyOAuthServers={false}
             />
           )}
 
@@ -248,14 +247,7 @@ export default function App() {
             />
           )}
 
-          {activeTab === "oauth-flow" && (
-            <OAuthFlowTab
-              serverConfig={selectedMCPConfig}
-              serverEntry={appState.servers[appState.selectedServer]}
-              serverName={appState.selectedServer}
-              onUpdate={handleUpdate}
-            />
-          )}
+          {activeTab === "oauth-flow" && <OAuthFlowTab />}
 
           {activeTab === "chat" && (
             <ChatTab

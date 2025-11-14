@@ -64,6 +64,8 @@ const convex = new ConvexReactClient(convexUrl);
 
 const root = createRoot(document.getElementById("root")!);
 
+console.log("workosClientOptions", workosClientOptions);
+
 const Providers = (
   <AuthKitProvider
     clientId={workosClientId}
