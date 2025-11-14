@@ -23,6 +23,8 @@ import {
   Circle,
   AlertTriangle,
   Copy,
+  RotateCcw,
+  Settings,
 } from "lucide-react";
 import { generateGuideText, generateRawText } from "@/lib/oauth/log-formatters";
 import "react18-json-view/src/style.css";
@@ -33,6 +35,21 @@ interface OAuthFlowLoggerProps {
   onClearHttpHistory: () => void;
   activeStep?: OAuthFlowStep | null;
   onFocusStep?: (step: OAuthFlowStep) => void;
+  summary?: {
+    label: string;
+    description: string;
+    protocol?: string;
+    registration?: string;
+    step?: OAuthFlowStep;
+  };
+  actions?: {
+    onConfigure?: () => void;
+    onReset?: () => void;
+    onContinue?: () => void;
+    continueLabel?: string;
+    continueDisabled?: boolean;
+    resetDisabled?: boolean;
+  };
 }
 
 export function OAuthFlowLogger({
@@ -41,6 +58,8 @@ export function OAuthFlowLogger({
   onClearHttpHistory: _onClearHttpHistory,
   activeStep,
   onFocusStep,
+  summary,
+  actions,
 }: OAuthFlowLoggerProps) {
   const guideScrollRef = useRef<HTMLDivElement | null>(null);
   const rawScrollRef = useRef<HTMLDivElement | null>(null);
@@ -249,8 +268,55 @@ export function OAuthFlowLogger({
 
   return (
     <div className="h-full border-l border-border flex flex-col">
-      <div className="bg-muted/30 border-b border-border px-4 py-3">
-        <h3 className="text-sm font-semibold">OAuth Debugger</h3>
+      <div className="bg-muted/30 border-b border-border px-4 py-3 space-y-3">
+        {summary && (
+          <div className="flex flex-wrap items-start justify-between gap-3 text-xs">
+            <div className="space-y-1 text-muted-foreground">
+              <p className="text-sm font-medium text-foreground">
+                {summary.label}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {summary.protocol && (
+                  <span className="rounded-full bg-background px-2 py-1">
+                    Protocol {summary.protocol}
+                  </span>
+                )}
+                {summary.registration && (
+                  <span className="rounded-full bg-background px-2 py-1">
+                    {summary.registration}
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={actions?.onConfigure}
+                disabled={!actions?.onConfigure}
+                aria-label="Configure target"
+              >
+                <Settings className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={actions?.onReset}
+                disabled={actions?.resetDisabled || !actions?.onReset}
+                aria-label="Reset flow"
+              >
+                <RotateCcw className="h-4 w-4" />
+              </Button>
+              <Button
+                size="sm"
+                onClick={actions?.onContinue}
+                disabled={actions?.continueDisabled || !actions?.onContinue}
+              >
+                {actions?.continueLabel || "Continue"}
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
 
       <Tabs
