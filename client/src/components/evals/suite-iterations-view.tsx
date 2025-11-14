@@ -64,6 +64,7 @@ export function SuiteIterationsView({
   onTestIdChange,
   mode,
   onModeChange,
+  viewResetKey,
 }: {
   suite: EvalSuite;
   cases: EvalCase[];
@@ -87,6 +88,7 @@ export function SuiteIterationsView({
   onTestIdChange: (testId: string | null) => void;
   mode?: "runs" | "edit";
   onModeChange?: (mode: "runs" | "edit") => void;
+  viewResetKey?: number;
 }) {
   const [openIterationId, setOpenIterationId] = useState<string | null>(null);
   const [expandedQueries, setExpandedQueries] = useState<Set<string>>(
@@ -148,6 +150,15 @@ export function SuiteIterationsView({
   useEffect(() => {
     setEditedName(suite.name);
   }, [suite.name]);
+
+  // Reset viewMode when viewResetKey changes or when switching contexts
+  useEffect(() => {
+    if (activeTab === "runs" && selectedTestId === null) {
+      setViewMode("overview");
+      setSelectedRunId(null);
+      setShowRunSummarySidebar(false);
+    }
+  }, [activeTab, suite._id, selectedTestId, viewResetKey]);
 
   // Load default pass criteria from localStorage
   useEffect(() => {
@@ -590,67 +601,96 @@ export function SuiteIterationsView({
     return allIterations.filter((iteration) => iteration.suiteRunId === selectedRunId);
   }, [selectedRunId, allIterations]);
 
-  // Case groups for selected run
+  // Case groups for selected run - grouped by model
   const caseGroupsForSelectedRun = useMemo(() => {
     if (!selectedRunId) return [];
 
-    const groups = new Map<
+    // First, group by model
+    const modelGroups = new Map<
       string,
       {
+        model: string;
+        provider: string;
+        testGroups: Map<string, {
         testCase: EvalCase | null;
         iterations: EvalIteration[];
+        }>;
       }
     >();
 
-    // Initialize groups for all test cases
-    cases.forEach((testCase) => {
-      groups.set(testCase._id, {
-        testCase,
-        iterations: [],
-      });
-    });
-
-    // Group iterations for this run
+    // Group iterations by model, then by test
     iterationsForSelectedRun.forEach((iteration) => {
-      if (iteration.testCaseSnapshot) {
-        const snapshotKey = `snapshot-${iteration.testCaseSnapshot.title}-${iteration.testCaseSnapshot.query}`;
-        if (!groups.has(snapshotKey)) {
+      const snapshot = iteration.testCaseSnapshot;
+      if (!snapshot) return;
+
+      const modelKey = `${snapshot.provider}/${snapshot.model}`;
+      
+      if (!modelGroups.has(modelKey)) {
+        modelGroups.set(modelKey, {
+          model: snapshot.model,
+          provider: snapshot.provider,
+          testGroups: new Map(),
+        });
+      }
+
+      const modelGroup = modelGroups.get(modelKey)!;
+      const testKey = `${snapshot.title}-${snapshot.query}`;
+
+      if (!modelGroup.testGroups.has(testKey)) {
           const virtualTestCase: EvalCase = {
-            _id: snapshotKey,
+          _id: `${modelKey}-${testKey}`,
             evalTestSuiteId: suite._id,
             createdBy: iteration.createdBy || "",
-            title: iteration.testCaseSnapshot.title,
-            query: iteration.testCaseSnapshot.query,
-            provider: iteration.testCaseSnapshot.provider,
-            model: iteration.testCaseSnapshot.model,
-            expectedToolCalls: iteration.testCaseSnapshot.expectedToolCalls,
+          title: snapshot.title,
+          query: snapshot.query,
+          provider: snapshot.provider,
+          model: snapshot.model,
+          expectedToolCalls: snapshot.expectedToolCalls,
           };
-          groups.set(snapshotKey, {
+        modelGroup.testGroups.set(testKey, {
             testCase: virtualTestCase,
             iterations: [],
           });
         }
-        groups.get(snapshotKey)!.iterations.push(iteration);
-      } else if (iteration.testCaseId) {
-        const group = groups.get(iteration.testCaseId);
-        if (group) {
-          group.iterations.push(iteration);
-        }
-      }
+
+      modelGroup.testGroups.get(testKey)!.iterations.push(iteration);
     });
 
-    return Array.from(groups.values())
-      .filter((group) => group.iterations.length > 0)
-      .map((group) => ({
-        ...group,
-        iterations: [...group.iterations].sort((a, b) => {
+    // Flatten into an array with model headers
+    const result: Array<{
+      testCase: EvalCase | null;
+      iterations: EvalIteration[];
+      isModelHeader?: boolean;
+      modelName?: string;
+      providerName?: string;
+    }> = [];
+
+    modelGroups.forEach((modelGroup) => {
+      // Add model header
+      result.push({
+        testCase: null,
+        iterations: [],
+        isModelHeader: true,
+        modelName: modelGroup.model,
+        providerName: modelGroup.provider,
+      });
+
+      // Add test groups for this model
+      modelGroup.testGroups.forEach((testGroup) => {
+        result.push({
+          testCase: testGroup.testCase,
+          iterations: [...testGroup.iterations].sort((a, b) => {
           if (a.iterationNumber != null && b.iterationNumber != null) {
             return a.iterationNumber - b.iterationNumber;
           }
           return (a.createdAt ?? 0) - (b.createdAt ?? 0);
         }),
-      }));
-  }, [selectedRunId, iterationsForSelectedRun, cases, suite._id]);
+        });
+      });
+    });
+
+    return result;
+  }, [selectedRunId, iterationsForSelectedRun, suite._id]);
 
   // Data for run detail charts
   const selectedRunChartData = useMemo(() => {
@@ -1026,7 +1066,7 @@ export function SuiteIterationsView({
     <div className="space-y-4">
         {/* Header with actions */}
         {activeTab === "edit" ? (
-          <div className="flex items-center justify-between gap-4 mb-4">
+        <div className="flex items-center justify-between gap-4 mb-4">
             <h2 className="text-lg font-semibold">Edit Test Suite</h2>
           </div>
         ) : viewMode === "run-detail" && selectedRunDetails ? (
@@ -1050,7 +1090,7 @@ export function SuiteIterationsView({
                 className="gap-2"
               >
                 <RotateCw className={cn("h-4 w-4", rerunningSuiteId === suite._id && "animate-spin")} />
-                {rerunningSuiteId === suite._id ? "Rerunning..." : "Rerun"}
+                {rerunningSuiteId === suite._id ? "Running..." : "Rerun"}
               </Button>
               <Button
                 variant="outline"
@@ -1066,14 +1106,14 @@ export function SuiteIterationsView({
                 variant="outline"
                 size="icon"
                 onClick={() => {
-                  setViewMode("overview");
-                  setSelectedRunId(null);
+              setViewMode("overview");
+              setSelectedRunId(null);
                   setShowRunSummarySidebar(false);
                 }}
               >
                 <X className="h-4 w-4" />
               </Button>
-            </div>
+          </div>
           </div>
         ) : viewMode === "test-detail" && selectedTestDetails ? (
           <div className="flex items-center justify-between gap-4 mb-4">
@@ -1217,7 +1257,7 @@ export function SuiteIterationsView({
                 </TooltipTrigger>
                 <TooltipContent>Delete this test suite</TooltipContent>
               </Tooltip>
-            </div>
+        </div>
           </div>
         )}
 
@@ -1412,24 +1452,23 @@ export function SuiteIterationsView({
                         }
                       }}
                       disabled={isPending}
-                      className={`flex w-full items-center justify-between gap-4 px-4 py-3 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
+                      className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
                         isPending
                           ? "cursor-not-allowed"
                           : "cursor-pointer hover:bg-muted/50"
                       }`}
                     >
-                      <div className="flex min-w-0 flex-1 items-center gap-4 pl-3">
-                        <div className="text-muted-foreground">
+                      <div className="flex min-w-0 flex-1 items-center gap-3 pl-2">
+                        <div className="text-muted-foreground shrink-0">
                           {isPending ? (
-                            <ChevronRight className="h-4 w-4" />
+                            <ChevronRight className="h-3.5 w-3.5" />
                           ) : isOpen ? (
-                            <ChevronDown className="h-4 w-4" />
+                            <ChevronDown className="h-3.5 w-3.5" />
                           ) : (
-                            <ChevronRight className="h-4 w-4" />
+                            <ChevronRight className="h-3.5 w-3.5" />
                           )}
                         </div>
-                        <div className="flex min-w-0 flex-1 flex-col gap-1">
-                          <div className="flex items-center gap-2">
+                        <div className="flex min-w-0 flex-1 items-center gap-2">
                             <Badge
                               variant={
                                 iteration.result === "passed"
@@ -1440,7 +1479,7 @@ export function SuiteIterationsView({
                                       ? "outline"
                                       : "secondary"
                               }
-                              className="text-xs font-mono uppercase"
+                            className="text-[10px] font-mono uppercase px-1.5 py-0"
                             >
                               {iteration.result}
                             </Badge>
@@ -1454,48 +1493,47 @@ export function SuiteIterationsView({
                                 {runTimestamp}
                               </span>
                             )}
+                          <span className="text-xs text-muted-foreground">
+                            Iteration #{iteration.iterationNumber ?? "?"}
+                          </span>
                             {iterationRun && !isPending && (
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                className="h-6 text-xs px-2"
+                              className="h-5 text-[11px] px-2"
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   setSelectedRunId(iterationRun._id);
                                   onTestIdChange(null);
                                   setViewMode("run-detail");
-                                  if (onModeChange) onModeChange("runs");
+                                if (onModeChange) onModeChange("runs");
                                 }}
                               >
                                 View Run {formatRunId(iterationRun._id)}
                               </Button>
                             )}
                           </div>
-                          <div className="text-xs text-muted-foreground">
-                            Iteration #{iteration.iterationNumber ?? "?"}
                           </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-6 text-xs text-muted-foreground">
+                      <div className="flex items-center gap-4 text-xs text-muted-foreground shrink-0">
                         {!isPending && (
                           <>
                             <div className="flex items-center gap-1">
                               <span className="font-mono">{actualToolCalls.length}</span>
-                              <span>tools</span>
+                              <span className="text-[11px]">tools</span>
                             </div>
                             <div className="flex items-center gap-1">
                               <span className="font-mono">{Number(iteration.tokensUsed || 0).toLocaleString()}</span>
-                              <span>tokens</span>
+                              <span className="text-[11px]">tokens</span>
                             </div>
                             {durationMs !== null && (
-                              <div className="flex items-center gap-1">
-                                <span className="font-mono">{(durationMs / 1000).toFixed(1)}s</span>
+                              <div className="font-mono min-w-[40px] text-right">
+                                {(durationMs / 1000).toFixed(1)}s
                               </div>
                             )}
                           </>
                         )}
                         {isPending && (
-                          <Loader2 className="h-4 w-4 animate-spin text-amber-600" />
+                          <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-600" />
                         )}
                       </div>
                     </button>
@@ -1662,14 +1700,14 @@ export function SuiteIterationsView({
               {/* Runs List */}
             <div className="rounded-xl border bg-card text-card-foreground flex flex-col max-h-[600px]">
               {selectedRunIds.size > 0 ? (
-                <div className="border-b px-4 py-3 shrink-0 bg-muted/50 flex items-center justify-between">
+                <div className="border-b px-4 py-2 shrink-0 bg-muted/50 flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <Checkbox
                       checked={selectedRunIds.size === runs.length}
                       onCheckedChange={toggleAllRuns}
                       aria-label="Select all runs"
                     />
-                    <span className="text-sm font-medium">{selectedRunIds.size} {selectedRunIds.size === 1 ? 'item' : 'items'} selected</span>
+                    <span className="text-xs font-medium">{selectedRunIds.size} {selectedRunIds.size === 1 ? 'item' : 'items'} selected</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <Button
@@ -1690,8 +1728,8 @@ export function SuiteIterationsView({
                   </div>
                 </div>
               ) : (
-                <div className="border-b px-4 py-3 shrink-0">
-                  <div className="text-sm font-semibold">Runs</div>
+                <div className="border-b px-4 py-2 shrink-0">
+                  <div className="text-xs font-semibold">Runs</div>
                   <p className="text-xs text-muted-foreground">
                     Click on a run to view its test breakdown and results.
                   </p>
@@ -1699,14 +1737,15 @@ export function SuiteIterationsView({
               )}
               {/* Column Headers */}
               {runs.length > 0 && (
-                <div className="flex items-center gap-8 w-full px-4 py-2 bg-muted/30 border-b text-xs font-medium text-muted-foreground">
+                <div className="flex items-center gap-6 w-full px-4 py-1.5 bg-muted/30 border-b text-xs font-medium text-muted-foreground">
                   <div className="w-4"></div> {/* Checkbox column */}
-                  <div className="min-w-[140px]">Run ID</div>
-                  <div className="min-w-[180px]">Start time</div>
-                  <div className="min-w-[80px]">Duration</div>
-                  <div className="min-w-[80px]">Passed</div>
-                  <div className="min-w-[80px]">Failed</div>
-                  <div className="min-w-[80px]">Accuracy</div>
+                  <div className="min-w-[120px]">Run ID</div>
+                  <div className="min-w-[140px]">Start time</div>
+                  <div className="min-w-[60px]">Duration</div>
+                  <div className="min-w-[60px]">Passed</div>
+                  <div className="min-w-[60px]">Failed</div>
+                  <div className="min-w-[70px]">Accuracy</div>
+                  <div className="min-w-[70px]">Tokens</div>
                 </div>
               )}
               <div className="divide-y overflow-y-auto">
@@ -1721,6 +1760,7 @@ export function SuiteIterationsView({
                 const realTimePassed = runIterations.filter((i) => i.result === "passed").length;
                 const realTimeFailed = runIterations.filter((i) => i.result === "failed").length;
                 const realTimeTotal = runIterations.length;
+                const totalTokens = runIterations.reduce((sum, iter) => sum + (iter.tokensUsed || 0), 0);
 
                 // Use real-time data if available, otherwise fall back to summary
                 const passed = realTimePassed > 0 ? realTimePassed : (run.summary?.passed ?? 0);
@@ -1748,8 +1788,8 @@ export function SuiteIterationsView({
                 const isSelected = selectedRunIds.has(run._id);
 
                 const runButton = (
-                  <div className="flex items-center gap-8 w-full">
-                    <div className="pl-4">
+                  <div className="flex items-center gap-6 w-full">
+                    <div className="pl-3">
                       <Checkbox
                         checked={isSelected}
                         onCheckedChange={() => toggleRunSelection(run._id)}
@@ -1762,14 +1802,15 @@ export function SuiteIterationsView({
                         setSelectedRunId(run._id);
                         setViewMode("run-detail");
                       }}
-                      className="flex flex-1 items-center gap-8 py-2 pr-4 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                      className="flex flex-1 items-center gap-6 py-2.5 pr-3 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
                     >
-                      <span className="text-sm font-medium min-w-[140px]">Run {formatRunId(run._id)}</span>
-                      <span className="text-xs text-muted-foreground min-w-[180px]">{timestamp}</span>
-                      <span className="text-xs text-muted-foreground font-mono min-w-[80px]">{duration}</span>
-                      <span className="text-xs font-mono text-muted-foreground min-w-[80px]">{passed}</span>
-                      <span className="text-xs font-mono text-muted-foreground min-w-[80px]">{failed}</span>
-                      <span className="text-xs font-mono text-muted-foreground min-w-[80px]">{passRate !== null ? `${passRate}%` : "—"}</span>
+                      <span className="text-xs font-medium min-w-[120px]">Run {formatRunId(run._id)}</span>
+                      <span className="text-xs text-muted-foreground min-w-[140px]">{timestamp}</span>
+                      <span className="text-xs text-muted-foreground font-mono min-w-[60px]">{duration}</span>
+                      <span className="text-xs font-mono text-muted-foreground min-w-[60px]">{passed}</span>
+                      <span className="text-xs font-mono text-muted-foreground min-w-[60px]">{failed}</span>
+                      <span className="text-xs font-mono text-muted-foreground min-w-[70px]">{passRate !== null ? `${passRate}%` : "—"}</span>
+                      <span className="text-xs font-mono text-muted-foreground min-w-[70px]">{totalTokens > 0 ? totalTokens.toLocaleString() : "—"}</span>
                     </button>
                   </div>
                 );
@@ -1916,7 +1957,23 @@ export function SuiteIterationsView({
                 No test cases found for this run.
               </div>
             ) : (
-              caseGroupsForSelectedRun.map((group, index) => (
+              caseGroupsForSelectedRun.map((group, index) => {
+                // Render model header
+                if ((group as any).isModelHeader) {
+                  // Find if this is the first model header
+                  const isFirstHeader = index === 0 || !caseGroupsForSelectedRun.slice(0, index).some((g: any) => g.isModelHeader);
+                  return (
+                    <div 
+                      key={`model-header-${index}`} 
+                      className={cn("flex items-center gap-2 px-1", !isFirstHeader && "pt-4")}
+                    >
+                      <h3 className="text-base font-semibold">{(group as any).modelName}</h3>
+                    </div>
+                  );
+                }
+                
+                // Render test case group
+                return (
                 <TestCaseGroup
                   key={group.testCase?._id ?? `unassigned-${index}`}
                   group={group}
@@ -1928,8 +1985,10 @@ export function SuiteIterationsView({
                   setExpandedQueries={setExpandedQueries}
                   getIterationBorderColor={getIterationBorderColor}
                   showRunLink={false}
+                    hideModelInfo={true}
                 />
-              ))
+                );
+              })
             )}
           </div>
 
@@ -2219,6 +2278,7 @@ function TestCaseGroup({
   setExpandedQueries,
   getIterationBorderColor,
   showRunLink = true,
+  hideModelInfo = false,
 }: {
   group: {
     testCase: EvalCase | null;
@@ -2232,6 +2292,7 @@ function TestCaseGroup({
   setExpandedQueries: (fn: (prev: Set<string>) => Set<string>) => void;
   getIterationBorderColor: (result: string) => string;
   showRunLink?: boolean;
+  hideModelInfo?: boolean;
 }) {
   const { testCase, iterations: groupIterations } = group;
   const hasIterations = groupIterations.length > 0;
@@ -2259,42 +2320,25 @@ function TestCaseGroup({
 
   return (
     <div className="overflow-hidden rounded-xl border">
-      <div className="border-b bg-muted/50 px-4 py-2.5">
-        <div className="space-y-2">
+      <div className="border-b bg-muted/50 px-3 py-2">
           <div className="flex items-center gap-2">
-            <h3 className="text-sm font-semibold pr-2">
+          <h3 className="text-xs font-semibold">
               {testCase ? testCase.title : "Unassigned iterations"}
             </h3>
-            {testCase?.provider ? (
+          {!hideModelInfo && testCase?.provider ? (
               <>
-                <span className="text-xs text-muted-foreground">
+              <span className="text-[11px] text-muted-foreground">
                   {testCase.provider}
                 </span>
               </>
             ) : null}
-            {testCase?.model ? (
+          {!hideModelInfo && testCase?.model ? (
               <>
-                <span className="text-muted-foreground">•</span>
-                <span className="text-xs text-muted-foreground">
+              <span className="text-muted-foreground text-[11px]">•</span>
+              <span className="text-[11px] text-muted-foreground">
                   {testCase.model}
                 </span>
               </>
-            ) : null}
-          </div>
-          {testCase?.query ? (
-            <div className="flex items-start gap-2">
-              <p className="text-xs text-muted-foreground italic flex-1">
-                "{displayQuery}"
-              </p>
-              {shouldTruncate ? (
-                <button
-                  onClick={toggleQuery}
-                  className="text-xs text-primary hover:underline focus:outline-none whitespace-nowrap"
-                >
-                  {isQueryExpanded ? "Show less" : "Show more"}
-                </button>
-              ) : null}
-            </div>
           ) : null}
         </div>
       </div>
@@ -2335,65 +2379,46 @@ function TestCaseGroup({
                     }
                   }}
                   disabled={isPending}
-                  className={`flex w-full items-center justify-between gap-4 px-4 py-3 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
+                  className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
                     isPending
                       ? "cursor-not-allowed"
                       : "cursor-pointer hover:bg-muted/50"
                   }`}
                 >
-                  <div className="flex min-w-0 flex-1 items-center gap-4 pl-3">
-                    <div className="text-muted-foreground">
+                  <div className="flex min-w-0 flex-1 items-center gap-3 pl-2">
+                    <div className="text-muted-foreground shrink-0">
                       {isPending ? (
-                        <ChevronRight className="h-4 w-4" />
+                        <ChevronRight className="h-3.5 w-3.5" />
                       ) : isOpen ? (
-                        <ChevronDown className="h-4 w-4" />
+                        <ChevronDown className="h-3.5 w-3.5" />
                       ) : (
-                        <ChevronRight className="h-4 w-4" />
+                        <ChevronRight className="h-3.5 w-3.5" />
                       )}
                     </div>
-                    <div className="flex min-w-0 flex-1 flex-col gap-1">
-                      <div className="flex items-center gap-2">
-                        <Badge
-                          variant={
-                            iteration.result === "passed"
-                              ? "default"
-                              : iteration.result === "failed"
-                                ? "destructive"
-                                : iteration.result === "cancelled"
-                                  ? "outline"
-                                  : "secondary"
-                          }
-                          className="text-xs font-mono uppercase"
-                        >
-                          {iteration.result}
-                        </Badge>
-                        <span className="text-sm font-medium">
-                          {testInfo?.title || "Iteration"}
+                    <div className="flex min-w-0 flex-1 items-center gap-2">
+                      <span className="text-xs text-muted-foreground truncate italic">
+                        "{testInfo?.query || testInfo?.title || "Iteration"}"
                         </span>
                       </div>
-                      <div className="text-xs text-muted-foreground truncate">
-                        {testInfo?.query && `"${testInfo.query.substring(0, 60)}${testInfo.query.length > 60 ? "..." : ""}"`}
                       </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-6 text-xs text-muted-foreground">
+                  <div className="flex items-center gap-4 text-xs text-muted-foreground shrink-0">
                     {!isPending && (
                       <>
                         <div className="flex items-center gap-1">
                           <span className="font-mono">{actualToolCalls.length}</span>
-                          <span>tools</span>
+                          <span className="text-[11px]">tools</span>
                         </div>
                         <div className="flex items-center gap-1">
                           <span className="font-mono">{Number(iteration.tokensUsed || 0).toLocaleString()}</span>
-                          <span>tokens</span>
+                          <span className="text-[11px]">tokens</span>
                         </div>
-                        <div className="font-mono">
+                        <div className="font-mono min-w-[40px] text-right">
                           {durationMs !== null ? formatDuration(durationMs) : "—"}
                         </div>
                       </>
                     )}
                     {isPending && (
-                      <Loader2 className="h-4 w-4 animate-spin text-amber-600" />
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-600" />
                     )}
                   </div>
                 </button>

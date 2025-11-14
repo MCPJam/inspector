@@ -356,6 +356,7 @@ export function EvalsTab() {
   const [selectedTestId, setSelectedTestId] = useState<string | null>(null);
   const [expandedSuites, setExpandedSuites] = useState<Set<string>>(new Set());
   const [suiteMode, setSuiteMode] = useState<"runs" | "edit">("runs");
+  const [viewResetKey, setViewResetKey] = useState(0);
 
   // Reset selectedTestId only when suite changes without a test being explicitly selected
   // We track this by checking if the test selection was intentional
@@ -832,6 +833,8 @@ export function EvalsTab() {
                           setSelectedSuiteId(suiteId);
                           // Reset to runs mode when clicking suite name
                           setSuiteMode("runs");
+                          // Increment reset key to trigger view reset
+                          setViewResetKey(prev => prev + 1);
                           if (selectedSuiteId !== suiteId) {
                             // Auto-expand when selecting a new suite
                             setExpandedSuites((prev) => new Set(prev).add(suiteId));
@@ -930,6 +933,7 @@ export function EvalsTab() {
                   onTestIdChange={setSelectedTestId}
                   mode={suiteMode}
                   onModeChange={setSuiteMode}
+                  viewResetKey={viewResetKey}
                 />
               </div>
             ) : null}
