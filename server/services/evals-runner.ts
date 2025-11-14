@@ -453,6 +453,22 @@ export const runEvalSuiteWithAiSdk = async ({
 
   const tools = (await mcpClientManager.getToolsForAiSdk(serverIds)) as ToolSet;
 
+  // Pre-create all iterations upfront so they appear in the UI immediately
+  await convexClient.mutation("evals:precreateIterationsForRun" as any, {
+    runId,
+    tests: tests.map(test => ({
+      testCaseId: test.testCaseId,
+      title: test.title,
+      query: test.query,
+      provider: test.provider,
+      model: test.model,
+      runs: test.runs,
+      expectedToolCalls: test.expectedToolCalls,
+      judgeRequirement: test.judgeRequirement,
+      advancedConfig: test.advancedConfig,
+    })),
+  });
+
   const summary = {
     total: 0,
     passed: 0,
