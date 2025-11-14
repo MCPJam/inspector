@@ -16,7 +16,18 @@ import type {
   OAuthFlowState,
   OAuthStateMachine,
   RegistrationStrategy2025_03_26,
+  HttpHistoryEntry,
 } from "./types";
+import type { DiagramAction } from "./shared/types";
+import {
+  proxyFetch,
+  addInfoLog,
+  generateRandomString,
+  generateCodeChallenge,
+  loadPreregisteredCredentials,
+  markLatestHttpEntryAsError,
+  toLogErrorDetails,
+} from "./shared/helpers";
 
 // Re-export types for backward compatibility
 export type { OAuthFlowStep, OAuthFlowState };
@@ -28,11 +39,6 @@ export type OauthFlowStateJune2025 = OAuthFlowState;
 // Legacy state export
 export const EMPTY_OAUTH_FLOW_STATE_V2: OauthFlowStateJune2025 =
   EMPTY_OAUTH_FLOW_STATE;
-
-// State machine interface (legacy compatibility)
-export interface DebugOAuthStateMachine extends OAuthStateMachine {
-  // All methods inherited from OAuthStateMachine
-}
 
 // Configuration for creating the state machine (2025-03-26 specific)
 export interface DebugOAuthStateMachineConfig {
@@ -46,6 +52,257 @@ export interface DebugOAuthStateMachineConfig {
   customScopes?: string;
   customHeaders?: Record<string, string>;
   registrationStrategy?: RegistrationStrategy2025_03_26; // dcr | preregistered only
+}
+
+/**
+ * Build the sequence of actions for the 2025-03-26 OAuth flow
+ * This function creates the visual representation of the OAuth flow steps
+ * that will be displayed in the sequence diagram.
+ */
+export function buildActions_2025_03_26(
+  flowState: OAuthFlowState,
+  registrationStrategy: "dcr" | "preregistered",
+): DiagramAction[] {
+  return [
+    // 2025-03-26: NO Protected Resource Metadata (RFC9728) support
+    // Flow starts directly with Authorization Server Metadata discovery
+    {
+      id: "request_authorization_server_metadata",
+      label: "GET /.well-known/oauth-authorization-server from MCP base URL",
+      description:
+        "Direct discovery from MCP server base URL with fallback to /authorize, /token, /register",
+      from: "client",
+      to: "authServer",
+      details: flowState.authorizationServerUrl
+        ? [
+            { label: "URL", value: flowState.authorizationServerUrl },
+            { label: "Protocol", value: "2025-03-26" },
+          ]
+        : undefined,
+    },
+    {
+      id: "received_authorization_server_metadata",
+      label: "Authorization server metadata response",
+      description: "Authorization Server returns metadata",
+      from: "authServer",
+      to: "client",
+      details: flowState.authorizationServerMetadata
+        ? [
+            {
+              label: "Token",
+              value: new URL(
+                flowState.authorizationServerMetadata.token_endpoint,
+              ).pathname,
+            },
+            {
+              label: "Auth",
+              value: new URL(
+                flowState.authorizationServerMetadata.authorization_endpoint,
+              ).pathname,
+            },
+          ]
+        : undefined,
+    },
+    // Client registration steps (no CIMD support in 2025-03-26)
+    ...(registrationStrategy === "dcr"
+      ? [
+          {
+            id: "request_client_registration",
+            label: "POST /register (2025-03-26)",
+            description:
+              "Client registers dynamically with Authorization Server",
+            from: "client",
+            to: "authServer",
+            details: [
+              {
+                label: "Note",
+                value: "Dynamic client registration (DCR)",
+              },
+            ],
+          },
+          {
+            id: "received_client_credentials",
+            label: "Client Credentials",
+            description:
+              "Authorization Server returns client ID and credentials",
+            from: "authServer",
+            to: "client",
+            details: flowState.clientId
+              ? [
+                  {
+                    label: "client_id",
+                    value: flowState.clientId.substring(0, 20) + "...",
+                  },
+                ]
+              : undefined,
+          },
+        ]
+      : [
+          {
+            id: "received_client_credentials",
+            label: "Use Pre-registered Client (2025-03-26)",
+            description: "Client uses pre-configured credentials (skipped DCR)",
+            from: "client",
+            to: "client",
+            details: flowState.clientId
+              ? [
+                  {
+                    label: "client_id",
+                    value: flowState.clientId.substring(0, 20) + "...",
+                  },
+                  {
+                    label: "Note",
+                    value: "Pre-registered (no DCR needed)",
+                  },
+                ]
+              : [
+                  {
+                    label: "Note",
+                    value: "Pre-registered client credentials",
+                  },
+                ],
+          },
+        ]),
+    {
+      id: "generate_pkce_parameters",
+      label: "Generate PKCE parameters",
+      description:
+        "Client generates code verifier and challenge (recommended), includes resource parameter",
+      from: "client",
+      to: "client",
+      details: flowState.codeChallenge
+        ? [
+            {
+              label: "code_challenge",
+              value: flowState.codeChallenge.substring(0, 15) + "...",
+            },
+            {
+              label: "method",
+              value: flowState.codeChallengeMethod || "S256",
+            },
+            { label: "resource", value: flowState.serverUrl || "—" },
+            { label: "Protocol", value: "2025-03-26" },
+          ]
+        : undefined,
+    },
+    {
+      id: "authorization_request",
+      label: "Open browser with authorization URL",
+      description:
+        "Client opens browser with authorization URL + code_challenge + resource",
+      from: "client",
+      to: "browser",
+      details: flowState.authorizationUrl
+        ? [
+            {
+              label: "code_challenge",
+              value:
+                flowState.codeChallenge?.substring(0, 12) + "..." || "S256",
+            },
+            { label: "resource", value: flowState.serverUrl || "" },
+          ]
+        : undefined,
+    },
+    {
+      id: "browser_to_auth_server",
+      label: "Authorization request with resource parameter",
+      description: "Browser navigates to authorization endpoint",
+      from: "browser",
+      to: "authServer",
+      details: flowState.authorizationUrl
+        ? [{ label: "Note", value: "User authorizes in browser" }]
+        : undefined,
+    },
+    {
+      id: "auth_redirect_to_browser",
+      label: "Redirect to callback with authorization code",
+      description:
+        "Authorization Server redirects browser back to callback URL",
+      from: "authServer",
+      to: "browser",
+      details: flowState.authorizationCode
+        ? [
+            {
+              label: "code",
+              value: flowState.authorizationCode.substring(0, 20) + "...",
+            },
+          ]
+        : undefined,
+    },
+    {
+      id: "received_authorization_code",
+      label: "Authorization code callback",
+      description: "Browser redirects back to client with authorization code",
+      from: "browser",
+      to: "client",
+      details: flowState.authorizationCode
+        ? [
+            {
+              label: "code",
+              value: flowState.authorizationCode.substring(0, 20) + "...",
+            },
+          ]
+        : undefined,
+    },
+    {
+      id: "token_request",
+      label: "Token request + code_verifier + resource",
+      description: "Client exchanges authorization code for access token",
+      from: "client",
+      to: "authServer",
+      details: flowState.codeVerifier
+        ? [
+            { label: "grant_type", value: "authorization_code" },
+            { label: "resource", value: flowState.serverUrl || "" },
+          ]
+        : undefined,
+    },
+    {
+      id: "received_access_token",
+      label: "Access token (+ refresh token)",
+      description: "Authorization Server returns access token",
+      from: "authServer",
+      to: "client",
+      details: flowState.accessToken
+        ? [
+            { label: "token_type", value: flowState.tokenType || "Bearer" },
+            {
+              label: "expires_in",
+              value: flowState.expiresIn?.toString() || "3600",
+            },
+          ]
+        : undefined,
+    },
+    {
+      id: "authenticated_mcp_request",
+      label: "MCP request with access token",
+      description: "Client makes authenticated request to MCP server",
+      from: "client",
+      to: "mcpServer",
+      details: flowState.accessToken
+        ? [
+            { label: "POST", value: "tools/list" },
+            {
+              label: "Authorization",
+              value: "Bearer " + flowState.accessToken.substring(0, 15) + "...",
+            },
+          ]
+        : undefined,
+    },
+    {
+      id: "complete",
+      label: "MCP response",
+      description: "MCP Server returns successful response",
+      from: "mcpServer",
+      to: "client",
+      details: flowState.accessToken
+        ? [
+            { label: "Status", value: "200 OK" },
+            { label: "Content", value: "tools, resources, prompts" },
+          ]
+        : undefined,
+    },
+  ];
 }
 
 // Helper: Build authorization base URL from MCP server URL (2025-03-26 specific)
@@ -86,104 +343,10 @@ function buildAuthServerMetadataUrls(serverUrl: string): string[] {
   return urls;
 }
 
-// Helper: Load pre-registered OAuth credentials from localStorage
-function loadPreregisteredCredentials(serverName: string): {
-  clientId?: string;
-  clientSecret?: string;
-} {
-  try {
-    // Try to load from mcp-client-{serverName} (where ServerModal stores them)
-    const storedClientInfo = localStorage.getItem(`mcp-client-${serverName}`);
-    if (storedClientInfo) {
-      const parsed = JSON.parse(storedClientInfo);
-      return {
-        clientId: parsed.client_id || undefined,
-        clientSecret: parsed.client_secret || undefined,
-      };
-    }
-  } catch (e) {
-    console.error("Failed to load pre-registered credentials:", e);
-  }
-  return {};
-}
-
-/**
- * Helper function to make requests via backend debug proxy (bypasses CORS)
- */
-async function proxyFetch(
-  url: string,
-  options: RequestInit = {},
-): Promise<{
-  status: number;
-  statusText: string;
-  headers: Record<string, string>;
-  body: any;
-  ok: boolean;
-}> {
-  const defaultHeaders: Record<string, string> = {
-    Accept: "application/json, text/event-stream",
-  };
-
-  const mergedHeaders = {
-    ...defaultHeaders,
-    ...((options.headers as Record<string, string>) || {}),
-  };
-
-  let bodyToSend: any = undefined;
-  if (options.body) {
-    const contentType =
-      mergedHeaders[
-        Object.keys(mergedHeaders).find(
-          (k) => k.toLowerCase() === "content-type",
-        ) || ""
-      ];
-
-    if (contentType?.includes("application/x-www-form-urlencoded")) {
-      const params = new URLSearchParams(options.body as string);
-      bodyToSend = Object.fromEntries(params.entries());
-    } else if (typeof options.body === "string") {
-      try {
-        bodyToSend = JSON.parse(options.body);
-      } catch {
-        bodyToSend = options.body;
-      }
-    } else {
-      bodyToSend = options.body;
-    }
-  }
-
-  const proxyPayload = {
-    url,
-    method: options.method || "GET",
-    body: bodyToSend,
-    headers: mergedHeaders,
-  };
-
-  const response = await fetch("/api/mcp/oauth/debug/proxy", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(proxyPayload),
-  });
-
-  if (!response.ok) {
-    throw new Error(
-      `Backend debug proxy error: ${response.status} ${response.statusText}`,
-    );
-  }
-
-  const data = await response.json();
-  return {
-    ...data,
-    ok: data.status >= 200 && data.status < 300,
-  };
-}
-
 // Factory function to create the 2025-03-26 state machine
 export const createDebugOAuthStateMachine = (
   config: DebugOAuthStateMachineConfig,
-): DebugOAuthStateMachine => {
+): OAuthStateMachine => {
   const {
     state: initialState,
     getState,
@@ -209,7 +372,7 @@ export const createDebugOAuthStateMachine = (
 
   const getCurrentState = () => (getState ? getState() : initialState);
 
-  const machine: DebugOAuthStateMachine = {
+  const machine: OAuthStateMachine = {
     state: initialState,
     updateState,
 
@@ -282,6 +445,7 @@ export const createDebugOAuthStateMachine = (
                   response.status === 200
                     ? addInfoLog(
                         state,
+                        "discovery_start",
                         "optional-auth",
                         "Optional Authentication",
                         {
@@ -420,6 +584,7 @@ export const createDebugOAuthStateMachine = (
 
               const fallbackInfo = addInfoLog(
                 getCurrentState(),
+                "received_authorization_server_metadata",
                 "fallback-endpoints",
                 "Using Fallback Endpoints",
                 {
@@ -514,6 +679,7 @@ export const createDebugOAuthStateMachine = (
 
             const infoLogs = addInfoLog(
               getCurrentState(),
+              "received_authorization_server_metadata",
               "as-metadata",
               "Authorization Server Metadata",
               metadata,
@@ -571,6 +737,7 @@ export const createDebugOAuthStateMachine = (
 
               const infoLogs = addInfoLog(
                 getCurrentState(),
+                "received_client_credentials",
                 "dcr",
                 "Pre-registered Client",
                 preregInfo,
@@ -656,9 +823,9 @@ export const createDebugOAuthStateMachine = (
                 state.authorizationServerMetadata.registration_endpoint,
                 {
                   method: "POST",
-                  headers: {
+                  headers: mergeHeaders({
                     "Content-Type": "application/json",
-                  },
+                  }),
                   body: JSON.stringify(state.lastRequest.body),
                 },
               );
@@ -717,6 +884,7 @@ export const createDebugOAuthStateMachine = (
 
                 const infoLogs = addInfoLog(
                   getCurrentState(),
+                  "received_client_credentials",
                   "dcr",
                   "Dynamic Client Registration",
                   dcrInfo,
@@ -779,6 +947,7 @@ export const createDebugOAuthStateMachine = (
 
             const pkceInfoLogs = addInfoLog(
               getCurrentState(),
+              "generate_pkce_parameters",
               "pkce-generation",
               "Generate PKCE Parameters (REQUIRED)",
               {
@@ -849,6 +1018,7 @@ export const createDebugOAuthStateMachine = (
 
             const authUrlInfoLogs = addInfoLog(
               getCurrentState(),
+              "authorization_request",
               "auth-url",
               "Authorization URL",
               {
@@ -983,9 +1153,9 @@ export const createDebugOAuthStateMachine = (
                 state.authorizationServerMetadata.token_endpoint,
                 {
                   method: "POST",
-                  headers: {
+                  headers: mergeHeaders({
                     "Content-Type": "application/x-www-form-urlencoded",
-                  },
+                  }),
                   body: tokenRequestBody.toString(),
                 },
               );
@@ -1033,6 +1203,8 @@ export const createDebugOAuthStateMachine = (
                   ...tokenInfoLogs,
                   {
                     id: "auth-code",
+                    level: "info",
+                    step: "received_authorization_code",
                     label: "Authorization Code",
                     data: {
                       code: state.authorizationCode,
@@ -1055,6 +1227,8 @@ export const createDebugOAuthStateMachine = (
                   ...tokenInfoLogs,
                   {
                     id: "oauth-tokens",
+                    level: "info",
+                    step: "received_access_token",
                     label: "OAuth Tokens",
                     data: tokenData,
                     timestamp: Date.now(),
@@ -1107,6 +1281,8 @@ export const createDebugOAuthStateMachine = (
                     ...tokenInfoLogs,
                     {
                       id: "token",
+                      step: "received_access_token",
+                      level: "info",
                       label: "Access Token (Decoded JWT)",
                       data: audienceNote,
                       timestamp: Date.now(),
@@ -1139,6 +1315,8 @@ export const createDebugOAuthStateMachine = (
                     ...tokenInfoLogs,
                     {
                       id: "id-token",
+                      step: "received_access_token",
+                      level: "info",
                       label: "ID Token (OIDC - Decoded JWT)",
                       data: formattedIdToken,
                       timestamp: Date.now(),
@@ -1218,6 +1396,7 @@ export const createDebugOAuthStateMachine = (
 
             const authenticatedRequestInfoLogs = addInfoLog(
               getCurrentState(),
+              "authenticated_mcp_request",
               "authenticated-init",
               "Authenticated MCP Initialize Request",
               {
@@ -1256,11 +1435,11 @@ export const createDebugOAuthStateMachine = (
             try {
               const response = await proxyFetch(state.serverUrl, {
                 method: "POST",
-                headers: {
+                headers: mergeHeaders({
                   Authorization: `Bearer ${state.accessToken}`,
                   "Content-Type": "application/json",
                   Accept: "application/json, text/event-stream",
-                },
+                }),
                 body: JSON.stringify({
                   jsonrpc: "2.0",
                   method: "initialize",
@@ -1308,30 +1487,15 @@ export const createDebugOAuthStateMachine = (
                       },
                     };
 
-                    const getHistoryEntry = {
-                      step: "http_sse_fallback",
+                    const getHistoryEntry: HttpHistoryEntry = {
+                      step: "complete",
                       timestamp: Date.now(),
                       request: getRequest,
                     };
 
                     updatedHistoryMcp.push(getHistoryEntry);
 
-                    // Add info log for backwards compatibility attempt
-                    let fallbackInfoLogs = addInfoLog(
-                      getCurrentState(),
-                      "http-sse-fallback-attempt",
-                      "Backwards Compatibility Check",
-                      {
-                        Reason: `POST failed with ${response.status}, checking for old HTTP+SSE transport`,
-                        "GET Request": state.serverUrl,
-                        Note: "Attempting to detect SSE stream with 'endpoint' event",
-                      },
-                    );
-
-                    updateState({
-                      infoLogs: fallbackInfoLogs,
-                      httpHistory: updatedHistoryMcp,
-                    });
+                    // Don't add intermediate log - the detection result log below has all the info
 
                     const getResponse = await proxyFetch(state.serverUrl, {
                       method: "GET",
@@ -1369,6 +1533,7 @@ export const createDebugOAuthStateMachine = (
 
                       const httpSseInfoLogs = addInfoLog(
                         getCurrentState(),
+                        "authenticated_mcp_request",
                         "http-sse-detected",
                         "HTTP+SSE Transport Detected (2024-11-05)",
                         {
@@ -1376,7 +1541,11 @@ export const createDebugOAuthStateMachine = (
                           "SSE Stream URL": state.serverUrl,
                           "POST Endpoint": fullEndpoint,
                           "First Event": sseBody.events?.[0],
-                          Note: "Server uses the old HTTP+SSE transport. All subsequent MCP requests should be POSTed to the endpoint above.",
+                          "Migration Note":
+                            "This transport is deprecated. Please update your server to use the 2025-03-26 Streamable HTTP transport.",
+                          "How It Works":
+                            "Client connected via GET for SSE stream. Subsequent requests use POST to: " +
+                            fullEndpoint,
                         },
                       );
 
@@ -1449,6 +1618,7 @@ export const createDebugOAuthStateMachine = (
 
                 mcpInfoLogs = addInfoLog(
                   getCurrentState(),
+                  "authenticated_mcp_request",
                   "mcp-protocol",
                   "MCP Server Information",
                   protocolInfo,
@@ -1456,6 +1626,7 @@ export const createDebugOAuthStateMachine = (
               } else if (isSSE) {
                 mcpInfoLogs = addInfoLog(
                   getCurrentState(),
+                  "authenticated_mcp_request",
                   "mcp-transport",
                   "MCP Transport Detected",
                   {
@@ -1489,6 +1660,7 @@ export const createDebugOAuthStateMachine = (
 
                 mcpInfoLogs = addInfoLog(
                   getCurrentState(),
+                  "authenticated_mcp_request",
                   "mcp-protocol",
                   "MCP Server Information",
                   protocolInfo,
@@ -1504,28 +1676,49 @@ export const createDebugOAuthStateMachine = (
                 isInitiatingAuth: false,
               });
             } catch (error) {
+              const errorDetails = toLogErrorDetails(error);
               const errorResponse = {
                 status: 0,
                 statusText: "Network Error",
                 headers: mergeHeaders({}),
                 body: {
-                  error: error instanceof Error ? error.message : String(error),
+                  error: errorDetails.message,
+                  details: errorDetails.details,
                 },
               };
 
               const updatedHistoryError = [...(state.httpHistory || [])];
               if (updatedHistoryError.length > 0) {
-                const lastEntry =
-                  updatedHistoryError[updatedHistoryError.length - 1];
-                lastEntry.response = errorResponse;
-                lastEntry.duration =
-                  Date.now() - (lastEntry.timestamp || Date.now());
+                const lastEntry = {
+                  ...updatedHistoryError[updatedHistoryError.length - 1],
+                  response: errorResponse,
+                  duration:
+                    Date.now() -
+                    (updatedHistoryError[updatedHistoryError.length - 1]
+                      ?.timestamp || Date.now()),
+                  error: errorDetails,
+                };
+                updatedHistoryError[updatedHistoryError.length - 1] = lastEntry;
               }
+
+              const currentState = getCurrentState();
+              const infoLogs = addInfoLog(
+                currentState,
+                "authenticated_mcp_request",
+                `error-authenticated_mcp_request-${Date.now()}`,
+                "Authenticated MCP request failed",
+                {
+                  request: currentState.lastRequest,
+                  error: errorDetails,
+                },
+                { level: "error", error: errorDetails },
+              );
 
               updateState({
                 lastResponse: errorResponse,
                 httpHistory: updatedHistoryError,
-                error: `Authenticated MCP request failed: ${error instanceof Error ? error.message : String(error)}`,
+                infoLogs,
+                error: `Authenticated MCP request failed: ${errorDetails.message}`,
                 isInitiatingAuth: false,
               });
             }
@@ -1540,10 +1733,38 @@ export const createDebugOAuthStateMachine = (
             break;
         }
       } catch (error) {
-        updateState({
-          error: error instanceof Error ? error.message : String(error),
+        const currentState = getCurrentState();
+        const errorDetails = toLogErrorDetails(error);
+        const infoLogs = addInfoLog(
+          currentState,
+          currentState.currentStep,
+          `error-${currentState.currentStep}-${Date.now()}`,
+          "Step failed",
+          {
+            step: currentState.currentStep,
+            request: currentState.lastRequest,
+            response: currentState.lastResponse,
+            error: errorDetails,
+          },
+          { level: "error", error: errorDetails },
+        );
+
+        const updatedHistory = markLatestHttpEntryAsError(
+          currentState.httpHistory,
+          errorDetails,
+        );
+
+        const updates: Partial<OAuthFlowState> = {
+          error: errorDetails.message,
+          infoLogs,
           isInitiatingAuth: false,
-        });
+        };
+
+        if (updatedHistory) {
+          updates.httpHistory = updatedHistory;
+        }
+
+        updateState(updates);
       }
     },
 
@@ -1574,42 +1795,3 @@ export const createDebugOAuthStateMachine = (
 
   return machine;
 };
-
-// Helper function to add an info log to the state
-function addInfoLog(
-  state: OauthFlowStateJune2025,
-  id: string,
-  label: string,
-  data: any,
-): Array<{ id: string; label: string; data: any; timestamp: number }> {
-  return [
-    ...(state.infoLogs || []),
-    {
-      id,
-      label,
-      data,
-      timestamp: Date.now(),
-    },
-  ];
-}
-
-// Helper function to generate random string for PKCE
-function generateRandomString(length: number): string {
-  const charset =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
-  const randomValues = new Uint8Array(length);
-  crypto.getRandomValues(randomValues);
-  return Array.from(
-    randomValues,
-    (byte) => charset[byte % charset.length],
-  ).join("");
-}
-
-// Helper function to generate code challenge from verifier
-async function generateCodeChallenge(verifier: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(verifier);
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  const base64 = btoa(String.fromCharCode(...new Uint8Array(hash)));
-  return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
-}

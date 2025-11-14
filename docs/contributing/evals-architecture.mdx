@@ -44,14 +44,13 @@ graph TB
         D[POST /api/mcp/evals/run]
         E[POST /api/mcp/evals/generate-tests]
         F[eval-agent.ts]
-        G[eval-transformer.ts]
     end
 
-    subgraph CLI["CLI Layer (evals-cli)"]
-        H[runner.ts - Core Orchestrator]
+    subgraph Execution["Execution Layer"]
+        H[evals-runner.ts - Core Orchestrator]
         I[evaluator.ts - Result Comparison]
         J[RunRecorder - DB Interface]
-        K[Mastra MCP Client]
+        K[MCPClientManager]
     end
 
     subgraph Backend["MCPJamBackend"]
@@ -69,7 +68,6 @@ graph TB
 
     D --> H
     E --> F
-    D --> G
 
     H --> J
     J --> O
@@ -191,10 +189,7 @@ HTTP API endpoints for eval execution and test generation.
     }
   }>
   serverIds: string[]
-  llmConfig: {
-    provider: string
-    apiKey: string
-  }
+  modelApiKey?: string | null
   convexAuthToken: string
 }
 ```
@@ -208,19 +203,16 @@ flowchart TD
     B -->|Valid| D[Resolve server IDs]
     D --> E{Check server status}
     E -->|Not connected| F[Throw error]
-    E -->|Connected| G[Transform server configs]
-    G --> H[Transform LLM config]
-    H --> I[Call runEvalsWithAuth async]
-    I --> J[Return success immediately]
+    E -->|Connected| G[Call runEvalSuiteWithAiSdk async]
+    G --> H[Return success immediately]
 
-    I --> K[Background execution continues...]
+    G --> I[Background execution continues...]
 ```
 
 **Key Functions:**
 
 - `resolveServerIdsOrThrow()`: Case-insensitive server ID matching
-- `transformServerConfigsToEnvironment()`: Converts server manager format to CLI format
-- `transformLLMConfigToLlmsConfig()`: Routes API keys appropriately
+- `runEvalSuiteWithAiSdk()`: Executes eval suite in background using AI SDK
 
 ##### **Endpoint: POST `/api/mcp/evals/generate-tests`**
 
@@ -575,21 +567,21 @@ The system supports multiple execution paths based on the selected model:
 flowchart TD
     A[Model Selection] --> B{Provider Type}
 
-    B -->|OpenAI| C[Direct API: @ai-sdk/openai]
-    B -->|Anthropic| D[Direct API: @ai-sdk/anthropic]
-    B -->|DeepSeek| E[Direct API: @ai-sdk/openai compat]
-    B -->|Ollama| F[Direct API: @ai-sdk/ollama]
-    B -->|MCPJam| G[MCPJamBackend: MCPJamBackend/streaming]
+    B -->|OpenAI| C[AI SDK: @ai-sdk/openai]
+    B -->|Anthropic| D[AI SDK: @ai-sdk/anthropic]
+    B -->|DeepSeek| E[AI SDK: @ai-sdk/openai compat]
+    B -->|Ollama| F[AI SDK: @ai-sdk/ollama]
+    B -->|MCPJam| G[MCPJam Backend: /stream]
 
-    C --> H[streamText via ai SDK]
+    C --> H[generateText via AI SDK]
     D --> H
     E --> H
     F --> H
 
-    G --> I[runBackendConversation]
+    G --> I[runIterationViaBackend]
 
-    H --> J[Agentic Loop]
-    I --> J
+    H --> J[Single-step execution]
+    I --> K[Multi-step agentic loop]
 ```
 
 **Provider Configuration:**
@@ -617,6 +609,15 @@ flowchart TD
 }
 ```
 
+**AI SDK Integration:**
+
+The system now uses Vercel's AI SDK (`ai` package) for LLM interactions:
+
+- `generateText()`: Single-step text generation with tool calling
+- `createLlmModel()`: Helper to create provider-specific model instances
+- Automatic tool call extraction and evaluation
+- Built-in token usage tracking
+
 ### MCP Server Integration
 
 **Connection Workflow:**
@@ -624,8 +625,7 @@ flowchart TD
 ```mermaid
 sequenceDiagram
     participant UI as UI
-    participant CM as ClientManager
-    participant MCP as MCP Client
+    participant CM as MCPClientManager
     participant Server as MCP Server
 
     UI->>CM: listServers()
@@ -635,19 +635,17 @@ sequenceDiagram
     CM-->>UI: "connected"
 
     UI->>CM: listTools("server1")
-    CM->>MCP: listTools()
-    MCP->>Server: tools/list
-    Server-->>MCP: {tools: [...]}
-    MCP-->>CM: {tools: [...]}
+    CM->>Server: tools/list
+    Server-->>CM: {tools: [...]}
     CM-->>UI: {tools: [...]}
 
     Note over UI,Server: During eval execution...
 
     UI->>Runner: Execute eval
-    Runner->>MCP: callTool("toolName", args)
-    MCP->>Server: tools/call
-    Server-->>MCP: {result: ...}
-    MCP-->>Runner: {result: ...}
+    Runner->>CM: getToolsForAiSdk(serverIds)
+    CM-->>Runner: ToolSet (AI SDK format)
+    Runner->>Server: Execute tool via AI SDK
+    Server-->>Runner: {result: ...}
 ```
 
 **Transport Support:**
@@ -730,39 +728,31 @@ evals:getAllTestCasesAndIterationsBySuite(
 
 ### Adding a New LLM Provider
 
-1. **Update LLM config schema** in `evals-cli/src/utils/validators.ts`:
+1. **Add AI SDK provider package**:
 
-```typescript
-const LlmsConfigSchema = z.object({
-  // Add your provider
-  myProvider: z
-    .object({
-      apiKey: z.string(),
-      model: z.string(),
-    })
-    .optional(),
-});
+```bash
+npm install @ai-sdk/my-provider
 ```
 
-2. **Add provider case** in `evals-cli/src/evals/runner.ts`:
+2. **Update model creation** in `server/utils/chat-helpers.ts`:
 
 ```typescript
-function getModelForProvider(
-  llms: LlmsConfig,
-  provider: string,
-  modelId: string,
+import { createMyProvider } from "@ai-sdk/my-provider";
+
+export function createLlmModel(
+  modelDefinition: ModelDefinition,
+  apiKey: string,
 ) {
-  switch (provider) {
+  switch (modelDefinition.provider) {
     case "myProvider":
-      return myProvider.chat(modelId, {
-        apiKey: llms.myProvider?.apiKey,
-      });
+      const myProvider = createMyProvider({ apiKey });
+      return myProvider(modelDefinition.id);
     // ...
   }
 }
 ```
 
-3. **Add to UI model list** in `client/src/hooks/use-chat.tsx`:
+3. **Add to UI model list** in `shared/types.ts`:
 
 ```typescript
 const availableModels: ModelDefinition[] = [
@@ -776,80 +766,50 @@ const availableModels: ModelDefinition[] = [
 
 ### Adding a New MCP Transport
 
-1. **Update server definition schema** in `evals-cli/src/utils/validators.ts`:
+1. **Update MCPClientManager** in `sdk/` to support the new transport type:
 
 ```typescript
-const MyTransportSchema = z.object({
-  type: z.literal("my-transport"),
-  endpoint: z.string().url(),
+// Add transport configuration to server config
+type MyTransportConfig = {
+  type: "my-transport";
+  endpoint: string;
   // Add transport-specific config
-});
-
-export const ServerDefinitionSchema = z.discriminatedUnion("type", [
-  StdioServerDefinitionSchema,
-  HttpServerDefinitionSchema,
-  MyTransportSchema, // Add new transport
-]);
+};
 ```
 
-2. **Implement transport** in Mastra MCP client (external library).
-
-3. **Update config transformer** in `server/utils/eval-transformer.ts`:
+2. **Implement transport connection logic** in MCPClientManager:
 
 ```typescript
-function transformServerConfigsToEnvironment(
-  serverIds: string[],
-  clientManager: MCPClientManager,
-): MCPClientOptions {
-  for (const serverId of serverIds) {
-    const server = clientManager.getServer(serverId);
-
-    if (server.transport.type === "my-transport") {
-      // Transform to CLI format
-    }
+async connectServer(serverId: string, config: ServerConfig) {
+  if (config.transport.type === "my-transport") {
+    // Implement connection logic
   }
 }
 ```
+
+3. **Ensure tool execution** works with the new transport in `getToolsForAiSdk()`
 
 ### Debugging Evals
 
 **Enable verbose logging:**
 
 ```typescript
-// In runner.ts
-const DEBUG = true;
-
-if (DEBUG) {
-  console.log("LLM Response:", response);
-  console.log("Tool Calls:", toolCalls);
-  console.log("Message History:", messages);
-}
+// In evals-runner.ts
+console.log("AI SDK Response:", result);
+console.log("Tool Calls:", result.toolCalls);
+console.log("Message History:", result.response?.messages);
 ```
 
 **Inspect MCP client:**
 
 ```typescript
-// In runner.ts
+// In evals-runner.ts
 console.log("Available tools:", tools);
-console.log("Server status:", mcpClient.getConnectionStatus());
+console.log("Server IDs:", serverIds);
+console.log("Tools for AI SDK:", await mcpClientManager.getToolsForAiSdk(serverIds));
 ```
 
 ### Testing Changes
-
-**Run evals locally:**
-
-```bash
-cd evals-cli
-npm run build
-npm link
-
-# Run test
-mcpjam evals run \
-  --tests examples/tests.json \
-  --environment examples/environment.json \
-  --llms examples/llms.json \
-  --api-key your-api-key
-```
 
 **Test via UI:**
 
@@ -858,6 +818,16 @@ mcpjam evals run \
 3. Configure and execute test
 4. Check browser console for errors
 5. View results in "Eval results" tab
+6. Monitor server logs for execution details
+
+**Test server-side execution:**
+
+```typescript
+// In server/services/evals-runner.ts
+console.log("Starting eval suite:", tests.length, "tests");
+console.log("Using servers:", serverIds);
+console.log("Model API key provided:", !!modelApiKey);
+```
 
 ### Common Issues
 
@@ -984,16 +954,16 @@ Potential areas for contribution:
 | **Missing Tools**    | Expected tools that were not called (causes failure)             |
 | **Unexpected Tools** | Tools called but not expected (logged, doesn't fail)             |
 | **RunRecorder**      | Interface for persisting eval results to database                |
-| **MCPClient**        | Mastra client for communicating with MCP servers                 |
+| **MCPClientManager** | Manager for MCP server connections and tool execution           |
+| **AI SDK**           | Vercel's AI SDK for LLM interactions and tool calling            |
 
 ---
 
 ## Resources
 
 - **MCP Specification**: [https://spec.modelcontextprotocol.io](https://spec.modelcontextprotocol.io)
-- **Mastra MCP Client**: [https://mastra.dev](https://mastra.dev)
-- **Convex Database**: [https://convex.dev](https://convex.dev)
 - **Vercel AI SDK**: [https://sdk.vercel.ai](https://sdk.vercel.ai)
+- **Convex Database**: [https://convex.dev](https://convex.dev)
 
 ---
 

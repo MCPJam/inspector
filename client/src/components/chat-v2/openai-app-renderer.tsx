@@ -68,6 +68,52 @@ export function OpenAIAppRenderer({
     return null;
   }, [toolOutputProp]);
 
+  // Extract toolResponseMetadata from _meta field
+  const toolResponseMetadata = useMemo(() => {
+    if (
+      !toolOutputProp ||
+      typeof toolOutputProp !== "object" ||
+      toolOutputProp === null
+    ) {
+      return null;
+    }
+
+    const output = toolOutputProp as Record<string, unknown>;
+
+    // Check for _meta at root level
+    if (output._meta && typeof output._meta === "object") {
+      return output._meta as Record<string, any>;
+    }
+
+    // Check for _meta in structuredContent
+    if (
+      structuredContent &&
+      typeof structuredContent === "object" &&
+      structuredContent !== null &&
+      "_meta" in (structuredContent as Record<string, unknown>)
+    ) {
+      return (structuredContent as Record<string, unknown>)._meta as Record<
+        string,
+        any
+      >;
+    }
+
+    // Check for _meta in result wrapper
+    if (
+      output.result &&
+      typeof output.result === "object" &&
+      output.result !== null &&
+      "_meta" in (output.result as Record<string, unknown>)
+    ) {
+      return (output.result as Record<string, unknown>)._meta as Record<
+        string,
+        any
+      >;
+    }
+
+    return null;
+  }, [toolOutputProp, structuredContent]);
+
   const resolvedToolInput = useMemo(
     () => (toolInputProp as Record<string, any>) ?? {},
     [toolInputProp],
@@ -121,7 +167,7 @@ export function OpenAIAppRenderer({
             uri: outputTemplate,
             toolInput: resolvedToolInput,
             toolOutput: resolvedToolOutput,
-            toolResponseMetadata: null, // Can be extended later
+            toolResponseMetadata: toolResponseMetadata, // Extract _meta from tool response
             toolId: resolvedToolCallId,
             toolName: toolName,
             theme: themeMode,
@@ -159,7 +205,18 @@ export function OpenAIAppRenderer({
     };
     // Store once when state becomes output-available and widgetUrl is not yet set
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toolState, resolvedToolCallId, widgetUrl, outputTemplate, toolName]);
+  }, [
+    toolState,
+    resolvedToolCallId,
+    widgetUrl,
+    outputTemplate,
+    toolName,
+    serverId,
+    resolvedToolInput,
+    resolvedToolOutput,
+    toolResponseMetadata,
+    themeMode,
+  ]);
 
   const appliedHeight = useMemo(
     () => Math.min(Math.max(contentHeight, 320), maxHeight),

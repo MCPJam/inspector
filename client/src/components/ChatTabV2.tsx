@@ -46,6 +46,7 @@ import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import { ErrorBox } from "@/components/chat-v2/error";
 import { usePersistedModel } from "@/hooks/use-persisted-model";
+import { countMCPToolsTokens, countTextTokens } from "@/lib/mcp-tokenizer-api";
 
 const DEFAULT_SYSTEM_PROMPT =
   "You are a helpful assistant with access to MCP tools.";
@@ -86,7 +87,7 @@ export function ChatTabV2({
   selectedServerNames,
 }: ChatTabProps) {
   const { getAccessToken, signUp } = useAuth();
-  const { isAuthenticated } = useConvexAuth();
+  const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const posthog = usePostHog();
   const {
     hasToken,
@@ -110,6 +111,17 @@ export function ChatTabV2({
     Record<string, Record<string, any>>
   >({});
   const [toolServerMap, setToolServerMap] = useState<ToolServerMap>({});
+  const [mcpToolsTokenCount, setMcpToolsTokenCount] = useState<Record<
+    string,
+    number
+  > | null>(null);
+  const [mcpToolsTokenCountLoading, setMcpToolsTokenCountLoading] =
+    useState(false);
+  const [systemPromptTokenCount, setSystemPromptTokenCount] = useState<
+    number | null
+  >(null);
+  const [systemPromptTokenCountLoading, setSystemPromptTokenCountLoading] =
+    useState(false);
   const availableModels = useMemo(() => {
     return buildAvailableModels({
       hasToken,
@@ -218,6 +230,41 @@ export function ChatTabV2({
       ? undefined
       : lastAssistantMessageIsCompleteWithToolCalls,
   });
+
+  // Sum token usage from all assistant messages with metadata
+  const tokenUsage = useMemo(() => {
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+    let totalTokens = 0;
+
+    for (const message of messages) {
+      if (message.role === "assistant" && message.metadata) {
+        const metadata = message.metadata as
+          | {
+              inputTokens?: number;
+              outputTokens?: number;
+              totalTokens?: number;
+            }
+          | undefined;
+
+        if (metadata) {
+          totalInputTokens += metadata.inputTokens ?? 0;
+          totalOutputTokens += metadata.outputTokens ?? 0;
+          const messageTotal =
+            metadata.totalTokens ??
+            (metadata.inputTokens ?? 0) + (metadata.outputTokens ?? 0);
+          totalTokens += messageTotal;
+        }
+      }
+    }
+
+    return {
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
+      totalTokens:
+        totalTokens > 0 ? totalTokens : totalInputTokens + totalOutputTokens,
+    };
+  }, [messages]);
   const resetChat = useCallback(() => {
     setChatSessionId(generateId());
     setMessages([]);
@@ -273,8 +320,6 @@ export function ChatTabV2({
     const interval = setInterval(checkOllama, 30000);
     return () => clearInterval(interval);
   }, [getOllamaBaseUrl]);
-
-  // selectedModelId defaults via effectiveModel; no effect needed
 
   useEffect(() => {
     const es = new EventSource("/api/mcp/elicitation/stream");
@@ -338,6 +383,70 @@ export function ChatTabV2({
     fetchToolsMetadata();
   }, [selectedConnectedServerNames]);
 
+  useEffect(() => {
+    const fetchMcpToolsTokenCount = async () => {
+      if (
+        selectedConnectedServerNames.length === 0 ||
+        !selectedModel?.id ||
+        !selectedModel?.provider
+      ) {
+        setMcpToolsTokenCount(null);
+        setMcpToolsTokenCountLoading(false);
+        return;
+      }
+
+      setMcpToolsTokenCountLoading(true);
+      try {
+        const modelId = isMCPJamProvidedModel(String(selectedModel.id))
+          ? String(selectedModel.id)
+          : `${selectedModel.provider}/${selectedModel.id}`;
+        const counts = await countMCPToolsTokens(
+          selectedConnectedServerNames,
+          modelId,
+        );
+        setMcpToolsTokenCount(
+          counts && Object.keys(counts).length > 0 ? counts : null,
+        );
+      } catch (error) {
+        console.warn("[ChatTabV2] Failed to count MCP tools tokens:", error);
+        setMcpToolsTokenCount(null);
+      } finally {
+        setMcpToolsTokenCountLoading(false);
+      }
+    };
+
+    fetchMcpToolsTokenCount();
+  }, [selectedConnectedServerNames, selectedModel]);
+
+  useEffect(() => {
+    const fetchSystemPromptTokenCount = async () => {
+      if (!systemPrompt || !selectedModel?.id || !selectedModel?.provider) {
+        setSystemPromptTokenCount(null);
+        setSystemPromptTokenCountLoading(false);
+        return;
+      }
+
+      setSystemPromptTokenCountLoading(true);
+      try {
+        const modelId = isMCPJamProvidedModel(String(selectedModel.id))
+          ? String(selectedModel.id)
+          : `${selectedModel.provider}/${selectedModel.id}`;
+        const count = await countTextTokens(systemPrompt, modelId);
+        setSystemPromptTokenCount(count > 0 ? count : null);
+      } catch (error) {
+        console.warn(
+          "[ChatTabV2] Failed to count system prompt tokens:",
+          error,
+        );
+        setSystemPromptTokenCount(null);
+      } finally {
+        setSystemPromptTokenCountLoading(false);
+      }
+    };
+
+    fetchSystemPromptTokenCount();
+  }, [systemPrompt, selectedModel]);
+
   const disableForAuthentication = !isAuthenticated && isMcpJamModel;
   const disableForServers = noServersConnected;
   const isStreaming = status === "streaming" || status === "submitted";
@@ -352,8 +461,10 @@ export function ChatTabV2({
     placeholder = "Sign in to use free chat";
   }
 
-  const shouldShowUpsell = disableForAuthentication;
-  const shouldShowConnectCallout = disableForServers && !shouldShowUpsell;
+  // Show loading state while auth is initializing
+  const shouldShowUpsell = disableForAuthentication && !isAuthLoading;
+  const shouldShowConnectCallout =
+    disableForServers && !shouldShowUpsell && !isAuthLoading;
   const showDisabledCallout =
     messages.length === 0 && (shouldShowUpsell || shouldShowConnectCallout);
 
@@ -426,9 +537,17 @@ export function ChatTabV2({
     onTemperatureChange: setTemperature,
     onResetChat: resetChat,
     submitDisabled: submitBlocked,
+    tokenUsage,
+    selectedServers: selectedConnectedServerNames,
+    mcpToolsTokenCount,
+    mcpToolsTokenCountLoading,
+    connectedServerConfigs,
+    systemPromptTokenCount,
+    systemPromptTokenCountLoading,
   };
 
-  const showStarterPrompts = !showDisabledCallout && messages.length === 0;
+  const showStarterPrompts =
+    !showDisabledCallout && messages.length === 0 && !isAuthLoading;
 
   return (
     <div className="flex flex-1 h-full min-h-0 flex-col overflow-hidden">
@@ -441,7 +560,14 @@ export function ChatTabV2({
             {messages.length === 0 ? (
               <div className="flex-1 flex items-center justify-center overflow-y-auto px-4">
                 <div className="w-full max-w-3xl space-y-6 py-8">
-                  {showDisabledCallout && (
+                  {isAuthLoading ? (
+                    <div className="text-center space-y-4">
+                      <div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-primary" />
+                      <p className="text-sm text-muted-foreground">
+                        Loading...
+                      </p>
+                    </div>
+                  ) : showDisabledCallout ? (
                     <div className="space-y-4">
                       {shouldShowUpsell ? (
                         <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
@@ -449,7 +575,7 @@ export function ChatTabV2({
                         <ConnectMcpServerCallout />
                       )}
                     </div>
-                  )}
+                  ) : null}
 
                   <div className="space-y-4">
                     {showStarterPrompts && (
@@ -472,13 +598,18 @@ export function ChatTabV2({
                       </div>
                     )}
 
-                    <ChatInput {...sharedChatInputProps} hasMessages={false} />
+                    {!isAuthLoading && (
+                      <ChatInput
+                        {...sharedChatInputProps}
+                        hasMessages={false}
+                      />
+                    )}
                   </div>
                 </div>
               </div>
             ) : (
               <>
-                <div className="flex flex-1 flex-col min-h-0">
+                <div className="flex flex-1 flex-col min-h-0 animate-in fade-in duration-300">
                   <div className="flex-1 overflow-y-auto">
                     <Thread
                       messages={messages}
@@ -501,7 +632,7 @@ export function ChatTabV2({
                   )}
                 </div>
 
-                <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0">
+                <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0 animate-in slide-in-from-bottom duration-500">
                   <div className="max-w-4xl mx-auto p-4">
                     <ChatInput {...sharedChatInputProps} hasMessages />
                   </div>

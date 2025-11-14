@@ -5,14 +5,14 @@ import { ResourcesTab } from "./components/ResourcesTab";
 import { PromptsTab } from "./components/PromptsTab";
 import { ChatTab } from "./components/ChatTab";
 import { ChatTabV2 } from "./components/ChatTabV2";
-import { EvalsResultsTab } from "./components/EvalsResultsTab";
-import { EvalsRunTab } from "./components/EvalsRunTab";
+import { EvalsTab } from "./components/EvalsTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { TracingTab } from "./components/TracingTab";
 import { InterceptorTab } from "./components/InterceptorTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
-import OAuthDebugCallback from "./components/OAuthDebugCallback";
+import { RegistryTab } from "./components/RegistryTab";
+import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import { MCPSidebar } from "./components/mcp-sidebar";
 import { ActiveServerSelector } from "./components/ActiveServerSelector";
 import {
@@ -22,6 +22,7 @@ import {
 } from "./components/ui/sidebar";
 import { useAppState } from "./hooks/use-app-state";
 import { PreferencesStoreProvider } from "./stores/preferences/preferences-provider";
+import { RegistryStoreProvider } from "./stores/registry/registry-provider";
 import { Toaster } from "./components/ui/sonner";
 import { useElectronOAuth } from "./hooks/useElectronOAuth";
 import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
@@ -32,11 +33,18 @@ import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
 import "./index.css";
 import { AuthUpperArea } from "./components/auth/auth-upper-area";
 import { detectEnvironment, detectPlatform } from "./logs/PosthogUtils";
+import {
+  getInitialThemeMode,
+  updateThemeMode,
+  getInitialThemePreset,
+  updateThemePreset,
+} from "./lib/theme-utils";
 import CompletingSignInLoading from "./components/CompletingSignInLoading";
 import LoadingScreen from "./components/LoadingScreen";
 import LoginPage from "./components/LoginPage";
 import { useLoginPage } from "./hooks/use-log-in-page";
 import { Header } from "./components/Header";
+import { ThemePreset } from "./types/preferences/theme";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
@@ -52,9 +60,18 @@ export default function App() {
       platform: detectPlatform(),
       environment: detectEnvironment(),
       user_agent: navigator.userAgent,
+      version: __APP_VERSION__,
       is_authenticated: isAuthenticated,
     });
   }, [isAuthLoading, isAuthenticated]);
+
+  // Set the initial theme mode and preset on page load
+  const initialThemeMode = getInitialThemeMode();
+  const initialThemePreset: ThemePreset = getInitialThemePreset();
+  useEffect(() => {
+    updateThemeMode(initialThemeMode);
+    updateThemePreset(initialThemePreset);
+  }, []);
 
   // Set up Electron OAuth callback handling
   useElectronOAuth();
@@ -88,6 +105,13 @@ export default function App() {
     toggleServerSelection,
     selectedMCPConfigsMap,
     setSelectedMultipleServersToAllServers,
+    workspaces,
+    activeWorkspaceId,
+    activeWorkspace,
+    handleSwitchWorkspace,
+    handleCreateWorkspace,
+    handleUpdateWorkspace,
+    handleDeleteWorkspace,
   } = useAppState();
   // Sync tab with hash on mount and when hash changes
   useEffect(() => {
@@ -138,7 +162,14 @@ export default function App() {
     <SidebarProvider defaultOpen={true}>
       <MCPSidebar onNavigate={handleNavigate} activeTab={activeTab} />
       <SidebarInset className="flex flex-col min-h-0">
-        <Header />
+        <Header
+          workspaces={workspaces}
+          activeWorkspaceId={activeWorkspaceId}
+          onSwitchWorkspace={handleSwitchWorkspace}
+          onCreateWorkspace={handleCreateWorkspace}
+          onUpdateWorkspace={handleUpdateWorkspace}
+          onDeleteWorkspace={handleDeleteWorkspace}
+        />
         <div className="flex flex-1 min-h-0 flex-col overflow-hidden h-full">
           {/* Active Server Selector - Only show on Tools, Resources, Prompts, Auth, OAuth Flow, and Interceptor pages */}
           {(activeTab === "tools" ||
@@ -172,17 +203,29 @@ export default function App() {
               onReconnect={handleReconnect}
               onUpdate={handleUpdate}
               onRemove={handleRemoveServer}
+              workspaces={workspaces}
+              activeWorkspaceId={activeWorkspaceId}
+              activeWorkspace={activeWorkspace}
+              onSwitchWorkspace={handleSwitchWorkspace}
+              onCreateWorkspace={handleCreateWorkspace}
+              onUpdateWorkspace={handleUpdateWorkspace}
+              onDeleteWorkspace={handleDeleteWorkspace}
             />
           )}
 
-          {activeTab === "tools" && (
-            <ToolsTab
-              serverConfig={selectedMCPConfig}
-              serverName={appState.selectedServer}
-            />
+          {activeTab === "registry" && (
+            <RegistryTab onConnect={handleConnect} />
           )}
-          {activeTab === "evals" && <EvalsRunTab />}
-          {activeTab === "eval-results" && <EvalsResultsTab />}
+
+          {activeTab === "tools" && (
+            <div className="h-full overflow-hidden">
+              <ToolsTab
+                serverConfig={selectedMCPConfig}
+                serverName={appState.selectedServer}
+              />
+            </div>
+          )}
+          {activeTab === "evals" && <EvalsTab />}
           {activeTab === "resources" && (
             <ResourcesTab
               serverConfig={selectedMCPConfig}
@@ -244,13 +287,18 @@ export default function App() {
   );
 
   return (
-    <PreferencesStoreProvider themeMode="light" themePreset="default">
-      <Toaster />
-      {shouldShowLoginPage && !isOAuthCallbackComplete ? (
-        <LoginPage />
-      ) : (
-        appContent
-      )}
+    <PreferencesStoreProvider
+      themeMode={initialThemeMode}
+      themePreset={initialThemePreset}
+    >
+      <RegistryStoreProvider>
+        <Toaster />
+        {shouldShowLoginPage && !isOAuthCallbackComplete ? (
+          <LoginPage />
+        ) : (
+          appContent
+        )}
+      </RegistryStoreProvider>
     </PreferencesStoreProvider>
   );
 }

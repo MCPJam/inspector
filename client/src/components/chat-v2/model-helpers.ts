@@ -41,13 +41,13 @@ export function buildAvailableModels(params: {
     deepseek: hasToken("deepseek"),
     google: hasToken("google"),
     mistral: hasToken("mistral"),
+    xai: hasToken("xai"),
     ollama: isOllamaRunning,
     litellm: Boolean(getLiteLLMBaseUrl() && getLiteLLMModelAlias()),
     openrouter: Boolean(
       hasToken("openrouter") && getOpenRouterSelectedModels().length > 0,
     ),
     meta: false,
-    "x-ai": false,
   } as const;
 
   const cloud = SUPPORTED_MODELS.filter((m) => {
@@ -79,6 +79,7 @@ export const getDefaultModel = (
   availableModels: ModelDefinition[],
 ): ModelDefinition => {
   const modelIdsByPriority: Array<Model | string> = [
+    "openai/gpt-5",
     "meta-llama/llama-3.3-70b-instruct",
     Model.CLAUDE_3_7_SONNET_LATEST, // anthropic
     Model.GPT_4_1, // openai
