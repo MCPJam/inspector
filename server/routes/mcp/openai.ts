@@ -14,6 +14,7 @@ interface WidgetData {
   toolName: string;
   theme?: "light" | "dark";
   timestamp: number;
+  widgetState: any;
 }
 
 const widgetDataStore = new Map<string, WidgetData>();
@@ -45,6 +46,7 @@ openai.post("/widget/store", async (c) => {
       toolId,
       toolName,
       theme,
+      widgetState,
     } = body;
 
     if (!serverId || !uri || !toolId || !toolName) {
@@ -62,6 +64,7 @@ openai.post("/widget/store", async (c) => {
       toolName,
       theme: theme ?? "dark",
       timestamp: Date.now(),
+      widgetState: widgetState ?? null,
     });
 
     return c.json({ success: true });
@@ -205,8 +208,6 @@ openai.get("/widget-content/:toolId", async (c) => {
       );
     }
 
-    const widgetStateKey = `openai-widget-state:${toolName}:${toolId}`;
-
     // OpenAI Apps SDK bridge script
     const apiScript = `
       <script>
@@ -226,14 +227,10 @@ openai.get("/widget-content/:toolId", async (c) => {
               device: { type: 'desktop' },
               capabilities: { hover: true, touch: false }
             },
-            widgetState: null,
+            widgetState: ${JSON.stringify(widgetData.widgetState ?? null)},
 
             async setWidgetState(state) {
               this.widgetState = state;
-              try {
-                localStorage.setItem(${JSON.stringify(widgetStateKey)}, JSON.stringify(state));
-              } catch (err) {
-              }
               window.parent.postMessage({
                 type: 'openai:setWidgetState',
                 toolId: ${JSON.stringify(toolId)},
@@ -334,7 +331,8 @@ openai.get("/widget-content/:toolId", async (c) => {
                     theme: openaiAPI.theme,
                     locale: openaiAPI.locale,
                     safeArea: openaiAPI.safeArea,
-                    userAgent: openaiAPI.userAgent
+                    userAgent: openaiAPI.userAgent,
+                    widgetState: openaiAPI.widgetState
                   }
                 }
               });
@@ -344,15 +342,13 @@ openai.get("/widget-content/:toolId", async (c) => {
             }
           }, 0);
 
-          // Restore widget state from localStorage
           setTimeout(() => {
-            try {
-              const stored = localStorage.getItem(${JSON.stringify(widgetStateKey)});
-              if (stored && window.openai) {
-                window.openai.widgetState = JSON.parse(stored);
-              }
-            } catch (err) {
-              console.error('[OpenAI Widget] Failed to restore widget state:', err);
+            if (window.openai && window.openai.widgetState != null) {
+              window.parent.postMessage({
+                type: 'openai:setWidgetState',
+                toolId: ${JSON.stringify(toolId)},
+                state: window.openai.widgetState
+              }, '*');
             }
           }, 0);
 
@@ -372,6 +368,18 @@ openai.get("/widget-content/:toolId", async (c) => {
                   window.dispatchEvent(globalsEvent);
                 } catch (err) {
                   console.error('[OpenAI Widget] Failed to dispatch theme change:', err);
+                }
+              }
+
+              if (globals?.widgetState !== undefined && window.openai) {
+                window.openai.widgetState = globals.widgetState;
+                try {
+                  const globalsEvent = new CustomEvent('openai:set_globals', {
+                    detail: { globals: { widgetState: globals.widgetState } }
+                  });
+                  window.dispatchEvent(globalsEvent);
+                } catch (err) {
+                  console.error('[OpenAI Widget] Failed to dispatch widget state change:', err);
                 }
               }
             }
@@ -440,6 +448,43 @@ openai.get("/widget-content/:toolId", async (c) => {
     console.error("Error serving widget content:", error);
     return c.html(
       `<html><body>Error: ${error instanceof Error ? error.message : "Unknown error"}</body></html>`,
+      500,
+    );
+  }
+});
+
+// Persist widget state without re-uploading full widget metadata
+openai.post("/widget/state", async (c) => {
+  try {
+    const body = await c.req.json();
+    const { toolId, widgetState } = body;
+
+    if (!toolId) {
+      return c.json({ success: false, error: "toolId is required" }, 400);
+    }
+
+    const existing = widgetDataStore.get(toolId);
+    if (!existing) {
+      return c.json(
+        { success: false, error: "Widget data not found for toolId" },
+        404,
+      );
+    }
+
+    widgetDataStore.set(toolId, {
+      ...existing,
+      widgetState: widgetState ?? null,
+      timestamp: Date.now(),
+    });
+
+    return c.json({ success: true });
+  } catch (error) {
+    console.error("Error updating widget state:", error);
+    return c.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
       500,
     );
   }
