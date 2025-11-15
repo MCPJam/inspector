@@ -39,8 +39,6 @@ import {
 import { isMCPJamProvidedModel } from "@/shared/types";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import posthog from "posthog-js";
-import { useTemplateGroups } from "./evals/use-template-groups";
-
 // Component to render a single suite in the sidebar with its own data loading
 function SuiteSidebarItem({
   suite,
@@ -80,70 +78,12 @@ function SuiteSidebarItem({
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
 
-  // Load suite details only when expanded
-  const enableSuiteDetailsQuery = isAuthenticated && !!user && isExpanded;
-  const suiteDetails = useQuery(
-    "evals:getAllTestCasesAndIterationsBySuite" as any,
-    enableSuiteDetailsQuery ? ({ suiteId: suite._id } as any) : "skip",
-  ) as SuiteDetailsQueryResponse | undefined;
-
-  // Compute template groups from suite config (not just from iterations)
-  const templateGroupsFromConfig = useMemo(() => {
-    const tests = suite.config?.tests || [];
-    if (tests.length === 0) return [];
-
-    // Extract templates by de-duplicating (remove model suffix from title)
-    const templateMap = new Map<string, { title: string; query: string; testCaseIds: string[]; templateKey: string }>();
-    tests.forEach((test: any) => {
-      // Remove model suffix like " [ModelName]" from title
-      const templateTitle = test.title.replace(/\s*\[.*?\]\s*$/, '').trim();
-      const key = `${templateTitle}-${test.query}`;
-
-      if (!templateMap.has(key)) {
-        templateMap.set(key, {
-          title: templateTitle,
-          query: test.query,
-          testCaseIds: [],
-          templateKey: `template:${key}`, // Synthetic key for templates without testCaseIds
-        });
-      }
-
-      // Add testCaseId if available
-      if (test.testCaseId) {
-        templateMap.get(key)!.testCaseIds.push(test.testCaseId);
-      }
-    });
-
-    return Array.from(templateMap.values());
-  }, [suite.config?.tests]);
-
-  // Also get template groups from iterations (for cases where we have run data)
-  const { templateGroups: templateGroupsFromIterations } = useTemplateGroups(suiteDetails, isExpanded);
-
-  // Merge: prefer config templates, but use iteration data if available for testCaseIds
-  const templateGroups = useMemo(() => {
-    if (templateGroupsFromConfig.length > 0) {
-      // Use config templates as the source of truth
-      return templateGroupsFromConfig.map(configTemplate => {
-        // Try to find matching iteration template to get testCaseIds
-        const iterationTemplate = templateGroupsFromIterations.find(
-          it => it.title === configTemplate.title && it.query === configTemplate.query
-        );
-        return {
-          ...configTemplate,
-          testCaseIds: iterationTemplate?.testCaseIds || configTemplate.testCaseIds,
-          // Preserve templateKey from config
-          templateKey: configTemplate.templateKey,
-        };
-      });
-    }
-    // Fallback to iteration templates if no config templates
-    // Add templateKey for iteration templates that don't have testCaseIds
-    return templateGroupsFromIterations.map(tg => ({
-      ...tg,
-      templateKey: tg.testCaseIds.length === 0 ? `template:${tg.title}-${tg.query}` : undefined,
-    }));
-  }, [templateGroupsFromConfig, templateGroupsFromIterations]);
+  // Load test cases only when expanded
+  const enableTestCasesQuery = isAuthenticated && !!user && isExpanded;
+  const testCases = useQuery(
+    "evals:getTestCasesBySuite" as any,
+    enableTestCasesQuery ? ({ suiteId: suite._id } as any) : "skip",
+  ) as any[] | undefined;
 
   // Check for missing servers
   const suiteServers = suite.config?.environment?.servers || [];
@@ -158,14 +98,14 @@ function SuiteSidebarItem({
   // Determine status for the dot indicator
   const getStatusColor = () => {
     if (!latestRun) return "bg-gray-400"; // cancelled/no runs
-    
+
     // Use result if available, otherwise infer from status
     if (latestRun.result === "passed") return "bg-emerald-500";
     if (latestRun.result === "failed") return "bg-red-500";
     if (latestRun.result === "cancelled") return "bg-gray-400";
     if (latestRun.result === "pending" || latestRun.status === "pending") return "bg-amber-400";
     if (latestRun.status === "running") return "bg-amber-400";
-    
+
     // Fallback based on status
     if (latestRun.status === "completed") {
       // Check pass rate
@@ -174,7 +114,7 @@ function SuiteSidebarItem({
       return passRate >= minimumPassRate ? "bg-emerald-500" : "bg-red-500";
     }
     if (latestRun.status === "cancelled") return "bg-gray-400";
-    
+
     return "bg-gray-400";
   };
 
@@ -191,7 +131,7 @@ function SuiteSidebarItem({
           className="shrink-0 p-1 hover:bg-accent/50 rounded transition-colors"
           aria-label={isExpanded ? "Collapse suite" : "Expand suite"}
         >
-          {isExpanded && suiteDetails ? (
+          {isExpanded && testCases ? (
             <ChevronDown className="h-4 w-4" />
           ) : (
             <ChevronRight className="h-4 w-4 opacity-50" />
@@ -291,34 +231,32 @@ function SuiteSidebarItem({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-      
-      {/* Test Cases Dropdown */}
+
+      {/* Test Cases List */}
       {isExpanded && (
         <div className="pb-2">
-          {templateGroups.length === 0 ? (
+          {!testCases ? (
             <div className="px-4 py-4 text-center text-xs text-muted-foreground">
-              {enableSuiteDetailsQuery && suiteDetails === undefined ? "Loading..." : "No test cases"}
+              Loading...
+            </div>
+          ) : testCases.length === 0 ? (
+            <div className="px-4 py-4 text-center text-xs text-muted-foreground">
+              No test cases
             </div>
           ) : (
-            templateGroups.map((group, index) => {
-              const hasTestCaseIds = group.testCaseIds.length > 0;
-              // Use templateKey as identifier if no testCaseIds, otherwise use first testCaseId
-              const groupIdentifier = hasTestCaseIds ? group.testCaseIds[0] : (group as any).templateKey;
-              const isTestSelected = selectedTestId && (
-                (hasTestCaseIds && group.testCaseIds.includes(selectedTestId)) ||
-                (!hasTestCaseIds && selectedTestId === (group as any).templateKey)
-              );
+            testCases.map((testCase: any) => {
+              const isTestSelected = selectedTestId === testCase._id;
 
               return (
                 <button
-                  key={index}
+                  key={testCase._id}
                   onClick={() => {
                     // First select the suite if needed
                     if (!isSelected) {
                       onSelectSuite(suite._id);
                     }
-                    // Use templateKey if no testCaseIds, otherwise use first testCaseId
-                    onSelectTest(groupIdentifier || null);
+                    // Select the test case
+                    onSelectTest(testCase._id);
                   }}
                   className={cn(
                     "w-full flex items-center px-6 py-2 text-left text-xs hover:bg-accent/50 transition-colors",
@@ -326,7 +264,7 @@ function SuiteSidebarItem({
                   )}
                 >
                   <div className="flex-1 min-w-0">
-                    <div className="truncate">{group.title}</div>
+                    <div className="truncate">{testCase.title}</div>
                   </div>
                 </button>
               );

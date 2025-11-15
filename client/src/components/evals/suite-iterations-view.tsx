@@ -26,6 +26,7 @@ import {
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Pie, PieChart, XAxis, YAxis, Cell, Label } from "recharts";
 import { IterationDetails } from "./iteration-details";
 import { SuiteTestsConfig } from "./suite-tests-config";
+import { TestTemplateEditor } from "./test-template-editor";
 import { formatTime, formatRunId, computeIterationSummary, getTemplateKey } from "./helpers";
 import {
   EvalCase,
@@ -1429,6 +1430,14 @@ export function SuiteIterationsView({
                 </ChartContainer>
               </div>
             </div>
+          )}
+
+          {/* Test Case Editor */}
+          {selectedTestId && (
+            <TestTemplateEditor
+              suiteId={suite._id}
+              selectedTestCaseId={selectedTestId}
+            />
           )}
 
           {/* Iterations for this Test */}
