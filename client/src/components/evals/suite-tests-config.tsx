@@ -1,11 +1,8 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Pencil, Trash2, Plus, Check, X } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -19,19 +16,6 @@ import type { EvalSuite, EvalSuiteConfigTest } from "./types";
 import type { ModelDefinition } from "@/shared/types";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import { ProviderLogo } from "@/components/chat-v2/provider-logo";
-import { ExpectedToolsEditor } from "./expected-tools-editor";
-
-interface TestTemplate {
-  title: string;
-  query: string;
-  runs: number;
-  expectedToolCalls: Array<{
-    toolName: string;
-    arguments: Record<string, any>;
-  }>;
-  judgeRequirement?: string;
-  advancedConfig?: Record<string, unknown>;
-}
 
 interface ModelInfo {
   model: string;
@@ -47,13 +31,12 @@ interface SuiteTestsConfigProps {
 
 export function SuiteTestsConfig({ suite, onUpdate, availableModels }: SuiteTestsConfigProps) {
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
-  const [availableTools, setAvailableTools] = useState<Array<{ name: string; description?: string; inputSchema?: any }>>([]);
 
-  // Extract templates and models from expanded tests
-  const { templates: initialTemplates, models: initialModels } = useMemo(() => {
+  // Extract models from expanded tests
+  const initialModels = useMemo(() => {
     const tests = suite.config?.tests || [];
     if (tests.length === 0) {
-      return { templates: [], models: [] };
+      return [];
     }
 
     // Extract unique models
@@ -68,10 +51,18 @@ export function SuiteTestsConfig({ suite, onUpdate, availableModels }: SuiteTest
       }
     });
 
-    // Extract templates by de-duplicating (remove model suffix from title)
-    const templateMap = new Map<string, TestTemplate>();
+    return Array.from(modelSet.values());
+  }, [suite.config?.tests]);
+
+  const [models, setModels] = useState<ModelInfo[]>(initialModels);
+
+  // Re-expand matrix and save - now we need to preserve templates
+  const saveChanges = async (newModels: ModelInfo[]) => {
+    const tests = suite.config?.tests || [];
+
+    // Extract templates from existing tests
+    const templateMap = new Map<string, any>();
     tests.forEach(test => {
-      // Remove model suffix like " [ModelName]" from title
       const templateTitle = test.title.replace(/\s*\[.*?\]\s*$/, '').trim();
       const key = `${templateTitle}-${test.query}`;
 
@@ -87,50 +78,12 @@ export function SuiteTestsConfig({ suite, onUpdate, availableModels }: SuiteTest
       }
     });
 
-    return {
-      templates: Array.from(templateMap.values()),
-      models: Array.from(modelSet.values()),
-    };
-  }, [suite.config?.tests]);
+    const templates = Array.from(templateMap.values());
 
-  const [templates, setTemplates] = useState<TestTemplate[]>(initialTemplates);
-  const [models, setModels] = useState<ModelInfo[]>(initialModels);
-  const [editingTemplateIndex, setEditingTemplateIndex] = useState<number | null>(null);
-  const [editForm, setEditForm] = useState<TestTemplate | null>(null);
-
-  // Fetch available tools from selected servers
-  useEffect(() => {
-    async function fetchTools() {
-      const serverIds = suite.config?.environment?.servers || [];
-      if (serverIds.length === 0) {
-        setAvailableTools([]);
-        return;
-      }
-
-      try {
-        const response = await fetch("/api/mcp/list-tools", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ serverIds }),
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          setAvailableTools(data.tools || []);
-        }
-      } catch (error) {
-        console.error("Failed to fetch tools:", error);
-      }
-    }
-
-    fetchTools();
-  }, [suite.config?.environment?.servers]);
-
-  // Re-expand matrix and save
-  const saveChanges = async (newTemplates: TestTemplate[], newModels: ModelInfo[]) => {
-    const expandedTests: EvalSuiteConfigTest[] = newTemplates.flatMap(template =>
+    // Re-expand with new models
+    const expandedTests: EvalSuiteConfigTest[] = templates.flatMap(template =>
       newModels.map(modelInfo => ({
-        title: template.title, // Use template title without model name
+        title: template.title,
         query: template.query,
         runs: template.runs,
         model: modelInfo.model,
@@ -138,60 +91,15 @@ export function SuiteTestsConfig({ suite, onUpdate, availableModels }: SuiteTest
         expectedToolCalls: template.expectedToolCalls,
         judgeRequirement: template.judgeRequirement,
         advancedConfig: template.advancedConfig,
-        testTemplateKey: template.templateKey, // Add template key for grouping
       }))
     );
     await onUpdate(expandedTests);
   };
 
-  const startEdit = (index: number) => {
-    setEditingTemplateIndex(index);
-    setEditForm({ ...templates[index] });
-  };
-
-  const cancelEdit = () => {
-    setEditingTemplateIndex(null);
-    setEditForm(null);
-  };
-
-  const saveEdit = async () => {
-    if (editingTemplateIndex === null || !editForm) return;
-
-    const updated = [...templates];
-    if (editingTemplateIndex >= templates.length) {
-      // Adding a new template
-      updated.push(editForm);
-    } else {
-      // Editing existing template
-      updated[editingTemplateIndex] = editForm;
-    }
-    setTemplates(updated);
-    await saveChanges(updated, models);
-    cancelEdit();
-  };
-
-  const deleteTemplate = async (index: number) => {
-    const updated = templates.filter((_, i) => i !== index);
-    setTemplates(updated);
-    await saveChanges(updated, models);
-  };
-
-  const addTemplate = () => {
-    const newTemplate: TestTemplate = {
-      title: "New test",
-      query: "",
-      runs: 1,
-      expectedToolCalls: [],
-    };
-    // Set up editing state for new template, but don't add to templates array yet
-    setEditingTemplateIndex(templates.length); // Will be the index after adding
-    setEditForm(newTemplate);
-  };
-
   const deleteModel = async (modelToDelete: string) => {
     const updated = models.filter(m => m.model !== modelToDelete);
     setModels(updated);
-    await saveChanges(templates, updated);
+    await saveChanges(updated);
   };
 
   const handleAddModel = async (selectedModel: ModelDefinition) => {
@@ -209,7 +117,7 @@ export function SuiteTestsConfig({ suite, onUpdate, availableModels }: SuiteTest
 
     const updated = [...models, newModel];
     setModels(updated);
-    await saveChanges(templates, updated);
+    await saveChanges(updated);
     setIsModelDropdownOpen(false);
   };
 
@@ -246,7 +154,7 @@ export function SuiteTestsConfig({ suite, onUpdate, availableModels }: SuiteTest
           <div>
             <h3 className="text-lg font-semibold">Models</h3>
             <p className="text-sm text-muted-foreground">
-              Models used in this suite. Each test runs against all models.
+              Models used in this suite. Each test template runs against all models. Edit individual test templates by selecting them from the sidebar.
             </p>
           </div>
           <DropdownMenu open={isModelDropdownOpen} onOpenChange={setIsModelDropdownOpen}>
@@ -488,213 +396,6 @@ export function SuiteTestsConfig({ suite, onUpdate, availableModels }: SuiteTest
         )}
       </div>
 
-      {/* Test Templates Section */}
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-lg font-semibold">Test Templates</h3>
-            <p className="text-sm text-muted-foreground">
-              Each template runs against all {models.length} model{models.length === 1 ? '' : 's'} ({models.length * templates.length} total tests)
-            </p>
-          </div>
-          <Button onClick={addTemplate} size="sm">
-            <Plus className="h-4 w-4 mr-2" />
-            Add template
-          </Button>
-        </div>
-
-        {templates.length === 0 ? (
-          <Card className="p-8 text-center">
-            <p className="text-muted-foreground">No test templates configured</p>
-            <Button onClick={addTemplate} className="mt-4" variant="outline">
-              <Plus className="h-4 w-4 mr-2" />
-              Add your first template
-            </Button>
-          </Card>
-        ) : (
-          <div className="space-y-3">
-            {templates.map((template, index) => (
-              <Card key={index} className="p-4">
-                {editingTemplateIndex === index && editForm ? (
-                  <div className="space-y-4">
-                    <div className="space-y-2">
-                      <Label>Title</Label>
-                      <Input
-                        value={editForm.title}
-                        onChange={(e) =>
-                          setEditForm({ ...editForm, title: e.target.value })
-                        }
-                        placeholder="e.g., Add two numbers"
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Query</Label>
-                      <Textarea
-                        value={editForm.query}
-                        onChange={(e) =>
-                          setEditForm({ ...editForm, query: e.target.value })
-                        }
-                        rows={3}
-                        placeholder="e.g., Add 5 and 7 together"
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Runs per test</Label>
-                      <Input
-                        type="number"
-                        min={1}
-                        value={editForm.runs}
-                        onChange={(e) =>
-                          setEditForm({
-                            ...editForm,
-                            runs: parseInt(e.target.value) || 1,
-                          })
-                        }
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Expected tool calls</Label>
-                      <ExpectedToolsEditor
-                        toolCalls={editForm.expectedToolCalls || []}
-                        onChange={(toolCalls) =>
-                          setEditForm({
-                            ...editForm,
-                            expectedToolCalls: toolCalls,
-                          })
-                        }
-                        availableTools={availableTools}
-                      />
-                    </div>
-
-                    <div className="flex gap-2">
-                      <Button onClick={saveEdit} size="sm">
-                        <Check className="h-4 w-4 mr-2" />
-                        Save
-                      </Button>
-                      <Button onClick={cancelEdit} size="sm" variant="outline">
-                        <X className="h-4 w-4 mr-2" />
-                        Cancel
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div>
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <h4 className="font-semibold">{template.title}</h4>
-                        <p className="text-sm text-muted-foreground mt-1">
-                          {template.query}
-                        </p>
-                        <div className="flex flex-wrap gap-2 mt-3">
-                          <Badge variant="outline">{template.runs} runs</Badge>
-                          {(template.expectedToolCalls || []).length > 0 && (
-                            <Badge variant="outline">
-                              Expects: {(template.expectedToolCalls || []).map(t => t.toolName).join(", ")}
-                            </Badge>
-                          )}
-                          <Badge variant="secondary">
-                            {models.length} model{models.length === 1 ? '' : 's'}
-                          </Badge>
-                        </div>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button
-                          onClick={() => startEdit(index)}
-                          size="sm"
-                          variant="ghost"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          onClick={() => deleteTemplate(index)}
-                          size="sm"
-                          variant="ghost"
-                          className="text-destructive hover:text-destructive"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </Card>
-            ))}
-
-            {/* Render new template form if adding */}
-            {editingTemplateIndex !== null && editingTemplateIndex >= templates.length && editForm && (
-              <Card className="p-4">
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <Label>Title</Label>
-                    <Input
-                      value={editForm.title}
-                      onChange={(e) =>
-                        setEditForm({ ...editForm, title: e.target.value })
-                      }
-                      placeholder="e.g., Add two numbers"
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Query</Label>
-                    <Textarea
-                      value={editForm.query}
-                      onChange={(e) =>
-                        setEditForm({ ...editForm, query: e.target.value })
-                      }
-                      rows={3}
-                      placeholder="e.g., Add 5 and 7 together"
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Runs per test</Label>
-                    <Input
-                      type="number"
-                      min={1}
-                      value={editForm.runs}
-                      onChange={(e) =>
-                        setEditForm({
-                          ...editForm,
-                          runs: parseInt(e.target.value) || 1,
-                        })
-                      }
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Expected tool calls</Label>
-                    <ExpectedToolsEditor
-                      toolCalls={editForm.expectedToolCalls || []}
-                      onChange={(toolCalls) =>
-                        setEditForm({
-                          ...editForm,
-                          expectedToolCalls: toolCalls,
-                        })
-                      }
-                      availableTools={availableTools}
-                    />
-                  </div>
-
-                  <div className="flex gap-2">
-                    <Button onClick={saveEdit} size="sm">
-                      <Check className="h-4 w-4 mr-2" />
-                      Save
-                    </Button>
-                    <Button onClick={cancelEdit} size="sm" variant="outline">
-                      <X className="h-4 w-4 mr-2" />
-                      Cancel
-                    </Button>
-                  </div>
-                </div>
-              </Card>
-            )}
-          </div>
-        )}
-      </div>
     </div>
   );
 }
