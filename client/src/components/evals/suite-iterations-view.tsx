@@ -2404,26 +2404,24 @@ function IterationRow({
           </div>
         </div>
         <div className="flex items-center gap-4 text-xs text-muted-foreground shrink-0">
-          {!isPending && (
-            <>
-              {showModelInfo && (
-                <div className="min-w-[120px] text-left truncate">
-                  <span className="font-mono text-xs">{modelName}</span>
-                </div>
-              )}
-              <div className="min-w-[50px]">
-                <span className="font-mono">{actualToolCalls.length}</span>
-              </div>
-              <div className="min-w-[60px]">
-                <span className="font-mono">{Number(iteration.tokensUsed || 0).toLocaleString()}</span>
-              </div>
-              <div className="font-mono min-w-[40px] text-right">
-                {durationMs !== null ? formatDuration(durationMs) : "—"}
-              </div>
-            </>
+          {showModelInfo && (
+            <div className="min-w-[120px] text-left truncate">
+              <span className="font-mono text-xs">{modelName}</span>
+            </div>
           )}
+          <div className="min-w-[50px] text-center">
+            <span className="font-mono">{isPending ? "—" : actualToolCalls.length}</span>
+          </div>
+          <div className="min-w-[60px] text-center">
+            <span className="font-mono">{isPending ? "—" : Number(iteration.tokensUsed || 0).toLocaleString()}</span>
+          </div>
+          <div className="font-mono min-w-[40px] text-right">
+            {isPending ? "—" : durationMs !== null ? formatDuration(durationMs) : "—"}
+          </div>
           {isPending && (
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-600" />
+            <div className="w-3.5 flex items-center justify-center">
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-600" />
+            </div>
           )}
         </div>
       </button>
