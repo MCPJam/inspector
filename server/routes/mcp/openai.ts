@@ -18,6 +18,14 @@ interface WidgetData {
 
 const widgetDataStore = new Map<string, WidgetData>();
 
+const serializeForInlineScript = (value: unknown) =>
+  JSON.stringify(value ?? null)
+    .replace(/</g, "\\u003C")
+    .replace(/>/g, "\\u003E")
+    .replace(/&/g, "\\u0026")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+
 // Cleanup expired widget data every 5 minutes
 setInterval(
   () => {
@@ -214,9 +222,9 @@ openai.get("/widget-content/:toolId", async (c) => {
           'use strict';
 
           const openaiAPI = {
-            toolInput: ${JSON.stringify(toolInput)},
-            toolOutput: ${JSON.stringify(toolOutput)},
-            toolResponseMetadata: ${JSON.stringify(toolResponseMetadata ?? null)},
+            toolInput: ${serializeForInlineScript(toolInput)},
+            toolOutput: ${serializeForInlineScript(toolOutput)},
+            toolResponseMetadata: ${serializeForInlineScript(toolResponseMetadata)},
             displayMode: 'inline',
             maxHeight: 600,
             theme: ${JSON.stringify(theme ?? "dark")},
@@ -410,6 +418,10 @@ openai.get("/widget-content/:toolId", async (c) => {
       "https://cdn.jsdelivr.net",
       "https://cdnjs.cloudflare.com",
       "https://cdn.skypack.dev",
+      "https://apps-sdk-widgets.vercel.app",
+      "https://dynamic.heygen.ai",
+      "https://static.heygen.ai",
+      "https://files2.heygen.ai",
     ].join(" ");
 
     c.header(
