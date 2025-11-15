@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
-import { useConvexAuth, useQuery, useMutation } from "convex/react";
+import { useConvexAuth, useQuery, useMutation, useConvex } from "convex/react";
 import { FlaskConical, Plus, AlertTriangle, ChevronDown, ChevronRight, MoreVertical, RotateCw, Trash2, X, Pencil } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "sonner";
@@ -324,6 +324,7 @@ type View = "results" | "run";
 export function EvalsTab() {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const { user, getAccessToken } = useAuth();
+  const convex = useConvex();
 
   const [view, setView] = useState<View>("results");
   const [selectedSuiteId, setSelectedSuiteId] = useState<string | null>(null);
@@ -474,6 +475,17 @@ export function EvalsTab() {
     );
   }, [selectedSuite, suiteDetails, activeIterations]);
 
+  // Query to get test cases for a suite
+  const getTestCasesForRerun = useCallback(async (suiteId: string) => {
+    try {
+      const testCases = await convex.query("evals:getTestCasesBySuite" as any, { suiteId });
+      return testCases;
+    } catch (error) {
+      console.error("Failed to fetch test cases:", error);
+      return [];
+    }
+  }, [convex]);
+
   // Rerun handler
   const handleRerun = useCallback(
     async (suite: EvalSuite) => {
@@ -491,10 +503,39 @@ export function EvalsTab() {
         return;
       }
 
-      // Get the tests from the suite config
-      const tests = suite.config?.tests || [];
+      // Get current test cases from database (not from stale config)
+      const testCases = await getTestCasesForRerun(suite._id) as any[];
+      if (!testCases || testCases.length === 0) {
+        toast.error("No test cases found in this suite");
+        return;
+      }
+
+      // Generate tests array by expanding each test case's models
+      const tests: any[] = [];
+
+      for (const testCase of testCases) {
+        // Skip test cases with no models
+        if (!testCase.models || testCase.models.length === 0) {
+          continue;
+        }
+
+        // Create one test per model
+        for (const modelConfig of testCase.models) {
+          tests.push({
+            title: testCase.title,
+            query: testCase.query,
+            runs: testCase.runs || 1,
+            model: modelConfig.model,
+            provider: modelConfig.provider,
+            expectedToolCalls: testCase.expectedToolCalls || [],
+            judgeRequirement: testCase.judgeRequirement,
+            advancedConfig: testCase.advancedConfig,
+          });
+        }
+      }
+
       if (tests.length === 0) {
-        toast.error("No tests found in this suite");
+        toast.error("No tests to run. Please add models to your test cases.");
         return;
       }
 
@@ -589,6 +630,7 @@ export function EvalsTab() {
       getAccessToken,
       hasToken,
       getToken,
+      getTestCasesForRerun,
     ],
   );
 
@@ -695,10 +737,32 @@ export function EvalsTab() {
     setIsCreatingTestCase(true);
 
     try {
+      // Find the suite from suiteOverview
+      const suiteEntry = suiteOverview?.find(entry => entry.suite._id === suiteId);
+      const suite = suiteEntry?.suite;
+
+      // Extract unique models from suite config
+      let modelsToUse: any[] = [];
+      if (suite?.config?.tests && Array.isArray(suite.config.tests)) {
+        const uniqueModels = new Map<string, { model: string; provider: string }>();
+
+        for (const test of suite.config.tests) {
+          if (test.model && test.provider) {
+            const key = `${test.provider}:${test.model}`;
+            if (!uniqueModels.has(key)) {
+              uniqueModels.set(key, { model: test.model, provider: test.provider });
+            }
+          }
+        }
+
+        modelsToUse = Array.from(uniqueModels.values());
+      }
+
       const testCaseId = await createTestCaseMutation({
         suiteId: suiteId,
         title: "Untitled test case",
         query: "",
+        models: modelsToUse, // Copy models from suite configuration
       });
 
       toast.success("Test case created");
@@ -724,7 +788,7 @@ export function EvalsTab() {
     } finally {
       setIsCreatingTestCase(false);
     }
-  }, [isCreatingTestCase, createTestCaseMutation, selectedSuiteId]);
+  }, [isCreatingTestCase, createTestCaseMutation, selectedSuiteId, suiteOverview]);
 
   // Handle delete test case - opens confirmation modal
   const handleDeleteTestCase = useCallback((testCaseId: string, testCaseTitle: string) => {
