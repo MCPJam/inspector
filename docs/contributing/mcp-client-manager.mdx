@@ -386,8 +386,13 @@ await mcpClientManager.disconnectAllServers();
   Execute a tool on a specific server.
 </ResponseField>
 
-<ResponseField name="getToolsForAiSdk" type="(serverIds?: string[] | string, options?) => Promise<ToolSet>">
-  Get tools in Vercel AI SDK format. Automatically wires up tool execution. Each tool has `_serverId` metadata attached.
+<ResponseField
+  name="getToolsForAiSdk"
+  type="(serverIds?: string[] | string, options?) => Promise<ToolSet>"
+>
+  Get tools in Vercel AI SDK format. Automatically wires up tool execution. Each
+  tool has `_serverId` metadata attached.
+</ResponseField>
 
 Options:
 
