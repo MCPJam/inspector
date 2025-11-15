@@ -43,7 +43,6 @@ export function OpenAIAppRenderer({
   const [widgetUrl, setWidgetUrl] = useState<string | null>(null);
   const [isStoringWidget, setIsStoringWidget] = useState(false);
   const [storeError, setStoreError] = useState<string | null>(null);
-
   const resolvedToolCallId = useMemo(
     () => toolCallId ?? `${toolName || "openai-app"}-${Date.now()}`,
     [toolCallId, toolName],
@@ -71,46 +70,21 @@ export function OpenAIAppRenderer({
   // Extract toolResponseMetadata from _meta field
   const toolResponseMetadata = useMemo(() => {
     if (
-      !toolOutputProp ||
-      typeof toolOutputProp !== "object" ||
-      toolOutputProp === null
+      toolOutputProp &&
+      typeof toolOutputProp === "object" &&
+      toolOutputProp !== null &&
+      "_meta" in toolOutputProp
     ) {
-      return null;
+      return (toolOutputProp as Record<string, unknown>)._meta;
     }
-
-    const output = toolOutputProp as Record<string, unknown>;
-
-    // Check for _meta at root level
-    if (output._meta && typeof output._meta === "object") {
-      return output._meta as Record<string, any>;
-    }
-
-    // Check for _meta in structuredContent
     if (
-      structuredContent &&
-      typeof structuredContent === "object" &&
-      structuredContent !== null &&
-      "_meta" in (structuredContent as Record<string, unknown>)
+      toolOutputProp &&
+      typeof toolOutputProp === "object" &&
+      toolOutputProp !== null &&
+      "meta" in toolOutputProp
     ) {
-      return (structuredContent as Record<string, unknown>)._meta as Record<
-        string,
-        any
-      >;
+      return (toolOutputProp as Record<string, unknown>).meta;
     }
-
-    // Check for _meta in result wrapper
-    if (
-      output.result &&
-      typeof output.result === "object" &&
-      output.result !== null &&
-      "_meta" in (output.result as Record<string, unknown>)
-    ) {
-      return (output.result as Record<string, unknown>)._meta as Record<
-        string,
-        any
-      >;
-    }
-
     return null;
   }, [toolOutputProp, structuredContent]);
 
