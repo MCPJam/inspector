@@ -814,10 +814,10 @@ export function SuiteIterationsView({
   // Selected test details - aggregate across all models for the template
   const selectedTestDetails = useMemo(() => {
     if (!selectedTestId) return null;
-    
+
     // Check if selectedTestId is a template key (for templates without testCaseIds)
     const isTemplateKey = selectedTestId.startsWith('template:');
-    
+
     // Find the template group that contains this test case
     let templateGroup;
     if (isTemplateKey) {
@@ -835,7 +835,33 @@ export function SuiteIterationsView({
       );
     }
 
-    if (!templateGroup) return null;
+    // If no template group found (e.g., newly created test case with no runs)
+    // Try to find the test case directly in the cases array
+    if (!templateGroup) {
+      const directTestCase = cases.find(c => c._id === selectedTestId);
+      if (directTestCase) {
+        // Return minimal test details for a test case that hasn't been run yet
+        return {
+          testCase: directTestCase,
+          iterations: [],
+          summary: {
+            runs: 0,
+            passed: 0,
+            failed: 0,
+            cancelled: 0,
+            pending: 0,
+            tokens: 0,
+            avgDuration: null,
+          },
+          templateInfo: {
+            title: directTestCase.title,
+            query: directTestCase.query,
+            modelCount: directTestCase.models?.length || 0,
+          },
+        };
+      }
+      return null;
+    }
 
     // If template has no testCaseIds (hasn't been run yet), create a minimal test case from config
     if (templateGroup.testCaseIds.length === 0) {

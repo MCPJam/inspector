@@ -53,9 +53,12 @@ function SuiteSidebarItem({
   onCancelRun,
   onDelete,
   onEdit,
+  onCreateTestCase,
+  onDeleteTestCase,
   isRerunning,
   isCancelling,
   isDeleting,
+  deletingTestCaseId,
   connectedServerNames,
 }: {
   suite: EvalSuite;
@@ -70,9 +73,12 @@ function SuiteSidebarItem({
   onCancelRun: (runId: string) => void;
   onDelete: (suite: EvalSuite) => void;
   onEdit: (suite: EvalSuite) => void;
+  onCreateTestCase: (suiteId: string) => void;
+  onDeleteTestCase: (testCaseId: string, testCaseTitle: string) => void;
   isRerunning: boolean;
   isCancelling: boolean;
   isDeleting: boolean;
+  deletingTestCaseId: string | null;
   connectedServerNames: Set<string>;
 }) {
   const { isAuthenticated } = useConvexAuth();
@@ -150,6 +156,16 @@ function SuiteSidebarItem({
             </span>
             <div className={cn("h-1.5 w-1.5 rounded-full shrink-0", getStatusColor())} />
           </div>
+        </button>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onCreateTestCase(suite._id);
+          }}
+          className="shrink-0 p-1 hover:bg-accent/50 rounded transition-colors"
+          aria-label="Create test case"
+        >
+          <Plus className="h-4 w-4" />
         </button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -246,27 +262,54 @@ function SuiteSidebarItem({
           ) : (
             testCases.map((testCase: any) => {
               const isTestSelected = selectedTestId === testCase._id;
+              const isTestDeleting = deletingTestCaseId === testCase._id;
 
               return (
-                <button
+                <div
                   key={testCase._id}
-                  onClick={() => {
-                    // First select the suite if needed
-                    if (!isSelected) {
-                      onSelectSuite(suite._id);
-                    }
-                    // Select the test case
-                    onSelectTest(testCase._id);
-                  }}
                   className={cn(
-                    "w-full flex items-center px-6 py-2 text-left text-xs hover:bg-accent/50 transition-colors",
+                    "group w-full flex items-center gap-1 px-6 py-2 text-left text-xs hover:bg-accent/50 transition-colors",
                     isTestSelected && "bg-accent/70 font-medium"
                   )}
                 >
-                  <div className="flex-1 min-w-0">
+                  <button
+                    onClick={() => {
+                      // First select the suite if needed
+                      if (!isSelected) {
+                        onSelectSuite(suite._id);
+                      }
+                      // Select the test case
+                      onSelectTest(testCase._id);
+                    }}
+                    className="flex-1 min-w-0 text-left"
+                  >
                     <div className="truncate">{testCase.title}</div>
-                  </div>
-                </button>
+                  </button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        onClick={(e) => e.stopPropagation()}
+                        className="shrink-0 p-1 hover:bg-accent/50 rounded transition-colors opacity-0 group-hover:opacity-100"
+                        aria-label="Test case options"
+                      >
+                        <MoreVertical className="h-3 w-3" />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDeleteTestCase(testCase._id, testCase.title);
+                        }}
+                        disabled={isTestDeleting}
+                        variant="destructive"
+                      >
+                        <Trash2 className="h-3 w-3 mr-2" />
+                        {isTestDeleting ? "Deleting..." : "Delete"}
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
               );
             })
           )}
@@ -295,6 +338,9 @@ export function EvalsTab() {
   const [expandedSuites, setExpandedSuites] = useState<Set<string>>(new Set());
   const [suiteMode, setSuiteMode] = useState<"runs" | "edit">("runs");
   const [viewResetKey, setViewResetKey] = useState(0);
+  const [isCreatingTestCase, setIsCreatingTestCase] = useState(false);
+  const [deletingTestCaseId, setDeletingTestCaseId] = useState<string | null>(null);
+  const [testCaseToDelete, setTestCaseToDelete] = useState<{ id: string; title: string } | null>(null);
 
   // Reset selectedTestId only when suite changes without a test being explicitly selected
   // We track this by checking if the test selection was intentional
@@ -335,6 +381,8 @@ export function EvalsTab() {
   const deleteSuiteMutation = useMutation("evals:deleteSuite" as any);
   const deleteRunMutation = useMutation("evals:deleteSuiteRun" as any);
   const cancelRunMutation = useMutation("evals:cancelSuiteRun" as any);
+  const createTestCaseMutation = useMutation("evals:createTestCase" as any);
+  const deleteTestCaseMutation = useMutation("evals:deleteTestCase" as any);
 
   useEffect(() => {
     posthog.capture("evals_tab_viewed", {
@@ -640,6 +688,76 @@ export function EvalsTab() {
     }
   }, [runToDelete, deletingRunId, deleteRunMutation]);
 
+  // Handle create test case - creates directly without modal
+  const handleCreateTestCase = useCallback(async (suiteId: string) => {
+    if (isCreatingTestCase) return;
+
+    setIsCreatingTestCase(true);
+
+    try {
+      const testCaseId = await createTestCaseMutation({
+        suiteId: suiteId,
+        title: "Untitled test case",
+        query: "",
+      });
+
+      toast.success("Test case created");
+
+      // Ensure suite is expanded
+      setExpandedSuites((prev) => new Set(prev).add(suiteId));
+
+      // Check if suite is already selected
+      if (selectedSuiteId === suiteId) {
+        // If suite is already selected, directly set the test case
+        setSelectedTestId(testCaseId);
+      } else {
+        // Set pending test selection before changing suite to prevent reset
+        pendingTestSelection.current = testCaseId;
+        // Auto-select the suite (which will trigger the effect to set selectedTestId)
+        setSelectedSuiteId(suiteId);
+      }
+    } catch (error) {
+      console.error("Failed to create test case:", error);
+      toast.error(
+        error instanceof Error ? error.message : "Failed to create test case"
+      );
+    } finally {
+      setIsCreatingTestCase(false);
+    }
+  }, [isCreatingTestCase, createTestCaseMutation, selectedSuiteId]);
+
+  // Handle delete test case - opens confirmation modal
+  const handleDeleteTestCase = useCallback((testCaseId: string, testCaseTitle: string) => {
+    if (deletingTestCaseId) return;
+    setTestCaseToDelete({ id: testCaseId, title: testCaseTitle });
+  }, [deletingTestCaseId]);
+
+  // Confirm test case deletion
+  const confirmDeleteTestCase = useCallback(async () => {
+    if (!testCaseToDelete || deletingTestCaseId) return;
+
+    setDeletingTestCaseId(testCaseToDelete.id);
+
+    try {
+      await deleteTestCaseMutation({ testCaseId: testCaseToDelete.id });
+      toast.success("Test case deleted successfully");
+
+      // If we're viewing this test case, clear the selection
+      if (selectedTestId === testCaseToDelete.id) {
+        setSelectedTestId(null);
+      }
+
+      setTestCaseToDelete(null);
+    } catch (error) {
+      console.error("Failed to delete test case:", error);
+      toast.error(
+        error instanceof Error ? error.message : "Failed to delete test case"
+      );
+    } finally {
+      setDeletingTestCaseId(null);
+    }
+  }, [testCaseToDelete, deletingTestCaseId, deleteTestCaseMutation, selectedTestId]);
+
   // Handle eval run success - navigate back to results view
   const handleEvalRunSuccess = useCallback(() => {
     setView("results");
@@ -793,9 +911,12 @@ export function EvalsTab() {
                           setSuiteMode("edit");
                           setSelectedTestId(null);
                         }}
+                        onCreateTestCase={handleCreateTestCase}
+                        onDeleteTestCase={handleDeleteTestCase}
                         isRerunning={rerunningSuiteId === suite._id}
                         isCancelling={cancellingRunId === latestRun?._id}
                         isDeleting={deletingSuiteId === suite._id}
+                        deletingTestCaseId={deletingTestCaseId}
                         connectedServerNames={connectedServerNames}
                       />
                     );
@@ -950,6 +1071,45 @@ export function EvalsTab() {
               disabled={!!deletingRunId}
             >
               {deletingRunId ? "Deleting..." : "Delete Run"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Test Case Confirmation Modal */}
+      <Dialog open={!!testCaseToDelete} onOpenChange={(open) => !open && setTestCaseToDelete(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-destructive" />
+              Delete Test Case
+            </DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete the test case{" "}
+              <span className="font-semibold">
+                "{testCaseToDelete?.title || "Untitled test case"}"
+              </span>
+              ?
+              <br />
+              <br />
+              This will permanently delete all iterations and results
+              associated with this test case. This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setTestCaseToDelete(null)}
+              disabled={!!deletingTestCaseId}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={confirmDeleteTestCase}
+              disabled={!!deletingTestCaseId}
+            >
+              {deletingTestCaseId ? "Deleting..." : "Delete Test Case"}
             </Button>
           </DialogFooter>
         </DialogContent>
