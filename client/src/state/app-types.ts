@@ -15,6 +15,13 @@ export interface InitializationInfo {
   serverVersion?: {
     name: string;
     version: string;
+    title?: string;
+    websiteUrl?: string;
+    icons?: Array<{
+      src: string;
+      mimeType?: string;
+      sizes?: string[];
+    }>;
   };
   instructions?: string;
   clientCapabilities?: Record<string, any>;
