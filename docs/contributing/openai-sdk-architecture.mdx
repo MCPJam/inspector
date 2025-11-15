@@ -9,7 +9,11 @@ icon: "puzzle-piece"
 This guide explains how MCPJam Inspector implements the OpenAI Apps SDK to render custom UI components for MCP tool results. This enables MCP server developers to create rich, interactive visualizations for their tool outputs.
 
 <Note>
-MCPJam Inspector also supports [MCP-UI](https://github.com/modelcontextprotocol/mcp-ui) for simpler component-based UIs. See the [Playground Architecture](./playground-architecture#mcp-ui-integration) docs for MCP-UI implementation details.
+  MCPJam Inspector also supports
+  [MCP-UI](https://github.com/modelcontextprotocol/mcp-ui) for simpler
+  component-based UIs. See the [Playground
+  Architecture](./playground-architecture#mcp-ui-integration) docs for MCP-UI
+  implementation details.
 </Note>
 
 ## Overview
@@ -17,7 +21,11 @@ MCPJam Inspector also supports [MCP-UI](https://github.com/modelcontextprotocol/
 MCPJam Inspector provides full support for the [OpenAI Apps SDK](https://developers.openai.com/apps-sdk), allowing MCP tools to return custom UI components that render in iframes with a sandboxed `window.openai` API bridge.
 
 <Note>
-  This document covers the **V1 Playground** implementation. As of PR #773, **Playground V2** (`ChatTabV2.tsx`) also supports OpenAI Apps with a streamlined implementation using `openai-app-renderer.tsx`. The V2 implementation uses MCP resources API to fetch widget templates and renders them with similar `window.openai` bridge capabilities.
+  This document covers the **V1 Playground** implementation. As of PR #773,
+  **Playground V2** (`ChatTabV2.tsx`) also supports OpenAI Apps with a
+  streamlined implementation using `openai-app-renderer.tsx`. The V2
+  implementation uses MCP resources API to fetch widget templates and renders
+  them with similar `window.openai` bridge capabilities.
 </Note>
 
 ### Key Features
@@ -36,23 +44,25 @@ MCPJam Inspector provides full support for the [OpenAI Apps SDK](https://develop
 
 MCPJam Inspector supports two approaches for custom UI rendering:
 
-| Feature | OpenAI Apps SDK | MCP-UI |
-|---------|-----------------|--------|
-| Specification | OpenAI proprietary | MCP-UI (open standard) |
-| Rendering | Sandboxed iframes | RemoteDOM components |
-| Complexity | Full web applications | Simple interactive components |
-| Tool calls | `window.openai.callTool()` | Action handlers |
-| State persistence | `window.openai.setWidgetState()` | Not supported |
-| Security | Full iframe sandbox | Component-level isolation |
-| Best for | Complex dashboards, charts, forms | Buttons, cards, simple layouts |
+| Feature           | OpenAI Apps SDK                   | MCP-UI                         |
+| ----------------- | --------------------------------- | ------------------------------ |
+| Specification     | OpenAI proprietary                | MCP-UI (open standard)         |
+| Rendering         | Sandboxed iframes                 | RemoteDOM components           |
+| Complexity        | Full web applications             | Simple interactive components  |
+| Tool calls        | `window.openai.callTool()`        | Action handlers                |
+| State persistence | `window.openai.setWidgetState()`  | Not supported                  |
+| Security          | Full iframe sandbox               | Component-level isolation      |
+| Best for          | Complex dashboards, charts, forms | Buttons, cards, simple layouts |
 
 **When to use OpenAI Apps SDK:**
+
 - Need full JavaScript framework support (React, Vue, etc.)
 - Require persistent state across sessions
 - Building complex interactive visualizations
 - Need access to external APIs and libraries
 
 **When to use MCP-UI:**
+
 - Simple interactive components (buttons, cards)
 - Prefer open standards over proprietary APIs
 - Don't need state persistence

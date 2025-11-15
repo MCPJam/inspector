@@ -806,7 +806,10 @@ console.log("Message History:", result.response?.messages);
 // In evals-runner.ts
 console.log("Available tools:", tools);
 console.log("Server IDs:", serverIds);
-console.log("Tools for AI SDK:", await mcpClientManager.getToolsForAiSdk(serverIds));
+console.log(
+  "Tools for AI SDK:",
+  await mcpClientManager.getToolsForAiSdk(serverIds),
+);
 ```
 
 ### Testing Changes
@@ -954,7 +957,7 @@ Potential areas for contribution:
 | **Missing Tools**    | Expected tools that were not called (causes failure)             |
 | **Unexpected Tools** | Tools called but not expected (logged, doesn't fail)             |
 | **RunRecorder**      | Interface for persisting eval results to database                |
-| **MCPClientManager** | Manager for MCP server connections and tool execution           |
+| **MCPClientManager** | Manager for MCP server connections and tool execution            |
 | **AI SDK**           | Vercel's AI SDK for LLM interactions and tool calling            |
 
 ---
