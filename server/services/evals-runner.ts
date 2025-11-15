@@ -50,7 +50,7 @@ export type EvalTestCase = {
 
 export type RunEvalSuiteOptions = {
   suiteId: string;
-  runId: string;
+  runId: string | null; // null for quick runs
   config: {
     tests: EvalTestCase[];
     environment: { servers: string[] };
@@ -60,20 +60,95 @@ export type RunEvalSuiteOptions = {
   convexHttpUrl: string;
   convexAuthToken: string;
   mcpClientManager: MCPClientManager;
-  recorder?: SuiteRunRecorder;
+  recorder?: SuiteRunRecorder | null;
+  testCaseId?: string; // For quick runs, associate iterations with a specific test case
 };
 
 const MAX_STEPS = 20;
 
 type ToolSet = Record<string, any>;
 
+// Helper to create iteration directly (for quick runs without a recorder)
+async function createIterationDirectly(
+  convexClient: ConvexHttpClient,
+  params: {
+    testCaseId?: string;
+    testCaseSnapshot: {
+      title: string;
+      query: string;
+      provider: string;
+      model: string;
+      runs?: number;
+      expectedToolCalls: any[];
+      judgeRequirement?: string;
+      advancedConfig?: Record<string, unknown>;
+    };
+    iterationNumber: number;
+    startedAt: number;
+  }
+): Promise<string | undefined> {
+  try {
+    const response = await convexClient.mutation(
+      "evals:recordIterationStartWithoutRun" as any,
+      params
+    );
+    return response?.iterationId as string | undefined;
+  } catch (error) {
+    console.error(
+      "[evals] Failed to create iteration:",
+      error instanceof Error ? error.message : error
+    );
+    return undefined;
+  }
+}
+
+// Helper to finish iteration directly (for quick runs without a recorder)
+async function finishIterationDirectly(
+  convexClient: ConvexHttpClient,
+  params: {
+    iterationId?: string;
+    passed: boolean;
+    toolsCalled: Array<{ toolName: string; arguments: Record<string, any> }>;
+    usage: UsageTotals;
+    messages: ModelMessage[];
+    status?: "completed" | "failed" | "cancelled";
+    startedAt?: number;
+  }
+): Promise<void> {
+  if (!params.iterationId) return;
+
+  const iterationStatus = params.status ?? (params.passed ? "completed" : "failed");
+  const result = params.passed ? "passed" : "failed";
+
+  try {
+    await convexClient.action(
+      "evals:recordIterationEnd" as any,
+      {
+        iterationId: params.iterationId,
+        result,
+        status: iterationStatus,
+        actualToolCalls: params.toolsCalled,
+        tokensUsed: params.usage.totalTokens ?? 0,
+        updatedAt: Date.now(),
+        blobContent: params.messages, // Pass messages directly, action will handle blob storage
+      }
+    );
+  } catch (error) {
+    console.error(
+      "[evals] Failed to finish iteration:",
+      error instanceof Error ? error.message : error
+    );
+  }
+}
+
 type RunIterationBaseParams = {
   test: EvalTestCase;
   runIndex: number;
   tools: ToolSet;
-  recorder: SuiteRunRecorder;
+  recorder: SuiteRunRecorder | null;
   testCaseId?: string;
   modelApiKeys?: Record<string, string>;
+  convexClient: ConvexHttpClient;
 };
 
 type RunIterationAiSdkParams = RunIterationBaseParams & {
@@ -103,6 +178,7 @@ const runIterationWithAiSdk = async ({
   testCaseId,
   modelDefinition,
   modelApiKeys,
+  convexClient,
 }: RunIterationAiSdkParams) => {
   const { advancedConfig, query, expectedToolCalls } = test;
   const { system, temperature, toolChoice } = advancedConfig ?? {};
@@ -117,7 +193,7 @@ const runIterationWithAiSdk = async ({
   }
 
   const runStartedAt = Date.now();
-  const iterationId = await recorder.startIteration({
+  const iterationParams = {
     testCaseId: test.testCaseId ?? testCaseId,
     testCaseSnapshot: {
       title: test.title,
@@ -131,7 +207,11 @@ const runIterationWithAiSdk = async ({
     },
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
-  });
+  };
+
+  const iterationId = recorder
+    ? await recorder.startIteration(iterationParams)
+    : await createIterationDirectly(convexClient, iterationParams);
 
   const baseMessages: ModelMessage[] = [];
   if (system) {
@@ -225,20 +305,26 @@ const runIterationWithAiSdk = async ({
       totalTokens: result.usage?.totalTokens,
     };
 
-    await recorder.finishIteration({
+    const finishParams = {
       iterationId,
       passed: evaluation.passed,
       toolsCalled,
       usage,
       messages: finalMessages,
-      status: 'completed',
+      status: 'completed' as const,
       startedAt: runStartedAt,
-    });
+    };
+
+    if (recorder) {
+      await recorder.finishIteration(finishParams);
+    } else {
+      await finishIterationDirectly(convexClient, finishParams);
+    }
 
     return evaluation;
   } catch (error) {
     console.error("[evals] iteration failed", error);
-    await recorder.finishIteration({
+    const failParams = {
       iterationId,
       passed: false,
       toolsCalled: [],
@@ -248,9 +334,15 @@ const runIterationWithAiSdk = async ({
         totalTokens: undefined,
       },
       messages: baseMessages,
-      status: 'failed',
+      status: 'failed' as const,
       startedAt: runStartedAt,
-    });
+    };
+
+    if (recorder) {
+      await recorder.finishIteration(failParams);
+    } else {
+      await finishIterationDirectly(convexClient, failParams);
+    }
     return evaluateResults(expectedToolCalls, []);
   }
 };
@@ -263,6 +355,7 @@ const runIterationViaBackend = async ({
   testCaseId,
   convexHttpUrl,
   convexAuthToken,
+  convexClient,
 }: RunIterationBackendParams) => {
   const { query, expectedToolCalls, advancedConfig } = test;
   const { system: systemPrompt, temperature } = advancedConfig ?? {};
@@ -275,7 +368,8 @@ const runIterationViaBackend = async ({
   ];
   const toolsCalled: Array<{ toolName: string; arguments: Record<string, any> }> = [];
   const runStartedAt = Date.now();
-  const iterationId = await recorder.startIteration({
+
+  const iterationParams = {
     testCaseId: test.testCaseId ?? testCaseId,
     testCaseSnapshot: {
       title: test.title,
@@ -289,7 +383,11 @@ const runIterationViaBackend = async ({
     },
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
-  });
+  };
+
+  const iterationId = recorder
+    ? await recorder.startIteration(iterationParams)
+    : await createIterationDirectly(convexClient, iterationParams);
 
   const toolDefs = Object.entries(tools).map(([name, tool]) => {
     const schema = (tool as any)?.inputSchema;
@@ -418,15 +516,21 @@ const runIterationViaBackend = async ({
 
   const evaluation = evaluateResults(expectedToolCalls, toolsCalled);
 
-  await recorder.finishIteration({
+  const finishParams = {
     iterationId,
     passed: evaluation.passed,
     toolsCalled,
     usage: accumulatedUsage,
     messages: messageHistory,
-    status: 'completed',
+    status: 'completed' as const,
     startedAt: runStartedAt,
-  });
+  };
+
+  if (recorder) {
+    await recorder.finishIteration(finishParams);
+  } else {
+    await finishIterationDirectly(convexClient, finishParams);
+  }
 
   return evaluation;
 };
@@ -434,14 +538,16 @@ const runIterationViaBackend = async ({
 const runTestCase = async (params: {
   test: EvalTestCase;
   tools: ToolSet;
-  recorder: SuiteRunRecorder;
+  recorder: SuiteRunRecorder | null;
   modelApiKeys?: Record<string, string>;
   convexHttpUrl: string;
   convexAuthToken: string;
+  convexClient: ConvexHttpClient;
+  testCaseId?: string;
 }) => {
-  const { test, tools, recorder, modelApiKeys, convexHttpUrl, convexAuthToken } =
+  const { test, tools, recorder, modelApiKeys, convexHttpUrl, convexAuthToken, convexClient, testCaseId: parentTestCaseId } =
     params;
-  const testCaseId = test.testCaseId;
+  const testCaseId = test.testCaseId || parentTestCaseId;
   const modelDefinition = buildModelDefinition(test);
   const isJamModel = isMCPJamProvidedModel(String(modelDefinition.id));
 
@@ -457,6 +563,7 @@ const runTestCase = async (params: {
         testCaseId,
         convexHttpUrl,
         convexAuthToken,
+        convexClient,
         modelApiKeys,
       });
       evaluations.push(evaluation);
@@ -471,6 +578,7 @@ const runTestCase = async (params: {
       testCaseId,
       modelDefinition,
       modelApiKeys,
+      convexClient,
     });
     evaluations.push(evaluation);
   }
@@ -488,6 +596,7 @@ export const runEvalSuiteWithAiSdk = async ({
   convexAuthToken,
   mcpClientManager,
   recorder: providedRecorder,
+  testCaseId,
 }: RunEvalSuiteOptions) => {
   const tests = config.tests ?? [];
   const serverIds = config.environment?.servers ?? [];
@@ -496,31 +605,36 @@ export const runEvalSuiteWithAiSdk = async ({
     throw new Error("No tests supplied for eval run");
   }
 
+  // For quick runs (runId === null), we don't need a recorder
   const recorder =
-    providedRecorder ??
-    createSuiteRunRecorder({
-      convexClient,
-      suiteId,
-      runId,
-    });
+    runId === null
+      ? null
+      : (providedRecorder ??
+        createSuiteRunRecorder({
+          convexClient,
+          suiteId,
+          runId,
+        }));
 
   const tools = (await mcpClientManager.getToolsForAiSdk(serverIds)) as ToolSet;
 
-  // Pre-create all iterations upfront so they appear in the UI immediately
-  await convexClient.mutation("evals:precreateIterationsForRun" as any, {
-    runId,
-    tests: tests.map(test => ({
-      testCaseId: test.testCaseId,
-      title: test.title,
-      query: test.query,
-      provider: test.provider,
-      model: test.model,
-      runs: test.runs,
-      expectedToolCalls: test.expectedToolCalls,
-      judgeRequirement: test.judgeRequirement,
-      advancedConfig: test.advancedConfig,
-    })),
-  });
+  // Pre-create all iterations upfront only if we have a runId (suite run)
+  if (runId !== null) {
+    await convexClient.mutation("evals:precreateIterationsForRun" as any, {
+      runId,
+      tests: tests.map(test => ({
+        testCaseId: test.testCaseId || testCaseId,
+        title: test.title,
+        query: test.query,
+        provider: test.provider,
+        model: test.model,
+        runs: test.runs,
+        expectedToolCalls: test.expectedToolCalls,
+        judgeRequirement: test.judgeRequirement,
+        advancedConfig: test.advancedConfig,
+      })),
+    });
+  }
 
   const summary = {
     total: 0,
@@ -530,24 +644,28 @@ export const runEvalSuiteWithAiSdk = async ({
 
   try {
     for (const test of tests) {
-      // Check if run has been cancelled before processing next test
-      const currentRun = await convexClient.query("evals:getSuiteRunStatus" as any, {
-        runId,
-      });
-
-      if (currentRun?.status === 'cancelled') {
-        const passRate = summary.total > 0 ? summary.passed / summary.total : 0;
-        await recorder.finalize({
-          status: "cancelled",
-          summary: summary.total > 0 ? {
-            total: summary.total,
-            passed: summary.passed,
-            failed: summary.failed,
-            passRate,
-          } : undefined,
-          notes: "Run cancelled by user",
+      // Check if run has been cancelled before processing next test (only for suite runs)
+      if (runId !== null) {
+        const currentRun = await convexClient.query("evals:getSuiteRunStatus" as any, {
+          runId,
         });
-        return;
+
+        if (currentRun?.status === 'cancelled') {
+          const passRate = summary.total > 0 ? summary.passed / summary.total : 0;
+          if (recorder) {
+            await recorder.finalize({
+              status: "cancelled",
+              summary: summary.total > 0 ? {
+                total: summary.total,
+                passed: summary.passed,
+                failed: summary.failed,
+                passRate,
+              } : undefined,
+              notes: "Run cancelled by user",
+            });
+          }
+          return;
+        }
       }
 
       const evaluations = await runTestCase({
@@ -557,6 +675,8 @@ export const runEvalSuiteWithAiSdk = async ({
         modelApiKeys,
         convexHttpUrl,
         convexAuthToken,
+        convexClient,
+        testCaseId,
       });
 
       for (const evaluation of evaluations) {
@@ -572,31 +692,37 @@ export const runEvalSuiteWithAiSdk = async ({
     const passRate =
       summary.total > 0 ? summary.passed / summary.total : 0;
 
-    await recorder.finalize({
-      status: "completed",
-      summary: {
-        total: summary.total,
-        passed: summary.passed,
-        failed: summary.failed,
-        passRate,
-      },
-    });
+    // Only finalize if we have a recorder (suite runs, not quick runs)
+    if (recorder) {
+      await recorder.finalize({
+        status: "completed",
+        summary: {
+          total: summary.total,
+          passed: summary.passed,
+          failed: summary.failed,
+          passRate,
+        },
+      });
+    }
   } catch (error) {
     const passRate =
       summary.total > 0 ? summary.passed / summary.total : 0;
 
-    await recorder.finalize({
-      status: "failed",
-      summary:
-        summary.total > 0
-          ? {
-              total: summary.total,
-              passed: summary.passed,
-              failed: summary.failed,
-              passRate,
-            }
-          : undefined,
-    });
+    // Only finalize if we have a recorder (suite runs, not quick runs)
+    if (recorder) {
+      await recorder.finalize({
+        status: "failed",
+        summary:
+          summary.total > 0
+            ? {
+                total: summary.total,
+                passed: summary.passed,
+                failed: summary.failed,
+                passRate,
+              }
+            : undefined,
+      });
+    }
 
     throw error;
   }
