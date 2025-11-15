@@ -300,6 +300,116 @@ evals.post("/run", async (c) => {
   }
 });
 
+const RunTestCaseRequestSchema = z.object({
+  testCaseId: z.string(),
+  model: z.string(),
+  provider: z.string(),
+  serverIds: z.array(z.string()).min(1, "At least one server must be selected"),
+  modelApiKeys: z.record(z.string()).optional(),
+  convexAuthToken: z.string(),
+});
+
+type RunTestCaseRequest = z.infer<typeof RunTestCaseRequestSchema>;
+
+evals.post("/run-test-case", async (c) => {
+  try {
+    const body = await c.req.json();
+
+    const validationResult = RunTestCaseRequestSchema.safeParse(body);
+    if (!validationResult.success) {
+      return c.json(
+        {
+          error: "Invalid request body",
+          details: validationResult.error.issues,
+        },
+        400,
+      );
+    }
+
+    const {
+      testCaseId,
+      model,
+      provider,
+      serverIds,
+      modelApiKeys,
+      convexAuthToken,
+    } = validationResult.data as RunTestCaseRequest;
+
+    const clientManager = c.mcpClientManager;
+    const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
+
+    const convexUrl = process.env.CONVEX_URL;
+    if (!convexUrl) {
+      throw new Error("CONVEX_URL is not set");
+    }
+
+    const convexHttpUrl = process.env.CONVEX_HTTP_URL;
+    if (!convexHttpUrl) {
+      throw new Error("CONVEX_HTTP_URL is not set");
+    }
+
+    const convexClient = new ConvexHttpClient(convexUrl);
+    convexClient.setAuth(convexAuthToken);
+
+    // Get the test case details
+    const testCase = await convexClient.query("evals:getTestCase" as any, {
+      testCaseId,
+    });
+
+    if (!testCase) {
+      return c.json({ error: "Test case not found" }, 404);
+    }
+
+    // Create a test config for the runner
+    const test = {
+      title: testCase.title,
+      query: testCase.query,
+      runs: 1, // Quick run always does 1 run
+      model,
+      provider,
+      expectedToolCalls: testCase.expectedToolCalls || [],
+      judgeRequirement: testCase.judgeRequirement,
+      advancedConfig: testCase.advancedConfig,
+    };
+
+    const config = {
+      tests: [test],
+      environment: { servers: resolvedServerIds },
+    };
+
+    // Run the single test case without creating a suite run
+    await runEvalSuiteWithAiSdk({
+      suiteId: testCase.evalTestSuiteId,
+      runId: null, // No suite run for quick runs
+      config,
+      modelApiKeys: modelApiKeys ?? undefined,
+      convexClient,
+      convexHttpUrl,
+      convexAuthToken,
+      mcpClientManager: clientManager,
+      recorder: null, // No recorder for quick runs
+      testCaseId, // Pass testCaseId for quick run context
+    });
+
+    // Get the most recent quick run iteration that was just created
+    const recentIterations = await convexClient.query(
+      "evals:getQuickRunIterations" as any,
+      { testCaseId }
+    );
+    const latestIteration = recentIterations?.[0] || null;
+
+    return c.json({
+      success: true,
+      message: "Test case completed successfully",
+      iteration: latestIteration,
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error("[Error running test case]:", errorMessage);
+    return c.json({ error: errorMessage }, 500);
+  }
+});
+
 evals.post("/cancel", async (c) => {
   try {
     const body = await c.req.json();
