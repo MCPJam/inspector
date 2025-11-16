@@ -29,6 +29,11 @@
         ]
       },
       {
+        "group": "Troubleshooting",
+        "icon": "wrench",
+        "pages": ["troubleshooting/common-errors"]
+      },
+      {
         "group": "Contributing",
         "icon": "code",
         "pages": [

@@ -20,6 +20,7 @@ import {
   Download,
   Check,
   Edit,
+  ExternalLink,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { exportServerApi } from "@/lib/mcp-export-api";
@@ -315,6 +316,22 @@ export function ServerConnectionCard({
                   {server.retryCount !== 1 ? "s" : ""}
                 </div>
               )}
+            </div>
+          )}
+
+          {server.connectionStatus === "failed" && (
+            <div className="text-muted-foreground text-xs">
+              Having trouble?{" "}
+              <a
+                href="https://docs.mcpjam.com/troubleshooting/common-errors"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary hover:underline inline-flex items-center gap-1"
+                onClick={(e) => e.stopPropagation()}
+              >
+                Check out our troubleshooting page
+                <ExternalLink className="h-3 w-3" />
+              </a>
             </div>
           )}
         </div>

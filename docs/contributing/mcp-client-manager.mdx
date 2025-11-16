@@ -106,6 +106,8 @@ connecting → disconnected (on connection failure)
 connected → disconnected (on close/disconnect)
 ```
 
+**Connection Status Verification**: The manager verifies connection status by attempting a ping to the server each time `getConnectionStatusByAttemptingPing()` is called. This ensures the status reflects the actual server availability rather than cached state.
+
 ### 2. Transport Selection
 
 The manager automatically selects the appropriate transport:
@@ -287,8 +289,8 @@ await mcpClientManager.connectToServer("filesystem", {
   env: { DEBUG: "1" },
 });
 
-// Check status
-const status = mcpClientManager.getConnectionStatus("filesystem");
+// Check status (verifies with ping)
+const status = mcpClientManager.getConnectionStatusByAttemptingPing("filesystem");
 // Returns: "connected" | "connecting" | "disconnected"
 
 // Get all servers
@@ -344,10 +346,12 @@ await mcpClientManager.disconnectAllServers();
 </ResponseField>
 
 <ResponseField
-  name="getConnectionStatus"
+  name="getConnectionStatusByAttemptingPing"
   type="(serverId: string) => MCPConnectionStatus"
 >
-  Get connection status: `"connected"` | `"connecting"` | `"disconnected"`.
+  Get connection status by attempting a ping to verify server availability:
+  `"connected"` | `"connecting"` | `"disconnected"`. This method actively checks
+  the connection rather than relying on cached state.
 </ResponseField>
 
 <ResponseField
@@ -382,13 +386,19 @@ await mcpClientManager.disconnectAllServers();
   Execute a tool on a specific server.
 </ResponseField>
 
-<ResponseField name="getToolsForAiSdk" type="(serverIds?: string[] | string, options?) => Promise<ToolSet>">
-  Get tools in Vercel AI SDK format. Automatically wires up tool execution. Each tool has `_serverId` metadata attached.
+<ResponseField
+  name="getToolsForAiSdk"
+  type="(serverIds?: string[] | string, options?) => Promise<ToolSet>"
+>
+  Get tools in Vercel AI SDK format. Automatically wires up tool execution. Each
+  tool has `_serverId` metadata attached.
+</ResponseField>
 
 Options:
 
-- `schemas?: ToolSchemaOverrides | "automatic"` - Control schema conversion
-  </ResponseField>
+<ResponseField name="schemas" type="ToolSchemaOverrides | 'automatic'">
+  - `schemas?: ToolSchemaOverrides | "automatic"` - Control schema conversion
+</ResponseField>
 
 <ResponseField
   name="getAllToolsMetadata"
@@ -609,8 +619,8 @@ await manager.connectToServer("weather", {
 url: new URL("http://localhost:3000/mcp"),
 });
 
-// Check status
-if (manager.getConnectionStatus("weather") === "connected") {
+// Check status (verifies with ping)
+if (manager.getConnectionStatusByAttemptingPing("weather") === "connected") {
 const { resources } = await manager.listResources("weather");
 console.log(resources);
 }
@@ -672,13 +682,13 @@ const manager = new MCPClientManager(
   <Card title="Connection Management" icon="plug">
     **DO**:
     - Use unique, descriptive server IDs
-    - Check connection status before operations
+    - Check connection status with ping verification before operations
     - Handle connection errors gracefully
     - Clean up connections when no longer needed
 
     **DON'T**:
     - Reuse server IDs without disconnecting first
-    - Assume connections are always ready
+    - Assume connections are always ready without verification
     - Leave connections open indefinitely
     - Ignore connection state changes
   </Card>

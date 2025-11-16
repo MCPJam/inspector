@@ -1,0 +1,33 @@
+version: "3.9"
+services:
+  inspector:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mcpjam/mcp-inspector:latest
+    ports:
+      - "6274:6274"
+    # Injects env vars to process.env (server requires CONVEX_HTTP_URL, etc.)
+    env_file:
+      - .env.production
+    # Also mount the file so dotenv can find it on disk at /app/.env.production
+    volumes:
+      - ./.env.production:/app/.env.production:ro
+    environment:
+      - NODE_ENV=production
+    # Add extra host mapping for macOS Docker to access host machine services
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('http').request('http://localhost:6274/health', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).end()",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
