@@ -35,7 +35,6 @@ export function PromptsPopover({
   prompts,
   onPromptClick,
 }: PromptsPopoverProps) {
-
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverAnchor asChild>
@@ -68,38 +67,38 @@ export function PromptsPopover({
         </div>
         <div className="flex flex-col">
           {prompts.map((prompt, index) => (
-              <Tooltip key={prompt.namespacedName} delayDuration={1000}>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    className={
-                      cn(
-                        "flex items-center gap-2 rounded-sm px-2 max-w-[300px] py-1.5 text-xs select-none hover:bg-accent hover:text-accent-foreground",
-                        highlightedIndex === index && !isHovering
-                          ? "bg-accent text-accent-foreground"
-                          : "",
-                      )
+            <Tooltip key={prompt.namespacedName} delayDuration={1000}>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className={cn(
+                    "flex items-center gap-2 rounded-sm px-2 max-w-[300px] py-1.5 text-xs select-none hover:bg-accent hover:text-accent-foreground",
+                    highlightedIndex === index && !isHovering
+                      ? "bg-accent text-accent-foreground"
+                      : "",
+                  )}
+                  onClick={() => onPromptClick(prompt.namespacedName)}
+                  onMouseEnter={() => {
+                    if (isHovering) {
+                      setHighlightedIndex(index);
                     }
-                    onClick={() => onPromptClick(prompt.namespacedName)}
-                    onMouseEnter={() => {
-                      if (isHovering) {
-                        setHighlightedIndex(index);
-                      }
-                    }}
-                  >
-                    <MessageSquareCode size={16} className="shrink-0" />
-                    <span className="flex-1 text-left truncate">{prompt.namespacedName}</span>
-                    {prompt.arguments && prompt.arguments.length > 0 && (
-                      <ListChecks
-                        size={14}
-                        className="text-muted-foreground shrink-0 ml-2"
-                        aria-label="Requires inputs"
-                      />
-                    )}
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>{prompt.description}</TooltipContent>
-              </Tooltip>
+                  }}
+                >
+                  <MessageSquareCode size={16} className="shrink-0" />
+                  <span className="flex-1 text-left truncate">
+                    {prompt.namespacedName}
+                  </span>
+                  {prompt.arguments && prompt.arguments.length > 0 && (
+                    <ListChecks
+                      size={14}
+                      className="text-muted-foreground shrink-0 ml-2"
+                      aria-label="Requires inputs"
+                    />
+                  )}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>{prompt.description}</TooltipContent>
+            </Tooltip>
           ))}
         </div>
       </PopoverContent>
