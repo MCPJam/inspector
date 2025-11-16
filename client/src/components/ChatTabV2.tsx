@@ -477,7 +477,7 @@ export function ChatTabV2({
         setIsPromptArgsDialogOpen(true);
         return;
       }
-      const [serverId, promptName] = promptNamespacedName.split("/");
+      const [serverId, promptName] = promptNamespacedName.split("/", 1);
       const EMPTY_ARGS = {};
       const promptResult = await getPromptContent(
         serverId,
@@ -504,7 +504,7 @@ export function ChatTabV2({
       if (!prompt) {
         return;
       }
-      const [serverId, promptName] = promptNamespacedName.split("/");
+      const [serverId, promptName] = promptNamespacedName.split("/", 1);
       const promptResult = await getPromptContent(serverId, promptName, values);
       setPromptResults((prev) => ({
         ...prev,
