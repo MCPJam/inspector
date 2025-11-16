@@ -14,7 +14,7 @@ import {
 } from "ai";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import { ModelDefinition, isGPT5Model } from "@/shared/types";
+import { MCPPrompt, ModelDefinition, isGPT5Model } from "@/shared/types";
 import {
   ProviderTokens,
   useAiProviderKeys,
@@ -38,8 +38,10 @@ import {
 import { isMCPJamProvidedModel } from "@/shared/types";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { Thread } from "@/components/chat-v2/thread";
+import { PromptsArgumentsDialog } from "@/components/chat-v2/prompts-arguments-dialog";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { getToolsMetadata, ToolServerMap } from "@/lib/mcp-tools-api";
+import { getPromptsByServerIds, getPromptContent, PromptContentResponse, PromptsServerMap } from "@/lib/mcp-prompts-api";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
 import { ConnectMcpServerCallout } from "@/components/chat-v2/connect-mcp-server-callout";
 import { usePostHog } from "posthog-js/react";
@@ -68,6 +70,10 @@ const STARTER_PROMPTS: Array<{ label: string; text: string }> = [
 interface ChatTabProps {
   connectedServerConfigs: Record<string, ServerWithName>;
   selectedServerNames: string[];
+}
+
+export interface NamespacedPrompt extends MCPPrompt {
+  namespacedName: string;
 }
 
 function formatErrorMessage(error: unknown): string | null {
@@ -110,6 +116,28 @@ export function ChatTabV2({
     Record<string, Record<string, any>>
   >({});
   const [toolServerMap, setToolServerMap] = useState<ToolServerMap>({});
+  const [promptsServerMap, setPromptsServerMap] = useState<PromptsServerMap>({});
+  const flatNamespacedPromptList = useMemo(() => {
+    const namespacedPrompts: NamespacedPrompt[] = [];
+    const serverNames = Object.keys(promptsServerMap);
+    for ( const serverName of serverNames) {
+      const prompts = promptsServerMap[serverName];
+      prompts.forEach((prompt) => {
+        const namespacedName = `${serverName}/${prompt.name}`;
+        namespacedPrompts.push({
+          ...prompt,
+          namespacedName,
+        });
+      });
+    }
+    return namespacedPrompts;
+  }, [promptsServerMap]);
+  const [promptResults, setPromptResults] = useState<Record<string, PromptContentResponse>>({});
+  const [isPromptArgsDialogOpen, setIsPromptArgsDialogOpen] = useState(false);
+  const [selectedPromptForArgsDialog, setSelectedPromptForArgsDialog] = useState<{
+    promptNamespacedName: string;
+    args: MCPPrompt["arguments"];
+  } | null>(null);
   const availableModels = useMemo(() => {
     return buildAvailableModels({
       hasToken,
@@ -329,11 +357,17 @@ export function ChatTabV2({
 
   useEffect(() => {
     const fetchToolsMetadata = async () => {
-      const { metadata, toolServerMap } = await getToolsMetadata(
-        selectedConnectedServerNames,
-      );
+      const results = await Promise.all([
+        getToolsMetadata(selectedConnectedServerNames),
+        getPromptsByServerIds(selectedConnectedServerNames),
+      ]);
+      // Get tools
+      const { metadata, toolServerMap } = results[0];
       setToolsMetadata(metadata);
       setToolServerMap(toolServerMap);
+      // Get prompts
+      const promptsServerMap = results[1];
+      setPromptsServerMap(promptsServerMap);
     };
     fetchToolsMetadata();
   }, [selectedConnectedServerNames]);
@@ -391,6 +425,42 @@ export function ChatTabV2({
     }
   };
 
+  const onSelectMCPPrompt = async (promptNamespacedName: string): Promise<void> => {
+    const selectedPrompt = flatNamespacedPromptList.find((prompt) => prompt.namespacedName === promptNamespacedName);
+    if (!selectedPrompt) {
+      return;
+    }
+    if (selectedPrompt.arguments && selectedPrompt.arguments.length > 0) {
+      setSelectedPromptForArgsDialog({ promptNamespacedName, args: selectedPrompt.arguments });
+      setIsPromptArgsDialogOpen(true);
+      return;
+    }
+    const [serverId, promptName] = promptNamespacedName.split("/");
+    const EMPTY_ARGS = {};
+    const promptResult = await getPromptContent(
+      serverId,
+      promptName,
+      EMPTY_ARGS,
+    )
+    setPromptResults((prev) => ({
+      ...prev,
+      [promptNamespacedName]: promptResult,
+    }));
+  }
+
+  const onPromptArgsDialogSubmit = async (promptNamespacedName: string, values: Record<string, string>): Promise<void> => {
+    const prompt = flatNamespacedPromptList.find((prompt) => prompt.namespacedName === promptNamespacedName);
+    if (!prompt) {
+      return;
+    }
+    const [serverId, promptName] = promptNamespacedName.split("/");
+    const promptResult = await getPromptContent(serverId, promptName, values);
+    setPromptResults((prev) => ({ ...prev, [promptNamespacedName]: promptResult }));
+    // Clear dialog state and close
+    setSelectedPromptForArgsDialog(null);
+    setIsPromptArgsDialogOpen(false);
+  }
+
   const handleStarterPrompt = (prompt: string) => {
     if (submitBlocked || inputDisabled) {
       setInput(prompt);
@@ -406,6 +476,14 @@ export function ChatTabV2({
     });
     sendMessage({ text: prompt });
     setInput("");
+  };
+
+  const onRemovePromptResult = (promptNamespacedName: string) => {
+    setPromptResults((prev) => {
+      const updated = { ...prev };
+      delete updated[promptNamespacedName];
+      return updated;
+    });
   };
 
   const sharedChatInputProps = {
@@ -428,6 +506,10 @@ export function ChatTabV2({
     onTemperatureChange: setTemperature,
     onResetChat: resetChat,
     submitDisabled: submitBlocked,
+    prompts: flatNamespacedPromptList,
+    onSelectMCPPrompt,
+    promptResults,
+    onRemovePromptResult,
   };
 
   const showStarterPrompts =
@@ -529,6 +611,12 @@ export function ChatTabV2({
               onResponse={handleElicitationResponse}
               loading={elicitationLoading}
             />
+            {selectedPromptForArgsDialog && <PromptsArgumentsDialog
+              {...selectedPromptForArgsDialog}
+              onSubmit={onPromptArgsDialogSubmit}
+              open={isPromptArgsDialogOpen}
+              onOpenChange={setIsPromptArgsDialogOpen}
+            />}
           </div>
         </ResizablePanel>
 
