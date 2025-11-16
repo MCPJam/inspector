@@ -40,7 +40,6 @@ import { PassCriteriaBadge } from "./pass-criteria-badge";
 import { PassCriteriaSelector } from "./pass-criteria-selector";
 import { computeIterationPassed } from "./pass-criteria";
 import { AccuracyChart } from "./accuracy-chart";
-import { CompactIterationRow } from "./iteration-row";
 
 export function SuiteIterationsView({
   suite,
@@ -1179,78 +1178,7 @@ export function SuiteIterationsView({
           </div>
           </div>
         ) : viewMode === "test-detail" && selectedTestDetails ? (
-          <div className="flex items-center justify-between gap-4 mb-4">
-            <h2 className="text-lg font-semibold">
-              {selectedTestDetails.templateInfo?.title || selectedTestDetails.testCase?.title}
-            </h2>
-            <div className="flex items-center gap-2 shrink-0">
-              {isRunInProgress && latestRun ? (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => onCancelRun(latestRun._id)}
-                      disabled={isCancelling}
-                      className="gap-2"
-                    >
-                      {isCancelling ? (
-                        <>
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          Cancelling...
-                        </>
-                      ) : (
-                        <>
-                          <X className="h-4 w-4" />
-                          Cancel run
-                        </>
-                      )}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Cancel the current evaluation run</TooltipContent>
-                </Tooltip>
-              ) : (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => onRerun(suite)}
-                        disabled={!canRerun || isRerunning}
-                        className="gap-2"
-                      >
-                        <RotateCw
-                          className={`h-4 w-4 ${isRerunning ? "animate-spin" : ""}`}
-                        />
-                        Rerun
-                      </Button>
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    {!canRerun
-                      ? `Connect the following servers: ${missingServers.join(", ")}`
-                      : "Rerun evaluation"}
-                  </TooltipContent>
-                </Tooltip>
-              )}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => onDelete(suite)}
-                    disabled={isDeleting}
-                    className="gap-2"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                    {isDeleting ? "Deleting..." : "Delete"}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Delete this test suite</TooltipContent>
-              </Tooltip>
-            </div>
-          </div>
+          null
         ) : (
           <div className="flex items-center justify-between gap-4 mb-4">
             <h2 className="text-lg font-semibold">Runs</h2>
@@ -1329,188 +1257,29 @@ export function SuiteIterationsView({
           <div className="space-y-4">
           {viewMode === "test-detail" && selectedTestDetails ? (
             <>
-          {/* Test Detail View - shown when a test is selected from sidebar */}
-          <div className="rounded-xl border bg-card text-card-foreground">
-            <div className="border-b px-4 py-3">
-              <div className="text-sm font-semibold">{selectedTestDetails.templateInfo?.title || selectedTestDetails.testCase?.title}</div>
-              <p className="text-xs text-muted-foreground">
-                {selectedTestDetails.templateInfo
-                  ? `${selectedTestDetails.templateInfo.modelCount} model${selectedTestDetails.templateInfo.modelCount === 1 ? "" : "s"}`
-                  : `${selectedTestDetails.testCase?.provider} • ${selectedTestDetails.testCase?.model}`
-                }
-              </p>
-            </div>
-            {selectedTestTrendData.length > 0 && (
-              <div className="border-b px-4 py-3">
-                <div className="text-xs text-muted-foreground mb-2">Performance across runs</div>
-                <AccuracyChart
-                  data={selectedTestTrendData}
-                  height="h-32"
-                  showLabel={true}
-                  onClick={(runId) => {
-                    setSelectedRunId(runId);
-                    setViewMode("run-detail");
-                    onTestIdChange(null);
-                    if (onModeChange) onModeChange("runs");
-                  }}
-                />
-              </div>
-            )}
-            <div className="px-4 py-4">
-              {selectedTestDetails.testCase?.query && (
-                <div className="mb-4 rounded-lg border bg-muted/30 p-3">
-                  <div className="text-xs font-medium text-muted-foreground mb-1">Query</div>
-                  <p className="text-sm italic">"{selectedTestDetails.testCase.query}"</p>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Per-Model Breakdown */}
-          {selectedTestModelBreakdown.length > 1 && (
-            <div className="rounded-xl border bg-card text-card-foreground">
-              <div className="border-b px-4 py-3">
-                <div className="text-sm font-semibold">Performance by model</div>
-                <p className="text-xs text-muted-foreground">
-                  Pass rate comparison across {selectedTestModelBreakdown.length} model{selectedTestModelBreakdown.length === 1 ? "" : "s"}.
-                </p>
-              </div>
-              <div className="px-4 py-4">
-                <ChartContainer config={chartConfig} className="aspect-auto h-48 w-full">
-                  <BarChart
-                    data={selectedTestModelBreakdown}
-                    layout="vertical"
-                    margin={{ left: 0, right: 40 }}
-                  >
-                    <CartesianGrid
-                      strokeDasharray="3 3"
-                      horizontal={false}
-                      stroke="hsl(var(--muted-foreground) / 0.2)"
-                    />
-                    <XAxis
-                      type="number"
-                      domain={[0, 100]}
-                      tickLine={false}
-                      axisLine={false}
-                      tickMargin={8}
-                      tick={{ fontSize: 11 }}
-                      tickFormatter={(value) => `${value}%`}
-                    />
-                    <YAxis
-                      type="category"
-                      dataKey="model"
-                      tickLine={false}
-                      axisLine={false}
-                      tickMargin={8}
-                      tick={{ fontSize: 11 }}
-                      width={120}
-                    />
-                    <ChartTooltip
-                      cursor={false}
-                      content={({ active, payload }) => {
-                        if (!active || !payload || !payload.length) return null;
-                        const data = payload[0].payload;
-                        return (
-                          <div className="rounded-lg border bg-background p-2 shadow-sm">
-                            <div className="text-xs font-medium">{data.model}</div>
-                            <div className="text-xs text-muted-foreground">{data.provider}</div>
-                            <div className="mt-1 text-xs">
-                              Pass rate: <span className="font-medium">{data.passRate}%</span>
-                            </div>
-                            <div className="text-xs text-muted-foreground">
-                              {data.passed}/{data.total} passed
-                            </div>
-                          </div>
-                        );
-                      }}
-                    />
-                    <Bar
-                      dataKey="passRate"
-                      fill="hsl(var(--chart-1))"
-                      radius={[0, 4, 4, 0]}
-                      isAnimationActive={false}
-                    />
-                  </BarChart>
-                </ChartContainer>
-              </div>
-            </div>
-          )}
-
-          {/* Test Case Editor */}
+          {/* Test Case Editor with Tabs */}
           {selectedTestId && (
+            <div className="h-[calc(100vh-200px)]">
             <TestTemplateEditor
               suiteId={suite._id}
               selectedTestCaseId={selectedTestId}
+              selectedTestTrendData={selectedTestTrendData}
+              iterationsForSelectedTest={iterationsForSelectedTest}
+              selectedTestDetails={selectedTestDetails}
+              runs={runs}
+              caseGroups={caseGroups}
+              onViewRun={(runId: string) => {
+                setSelectedRunId(runId);
+                onTestIdChange(null);
+                setViewMode("run-detail");
+                if (onModeChange) onModeChange("runs");
+              }}
+              onTestIdChange={onTestIdChange}
+              onModeChange={onModeChange}
+              selectedTestModelBreakdown={selectedTestModelBreakdown}
             />
+            </div>
           )}
-
-          {/* Iterations for this Test */}
-          <div className="rounded-xl border bg-card text-card-foreground flex flex-col max-h-[600px]">
-            {iterationsForSelectedTest.length === 0 ? (
-              <div className="px-4 py-12 text-center text-sm text-muted-foreground">
-                No iterations found for this test.
-              </div>
-            ) : (
-              <>
-                {/* Column Headers */}
-                <div className="flex items-center gap-6 w-full px-4 py-1.5 bg-muted/30 border-b text-xs font-medium text-muted-foreground shrink-0">
-                  <div className="w-4"></div>
-                  <div className="min-w-[120px] max-w-[120px]">Result</div>
-                  <div className="min-w-[140px] max-w-[140px]">Model</div>
-                  <div className="min-w-[60px] max-w-[60px] text-right">Tools</div>
-                  <div className="min-w-[70px] max-w-[70px] text-right">Tokens</div>
-                  <div className="min-w-[70px] max-w-[70px] text-right">Duration</div>
-                </div>
-                <div className="divide-y overflow-y-auto">
-                  {iterationsForSelectedTest.map((iteration) => {
-                    const isOpen = openIterationId === iteration._id;
-                    const iterationRun = iteration.suiteRunId
-                      ? runs.find((r) => r._id === iteration.suiteRunId)
-                      : null;
-
-                    // Get model info for this iteration
-                    const iterationTestCase = iteration.testCaseId
-                      ? caseGroups.find((g) => g.testCase?._id === iteration.testCaseId)?.testCase
-                      : null;
-
-                    return (
-                      <div key={iteration._id}>
-                        <CompactIterationRow
-                          iteration={iteration}
-                          testCase={selectedTestDetails.testCase}
-                          iterationTestCase={iterationTestCase}
-                          iterationRun={iterationRun}
-                          onViewRun={(runId: string) => {
-                            setSelectedRunId(runId);
-                            onTestIdChange(null);
-                            setViewMode("run-detail");
-                            if (onModeChange) onModeChange("runs");
-                          }}
-                          getIterationBorderColor={getIterationBorderColor}
-                          formatTime={formatTime}
-                          formatDuration={formatDuration}
-                          isOpen={isOpen}
-                          onToggle={() => {
-                            setOpenIterationId((current) =>
-                              current === iteration._id ? null : iteration._id
-                            );
-                          }}
-                        />
-                        {isOpen && (
-                          <div className="border-t bg-muted/20 px-4 pb-4 pt-3 pl-8">
-                            <IterationDetails
-                              iteration={iteration}
-                              testCase={selectedTestDetails.testCase}
-                            />
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </>
-            )}
-          </div>
             </>
           ) : viewMode === "overview" ? (
             <>
