@@ -2,6 +2,7 @@ import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { ChatMessage } from "./chat-types";
 import { ModelDefinition } from "@/shared/types.js";
+import { getDefaultTemperatureByProvider } from "@/shared/chat-utils.js";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -186,21 +187,6 @@ export function debounce<T extends (...args: any[]) => any>(
     clearTimeout(timeout);
     timeout = setTimeout(() => func(...args), wait);
   };
-}
-
-export function getDefaultTemperatureByProvider(provider: string): number {
-  switch (provider) {
-    case "openai":
-      return 1.0;
-    case "anthropic":
-      return 0;
-    case "google":
-      return 0.9; // Google's recommended default
-    case "mistral":
-      return 0.7; // Mistral's recommended default
-    default:
-      return 0;
-  }
 }
 
 export function getDefaultTemperatureForModel(model: ModelDefinition): number {

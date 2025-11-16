@@ -38,31 +38,9 @@ let serverPort: number = 0;
 
 const isDev = process.env.NODE_ENV === "development";
 
-async function findAvailablePort(startPort = 3000): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const net = require("net");
-    const server = net.createServer();
-
-    server.listen(startPort, () => {
-      const port = server.address()?.port;
-      server.close(() => {
-        resolve(port);
-      });
-    });
-
-    server.on("error", () => {
-      // Port is in use, try next one
-      findAvailablePort(startPort + 1)
-        .then(resolve)
-        .catch(reject);
-    });
-  });
-}
-
 async function startHonoServer(): Promise<number> {
   try {
-    const port = app.isPackaged ? 3000 : await findAvailablePort(3000);
-
+    const port = 6274;
     // Set environment variables to tell the server it's running in Electron
     process.env.ELECTRON_APP = "true";
     process.env.IS_PACKAGED = app.isPackaged ? "true" : "false";

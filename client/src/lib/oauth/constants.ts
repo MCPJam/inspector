@@ -11,26 +11,6 @@
 export const MCPJAM_CLIENT_ID =
   "https://www.mcpjam.com/.well-known/oauth/client-metadata.json";
 
-/**
- * Redirect URIs that match what's in the CIMD document
- * These cover all deployment scenarios:
- * - Custom protocol for Electron app
- * - Production web
- * - Local development ports
- */
-export const REDIRECT_URIS = [
-  "mcpjam://oauth/callback",
-  "mcpjam://authkit/callback",
-  "https://www.mcpjam.com/oauth/callback",
-  "https://www.mcpjam.com/authkit/callback",
-  "http://127.0.0.1:6274/oauth/callback",
-  "http://127.0.0.1:6274/oauth/callback/debug",
-  "http://127.0.0.1:6274/callback",
-] as const;
-
-/**
- * Get the appropriate redirect URI based on current environment
- */
 export function getRedirectUri(): string {
   // Check if running in Electron with custom protocol support
   if (typeof window !== "undefined" && (window as any).electron) {
@@ -51,12 +31,5 @@ export function getRedirectUri(): string {
   }
 
   // Default fallback
-  return "http://localhost:3000/oauth/callback";
-}
-
-/**
- * Validates that a redirect URI is in the approved list
- */
-export function isValidRedirectUri(uri: string): boolean {
-  return REDIRECT_URIS.includes(uri as any);
+  return "http://localhost:6274/oauth/callback";
 }
