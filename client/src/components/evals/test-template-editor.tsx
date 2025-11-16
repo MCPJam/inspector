@@ -341,7 +341,7 @@ export function TestTemplateEditor({
 
   return (
     <ResizablePanelGroup direction="vertical" className="h-full">
-      <ResizablePanel defaultSize={60} minSize={30}>
+      <ResizablePanel defaultSize={40} minSize={20}>
         <div className="h-full overflow-auto">
           <div className="p-4 space-y-4">
             {/* Header with title and save button */}
@@ -661,7 +661,7 @@ export function TestTemplateEditor({
       {activeTab === "edit" && (
         <>
           <ResizableHandle withHandle />
-          <ResizablePanel defaultSize={40} minSize={20} maxSize={70}>
+          <ResizablePanel defaultSize={60} minSize={20} maxSize={80}>
             <TestResultsPanel
               iteration={currentQuickRunResult}
               testCase={currentTestCase}
