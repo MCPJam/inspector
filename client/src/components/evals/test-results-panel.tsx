@@ -1,4 +1,5 @@
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { IterationDetails } from "./iteration-details";
@@ -9,12 +10,14 @@ interface TestResultsPanelProps {
   iteration: EvalIteration | null;
   testCase: EvalCase | null;
   loading?: boolean;
+  onClear?: () => void;
 }
 
 export function TestResultsPanel({
   iteration,
   testCase,
   loading = false,
+  onClear,
 }: TestResultsPanelProps) {
   const hasResult = iteration !== null;
   const isPassed = iteration?.result === "passed";
@@ -69,6 +72,14 @@ export function TestResultsPanel({
               <span>Duration: {formatDuration(iteration.duration)}</span>
             )}
             <span>{formatTime(iteration.createdAt)}</span>
+            {onClear && (
+              <button
+                onClick={onClear}
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+              >
+                Clear
+              </button>
+            )}
           </div>
         )}
       </div>
