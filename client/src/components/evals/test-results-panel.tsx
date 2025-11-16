@@ -1,10 +1,6 @@
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { CheckCircle2, XCircle, Loader2, ChevronDown, ChevronRight } from "lucide-react";
-import { useState } from "react";
-import JsonView from "react18-json-view";
-import "react18-json-view/src/style.css";
+import { CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { IterationDetails } from "./iteration-details";
 import type { EvalIteration, EvalCase } from "./types";
 import { formatTime, formatDuration } from "./helpers";
@@ -20,9 +16,6 @@ export function TestResultsPanel({
   testCase,
   loading = false,
 }: TestResultsPanelProps) {
-  const [showRawJson, setShowRawJson] = useState(false);
-  const [isExpanded, setIsExpanded] = useState(true);
-
   const hasResult = iteration !== null;
   const isPassed = iteration?.result === "passed";
   const isFailed = iteration?.result === "failed";
@@ -33,9 +26,8 @@ export function TestResultsPanel({
   return (
     <div className="h-full flex flex-col border-t border-border bg-background">
       {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b border-border">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-border">
         <div className="flex items-center gap-4">
-          <h2 className="text-xs font-semibold text-foreground">Result</h2>
           {hasResult && !loading && (
             <>
               {isPassed && (
@@ -63,27 +55,26 @@ export function TestResultsPanel({
           )}
         </div>
         {hasResult && !loading && (
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant={!showRawJson ? "default" : "outline"}
-              onClick={() => setShowRawJson(false)}
-            >
-              Formatted
-            </Button>
-            <Button
-              size="sm"
-              variant={showRawJson ? "default" : "outline"}
-              onClick={() => setShowRawJson(true)}
-            >
-              Raw
-            </Button>
+          <div className="flex items-center gap-4 text-xs text-muted-foreground">
+            <span className="font-mono font-medium">
+              {modelName}
+            </span>
+            <span>
+              Tools: {iteration.actualToolCalls?.length || 0}
+            </span>
+            <span>
+              Tokens: {iteration.tokensUsed?.toLocaleString() || 0}
+            </span>
+            {iteration.duration && (
+              <span>Duration: {formatDuration(iteration.duration)}</span>
+            )}
+            <span>{formatTime(iteration.createdAt)}</span>
           </div>
         )}
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 overflow-hidden h-0">
         {loading ? (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
@@ -107,91 +98,10 @@ export function TestResultsPanel({
               </p>
             </div>
           </div>
-        ) : showRawJson ? (
-          // Raw JSON view
+        ) : (
           <ScrollArea className="h-full">
             <div className="p-4">
-              <JsonView
-                src={iteration}
-                dark={true}
-                theme="atom"
-                enableClipboard={true}
-                displaySize={false}
-                collapseStringsAfterLength={100}
-                style={{
-                  fontSize: "12px",
-                  fontFamily:
-                    "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                  backgroundColor: "hsl(var(--background))",
-                  padding: "16px",
-                  borderRadius: "8px",
-                  border: "1px solid hsl(var(--border))",
-                }}
-              />
-            </div>
-          </ScrollArea>
-        ) : (
-          // Formatted view
-          <ScrollArea className="h-full">
-            <div className="p-4 space-y-4">
-              {/* Summary Card */}
-              <div
-                className="rounded-lg border hover:bg-accent/50 transition-colors cursor-pointer"
-                onClick={() => setIsExpanded(!isExpanded)}
-              >
-                <div className="flex items-center gap-3 p-3">
-                  {/* Expand/Collapse Icon */}
-                  <div className="shrink-0">
-                    {isExpanded ? (
-                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                    ) : (
-                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                    )}
-                  </div>
-
-                  {/* Result Icon */}
-                  <div className="shrink-0">
-                    {isPending ? (
-                      <Loader2 className="h-4 w-4 animate-spin text-amber-600" />
-                    ) : isPassed ? (
-                      <CheckCircle2 className="h-4 w-4 text-green-600" />
-                    ) : isFailed ? (
-                      <XCircle className="h-4 w-4 text-red-600" />
-                    ) : null}
-                  </div>
-
-                  {/* Model & Stats */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 text-sm">
-                      <span className="font-mono font-medium truncate">
-                        {provider}/{modelName}
-                      </span>
-                      <Badge variant="outline" className="text-xs">
-                        {iteration.result}
-                      </Badge>
-                    </div>
-                    <div className="flex items-center gap-4 text-xs text-muted-foreground mt-1">
-                      <span>
-                        Tools: {iteration.actualToolCalls?.length || 0}
-                      </span>
-                      <span>
-                        Tokens: {iteration.tokensUsed?.toLocaleString() || 0}
-                      </span>
-                      {iteration.duration && (
-                        <span>Duration: {formatDuration(iteration.duration)}</span>
-                      )}
-                      <span>{formatTime(iteration.createdAt)}</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Expanded Details */}
-              {isExpanded && (
-                <div className="pl-2">
-                  <IterationDetails iteration={iteration} testCase={testCase} />
-                </div>
-              )}
+              <IterationDetails iteration={iteration} testCase={testCase} />
             </div>
           </ScrollArea>
         )}
