@@ -12,6 +12,17 @@ import { useTextareaCaretPosition } from "@/hooks/use-textarea-caret-position";
 import { PromptsPopover } from "./prompts-popover";
 import type { NamespacedPrompt } from "@/components/ChatTabV2";
 import type { PromptContentResponse } from "@/lib/mcp-prompts-api";
+import {
+  Context,
+  ContextTrigger,
+  ContextContent,
+  ContextContentHeader,
+  ContextContentBody,
+  ContextInputUsage,
+  ContextOutputUsage,
+  ContextMCPServerUsage,
+  ContextSystemPromptUsage,
+} from "./context";
 
 interface ChatInputProps {
   value: string;
@@ -36,6 +47,17 @@ interface ChatInputProps {
   onSelectMCPPrompt: (promptNamespacedName: string) => Promise<void>;
   promptResults: Record<string, PromptContentResponse>;
   onRemovePromptResult: (promptNamespacedName: string) => void;
+  tokenUsage?: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+  };
+  selectedServers?: string[];
+  mcpToolsTokenCount?: Record<string, number> | null;
+  mcpToolsTokenCountLoading?: boolean;
+  connectedServerConfigs?: Record<string, { name: string }>;
+  systemPromptTokenCount?: number | null;
+  systemPromptTokenCountLoading?: boolean;
 }
 
 export function ChatInput({
@@ -61,6 +83,13 @@ export function ChatInput({
   promptResults,
   onSelectMCPPrompt,
   onRemovePromptResult,
+  tokenUsage,
+  selectedServers,
+  mcpToolsTokenCount,
+  mcpToolsTokenCountLoading = false,
+  connectedServerConfigs,
+  systemPromptTokenCount,
+  systemPromptTokenCountLoading = false,
 }: ChatInputProps) {
   const formRef = useRef<HTMLFormElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -256,6 +285,78 @@ export function ChatInput({
               "pt-2 pb-3 text-base text-foreground placeholder:text-muted-foreground/70",
               "outline-none focus-visible:outline-none focus-visible:ring-0 shadow-none focus-visible:shadow-none",
               disabled ? "cursor-not-allowed text-muted-foreground" : "",
+          <div className="flex items-center gap-2">
+            <Context
+              usedTokens={tokenUsage?.totalTokens ?? 0}
+              usage={
+                tokenUsage && tokenUsage.totalTokens > 0
+                  ? {
+                      inputTokens: tokenUsage.inputTokens,
+                      outputTokens: tokenUsage.outputTokens,
+                      totalTokens: tokenUsage.totalTokens,
+                    }
+                  : undefined
+              }
+              modelId={`${currentModel.id}`}
+              selectedServers={selectedServers}
+              mcpToolsTokenCount={mcpToolsTokenCount}
+              mcpToolsTokenCountLoading={mcpToolsTokenCountLoading}
+              connectedServerConfigs={connectedServerConfigs}
+              systemPromptTokenCount={systemPromptTokenCount}
+              systemPromptTokenCountLoading={systemPromptTokenCountLoading}
+              hasMessages={hasMessages}
+            >
+              <ContextTrigger />
+              <ContextContent>
+                {hasMessages && tokenUsage && tokenUsage.totalTokens > 0 && (
+                  <ContextContentHeader />
+                )}
+                <ContextContentBody>
+                  {hasMessages && tokenUsage && tokenUsage.totalTokens > 0 && (
+                    <>
+                      <ContextInputUsage />
+                      <ContextOutputUsage />
+                    </>
+                  )}
+                  <ContextSystemPromptUsage />
+                  <ContextMCPServerUsage />
+                </ContextContentBody>
+              </ContextContent>
+            </Context>
+            {isLoading ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="destructive"
+                    className="size-[34px] rounded-full transition-colors bg-red-500 hover:bg-red-600"
+                    onClick={() => stop()}
+                  >
+                    <Square size={16} />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Stop generating</TooltipContent>
+              </Tooltip>
+            ) : (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="submit"
+                    size="icon"
+                    className={cn(
+                      "size-[34px] rounded-full transition-colors",
+                      value.trim() && !disabled && !submitDisabled
+                        ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                        : "bg-muted text-muted-foreground cursor-not-allowed",
+                    )}
+                    disabled={!value.trim() || disabled || submitDisabled}
+                  >
+                    <ArrowUp size={16} />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Send message</TooltipContent>
+              </Tooltip>
             )}
             autoFocus={!disabled}
           />

@@ -25,7 +25,7 @@ You need to set up at least one LLM to use the playground. Go to the settings ta
 
 Get an API key from [OpenAI Platform](https://platform.openai.com/api-keys).
 
-`gpt-4o`, `gpt-4o-mini`, `gpt-4-turbo`, `gpt-4`, `gpt-5`, `gpt-5-mini`, `gpt-5-nano`, `gpt-5-chat-latest`, `gpt-5-pro`, `gpt-5-codex`, `gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano`, `gpt-3.5-turbo`,`o3-mini`, `o3`, `o4-mini`, `o1`
+`gpt-4o`, `gpt-4o-mini`, `gpt-4-turbo`, `gpt-4`, `gpt-5.1`, `gpt-5.1-codex`, `gpt-5.1-codex-mini`, `gpt-5`, `gpt-5-mini`, `gpt-5-nano`, `gpt-5-chat-latest`, `gpt-5-pro`, `gpt-5-codex`, `gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano`, `gpt-3.5-turbo`,`o3-mini`, `o3`, `o4-mini`, `o1`
 
 <Note>
   GPT-5 models require organization verification. If you encounter access
@@ -43,7 +43,7 @@ Get an API key from [OpenAI Platform](https://platform.openai.com/api-keys).
 
 Get an API key from [Anthropic Console](https://console.anthropic.com/).
 
-`claude-opus-4-0`, `claude-sonnet-4-0`, `claude-3-7-sonnet-latest`, `claude-3-5-sonnet-latest`, `claude-3-5-haiku-latest`
+`claude-opus-4-1`, `claude-opus-4-0`, `claude-sonnet-4-5`, `claude-sonnet-4-0`, `claude-3-7-sonnet-latest`, `claude-haiku-4-5`, `claude-3-5-haiku-latest`
 
 ### Gemini
 
@@ -135,6 +135,35 @@ You can configure the system prompt and temperature, just like you would buildin
   />
 </Frame>
 
+## Playground layout
+
+The playground features a split-panel layout with:
+
+- **Chat panel** (left) - Your conversation with the LLM, including tool calls and results
+- **JSON-RPC logger** (right) - Real-time view of MCP protocol messages between Inspector and your servers
+
+You can resize the panels by dragging the divider between them. This layout helps you understand exactly how the LLM interacts with your MCP servers.
+
 ## Elicitation support
 
 MCPJam has elicitation support in the LLM playground. Any elicitation requests will be shown as a popup modal.
+
+## MCP-UI support
+
+The playground supports rendering custom UI components from MCP servers using the [MCP-UI specification](https://github.com/modelcontextprotocol/mcp-ui). When an MCP tool returns a UI resource, it will be rendered inline in the chat with interactive capabilities.
+
+MCP-UI components can:
+
+- Display rich, interactive visualizations
+- Trigger tool calls through button actions
+- Send follow-up messages to the chat
+- Open external links
+- Show notifications
+
+This enables MCP server developers to create custom user experiences beyond plain text responses.
+
+## OpenAI Apps SDK support
+
+The playground supports rendering custom UI components from MCP tools using the [OpenAI Apps SDK](https://developers.openai.com/apps-sdk). When a tool includes an `openai/outputTemplate` metadata field pointing to a resource URI, the playground will render the custom HTML interface in an isolated iframe with access to the `window.openai` API.
+
+This enables MCP servers to provide rich, interactive visualizations for tool results, including charts, forms, and custom widgets that can call other tools or send followup messages to the chat.

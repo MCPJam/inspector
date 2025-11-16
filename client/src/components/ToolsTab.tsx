@@ -103,8 +103,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     string,
     unknown
   > | null>(null);
-  const [lastToolCallTimestamp, setLastToolCallTimestamp] =
-    useState<Date | null>(null);
   const [savedRequests, setSavedRequests] = useState<SavedRequest[]>([]);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
   const [editingRequestId, setEditingRequestId] = useState<string | null>(null);
@@ -309,14 +307,12 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
 
     const executionStartTime = Date.now();
     const toolCallId = `tool-${executionStartTime}`;
-    const toolCallTimestamp = new Date();
 
     try {
       const params = buildParameters();
       setLastToolCallId(toolCallId);
       setLastToolName(selectedTool);
       setLastToolParameters(params);
-      setLastToolCallTimestamp(toolCallTimestamp);
 
       const response = await executeToolApi(serverName, selectedTool, params);
       handleExecutionResponse(response, selectedTool, executionStartTime);
@@ -515,7 +511,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                 toolCallId={lastToolCallId ?? undefined}
                 toolName={lastToolName ?? undefined}
                 toolParameters={lastToolParameters ?? undefined}
-                toolCallTimestamp={lastToolCallTimestamp ?? undefined}
                 toolMeta={getToolMeta(lastToolName)}
                 onExecuteFromUI={async (name, params) => {
                   if (!serverName) return { error: "No server selected" };

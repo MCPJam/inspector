@@ -66,14 +66,33 @@ We also have a Mac and Windows desktop app:
 Run MCPJam Inspector using Docker:
 
 ```bash
-# Run the latest version from Docker Hub
-docker run -p 3001:3001 mcpjam/mcp-inspector:latest
+# Using Docker Compose (recommended)
+docker-compose up -d
 
-# Or run in the background
-docker run -d -p 3001:3001 --name mcp-inspector mcpjam/mcp-inspector:latest
+# Or using Docker run
+docker run -d \
+  -p 6274:6274 \
+  --env-file .env.production \
+  -e NODE_ENV=production \
+  --add-host host.docker.internal:host-gateway \
+  --name mcp-inspector \
+  --restart unless-stopped \
+  mcpjam/mcp-inspector:latest
 ```
 
-The application will be available at `http://localhost:3001`.
+The application will be available at `http://127.0.0.1:6274`.
+
+**Important for macOS/Windows users:**
+
+- Access the app via `http://127.0.0.1:6274` (not `localhost`)
+- When connecting to MCP servers on your host machine, use `http://host.docker.internal:PORT` instead of `http://127.0.0.1:PORT`
+
+Example:
+
+```bash
+# Your MCP server runs on host at: http://127.0.0.1:8080/mcp
+# In Docker, configure it as: http://host.docker.internal:8080/mcp
+```
 
 # Key Features
 

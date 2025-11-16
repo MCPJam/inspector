@@ -45,12 +45,31 @@ if (!workosClientId) {
   );
 }
 
+const workosClientOptions = (() => {
+  if (typeof window === "undefined") return {};
+  const disableProxy =
+    (import.meta.env.VITE_WORKOS_DISABLE_LOCAL_PROXY as string | undefined) ===
+    "true";
+  if (!import.meta.env.DEV || disableProxy) return {};
+  const { protocol, hostname, port } = window.location;
+  const parsedPort = port ? Number(port) : undefined;
+  return {
+    apiHostname: hostname,
+    https: protocol === "https:",
+    ...(parsedPort ? { port: parsedPort } : {}),
+  };
+})();
+
 const convex = new ConvexReactClient(convexUrl);
 
 const root = createRoot(document.getElementById("root")!);
 
 const Providers = (
-  <AuthKitProvider clientId={workosClientId} redirectUri={workosRedirectUri}>
+  <AuthKitProvider
+    clientId={workosClientId}
+    redirectUri={workosRedirectUri}
+    {...workosClientOptions}
+  >
     <ConvexProviderWithAuthKit client={convex} useAuth={useAuth}>
       <App />
     </ConvexProviderWithAuthKit>

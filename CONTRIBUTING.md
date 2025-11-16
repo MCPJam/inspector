@@ -55,12 +55,6 @@ This runs:
 - **Client**: Vite dev server on `:3000`
 - **Server**: Hono dev server on `:3001`
 
-For Windows users, there's a specific script:
-
-```bash
-npm run dev:windows
-```
-
 ### Electron Development
 
 To run the Electron app in development mode:

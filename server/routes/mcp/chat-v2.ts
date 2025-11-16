@@ -196,6 +196,20 @@ chatV2.post("/", async (c) => {
 
             const finishReason: string | undefined = json.finishReason;
             if (finishReason && finishReason !== "tool-calls") {
+              writer.write({
+                type: "finish",
+                messageMetadata: {
+                  inputTokens:
+                    json.messages[json.messages.length - 1].metadata
+                      .inputTokens,
+                  outputTokens:
+                    json.messages[json.messages.length - 1].metadata
+                      .outputTokens,
+                  totalTokens:
+                    json.messages[json.messages.length - 1].metadata
+                      .totalTokens,
+                },
+              });
               break;
             }
           }
@@ -224,6 +238,15 @@ chatV2.post("/", async (c) => {
     });
 
     return result.toUIMessageStreamResponse({
+      messageMetadata: ({ part }) => {
+        if (part.type === "finish") {
+          return {
+            inputTokens: part.totalUsage.inputTokens,
+            outputTokens: part.totalUsage.outputTokens,
+            totalTokens: part.totalUsage.totalTokens,
+          };
+        }
+      },
       onError: (error) => {
         console.error("[mcp/chat-v2] stream error:", error);
         // Return detailed error message to be sent to the client

@@ -461,6 +461,10 @@ resources.get("/widget-content/:toolId", async (c) => {
       "https://cdn.jsdelivr.net",
       "https://cdnjs.cloudflare.com",
       "https://cdn.skypack.dev",
+      "https://apps-sdk-widgets.vercel.app",
+      "https://dynamic.heygen.ai",
+      "https://static.heygen.ai",
+      "https://files2.heygen.ai",
     ].join(" ");
 
     c.header(
