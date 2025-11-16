@@ -26,13 +26,13 @@ export interface PromptsServerMap {
 }
 
 const parseOrThrow = async (res: Response) => {
-    try {
-        return await res.json();
-    } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        throw new Error(`Failed to parse response: ${message}`);
-    }
-}
+  try {
+    return await res.json();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`Failed to parse response: ${message}`);
+  }
+};
 
 export async function listPrompts(
   serverId: string,
@@ -52,11 +52,7 @@ export async function listPrompts(
   }
 
   // Minimal runtime check
-  if (
-    !body ||
-    typeof body !== "object" ||
-    !Array.isArray(body.prompts)
-  ) {
+  if (!body || typeof body !== "object" || !Array.isArray(body.prompts)) {
     throw new Error("Invalid list prompts response shape");
   }
 
@@ -96,7 +92,9 @@ export async function getPromptContent(
   return result;
 }
 
-export const getPromptsByServerIds = async (serverIds: string[]): Promise<PromptsServerMap> => {
+export const getPromptsByServerIds = async (
+  serverIds: string[],
+): Promise<PromptsServerMap> => {
   const promptsByServerId: Record<string, MCPPrompt[]> = {};
   await Promise.all(
     serverIds.map(async (serverId) => {
@@ -105,5 +103,4 @@ export const getPromptsByServerIds = async (serverIds: string[]): Promise<Prompt
     }),
   );
   return promptsByServerId;
-}
-
+};

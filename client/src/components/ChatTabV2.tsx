@@ -41,7 +41,12 @@ import { Thread } from "@/components/chat-v2/thread";
 import { PromptsArgumentsDialog } from "@/components/chat-v2/prompts-arguments-dialog";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { getToolsMetadata, ToolServerMap } from "@/lib/mcp-tools-api";
-import { getPromptsByServerIds, getPromptContent, PromptContentResponse, PromptsServerMap } from "@/lib/mcp-prompts-api";
+import {
+  getPromptsByServerIds,
+  getPromptContent,
+  PromptContentResponse,
+  PromptsServerMap,
+} from "@/lib/mcp-prompts-api";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
 import { ConnectMcpServerCallout } from "@/components/chat-v2/connect-mcp-server-callout";
 import { usePostHog } from "posthog-js/react";
@@ -116,11 +121,13 @@ export function ChatTabV2({
     Record<string, Record<string, any>>
   >({});
   const [toolServerMap, setToolServerMap] = useState<ToolServerMap>({});
-  const [promptsServerMap, setPromptsServerMap] = useState<PromptsServerMap>({});
+  const [promptsServerMap, setPromptsServerMap] = useState<PromptsServerMap>(
+    {},
+  );
   const flatNamespacedPromptList = useMemo(() => {
     const namespacedPrompts: NamespacedPrompt[] = [];
     const serverNames = Object.keys(promptsServerMap);
-    for ( const serverName of serverNames) {
+    for (const serverName of serverNames) {
       const prompts = promptsServerMap[serverName];
       prompts.forEach((prompt) => {
         const namespacedName = `${serverName}/${prompt.name}`;
@@ -132,12 +139,15 @@ export function ChatTabV2({
     }
     return namespacedPrompts;
   }, [promptsServerMap]);
-  const [promptResults, setPromptResults] = useState<Record<string, PromptContentResponse>>({});
+  const [promptResults, setPromptResults] = useState<
+    Record<string, PromptContentResponse>
+  >({});
   const [isPromptArgsDialogOpen, setIsPromptArgsDialogOpen] = useState(false);
-  const [selectedPromptForArgsDialog, setSelectedPromptForArgsDialog] = useState<{
-    promptNamespacedName: string;
-    args: MCPPrompt["arguments"];
-  } | null>(null);
+  const [selectedPromptForArgsDialog, setSelectedPromptForArgsDialog] =
+    useState<{
+      promptNamespacedName: string;
+      args: MCPPrompt["arguments"];
+    } | null>(null);
   const availableModels = useMemo(() => {
     return buildAvailableModels({
       hasToken,
@@ -404,6 +414,25 @@ export function ChatTabV2({
     signUp();
   };
 
+  const formatPromptContext = (): string => {
+    const entries = Object.entries(promptResults);
+    if (entries.length === 0) return "";
+
+    const formatted = entries
+      .map(([name, result]) => {
+        const description = result.description
+          ? `${result.description}\n\n`
+          : "";
+        const msgText = result.messages
+          .map((m) => `${m.role}: ${m.content.text}`)
+          .join("\n");
+        return `[Prompt: ${name}]\n${description}${msgText}`;
+      })
+      .join("\n\n");
+
+    return formatted + "\n\n---\n\n";
+  };
+
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (
@@ -420,46 +449,77 @@ export function ChatTabV2({
         model_name: selectedModel?.name ?? null,
         model_provider: selectedModel?.provider ?? null,
       });
-      sendMessage({ text: input });
+
+      const promptContext = formatPromptContext();
+      sendMessage({ text: promptContext + input });
+
       setInput("");
+      setPromptResults({});
     }
   };
 
-  const onSelectMCPPrompt = async (promptNamespacedName: string): Promise<void> => {
-    const selectedPrompt = flatNamespacedPromptList.find((prompt) => prompt.namespacedName === promptNamespacedName);
-    if (!selectedPrompt) {
-      return;
+  const onSelectMCPPrompt = async (
+    promptNamespacedName: string,
+  ): Promise<void> => {
+    try {
+      const selectedPrompt = flatNamespacedPromptList.find(
+        (prompt) => prompt.namespacedName === promptNamespacedName,
+      );
+      if (!selectedPrompt) {
+        return;
+      }
+      if (selectedPrompt.arguments && selectedPrompt.arguments.length > 0) {
+        // let the prompt arguments dialog handle the request
+        setSelectedPromptForArgsDialog({
+          promptNamespacedName,
+          args: selectedPrompt.arguments,
+        });
+        setIsPromptArgsDialogOpen(true);
+        return;
+      }
+      const [serverId, promptName] = promptNamespacedName.split("/");
+      const EMPTY_ARGS = {};
+      const promptResult = await getPromptContent(
+        serverId,
+        promptName,
+        EMPTY_ARGS,
+      );
+      setPromptResults((prev) => ({
+        ...prev,
+        [promptNamespacedName]: promptResult,
+      }));
+    } catch (error) {
+      console.error("[ChatTabV2] Failed to select MCP prompt", error);
     }
-    if (selectedPrompt.arguments && selectedPrompt.arguments.length > 0) {
-      setSelectedPromptForArgsDialog({ promptNamespacedName, args: selectedPrompt.arguments });
-      setIsPromptArgsDialogOpen(true);
-      return;
-    }
-    const [serverId, promptName] = promptNamespacedName.split("/");
-    const EMPTY_ARGS = {};
-    const promptResult = await getPromptContent(
-      serverId,
-      promptName,
-      EMPTY_ARGS,
-    )
-    setPromptResults((prev) => ({
-      ...prev,
-      [promptNamespacedName]: promptResult,
-    }));
-  }
+  };
 
-  const onPromptArgsDialogSubmit = async (promptNamespacedName: string, values: Record<string, string>): Promise<void> => {
-    const prompt = flatNamespacedPromptList.find((prompt) => prompt.namespacedName === promptNamespacedName);
-    if (!prompt) {
-      return;
+  const onPromptArgsDialogSubmit = async (
+    promptNamespacedName: string,
+    values: Record<string, string>,
+  ): Promise<void> => {
+    try {
+      const prompt = flatNamespacedPromptList.find(
+        (prompt) => prompt.namespacedName === promptNamespacedName,
+      );
+      if (!prompt) {
+        return;
+      }
+      const [serverId, promptName] = promptNamespacedName.split("/");
+      const promptResult = await getPromptContent(serverId, promptName, values);
+      setPromptResults((prev) => ({
+        ...prev,
+        [promptNamespacedName]: promptResult,
+      }));
+      // Clear dialog state and close
+      setSelectedPromptForArgsDialog(null);
+      setIsPromptArgsDialogOpen(false);
+    } catch (error) {
+      console.error(
+        "[ChatTabV2] Failed to submit prompt arguments dialog",
+        error,
+      );
     }
-    const [serverId, promptName] = promptNamespacedName.split("/");
-    const promptResult = await getPromptContent(serverId, promptName, values);
-    setPromptResults((prev) => ({ ...prev, [promptNamespacedName]: promptResult }));
-    // Clear dialog state and close
-    setSelectedPromptForArgsDialog(null);
-    setIsPromptArgsDialogOpen(false);
-  }
+  };
 
   const handleStarterPrompt = (prompt: string) => {
     if (submitBlocked || inputDisabled) {
@@ -611,12 +671,14 @@ export function ChatTabV2({
               onResponse={handleElicitationResponse}
               loading={elicitationLoading}
             />
-            {selectedPromptForArgsDialog && <PromptsArgumentsDialog
-              {...selectedPromptForArgsDialog}
-              onSubmit={onPromptArgsDialogSubmit}
-              open={isPromptArgsDialogOpen}
-              onOpenChange={setIsPromptArgsDialogOpen}
-            />}
+            {selectedPromptForArgsDialog && (
+              <PromptsArgumentsDialog
+                {...selectedPromptForArgsDialog}
+                onSubmit={onPromptArgsDialogSubmit}
+                open={isPromptArgsDialogOpen}
+                onOpenChange={setIsPromptArgsDialogOpen}
+              />
+            )}
           </div>
         </ResizablePanel>
 
