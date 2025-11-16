@@ -56,7 +56,7 @@ export function PassCriteriaBadge({
               {passed ? "✓ Suite Passed" : "✗ Suite Failed"}
             </div>
             <div className="text-muted-foreground">
-              Required: {minimumPassRate}% pass rate
+              Required: {minimumPassRate}% Accuracy
             </div>
             <div className="text-muted-foreground">
               Actual: {passRate.toFixed(1)}%
@@ -85,12 +85,12 @@ export function PassCriteriaBadge({
         <div className="flex items-center gap-2">
           <span className="text-muted-foreground">Criteria:</span>
           <Badge variant="outline" className="text-xs">
-            Min {minimumPassRate}% pass rate
+            Min {minimumPassRate}% Accuracy
           </Badge>
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="text-muted-foreground">Pass Rate:</span>
+          <span className="text-muted-foreground">Accuracy:</span>
           <span className="font-mono">
             {passRate.toFixed(1)}%
           </span>
