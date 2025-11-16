@@ -1102,7 +1102,25 @@ export function SuiteIterationsView({
         {/* Header with actions */}
         {activeTab === "edit" ? (
         <div className="flex items-center justify-between gap-4 mb-4">
-            <h2 className="text-lg font-semibold">Edit Test Suite</h2>
+            {isEditingName ? (
+              <input
+                type="text"
+                value={editedName}
+                onChange={(e) => setEditedName(e.target.value)}
+                onBlur={handleNameBlur}
+                onKeyDown={handleNameKeyDown}
+                autoFocus
+                className="px-3 py-2 text-lg font-semibold border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+            ) : (
+              <Button
+                variant="ghost"
+                onClick={handleNameClick}
+                className="px-3 py-2 h-auto text-lg font-semibold hover:bg-accent"
+              >
+                {suite.name}
+              </Button>
+            )}
           </div>
         ) : viewMode === "run-detail" && selectedRunDetails ? (
           <div className="flex items-center justify-between gap-4 mb-4">

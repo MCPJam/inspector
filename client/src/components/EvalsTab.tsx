@@ -578,7 +578,7 @@ export function EvalsTab() {
         const suiteDefault = suite.defaultPassCriteria?.minimumPassRate;
         const latestRun = selectedSuiteEntry?.latestRun;
         const minimumPassRate = suiteDefault ?? latestRun?.passCriteria?.minimumPassRate ?? 100;
-        const criteriaNote = `Pass Criteria: Min ${minimumPassRate}% pass rate`;
+        const criteriaNote = `Pass Criteria: Min ${minimumPassRate}% Accuracy`;
 
         const response = await fetch("/api/mcp/evals/run", {
           method: "POST",

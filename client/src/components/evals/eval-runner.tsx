@@ -491,7 +491,7 @@ export function EvalRunner({
       });
 
       // Build pass criteria description for notes
-      const criteriaNote = `Pass Criteria: Min ${minimumPassRate}% pass rate`;
+      const criteriaNote = `Pass Criteria: Min ${minimumPassRate}% Accuracy`;
 
       const response = await fetch("/api/mcp/evals/run", {
         method: "POST",

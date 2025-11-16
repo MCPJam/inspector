@@ -1,5 +1,6 @@
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useState } from "react";
 
 interface PassCriteriaSelectorProps {
   minimumPassRate: number;
@@ -10,31 +11,45 @@ export function PassCriteriaSelector({
   minimumPassRate,
   onMinimumPassRateChange,
 }: PassCriteriaSelectorProps) {
-  return (
-    <div className="space-y-4 rounded-lg border bg-muted/30 p-4">
-      <div>
-        <h3 className="text-sm font-medium">Pass/Fail Criteria</h3>
-        <p className="text-xs text-muted-foreground mt-1">
-          Define when this evaluation run should be considered successful
-        </p>
-      </div>
+  const [editedValue, setEditedValue] = useState(minimumPassRate.toString());
 
-      <div className="space-y-2">
-        <Label className="text-xs">Minimum Pass Rate (%)</Label>
+  const handleBlur = () => {
+    const numValue = Number(editedValue);
+    if (!isNaN(numValue)) {
+      const clampedValue = Math.max(0, Math.min(100, numValue));
+      onMinimumPassRateChange(clampedValue);
+      setEditedValue(clampedValue.toString());
+    } else {
+      // Reset to current value if invalid
+      setEditedValue(minimumPassRate.toString());
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      handleBlur();
+      (e.target as HTMLInputElement).blur();
+    } else if (e.key === "Escape") {
+      setEditedValue(minimumPassRate.toString());
+      (e.target as HTMLInputElement).blur();
+    }
+  };
+
+  return (
+    <div className="flex items-center justify-between gap-4 rounded-lg border bg-muted/30 p-4">
+      <Label className="text-sm font-medium">Pass/Fail Criteria</Label>
+      <div className="flex items-center gap-2">
         <Input
           type="number"
           min={0}
           max={100}
-          value={minimumPassRate}
-          onChange={(e) =>
-            onMinimumPassRateChange(
-              Math.max(0, Math.min(100, Number(e.target.value)))
-            )
-          }
+          value={editedValue}
+          onChange={(e) => setEditedValue(e.target.value)}
+          onBlur={handleBlur}
+          onKeyDown={handleKeyDown}
+          className="w-20 text-center"
         />
-        <p className="text-xs text-muted-foreground">
-          Suite passes if {minimumPassRate}% or more of all test iterations pass
-        </p>
+        <span className="text-sm text-muted-foreground">% Accuracy</span>
       </div>
     </div>
   );
