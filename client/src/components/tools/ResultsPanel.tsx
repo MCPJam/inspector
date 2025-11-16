@@ -2,7 +2,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { ToolExecutionResponse } from "@/lib/mcp-tools-api";
 import { UIResourceRenderer } from "@mcp-ui/client";
 import { CheckCircle, XCircle } from "lucide-react";
-import { OpenAIComponentRenderer } from "../chat/openai-component-renderer";
+import { OpenAIAppRenderer } from "../chat-v2/openai-app-renderer";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
@@ -74,7 +74,6 @@ interface ResultsPanelProps {
   toolCallId?: string;
   toolName?: string;
   toolParameters?: Record<string, unknown>;
-  toolCallTimestamp?: Date;
   toolMeta?: Record<string, any>; // Tool metadata from definition (_meta field)
 }
 
@@ -93,7 +92,6 @@ export function ResultsPanel({
   toolCallId,
   toolName,
   toolParameters,
-  toolCallTimestamp,
   toolMeta,
 }: ResultsPanelProps) {
   const rawResult = result as unknown as Record<string, unknown> | null;
@@ -231,21 +229,15 @@ export function ResultsPanel({
           (() => {
             if (!showStructured && hasOpenAIComponent && openaiOutputTemplate) {
               return (
-                <OpenAIComponentRenderer
-                  componentUrl={openaiOutputTemplate}
-                  toolCall={{
-                    id: toolCallId || "tool-result",
-                    name: toolName || "tool",
-                    parameters: toolParameters || {},
-                    timestamp: toolCallTimestamp || new Date(),
-                    status: "completed",
-                  }}
-                  toolResult={{
-                    id: `${toolCallId || "tool-result"}-result`,
-                    toolCallId: toolCallId || "tool-result",
-                    result: rawResult,
-                    timestamp: new Date(),
-                  }}
+                <OpenAIAppRenderer
+                  serverId={serverId || "unknown-server"}
+                  toolCallId={toolCallId}
+                  toolName={toolName}
+                  toolState="output-available"
+                  toolInput={toolParameters || null}
+                  toolOutput={rawResult}
+                  toolMetadata={toolMeta}
+                  onSendFollowUp={onSendFollowup}
                   onCallTool={async (invocationToolName, params) => {
                     const toolResponse = await onExecuteFromUI(
                       invocationToolName,
@@ -281,8 +273,6 @@ export function ResultsPanel({
                       error: "Elicitation not supported in this context",
                     };
                   }}
-                  onSendFollowup={onSendFollowup}
-                  serverId={serverId}
                 />
               );
             }
