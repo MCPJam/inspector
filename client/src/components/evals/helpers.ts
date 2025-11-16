@@ -5,6 +5,27 @@ export function formatTime(ts?: number) {
   return ts ? new Date(ts).toLocaleString() : "—";
 }
 
+export function formatDuration(durationMs: number) {
+  if (durationMs < 1000) {
+    return `${durationMs}ms`;
+  }
+
+  const totalSeconds = Math.round(durationMs / 1000);
+  if (totalSeconds < 60) {
+    return `${totalSeconds}s`;
+  }
+
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) {
+    return seconds ? `${minutes}m ${seconds}s` : `${minutes}m`;
+  }
+
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+}
+
 export function formatRunId(runId: string): string {
   // Format Convex ID for display (e.g., "j1234567890abcdef" -> "j1234567")
   return runId.substring(0, 8);
