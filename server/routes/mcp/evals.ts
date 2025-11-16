@@ -398,6 +398,17 @@ evals.post("/run-test-case", async (c) => {
     );
     const latestIteration = recentIterations?.[0] || null;
 
+    // Save this iteration as the last message run
+    if (latestIteration?._id) {
+      await convexClient.mutation(
+        "evals:setLastMessageRun" as any,
+        {
+          testCaseId,
+          iterationId: latestIteration._id,
+        }
+      );
+    }
+
     return c.json({
       success: true,
       message: "Test case completed successfully",

@@ -108,12 +108,33 @@ export function TestTemplateEditor({
   }) as any[] | undefined;
 
   const updateTestCaseMutation = useMutation("evals:updateTestCase" as any);
+  const clearLastMessageRunMutation = useMutation("evals:clearLastMessageRun" as any);
 
   // Find the test case
   const currentTestCase = useMemo(() => {
     if (!testCases) return null;
     return testCases.find((tc: any) => tc._id === selectedTestCaseId) || null;
   }, [testCases, selectedTestCaseId]);
+
+  // Fetch the lastMessageRun iteration if it exists
+  const lastMessageRunId = currentTestCase?.lastMessageRun;
+  const lastMessageRunIteration = useQuery(
+    "evals:getIteration" as any,
+    lastMessageRunId ? { iterationId: lastMessageRunId } : "skip"
+  ) as any | undefined;
+
+  // Clear and reload currentQuickRunResult when test case changes
+  useEffect(() => {
+    // Clear the result when switching test cases
+    setCurrentQuickRunResult(null);
+  }, [selectedTestCaseId]);
+
+  // Load lastMessageRun into currentQuickRunResult when it's available
+  useEffect(() => {
+    if (lastMessageRunIteration) {
+      setCurrentQuickRunResult(lastMessageRunIteration);
+    }
+  }, [lastMessageRunIteration]);
 
   // Sync editedTitle when currentTestCase changes
   useEffect(() => {
@@ -318,6 +339,21 @@ export function TestTemplateEditor({
       );
     } finally {
       setIsRunning(false);
+    }
+  };
+
+  const handleClearResult = async () => {
+    if (!currentTestCase) return;
+
+    try {
+      await clearLastMessageRunMutation({
+        testCaseId: currentTestCase._id,
+      });
+      setCurrentQuickRunResult(null);
+      toast.success("Result cleared");
+    } catch (error) {
+      console.error("Failed to clear result:", error);
+      toast.error("Failed to clear result");
     }
   };
 
@@ -666,6 +702,7 @@ export function TestTemplateEditor({
               iteration={currentQuickRunResult}
               testCase={currentTestCase}
               loading={isRunning}
+              onClear={handleClearResult}
             />
           </ResizablePanel>
         </>
