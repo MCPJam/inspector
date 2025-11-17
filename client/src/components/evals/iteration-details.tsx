@@ -3,13 +3,16 @@ import { useEffect, useState } from "react";
 import { EvalIteration, EvalCase } from "./types";
 import { TraceViewer } from "./trace-viewer";
 import { MessageSquare, Code2 } from "lucide-react";
+import { getToolsMetadata, ToolServerMap } from "@/lib/mcp-tools-api";
 
 export function IterationDetails({
   iteration,
   testCase,
+  serverNames = [],
 }: {
   iteration: EvalIteration;
   testCase: EvalCase | null;
+  serverNames?: string[];
 }) {
   const getBlob = useAction(
     "testSuites:getTestIterationBlob" as any,
@@ -21,6 +24,10 @@ export function IterationDetails({
   const [toolViewMode, setToolViewMode] = useState<"formatted" | "raw">(
     "formatted",
   );
+  const [toolsMetadata, setToolsMetadata] = useState<
+    Record<string, Record<string, any>>
+  >({});
+  const [toolServerMap, setToolServerMap] = useState<ToolServerMap>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -50,6 +57,30 @@ export function IterationDetails({
       cancelled = true;
     };
   }, [iteration.blob, getBlob]);
+
+  useEffect(() => {
+    const fetchToolsMetadata = async () => {
+      if (serverNames.length === 0) {
+        setToolsMetadata({});
+        setToolServerMap({});
+        return;
+      }
+      try {
+        // Filter to only connected servers to avoid 404 errors
+        // In evals, serverNames might contain servers that aren't currently connected
+        const { metadata, toolServerMap } = await getToolsMetadata(serverNames);
+        setToolsMetadata(metadata);
+        setToolServerMap(toolServerMap);
+      } catch (error) {
+        // Silently fail if servers aren't connected
+        // This is expected in evals where servers may not be running
+        console.debug("Could not fetch tools metadata (servers may not be connected):", error);
+        setToolsMetadata({});
+        setToolServerMap({});
+      }
+    };
+    fetchToolsMetadata();
+  }, [serverNames]);
 
   const expectedToolCalls =
     testCase?.expectedToolCalls ||
@@ -233,6 +264,8 @@ export function IterationDetails({
                   iteration.testCaseSnapshot?.provider ||
                   "openai"
                 }
+                toolsMetadata={toolsMetadata}
+                toolServerMap={toolServerMap}
               />
             )}
           </div>

@@ -11,6 +11,7 @@ interface TestResultsPanelProps {
   testCase: EvalCase | null;
   loading?: boolean;
   onClear?: () => void;
+  serverNames?: string[];
 }
 
 export function TestResultsPanel({
@@ -18,6 +19,7 @@ export function TestResultsPanel({
   testCase,
   loading = false,
   onClear,
+  serverNames = [],
 }: TestResultsPanelProps) {
   const hasResult = iteration !== null;
   const isPassed = iteration?.result === "passed";
@@ -78,7 +80,7 @@ export function TestResultsPanel({
         ) : (
           <ScrollArea className="h-full">
             <div className="p-3">
-              <IterationDetails iteration={iteration} testCase={testCase} />
+              <IterationDetails iteration={iteration} testCase={testCase} serverNames={serverNames} />
             </div>
           </ScrollArea>
         )}

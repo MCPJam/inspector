@@ -20,6 +20,7 @@ interface TestCaseDetailViewProps {
   runs: EvalSuiteRun[];
   onBack: () => void;
   onViewRun?: (runId: string) => void;
+  serverNames?: string[];
 }
 
 export function TestCaseDetailView({
@@ -28,6 +29,7 @@ export function TestCaseDetailView({
   runs,
   onBack,
   onViewRun,
+  serverNames = [],
 }: TestCaseDetailViewProps) {
   const [openIterationId, setOpenIterationId] = useState<string | null>(null);
 
@@ -365,7 +367,7 @@ export function TestCaseDetailView({
                   </button>
                   {isOpen && (
                     <div className="border-t bg-muted/20 px-4 pb-4 pt-3 pl-8">
-                      <IterationDetails iteration={iteration} />
+                      <IterationDetails iteration={iteration} testCase={testCase} serverNames={serverNames} />
                     </div>
                   )}
                 </div>

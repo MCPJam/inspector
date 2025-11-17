@@ -520,6 +520,7 @@ export function TestTemplateEditor({
           testCase={currentTestCase}
           loading={isRunning}
           onClear={handleClearResult}
+          serverNames={(suite?.environment?.servers || []).filter(name => connectedServerNames.has(name))}
         />
       </ResizablePanel>
     </ResizablePanelGroup>

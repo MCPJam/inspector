@@ -331,6 +331,7 @@ export function SuiteIterationsView({
                   testCase={selectedCase}
                   iterations={caseIterations}
                   runs={runs}
+                  serverNames={(suite.environment?.servers || []).filter(name => connectedServerNames.has(name))}
                   onBack={() => {
                     navigateToEvalsRoute({
                       type: "suite-overview",
@@ -404,6 +405,7 @@ export function SuiteIterationsView({
               onSortChange={setRunDetailSortBy}
               showRunSummarySidebar={showRunSummarySidebar}
               setShowRunSummarySidebar={setShowRunSummarySidebar}
+              serverNames={(suite.environment?.servers || []).filter(name => connectedServerNames.has(name))}
             />
           ) : null}
         </div>
