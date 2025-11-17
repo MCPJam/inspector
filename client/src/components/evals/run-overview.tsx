@@ -145,7 +145,11 @@ export function RunOverview({
                 config={modelChartConfig}
                 className="aspect-auto h-32 w-full"
               >
-                <BarChart data={modelStats} width={undefined} height={undefined}>
+                <BarChart
+                  data={modelStats}
+                  width={undefined}
+                  height={undefined}
+                >
                   <CartesianGrid
                     strokeDasharray="3 3"
                     vertical={false}
@@ -177,7 +181,8 @@ export function RunOverview({
                   <ChartTooltip
                     cursor={false}
                     content={({ active, payload }) => {
-                      if (!active || !payload || payload.length === 0) return null;
+                      if (!active || !payload || payload.length === 0)
+                        return null;
                       const data = payload[0].payload;
                       return (
                         <div className="rounded-lg border bg-background p-2 shadow-sm">
@@ -193,7 +198,9 @@ export function RunOverview({
                             <div className="flex items-center gap-2">
                               <div
                                 className="h-2 w-2 rounded-full"
-                                style={{ backgroundColor: "var(--color-passRate)" }}
+                                style={{
+                                  backgroundColor: "var(--color-passRate)",
+                                }}
                               />
                               <span className="text-sm font-semibold">
                                 {data.passRate}%
@@ -286,24 +293,28 @@ export function RunOverview({
           ) : (
             runs.map((run) => {
               const runIterations = allIterations.filter(
-                (iter) => iter.suiteRunId === run._id
+                (iter) => iter.suiteRunId === run._id,
               );
               const realTimePassed = runIterations.filter(
-                (i) => i.result === "passed"
+                (i) => i.result === "passed",
               ).length;
               const realTimeFailed = runIterations.filter(
-                (i) => i.result === "failed"
+                (i) => i.result === "failed",
               ).length;
               const realTimeTotal = runIterations.length;
               const totalTokens = runIterations.reduce(
                 (sum, iter) => sum + (iter.tokensUsed || 0),
-                0
+                0,
               );
 
               const passed =
-                realTimePassed > 0 ? realTimePassed : (run.summary?.passed ?? 0);
+                realTimePassed > 0
+                  ? realTimePassed
+                  : (run.summary?.passed ?? 0);
               const failed =
-                realTimeFailed > 0 ? realTimeFailed : (run.summary?.failed ?? 0);
+                realTimeFailed > 0
+                  ? realTimeFailed
+                  : (run.summary?.failed ?? 0);
               const total =
                 realTimeTotal > 0 ? realTimeTotal : (run.summary?.total ?? 0);
               const passRate =
@@ -315,8 +326,8 @@ export function RunOverview({
                 run.completedAt && run.createdAt
                   ? formatDuration(run.completedAt - run.createdAt)
                   : run.createdAt && run.status === "running"
-                  ? formatDuration(Date.now() - run.createdAt)
-                  : "—";
+                    ? formatDuration(Date.now() - run.createdAt)
+                    : "—";
 
               const isInactive = run.isActive === false;
 
@@ -327,8 +338,8 @@ export function RunOverview({
                     ? "passed"
                     : "failed"
                   : run.status === "cancelled"
-                  ? "cancelled"
-                  : "pending");
+                    ? "cancelled"
+                    : "pending");
               const runBorderColor = getIterationBorderColor(runResult);
 
               const isSelected = selectedRunIds.has(run._id);
@@ -377,7 +388,7 @@ export function RunOverview({
                   key={run._id}
                   className={cn(
                     "relative overflow-hidden",
-                    isInactive && "opacity-50"
+                    isInactive && "opacity-50",
                   )}
                 >
                   <div
@@ -403,12 +414,16 @@ export function RunOverview({
       </div>
 
       {/* Batch Delete Confirmation Modal */}
-      <Dialog open={showBatchDeleteModal} onOpenChange={setShowBatchDeleteModal}>
+      <Dialog
+        open={showBatchDeleteModal}
+        onOpenChange={setShowBatchDeleteModal}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Trash2 className="h-5 w-5 text-destructive" />
-              Delete {selectedRunIds.size} Run{selectedRunIds.size !== 1 ? "s" : ""}
+              Delete {selectedRunIds.size} Run
+              {selectedRunIds.size !== 1 ? "s" : ""}
             </DialogTitle>
             <DialogDescription>
               Are you sure you want to delete {selectedRunIds.size} run

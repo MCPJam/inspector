@@ -23,13 +23,10 @@ export function LoadingState({
   return (
     <div className={cn("flex items-center justify-center p-6", className)}>
       <div className="text-center">
-        <Loader2 className={cn(
-          "mx-auto animate-spin text-primary",
-          sizeMap[size]
-        )} />
-        {title && (
-          <p className="mt-4 font-medium text-foreground">{title}</p>
-        )}
+        <Loader2
+          className={cn("mx-auto animate-spin text-primary", sizeMap[size])}
+        />
+        {title && <p className="mt-4 font-medium text-foreground">{title}</p>}
         {description && (
           <p className="mt-2 text-sm text-muted-foreground">{description}</p>
         )}
@@ -42,9 +39,7 @@ export function LoadingState({
  * Inline loading spinner for smaller contexts
  */
 export function LoadingSpinner({ className }: { className?: string }) {
-  return (
-    <Loader2 className={cn("h-4 w-4 animate-spin", className)} />
-  );
+  return <Loader2 className={cn("h-4 w-4 animate-spin", className)} />;
 }
 
 /**

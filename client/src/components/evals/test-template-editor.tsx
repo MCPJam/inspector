@@ -31,7 +31,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useAiProviderKeys, type ProviderTokens } from "@/hooks/use-ai-provider-keys";
+import {
+  useAiProviderKeys,
+  type ProviderTokens,
+} from "@/hooks/use-ai-provider-keys";
 import { isMCPJamProvidedModel } from "@/shared/types";
 
 interface TestTemplate {
@@ -49,7 +52,12 @@ interface TestTemplateEditorProps {
   suiteId: string;
   selectedTestCaseId: string;
   // Run History props
-  selectedTestTrendData?: Array<{ runId: string; runIdDisplay: string; passRate: number; label: string }>;
+  selectedTestTrendData?: Array<{
+    runId: string;
+    runIdDisplay: string;
+    passRate: number;
+    label: string;
+  }>;
   iterationsForSelectedTest?: EvalIteration[];
   selectedTestDetails?: {
     testCase: EvalCase | null;
@@ -98,7 +106,9 @@ export function TestTemplateEditor({
   >([]);
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [isRunning, setIsRunning] = useState(false);
-  const [currentQuickRunResult, setCurrentQuickRunResult] = useState<any | null>(null);
+  const [currentQuickRunResult, setCurrentQuickRunResult] = useState<
+    any | null
+  >(null);
   const [openIterationId, setOpenIterationId] = useState<string | null>(null);
 
   // Get all test cases for this suite
@@ -106,7 +116,9 @@ export function TestTemplateEditor({
     suiteId,
   }) as any[] | undefined;
 
-  const updateTestCaseMutation = useMutation("testSuites:updateTestCase" as any);
+  const updateTestCaseMutation = useMutation(
+    "testSuites:updateTestCase" as any,
+  );
 
   // Find the test case
   const currentTestCase = useMemo(() => {
@@ -118,7 +130,7 @@ export function TestTemplateEditor({
   const lastMessageRunId = currentTestCase?.lastMessageRun;
   const lastMessageRunIteration = useQuery(
     "testSuites:getTestIteration" as any,
-    lastMessageRunId ? { iterationId: lastMessageRunId } : "skip"
+    lastMessageRunId ? { iterationId: lastMessageRunId } : "skip",
   ) as any | undefined;
 
   // Clear and reload currentQuickRunResult when test case changes
@@ -157,7 +169,10 @@ export function TestTemplateEditor({
   }, [currentTestCase, activeTab]);
 
   // Get suite config for servers (to fetch available tools)
-  const suiteConfig = useQuery("testSuites:getTestSuitesOverview" as any, {}) as any;
+  const suiteConfig = useQuery(
+    "testSuites:getTestSuitesOverview" as any,
+    {},
+  ) as any;
   const suite = useMemo(() => {
     if (!suiteConfig) return null;
     return suiteConfig.find((entry: any) => entry.suite._id === suiteId)?.suite;
@@ -243,7 +258,7 @@ export function TestTemplateEditor({
     } catch (error) {
       console.error("Failed to update test case:", error);
       toast.error(
-        error instanceof Error ? error.message : "Failed to update test case"
+        error instanceof Error ? error.message : "Failed to update test case",
       );
     }
   };
@@ -255,8 +270,11 @@ export function TestTemplateEditor({
       editForm.title !== currentTestCase.title ||
       editForm.query !== currentTestCase.query ||
       editForm.runs !== currentTestCase.runs ||
-      JSON.stringify(editForm.expectedToolCalls || []) !== JSON.stringify(currentTestCase.expectedToolCalls || []) ||
-      JSON.stringify(editForm.advancedConfig || {}) !== JSON.stringify(currentTestCase.advancedConfig || {})
+      JSON.stringify(editForm.expectedToolCalls || []) !==
+        JSON.stringify(currentTestCase.expectedToolCalls || []) ||
+      editForm.judgeRequirement !== currentTestCase.judgeRequirement ||
+      JSON.stringify(editForm.advancedConfig || {}) !==
+        JSON.stringify(currentTestCase.advancedConfig || {})
     );
   }, [editForm, currentTestCase]);
 
@@ -277,7 +295,7 @@ export function TestTemplateEditor({
       const tokenKey = provider.toLowerCase() as keyof ProviderTokens;
       if (!hasToken(tokenKey)) {
         toast.error(
-          `Please add your ${provider} API key in Settings before running this test`
+          `Please add your ${provider} API key in Settings before running this test`,
         );
         return;
       }
@@ -309,7 +327,8 @@ export function TestTemplateEditor({
           model,
           provider,
           serverIds,
-          modelApiKeys: Object.keys(modelApiKeys).length > 0 ? modelApiKeys : undefined,
+          modelApiKeys:
+            Object.keys(modelApiKeys).length > 0 ? modelApiKeys : undefined,
           convexAuthToken: accessToken,
         }),
       });
@@ -330,7 +349,7 @@ export function TestTemplateEditor({
     } catch (error) {
       console.error("Failed to run test case:", error);
       toast.error(
-        error instanceof Error ? error.message : "Failed to run test case"
+        error instanceof Error ? error.message : "Failed to run test case",
       );
     } finally {
       setIsRunning(false);
@@ -393,7 +412,7 @@ export function TestTemplateEditor({
                     className="px-2 py-1 text-lg font-semibold border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring bg-background"
                   />
                 ) : (
-                  <h2 
+                  <h2
                     className="text-lg font-semibold cursor-pointer"
                     onClick={handleTitleClick}
                   >
@@ -413,280 +432,353 @@ export function TestTemplateEditor({
             </div>
 
             <Card className="p-0 overflow-hidden">
-        {/* Unified Test Case Editor - Postman-style */}
+              {/* Unified Test Case Editor - Postman-style */}
 
-        {/* Quick Run Controls - Postman-style */}
-        <div className="border-b">
-          <div className="flex items-center gap-0">
-                <Select
-                  value={selectedModel}
-                  onValueChange={setSelectedModel}
-                  disabled={isRunning || modelOptions.length === 0}
-                >
-              <SelectTrigger className="h-10 rounded-none border-r-0 border-y-0 w-48 shrink-0">
-                <SelectValue placeholder="Model" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {modelOptions.length === 0 ? (
-                      <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                        No models available
-                      </div>
+              {/* Quick Run Controls - Postman-style */}
+              <div className="border-b">
+                <div className="flex items-center gap-0">
+                  <Select
+                    value={selectedModel}
+                    onValueChange={setSelectedModel}
+                    disabled={isRunning || modelOptions.length === 0}
+                  >
+                    <SelectTrigger className="h-10 rounded-none border-r-0 border-y-0 w-48 shrink-0">
+                      <SelectValue placeholder="Model" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {modelOptions.length === 0 ? (
+                        <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                          No models available
+                        </div>
+                      ) : (
+                        modelOptions.map(
+                          (option: {
+                            value: string;
+                            label: string;
+                            provider: string;
+                          }) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ),
+                        )
+                      )}
+                    </SelectContent>
+                  </Select>
+                  <Input
+                    value={currentTestCase.query || ""}
+                    readOnly
+                    placeholder="Enter your prompt..."
+                    className="h-10 rounded-none border-x-0 border-y-0 flex-1 font-mono text-sm"
+                  />
+                  <Button
+                    onClick={handleQuickRun}
+                    disabled={
+                      !selectedModel || isRunning || !currentTestCase.query
+                    }
+                    className="h-10 rounded-none border-l-0 border-y-0 shrink-0 px-6"
+                  >
+                    {isRunning ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        Running
+                      </>
                     ) : (
-                      modelOptions.map((option: { value: string; label: string; provider: string }) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))
+                      <>
+                        <Play className="h-4 w-4 mr-2" />
+                        Run
+                      </>
                     )}
-                  </SelectContent>
-                </Select>
-            <Input
-              value={currentTestCase.query || ""}
-              readOnly
-              placeholder="Enter your prompt..."
-              className="h-10 rounded-none border-x-0 border-y-0 flex-1 font-mono text-sm"
-            />
-                <Button
-                  onClick={handleQuickRun}
-                  disabled={!selectedModel || isRunning || !currentTestCase.query}
-              className="h-10 rounded-none border-l-0 border-y-0 shrink-0 px-6"
-                >
-                  {isRunning ? (
+                  </Button>
+                </div>
+              </div>
+
+              {/* Tabs Navigation - Postman style */}
+              <Tabs
+                value={activeTab}
+                onValueChange={setActiveTab}
+                className="w-full"
+              >
+                <TabsList className="w-full justify-start rounded-none border-b bg-transparent h-auto p-0">
+                  <TabsTrigger
+                    value="edit"
+                    className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-3 py-2 text-sm h-9"
+                  >
+                    Edit
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="history"
+                    className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-3 py-2 text-sm h-9"
+                  >
+                    Run History
+                  </TabsTrigger>
+                </TabsList>
+
+                {/* Edit Tab */}
+                <TabsContent value="edit" className="p-4 space-y-4 mt-0">
+                  {editForm ? (
                     <>
-                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                  Running
+                      <div className="space-y-2">
+                        <Label className="text-xs font-medium text-muted-foreground">
+                          Query / Prompt
+                        </Label>
+                        <Textarea
+                          value={editForm.query}
+                          onChange={(e) =>
+                            setEditForm({ ...editForm, query: e.target.value })
+                          }
+                          rows={6}
+                          placeholder="Enter your test query or prompt here..."
+                          className="font-mono text-sm resize-none"
+                        />
+                      </div>
+
+                      <div className="space-y-4 pt-2 border-t">
+                        <div className="space-y-2">
+                          <Label className="text-xs font-medium text-muted-foreground">
+                            Runs per test
+                          </Label>
+                          <Input
+                            type="number"
+                            min={1}
+                            value={editForm.runs}
+                            onChange={(e) =>
+                              setEditForm({
+                                ...editForm,
+                                runs: parseInt(e.target.value) || 1,
+                              })
+                            }
+                            className="h-9"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label className="text-xs font-medium text-muted-foreground">
+                            Expected tool calls
+                          </Label>
+                          <ExpectedToolsEditor
+                            toolCalls={editForm.expectedToolCalls || []}
+                            onChange={(toolCalls) =>
+                              setEditForm({
+                                ...editForm,
+                                expectedToolCalls: toolCalls,
+                              })
+                            }
+                            availableTools={availableTools}
+                          />
+                        </div>
+                      </div>
                     </>
                   ) : (
-                    <>
-                  <Play className="h-4 w-4 mr-2" />
-                  Run
-                    </>
+                    <div className="py-12 text-center text-sm text-muted-foreground">
+                      Loading...
+                    </div>
                   )}
-                </Button>
-          </div>
-        </div>
+                </TabsContent>
 
-        {/* Tabs Navigation - Postman style */}
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="w-full justify-start rounded-none border-b bg-transparent h-auto p-0">
-            <TabsTrigger value="edit" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-3 py-2 text-sm h-9">
-              Edit
-            </TabsTrigger>
-            <TabsTrigger value="history" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-3 py-2 text-sm h-9">
-              Run History
-            </TabsTrigger>
-          </TabsList>
+                {/* Run History Tab */}
+                <TabsContent value="history" className="p-4 space-y-4 mt-0">
+                  {/* Performance Chart */}
+                  {selectedTestTrendData.length > 0 && (
+                    <div className="space-y-2">
+                      <Label className="text-xs font-medium text-muted-foreground">
+                        Performance across runs
+                      </Label>
+                      <AccuracyChart
+                        data={selectedTestTrendData}
+                        height="h-32"
+                        showLabel={true}
+                        onClick={(runId) => {
+                          if (onViewRun) onViewRun(runId);
+                          if (onTestIdChange) onTestIdChange(null);
+                          if (onModeChange) onModeChange("runs");
+                        }}
+                      />
+                    </div>
+                  )}
 
-          {/* Edit Tab */}
-          <TabsContent value="edit" className="p-4 space-y-4 mt-0">
-            {editForm ? (
-              <>
-                <div className="space-y-2">
-                  <Label className="text-xs font-medium text-muted-foreground">Query / Prompt</Label>
-                  <Textarea
-                    value={editForm.query}
-                    onChange={(e) =>
-                      setEditForm({ ...editForm, query: e.target.value })
-                    }
-                    rows={6}
-                    placeholder="Enter your test query or prompt here..."
-                    className="font-mono text-sm resize-none"
-                  />
-                </div>
-
-                <div className="space-y-4 pt-2 border-t">
-                  <div className="space-y-2">
-                    <Label className="text-xs font-medium text-muted-foreground">Runs per test</Label>
-                    <Input
-                      type="number"
-                      min={1}
-                      value={editForm.runs}
-                      onChange={(e) =>
-                        setEditForm({
-                          ...editForm,
-                          runs: parseInt(e.target.value) || 1,
-                        })
-                      }
-                      className="h-9"
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label className="text-xs font-medium text-muted-foreground">Expected tool calls</Label>
-                    <ExpectedToolsEditor
-                      toolCalls={editForm.expectedToolCalls || []}
-                      onChange={(toolCalls) =>
-                        setEditForm({
-                          ...editForm,
-                          expectedToolCalls: toolCalls,
-                        })
-                      }
-                      availableTools={availableTools}
-                    />
-                  </div>
-                </div>
-              </>
-            ) : (
-              <div className="py-12 text-center text-sm text-muted-foreground">
-                Loading...
-              </div>
-            )}
-          </TabsContent>
-
-          {/* Run History Tab */}
-          <TabsContent value="history" className="p-4 space-y-4 mt-0">
-            {/* Performance Chart */}
-            {selectedTestTrendData.length > 0 && (
-              <div className="space-y-2">
-                <Label className="text-xs font-medium text-muted-foreground">Performance across runs</Label>
-                <AccuracyChart
-                  data={selectedTestTrendData}
-                  height="h-32"
-                  showLabel={true}
-                  onClick={(runId) => {
-                    if (onViewRun) onViewRun(runId);
-                    if (onTestIdChange) onTestIdChange(null);
-                    if (onModeChange) onModeChange("runs");
-                  }}
-                />
-              </div>
-            )}
-
-            {/* Per-Model Breakdown */}
-            {selectedTestModelBreakdown.length > 1 && (
-              <div className="space-y-2">
-                <Label className="text-xs font-medium text-muted-foreground">Performance by model</Label>
-                <ChartContainer config={{ passRate: { label: "Pass rate", color: "var(--chart-1)" } }} className="aspect-auto h-48 w-full">
-                  <BarChart
-                    data={selectedTestModelBreakdown}
-                    layout="vertical"
-                    margin={{ left: 0, right: 40 }}
-                  >
-                    <CartesianGrid
-                      strokeDasharray="3 3"
-                      horizontal={false}
-                      stroke="hsl(var(--muted-foreground) / 0.2)"
-                    />
-                    <XAxis
-                      type="number"
-                      domain={[0, 100]}
-                      tickLine={false}
-                      axisLine={false}
-                      tickMargin={8}
-                      tick={{ fontSize: 11 }}
-                      tickFormatter={(value) => `${value}%`}
-                    />
-                    <YAxis
-                      type="category"
-                      dataKey="model"
-                      tickLine={false}
-                      axisLine={false}
-                      tickMargin={8}
-                      tick={{ fontSize: 11 }}
-                      width={120}
-                    />
-                    <ChartTooltip
-                      cursor={false}
-                      content={({ active, payload }) => {
-                        if (!active || !payload || !payload.length) return null;
-                        const data = payload[0].payload;
-                        return (
-                          <div className="rounded-lg border bg-background p-2 shadow-sm">
-                            <div className="text-xs font-medium">{data.model}</div>
-                            <div className="text-xs text-muted-foreground">{data.provider}</div>
-                            <div className="mt-1 text-xs">
-                              Pass rate: <span className="font-medium">{data.passRate}%</span>
-                            </div>
-                            <div className="text-xs text-muted-foreground">
-                              {data.passed}/{data.total} passed
-                            </div>
-                          </div>
-                        );
-                      }}
-                    />
-                    <Bar
-                      dataKey="passRate"
-                      fill="hsl(var(--chart-1))"
-                      radius={[0, 4, 4, 0]}
-                      isAnimationActive={false}
-                    />
-                  </BarChart>
-                </ChartContainer>
-              </div>
-            )}
-
-            {/* Iterations List */}
-            {iterationsForSelectedTest.length === 0 ? (
-              <div className="py-12 text-center text-sm text-muted-foreground">
-                No iterations found for this test.
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <Label className="text-xs font-medium text-muted-foreground">Iterations</Label>
-                <div className="rounded-md border bg-card text-card-foreground flex flex-col max-h-[600px]">
-                  {/* Column Headers */}
-                  <div className="flex items-center gap-6 w-full px-4 py-1.5 bg-muted/30 border-b text-xs font-medium text-muted-foreground shrink-0">
-                    <div className="w-4"></div>
-                    <div className="min-w-[120px] max-w-[120px]">Result</div>
-                    <div className="min-w-[140px] max-w-[140px]">Model</div>
-                    <div className="min-w-[60px] max-w-[60px] text-right">Tools</div>
-                    <div className="min-w-[70px] max-w-[70px] text-right">Tokens</div>
-                    <div className="min-w-[70px] max-w-[70px] text-right">Duration</div>
-                  </div>
-                  <div className="divide-y overflow-y-auto">
-                    {iterationsForSelectedTest.map((iteration) => {
-                      const isOpen = openIterationId === iteration._id;
-                      const iterationRun = iteration.suiteRunId
-                        ? runs.find((r) => r._id === iteration.suiteRunId)
-                        : null;
-
-                      // Get model info for this iteration
-                      const iterationTestCase = iteration.testCaseId
-                        ? caseGroups.find((g) => g.testCase?._id === iteration.testCaseId)?.testCase
-                        : null;
-
-                      const getIterationBorderColor = (result: string) => {
-                        if (result === "passed") return "bg-emerald-500/50";
-                        if (result === "failed") return "bg-red-500/50";
-                        if (result === "cancelled") return "bg-zinc-300/50";
-                        return "bg-amber-500/50"; // pending
-                      };
-
-                      return (
-                        <div key={iteration._id}>
-                          <CompactIterationRow
-                            iteration={iteration}
-                            testCase={selectedTestDetails?.testCase || null}
-                            iterationTestCase={iterationTestCase || undefined}
-                            iterationRun={iterationRun || undefined}
-                            onViewRun={onViewRun}
-                            getIterationBorderColor={getIterationBorderColor}
-                            formatTime={formatTime}
-                            formatDuration={formatDuration}
-                            isOpen={isOpen}
-                            onToggle={() => {
-                              setOpenIterationId((current) =>
-                                current === iteration._id ? null : iteration._id
+                  {/* Per-Model Breakdown */}
+                  {selectedTestModelBreakdown.length > 1 && (
+                    <div className="space-y-2">
+                      <Label className="text-xs font-medium text-muted-foreground">
+                        Performance by model
+                      </Label>
+                      <ChartContainer
+                        config={{
+                          passRate: {
+                            label: "Pass rate",
+                            color: "var(--chart-1)",
+                          },
+                        }}
+                        className="aspect-auto h-48 w-full"
+                      >
+                        <BarChart
+                          data={selectedTestModelBreakdown}
+                          layout="vertical"
+                          margin={{ left: 0, right: 40 }}
+                        >
+                          <CartesianGrid
+                            strokeDasharray="3 3"
+                            horizontal={false}
+                            stroke="hsl(var(--muted-foreground) / 0.2)"
+                          />
+                          <XAxis
+                            type="number"
+                            domain={[0, 100]}
+                            tickLine={false}
+                            axisLine={false}
+                            tickMargin={8}
+                            tick={{ fontSize: 11 }}
+                            tickFormatter={(value) => `${value}%`}
+                          />
+                          <YAxis
+                            type="category"
+                            dataKey="model"
+                            tickLine={false}
+                            axisLine={false}
+                            tickMargin={8}
+                            tick={{ fontSize: 11 }}
+                            width={120}
+                          />
+                          <ChartTooltip
+                            cursor={false}
+                            content={({ active, payload }) => {
+                              if (!active || !payload || !payload.length)
+                                return null;
+                              const data = payload[0].payload;
+                              return (
+                                <div className="rounded-lg border bg-background p-2 shadow-sm">
+                                  <div className="text-xs font-medium">
+                                    {data.model}
+                                  </div>
+                                  <div className="text-xs text-muted-foreground">
+                                    {data.provider}
+                                  </div>
+                                  <div className="mt-1 text-xs">
+                                    Pass rate:{" "}
+                                    <span className="font-medium">
+                                      {data.passRate}%
+                                    </span>
+                                  </div>
+                                  <div className="text-xs text-muted-foreground">
+                                    {data.passed}/{data.total} passed
+                                  </div>
+                                </div>
                               );
                             }}
                           />
-                          {isOpen && (
-                            <div className="border-t bg-muted/20 px-4 pb-4 pt-3 pl-8">
-                              <IterationDetails
-                                iteration={iteration}
-                                testCase={selectedTestDetails?.testCase || null}
-                              />
-                            </div>
-                          )}
+                          <Bar
+                            dataKey="passRate"
+                            fill="hsl(var(--chart-1))"
+                            radius={[0, 4, 4, 0]}
+                            isAnimationActive={false}
+                          />
+                        </BarChart>
+                      </ChartContainer>
+                    </div>
+                  )}
+
+                  {/* Iterations List */}
+                  {iterationsForSelectedTest.length === 0 ? (
+                    <div className="py-12 text-center text-sm text-muted-foreground">
+                      No iterations found for this test.
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <Label className="text-xs font-medium text-muted-foreground">
+                        Iterations
+                      </Label>
+                      <div className="rounded-md border bg-card text-card-foreground flex flex-col max-h-[600px]">
+                        {/* Column Headers */}
+                        <div className="flex items-center gap-6 w-full px-4 py-1.5 bg-muted/30 border-b text-xs font-medium text-muted-foreground shrink-0">
+                          <div className="w-4"></div>
+                          <div className="min-w-[120px] max-w-[120px]">
+                            Result
+                          </div>
+                          <div className="min-w-[140px] max-w-[140px]">
+                            Model
+                          </div>
+                          <div className="min-w-[60px] max-w-[60px] text-right">
+                            Tools
+                          </div>
+                          <div className="min-w-[70px] max-w-[70px] text-right">
+                            Tokens
+                          </div>
+                          <div className="min-w-[70px] max-w-[70px] text-right">
+                            Duration
+                          </div>
                         </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-            )}
-          </TabsContent>
-        </Tabs>
+                        <div className="divide-y overflow-y-auto">
+                          {iterationsForSelectedTest.map((iteration) => {
+                            const isOpen = openIterationId === iteration._id;
+                            const iterationRun = iteration.suiteRunId
+                              ? runs.find((r) => r._id === iteration.suiteRunId)
+                              : null;
+
+                            // Get model info for this iteration
+                            const iterationTestCase = iteration.testCaseId
+                              ? caseGroups.find(
+                                  (g) =>
+                                    g.testCase?._id === iteration.testCaseId,
+                                )?.testCase
+                              : null;
+
+                            const getIterationBorderColor = (
+                              result: string,
+                            ) => {
+                              if (result === "passed")
+                                return "bg-emerald-500/50";
+                              if (result === "failed") return "bg-red-500/50";
+                              if (result === "cancelled")
+                                return "bg-zinc-300/50";
+                              return "bg-amber-500/50"; // pending
+                            };
+
+                            return (
+                              <div key={iteration._id}>
+                                <CompactIterationRow
+                                  iteration={iteration}
+                                  testCase={
+                                    selectedTestDetails?.testCase || null
+                                  }
+                                  iterationTestCase={
+                                    iterationTestCase || undefined
+                                  }
+                                  iterationRun={iterationRun || undefined}
+                                  onViewRun={onViewRun}
+                                  getIterationBorderColor={
+                                    getIterationBorderColor
+                                  }
+                                  formatTime={formatTime}
+                                  formatDuration={formatDuration}
+                                  isOpen={isOpen}
+                                  onToggle={() => {
+                                    setOpenIterationId((current) =>
+                                      current === iteration._id
+                                        ? null
+                                        : iteration._id,
+                                    );
+                                  }}
+                                />
+                                {isOpen && (
+                                  <div className="border-t bg-muted/20 px-4 pb-4 pt-3 pl-8">
+                                    <IterationDetails
+                                      iteration={iteration}
+                                      testCase={
+                                        selectedTestDetails?.testCase || null
+                                      }
+                                    />
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </TabsContent>
+              </Tabs>
             </Card>
           </div>
         </div>

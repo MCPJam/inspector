@@ -161,9 +161,7 @@ export function aggregateSuite(
  */
 export function handleMutationError(error: unknown, action: string) {
   console.error(`Failed to ${action}:`, error);
-  toast.error(
-    error instanceof Error ? error.message : `Failed to ${action}`
-  );
+  toast.error(error instanceof Error ? error.message : `Failed to ${action}`);
 }
 
 /**
@@ -212,7 +210,8 @@ export function getStatusDotColor(result: string, status?: string): string {
   if (result === RESULT_STATUS.PASSED) return "bg-emerald-500";
   if (result === RESULT_STATUS.FAILED) return "bg-red-500";
   if (result === RESULT_STATUS.CANCELLED) return "bg-gray-400";
-  if (result === RESULT_STATUS.PENDING || status === "pending") return "bg-amber-400";
+  if (result === RESULT_STATUS.PENDING || status === "pending")
+    return "bg-amber-400";
   if (status === "running") return "bg-amber-400";
   return "bg-gray-400";
 }

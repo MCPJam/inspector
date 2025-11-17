@@ -91,7 +91,7 @@ export function ExpectedToolsEditor({
   const updateArgumentKey = (
     toolIndex: number,
     oldKey: string,
-    newKey: string
+    newKey: string,
   ) => {
     const updated = [...toolCalls];
     const args = { ...(updated[toolIndex].arguments || {}) };
@@ -107,7 +107,7 @@ export function ExpectedToolsEditor({
   const updateArgumentValue = (
     toolIndex: number,
     argKey: string,
-    value: string
+    value: string,
   ) => {
     const updated = [...toolCalls];
     const args = { ...(updated[toolIndex].arguments || {}) };
@@ -141,18 +141,18 @@ export function ExpectedToolsEditor({
 
   const getArgumentSchema = (toolIndex: number, argKey: string) => {
     const toolCall = toolCalls[toolIndex];
-    const tool = availableTools.find(t => t.name === toolCall.toolName);
+    const tool = availableTools.find((t) => t.name === toolCall.toolName);
     if (!tool?.inputSchema?.properties) return null;
     return tool.inputSchema.properties[argKey];
   };
 
   const getAvailableArguments = (toolIndex: number) => {
     const toolCall = toolCalls[toolIndex];
-    const tool = availableTools.find(t => t.name === toolCall.toolName);
+    const tool = availableTools.find((t) => t.name === toolCall.toolName);
     if (!tool?.inputSchema?.properties) return [];
 
     const properties = tool.inputSchema.properties;
-    return Object.keys(properties).map(key => ({
+    return Object.keys(properties).map((key) => ({
       key,
       schema: properties[key],
     }));
@@ -174,7 +174,9 @@ export function ExpectedToolsEditor({
               {availableTools.length > 0 ? (
                 <Popover
                   open={openCombobox === toolIndex}
-                  onOpenChange={(open) => setOpenCombobox(open ? toolIndex : null)}
+                  onOpenChange={(open) =>
+                    setOpenCombobox(open ? toolIndex : null)
+                  }
                 >
                   <PopoverTrigger asChild>
                     <Button
@@ -189,7 +191,10 @@ export function ExpectedToolsEditor({
                   </PopoverTrigger>
                   <PopoverContent className="w-full p-0" align="start">
                     <Command>
-                      <CommandInput placeholder="Search tools..." className="h-9" />
+                      <CommandInput
+                        placeholder="Search tools..."
+                        className="h-9"
+                      />
                       <ScrollArea className="max-h-60">
                         <CommandEmpty>No tool found.</CommandEmpty>
                         <CommandGroup>
@@ -203,7 +208,9 @@ export function ExpectedToolsEditor({
                               }}
                             >
                               <div className="flex flex-col flex-1">
-                                <span className="font-mono text-sm">{tool.name}</span>
+                                <span className="font-mono text-sm">
+                                  {tool.name}
+                                </span>
                                 {tool.description && (
                                   <span className="text-xs text-muted-foreground">
                                     {tool.description}
@@ -215,7 +222,7 @@ export function ExpectedToolsEditor({
                                   "ml-2 h-4 w-4",
                                   toolCall.toolName === tool.name
                                     ? "opacity-100"
-                                    : "opacity-0"
+                                    : "opacity-0",
                                 )}
                               />
                             </CommandItem>
@@ -252,26 +259,30 @@ export function ExpectedToolsEditor({
               {getAvailableArguments(toolIndex).length > 0 ? (
                 <Popover
                   open={openArgCombobox === `${toolIndex}`}
-                  onOpenChange={(open) => setOpenArgCombobox(open ? `${toolIndex}` : null)}
+                  onOpenChange={(open) =>
+                    setOpenArgCombobox(open ? `${toolIndex}` : null)
+                  }
                 >
                   <PopoverTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 text-xs"
-                    >
+                    <Button variant="ghost" size="sm" className="h-7 text-xs">
                       <Plus className="h-3 w-3 mr-1" />
                       Add argument
                     </Button>
                   </PopoverTrigger>
                   <PopoverContent className="w-full p-0" align="end">
                     <Command>
-                      <CommandInput placeholder="Search arguments..." className="h-9" />
+                      <CommandInput
+                        placeholder="Search arguments..."
+                        className="h-9"
+                      />
                       <ScrollArea className="max-h-60">
                         <CommandEmpty>No argument found.</CommandEmpty>
                         <CommandGroup>
                           {getAvailableArguments(toolIndex)
-                            .filter(arg => !toolCall.arguments.hasOwnProperty(arg.key))
+                            .filter(
+                              (arg) =>
+                                !toolCall.arguments.hasOwnProperty(arg.key),
+                            )
                             .map((arg) => (
                               <CommandItem
                                 key={arg.key}
@@ -282,7 +293,9 @@ export function ExpectedToolsEditor({
                                 }}
                               >
                                 <div className="flex flex-col flex-1">
-                                  <span className="font-mono text-sm">{arg.key}</span>
+                                  <span className="font-mono text-sm">
+                                    {arg.key}
+                                  </span>
                                   {arg.schema?.description && (
                                     <span className="text-xs text-muted-foreground">
                                       {arg.schema.description}
@@ -314,77 +327,86 @@ export function ExpectedToolsEditor({
               )}
             </div>
 
-            {!toolCall.arguments || Object.entries(toolCall.arguments).length === 0 ? (
+            {!toolCall.arguments ||
+            Object.entries(toolCall.arguments).length === 0 ? (
               <div className="text-xs text-muted-foreground italic py-2">
                 {getAvailableArguments(toolIndex).length > 0
-                  ? "No arguments selected. Click \"Add argument\" to select from available options."
-                  : "No arguments. Click \"Add argument\" to add one."}
+                  ? 'No arguments selected. Click "Add argument" to select from available options.'
+                  : 'No arguments. Click "Add argument" to add one.'}
               </div>
             ) : (
               <div className="space-y-2">
-                {Object.entries(toolCall.arguments || {}).map(([key, value]) => {
-                  const argSchema = getArgumentSchema(toolIndex, key);
-                  return (
-                    <div key={key} className="flex items-start gap-2">
-                      <div className="flex-1">
-                        {argSchema ? (
-                          <div>
-                            <div className="font-mono text-sm font-medium px-3 py-2 bg-muted/30 rounded-md border border-border/40">
-                              {key}
+                {Object.entries(toolCall.arguments || {}).map(
+                  ([key, value]) => {
+                    const argSchema = getArgumentSchema(toolIndex, key);
+                    return (
+                      <div key={key} className="flex items-start gap-2">
+                        <div className="flex-1">
+                          {argSchema ? (
+                            <div>
+                              <div className="font-mono text-sm font-medium px-3 py-2 bg-muted/30 rounded-md border border-border/40">
+                                {key}
+                              </div>
+                              {argSchema.description && (
+                                <p className="text-xs text-muted-foreground mt-1">
+                                  {argSchema.description}
+                                </p>
+                              )}
                             </div>
-                            {argSchema.description && (
-                              <p className="text-xs text-muted-foreground mt-1">
-                                {argSchema.description}
-                              </p>
-                            )}
-                          </div>
-                        ) : (
+                          ) : (
+                            <Input
+                              value={key}
+                              onChange={(e) =>
+                                updateArgumentKey(
+                                  toolIndex,
+                                  key,
+                                  e.target.value,
+                                )
+                              }
+                              placeholder="Key"
+                              className="font-mono text-sm"
+                            />
+                          )}
+                        </div>
+                        <div className="flex-[2]">
                           <Input
-                            value={key}
-                            onChange={(e) =>
-                              updateArgumentKey(toolIndex, key, e.target.value)
+                            value={
+                              typeof value === "string"
+                                ? value
+                                : JSON.stringify(value)
                             }
-                            placeholder="Key"
+                            onChange={(e) =>
+                              updateArgumentValue(
+                                toolIndex,
+                                key,
+                                e.target.value,
+                              )
+                            }
+                            placeholder={
+                              argSchema?.type ? `${argSchema.type}` : "Value"
+                            }
                             className="font-mono text-sm"
                           />
-                        )}
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => removeArgument(toolIndex, key)}
+                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
                       </div>
-                      <div className="flex-[2]">
-                        <Input
-                          value={
-                            typeof value === "string"
-                              ? value
-                              : JSON.stringify(value)
-                          }
-                          onChange={(e) =>
-                            updateArgumentValue(toolIndex, key, e.target.value)
-                          }
-                          placeholder={argSchema?.type ? `${argSchema.type}` : "Value"}
-                          className="font-mono text-sm"
-                        />
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => removeArgument(toolIndex, key)}
-                        className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  );
-                })}
+                    );
+                  },
+                )}
               </div>
             )}
           </div>
         </div>
       ))}
 
-      <Button
-        variant="outline"
-        onClick={addToolCall}
-        className="w-full"
-      >
+      <Button variant="outline" onClick={addToolCall} className="w-full">
         <Plus className="h-4 w-4 mr-2" />
         Add expected tool call
       </Button>
