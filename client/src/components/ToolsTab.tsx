@@ -186,7 +186,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       const data = await listTools(serverName);
       const toolArray = data.tools ?? [];
       const dictionary = Object.fromEntries(
-        toolArray.map((tool) => [tool.name, tool]),
+        toolArray.map((tool: Tool) => [tool.name, tool]),
       );
       setTools(dictionary);
       logger.info("Tools fetched", {
