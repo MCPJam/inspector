@@ -64,7 +64,11 @@ export function ExpectedToolsEditor({
       });
     }
 
-    updated[index] = { ...updated[index], toolName, arguments: initialArguments };
+    updated[index] = {
+      ...updated[index],
+      toolName,
+      arguments: initialArguments,
+    };
     onChange(updated);
   };
 
@@ -202,42 +206,43 @@ export function ExpectedToolsEditor({
                     <Command>
                       <CommandInput
                         placeholder="Search tools..."
-                        className="h-9"
+                        className="h-8 text-xs"
                       />
-                      <ScrollArea className="max-h-60">
-                        <CommandEmpty>No tool found.</CommandEmpty>
-                        <CommandGroup>
-                          {availableTools.map((tool) => (
-                            <CommandItem
-                              key={tool.name}
-                              value={tool.name}
-                              onSelect={() => {
-                                updateToolName(toolIndex, tool.name);
-                                setOpenCombobox(null);
-                              }}
-                            >
-                              <div className="flex flex-col flex-1">
-                                <span className="font-mono text-sm">
-                                  {tool.name}
+                      <CommandEmpty className="text-xs py-2">
+                        No tool found.
+                      </CommandEmpty>
+                      <CommandGroup className="max-h-[200px] overflow-y-auto p-1">
+                        {availableTools.map((tool) => (
+                          <CommandItem
+                            key={tool.name}
+                            value={tool.name}
+                            onSelect={() => {
+                              updateToolName(toolIndex, tool.name);
+                              setOpenCombobox(null);
+                            }}
+                            className="px-2 py-1.5 cursor-pointer"
+                          >
+                            <div className="flex flex-col flex-1">
+                              <span className="font-mono text-xs">
+                                {tool.name}
+                              </span>
+                              {tool.description && (
+                                <span className="text-[10px] text-muted-foreground leading-tight">
+                                  {tool.description}
                                 </span>
-                                {tool.description && (
-                                  <span className="text-xs text-muted-foreground">
-                                    {tool.description}
-                                  </span>
-                                )}
-                              </div>
-                              <Check
-                                className={cn(
-                                  "ml-2 h-4 w-4",
-                                  toolCall.toolName === tool.name
-                                    ? "opacity-100"
-                                    : "opacity-0",
-                                )}
-                              />
-                            </CommandItem>
-                          ))}
-                        </CommandGroup>
-                      </ScrollArea>
+                              )}
+                            </div>
+                            <Check
+                              className={cn(
+                                "ml-2 h-3 w-3 shrink-0",
+                                toolCall.toolName === tool.name
+                                  ? "opacity-100"
+                                  : "opacity-0",
+                              )}
+                            />
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
                     </Command>
                   </PopoverContent>
                 </Popover>
@@ -261,155 +266,136 @@ export function ExpectedToolsEditor({
           </div>
 
           <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-medium text-muted-foreground">
-                Arguments
-              </label>
-              {getAvailableArguments(toolIndex).length > 0 ? (
-                <Popover
-                  open={openArgCombobox === `${toolIndex}`}
-                  onOpenChange={(open) =>
-                    setOpenArgCombobox(open ? `${toolIndex}` : null)
-                  }
-                >
-                  <PopoverTrigger asChild>
-                    <Button variant="ghost" size="sm" className="h-7 text-xs">
-                      <Plus className="h-3 w-3 mr-1" />
-                      Add argument
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-full p-0" align="end">
-                    <Command>
-                      <CommandInput
-                        placeholder="Search arguments..."
-                        className="h-9"
-                      />
-                      <ScrollArea className="max-h-60">
-                        <CommandEmpty>No argument found.</CommandEmpty>
-                        <CommandGroup>
-                          {getAvailableArguments(toolIndex)
-                            .filter(
-                              (arg) =>
-                                !toolCall.arguments.hasOwnProperty(arg.key),
-                            )
-                            .map((arg) => (
-                              <CommandItem
-                                key={arg.key}
-                                value={arg.key}
-                                onSelect={() => {
-                                  addArgument(toolIndex, arg.key);
-                                  setOpenArgCombobox(null);
-                                }}
-                              >
-                                <div className="flex flex-col flex-1">
-                                  <span className="font-mono text-sm">
-                                    {arg.key}
-                                  </span>
-                                  {arg.schema?.description && (
-                                    <span className="text-xs text-muted-foreground">
-                                      {arg.schema.description}
-                                    </span>
-                                  )}
-                                  {arg.schema?.type && (
-                                    <span className="text-xs text-muted-foreground">
-                                      Type: {arg.schema.type}
-                                    </span>
-                                  )}
-                                </div>
-                              </CommandItem>
-                            ))}
-                        </CommandGroup>
-                      </ScrollArea>
-                    </Command>
-                  </PopoverContent>
-                </Popover>
-              ) : (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => addArgument(toolIndex)}
-                  className="h-7 text-xs"
-                >
-                  <Plus className="h-3 w-3 mr-1" />
-                  Add argument
-                </Button>
-              )}
-            </div>
+            <label className="text-xs font-medium text-muted-foreground">
+              Arguments
+            </label>
 
-            {!toolCall.arguments ||
-            Object.entries(toolCall.arguments).length === 0 ? (
-              <div className="text-xs text-muted-foreground italic py-2">
-                {getAvailableArguments(toolIndex).length > 0
-                  ? 'No arguments selected. Click "Add argument" to select from available options.'
-                  : 'No arguments. Click "Add argument" to add one.'}
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {Object.entries(toolCall.arguments || {}).map(
-                  ([key, value]) => {
-                    const argSchema = getArgumentSchema(toolIndex, key);
-                    return (
-                      <div key={key} className="flex items-start gap-2">
-                        <div className="flex-1">
-                          {argSchema ? (
-                            <div>
-                              <div className="font-mono text-sm font-medium px-3 py-2 bg-muted/30 rounded-md border border-border/40">
-                                {key}
-                              </div>
-                              {argSchema.description && (
-                                <p className="text-xs text-muted-foreground mt-1">
-                                  {argSchema.description}
-                                </p>
-                              )}
-                            </div>
-                          ) : (
-                            <Input
-                              value={key}
-                              onChange={(e) =>
-                                updateArgumentKey(
-                                  toolIndex,
-                                  key,
-                                  e.target.value,
-                                )
-                              }
-                              placeholder="Key"
-                              className="font-mono text-sm"
-                            />
+            <div className="space-y-2">
+              {Object.entries(toolCall.arguments || {}).map(([key, value]) => {
+                const argSchema = getArgumentSchema(toolIndex, key);
+                return (
+                  <div key={key} className="flex items-start gap-2">
+                    <div className="flex-1">
+                      {argSchema ? (
+                        <div>
+                          <div className="font-mono text-sm font-medium px-3 py-2 bg-muted/30 rounded-md border border-border/40">
+                            {key}
+                          </div>
+                          {argSchema.description && (
+                            <p className="text-xs text-muted-foreground mt-1">
+                              {argSchema.description}
+                            </p>
                           )}
                         </div>
-                        <div className="flex-[2]">
-                          <Input
-                            value={
-                              typeof value === "string"
-                                ? value
-                                : JSON.stringify(value)
-                            }
-                            onChange={(e) =>
-                              updateArgumentValue(
-                                toolIndex,
-                                key,
-                                e.target.value,
-                              )
-                            }
-                            placeholder={
-                              argSchema?.type ? `${argSchema.type}` : "Value"
-                            }
-                            className="font-mono text-sm"
-                          />
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => removeArgument(toolIndex, key)}
-                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    );
-                  },
-                )}
-              </div>
+                      ) : (
+                        <Input
+                          value={key}
+                          onChange={(e) =>
+                            updateArgumentKey(toolIndex, key, e.target.value)
+                          }
+                          placeholder="Key"
+                          className="font-mono text-sm"
+                        />
+                      )}
+                    </div>
+                    <div className="flex-[2]">
+                      <Input
+                        value={
+                          typeof value === "string"
+                            ? value
+                            : JSON.stringify(value)
+                        }
+                        onChange={(e) =>
+                          updateArgumentValue(toolIndex, key, e.target.value)
+                        }
+                        placeholder={
+                          argSchema?.type ? `${argSchema.type}` : "Value"
+                        }
+                        className="font-mono text-sm"
+                      />
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => removeArgument(toolIndex, key)}
+                      className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
+
+            {getAvailableArguments(toolIndex).length > 0 ? (
+              <Popover
+                open={openArgCombobox === `${toolIndex}`}
+                onOpenChange={(open) =>
+                  setOpenArgCombobox(open ? `${toolIndex}` : null)
+                }
+              >
+                <PopoverTrigger asChild>
+                  <Button variant="ghost" size="sm" className="h-7 text-xs">
+                    <Plus className="h-3 w-3 mr-1" />
+                    Add argument
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-full p-0" align="start">
+                  <Command>
+                    <CommandInput
+                      placeholder="Search arguments..."
+                      className="h-9"
+                    />
+                    <ScrollArea className="max-h-60">
+                      <CommandEmpty>No argument found.</CommandEmpty>
+                      <CommandGroup>
+                        {getAvailableArguments(toolIndex)
+                          .filter(
+                            (arg) =>
+                              !toolCall.arguments.hasOwnProperty(arg.key),
+                          )
+                          .map((arg) => (
+                            <CommandItem
+                              key={arg.key}
+                              value={arg.key}
+                              onSelect={() => {
+                                addArgument(toolIndex, arg.key);
+                                setOpenArgCombobox(null);
+                              }}
+                              className="cursor-pointer"
+                            >
+                              <div className="flex flex-col flex-1">
+                                <span className="font-mono text-sm">
+                                  {arg.key}
+                                </span>
+                                {arg.schema?.description && (
+                                  <span className="text-xs text-muted-foreground">
+                                    {arg.schema.description}
+                                  </span>
+                                )}
+                                {arg.schema?.type && (
+                                  <span className="text-xs text-muted-foreground">
+                                    Type: {arg.schema.type}
+                                  </span>
+                                )}
+                              </div>
+                            </CommandItem>
+                          ))}
+                      </CommandGroup>
+                    </ScrollArea>
+                  </Command>
+                </PopoverContent>
+              </Popover>
+            ) : (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => addArgument(toolIndex)}
+                className="h-7 text-xs"
+              >
+                <Plus className="h-3 w-3 mr-1" />
+                Add argument
+              </Button>
             )}
           </div>
         </div>
