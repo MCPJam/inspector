@@ -698,6 +698,18 @@ export function EvalsTab() {
           throw new Error(errorText || "Failed to start eval run");
         }
 
+        // Track suite run started
+        posthog.capture("eval_suite_run_started", {
+          location: "evals_tab",
+          platform: detectPlatform(),
+          environment: detectEnvironment(),
+          suite_id: suite._id,
+          num_test_cases: testCases.length,
+          num_tests: tests.length,
+          num_models: providersNeeded.size,
+          minimum_pass_rate: minimumPassRate,
+        });
+
         // Optionally show completion toast
         toast.success("Eval run completed!");
       } catch (error) {
@@ -764,6 +776,17 @@ export function EvalsTab() {
       try {
         const newSuite = await duplicateSuiteMutation({ suiteId: suite._id });
         toast.success("Test suite duplicated successfully");
+
+        // Track suite duplicated
+        if (newSuite && newSuite._id) {
+          posthog.capture("eval_suite_duplicated", {
+            location: "evals_tab",
+            platform: detectPlatform(),
+            environment: detectEnvironment(),
+            original_suite_id: suite._id,
+            new_suite_id: newSuite._id,
+          });
+        }
 
         // Navigate to the new duplicated suite
         if (newSuite && newSuite._id) {
@@ -895,6 +918,16 @@ export function EvalsTab() {
 
         toast.success("Test case created");
 
+        // Track test case created
+        posthog.capture("eval_test_case_created", {
+          location: "evals_tab",
+          platform: detectPlatform(),
+          environment: detectEnvironment(),
+          suite_id: suiteId,
+          test_case_id: testCaseId,
+          num_models: modelsToUse.length,
+        });
+
         // Ensure suite is expanded
         setExpandedSuites((prev) => new Set(prev).add(suiteId));
 
@@ -980,6 +1013,18 @@ export function EvalsTab() {
       try {
         const newTestCase = await duplicateTestCaseMutation({ testCaseId });
         toast.success("Test case duplicated successfully");
+
+        // Track test case duplicated
+        if (newTestCase && newTestCase._id) {
+          posthog.capture("eval_test_case_duplicated", {
+            location: "evals_tab",
+            platform: detectPlatform(),
+            environment: detectEnvironment(),
+            suite_id: suiteId,
+            original_test_case_id: testCaseId,
+            new_test_case_id: newTestCase._id,
+          });
+        }
 
         // Ensure the suite is expanded to show the new test case
         setExpandedSuites((prev) => new Set(prev).add(suiteId));
