@@ -47,6 +47,7 @@ interface ThreadProps {
   isLoading: boolean;
   toolsMetadata: Record<string, Record<string, any>>;
   toolServerMap: ToolServerMap;
+  onWidgetStateChange?: (toolCallId: string, state: any) => void;
 }
 
 export function Thread({
@@ -56,6 +57,7 @@ export function Thread({
   isLoading,
   toolsMetadata,
   toolServerMap,
+  onWidgetStateChange,
 }: ThreadProps) {
   return (
     <div className="flex-1 overflow-y-auto pb-4">
@@ -68,6 +70,7 @@ export function Thread({
             onSendFollowUp={sendFollowUpMessage}
             toolsMetadata={toolsMetadata}
             toolServerMap={toolServerMap}
+            onWidgetStateChange={onWidgetStateChange}
           />
         ))}
         {isLoading && <ThinkingIndicator model={model} />}
@@ -82,15 +85,19 @@ function MessageView({
   onSendFollowUp,
   toolsMetadata,
   toolServerMap,
+  onWidgetStateChange,
 }: {
   message: UIMessage;
   model: ModelDefinition;
   onSendFollowUp: (text: string) => void;
   toolsMetadata: Record<string, Record<string, any>>;
   toolServerMap: ToolServerMap;
+  onWidgetStateChange?: (toolCallId: string, state: any) => void;
 }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const logoSrc = getProviderLogoFromModel(model, themeMode);
+  // Hide widget-state messages from UI (they're sent to model but not displayed)
+  if (message.id?.startsWith("widget-state-")) return null;
   const role = message.role;
   if (role !== "user" && role !== "assistant") return null;
 
@@ -106,6 +113,7 @@ function MessageView({
               onSendFollowUp={onSendFollowUp}
               toolsMetadata={toolsMetadata}
               toolServerMap={toolServerMap}
+              onWidgetStateChange={onWidgetStateChange}
             />
           ))}
         </div>
@@ -139,6 +147,7 @@ function MessageView({
                 onSendFollowUp={onSendFollowUp}
                 toolsMetadata={toolsMetadata}
                 toolServerMap={toolServerMap}
+                onWidgetStateChange={onWidgetStateChange}
               />
             ))}
           </div>
@@ -171,12 +180,14 @@ function PartSwitch({
   onSendFollowUp,
   toolsMetadata,
   toolServerMap,
+  onWidgetStateChange,
 }: {
   part: AnyPart;
   role: UIMessage["role"];
   onSendFollowUp: (text: string) => void;
   toolsMetadata: Record<string, Record<string, any>>;
   toolServerMap: ToolServerMap;
+  onWidgetStateChange?: (toolCallId: string, state: any) => void;
 }) {
   if (isToolPart(part) || isDynamicTool(part)) {
     let maybeUiResource: any;
@@ -259,6 +270,7 @@ function PartSwitch({
             onCallTool={(toolName, params) =>
               callTool(serverId, toolName, params)
             }
+            onWidgetStateChange={onWidgetStateChange}
           />
         </>
       );
