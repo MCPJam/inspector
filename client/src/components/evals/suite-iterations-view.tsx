@@ -7,6 +7,8 @@ import { RunDetailView } from "./run-detail-view";
 import { SuiteTestsConfig } from "./suite-tests-config";
 import { TestTemplateEditor } from "./test-template-editor";
 import { PassCriteriaSelector } from "./pass-criteria-selector";
+import { TestCasesOverview } from "./test-cases-overview";
+import { TestCaseDetailView } from "./test-case-detail-view";
 import { useSuiteData, useRunDetailData } from "./use-suite-data";
 import type {
   EvalCase,
@@ -69,7 +71,9 @@ export function SuiteIterationsView({
   const [viewMode, setViewMode] = useState<
     "overview" | "run-detail" | "test-detail"
   >("overview");
+  const [runsViewMode, setRunsViewMode] = useState<"runs" | "test-cases">("runs");
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [selectedTestCaseIdForRuns, setSelectedTestCaseIdForRuns] = useState<string | null>(null);
   const [showRunSummarySidebar, setShowRunSummarySidebar] = useState(false);
   const [runDetailSortBy, setRunDetailSortBy] = useState<
     "model" | "test" | "result"
@@ -326,15 +330,68 @@ export function SuiteIterationsView({
               />
             </div>
           ) : viewMode === "overview" ? (
-            <RunOverview
-              runs={runs}
-              runsLoading={runsLoading}
-              allIterations={allIterations}
-              runTrendData={runTrendData}
-              modelStats={modelStats}
-              onRunClick={handleRunClick}
-              onDirectDeleteRun={onDirectDeleteRun}
-            />
+            <div key={runsViewMode} className="space-y-4">
+              {runsViewMode === "runs" ? (
+                <RunOverview
+                  runs={runs}
+                  runsLoading={runsLoading}
+                  allIterations={allIterations}
+                  runTrendData={runTrendData}
+                  modelStats={modelStats}
+                  onRunClick={handleRunClick}
+                  onDirectDeleteRun={onDirectDeleteRun}
+                  runsViewMode={runsViewMode}
+                  onViewModeChange={(value) => {
+                    setRunsViewMode(value);
+                    setSelectedTestCaseIdForRuns(null);
+                  }}
+                />
+              ) : selectedTestCaseIdForRuns ? (
+                (() => {
+                  const selectedCase = cases.find(
+                    (c) => c._id === selectedTestCaseIdForRuns
+                  );
+                  if (!selectedCase) return null;
+
+                  const caseIterations = allIterations.filter(
+                    (iter) => iter.testCaseId === selectedTestCaseIdForRuns
+                  );
+
+                  return (
+                    <TestCaseDetailView
+                      testCase={selectedCase}
+                      iterations={caseIterations}
+                      runs={runs}
+                      onBack={() => setSelectedTestCaseIdForRuns(null)}
+                      onViewRun={(runId) => {
+                        setSelectedRunId(runId);
+                        setSelectedTestCaseIdForRuns(null);
+                        setRunsViewMode("runs");
+                        setViewMode("run-detail");
+                      }}
+                    />
+                  );
+                })()
+              ) : (
+                <TestCasesOverview
+                  cases={cases}
+                  allIterations={allIterations}
+                  runs={runs}
+                  onTestCaseClick={(testCaseId) => {
+                    setSelectedTestCaseIdForRuns(testCaseId);
+                  }}
+                  runsViewMode={runsViewMode}
+                  onViewModeChange={(value) => {
+                    setRunsViewMode(value);
+                    setSelectedTestCaseIdForRuns(null);
+                  }}
+                  runTrendData={runTrendData}
+                  modelStats={modelStats}
+                  runsLoading={runsLoading}
+                  onRunClick={handleRunClick}
+                />
+              )}
+            </div>
           ) : viewMode === "run-detail" && selectedRunDetails ? (
             <RunDetailView
               selectedRunDetails={selectedRunDetails}

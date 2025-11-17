@@ -46,6 +46,8 @@ interface RunOverviewProps {
   }>;
   onRunClick: (runId: string) => void;
   onDirectDeleteRun: (runId: string) => Promise<void>;
+  runsViewMode: "runs" | "test-cases";
+  onViewModeChange: (value: "runs" | "test-cases") => void;
 }
 
 export function RunOverview({
@@ -56,6 +58,8 @@ export function RunOverview({
   modelStats,
   onRunClick,
   onDirectDeleteRun,
+  runsViewMode,
+  onViewModeChange,
 }: RunOverviewProps) {
   const [selectedRunIds, setSelectedRunIds] = useState<Set<string>>(new Set());
   const [showBatchDeleteModal, setShowBatchDeleteModal] = useState(false);
@@ -263,11 +267,21 @@ export function RunOverview({
             </div>
           </div>
         ) : (
-          <div className="border-b px-4 py-2 shrink-0">
-            <div className="text-xs font-semibold">Runs</div>
-            <p className="text-xs text-muted-foreground">
-              Click on a run to view its test breakdown and results.
-            </p>
+          <div className="border-b px-4 py-2 shrink-0 flex items-center justify-between">
+            <div>
+              <div className="text-xs font-semibold">Runs</div>
+              <p className="text-xs text-muted-foreground">
+                Click on a run to view its test breakdown and results.
+              </p>
+            </div>
+            <select
+              value={runsViewMode}
+              onChange={(e) => onViewModeChange(e.target.value as "runs" | "test-cases")}
+              className="text-xs border rounded px-2 py-1 bg-background"
+            >
+              <option value="runs">Runs</option>
+              <option value="test-cases">Test Cases</option>
+            </select>
           </div>
         )}
 
