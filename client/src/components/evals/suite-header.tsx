@@ -13,7 +13,7 @@ import { toast } from "sonner";
 
 interface SuiteHeaderProps {
   suite: EvalSuite;
-  viewMode: "overview" | "run-detail" | "test-edit";
+  viewMode: "overview" | "run-detail" | "test-detail" | "test-edit";
   selectedRunDetails: EvalSuiteRun | null;
   isEditMode: boolean;
   onRerun: (suite: EvalSuite) => void;
@@ -222,7 +222,7 @@ export function SuiteHeader({
     );
   }
 
-  if (viewMode === "test-edit") {
+  if (viewMode === "test-detail" || viewMode === "test-edit") {
     return null;
   }
 

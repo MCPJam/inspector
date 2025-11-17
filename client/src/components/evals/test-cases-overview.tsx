@@ -15,6 +15,7 @@ interface TestCasesOverviewProps {
   runs: EvalSuiteRun[];
   runsViewMode: "runs" | "test-cases";
   onViewModeChange: (value: "runs" | "test-cases") => void;
+  onTestCaseClick: (testCaseId: string) => void;
   runTrendData: Array<{
     runId: string;
     runIdDisplay: string;
@@ -38,6 +39,7 @@ export function TestCasesOverview({
   runs,
   runsViewMode,
   onViewModeChange,
+  onTestCaseClick,
   runTrendData,
   modelStats,
   runsLoading,
@@ -230,7 +232,7 @@ export function TestCasesOverview({
           <div>
             <div className="text-xs font-semibold">Test Cases</div>
             <p className="text-xs text-muted-foreground">
-              Overview of test case performance across all runs.
+              Click on a test case to view its run history and performance.
             </p>
           </div>
           <select
@@ -260,9 +262,10 @@ export function TestCasesOverview({
           </div>
         ) : (
           testCaseStats.map(({ testCase, iterations, avgAccuracy, avgDuration }) => (
-            <div
+            <button
               key={testCase._id}
-              className="flex items-center gap-6 w-full px-4 py-2.5"
+              onClick={() => onTestCaseClick(testCase._id)}
+              className="flex items-center gap-6 w-full px-4 py-2.5 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
             >
               <span className="text-xs font-medium flex-1 min-w-[200px] truncate">
                 {testCase.title || "Untitled test case"}
@@ -276,7 +279,7 @@ export function TestCasesOverview({
               <span className="min-w-[100px] text-right text-xs font-mono text-muted-foreground">
                 {iterations > 0 ? formatDuration(avgDuration) : "—"}
               </span>
-            </div>
+            </button>
           ))
         )}
       </div>
