@@ -8,7 +8,6 @@ import { SuiteTestsConfig } from "./suite-tests-config";
 import { TestTemplateEditor } from "./test-template-editor";
 import { PassCriteriaSelector } from "./pass-criteria-selector";
 import { TestCasesOverview } from "./test-cases-overview";
-import { TestCaseDetailView } from "./test-case-detail-view";
 import { useSuiteData, useRunDetailData } from "./use-suite-data";
 import type {
   EvalCase,
@@ -63,19 +62,14 @@ export function SuiteIterationsView({
 }) {
   // Derive view state from route
   const isEditMode = route.type === "suite-edit";
-  const selectedTestId =
-    route.type === "test-detail" || route.type === "test-edit"
-      ? route.testId
-      : null;
+  const selectedTestId = route.type === "test-edit" ? route.testId : null;
   const selectedRunId = route.type === "run-detail" ? route.runId : null;
   const viewMode =
     route.type === "run-detail"
       ? "run-detail"
-      : route.type === "test-detail"
-        ? "test-detail"
-        : route.type === "test-edit"
-          ? "test-edit"
-          : "overview";
+      : route.type === "test-edit"
+        ? "test-edit"
+        : "overview";
   const runsViewMode =
     route.type === "suite-overview" && route.view === "test-cases"
       ? "test-cases"
@@ -115,110 +109,6 @@ export function SuiteIterationsView({
     const run = runs.find((r) => r._id === selectedRunId);
     return run ?? null;
   }, [selectedRunId, runs]);
-
-  // Selected test details
-  const selectedTestDetails = useMemo(() => {
-    if (!selectedTestId) return null;
-
-    const isTemplateKey = selectedTestId.startsWith("template:");
-
-    let templateGroup;
-    if (isTemplateKey) {
-      const keyParts = selectedTestId.replace("template:", "").split("-");
-      templateGroup = templateGroups.find((tg) => {
-        const tgKey = `${tg.title}-${tg.query}`;
-        return (
-          tgKey === keyParts.join("-") || selectedTestId === `template:${tgKey}`
-        );
-      });
-    } else {
-      templateGroup = templateGroups.find((tg) =>
-        tg.testCaseIds.includes(selectedTestId),
-      );
-    }
-
-    if (!templateGroup) {
-      const directTestCase = cases.find((c) => c._id === selectedTestId);
-      if (directTestCase) {
-        return {
-          testCase: directTestCase,
-          templateInfo: {
-            title: directTestCase.title,
-            query: directTestCase.query,
-            modelCount: directTestCase.models?.length || 1,
-          },
-        };
-      }
-      return null;
-    }
-
-    if (templateGroup.testCaseIds.length === 0) {
-      // Try to get config from the latest run
-      const latestRun = runs.length > 0 ? runs[0] : null;
-      const configTest = latestRun?.configSnapshot?.tests?.find((test: any) => {
-        const templateTitle = test.title.replace(/\s*\[.*?\]\s*$/, "").trim();
-        return (
-          templateTitle === templateGroup.title &&
-          test.query === templateGroup.query
-        );
-      });
-
-      if (configTest) {
-        return {
-          testCase: {
-            _id: selectedTestId,
-            testSuiteId: suite._id,
-            createdBy: suite.createdBy || "",
-            title: templateGroup.title,
-            query: templateGroup.query,
-            models: [
-              {
-                model: configTest.model || "",
-                provider: configTest.provider || "",
-              },
-            ],
-            runs: configTest.runs || 1,
-            expectedToolCalls: configTest.expectedToolCalls || [],
-          },
-          templateInfo: {
-            title: templateGroup.title,
-            query: templateGroup.query,
-            modelCount: 1,
-          },
-        };
-      }
-      return null;
-    }
-
-    const group = caseGroups.find(
-      (g) => g.testCase && templateGroup.testCaseIds.includes(g.testCase._id),
-    );
-
-    if (!group || !group.testCase) {
-      const firstTestCase = cases.find((c) =>
-        templateGroup.testCaseIds.includes(c._id),
-      );
-      if (!firstTestCase) return null;
-
-      return {
-        testCase: firstTestCase,
-        templateInfo: {
-          title: templateGroup.title,
-          query: templateGroup.query,
-          modelCount: templateGroup.testCaseIds.length,
-        },
-      };
-    }
-
-    return {
-      testCase: group.testCase,
-      templateInfo: {
-        title: templateGroup.title,
-        query: templateGroup.query,
-        modelCount: templateGroup.testCaseIds.length,
-      },
-    };
-  }, [selectedTestId, caseGroups, templateGroups, cases, suite]);
 
   // Load default pass criteria from suite
   useEffect(() => {
@@ -317,38 +207,6 @@ export function SuiteIterationsView({
                 connectedServerNames={connectedServerNames}
               />
             </div>
-          ) : viewMode === "test-detail" && selectedTestId ? (
-            (() => {
-              const selectedCase = cases.find((c) => c._id === selectedTestId);
-              if (!selectedCase) return null;
-
-              const caseIterations = allIterations.filter(
-                (iter) => iter.testCaseId === selectedTestId,
-              );
-
-              return (
-                <TestCaseDetailView
-                  testCase={selectedCase}
-                  iterations={caseIterations}
-                  runs={runs}
-                  serverNames={(suite.environment?.servers || []).filter(name => connectedServerNames.has(name))}
-                  onBack={() => {
-                    navigateToEvalsRoute({
-                      type: "suite-overview",
-                      suiteId: suite._id,
-                      view: "test-cases",
-                    });
-                  }}
-                  onViewRun={(runId) => {
-                    navigateToEvalsRoute({
-                      type: "run-detail",
-                      suiteId: suite._id,
-                      runId,
-                    });
-                  }}
-                />
-              );
-            })()
           ) : viewMode === "overview" ? (
             <div key={runsViewMode} className="space-y-4">
               {runsViewMode === "runs" ? (
@@ -374,13 +232,6 @@ export function SuiteIterationsView({
                   cases={cases}
                   allIterations={allIterations}
                   runs={runs}
-                  onTestCaseClick={(testCaseId) => {
-                    navigateToEvalsRoute({
-                      type: "test-detail",
-                      suiteId: suite._id,
-                      testId: testCaseId,
-                    });
-                  }}
                   runsViewMode={runsViewMode}
                   onViewModeChange={(value) => {
                     navigateToEvalsRoute({
