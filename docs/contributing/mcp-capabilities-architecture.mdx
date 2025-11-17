@@ -884,6 +884,22 @@ function jsonError(c: any, error: unknown, fallbackStatus = 500) {
 
 </ResponseField>
 
+<ResponseField name="POST /api/mcp/prompts/list-multi" type="{ serverIds: string[] }">
+  Batch list prompts from multiple servers in parallel.
+
+**Response**:
+
+```typescript
+{
+  prompts: Record<string, MCPPrompt[]>;
+  errors?: Record<string, string>; // Per-server errors
+}
+```
+
+**Note**: Returns partial results even if some servers fail. Check `errors` field for failures.
+
+</ResponseField>
+
 <ResponseField name="POST /api/mcp/prompts/get" type="{ serverId: string, name: string, args?: Record<string, string> }">
   Get prompt with argument substitution.
 
