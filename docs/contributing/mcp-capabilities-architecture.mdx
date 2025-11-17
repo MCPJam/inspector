@@ -677,6 +677,78 @@ const buildParameters = (): Record<string, string> => {
 };
 ```
 
+### API Client Layer
+
+The Prompts Tab uses a dedicated API client (`mcp-prompts-api.ts`) that provides type-safe, error-handled wrappers around the backend endpoints:
+
+```typescript
+// client/src/lib/mcp-prompts-api.ts
+
+export interface PromptContentResponse {
+  content: any;
+}
+
+export interface BatchPromptsResponse {
+  prompts: Record<string, MCPPrompt[]>;
+  errors?: Record<string, string>;
+}
+
+// Single server prompt listing
+export async function listPrompts(serverId: string): Promise<MCPPrompt[]> {
+  const res = await fetch("/api/mcp/prompts/list", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ serverId }),
+  });
+
+  let body: any = null;
+  try {
+    body = await res.json();
+  } catch {}
+
+  if (!res.ok) {
+    const message = body?.error || `List prompts failed (${res.status})`;
+    throw new Error(message);
+  }
+
+  return Array.isArray(body?.prompts) ? (body.prompts as MCPPrompt[]) : [];
+}
+
+// Batch listing from multiple servers
+export async function listPromptsForServers(
+  serverIds: string[],
+): Promise<BatchPromptsResponse> {
+  const res = await fetch("/api/mcp/prompts/list-multi", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ serverIds }),
+  });
+
+  let body: any = null;
+  try {
+    body = await res.json();
+  } catch {}
+
+  if (!res.ok) {
+    const message = body?.error || `Batch list prompts failed (${res.status})`;
+    throw new Error(message);
+  }
+
+  return {
+    prompts: (body?.prompts ?? {}) as Record<string, MCPPrompt[]>,
+    errors: body?.errors as Record<string, string> | undefined,
+  };
+}
+```
+
+**Benefits**:
+
+- Centralized error handling with descriptive messages
+- Type-safe interfaces for requests and responses
+- Consistent API patterns across Tools and Prompts
+- Easier testing and mocking
+- Safe JSON parsing with fallback handling
+
 ---
 
 ## Common Patterns
