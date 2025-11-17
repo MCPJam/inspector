@@ -244,6 +244,8 @@ Provides an interactive guide for the OAuth flow with educational content:
 - Shows teachable moments and tips for each step
 - Supports focusing on specific steps in the sequence diagram
 - Auto-scrolls to latest activity
+- Integrated action controls (Configure, Reset, Continue)
+- Summary header showing target server, protocol, and registration strategy
 
 Step metadata is defined in `client/src/lib/oauth/state-machines/shared/step-metadata.ts` with:
 
@@ -251,6 +253,23 @@ Step metadata is defined in `client/src/lib/oauth/state-machines/shared/step-met
 - Educational summaries for each step
 - Teachable moments highlighting key concepts
 - Tips for common issues
+
+### 2. OAuthProfileModal
+
+**Location:** `client/src/components/oauth/OAuthProfileModal.tsx`
+
+Modal dialog for configuring OAuth test profiles:
+
+- Server name and URL configuration
+- Protocol version selection (2025-03-26, 2025-06-18, 2025-11-25)
+- Registration strategy selection (CIMD, DCR, Pre-registered)
+- Advanced settings accordion for optional configuration
+- Custom headers management with add/remove functionality
+- Client credentials input for pre-registered flows
+- Validation and error handling
+- Generates unique server names to avoid conflicts
+
+The modal derives initial values from existing server configurations and supports both creating new profiles and editing existing ones.
 
 ### 2. MCPOAuthProvider
 
