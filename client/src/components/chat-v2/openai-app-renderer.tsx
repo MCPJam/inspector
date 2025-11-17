@@ -20,6 +20,7 @@ interface OpenAIAppRendererProps {
   toolMetadata?: Record<string, any>;
   onSendFollowUp?: (text: string) => void;
   onCallTool?: (toolName: string, params: Record<string, any>) => Promise<any>;
+  onWidgetStateChange?: (toolCallId: string, state: any) => void;
 }
 
 export function OpenAIAppRenderer({
@@ -32,6 +33,7 @@ export function OpenAIAppRenderer({
   toolMetadata,
   onSendFollowUp,
   onCallTool,
+  onWidgetStateChange,
 }: OpenAIAppRendererProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
@@ -43,6 +45,7 @@ export function OpenAIAppRenderer({
   const [widgetUrl, setWidgetUrl] = useState<string | null>(null);
   const [isStoringWidget, setIsStoringWidget] = useState(false);
   const [storeError, setStoreError] = useState<string | null>(null);
+  const previousWidgetStateRef = useRef<string | null>(null);
   const resolvedToolCallId = useMemo(
     () => toolCallId ?? `${toolName || "openai-app"}-${Date.now()}`,
     [toolCallId, toolName],
@@ -229,6 +232,17 @@ export function OpenAIAppRenderer({
         case "openai:setWidgetState": {
           // Widget state is already persisted by the iframe script
           console.log("[OpenAI App] Widget state updated:", event.data.state);
+
+          if (onWidgetStateChange && event.data.toolId === resolvedToolCallId) {
+            const newState = event.data.state;
+            const newStateStr =
+              newState === null ? null : JSON.stringify(newState);
+
+            if (newStateStr !== previousWidgetStateRef.current) {
+              previousWidgetStateRef.current = newStateStr;
+              onWidgetStateChange(resolvedToolCallId, newState);
+            }
+          }
           break;
         }
 
@@ -314,7 +328,7 @@ export function OpenAIAppRenderer({
         }
       }
     },
-    [onCallTool, onSendFollowUp],
+    [onCallTool, onSendFollowUp, onWidgetStateChange, resolvedToolCallId],
   );
 
   useEffect(() => {
