@@ -55,9 +55,10 @@ graph TB
         ResourcesAPI[Resources API
         /list
         /read]
-        PromptsAPI[Prompts API
-        /list
-        /get]
+        PromptsAPI[mcp-prompts-api.ts
+        listPrompts
+        getPrompt
+        listPromptsForServers]
     end
 
     subgraph Backend["Hono Backend Routes"]
