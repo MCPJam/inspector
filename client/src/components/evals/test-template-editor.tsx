@@ -419,7 +419,7 @@ export function TestTemplateEditor({
                 <Button
                   onClick={handleQuickRun}
                   disabled={
-                    !selectedModel || isRunning || !currentTestCase.query
+                    !selectedModel || isRunning || !editForm?.query?.trim()
                   }
                   size="sm"
                   className="h-9 px-5 text-xs font-medium shadow-sm"
