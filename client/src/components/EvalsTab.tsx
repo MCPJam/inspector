@@ -115,6 +115,9 @@ function SuiteSidebarItem({
 
   // Determine status for the dot indicator
   const getStatusColor = () => {
+    // If servers are disconnected, show grey dot
+    if (hasMissingServers) return "bg-gray-400";
+
     if (!latestRun) return "bg-gray-400"; // cancelled/no runs
 
     // Use result if available, otherwise infer from status
@@ -545,16 +548,6 @@ export function EvalsTab() {
       if (rerunningSuiteId) return;
 
       const suiteServers = suite.environment?.servers || [];
-      const missingServers = suiteServers.filter(
-        (server) => !connectedServerNames.has(server),
-      );
-
-      if (missingServers.length > 0) {
-        toast.error(
-          `Please connect the following servers first: ${missingServers.join(", ")}`,
-        );
-        return;
-      }
 
       // Get current test cases from database (not from stale config)
       const testCases = (await getTestCasesForRerun(suite._id)) as any[];
@@ -679,7 +672,6 @@ export function EvalsTab() {
     },
     [
       rerunningSuiteId,
-      connectedServerNames,
       selectedSuiteEntry,
       getAccessToken,
       hasToken,

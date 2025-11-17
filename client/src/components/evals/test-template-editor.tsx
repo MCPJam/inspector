@@ -7,6 +7,11 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card } from "@/components/ui/card";
 import { Play, Loader2 } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { ExpectedToolsEditor } from "./expected-tools-editor";
 import { TestResultsPanel } from "./test-results-panel";
 import {
@@ -42,11 +47,13 @@ interface TestTemplate {
 interface TestTemplateEditorProps {
   suiteId: string;
   selectedTestCaseId: string;
+  connectedServerNames: Set<string>;
 }
 
 export function TestTemplateEditor({
   suiteId,
   selectedTestCaseId,
+  connectedServerNames,
 }: TestTemplateEditorProps) {
   const { getAccessToken } = useAuth();
   const { getToken, hasToken } = useAiProviderKeys();
@@ -126,6 +133,15 @@ export function TestTemplateEditor({
     if (!suiteConfig) return null;
     return suiteConfig.find((entry: any) => entry.suite._id === suiteId)?.suite;
   }, [suiteConfig, suiteId]);
+
+  // Calculate missing servers
+  const missingServers = useMemo(() => {
+    if (!suite) return [];
+    const suiteServers = suite.environment?.servers || [];
+    return suiteServers.filter((server) => !connectedServerNames.has(server));
+  }, [suite, connectedServerNames]);
+
+  const canRun = missingServers.length === 0;
 
   // Fetch available tools from selected servers
   useEffect(() => {
@@ -416,26 +432,46 @@ export function TestTemplateEditor({
                     )}
                   </SelectContent>
                 </Select>
-                <Button
-                  onClick={handleQuickRun}
-                  disabled={
-                    !selectedModel || isRunning || !editForm?.query?.trim()
-                  }
-                  size="sm"
-                  className="h-9 px-5 text-xs font-medium shadow-sm"
-                >
-                  {isRunning ? (
-                    <>
-                      <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />
-                      Running...
-                    </>
-                  ) : (
-                    <>
-                      <Play className="h-3.5 w-3.5 mr-2 fill-current" />
-                      {hasUnsavedChanges ? "Save & Run" : "Run"}
-                    </>
-                  )}
-                </Button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span>
+                      <Button
+                        onClick={handleQuickRun}
+                        disabled={
+                          !selectedModel ||
+                          isRunning ||
+                          !editForm?.query?.trim() ||
+                          !canRun
+                        }
+                        size="sm"
+                        className="h-9 px-5 text-xs font-medium shadow-sm"
+                      >
+                        {isRunning ? (
+                          <>
+                            <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />
+                            Running...
+                          </>
+                        ) : (
+                          <>
+                            <Play className="h-3.5 w-3.5 mr-2 fill-current" />
+                            {hasUnsavedChanges ? "Save & Run" : "Run"}
+                          </>
+                        )}
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {!canRun
+                      ? `Connect the following servers: ${missingServers.join(", ")}`
+                      : !selectedModel
+                        ? "Select a model to run"
+                        : !editForm?.query?.trim()
+                          ? "Enter a query to run"
+                          : hasUnsavedChanges
+                            ? "Save and run this test"
+                            : "Run this test"}
+                  </TooltipContent>
+                </Tooltip>
               </div>
             </div>
 
