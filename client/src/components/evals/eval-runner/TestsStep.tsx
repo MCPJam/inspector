@@ -129,11 +129,11 @@ export function TestsStep({
         type="button"
         variant="outline"
         onClick={onAddTestTemplate}
-        aria-label="Add test template"
+        aria-label="Add test case"
         className="w-full"
       >
         <Plus className="h-4 w-4 mr-2" />
-        Add test template
+        Add test case
       </Button>
     </div>
   );
