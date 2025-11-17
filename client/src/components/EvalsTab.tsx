@@ -87,12 +87,12 @@ function SuiteSidebarItem({
   // Load test cases only when expanded
   const enableTestCasesQuery = isAuthenticated && !!user && isExpanded;
   const testCases = useQuery(
-    "evals:getTestCasesBySuite" as any,
+    "testSuites:listTestCases" as any,
     enableTestCasesQuery ? ({ suiteId: suite._id } as any) : "skip",
   ) as any[] | undefined;
 
   // Check for missing servers
-  const suiteServers = suite.config?.environment?.servers || [];
+  const suiteServers = suite.environment?.servers || [];
   const missingServers = suiteServers.filter(
     (server) => !connectedServerNames.has(server),
   );
@@ -379,11 +379,11 @@ export function EvalsTab() {
   const { appState } = useAppState();
   const { getToken, hasToken } = useAiProviderKeys();
 
-  const deleteSuiteMutation = useMutation("evals:deleteSuite" as any);
-  const deleteRunMutation = useMutation("evals:deleteSuiteRun" as any);
-  const cancelRunMutation = useMutation("evals:cancelSuiteRun" as any);
-  const createTestCaseMutation = useMutation("evals:createTestCase" as any);
-  const deleteTestCaseMutation = useMutation("evals:deleteTestCase" as any);
+  const deleteSuiteMutation = useMutation("testSuites:deleteTestSuite" as any);
+  const deleteRunMutation = useMutation("testSuites:deleteTestSuiteRun" as any);
+  const cancelRunMutation = useMutation("testSuites:cancelTestSuiteRun" as any);
+  const createTestCaseMutation = useMutation("testSuites:createTestCase" as any);
+  const deleteTestCaseMutation = useMutation("testSuites:deleteTestCase" as any);
 
   useEffect(() => {
     posthog.capture("evals_tab_viewed", {
@@ -407,19 +407,19 @@ export function EvalsTab() {
 
   const enableOverviewQuery = isAuthenticated && !!user;
   const suiteOverview = useQuery(
-    "evals:getSuiteOverview" as any,
+    "testSuites:getTestSuitesOverview" as any,
     enableOverviewQuery ? ({} as any) : "skip",
   ) as EvalSuiteOverviewEntry[] | undefined;
 
   const enableSuiteDetailsQuery =
     isAuthenticated && !!user && !!selectedSuiteId;
   const suiteDetails = useQuery(
-    "evals:getAllTestCasesAndIterationsBySuite" as any,
+    "testSuites:getAllTestCasesAndIterationsBySuite" as any,
     enableSuiteDetailsQuery ? ({ suiteId: selectedSuiteId } as any) : "skip",
   ) as SuiteDetailsQueryResponse | undefined;
 
   const suiteRuns = useQuery(
-    "evals:getSuiteRuns" as any,
+    "testSuites:listTestSuiteRuns" as any,
     enableSuiteDetailsQuery
       ? ({ suiteId: selectedSuiteId, limit: 20 } as any)
       : "skip",
@@ -478,7 +478,7 @@ export function EvalsTab() {
   // Query to get test cases for a suite
   const getTestCasesForRerun = useCallback(async (suiteId: string) => {
     try {
-      const testCases = await convex.query("evals:getTestCasesBySuite" as any, { suiteId });
+      const testCases = await convex.query("testSuites:listTestCases" as any, { suiteId });
       return testCases;
     } catch (error) {
       console.error("Failed to fetch test cases:", error);
@@ -491,7 +491,7 @@ export function EvalsTab() {
     async (suite: EvalSuite) => {
       if (rerunningSuiteId) return;
 
-      const suiteServers = suite.config?.environment?.servers || [];
+      const suiteServers = suite.environment?.servers || [];
       const missingServers = suiteServers.filter(
         (server) => !connectedServerNames.has(server),
       );
@@ -737,20 +737,23 @@ export function EvalsTab() {
     setIsCreatingTestCase(true);
 
     try {
-      // Find the suite from suiteOverview
-      const suiteEntry = suiteOverview?.find(entry => entry.suite._id === suiteId);
-      const suite = suiteEntry?.suite;
+      // Get test cases for the suite to extract models
+      const testCases = await convex.query("testSuites:listTestCases" as any, { suiteId });
 
-      // Extract unique models from suite config
+      // Extract unique models from existing test cases
       let modelsToUse: any[] = [];
-      if (suite?.config?.tests && Array.isArray(suite.config.tests)) {
+      if (testCases && Array.isArray(testCases) && testCases.length > 0) {
         const uniqueModels = new Map<string, { model: string; provider: string }>();
 
-        for (const test of suite.config.tests) {
-          if (test.model && test.provider) {
-            const key = `${test.provider}:${test.model}`;
-            if (!uniqueModels.has(key)) {
-              uniqueModels.set(key, { model: test.model, provider: test.provider });
+        for (const testCase of testCases) {
+          if (testCase.models && Array.isArray(testCase.models)) {
+            for (const modelConfig of testCase.models) {
+              if (modelConfig.model && modelConfig.provider) {
+                const key = `${modelConfig.provider}:${modelConfig.model}`;
+                if (!uniqueModels.has(key)) {
+                  uniqueModels.set(key, { model: modelConfig.model, provider: modelConfig.provider });
+                }
+              }
             }
           }
         }

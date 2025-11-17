@@ -62,17 +62,52 @@ export const createSuiteRunRecorder = ({
     suiteId,
     async startIteration({ testCaseId, testCaseSnapshot, iterationNumber, startedAt }) {
       try {
-        const response = await convexClient.mutation(
-          "evals:recordSuiteIterationStart" as any,
-          {
-            suiteRunId: runId,
+        // In the new data model, iterations are pre-created by precreateIterationsForRun
+        // We need to find the correct iteration and mark it as running
+
+        // Query all iterations for this run
+        const response = await convexClient.query(
+          "testSuites:getTestSuiteRunDetails" as any,
+          { runId }
+        );
+
+        const iterations = response?.iterations || [];
+
+        // Find the iteration that matches this test case and iteration number
+        // Match by testCaseSnapshot if available, otherwise by testCaseId
+        const matchingIteration = iterations.find((iter: any) => {
+          if (testCaseSnapshot && iter.testCaseSnapshot) {
+            // Match by model and provider from snapshot
+            return (
+              iter.testCaseSnapshot.title === testCaseSnapshot.title &&
+              iter.testCaseSnapshot.query === testCaseSnapshot.query &&
+              iter.testCaseSnapshot.model === testCaseSnapshot.model &&
+              iter.testCaseSnapshot.provider === testCaseSnapshot.provider &&
+              iter.iterationNumber === iterationNumber
+            );
+          }
+          // Fallback to matching by testCaseId and iteration number
+          return iter.testCaseId === testCaseId && iter.iterationNumber === iterationNumber;
+        });
+
+        if (!matchingIteration) {
+          console.error("[evals] Could not find pre-created iteration for", {
             testCaseId,
             testCaseSnapshot,
             iterationNumber,
-            startedAt,
-          },
+          });
+          return undefined;
+        }
+
+        // Mark it as running
+        await convexClient.mutation(
+          "testSuites:startTestIteration" as any,
+          {
+            iterationId: matchingIteration._id,
+          }
         );
-        return response?.iterationId as string | undefined;
+
+        return matchingIteration._id as string;
       } catch (error) {
         console.error(
           "[evals] Failed to record iteration start:",
@@ -99,16 +134,14 @@ export const createSuiteRunRecorder = ({
 
       try {
         await convexClient.action(
-          "evals:recordSuiteIterationResult" as any,
+          "testSuites:updateTestIteration" as any,
           {
-            suiteRunId: runId,
             iterationId,
             status: iterationStatus === "completed" ? "completed" : iterationStatus,
             result,
             actualToolCalls: toolsCalled,
             tokensUsed: usage.totalTokens ?? 0,
             messages,
-            startedAt,
           },
         );
       } catch (error) {
@@ -120,7 +153,7 @@ export const createSuiteRunRecorder = ({
     },
     async finalize({ status, summary, notes }) {
       try {
-        await convexClient.mutation("evals:finalizeSuiteRun" as any, {
+        await convexClient.mutation("testSuites:updateTestSuiteRun" as any, {
           runId,
           status,
           summary,
@@ -141,6 +174,7 @@ export const startSuiteRunWithRecorder = async ({
   suiteId,
   notes,
   passCriteria,
+  serverIds,
 }: {
   convexClient: ConvexHttpClient;
   suiteId: string;
@@ -148,9 +182,10 @@ export const startSuiteRunWithRecorder = async ({
   passCriteria?: {
     minimumPassRate: number;
   };
+  serverIds?: string[];
 }) => {
   const response = await convexClient.mutation(
-    "evals:startSuiteRun" as any,
+    "testSuites:startTestSuiteRun" as any,
     {
       suiteId,
       notes,
@@ -159,20 +194,43 @@ export const startSuiteRunWithRecorder = async ({
   );
 
   const runId = response?.runId as string;
-  const config = response?.config as {
-    tests: Array<Record<string, any>>;
-    environment: { servers: string[] };
-  };
+  const testCases = response?.testCases as Array<Record<string, any>>;
 
-  if (!runId || !config) {
+  if (!runId || !testCases) {
     throw new Error("Failed to start suite run");
   }
+
+  // Pre-create all iterations
+  await convexClient.mutation(
+    "testSuites:precreateIterationsForRun" as any,
+    {
+      runId,
+    },
+  );
 
   const recorder = createSuiteRunRecorder({
     convexClient,
     suiteId,
     runId,
   });
+
+  // Build config from test cases for backward compatibility
+  const config = {
+    tests: testCases.flatMap((tc: any) =>
+      (tc.models || []).map((model: any) => ({
+        title: tc.title,
+        query: tc.query,
+        model: model.model,
+        provider: model.provider,
+        runs: tc.runs || 1,
+        expectedToolCalls: tc.expectedToolCalls || [],
+        judgeRequirement: tc.judgeRequirement,
+        advancedConfig: tc.advancedConfig,
+        testCaseId: tc._id,
+      }))
+    ),
+    environment: { servers: serverIds || [] },
+  };
 
   return {
     runId,

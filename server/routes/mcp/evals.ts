@@ -184,58 +184,129 @@ evals.post("/run", async (c) => {
     const convexClient = new ConvexHttpClient(convexUrl);
     convexClient.setAuth(convexAuthToken);
 
-    const suiteConfigPayload = {
-      tests,
-      environment: { servers: resolvedServerIds },
-    };
-
     let resolvedSuiteId = suiteId ?? null;
 
+    // Group tests by title+query to create test cases with multiple models
+    const testCaseMap = new Map<string, {
+      title: string;
+      query: string;
+      runs: number;
+      models: Array<{ model: string; provider: string }>;
+      expectedToolCalls: any[];
+      judgeRequirement?: string;
+      advancedConfig?: any;
+    }>();
+
+    for (const test of tests) {
+      const key = `${test.title}-${test.query}`;
+      if (!testCaseMap.has(key)) {
+        testCaseMap.set(key, {
+          title: test.title,
+          query: test.query,
+          runs: test.runs,
+          models: [],
+          expectedToolCalls: test.expectedToolCalls,
+          judgeRequirement: test.judgeRequirement,
+          advancedConfig: test.advancedConfig,
+        });
+      }
+      testCaseMap.get(key)!.models.push({
+        model: test.model,
+        provider: test.provider,
+      });
+    }
+
     if (resolvedSuiteId) {
-      // Compute revision of new config to compare with current
-      const newConfigRevision = computeConfigRevision(suiteConfigPayload);
+      // Update existing suite
+      await convexClient.mutation(
+        "testSuites:updateTestSuite" as any,
+        {
+          suiteId: resolvedSuiteId,
+          name: suiteName,
+          description: suiteDescription,
+          environment: { servers: resolvedServerIds },
+        },
+      );
 
-      // Get current suite data to access its configRevision
-      // We'll fetch the suite details which includes the config
-      const suiteOverview = await convexClient.query("evals:getSuiteOverview" as any, {});
-      const currentSuite = suiteOverview?.find((entry: any) => entry.suite._id === resolvedSuiteId)?.suite;
-      const currentConfigRevision = currentSuite?.configRevision || null;
+      // Get existing test cases
+      const existingTestCases = await convexClient.query(
+        "testSuites:listTestCases" as any,
+        { suiteId: resolvedSuiteId }
+      );
 
-      // Check if config actually changed by comparing revisions
-      const configChanged = currentConfigRevision !== newConfigRevision;
-
-      if (configChanged) {
-        // Config changed: update suite (this will mark old runs as inactive)
-        await convexClient.mutation(
-          "evals:updateSuite" as any,
-          {
-            suiteId: resolvedSuiteId,
-            name: suiteName,
-            description: suiteDescription,
-            config: suiteConfigPayload,
-          },
+      // Update or create test cases
+      for (const [key, testCaseData] of testCaseMap.entries()) {
+        const existingTestCase = existingTestCases?.find(
+          (tc: any) => tc.title === testCaseData.title && tc.query === testCaseData.query
         );
-      } else {
-        // Config unchanged: just update name/description
-        // This keeps old runs active for trend continuity
-        await convexClient.mutation(
-          "evals:updateSuite" as any,
-          {
-            suiteId: resolvedSuiteId,
-            name: suiteName,
-            description: suiteDescription,
-            // Don't pass config - preserves run history
-          },
-        );
+
+        if (existingTestCase) {
+          // Normalize values for comparison (handle undefined vs null, etc.)
+          const normalize = (val: any) => val === undefined || val === null ? null : val;
+
+          // Normalize object for comparison (sort keys recursively to handle key order differences)
+          const normalizeForComparison = (obj: any): any => {
+            if (obj === null || obj === undefined) return null;
+            if (typeof obj !== 'object') return obj;
+            if (Array.isArray(obj)) return obj.map(normalizeForComparison);
+
+            // Sort object keys alphabetically
+            const sorted: any = {};
+            Object.keys(obj).sort().forEach(key => {
+              sorted[key] = normalizeForComparison(obj[key]);
+            });
+            return sorted;
+          };
+
+          // Check if anything actually changed to avoid marking runs as inactive unnecessarily
+          const modelsChanged = JSON.stringify(normalizeForComparison(existingTestCase.models || [])) !== JSON.stringify(normalizeForComparison(testCaseData.models || []));
+          const runsChanged = normalize(existingTestCase.runs) !== normalize(testCaseData.runs);
+          const expectedToolCallsChanged = JSON.stringify(normalizeForComparison(existingTestCase.expectedToolCalls || [])) !== JSON.stringify(normalizeForComparison(testCaseData.expectedToolCalls || []));
+          const judgeRequirementChanged = normalize(existingTestCase.judgeRequirement) !== normalize(testCaseData.judgeRequirement);
+          const advancedConfigChanged = JSON.stringify(normalizeForComparison(existingTestCase.advancedConfig)) !== JSON.stringify(normalizeForComparison(testCaseData.advancedConfig));
+
+          const hasChanges = modelsChanged || runsChanged || expectedToolCallsChanged || judgeRequirementChanged || advancedConfigChanged;
+
+          // Only update if there are actual changes (this preserves run history when config is unchanged)
+          if (hasChanges) {
+            console.log(`[evals] Test case "${testCaseData.title}" has changes - updating to preserve accuracy`);
+            await convexClient.mutation(
+              "testSuites:updateTestCase" as any,
+              {
+                testCaseId: existingTestCase._id,
+                models: testCaseData.models,
+                runs: testCaseData.runs,
+                expectedToolCalls: testCaseData.expectedToolCalls,
+                judgeRequirement: testCaseData.judgeRequirement,
+                advancedConfig: testCaseData.advancedConfig,
+              },
+            );
+          }
+        } else {
+          await convexClient.mutation(
+            "testSuites:createTestCase" as any,
+            {
+              suiteId: resolvedSuiteId,
+              title: testCaseData.title,
+              query: testCaseData.query,
+              models: testCaseData.models,
+              runs: testCaseData.runs,
+              expectedToolCalls: testCaseData.expectedToolCalls,
+              judgeRequirement: testCaseData.judgeRequirement,
+              advancedConfig: testCaseData.advancedConfig,
+            },
+          );
+        }
       }
     } else {
+      // Create new suite
       const createdSuite = await convexClient.mutation(
-        "evals:createSuite" as any,
+        "testSuites:createTestSuite" as any,
         {
           name: suiteName!,
           description: suiteDescription,
-          config: suiteConfigPayload,
-          defaultPassCriteria: passCriteria, // Use passCriteria from request as default for new suite
+          environment: { servers: resolvedServerIds },
+          defaultPassCriteria: passCriteria,
         },
       );
 
@@ -244,6 +315,23 @@ evals.post("/run", async (c) => {
       }
 
       resolvedSuiteId = createdSuite._id as string;
+
+      // Create test cases
+      for (const [key, testCaseData] of testCaseMap.entries()) {
+        await convexClient.mutation(
+          "testSuites:createTestCase" as any,
+          {
+            suiteId: resolvedSuiteId,
+            title: testCaseData.title,
+            query: testCaseData.query,
+            models: testCaseData.models,
+            runs: testCaseData.runs,
+            expectedToolCalls: testCaseData.expectedToolCalls,
+            judgeRequirement: testCaseData.judgeRequirement,
+            advancedConfig: testCaseData.advancedConfig,
+          },
+        );
+      }
     }
 
     const {
@@ -255,6 +343,7 @@ evals.post("/run", async (c) => {
       suiteId: resolvedSuiteId,
       notes,
       passCriteria,
+      serverIds: resolvedServerIds,
     });
 
     try {
@@ -352,7 +441,7 @@ evals.post("/run-test-case", async (c) => {
     convexClient.setAuth(convexAuthToken);
 
     // Get the test case details
-    const testCase = await convexClient.query("evals:getTestCase" as any, {
+    const testCase = await convexClient.query("testSuites:getTestCase" as any, {
       testCaseId,
     });
 
@@ -393,7 +482,7 @@ evals.post("/run-test-case", async (c) => {
 
     // Get the most recent quick run iteration that was just created
     const recentIterations = await convexClient.query(
-      "evals:getQuickRunIterations" as any,
+      "testSuites:listTestIterations" as any,
       { testCaseId }
     );
     const latestIteration = recentIterations?.[0] || null;
@@ -401,10 +490,10 @@ evals.post("/run-test-case", async (c) => {
     // Save this iteration as the last message run
     if (latestIteration?._id) {
       await convexClient.mutation(
-        "evals:setLastMessageRun" as any,
+        "testSuites:updateTestCase" as any,
         {
           testCaseId,
-          iterationId: latestIteration._id,
+          lastMessageRun: latestIteration._id,
         }
       );
     }
@@ -442,7 +531,7 @@ evals.post("/cancel", async (c) => {
     const convexClient = new ConvexHttpClient(convexUrl);
     convexClient.setAuth(convexAuthToken);
 
-    await convexClient.mutation("evals:cancelSuiteRun" as any, {
+    await convexClient.mutation("testSuites:cancelTestSuiteRun" as any, {
       runId,
     });
 

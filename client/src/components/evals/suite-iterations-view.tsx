@@ -146,7 +146,7 @@ export function SuiteIterationsView({
   // Default pass criteria for new runs (stored in localStorage per suite)
   const [defaultMinimumPassRate, setDefaultMinimumPassRate] = useState(100);
 
-  const updateSuite = useMutation("evals:updateSuite" as any);
+  const updateSuite = useMutation("testSuites:updateTestSuite" as any);
 
   useEffect(() => {
     setEditedName(suite.name);
@@ -188,22 +188,25 @@ export function SuiteIterationsView({
     }
   }, [suite._id, suite.defaultPassCriteria]);
 
-  const handleUpdateTests = async (tests: EvalSuiteConfigTest[]) => {
+  const updateTestCaseMutation = useMutation("testSuites:updateTestCase" as any);
+
+  const handleUpdateTests = async (models: any[]) => {
     try {
-      const result = await updateSuite({
-        suiteId: suite._id,
-        config: {
-          tests,
-          environment: suite.config?.environment || { servers: [] },
-        },
-      });
-      if (result) {
-        toast.success("Suite updated successfully");
+      // Update all test cases with the new models list
+      for (const testCase of cases) {
+        await updateTestCaseMutation({
+          testCaseId: testCase._id,
+          models: models.map(m => ({
+            model: m.model,
+            provider: m.provider,
+          })),
+        });
       }
+      toast.success("Models updated successfully");
     } catch (error) {
-      toast.error("Failed to update suite");
-      console.error("Failed to update suite:", error);
-      throw error; // Re-throw so SuiteTestsConfig can handle it if needed
+      toast.error("Failed to update models");
+      console.error("Failed to update models:", error);
+      throw error;
     }
   };
 
@@ -1924,7 +1927,7 @@ export function SuiteIterationsView({
           </div>
 
           {/* Tests Config */}
-          <SuiteTestsConfig suite={suite} onUpdate={handleUpdateTests} availableModels={availableModels} />
+          <SuiteTestsConfig suite={suite} testCases={cases} onUpdate={handleUpdateTests} availableModels={availableModels} />
           </div>
         )}
 

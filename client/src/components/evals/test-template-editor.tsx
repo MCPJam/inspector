@@ -103,12 +103,11 @@ export function TestTemplateEditor({
   const [openIterationId, setOpenIterationId] = useState<string | null>(null);
 
   // Get all test cases for this suite
-  const testCases = useQuery("evals:getTestCasesBySuite" as any, {
+  const testCases = useQuery("testSuites:listTestCases" as any, {
     suiteId,
   }) as any[] | undefined;
 
-  const updateTestCaseMutation = useMutation("evals:updateTestCase" as any);
-  const clearLastMessageRunMutation = useMutation("evals:clearLastMessageRun" as any);
+  const updateTestCaseMutation = useMutation("testSuites:updateTestCase" as any);
 
   // Find the test case
   const currentTestCase = useMemo(() => {
@@ -119,7 +118,7 @@ export function TestTemplateEditor({
   // Fetch the lastMessageRun iteration if it exists
   const lastMessageRunId = currentTestCase?.lastMessageRun;
   const lastMessageRunIteration = useQuery(
-    "evals:getIteration" as any,
+    "testSuites:getTestIteration" as any,
     lastMessageRunId ? { iterationId: lastMessageRunId } : "skip"
   ) as any | undefined;
 
@@ -160,7 +159,7 @@ export function TestTemplateEditor({
   }, [currentTestCase, activeTab]);
 
   // Get suite config for servers (to fetch available tools)
-  const suiteConfig = useQuery("evals:getSuiteOverview" as any, {}) as any;
+  const suiteConfig = useQuery("testSuites:getTestSuitesOverview" as any, {}) as any;
   const suite = useMemo(() => {
     if (!suiteConfig) return null;
     return suiteConfig.find((entry: any) => entry.suite._id === suiteId)?.suite;
@@ -171,7 +170,7 @@ export function TestTemplateEditor({
     async function fetchTools() {
       if (!suite) return;
 
-      const serverIds = suite.config?.environment?.servers || [];
+      const serverIds = suite.environment?.servers || [];
       if (serverIds.length === 0) {
         setAvailableTools([]);
         return;
@@ -294,7 +293,7 @@ export function TestTemplateEditor({
 
     try {
       const accessToken = await getAccessToken();
-      const serverIds = suite.config?.environment?.servers || [];
+      const serverIds = suite.environment?.servers || [];
 
       // Collect API key if needed
       const modelApiKeys: Record<string, string> = {};
@@ -346,9 +345,13 @@ export function TestTemplateEditor({
     if (!currentTestCase) return;
 
     try {
-      await clearLastMessageRunMutation({
+      // Clear the lastMessageRun field in the database
+      await updateTestCaseMutation({
         testCaseId: currentTestCase._id,
+        lastMessageRun: null,
       });
+
+      // Clear the local state
       setCurrentQuickRunResult(null);
       toast.success("Result cleared");
     } catch (error) {
