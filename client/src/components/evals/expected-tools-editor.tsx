@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Plus, X } from "lucide-react";
 import { useState } from "react";
 import {
@@ -292,7 +293,7 @@ export function ExpectedToolsEditor({
                       )}
                     </div>
                     <div className="flex-[2]">
-                      <Input
+                      <Textarea
                         value={
                           typeof value === "string"
                             ? value
@@ -304,7 +305,8 @@ export function ExpectedToolsEditor({
                         placeholder={
                           argSchema?.type ? `${argSchema.type}` : "Value"
                         }
-                        className="font-mono text-sm"
+                        className="font-mono text-sm resize-none min-h-[36px]"
+                        rows={1}
                       />
                     </div>
                     <Button

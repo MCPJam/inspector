@@ -414,6 +414,14 @@ const RunTestCaseRequestSchema = z.object({
     .min(1, { message: "At least one server must be selected" }),
   modelApiKeys: z.record(z.string(), z.string()).optional(),
   convexAuthToken: z.string(),
+  // Optional overrides for running with unsaved changes
+  testCaseOverrides: z
+    .object({
+      query: z.string().optional(),
+      expectedToolCalls: z.array(z.any()).optional(),
+      runs: z.number().optional(),
+    })
+    .optional(),
 });
 
 type RunTestCaseRequest = z.infer<typeof RunTestCaseRequestSchema>;
@@ -440,6 +448,7 @@ evals.post("/run-test-case", async (c) => {
       serverIds,
       modelApiKeys,
       convexAuthToken,
+      testCaseOverrides,
     } = validationResult.data as RunTestCaseRequest;
 
     const clientManager = c.mcpClientManager;
@@ -468,13 +477,15 @@ evals.post("/run-test-case", async (c) => {
     }
 
     // Create a test config for the runner
+    // Use overrides if provided (for running with unsaved changes), otherwise use DB values
     const test = {
       title: testCase.title,
-      query: testCase.query,
-      runs: 1, // Quick run always does 1 run
+      query: testCaseOverrides?.query ?? testCase.query,
+      runs: testCaseOverrides?.runs ?? 1, // Quick run defaults to 1 run
       model,
       provider,
-      expectedToolCalls: testCase.expectedToolCalls || [],
+      expectedToolCalls:
+        testCaseOverrides?.expectedToolCalls ?? testCase.expectedToolCalls ?? [],
       advancedConfig: testCase.advancedConfig,
       testCaseId: testCase._id,
     };

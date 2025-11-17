@@ -81,9 +81,10 @@ export function IterationDetails({
     fetchToolsMetadata();
   }, [serverNames]);
 
+  // Use snapshot values first (reflects what was actually tested, including unsaved edits)
   const expectedToolCalls =
-    testCase?.expectedToolCalls ||
     iteration.testCaseSnapshot?.expectedToolCalls ||
+    testCase?.expectedToolCalls ||
     [];
   const actualToolCalls = iteration.actualToolCalls || [];
 

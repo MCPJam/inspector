@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card } from "@/components/ui/card";
-import { Play, Loader2 } from "lucide-react";
+import { Play, Loader2, Save } from "lucide-react";
 import posthog from "posthog-js";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import {
@@ -113,7 +113,8 @@ export function TestTemplateEditor({
     }
   }, [currentTestCase?.title]);
 
-  // Initialize/reset editForm when currentTestCase changes
+  // Initialize/reset editForm only when switching test cases (not on DB updates)
+  // This preserves local edits after running tests
   useEffect(() => {
     if (currentTestCase) {
       setEditForm({
@@ -124,7 +125,7 @@ export function TestTemplateEditor({
         advancedConfig: currentTestCase.advancedConfig,
       });
     }
-  }, [currentTestCase]);
+  }, [selectedTestCaseId, currentTestCase?._id]); // Reset when switching test cases or when test case first loads
 
   // Get suite config for servers (to fetch available tools)
   const suiteConfig = useQuery(
@@ -222,26 +223,30 @@ export function TestTemplateEditor({
     );
   }, [editForm, currentTestCase]);
 
-  const handleQuickRun = async () => {
-    if (!selectedModel || !currentTestCase || !suite) return;
+  // Separate save handler
+  const handleSave = async () => {
+    if (!editForm || !currentTestCase) return;
 
-    // Save first if there are unsaved changes
-    if (hasUnsavedChanges && editForm) {
-      try {
-        await updateTestCaseMutation({
-          testCaseId: currentTestCase._id,
-          title: editForm.title,
-          query: editForm.query,
-          runs: editForm.runs,
-          expectedToolCalls: editForm.expectedToolCalls,
-          advancedConfig: editForm.advancedConfig,
-        });
-      } catch (error) {
-        console.error("Failed to save before run:", error);
-        toast.error("Failed to save changes before running");
-        return;
-      }
+    try {
+      await updateTestCaseMutation({
+        testCaseId: currentTestCase._id,
+        title: editForm.title,
+        query: editForm.query,
+        runs: editForm.runs,
+        expectedToolCalls: editForm.expectedToolCalls,
+        advancedConfig: editForm.advancedConfig,
+      });
+      toast.success("Changes saved");
+    } catch (error) {
+      console.error("Failed to save:", error);
+      toast.error("Failed to save changes");
+      throw error;
     }
+  };
+
+  // Standalone run handler (no auto-save)
+  const handleRun = async () => {
+    if (!selectedModel || !currentTestCase || !suite) return;
 
     // Parse the selected model (format: "provider/model")
     const [provider, ...modelParts] = selectedModel.split("/");
@@ -302,6 +307,14 @@ export function TestTemplateEditor({
           modelApiKeys:
             Object.keys(modelApiKeys).length > 0 ? modelApiKeys : undefined,
           convexAuthToken: accessToken,
+          // Send current form state to run with unsaved changes
+          testCaseOverrides: editForm
+            ? {
+                query: editForm.query,
+                expectedToolCalls: editForm.expectedToolCalls,
+                runs: editForm.runs,
+              }
+            : undefined,
         }),
       });
 
@@ -344,6 +357,19 @@ export function TestTemplateEditor({
     } finally {
       setIsRunning(false);
     }
+  };
+
+  // Combined save and run handler
+  const handleSaveAndRun = async () => {
+    if (hasUnsavedChanges) {
+      try {
+        await handleSave();
+      } catch (error) {
+        // If save fails, don't proceed with run
+        return;
+      }
+    }
+    await handleRun();
   };
 
   const handleClearResult = async () => {
@@ -463,11 +489,36 @@ export function TestTemplateEditor({
                     )}
                   </SelectContent>
                 </Select>
+
+                {/* Save button - only show if there are unsaved changes */}
+                {hasUnsavedChanges && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span>
+                        <Button
+                          onClick={handleSave}
+                          disabled={isRunning}
+                          variant="outline"
+                          size="sm"
+                          className="h-9 px-4 text-xs font-medium"
+                        >
+                          <Save className="h-3.5 w-3.5 mr-2" />
+                          Save
+                        </Button>
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      Save changes to this test case
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+
+                {/* Run button */}
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <span>
                       <Button
-                        onClick={handleQuickRun}
+                        onClick={handleRun}
                         disabled={
                           !selectedModel ||
                           isRunning ||
@@ -485,7 +536,7 @@ export function TestTemplateEditor({
                         ) : (
                           <>
                             <Play className="h-3.5 w-3.5 mr-2 fill-current" />
-                            {hasUnsavedChanges ? "Save & Run" : "Run"}
+                            Run
                           </>
                         )}
                       </Button>
@@ -498,9 +549,7 @@ export function TestTemplateEditor({
                         ? "Select a model to run"
                         : !editForm?.query?.trim()
                           ? "Enter a query to run"
-                          : hasUnsavedChanges
-                            ? "Save and run this test"
-                            : "Run this test"}
+                          : "Run this test"}
                   </TooltipContent>
                 </Tooltip>
               </div>
