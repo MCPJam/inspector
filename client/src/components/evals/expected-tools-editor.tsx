@@ -53,9 +53,18 @@ export function ExpectedToolsEditor({
 
   const updateToolName = (index: number, toolName: string) => {
     const updated = [...toolCalls];
-    updated[index] = { ...updated[index], toolName };
+    const selectedTool = availableTools.find((t) => t.name === toolName);
 
-    // Don't auto-populate arguments anymore - user will select from dropdown
+    // Auto-populate all available arguments from the tool's schema
+    let initialArguments: Record<string, any> = {};
+    if (selectedTool?.inputSchema?.properties) {
+      const properties = selectedTool.inputSchema.properties;
+      Object.keys(properties).forEach((key) => {
+        initialArguments[key] = "";
+      });
+    }
+
+    updated[index] = { ...updated[index], toolName, arguments: initialArguments };
     onChange(updated);
   };
 
