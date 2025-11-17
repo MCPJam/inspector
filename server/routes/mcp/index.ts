@@ -4,7 +4,6 @@ import servers from "./servers";
 import tools from "./tools";
 import resources from "./resources";
 import prompts from "./prompts";
-import chat from "./chat";
 import chatV2 from "./chat-v2";
 import oauth from "./oauth";
 import exporter from "./export";
@@ -27,9 +26,6 @@ mcp.get("/health", (c) => {
     timestamp: new Date().toISOString(),
   });
 });
-
-// Chat endpoint - REAL IMPLEMENTATION
-mcp.route("/chat", chat);
 
 // Chat v2 endpoint
 mcp.route("/chat-v2", chatV2);

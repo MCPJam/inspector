@@ -30,7 +30,6 @@ import {
   useAiProviderKeys,
   type ProviderTokens,
 } from "@/hooks/use-ai-provider-keys";
-import { ModelSelector } from "@/components/chat/model-selector";
 import { cn } from "@/lib/utils";
 import { ModelDefinition, isMCPJamProvidedModel } from "@/shared/types";
 import { ServerSelectionCard } from "./ServerSelectionCard";
