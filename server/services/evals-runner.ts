@@ -83,7 +83,7 @@ async function createIterationDirectly(
     };
     iterationNumber: number;
     startedAt: number;
-  }
+  },
 ): Promise<string | undefined> {
   try {
     const result = await convexClient.mutation(
@@ -93,14 +93,14 @@ async function createIterationDirectly(
         testCaseSnapshot: params.testCaseSnapshot,
         iterationNumber: params.iterationNumber,
         startedAt: params.startedAt,
-      }
+      },
     );
 
     return result?.iterationId as string | undefined;
   } catch (error) {
     console.error(
       "[evals] Failed to create iteration:",
-      error instanceof Error ? error.message : error
+      error instanceof Error ? error.message : error,
     );
     return undefined;
   }
@@ -117,29 +117,27 @@ async function finishIterationDirectly(
     messages: ModelMessage[];
     status?: "completed" | "failed" | "cancelled";
     startedAt?: number;
-  }
+  },
 ): Promise<void> {
   if (!params.iterationId) return;
 
-  const iterationStatus = params.status ?? (params.passed ? "completed" : "failed");
+  const iterationStatus =
+    params.status ?? (params.passed ? "completed" : "failed");
   const result = params.passed ? "passed" : "failed";
 
   try {
-    await convexClient.action(
-      "testSuites:updateTestIteration" as any,
-      {
-        iterationId: params.iterationId,
-        result,
-        status: iterationStatus,
-        actualToolCalls: params.toolsCalled,
-        tokensUsed: params.usage.totalTokens ?? 0,
-        messages: params.messages,
-      }
-    );
+    await convexClient.action("testSuites:updateTestIteration" as any, {
+      iterationId: params.iterationId,
+      result,
+      status: iterationStatus,
+      actualToolCalls: params.toolsCalled,
+      tokensUsed: params.usage.totalTokens ?? 0,
+      messages: params.messages,
+    });
   } catch (error) {
     console.error(
       "[evals] Failed to finish iteration:",
-      error instanceof Error ? error.message : error
+      error instanceof Error ? error.message : error,
     );
   }
 }
@@ -188,10 +186,13 @@ const runIterationWithAiSdk = async ({
 
   // Get API key for this model's provider
   // Try exact match first, then lowercase
-  const apiKey = modelApiKeys?.[test.provider] ?? modelApiKeys?.[test.provider.toLowerCase()] ?? "";
+  const apiKey =
+    modelApiKeys?.[test.provider] ??
+    modelApiKeys?.[test.provider.toLowerCase()] ??
+    "";
   if (!apiKey) {
     throw new Error(
-      `Missing API key for provider ${test.provider} (test: ${test.title})`
+      `Missing API key for provider ${test.provider} (test: ${test.title})`,
     );
   }
 
@@ -237,10 +238,13 @@ const runIterationWithAiSdk = async ({
 
     const finalMessages =
       (result.response?.messages as ModelMessage[]) ?? baseMessages;
-    
+
     // Extract all tool calls from all steps in the conversation
-    const toolsCalled: Array<{ toolName: string; arguments: Record<string, any> }> = [];
-    
+    const toolsCalled: Array<{
+      toolName: string;
+      arguments: Record<string, any>;
+    }> = [];
+
     // First, extract from result.steps if available (more reliable for multi-step conversations)
     if (result.steps && Array.isArray(result.steps)) {
       for (const step of result.steps) {
@@ -255,7 +259,7 @@ const runIterationWithAiSdk = async ({
         }
       }
     }
-    
+
     // Fallback: also check messages (in case steps don't have all info)
     for (const msg of finalMessages) {
       if (msg?.role === "assistant" && Array.isArray((msg as any).content)) {
@@ -265,8 +269,12 @@ const runIterationWithAiSdk = async ({
             if (name) {
               // Check if not already added from steps
               const alreadyAdded = toolsCalled.some(
-                tc => tc.toolName === name && 
-                JSON.stringify(tc.arguments) === JSON.stringify(item.input ?? item.parameters ?? item.args ?? {})
+                (tc) =>
+                  tc.toolName === name &&
+                  JSON.stringify(tc.arguments) ===
+                    JSON.stringify(
+                      item.input ?? item.parameters ?? item.args ?? {},
+                    ),
               );
               if (!alreadyAdded) {
                 toolsCalled.push({
@@ -283,8 +291,10 @@ const runIterationWithAiSdk = async ({
         for (const call of (msg as any).toolCalls) {
           if (call?.toolName || call?.name) {
             const alreadyAdded = toolsCalled.some(
-              tc => tc.toolName === (call.toolName ?? call.name) && 
-              JSON.stringify(tc.arguments) === JSON.stringify(call.args ?? call.input ?? {})
+              (tc) =>
+                tc.toolName === (call.toolName ?? call.name) &&
+                JSON.stringify(tc.arguments) ===
+                  JSON.stringify(call.args ?? call.input ?? {}),
             );
             if (!alreadyAdded) {
               toolsCalled.push({
@@ -296,9 +306,14 @@ const runIterationWithAiSdk = async ({
         }
       }
     }
-    
-    console.log('[evals-runner] Extracted', toolsCalled.length, 'tool calls:', toolsCalled.map(tc => tc.toolName));
-    
+
+    console.log(
+      "[evals-runner] Extracted",
+      toolsCalled.length,
+      "tool calls:",
+      toolsCalled.map((tc) => tc.toolName),
+    );
+
     const evaluation = evaluateResults(expectedToolCalls, toolsCalled);
 
     const usage: UsageTotals = {
@@ -313,7 +328,7 @@ const runIterationWithAiSdk = async ({
       toolsCalled,
       usage,
       messages: finalMessages,
-      status: 'completed' as const,
+      status: "completed" as const,
       startedAt: runStartedAt,
     };
 
@@ -336,7 +351,7 @@ const runIterationWithAiSdk = async ({
         totalTokens: undefined,
       },
       messages: baseMessages,
-      status: 'failed' as const,
+      status: "failed" as const,
       startedAt: runStartedAt,
     };
 
@@ -368,7 +383,10 @@ const runIterationViaBackend = async ({
       content: query,
     },
   ];
-  const toolsCalled: Array<{ toolName: string; arguments: Record<string, any> }> = [];
+  const toolsCalled: Array<{
+    toolName: string;
+    arguments: Record<string, any>;
+  }> = [];
   const runStartedAt = Date.now();
 
   const iterationParams = {
@@ -469,9 +487,13 @@ const runIterationViaBackend = async ({
 
       // Accumulate usage from this step
       if (json.usage) {
-        accumulatedUsage.inputTokens = (accumulatedUsage.inputTokens || 0) + (json.usage.promptTokens || 0);
-        accumulatedUsage.outputTokens = (accumulatedUsage.outputTokens || 0) + (json.usage.completionTokens || 0);
-        accumulatedUsage.totalTokens = (accumulatedUsage.totalTokens || 0) + (json.usage.totalTokens || 0);
+        accumulatedUsage.inputTokens =
+          (accumulatedUsage.inputTokens || 0) + (json.usage.promptTokens || 0);
+        accumulatedUsage.outputTokens =
+          (accumulatedUsage.outputTokens || 0) +
+          (json.usage.completionTokens || 0);
+        accumulatedUsage.totalTokens =
+          (accumulatedUsage.totalTokens || 0) + (json.usage.totalTokens || 0);
       }
 
       for (const msg of json.messages as any[]) {
@@ -523,7 +545,7 @@ const runIterationViaBackend = async ({
     toolsCalled,
     usage: accumulatedUsage,
     messages: messageHistory,
-    status: 'completed' as const,
+    status: "completed" as const,
     startedAt: runStartedAt,
   };
 
@@ -546,8 +568,16 @@ const runTestCase = async (params: {
   convexClient: ConvexHttpClient;
   testCaseId?: string;
 }) => {
-  const { test, tools, recorder, modelApiKeys, convexHttpUrl, convexAuthToken, convexClient, testCaseId: parentTestCaseId } =
-    params;
+  const {
+    test,
+    tools,
+    recorder,
+    modelApiKeys,
+    convexHttpUrl,
+    convexAuthToken,
+    convexClient,
+    testCaseId: parentTestCaseId,
+  } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const modelDefinition = buildModelDefinition(test);
   const isJamModel = isMCPJamProvidedModel(String(modelDefinition.id));
@@ -632,21 +662,28 @@ export const runEvalSuiteWithAiSdk = async ({
     for (const test of tests) {
       // Check if run has been cancelled before processing next test (only for suite runs)
       if (runId !== null) {
-        const currentRun = await convexClient.query("testSuites:getTestSuiteRun" as any, {
-          runId,
-        });
+        const currentRun = await convexClient.query(
+          "testSuites:getTestSuiteRun" as any,
+          {
+            runId,
+          },
+        );
 
-        if (currentRun?.status === 'cancelled') {
-          const passRate = summary.total > 0 ? summary.passed / summary.total : 0;
+        if (currentRun?.status === "cancelled") {
+          const passRate =
+            summary.total > 0 ? summary.passed / summary.total : 0;
           if (recorder) {
             await recorder.finalize({
               status: "cancelled",
-              summary: summary.total > 0 ? {
-                total: summary.total,
-                passed: summary.passed,
-                failed: summary.failed,
-                passRate,
-              } : undefined,
+              summary:
+                summary.total > 0
+                  ? {
+                      total: summary.total,
+                      passed: summary.passed,
+                      failed: summary.failed,
+                      passRate,
+                    }
+                  : undefined,
               notes: "Run cancelled by user",
             });
           }
@@ -675,8 +712,7 @@ export const runEvalSuiteWithAiSdk = async ({
       }
     }
 
-    const passRate =
-      summary.total > 0 ? summary.passed / summary.total : 0;
+    const passRate = summary.total > 0 ? summary.passed / summary.total : 0;
 
     // Only finalize if we have a recorder (suite runs, not quick runs)
     if (recorder) {
@@ -691,8 +727,7 @@ export const runEvalSuiteWithAiSdk = async ({
       });
     }
   } catch (error) {
-    const passRate =
-      summary.total > 0 ? summary.passed / summary.total : 0;
+    const passRate = summary.total > 0 ? summary.passed / summary.total : 0;
 
     // Only finalize if we have a recorder (suite runs, not quick runs)
     if (recorder) {

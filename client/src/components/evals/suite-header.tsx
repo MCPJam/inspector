@@ -1,6 +1,10 @@
 import { useState, useCallback, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { BarChart3, Loader2, RotateCw, Trash2, X } from "lucide-react";
 import { formatRunId } from "./helpers";
 import { EvalSuite, EvalSuiteRun } from "./types";
@@ -85,13 +89,13 @@ export function SuiteHeader({
         setEditedName(suite.name);
       }
     },
-    [handleNameBlur, suite.name]
+    [handleNameBlur, suite.name],
   );
 
   // Calculate suite server status
   const suiteServers = suite.config?.environment?.servers || [];
   const missingServers = suiteServers.filter(
-    (server) => !connectedServerNames.has(server)
+    (server) => !connectedServerNames.has(server),
   );
   const canRerun = missingServers.length === 0;
   const isRerunning = rerunningSuiteId === suite._id;
@@ -189,7 +193,9 @@ export function SuiteHeader({
             className="gap-2"
           >
             <Trash2 className="h-4 w-4" />
-            {deletingRunId === selectedRunDetails._id ? "Deleting..." : "Delete"}
+            {deletingRunId === selectedRunDetails._id
+              ? "Deleting..."
+              : "Delete"}
           </Button>
           <Button
             variant="outline"

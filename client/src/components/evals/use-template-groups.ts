@@ -37,7 +37,7 @@ export interface TemplateGroup {
  */
 export function useTemplateGroups(
   suiteDetails: SuiteDetailsQueryResponse | undefined,
-  enabled: boolean = true
+  enabled: boolean = true,
 ): { caseGroups: CaseGroup[]; templateGroups: TemplateGroup[] } {
   const caseGroups = useMemo(() => {
     if (!suiteDetails || !enabled) return [];
@@ -165,7 +165,7 @@ export function useTemplateGroups(
  * Hook to compute unique template groups count from suite config
  */
 export function useTemplateGroupsCount(
-  config: { tests?: any[] } | undefined
+  config: { tests?: any[] } | undefined,
 ): number {
   return useMemo(() => {
     const tests = config?.tests || [];

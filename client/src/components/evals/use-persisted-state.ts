@@ -8,7 +8,7 @@ import { useState, useEffect } from "react";
  */
 export function usePersistedState<T>(
   key: string,
-  defaultValue: T
+  defaultValue: T,
 ): [T, React.Dispatch<React.SetStateAction<T>>] {
   // Initialize state from localStorage or use default
   const [state, setState] = useState<T>(() => {
@@ -53,7 +53,7 @@ export function usePersistedStateCustom<T>(
   key: string,
   defaultValue: T,
   serialize: (value: T) => string,
-  deserialize: (value: string) => T
+  deserialize: (value: string) => T,
 ): [T, React.Dispatch<React.SetStateAction<T>>] {
   const [state, setState] = useState<T>(() => {
     if (typeof window === "undefined") {

@@ -11,7 +11,10 @@ interface ToolCallsDisplayProps {
   className?: string;
 }
 
-export function ToolCallsDisplay({ toolCalls, className = "" }: ToolCallsDisplayProps) {
+export function ToolCallsDisplay({
+  toolCalls,
+  className = "",
+}: ToolCallsDisplayProps) {
   if (toolCalls.length === 0) {
     return (
       <div className={`text-xs text-muted-foreground ${className}`}>

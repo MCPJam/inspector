@@ -1,8 +1,23 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery, useMutation, useConvex } from "convex/react";
-import { FlaskConical, Plus, AlertTriangle, ChevronDown, ChevronRight, MoreVertical, RotateCw, Trash2, X, Pencil } from "lucide-react";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  FlaskConical,
+  Plus,
+  AlertTriangle,
+  ChevronDown,
+  ChevronRight,
+  MoreVertical,
+  RotateCw,
+  Trash2,
+  X,
+  Pencil,
+} from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -99,7 +114,9 @@ function SuiteSidebarItem({
   const hasMissingServers = missingServers.length > 0;
 
   // Check if there's an active run (pending or running)
-  const hasActiveRun = latestRun && (latestRun.status === "pending" || latestRun.status === "running");
+  const hasActiveRun =
+    latestRun &&
+    (latestRun.status === "pending" || latestRun.status === "running");
 
   // Determine status for the dot indicator
   const getStatusColor = () => {
@@ -109,7 +126,8 @@ function SuiteSidebarItem({
     if (latestRun.result === "passed") return "bg-emerald-500";
     if (latestRun.result === "failed") return "bg-red-500";
     if (latestRun.result === "cancelled") return "bg-gray-400";
-    if (latestRun.result === "pending" || latestRun.status === "pending") return "bg-amber-400";
+    if (latestRun.result === "pending" || latestRun.status === "pending")
+      return "bg-amber-400";
     if (latestRun.status === "running") return "bg-amber-400";
 
     // Fallback based on status
@@ -129,7 +147,7 @@ function SuiteSidebarItem({
       <div
         className={cn(
           "group w-full flex items-center gap-1 px-4 py-2 text-left text-sm transition-colors hover:bg-accent/50",
-          isSelected && !selectedTestId && "bg-accent"
+          isSelected && !selectedTestId && "bg-accent",
         )}
       >
         <button
@@ -147,14 +165,19 @@ function SuiteSidebarItem({
           onClick={() => onSelectSuite(suite._id)}
           className={cn(
             "flex-1 min-w-0 text-left rounded px-2 py-1 transition-colors",
-            isSelected && !selectedTestId && "font-medium"
+            isSelected && !selectedTestId && "font-medium",
           )}
         >
           <div className="flex items-center gap-1.5 truncate">
             <span className="truncate font-medium">
               {suite.name || "Untitled suite"}
             </span>
-            <div className={cn("h-1.5 w-1.5 rounded-full shrink-0", getStatusColor())} />
+            <div
+              className={cn(
+                "h-1.5 w-1.5 rounded-full shrink-0",
+                getStatusColor(),
+              )}
+            />
           </div>
         </button>
         <button
@@ -188,10 +211,12 @@ function SuiteSidebarItem({
                 }}
                 disabled={isCancelling}
               >
-                <X className={cn(
-                  "h-4 w-4 mr-2 text-foreground",
-                  isCancelling && "opacity-50"
-                )} />
+                <X
+                  className={cn(
+                    "h-4 w-4 mr-2 text-foreground",
+                    isCancelling && "opacity-50",
+                  )}
+                />
                 {isCancelling ? "Cancelling..." : "Cancel run"}
               </DropdownMenuItem>
             ) : (
@@ -208,11 +233,13 @@ function SuiteSidebarItem({
                       disabled={hasMissingServers || isRerunning}
                       className={hasMissingServers ? "cursor-not-allowed" : ""}
                     >
-                      <RotateCw className={cn(
-                        "h-4 w-4 mr-2 text-foreground",
-                        (hasMissingServers || isRerunning) && "opacity-50",
-                        isRerunning && "animate-spin"
-                      )} />
+                      <RotateCw
+                        className={cn(
+                          "h-4 w-4 mr-2 text-foreground",
+                          (hasMissingServers || isRerunning) && "opacity-50",
+                          isRerunning && "animate-spin",
+                        )}
+                      />
                       {isRerunning ? "Running..." : "Rerun"}
                     </DropdownMenuItem>
                   </div>
@@ -269,7 +296,7 @@ function SuiteSidebarItem({
                   key={testCase._id}
                   className={cn(
                     "group w-full flex items-center gap-1 px-6 py-2 text-left text-xs hover:bg-accent/50 transition-colors",
-                    isTestSelected && "bg-accent/70 font-medium"
+                    isTestSelected && "bg-accent/70 font-medium",
                   )}
                 >
                   <button
@@ -340,8 +367,13 @@ export function EvalsTab() {
   const [suiteMode, setSuiteMode] = useState<"runs" | "edit">("runs");
   const [viewResetKey, setViewResetKey] = useState(0);
   const [isCreatingTestCase, setIsCreatingTestCase] = useState(false);
-  const [deletingTestCaseId, setDeletingTestCaseId] = useState<string | null>(null);
-  const [testCaseToDelete, setTestCaseToDelete] = useState<{ id: string; title: string } | null>(null);
+  const [deletingTestCaseId, setDeletingTestCaseId] = useState<string | null>(
+    null,
+  );
+  const [testCaseToDelete, setTestCaseToDelete] = useState<{
+    id: string;
+    title: string;
+  } | null>(null);
 
   // Reset selectedTestId only when suite changes without a test being explicitly selected
   // We track this by checking if the test selection was intentional
@@ -382,8 +414,12 @@ export function EvalsTab() {
   const deleteSuiteMutation = useMutation("testSuites:deleteTestSuite" as any);
   const deleteRunMutation = useMutation("testSuites:deleteTestSuiteRun" as any);
   const cancelRunMutation = useMutation("testSuites:cancelTestSuiteRun" as any);
-  const createTestCaseMutation = useMutation("testSuites:createTestCase" as any);
-  const deleteTestCaseMutation = useMutation("testSuites:deleteTestCase" as any);
+  const createTestCaseMutation = useMutation(
+    "testSuites:createTestCase" as any,
+  );
+  const deleteTestCaseMutation = useMutation(
+    "testSuites:deleteTestCase" as any,
+  );
 
   useEffect(() => {
     posthog.capture("evals_tab_viewed", {
@@ -392,7 +428,6 @@ export function EvalsTab() {
       environment: detectEnvironment(),
     });
   }, []);
-
 
   // Get connected server names
   const connectedServerNames = useMemo(
@@ -429,8 +464,7 @@ export function EvalsTab() {
   const isSuiteDetailsLoading =
     enableSuiteDetailsQuery && suiteDetails === undefined;
 
-  const isSuiteRunsLoading =
-    enableSuiteDetailsQuery && suiteRuns === undefined;
+  const isSuiteRunsLoading = enableSuiteDetailsQuery && suiteRuns === undefined;
 
   const selectedSuiteEntry = useMemo(() => {
     if (!selectedSuiteId || !suiteOverview) return null;
@@ -456,13 +490,14 @@ export function EvalsTab() {
   // Filter iterations to only include those from active runs
   const activeIterations = useMemo(() => {
     if (!suiteRuns || sortedIterations.length === 0) return sortedIterations;
-    
+
     const activeRunIds = new Set(
-      suiteRuns.filter((run) => run.isActive !== false).map((run) => run._id)
+      suiteRuns.filter((run) => run.isActive !== false).map((run) => run._id),
     );
-    
-    return sortedIterations.filter((iteration) => 
-      !iteration.suiteRunId || activeRunIds.has(iteration.suiteRunId)
+
+    return sortedIterations.filter(
+      (iteration) =>
+        !iteration.suiteRunId || activeRunIds.has(iteration.suiteRunId),
     );
   }, [sortedIterations, suiteRuns]);
 
@@ -476,15 +511,21 @@ export function EvalsTab() {
   }, [selectedSuite, suiteDetails, activeIterations]);
 
   // Query to get test cases for a suite
-  const getTestCasesForRerun = useCallback(async (suiteId: string) => {
-    try {
-      const testCases = await convex.query("testSuites:listTestCases" as any, { suiteId });
-      return testCases;
-    } catch (error) {
-      console.error("Failed to fetch test cases:", error);
-      return [];
-    }
-  }, [convex]);
+  const getTestCasesForRerun = useCallback(
+    async (suiteId: string) => {
+      try {
+        const testCases = await convex.query(
+          "testSuites:listTestCases" as any,
+          { suiteId },
+        );
+        return testCases;
+      } catch (error) {
+        console.error("Failed to fetch test cases:", error);
+        return [];
+      }
+    },
+    [convex],
+  );
 
   // Rerun handler
   const handleRerun = useCallback(
@@ -504,7 +545,7 @@ export function EvalsTab() {
       }
 
       // Get current test cases from database (not from stale config)
-      const testCases = await getTestCasesForRerun(suite._id) as any[];
+      const testCases = (await getTestCasesForRerun(suite._id)) as any[];
       if (!testCases || testCases.length === 0) {
         toast.error("No test cases found in this suite");
         return;
@@ -576,7 +617,8 @@ export function EvalsTab() {
         // Get pass criteria from suite's defaultPassCriteria, or fall back to latest run, or default to 100%
         const suiteDefault = suite.defaultPassCriteria?.minimumPassRate;
         const latestRun = selectedSuiteEntry?.latestRun;
-        const minimumPassRate = suiteDefault ?? latestRun?.passCriteria?.minimumPassRate ?? 100;
+        const minimumPassRate =
+          suiteDefault ?? latestRun?.passCriteria?.minimumPassRate ?? 100;
         const criteriaNote = `Pass Criteria: Min ${minimumPassRate}% Accuracy`;
 
         const response = await fetch("/api/mcp/evals/run", {
@@ -596,7 +638,8 @@ export function EvalsTab() {
               advancedConfig: test.advancedConfig,
             })),
             serverIds: suiteServers,
-            modelApiKeys: Object.keys(modelApiKeys).length > 0 ? modelApiKeys : undefined,
+            modelApiKeys:
+              Object.keys(modelApiKeys).length > 0 ? modelApiKeys : undefined,
             convexAuthToken: accessToken,
             passCriteria: {
               minimumPassRate: minimumPassRate,
@@ -699,14 +742,17 @@ export function EvalsTab() {
   );
 
   // Direct delete function - actually performs the deletion (for batch delete)
-  const directDeleteRun = useCallback(async (runId: string) => {
-    try {
-      await deleteRunMutation({ runId });
-    } catch (error) {
-      console.error("Failed to delete run:", error);
-      throw error;
-    }
-  }, [deleteRunMutation]);
+  const directDeleteRun = useCallback(
+    async (runId: string) => {
+      try {
+        await deleteRunMutation({ runId });
+      } catch (error) {
+        console.error("Failed to delete run:", error);
+        throw error;
+      }
+    },
+    [deleteRunMutation],
+  );
 
   // Confirm run deletion - actually performs the deletion
   const confirmDeleteRun = useCallback(async () => {
@@ -729,73 +775,93 @@ export function EvalsTab() {
   }, [runToDelete, deletingRunId, deleteRunMutation]);
 
   // Handle create test case - creates directly without modal
-  const handleCreateTestCase = useCallback(async (suiteId: string) => {
-    if (isCreatingTestCase) return;
+  const handleCreateTestCase = useCallback(
+    async (suiteId: string) => {
+      if (isCreatingTestCase) return;
 
-    setIsCreatingTestCase(true);
+      setIsCreatingTestCase(true);
 
-    try {
-      // Get test cases for the suite to extract models
-      const testCases = await convex.query("testSuites:listTestCases" as any, { suiteId });
+      try {
+        // Get test cases for the suite to extract models
+        const testCases = await convex.query(
+          "testSuites:listTestCases" as any,
+          { suiteId },
+        );
 
-      // Extract unique models from existing test cases
-      let modelsToUse: any[] = [];
-      if (testCases && Array.isArray(testCases) && testCases.length > 0) {
-        const uniqueModels = new Map<string, { model: string; provider: string }>();
+        // Extract unique models from existing test cases
+        let modelsToUse: any[] = [];
+        if (testCases && Array.isArray(testCases) && testCases.length > 0) {
+          const uniqueModels = new Map<
+            string,
+            { model: string; provider: string }
+          >();
 
-        for (const testCase of testCases) {
-          if (testCase.models && Array.isArray(testCase.models)) {
-            for (const modelConfig of testCase.models) {
-              if (modelConfig.model && modelConfig.provider) {
-                const key = `${modelConfig.provider}:${modelConfig.model}`;
-                if (!uniqueModels.has(key)) {
-                  uniqueModels.set(key, { model: modelConfig.model, provider: modelConfig.provider });
+          for (const testCase of testCases) {
+            if (testCase.models && Array.isArray(testCase.models)) {
+              for (const modelConfig of testCase.models) {
+                if (modelConfig.model && modelConfig.provider) {
+                  const key = `${modelConfig.provider}:${modelConfig.model}`;
+                  if (!uniqueModels.has(key)) {
+                    uniqueModels.set(key, {
+                      model: modelConfig.model,
+                      provider: modelConfig.provider,
+                    });
+                  }
                 }
               }
             }
           }
+
+          modelsToUse = Array.from(uniqueModels.values());
         }
 
-        modelsToUse = Array.from(uniqueModels.values());
+        const testCaseId = await createTestCaseMutation({
+          suiteId: suiteId,
+          title: "Untitled test case",
+          query: "",
+          models: modelsToUse, // Copy models from suite configuration
+        });
+
+        toast.success("Test case created");
+
+        // Ensure suite is expanded
+        setExpandedSuites((prev) => new Set(prev).add(suiteId));
+
+        // Check if suite is already selected
+        if (selectedSuiteId === suiteId) {
+          // If suite is already selected, directly set the test case
+          setSelectedTestId(testCaseId);
+        } else {
+          // Set pending test selection before changing suite to prevent reset
+          pendingTestSelection.current = testCaseId;
+          // Auto-select the suite (which will trigger the effect to set selectedTestId)
+          setSelectedSuiteId(suiteId);
+        }
+      } catch (error) {
+        console.error("Failed to create test case:", error);
+        toast.error(
+          error instanceof Error ? error.message : "Failed to create test case",
+        );
+      } finally {
+        setIsCreatingTestCase(false);
       }
-
-      const testCaseId = await createTestCaseMutation({
-        suiteId: suiteId,
-        title: "Untitled test case",
-        query: "",
-        models: modelsToUse, // Copy models from suite configuration
-      });
-
-      toast.success("Test case created");
-
-      // Ensure suite is expanded
-      setExpandedSuites((prev) => new Set(prev).add(suiteId));
-
-      // Check if suite is already selected
-      if (selectedSuiteId === suiteId) {
-        // If suite is already selected, directly set the test case
-        setSelectedTestId(testCaseId);
-      } else {
-        // Set pending test selection before changing suite to prevent reset
-        pendingTestSelection.current = testCaseId;
-        // Auto-select the suite (which will trigger the effect to set selectedTestId)
-        setSelectedSuiteId(suiteId);
-      }
-    } catch (error) {
-      console.error("Failed to create test case:", error);
-      toast.error(
-        error instanceof Error ? error.message : "Failed to create test case"
-      );
-    } finally {
-      setIsCreatingTestCase(false);
-    }
-  }, [isCreatingTestCase, createTestCaseMutation, selectedSuiteId, suiteOverview]);
+    },
+    [
+      isCreatingTestCase,
+      createTestCaseMutation,
+      selectedSuiteId,
+      suiteOverview,
+    ],
+  );
 
   // Handle delete test case - opens confirmation modal
-  const handleDeleteTestCase = useCallback((testCaseId: string, testCaseTitle: string) => {
-    if (deletingTestCaseId) return;
-    setTestCaseToDelete({ id: testCaseId, title: testCaseTitle });
-  }, [deletingTestCaseId]);
+  const handleDeleteTestCase = useCallback(
+    (testCaseId: string, testCaseTitle: string) => {
+      if (deletingTestCaseId) return;
+      setTestCaseToDelete({ id: testCaseId, title: testCaseTitle });
+    },
+    [deletingTestCaseId],
+  );
 
   // Confirm test case deletion
   const confirmDeleteTestCase = useCallback(async () => {
@@ -816,12 +882,17 @@ export function EvalsTab() {
     } catch (error) {
       console.error("Failed to delete test case:", error);
       toast.error(
-        error instanceof Error ? error.message : "Failed to delete test case"
+        error instanceof Error ? error.message : "Failed to delete test case",
       );
     } finally {
       setDeletingTestCaseId(null);
     }
-  }, [testCaseToDelete, deletingTestCaseId, deleteTestCaseMutation, selectedTestId]);
+  }, [
+    testCaseToDelete,
+    deletingTestCaseId,
+    deleteTestCaseMutation,
+    selectedTestId,
+  ]);
 
   // Handle eval run success - navigate back to results view
   const handleEvalRunSuccess = useCallback(() => {
@@ -956,10 +1027,12 @@ export function EvalsTab() {
                           // Reset to runs mode when clicking suite name
                           setSuiteMode("runs");
                           // Increment reset key to trigger view reset
-                          setViewResetKey(prev => prev + 1);
+                          setViewResetKey((prev) => prev + 1);
                           if (selectedSuiteId !== suiteId) {
                             // Auto-expand when selecting a new suite
-                            setExpandedSuites((prev) => new Set(prev).add(suiteId));
+                            setExpandedSuites((prev) =>
+                              new Set(prev).add(suiteId),
+                            );
                           }
                         }}
                         onToggleExpanded={toggleSuiteExpanded}
@@ -1003,7 +1076,8 @@ export function EvalsTab() {
                     Select a test suite
                   </h2>
                   <p className="text-sm text-muted-foreground mb-6">
-                    Choose a test suite from the sidebar to view its runs, test cases, and performance metrics.
+                    Choose a test suite from the sidebar to view its runs, test
+                    cases, and performance metrics.
                   </p>
                   {sortedSuites.length === 0 && (
                     <Button
@@ -1066,9 +1140,11 @@ export function EvalsTab() {
         </div>
       )}
 
-
       {/* Delete Suite Confirmation Modal */}
-      <Dialog open={!!suiteToDelete} onOpenChange={(open) => !open && setSuiteToDelete(null)}>
+      <Dialog
+        open={!!suiteToDelete}
+        onOpenChange={(open) => !open && setSuiteToDelete(null)}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -1107,7 +1183,10 @@ export function EvalsTab() {
       </Dialog>
 
       {/* Delete Run Confirmation Modal */}
-      <Dialog open={!!runToDelete} onOpenChange={(open) => !open && setRunToDelete(null)}>
+      <Dialog
+        open={!!runToDelete}
+        onOpenChange={(open) => !open && setRunToDelete(null)}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -1118,8 +1197,8 @@ export function EvalsTab() {
               Are you sure you want to delete this run?
               <br />
               <br />
-              This will permanently delete all iterations and results
-              associated with this run. This action cannot be undone.
+              This will permanently delete all iterations and results associated
+              with this run. This action cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -1142,7 +1221,10 @@ export function EvalsTab() {
       </Dialog>
 
       {/* Delete Test Case Confirmation Modal */}
-      <Dialog open={!!testCaseToDelete} onOpenChange={(open) => !open && setTestCaseToDelete(null)}>
+      <Dialog
+        open={!!testCaseToDelete}
+        onOpenChange={(open) => !open && setTestCaseToDelete(null)}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -1157,8 +1239,8 @@ export function EvalsTab() {
               ?
               <br />
               <br />
-              This will permanently delete all iterations and results
-              associated with this test case. This action cannot be undone.
+              This will permanently delete all iterations and results associated
+              with this test case. This action cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

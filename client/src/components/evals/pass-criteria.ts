@@ -22,8 +22,16 @@ export type PassCriteriaEvaluation = {
   details?: {
     overallPassRate?: number;
     threshold?: number;
-    failedTemplates?: Array<{ templateKey: string; passRate: number; threshold: number }>;
-    failedModels?: Array<{ model: string; passRate: number; threshold: number }>;
+    failedTemplates?: Array<{
+      templateKey: string;
+      passRate: number;
+      threshold: number;
+    }>;
+    failedModels?: Array<{
+      model: string;
+      passRate: number;
+      threshold: number;
+    }>;
   };
 };
 
@@ -40,11 +48,17 @@ export function computeIterationResult(
   iteration: {
     status: "pending" | "running" | "completed" | "failed" | "cancelled";
     testCaseSnapshot?: {
-      expectedToolCalls: Array<{ toolName: string; arguments: Record<string, any> }>;
+      expectedToolCalls: Array<{
+        toolName: string;
+        arguments: Record<string, any>;
+      }>;
     };
-    actualToolCalls: Array<{ toolName: string; arguments: Record<string, any> }>;
+    actualToolCalls: Array<{
+      toolName: string;
+      arguments: Record<string, any>;
+    }>;
   },
-  criteria?: PassCriteria
+  criteria?: PassCriteria,
 ): "pending" | "passed" | "failed" | "cancelled" {
   // Handle status-based results first
   if (iteration.status === "pending" || iteration.status === "running") {
@@ -64,7 +78,7 @@ export function computeIterationResult(
  */
 export function computeIterationPassed(
   iteration: EvalIteration,
-  criteria?: PassCriteria
+  criteria?: PassCriteria,
 ): boolean {
   if (!iteration.testCaseSnapshot?.expectedToolCalls) {
     return true; // No expectations = pass
@@ -75,12 +89,12 @@ export function computeIterationPassed(
 
   // Find missing tool calls (expected but not called)
   const missing = expected.filter(
-    (exp) => !actual.some((act) => act.toolName === exp.toolName)
+    (exp) => !actual.some((act) => act.toolName === exp.toolName),
   );
 
   // Find unexpected tool calls (called but not expected)
   const unexpected = actual.filter(
-    (act) => !expected.some((exp) => exp.toolName === act.toolName)
+    (act) => !expected.some((exp) => exp.toolName === act.toolName),
   );
 
   // Check argument mismatches for tools that were called
@@ -122,7 +136,7 @@ export function computeIterationPassed(
 export function evaluatePassCriteria(
   run: EvalSuiteRun,
   iterations: EvalIteration[],
-  criteria: PassCriteria = DEFAULT_CRITERIA
+  criteria: PassCriteria = DEFAULT_CRITERIA,
 ): PassCriteriaEvaluation {
   // Filter to only this run's iterations
   const runIterations = iterations.filter((it) => it.suiteRunId === run._id);
@@ -178,7 +192,9 @@ export function evaluatePassCriteria(
 
       // Check each template
       for (const [templateKey, templateIterations] of byTemplate) {
-        const templatePassed = templateIterations.filter((it) => it.passed).length;
+        const templatePassed = templateIterations.filter(
+          (it) => it.passed,
+        ).length;
         const templateTotal = templateIterations.length;
         const templatePassRate =
           templateTotal > 0 ? (templatePassed / templateTotal) * 100 : 0;
@@ -217,7 +233,10 @@ export function evaluatePassCriteria(
       }> = [];
 
       // Group by model
-      const byModel = new Map<string, Array<(typeof iterationsWithResults)[0]>>();
+      const byModel = new Map<
+        string,
+        Array<(typeof iterationsWithResults)[0]>
+      >();
       for (const it of iterationsWithResults) {
         const model = it.testCaseSnapshot?.model || "unknown";
         if (!byModel.has(model)) {
@@ -232,7 +251,8 @@ export function evaluatePassCriteria(
         const modelTotal = modelIterations.length;
         const modelPassRate =
           modelTotal > 0 ? (modelPassed / modelTotal) * 100 : 0;
-        const modelThreshold = criteria.perModelThresholds?.[model] ?? threshold;
+        const modelThreshold =
+          criteria.perModelThresholds?.[model] ?? threshold;
 
         if (modelPassRate < modelThreshold) {
           failedModels.push({
