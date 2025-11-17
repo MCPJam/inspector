@@ -28,85 +28,56 @@ export function TestResultsPanel({
   const provider = iteration?.testCaseSnapshot?.provider || "";
 
   return (
-    <div className="h-full flex flex-col border-t border-border bg-background">
+    <div className="h-full flex flex-col bg-muted/20">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-border">
-        <div className="flex items-center gap-4">
-          {hasResult && !loading && (
-            <>
-              {isPassed && (
-                <Badge
-                  variant="default"
-                  className="bg-green-600 hover:bg-green-700"
-                >
-                  <CheckCircle2 className="h-3 w-3 mr-1.5" />
-                  Passed
-                </Badge>
+      {hasResult && !loading && (
+        <div className="flex items-center justify-between px-3 py-2 border-b">
+          <div className="flex items-center gap-3">
+            {isPassed && <CheckCircle2 className="h-5 w-5 text-green-600" />}
+            {isFailed && <XCircle className="h-5 w-5 text-red-600" />}
+            {isPending && (
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            )}
+            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+              <span className="font-mono font-medium text-foreground">
+                {modelName}
+              </span>
+              <span>{iteration.actualToolCalls?.length || 0} tools</span>
+              <span>{iteration.tokensUsed?.toLocaleString() || 0} tokens</span>
+              {iteration.duration && (
+                <span>{formatDuration(iteration.duration)}</span>
               )}
-              {isFailed && (
-                <Badge variant="destructive">
-                  <XCircle className="h-3 w-3 mr-1.5" />
-                  Failed
-                </Badge>
-              )}
-              {isPending && (
-                <Badge variant="secondary">
-                  <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
-                  Running
-                </Badge>
-              )}
-            </>
+            </div>
+          </div>
+          {onClear && (
+            <button
+              onClick={onClear}
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Clear
+            </button>
           )}
         </div>
-        {hasResult && !loading && (
-          <div className="flex items-center gap-4 text-xs text-muted-foreground">
-            <span className="font-mono font-medium">{modelName}</span>
-            <span>Tools: {iteration.actualToolCalls?.length || 0}</span>
-            <span>Tokens: {iteration.tokensUsed?.toLocaleString() || 0}</span>
-            {iteration.duration && (
-              <span>Duration: {formatDuration(iteration.duration)}</span>
-            )}
-            <span>{formatTime(iteration.createdAt)}</span>
-            {onClear && (
-              <button
-                onClick={onClear}
-                className="text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-              >
-                Clear
-              </button>
-            )}
-          </div>
-        )}
-      </div>
+      )}
 
       {/* Content */}
       <div className="flex-1 overflow-hidden h-0">
         {loading ? (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground mx-auto mb-3" />
-              <p className="text-xs font-semibold text-foreground mb-1">
-                Running test...
-              </p>
-              <p className="text-xs text-muted-foreground font-medium">
-                This may take a few moments
-              </p>
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground mx-auto mb-2" />
+              <p className="text-xs text-muted-foreground">Running test...</p>
             </div>
           </div>
         ) : !hasResult ? (
           <div className="flex items-center justify-center h-full">
-            <div className="text-center max-w-sm">
-              <p className="text-sm font-semibold text-foreground mb-2">
-                No results yet
-              </p>
-              <p className="text-xs text-muted-foreground font-medium">
-                Select a model and click Run to execute this test
-              </p>
-            </div>
+            <p className="text-xs text-muted-foreground">
+              Click Run to execute this test
+            </p>
           </div>
         ) : (
           <ScrollArea className="h-full">
-            <div className="p-4">
+            <div className="p-3">
               <IterationDetails iteration={iteration} testCase={testCase} />
             </div>
           </ScrollArea>

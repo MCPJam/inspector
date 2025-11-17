@@ -6,24 +6,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card } from "@/components/ui/card";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Play, Loader2, Save } from "lucide-react";
+import { Play, Loader2 } from "lucide-react";
 import { ExpectedToolsEditor } from "./expected-tools-editor";
-import { IterationDetails } from "./iteration-details";
-import { CompactIterationRow } from "./iteration-row";
-import { AccuracyChart } from "./accuracy-chart";
 import { TestResultsPanel } from "./test-results-panel";
-import { ChartContainer } from "@/components/ui/chart";
-import { BarChart, Bar, CartesianGrid, XAxis, YAxis } from "recharts";
-import { ChartTooltip } from "@/components/ui/chart";
 import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { toast } from "sonner";
-import type { EvalIteration, EvalCase } from "./types";
-import { formatTime, formatDuration } from "./helpers";
 import {
   Select,
   SelectContent,
@@ -51,56 +42,17 @@ interface TestTemplate {
 interface TestTemplateEditorProps {
   suiteId: string;
   selectedTestCaseId: string;
-  // Run History props
-  selectedTestTrendData?: Array<{
-    runId: string;
-    runIdDisplay: string;
-    passRate: number;
-    label: string;
-  }>;
-  iterationsForSelectedTest?: EvalIteration[];
-  selectedTestDetails?: {
-    testCase: EvalCase | null;
-    templateInfo?: {
-      title: string;
-      query: string;
-      modelCount: number;
-    };
-  } | null;
-  runs?: Array<{ _id: string }>;
-  caseGroups?: Array<{ testCase: EvalCase | null }>;
-  onViewRun?: (runId: string) => void;
-  onTestIdChange?: (testId: string | null) => void;
-  onModeChange?: (mode: "runs" | "edit") => void;
-  selectedTestModelBreakdown?: Array<{
-    provider: string;
-    model: string;
-    passed: number;
-    failed: number;
-    total: number;
-    passRate: number;
-  }>;
 }
 
 export function TestTemplateEditor({
   suiteId,
   selectedTestCaseId,
-  selectedTestTrendData = [],
-  iterationsForSelectedTest = [],
-  selectedTestDetails,
-  runs = [],
-  caseGroups = [],
-  onViewRun,
-  onTestIdChange,
-  onModeChange,
-  selectedTestModelBreakdown = [],
 }: TestTemplateEditorProps) {
   const { getAccessToken } = useAuth();
   const { getToken, hasToken } = useAiProviderKeys();
   const [editForm, setEditForm] = useState<TestTemplate | null>(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editedTitle, setEditedTitle] = useState("");
-  const [activeTab, setActiveTab] = useState("edit");
   const [availableTools, setAvailableTools] = useState<
     Array<{ name: string; description?: string; inputSchema?: any }>
   >([]);
@@ -109,7 +61,6 @@ export function TestTemplateEditor({
   const [currentQuickRunResult, setCurrentQuickRunResult] = useState<
     any | null
   >(null);
-  const [openIterationId, setOpenIterationId] = useState<string | null>(null);
 
   // Get all test cases for this suite
   const testCases = useQuery("testSuites:listTestCases" as any, {
@@ -153,20 +104,18 @@ export function TestTemplateEditor({
     }
   }, [currentTestCase?.title]);
 
-  // Initialize/reset editForm when switching to edit tab or when currentTestCase changes
+  // Initialize/reset editForm when currentTestCase changes
   useEffect(() => {
     if (currentTestCase) {
-      if (activeTab === "edit") {
-        setEditForm({
-          title: currentTestCase.title,
-          query: currentTestCase.query,
-          runs: currentTestCase.runs,
-          expectedToolCalls: currentTestCase.expectedToolCalls || [],
-          advancedConfig: currentTestCase.advancedConfig,
-        });
-      }
+      setEditForm({
+        title: currentTestCase.title,
+        query: currentTestCase.query,
+        runs: currentTestCase.runs,
+        expectedToolCalls: currentTestCase.expectedToolCalls || [],
+        advancedConfig: currentTestCase.advancedConfig,
+      });
     }
-  }, [currentTestCase, activeTab]);
+  }, [currentTestCase]);
 
   // Get suite config for servers (to fetch available tools)
   const suiteConfig = useQuery(
@@ -241,28 +190,6 @@ export function TestTemplateEditor({
     }
   };
 
-  const handleSave = async () => {
-    if (!editForm || !currentTestCase) return;
-
-    try {
-      await updateTestCaseMutation({
-        testCaseId: currentTestCase._id,
-        title: editForm.title,
-        query: editForm.query,
-        runs: editForm.runs,
-        expectedToolCalls: editForm.expectedToolCalls,
-        advancedConfig: editForm.advancedConfig,
-      });
-
-      toast.success("Test case updated successfully");
-    } catch (error) {
-      console.error("Failed to update test case:", error);
-      toast.error(
-        error instanceof Error ? error.message : "Failed to update test case",
-      );
-    }
-  };
-
   // Check if there are unsaved changes
   const hasUnsavedChanges = useMemo(() => {
     if (!editForm || !currentTestCase) return false;
@@ -272,7 +199,6 @@ export function TestTemplateEditor({
       editForm.runs !== currentTestCase.runs ||
       JSON.stringify(editForm.expectedToolCalls || []) !==
         JSON.stringify(currentTestCase.expectedToolCalls || []) ||
-      editForm.judgeRequirement !== currentTestCase.judgeRequirement ||
       JSON.stringify(editForm.advancedConfig || {}) !==
         JSON.stringify(currentTestCase.advancedConfig || {})
     );
@@ -280,6 +206,24 @@ export function TestTemplateEditor({
 
   const handleQuickRun = async () => {
     if (!selectedModel || !currentTestCase || !suite) return;
+
+    // Save first if there are unsaved changes
+    if (hasUnsavedChanges && editForm) {
+      try {
+        await updateTestCaseMutation({
+          testCaseId: currentTestCase._id,
+          title: editForm.title,
+          query: editForm.query,
+          runs: editForm.runs,
+          expectedToolCalls: editForm.expectedToolCalls,
+          advancedConfig: editForm.advancedConfig,
+        });
+      } catch (error) {
+        console.error("Failed to save before run:", error);
+        toast.error("Failed to save changes before running");
+        return;
+      }
+    }
 
     // Parse the selected model (format: "provider/model")
     const [provider, ...modelParts] = selectedModel.split("/");
@@ -377,9 +321,9 @@ export function TestTemplateEditor({
 
   if (!currentTestCase) {
     return (
-      <Card className="p-4">
-        <p className="text-sm text-muted-foreground">Loading test case...</p>
-      </Card>
+      <div className="flex items-center justify-center h-full">
+        <p className="text-xs text-muted-foreground">Loading test case...</p>
+      </div>
     );
   }
 
@@ -393,13 +337,20 @@ export function TestTemplateEditor({
     }));
   }, [currentTestCase.models]);
 
+  // Auto-select first model if none selected
+  useEffect(() => {
+    if (modelOptions.length > 0 && !selectedModel) {
+      setSelectedModel(modelOptions[0].value);
+    }
+  }, [modelOptions, selectedModel]);
+
   return (
     <ResizablePanelGroup direction="vertical" className="h-full">
       <ResizablePanel defaultSize={40} minSize={20}>
         <div className="h-full overflow-auto">
-          <div className="p-4 space-y-4">
-            {/* Header with title and save button */}
-            <div className="flex items-center justify-between gap-4">
+          <div className="p-2 space-y-2">
+            {/* Header with title and controls */}
+            <div className="flex items-center justify-between gap-4 px-1 pb-3 border-b">
               <div className="flex-1 min-w-0">
                 {isEditingTitle ? (
                   <input
@@ -409,395 +360,132 @@ export function TestTemplateEditor({
                     onBlur={handleTitleBlur}
                     onKeyDown={handleTitleKeyDown}
                     autoFocus
-                    className="px-2 py-1 text-lg font-semibold border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring bg-background"
+                    className="px-0 py-0 text-lg font-semibold border-none focus:outline-none focus:ring-0 bg-transparent w-full"
                   />
                 ) : (
                   <h2
-                    className="text-lg font-semibold cursor-pointer"
+                    className="text-lg font-semibold cursor-pointer hover:opacity-60 transition-opacity"
                     onClick={handleTitleClick}
                   >
                     {currentTestCase.title}
                   </h2>
                 )}
               </div>
-              {activeTab === "edit" && editForm && hasUnsavedChanges && (
-                <Button
-                  onClick={handleSave}
-                  size="sm"
-                  className="gap-2 shrink-0"
-                >
-                  <Save className="h-4 w-4" />
-                </Button>
-              )}
-            </div>
-
-            <Card className="p-0 overflow-hidden">
-              {/* Unified Test Case Editor - Postman-style */}
-
-              {/* Quick Run Controls - Postman-style */}
-              <div className="border-b">
-                <div className="flex items-center gap-0">
-                  <Select
-                    value={selectedModel}
-                    onValueChange={setSelectedModel}
-                    disabled={isRunning || modelOptions.length === 0}
-                  >
-                    <SelectTrigger className="h-10 rounded-none border-r-0 border-y-0 w-48 shrink-0">
-                      <SelectValue placeholder="Model" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {modelOptions.length === 0 ? (
-                        <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                          No models available
-                        </div>
-                      ) : (
-                        modelOptions.map(
-                          (option: {
-                            value: string;
-                            label: string;
-                            provider: string;
-                          }) => (
-                            <SelectItem key={option.value} value={option.value}>
-                              {option.label}
-                            </SelectItem>
-                          ),
-                        )
-                      )}
-                    </SelectContent>
-                  </Select>
+              <div className="flex items-center gap-3 shrink-0">
+                <div className="flex items-center gap-2">
+                  <Label className="text-xs text-muted-foreground">Runs:</Label>
                   <Input
-                    value={currentTestCase.query || ""}
-                    readOnly
-                    placeholder="Enter your prompt..."
-                    className="h-10 rounded-none border-x-0 border-y-0 flex-1 font-mono text-sm"
-                  />
-                  <Button
-                    onClick={handleQuickRun}
-                    disabled={
-                      !selectedModel || isRunning || !currentTestCase.query
+                    type="number"
+                    min={1}
+                    value={editForm?.runs || 1}
+                    onChange={(e) =>
+                      editForm &&
+                      setEditForm({
+                        ...editForm,
+                        runs: parseInt(e.target.value) || 1,
+                      })
                     }
-                    className="h-10 rounded-none border-l-0 border-y-0 shrink-0 px-6"
-                  >
-                    {isRunning ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                        Running
-                      </>
-                    ) : (
-                      <>
-                        <Play className="h-4 w-4 mr-2" />
-                        Run
-                      </>
-                    )}
-                  </Button>
+                    className="h-7 w-16 text-xs border-0 bg-muted/50"
+                  />
                 </div>
-              </div>
-
-              {/* Tabs Navigation - Postman style */}
-              <Tabs
-                value={activeTab}
-                onValueChange={setActiveTab}
-                className="w-full"
-              >
-                <TabsList className="w-full justify-start rounded-none border-b bg-transparent h-auto p-0">
-                  <TabsTrigger
-                    value="edit"
-                    className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-3 py-2 text-sm h-9"
-                  >
-                    Edit
-                  </TabsTrigger>
-                  <TabsTrigger
-                    value="history"
-                    className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-3 py-2 text-sm h-9"
-                  >
-                    Run History
-                  </TabsTrigger>
-                </TabsList>
-
-                {/* Edit Tab */}
-                <TabsContent value="edit" className="p-4 space-y-4 mt-0">
-                  {editForm ? (
+                <Select
+                  value={selectedModel}
+                  onValueChange={setSelectedModel}
+                  disabled={isRunning || modelOptions.length === 0}
+                >
+                  <SelectTrigger className="h-9 text-xs border-0 bg-muted/50 hover:bg-muted transition-colors w-[180px]">
+                    <SelectValue placeholder="Select model" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {modelOptions.length === 0 ? (
+                      <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                        No models available
+                      </div>
+                    ) : (
+                      modelOptions.map(
+                        (option: {
+                          value: string;
+                          label: string;
+                          provider: string;
+                        }) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ),
+                      )
+                    )}
+                  </SelectContent>
+                </Select>
+                <Button
+                  onClick={handleQuickRun}
+                  disabled={
+                    !selectedModel || isRunning || !currentTestCase.query
+                  }
+                  size="sm"
+                  className="h-9 px-5 text-xs font-medium shadow-sm"
+                >
+                  {isRunning ? (
                     <>
-                      <div className="space-y-2">
-                        <Label className="text-xs font-medium text-muted-foreground">
-                          Query / Prompt
-                        </Label>
-                        <Textarea
-                          value={editForm.query}
-                          onChange={(e) =>
-                            setEditForm({ ...editForm, query: e.target.value })
-                          }
-                          rows={6}
-                          placeholder="Enter your test query or prompt here..."
-                          className="font-mono text-sm resize-none"
-                        />
-                      </div>
-
-                      <div className="space-y-4 pt-2 border-t">
-                        <div className="space-y-2">
-                          <Label className="text-xs font-medium text-muted-foreground">
-                            Runs per test
-                          </Label>
-                          <Input
-                            type="number"
-                            min={1}
-                            value={editForm.runs}
-                            onChange={(e) =>
-                              setEditForm({
-                                ...editForm,
-                                runs: parseInt(e.target.value) || 1,
-                              })
-                            }
-                            className="h-9"
-                          />
-                        </div>
-
-                        <div className="space-y-2">
-                          <Label className="text-xs font-medium text-muted-foreground">
-                            Expected tool calls
-                          </Label>
-                          <ExpectedToolsEditor
-                            toolCalls={editForm.expectedToolCalls || []}
-                            onChange={(toolCalls) =>
-                              setEditForm({
-                                ...editForm,
-                                expectedToolCalls: toolCalls,
-                              })
-                            }
-                            availableTools={availableTools}
-                          />
-                        </div>
-                      </div>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />
+                      Running...
                     </>
                   ) : (
-                    <div className="py-12 text-center text-sm text-muted-foreground">
-                      Loading...
-                    </div>
+                    <>
+                      <Play className="h-3.5 w-3.5 mr-2 fill-current" />
+                      {hasUnsavedChanges ? "Save & Run" : "Run"}
+                    </>
                   )}
-                </TabsContent>
+                </Button>
+              </div>
+            </div>
 
-                {/* Run History Tab */}
-                <TabsContent value="history" className="p-4 space-y-4 mt-0">
-                  {/* Performance Chart */}
-                  {selectedTestTrendData.length > 0 && (
-                    <div className="space-y-2">
-                      <Label className="text-xs font-medium text-muted-foreground">
-                        Performance across runs
-                      </Label>
-                      <AccuracyChart
-                        data={selectedTestTrendData}
-                        height="h-32"
-                        showLabel={true}
-                        onClick={(runId) => {
-                          if (onViewRun) onViewRun(runId);
-                          if (onTestIdChange) onTestIdChange(null);
-                          if (onModeChange) onModeChange("runs");
-                        }}
-                      />
-                    </div>
-                  )}
+            {/* Edit Content */}
+            {editForm ? (
+              <>
+                <div className="px-1 pt-2">
+                  <Textarea
+                    value={editForm.query}
+                    onChange={(e) =>
+                      setEditForm({ ...editForm, query: e.target.value })
+                    }
+                    rows={10}
+                    placeholder="Enter your test prompt here..."
+                    className="font-mono text-sm resize-none border-0 bg-muted/30 focus-visible:bg-muted/50 transition-colors px-3 py-2.5"
+                  />
+                </div>
 
-                  {/* Per-Model Breakdown */}
-                  {selectedTestModelBreakdown.length > 1 && (
-                    <div className="space-y-2">
-                      <Label className="text-xs font-medium text-muted-foreground">
-                        Performance by model
-                      </Label>
-                      <ChartContainer
-                        config={{
-                          passRate: {
-                            label: "Pass rate",
-                            color: "var(--chart-1)",
-                          },
-                        }}
-                        className="aspect-auto h-48 w-full"
-                      >
-                        <BarChart
-                          data={selectedTestModelBreakdown}
-                          layout="vertical"
-                          margin={{ left: 0, right: 40 }}
-                        >
-                          <CartesianGrid
-                            strokeDasharray="3 3"
-                            horizontal={false}
-                            stroke="hsl(var(--muted-foreground) / 0.2)"
-                          />
-                          <XAxis
-                            type="number"
-                            domain={[0, 100]}
-                            tickLine={false}
-                            axisLine={false}
-                            tickMargin={8}
-                            tick={{ fontSize: 11 }}
-                            tickFormatter={(value) => `${value}%`}
-                          />
-                          <YAxis
-                            type="category"
-                            dataKey="model"
-                            tickLine={false}
-                            axisLine={false}
-                            tickMargin={8}
-                            tick={{ fontSize: 11 }}
-                            width={120}
-                          />
-                          <ChartTooltip
-                            cursor={false}
-                            content={({ active, payload }) => {
-                              if (!active || !payload || !payload.length)
-                                return null;
-                              const data = payload[0].payload;
-                              return (
-                                <div className="rounded-lg border bg-background p-2 shadow-sm">
-                                  <div className="text-xs font-medium">
-                                    {data.model}
-                                  </div>
-                                  <div className="text-xs text-muted-foreground">
-                                    {data.provider}
-                                  </div>
-                                  <div className="mt-1 text-xs">
-                                    Pass rate:{" "}
-                                    <span className="font-medium">
-                                      {data.passRate}%
-                                    </span>
-                                  </div>
-                                  <div className="text-xs text-muted-foreground">
-                                    {data.passed}/{data.total} passed
-                                  </div>
-                                </div>
-                              );
-                            }}
-                          />
-                          <Bar
-                            dataKey="passRate"
-                            fill="hsl(var(--chart-1))"
-                            radius={[0, 4, 4, 0]}
-                            isAnimationActive={false}
-                          />
-                        </BarChart>
-                      </ChartContainer>
-                    </div>
-                  )}
-
-                  {/* Iterations List */}
-                  {iterationsForSelectedTest.length === 0 ? (
-                    <div className="py-12 text-center text-sm text-muted-foreground">
-                      No iterations found for this test.
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      <Label className="text-xs font-medium text-muted-foreground">
-                        Iterations
-                      </Label>
-                      <div className="rounded-md border bg-card text-card-foreground flex flex-col max-h-[600px]">
-                        {/* Column Headers */}
-                        <div className="flex items-center gap-6 w-full px-4 py-1.5 bg-muted/30 border-b text-xs font-medium text-muted-foreground shrink-0">
-                          <div className="w-4"></div>
-                          <div className="min-w-[120px] max-w-[120px]">
-                            Result
-                          </div>
-                          <div className="min-w-[140px] max-w-[140px]">
-                            Model
-                          </div>
-                          <div className="min-w-[60px] max-w-[60px] text-right">
-                            Tools
-                          </div>
-                          <div className="min-w-[70px] max-w-[70px] text-right">
-                            Tokens
-                          </div>
-                          <div className="min-w-[70px] max-w-[70px] text-right">
-                            Duration
-                          </div>
-                        </div>
-                        <div className="divide-y overflow-y-auto">
-                          {iterationsForSelectedTest.map((iteration) => {
-                            const isOpen = openIterationId === iteration._id;
-                            const iterationRun = iteration.suiteRunId
-                              ? runs.find((r) => r._id === iteration.suiteRunId)
-                              : null;
-
-                            // Get model info for this iteration
-                            const iterationTestCase = iteration.testCaseId
-                              ? caseGroups.find(
-                                  (g) =>
-                                    g.testCase?._id === iteration.testCaseId,
-                                )?.testCase
-                              : null;
-
-                            const getIterationBorderColor = (
-                              result: string,
-                            ) => {
-                              if (result === "passed")
-                                return "bg-emerald-500/50";
-                              if (result === "failed") return "bg-red-500/50";
-                              if (result === "cancelled")
-                                return "bg-zinc-300/50";
-                              return "bg-amber-500/50"; // pending
-                            };
-
-                            return (
-                              <div key={iteration._id}>
-                                <CompactIterationRow
-                                  iteration={iteration}
-                                  testCase={
-                                    selectedTestDetails?.testCase || null
-                                  }
-                                  iterationTestCase={
-                                    iterationTestCase || undefined
-                                  }
-                                  iterationRun={iterationRun || undefined}
-                                  onViewRun={onViewRun}
-                                  getIterationBorderColor={
-                                    getIterationBorderColor
-                                  }
-                                  formatTime={formatTime}
-                                  formatDuration={formatDuration}
-                                  isOpen={isOpen}
-                                  onToggle={() => {
-                                    setOpenIterationId((current) =>
-                                      current === iteration._id
-                                        ? null
-                                        : iteration._id,
-                                    );
-                                  }}
-                                />
-                                {isOpen && (
-                                  <div className="border-t bg-muted/20 px-4 pb-4 pt-3 pl-8">
-                                    <IterationDetails
-                                      iteration={iteration}
-                                      testCase={
-                                        selectedTestDetails?.testCase || null
-                                      }
-                                    />
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </TabsContent>
-              </Tabs>
-            </Card>
+                <div className="px-1 pt-1">
+                  <ExpectedToolsEditor
+                    toolCalls={editForm.expectedToolCalls || []}
+                    onChange={(toolCalls) =>
+                      setEditForm({
+                        ...editForm,
+                        expectedToolCalls: toolCalls,
+                      })
+                    }
+                    availableTools={availableTools}
+                  />
+                </div>
+              </>
+            ) : (
+              <div className="py-8 text-center text-xs text-muted-foreground">
+                Loading...
+              </div>
+            )}
           </div>
         </div>
       </ResizablePanel>
 
-      {/* Results Panel - Only show in Edit tab */}
-      {activeTab === "edit" && (
-        <>
-          <ResizableHandle withHandle />
-          <ResizablePanel defaultSize={60} minSize={20} maxSize={80}>
-            <TestResultsPanel
-              iteration={currentQuickRunResult}
-              testCase={currentTestCase}
-              loading={isRunning}
-              onClear={handleClearResult}
-            />
-          </ResizablePanel>
-        </>
-      )}
+      {/* Results Panel */}
+      <ResizableHandle withHandle />
+      <ResizablePanel defaultSize={60} minSize={20} maxSize={80}>
+        <TestResultsPanel
+          iteration={currentQuickRunResult}
+          testCase={currentTestCase}
+          loading={isRunning}
+          onClear={handleClearResult}
+        />
+      </ResizablePanel>
     </ResizablePanelGroup>
   );
 }
