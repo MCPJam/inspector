@@ -42,7 +42,6 @@ interface TestTemplate {
     toolName: string;
     arguments: Record<string, any>;
   }>;
-  judgeRequirement?: string;
   advancedConfig?: Record<string, unknown>;
 }
 
@@ -151,7 +150,6 @@ export function TestTemplateEditor({
           query: currentTestCase.query,
           runs: currentTestCase.runs,
           expectedToolCalls: currentTestCase.expectedToolCalls || [],
-          judgeRequirement: currentTestCase.judgeRequirement,
           advancedConfig: currentTestCase.advancedConfig,
         });
       }
@@ -238,7 +236,6 @@ export function TestTemplateEditor({
         query: editForm.query,
         runs: editForm.runs,
         expectedToolCalls: editForm.expectedToolCalls,
-        judgeRequirement: editForm.judgeRequirement,
         advancedConfig: editForm.advancedConfig,
       });
 
@@ -259,7 +256,6 @@ export function TestTemplateEditor({
       editForm.query !== currentTestCase.query ||
       editForm.runs !== currentTestCase.runs ||
       JSON.stringify(editForm.expectedToolCalls || []) !== JSON.stringify(currentTestCase.expectedToolCalls || []) ||
-      editForm.judgeRequirement !== currentTestCase.judgeRequirement ||
       JSON.stringify(editForm.advancedConfig || {}) !== JSON.stringify(currentTestCase.advancedConfig || {})
     );
   }, [editForm, currentTestCase]);

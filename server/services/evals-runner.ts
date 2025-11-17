@@ -39,7 +39,6 @@ export type EvalTestCase = {
     toolName: string;
     arguments: Record<string, any>;
   }>;
-  judgeRequirement?: string;
   advancedConfig?: {
     system?: string;
     temperature?: number;
@@ -80,7 +79,6 @@ async function createIterationDirectly(
       model: string;
       runs?: number;
       expectedToolCalls: any[];
-      judgeRequirement?: string;
       advancedConfig?: Record<string, unknown>;
     };
     iterationNumber: number;
@@ -207,7 +205,6 @@ const runIterationWithAiSdk = async ({
       model: test.model,
       runs: test.runs,
       expectedToolCalls: test.expectedToolCalls,
-      judgeRequirement: test.judgeRequirement,
       advancedConfig: test.advancedConfig,
     },
     iterationNumber: runIndex + 1,
@@ -383,7 +380,6 @@ const runIterationViaBackend = async ({
       model: test.model,
       runs: test.runs,
       expectedToolCalls: test.expectedToolCalls,
-      judgeRequirement: test.judgeRequirement,
       advancedConfig: test.advancedConfig,
     },
     iterationNumber: runIndex + 1,
