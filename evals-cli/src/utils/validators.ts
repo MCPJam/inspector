@@ -25,7 +25,6 @@ export const TestCaseSchema = z.object({
   model: z.string(),
   provider: z.string(),
   expectedToolCalls: z.array(z.string()),
-  judgeRequirement: z.string().optional(),
   advancedConfig: AdvancedConfigSchema.optional(),
 });
 

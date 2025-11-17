@@ -14,6 +14,7 @@ import elicitation from "./elicitation";
 import openai from "./openai";
 import registry from "./registry";
 import models from "./models";
+import listTools from "./list-tools";
 import tokenizer from "./tokenizer";
 
 const mcp = new Hono();
@@ -41,6 +42,9 @@ mcp.route("/servers", servers);
 
 // Tools endpoint - REAL IMPLEMENTATION
 mcp.route("/tools", tools);
+
+// List tools endpoint - list all tools from selected servers
+mcp.route("/list-tools", listTools);
 
 // Evals endpoint - run evaluations
 mcp.route("/evals", evals);

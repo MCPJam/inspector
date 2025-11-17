@@ -290,11 +290,89 @@ app.on("open-url", (event, url) => {
   }
 });
 
-// Security: Prevent new window creation
+// Security: Prevent new window creation, but allow OAuth popups
 app.on("web-contents-created", (_, contents) => {
-  contents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
-    return { action: "deny" };
+  contents.setWindowOpenHandler(({ url, features }) => {
+    try {
+      const urlObj = new URL(url);
+
+      // Allow OAuth authorization popups to be created within Electron
+      // OAuth authorization URLs are typically external HTTPS URLs
+      // Check if this looks like an OAuth flow (external HTTPS URL)
+      const isOAuthFlow =
+        urlObj.protocol === "https:" &&
+        // Common OAuth authorization endpoint patterns
+        (urlObj.pathname.includes("/oauth") ||
+          urlObj.pathname.includes("/authorize") ||
+          urlObj.pathname.includes("/auth") ||
+          urlObj.searchParams.has("client_id") ||
+          urlObj.searchParams.has("response_type"));
+
+      if (isOAuthFlow) {
+        // Parse window features to create popup window
+        const width = features?.includes("width=")
+          ? parseInt(features.match(/width=(\d+)/)?.[1] || "600")
+          : 600;
+        const height = features?.includes("height=")
+          ? parseInt(features.match(/height=(\d+)/)?.[1] || "700")
+          : 700;
+
+        // Create a new BrowserWindow for OAuth popup
+        const popup = new BrowserWindow({
+          width,
+          height,
+          webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: true,
+            preload: path.join(__dirname, "preload.js"),
+          },
+          parent: mainWindow || undefined,
+          modal: false,
+          show: false,
+        });
+
+        // Load the OAuth URL
+        popup.loadURL(url);
+
+        // Show window when ready
+        popup.once("ready-to-show", () => {
+          popup.show();
+        });
+
+        // Handle OAuth callback redirects
+        popup.webContents.on("will-redirect", (event, navigationUrl) => {
+          try {
+            const redirectUrl = new URL(navigationUrl);
+            // If redirecting to our callback URL, handle it
+            if (
+              redirectUrl.protocol === "mcpjam:" ||
+              redirectUrl.pathname.includes("/callback") ||
+              redirectUrl.pathname.includes("/oauth/callback")
+            ) {
+              // Let the redirect happen, the callback handler will process it
+              // But we need to ensure the popup can communicate back
+            }
+          } catch (e) {
+            // Invalid URL, ignore
+          }
+        });
+
+        // Clean up when popup closes
+        popup.on("closed", () => {
+          // Popup closed, cleanup handled automatically
+        });
+
+        return { action: "allow" };
+      }
+
+      // For all other URLs, open externally
+      shell.openExternal(url);
+      return { action: "deny" };
+    } catch (e) {
+      // If URL parsing fails, open externally as fallback
+      shell.openExternal(url);
+      return { action: "deny" };
+    }
   });
 });
 

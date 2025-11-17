@@ -42,15 +42,6 @@ oauth.post("/debug/proxy", async (c) => {
       ...customHeaders,
     };
 
-    // Debug logging (only for debug endpoint)
-    console.log("[OAuth Debug Proxy]");
-    console.log("  URL:", url);
-    console.log("  Method:", method);
-    console.log("  Headers:", requestHeaders);
-    if (body) {
-      console.log("  Body:", JSON.stringify(body, null, 2));
-    }
-
     // Determine content type from custom headers or default to JSON
     const contentType =
       customHeaders?.["Content-Type"] || customHeaders?.["content-type"];
@@ -198,8 +189,6 @@ oauth.post("/debug/proxy", async (c) => {
         }
       }
     }
-
-    console.log("  Response:", response.status, response.statusText);
 
     // Return full response with headers
     return c.json({
