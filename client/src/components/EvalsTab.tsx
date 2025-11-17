@@ -143,13 +143,19 @@ function SuiteSidebarItem({
   return (
     <div>
       <div
+        onClick={() =>
+          navigateToEvalsRoute({ type: "suite-overview", suiteId: suite._id })
+        }
         className={cn(
-          "group w-full flex items-center gap-1 px-4 py-2 text-left text-sm transition-colors hover:bg-accent/50",
+          "group w-full flex items-center gap-1 px-4 py-2 text-left text-sm transition-colors hover:bg-accent/50 cursor-pointer",
           isSelected && !selectedTestId && "bg-accent",
         )}
       >
         <button
-          onClick={() => onToggleExpanded(suite._id)}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleExpanded(suite._id);
+          }}
           className="shrink-0 p-1 hover:bg-accent/50 rounded transition-colors"
           aria-label={isExpanded ? "Collapse suite" : "Expand suite"}
         >
@@ -159,10 +165,7 @@ function SuiteSidebarItem({
             <ChevronRight className="h-4 w-4 opacity-50" />
           )}
         </button>
-        <button
-          onClick={() =>
-            navigateToEvalsRoute({ type: "suite-overview", suiteId: suite._id })
-          }
+        <div
           className={cn(
             "flex-1 min-w-0 text-left rounded px-2 py-1 transition-colors",
             isSelected && !selectedTestId && "font-medium",
@@ -179,7 +182,7 @@ function SuiteSidebarItem({
               )}
             />
           </div>
-        </button>
+        </div>
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -294,23 +297,21 @@ function SuiteSidebarItem({
               return (
                 <div
                   key={testCase._id}
+                  onClick={() => {
+                    navigateToEvalsRoute({
+                      type: "test-edit",
+                      suiteId: suite._id,
+                      testId: testCase._id,
+                    });
+                  }}
                   className={cn(
-                    "group w-full flex items-center gap-1 pl-6 pr-4 py-2 text-left text-xs hover:bg-accent/50 transition-colors",
+                    "group w-full flex items-center gap-1 pl-6 pr-4 py-2 text-left text-xs hover:bg-accent/50 transition-colors cursor-pointer",
                     isTestSelected && "bg-accent/70 font-medium",
                   )}
                 >
-                  <button
-                    onClick={() => {
-                      navigateToEvalsRoute({
-                        type: "test-edit",
-                        suiteId: suite._id,
-                        testId: testCase._id,
-                      });
-                    }}
-                    className="flex-1 min-w-0 text-left"
-                  >
+                  <div className="flex-1 min-w-0 text-left">
                     <div className="truncate">{testCase.title}</div>
-                  </button>
+                  </div>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <button
