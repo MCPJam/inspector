@@ -1,5 +1,7 @@
 import { EvalCase, EvalIteration, EvalSuite, SuiteAggregate } from "./types";
 import { computeIterationResult } from "./pass-criteria";
+import { toast } from "sonner";
+import { RESULT_STATUS } from "./constants";
 
 export function formatTime(ts?: number) {
   return ts ? new Date(ts).toLocaleString() : "—";
@@ -153,3 +155,75 @@ export function aggregateSuite(
     byCase: Array.from(byCaseMap.values()),
   };
 }
+
+/**
+ * Centralized error handling for mutations
+ */
+export function handleMutationError(error: unknown, action: string) {
+  console.error(`Failed to ${action}:`, error);
+  toast.error(
+    error instanceof Error ? error.message : `Failed to ${action}`
+  );
+}
+
+/**
+ * Centralized success toast
+ */
+export function handleMutationSuccess(message: string) {
+  toast.success(message);
+}
+
+/**
+ * Format a percentage
+ */
+export function formatPercentage(value: number): string {
+  return `${Math.round(value)}%`;
+}
+
+/**
+ * Format token count
+ */
+export function formatTokens(tokens: number): string {
+  return tokens > 0 ? tokens.toLocaleString() : "—";
+}
+
+/**
+ * Get border color based on result status
+ */
+export function getIterationBorderColor(result: string): string {
+  switch (result) {
+    case RESULT_STATUS.PASSED:
+      return "bg-emerald-500/50";
+    case RESULT_STATUS.FAILED:
+      return "bg-red-500/50";
+    case RESULT_STATUS.CANCELLED:
+      return "bg-zinc-300/50";
+    case RESULT_STATUS.PENDING:
+      return "bg-amber-500/50";
+    default:
+      return "bg-gray-500/50";
+  }
+}
+
+/**
+ * Get status dot color
+ */
+export function getStatusDotColor(result: string, status?: string): string {
+  if (result === RESULT_STATUS.PASSED) return "bg-emerald-500";
+  if (result === RESULT_STATUS.FAILED) return "bg-red-500";
+  if (result === RESULT_STATUS.CANCELLED) return "bg-gray-400";
+  if (result === RESULT_STATUS.PENDING || status === "pending") return "bg-amber-400";
+  if (status === "running") return "bg-amber-400";
+  return "bg-gray-400";
+}
+
+/**
+ * Formatters object for convenient access
+ */
+export const formatters = {
+  time: formatTime,
+  duration: formatDuration,
+  runId: formatRunId,
+  percentage: formatPercentage,
+  tokens: formatTokens,
+} as const;

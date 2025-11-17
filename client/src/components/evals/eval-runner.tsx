@@ -29,6 +29,7 @@ import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import posthog from "posthog-js";
 import { ExpectedToolsEditor } from "./expected-tools-editor";
 import { PassCriteriaSelector } from "./pass-criteria-selector";
+import { WIZARD_STEPS, STORAGE_KEYS, DEFAULTS, API_ENDPOINTS } from "./constants";
 
 interface TestTemplate {
   title: string;
@@ -46,38 +47,12 @@ interface EvalRunnerProps {
   onSuccess?: () => void;
 }
 
-const PREFERENCE_STORAGE_KEY = "mcp-inspector-eval-runner-preferences";
-
-const steps = [
-  {
-    key: "servers",
-    title: "Select Servers",
-    description: "Choose the MCP servers to evaluate.",
-  },
-  {
-    key: "model",
-    title: "Choose Model",
-    description: "Pick the model and ensure credentials are ready.",
-  },
-  {
-    key: "tests",
-    title: "Define Tests",
-    description:
-      "Author the scenarios you want to run or generate them with AI.",
-  },
-  {
-    key: "review",
-    title: "Review & Run",
-    description: "Confirm the configuration before launching the run.",
-  },
-] as const;
-
-type StepKey = (typeof steps)[number]["key"];
+type StepKey = typeof WIZARD_STEPS[number]["key"];
 
 const buildBlankTestTemplate = (): TestTemplate => ({
   title: ``,
   query: "",
-  runs: 1,
+  runs: DEFAULTS.RUNS_PER_TEST,
   expectedToolCalls: [],
 });
 
@@ -113,7 +88,7 @@ export function EvalRunner({
   const [availableTools, setAvailableTools] = useState<Array<{ name: string; description?: string; inputSchema?: any }>>([]);
 
   // Pass/fail criteria state
-  const [minimumPassRate, setMinimumPassRate] = useState(100);
+  const [minimumPassRate, setMinimumPassRate] = useState(DEFAULTS.MIN_PASS_RATE);
 
   const connectedServers = useMemo(
     () =>
@@ -131,7 +106,7 @@ export function EvalRunner({
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      const stored = localStorage.getItem(PREFERENCE_STORAGE_KEY);
+      const stored = localStorage.getItem(STORAGE_KEYS.EVAL_RUNNER_PREFERENCES);
       if (!stored) return;
       const parsed = JSON.parse(stored) as {
         servers?: string[];
@@ -199,7 +174,7 @@ export function EvalRunner({
           minimumPassRate,
         },
       };
-      localStorage.setItem(PREFERENCE_STORAGE_KEY, JSON.stringify(payload));
+      localStorage.setItem(STORAGE_KEYS.EVAL_RUNNER_PREFERENCES, JSON.stringify(payload));
     } catch (error) {
       console.warn("Failed to persist eval runner preferences", error);
     }
@@ -214,7 +189,7 @@ export function EvalRunner({
       }
 
       try {
-        const response = await fetch("/api/mcp/list-tools", {
+        const response = await fetch(API_ENDPOINTS.LIST_TOOLS, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ serverIds: selectedServers }),
@@ -337,7 +312,7 @@ export function EvalRunner({
     try {
       const accessToken = await getAccessToken();
 
-      const response = await fetch("/api/mcp/evals/generate-tests", {
+      const response = await fetch(API_ENDPOINTS.EVALS_GENERATE_TESTS, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -379,10 +354,10 @@ export function EvalRunner({
   };
 
   const handleNext = () => {
-    if (currentStep >= steps.length - 1) return;
+    if (currentStep >= WIZARD_STEPS.length - 1) return;
     if (!canAdvance) return;
     setIsEditingSuiteName(false);
-    setCurrentStep((prev) => Math.min(prev + 1, steps.length - 1));
+    setCurrentStep((prev) => Math.min(prev + 1, WIZARD_STEPS.length - 1));
   };
 
   const handleBack = () => {
@@ -493,7 +468,7 @@ export function EvalRunner({
       // Build pass criteria description for notes
       const criteriaNote = `Pass Criteria: Min ${minimumPassRate}% Accuracy`;
 
-      const response = await fetch("/api/mcp/evals/run", {
+      const response = await fetch(API_ENDPOINTS.EVALS_RUN, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -539,7 +514,7 @@ export function EvalRunner({
   };
 
   const renderStepContent = () => {
-    switch (steps[currentStep].key as StepKey) {
+    switch (WIZARD_STEPS[currentStep].key as StepKey) {
       case "servers":
         return (
           <div className="space-y-4">
@@ -1116,7 +1091,7 @@ export function EvalRunner({
 
   const stepper = (
     <ol className="flex flex-col items-center gap-4 text-center md:flex-row md:gap-6">
-      {steps.map((step, index) => {
+      {WIZARD_STEPS.map((step, index) => {
         const isActive = currentStep === index;
         const isCompleted =
           index < currentStep && index <= highestAvailableStep;
@@ -1164,7 +1139,7 @@ export function EvalRunner({
   );
 
   const nextDisabled =
-    currentStep < steps.length - 1 ? !canAdvance : isSubmitting || !canAdvance;
+    currentStep < WIZARD_STEPS.length - 1 ? !canAdvance : isSubmitting || !canAdvance;
 
   const nextVariant = nextDisabled ? "secondary" : "default";
 
@@ -1194,7 +1169,7 @@ export function EvalRunner({
           type="button"
           variant={nextVariant}
           onClick={() => {
-            if (currentStep < steps.length - 1) {
+            if (currentStep < WIZARD_STEPS.length - 1) {
               posthog.capture("eval_setup_next_step_button_clicked", {
                 location: "eval_runner",
                 platform: detectPlatform(),
@@ -1213,10 +1188,10 @@ export function EvalRunner({
             }
           }}
           disabled={nextDisabled}
-          aria-label={currentStep === steps.length - 1 ? "Start" : "Next"}
+          aria-label={currentStep === WIZARD_STEPS.length - 1 ? "Start" : "Next"}
           className={cn("justify-center gap-2", !nextDisabled && "shadow-sm")}
         >
-          {currentStep === steps.length - 1 ? "Start" : "Next"}
+          {currentStep === WIZARD_STEPS.length - 1 ? "Start" : "Next"}
           <ChevronRight className="h-4 w-4" />
         </Button>
       </div>

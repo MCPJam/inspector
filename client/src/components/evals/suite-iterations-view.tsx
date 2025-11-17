@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
@@ -25,7 +25,7 @@ import { Bar, BarChart, CartesianGrid, Pie, PieChart, XAxis, YAxis, Label } from
 import { IterationDetails } from "./iteration-details";
 import { SuiteTestsConfig } from "./suite-tests-config";
 import { TestTemplateEditor } from "./test-template-editor";
-import { formatTime, formatRunId, computeIterationSummary, getTemplateKey } from "./helpers";
+import { formatTime, formatRunId, computeIterationSummary, getTemplateKey, getIterationBorderColor } from "./helpers";
 import {
   EvalCase,
   EvalIteration,
@@ -102,8 +102,8 @@ export function SuiteIterationsView({
   const [showRunSummarySidebar, setShowRunSummarySidebar] = useState(false);
   const [runDetailSortBy, setRunDetailSortBy] = useState<"model" | "test" | "result">("model");
 
-  // Handlers for batch run selection
-  const toggleRunSelection = (runId: string) => {
+  // Handlers for batch run selection (memoized to prevent recreating on every render)
+  const toggleRunSelection = useCallback((runId: string) => {
     setSelectedRunIds((prev) => {
       const next = new Set(prev);
       if (next.has(runId)) {
@@ -113,17 +113,19 @@ export function SuiteIterationsView({
       }
       return next;
     });
-  };
+  }, []);
 
-  const toggleAllRuns = () => {
-    if (selectedRunIds.size === runs.length) {
-      setSelectedRunIds(new Set());
-    } else {
-      setSelectedRunIds(new Set(runs.map((r) => r._id)));
-    }
-  };
+  const toggleAllRuns = useCallback(() => {
+    setSelectedRunIds((prev) => {
+      if (prev.size === runs.length) {
+        return new Set();
+      } else {
+        return new Set(runs.map((r) => r._id));
+      }
+    });
+  }, [runs]);
 
-  const confirmBatchDeleteRuns = () => {
+  const confirmBatchDeleteRuns = useCallback(() => {
     const runIds = Array.from(selectedRunIds);
     if (runIds.length === 0) return;
 
@@ -139,7 +141,7 @@ export function SuiteIterationsView({
         toast.error("Failed to delete some runs");
         setShowBatchDeleteModal(false);
       });
-  };
+  }, [selectedRunIds, onDirectDeleteRun]);
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState(suite.name);
 
@@ -210,12 +212,12 @@ export function SuiteIterationsView({
     }
   };
 
-  const handleNameClick = () => {
+  const handleNameClick = useCallback(() => {
     setIsEditingName(true);
     setEditedName(suite.name);
-  };
+  }, [suite.name]);
 
-  const handleNameBlur = async () => {
+  const handleNameBlur = useCallback(async () => {
     setIsEditingName(false);
     if (editedName && editedName.trim() && editedName !== suite.name) {
       try {
@@ -232,16 +234,16 @@ export function SuiteIterationsView({
     } else {
       setEditedName(suite.name);
     }
-  };
+  }, [editedName, suite.name, suite._id, updateSuite]);
 
-  const handleNameKeyDown = (e: React.KeyboardEvent) => {
+  const handleNameKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === "Enter") {
       handleNameBlur();
     } else if (e.key === "Escape") {
       setIsEditingName(false);
       setEditedName(suite.name);
     }
-  };
+  }, [handleNameBlur, suite.name]);
 
 
 
@@ -317,7 +319,6 @@ export function SuiteIterationsView({
         (item): item is { runId: string; runIdDisplay: string; passRate: number; label: string } =>
           item !== null,
       );
-    console.log('[Evals] Run trend data:', data);
     return data;
   }, [runs, allIterations]);
 
@@ -328,14 +329,16 @@ export function SuiteIterationsView({
     },
   };
 
+  // Calculate active run IDs once (memoized separately for better performance)
+  const activeRunIds = useMemo(() =>
+    new Set(runs.filter((run) => run.isActive !== false).map((run) => run._id)),
+    [runs]
+  );
+
   // Calculate per-model statistics (only from active runs)
   const modelStats = useMemo(() => {
-    const activeRunIds = new Set(
-      runs.filter((run) => run.isActive !== false).map((run) => run._id)
-    );
-    
     // Filter iterations to only include those from active runs
-    const activeIterations = allIterations.filter((iteration) => 
+    const activeIterations = allIterations.filter((iteration) =>
       !iteration.suiteRunId || activeRunIds.has(iteration.suiteRunId)
     );
 
@@ -370,7 +373,7 @@ export function SuiteIterationsView({
     }));
 
     return data.sort((a, b) => b.passRate - a.passRate);
-  }, [allIterations, runs]);
+  }, [allIterations, activeRunIds]);
 
   const modelChartConfig = {
     passRate: {
@@ -1062,13 +1065,6 @@ export function SuiteIterationsView({
       }))
       .sort((a, b) => b.passRate - a.passRate);
   }, [selectedTestId, selectedTestDetails, templateGroups, caseGroups]);
-
-  const getIterationBorderColor = (result: string) => {
-    if (result === "passed") return "bg-emerald-500/50";
-    if (result === "failed") return "bg-red-500/50";
-    if (result === "cancelled") return "bg-zinc-300/50";
-    return "bg-amber-500/50"; // pending
-  };
 
   // Check if all servers are connected
   const suiteServers = suite.config?.environment?.servers || [];
