@@ -109,7 +109,6 @@ const RunEvalsRequestSchema = z.object({
           arguments: z.record(z.string(), z.any()),
         })
       ),
-      judgeRequirement: z.string().optional(),
       advancedConfig: z
         .object({
           system: z.string().optional(),
@@ -192,7 +191,6 @@ evals.post("/run", async (c) => {
       runs: number;
       models: Array<{ model: string; provider: string }>;
       expectedToolCalls: any[];
-      judgeRequirement?: string;
       advancedConfig?: any;
     }>();
 
@@ -205,7 +203,6 @@ evals.post("/run", async (c) => {
           runs: test.runs,
           models: [],
           expectedToolCalls: test.expectedToolCalls,
-          judgeRequirement: test.judgeRequirement,
           advancedConfig: test.advancedConfig,
         });
       }
@@ -261,10 +258,9 @@ evals.post("/run", async (c) => {
           const modelsChanged = JSON.stringify(normalizeForComparison(existingTestCase.models || [])) !== JSON.stringify(normalizeForComparison(testCaseData.models || []));
           const runsChanged = normalize(existingTestCase.runs) !== normalize(testCaseData.runs);
           const expectedToolCallsChanged = JSON.stringify(normalizeForComparison(existingTestCase.expectedToolCalls || [])) !== JSON.stringify(normalizeForComparison(testCaseData.expectedToolCalls || []));
-          const judgeRequirementChanged = normalize(existingTestCase.judgeRequirement) !== normalize(testCaseData.judgeRequirement);
           const advancedConfigChanged = JSON.stringify(normalizeForComparison(existingTestCase.advancedConfig)) !== JSON.stringify(normalizeForComparison(testCaseData.advancedConfig));
 
-          const hasChanges = modelsChanged || runsChanged || expectedToolCallsChanged || judgeRequirementChanged || advancedConfigChanged;
+          const hasChanges = modelsChanged || runsChanged || expectedToolCallsChanged || advancedConfigChanged;
 
           // Only update if there are actual changes (this preserves run history when config is unchanged)
           if (hasChanges) {
@@ -276,7 +272,6 @@ evals.post("/run", async (c) => {
                 models: testCaseData.models,
                 runs: testCaseData.runs,
                 expectedToolCalls: testCaseData.expectedToolCalls,
-                judgeRequirement: testCaseData.judgeRequirement,
                 advancedConfig: testCaseData.advancedConfig,
               },
             );
@@ -291,7 +286,6 @@ evals.post("/run", async (c) => {
               models: testCaseData.models,
               runs: testCaseData.runs,
               expectedToolCalls: testCaseData.expectedToolCalls,
-              judgeRequirement: testCaseData.judgeRequirement,
               advancedConfig: testCaseData.advancedConfig,
             },
           );
@@ -326,7 +320,6 @@ evals.post("/run", async (c) => {
             models: testCaseData.models,
             runs: testCaseData.runs,
             expectedToolCalls: testCaseData.expectedToolCalls,
-            judgeRequirement: testCaseData.judgeRequirement,
             advancedConfig: testCaseData.advancedConfig,
           },
         );
@@ -456,7 +449,6 @@ evals.post("/run-test-case", async (c) => {
       model,
       provider,
       expectedToolCalls: testCase.expectedToolCalls || [],
-      judgeRequirement: testCase.judgeRequirement,
       advancedConfig: testCase.advancedConfig,
     };
 

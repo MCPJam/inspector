@@ -528,7 +528,6 @@ export function EvalsTab() {
             model: modelConfig.model,
             provider: modelConfig.provider,
             expectedToolCalls: testCase.expectedToolCalls || [],
-            judgeRequirement: testCase.judgeRequirement,
             advancedConfig: testCase.advancedConfig,
           });
         }
@@ -594,7 +593,6 @@ export function EvalsTab() {
               model: test.model,
               provider: test.provider,
               expectedToolCalls: test.expectedToolCalls,
-              judgeRequirement: test.judgeRequirement,
               advancedConfig: test.advancedConfig,
             })),
             serverIds: suiteServers,

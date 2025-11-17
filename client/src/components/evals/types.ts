@@ -8,7 +8,6 @@ export type EvalSuiteConfigTest = {
     toolName: string;
     arguments: Record<string, any>;
   }>;
-  judgeRequirement?: string;
   advancedConfig?: Record<string, unknown>;
   testCaseId?: string;
 };
@@ -46,7 +45,6 @@ export type EvalCase = {
     toolName: string;
     arguments: Record<string, any>;
   }>;
-  judgeRequirement?: string;
   advancedConfig?: Record<string, unknown>;
   lastMessageRun?: string | null;
   _creationTime?: number; // Convex auto field
@@ -65,7 +63,6 @@ export type EvalIteration = {
       toolName: string;
       arguments: Record<string, any>;
     }>;
-    judgeRequirement?: string;
     advancedConfig?: Record<string, unknown>;
   };
   suiteRunId?: string;

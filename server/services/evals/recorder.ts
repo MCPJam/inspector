@@ -16,7 +16,6 @@ export type SuiteRunRecorder = {
       model: string;
       runs?: number;
       expectedToolCalls: string[];
-      judgeRequirement?: string;
       advancedConfig?: Record<string, unknown>;
     };
     iterationNumber: number;
@@ -224,7 +223,6 @@ export const startSuiteRunWithRecorder = async ({
         provider: model.provider,
         runs: tc.runs || 1,
         expectedToolCalls: tc.expectedToolCalls || [],
-        judgeRequirement: tc.judgeRequirement,
         advancedConfig: tc.advancedConfig,
         testCaseId: tc._id,
       }))
