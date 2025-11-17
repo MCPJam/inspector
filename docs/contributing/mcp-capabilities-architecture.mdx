@@ -1231,7 +1231,89 @@ useEffect(() => {
 /api/mcp/resources/list
 /api/mcp/resources/read
 /api/mcp/prompts/list
+/api/mcp/prompts/list-multi
 /api/mcp/prompts/get
+```
+
+---
+
+## Batch Operations
+
+### Batch Prompt Listing
+
+The `/api/mcp/prompts/list-multi` endpoint enables efficient parallel fetching of prompts from multiple servers:
+
+```typescript
+// server/routes/mcp/prompts.ts:30-78
+prompts.post("/list-multi", async (c) => {
+  const { serverIds } = await c.req.json();
+
+  if (!Array.isArray(serverIds) || serverIds.length === 0) {
+    return c.json(
+      { success: false, error: "serverIds must be a non-empty array" },
+      400,
+    );
+  }
+
+  const mcpClientManager = c.mcpClientManager;
+  const promptsByServer: Record<string, unknown[]> = {};
+  const errors: Record<string, string> = {};
+
+  // Fetch prompts from all servers in parallel
+  await Promise.all(
+    serverIds.map(async (serverId) => {
+      try {
+        const { prompts } = await mcpClientManager.listPrompts(serverId);
+        promptsByServer[serverId] = prompts ?? [];
+      } catch (error) {
+        console.error(`Error fetching prompts for server ${serverId}:`, error);
+        errors[serverId] =
+          error instanceof Error ? error.message : "Unknown error";
+        promptsByServer[serverId] = [];
+      }
+    }),
+  );
+
+  const payload: Record<string, unknown> = { prompts: promptsByServer };
+  if (Object.keys(errors).length > 0) {
+    payload.errors = errors;
+  }
+
+  return c.json(payload);
+});
+```
+
+**Key Features**:
+
+- **Parallel execution**: Uses `Promise.all` to fetch from all servers simultaneously
+- **Partial success**: Returns results for successful servers even if some fail
+- **Error tracking**: Per-server error messages in `errors` field
+- **Graceful degradation**: Failed servers return empty arrays
+
+**Use Cases**:
+
+- Dashboard views showing prompts across all connected servers
+- Bulk operations on multiple servers
+- Server comparison and discovery tools
+
+**Example Usage**:
+
+```typescript
+// Fetch prompts from multiple servers
+const { prompts, errors } = await listPromptsForServers([
+  "server-1",
+  "server-2",
+  "server-3",
+]);
+
+// prompts = {
+//   "server-1": [{ name: "prompt1", ... }],
+//   "server-2": [{ name: "prompt2", ... }],
+//   "server-3": []
+// }
+// errors = {
+//   "server-3": "Connection timeout"
+// }
 ```
 
 ---
