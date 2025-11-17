@@ -10,6 +10,8 @@ import {
 import { useState } from "react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { getProviderLogo } from "@/lib/provider-logos";
+import { ToolServerMap, getToolServerId } from "@/lib/mcp-tools-api";
+import { OpenAIAppRenderer } from "@/components/chat-v2/openai-app-renderer";
 
 interface ContentPart {
   type: string;
@@ -34,11 +36,15 @@ interface TraceData {
 interface TraceViewerProps {
   trace: TraceData | TraceMessage | TraceMessage[] | null;
   modelProvider?: string;
+  toolsMetadata?: Record<string, Record<string, any>>;
+  toolServerMap?: ToolServerMap;
 }
 
 export function TraceViewer({
   trace,
   modelProvider = "openai",
+  toolsMetadata = {},
+  toolServerMap = {},
 }: TraceViewerProps) {
   const [viewMode, setViewMode] = useState<"formatted" | "raw">("formatted");
 
@@ -165,6 +171,8 @@ export function TraceViewer({
                   key={idx}
                   messages={group.messages}
                   modelProvider={modelProvider}
+                  toolsMetadata={toolsMetadata}
+                  toolServerMap={toolServerMap}
                 />
               );
             } else {
@@ -241,9 +249,13 @@ function TraceMessage({
 function TraceMessageGroup({
   messages,
   modelProvider,
+  toolsMetadata = {},
+  toolServerMap = {},
 }: {
   messages: TraceMessage[];
   modelProvider: string;
+  toolsMetadata?: Record<string, Record<string, any>>;
+  toolServerMap?: ToolServerMap;
 }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const logoSrc = getProviderLogo(modelProvider, themeMode);
@@ -297,6 +309,8 @@ function TraceMessageGroup({
             key={`tool-${i}`}
             toolCall={combo.toolCall}
             toolResult={combo.toolResult}
+            toolsMetadata={toolsMetadata}
+            toolServerMap={toolServerMap}
           />
         ))}
       </div>
@@ -355,9 +369,13 @@ function TracePart({ part }: { part: ContentPart }) {
 function CombinedToolPart({
   toolCall,
   toolResult,
+  toolsMetadata = {},
+  toolServerMap = {},
 }: {
   toolCall?: ContentPart;
   toolResult?: ContentPart;
+  toolsMetadata?: Record<string, Record<string, any>>;
+  toolServerMap?: ToolServerMap;
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const themeMode = usePreferencesStore((s) => s.themeMode);
@@ -369,8 +387,22 @@ function CombinedToolPart({
     toolResult?.output !== undefined && toolResult?.output !== null;
   const isError = toolResult?.isError === true;
 
+  // Check if this tool has OpenAI App metadata
+  const toolMetadata = toolName ? toolsMetadata[toolName] : undefined;
+  const hasOpenAIApp = !!toolMetadata?.["openai/outputTemplate"];
+  const serverId = toolName ? getToolServerId(toolName, toolServerMap) : undefined;
+
+  // Unwrap the output if it has the { type: "json", value: {...} } structure
+  const unwrappedOutput =
+    toolResult?.output &&
+    typeof toolResult.output === "object" &&
+    "type" in toolResult.output &&
+    "value" in toolResult.output
+      ? toolResult.output.value
+      : toolResult?.output;
+
   // Extract text from nested content structure if it exists
-  let displayOutput = toolResult?.output;
+  let displayOutput = unwrappedOutput;
   if (
     hasOutput &&
     typeof toolResult?.output === "object" &&
@@ -465,6 +497,31 @@ function CombinedToolPart({
           )}
         </div>
       )}
+
+      {/* Render OpenAI App widget if available */}
+      {hasOpenAIApp && serverId && hasOutput && !isError && (() => {
+        // Debug: Log the data we're passing to the widget
+        console.log('[Trace Widget Debug] toolName:', toolName);
+        console.log('[Trace Widget Debug] serverId:', serverId);
+        console.log('[Trace Widget Debug] toolCallId:', toolCall?.toolCallId);
+        console.log('[Trace Widget Debug] toolInput:', JSON.stringify(toolCall?.input, null, 2));
+        console.log('[Trace Widget Debug] unwrappedOutput:', JSON.stringify(unwrappedOutput, null, 2));
+        console.log('[Trace Widget Debug] toolMetadata:', JSON.stringify(toolMetadata, null, 2));
+
+        return (
+          <OpenAIAppRenderer
+            serverId={serverId}
+            toolCallId={toolCall?.toolCallId}
+            toolName={toolName}
+            toolState="output-available"
+            toolInput={toolCall?.input ?? null}
+            toolOutput={unwrappedOutput ?? null}
+            toolMetadata={toolMetadata}
+            onSendFollowUp={undefined}
+            onCallTool={undefined}
+          />
+        );
+      })()}
     </div>
   );
 }

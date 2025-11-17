@@ -43,6 +43,7 @@ interface RunDetailViewProps {
   onSortChange: (sortBy: "model" | "test" | "result") => void;
   showRunSummarySidebar: boolean;
   setShowRunSummarySidebar: (show: boolean) => void;
+  serverNames?: string[];
 }
 
 export function RunDetailView({
@@ -53,6 +54,7 @@ export function RunDetailView({
   onSortChange,
   showRunSummarySidebar,
   setShowRunSummarySidebar,
+  serverNames = [],
 }: RunDetailViewProps) {
   const [openIterationId, setOpenIterationId] = useState<string | null>(null);
 
@@ -228,6 +230,7 @@ export function RunDetailView({
                   )
                 }
                 showModelInfo={true}
+                serverNames={serverNames}
               />
             ))
           )}
@@ -445,11 +448,13 @@ function IterationRow({
   isOpen,
   onToggle,
   showModelInfo = false,
+  serverNames = [],
 }: {
   iteration: EvalIteration;
   isOpen: boolean;
   onToggle: () => void;
   showModelInfo?: boolean;
+  serverNames?: string[];
 }) {
   const startedAt = iteration.startedAt ?? iteration.createdAt;
   const completedAt = iteration.updatedAt ?? iteration.createdAt;
@@ -520,7 +525,7 @@ function IterationRow({
       </button>
       {isOpen ? (
         <div className="border-t bg-muted/20 px-4 pb-4 pt-3 pl-8">
-          <IterationDetails iteration={iteration} testCase={null} />
+          <IterationDetails iteration={iteration} testCase={null} serverNames={serverNames} />
         </div>
       ) : null}
     </div>
