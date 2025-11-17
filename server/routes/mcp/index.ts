@@ -4,7 +4,6 @@ import servers from "./servers";
 import tools from "./tools";
 import resources from "./resources";
 import prompts from "./prompts";
-import chat from "./chat";
 import chatV2 from "./chat-v2";
 import oauth from "./oauth";
 import exporter from "./export";
@@ -16,6 +15,7 @@ import openai from "./openai";
 import registry from "./registry";
 import models from "./models";
 import listTools from "./list-tools";
+import tokenizer from "./tokenizer";
 
 const mcp = new Hono();
 
@@ -27,9 +27,6 @@ mcp.get("/health", (c) => {
     timestamp: new Date().toISOString(),
   });
 });
-
-// Chat endpoint - REAL IMPLEMENTATION
-mcp.route("/chat", chat);
 
 // Chat v2 endpoint
 mcp.route("/chat-v2", chatV2);
@@ -79,5 +76,8 @@ mcp.route("/registry", registry);
 
 // Models endpoints - fetch model metadata from Convex backend
 mcp.route("/models", models);
+
+// Tokenizer endpoints - count tokens for MCP tools
+mcp.route("/tokenizer", tokenizer);
 
 export default mcp;

@@ -13,13 +13,15 @@ The **Playground** (Chat Tab) is MCPJam Inspector's interactive testing environm
 - Multi-provider LLM support (OpenAI, Anthropic, DeepSeek, Google, Ollama)
 - Free chat via MCPJam-provided models (powered by MCPJam backend)
 - Real-time MCP tool execution with OpenAI Apps SDK compatibility
+- MCP-UI rendering for custom interactive components
 - Server-Sent Events (SSE) for streaming responses
 - Interactive elicitation support (MCP servers requesting user input)
 - Multi-server MCP integration with automatic tool routing
 
 **Location**:
 
-- Frontend: `client/src/components/ChatTab.tsx`
+- Frontend: `client/src/components/ChatTabV2.tsx` (new resizable layout)
+- Legacy: `client/src/components/ChatTab.tsx` (original single-panel layout)
 - Backend: `server/routes/mcp/chat.ts`
 - Hook: `client/src/hooks/use-chat.ts`
 
@@ -27,22 +29,52 @@ The **Playground** (Chat Tab) is MCPJam Inspector's interactive testing environm
 
 ## Architecture Overview
 
+### UI Layout (ChatTabV2)
+
+The playground uses a **resizable split-panel layout** powered by `ResizablePanelGroup`:
+
+```typescript
+// client/src/components/ChatTabV2.tsx
+<ResizablePanelGroup direction="horizontal">
+  <ResizablePanel defaultSize={70} minSize={40}>
+    {/* Chat interface with messages and input */}
+  </ResizablePanel>
+
+  <ResizableHandle withHandle />
+
+  <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
+    <JsonRpcLoggerView /> {/* Real-time MCP protocol viewer */}
+  </ResizablePanel>
+</ResizablePanelGroup>
+```
+
+**Key Features**:
+
+- Chat panel (left): Message history, tool execution, input form
+- Logger panel (right): JSON-RPC messages from MCP servers
+- Resizable divider: Users can adjust panel sizes
+- Responsive: Minimum widths prevent UI collapse
+
 ### System Components
 
 ```mermaid
 graph TB
     subgraph Frontend["Chat Frontend"]
-        ChatTab["ChatTab Component"]
+        ChatTabV2["ChatTabV2 Component
+        (Resizable Layout)"]
         UseChat["use-chat Hook"]
         ChatAPI["POST /api/mcp/chat
         SSE streaming"]
         ElicitUI["Elicitation UI"]
         SSEParser["SSE Event Parser"]
+        JsonRpcLogger["JsonRpcLoggerView
+        (Right Panel)"]
 
-        ChatTab --> UseChat
+        ChatTabV2 --> UseChat
+        ChatTabV2 --> JsonRpcLogger
         UseChat --> ChatAPI
         UseChat --> SSEParser
-        ChatTab --> ElicitUI
+        ChatTabV2 --> ElicitUI
     end
 
     subgraph Backend["Chat Backend - Hono"]
@@ -778,7 +810,10 @@ body: JSON.stringify({
 
 ### Frontend
 
-- `client/src/components/ChatTab.tsx` - Main chat UI
+- `client/src/components/ChatTabV2.tsx` - Main chat UI with resizable layout
+- `client/src/components/ChatTab.tsx` - Legacy single-panel layout
+- `client/src/components/logging/json-rpc-logger-view.tsx` - MCP protocol viewer
+- `client/src/components/ui/resizable.tsx` - Resizable panel components
 - `client/src/hooks/use-chat.ts` - Chat state management
 - `client/src/components/chat/message.tsx` - Message rendering
 - `client/src/components/chat/chat-input.tsx` - Input component
@@ -890,16 +925,163 @@ const mcpClientManager = new MCPClientManager(
 
 ---
 
+## MCP-UI Integration
+
+MCPJam Inspector supports rendering custom UI components from MCP servers using the [MCP-UI specification](https://github.com/modelcontextprotocol/mcp-ui).
+
+### Detection and Rendering
+
+Located in `client/src/components/chat-v2/thread.tsx:151-172`:
+
+```typescript
+function PartSwitch({ part, role, onSendFollowUp }) {
+  if (isToolPart(part) || isDynamicTool(part)) {
+    const maybeUiResource = (part as any)?.output?.content?.[0] ?? undefined;
+    if (maybeUiResource && isUIResource(maybeUiResource)) {
+      // This renders MCP-UI
+      return (
+        <>
+          <ToolPart part={part} />
+          <MCPUIResourcePart
+            resource={maybeUiResource.resource}
+            onSendFollowUp={onSendFollowUp}
+          />
+        </>
+      );
+    }
+    // Fallback to standard tool rendering
+    return <ToolPart part={part} />;
+  }
+  // ... other part types
+}
+```
+
+### MCP-UI Component
+
+The `MCPUIResourcePart` component uses `@mcp-ui/client` library to render UI resources:
+
+```typescript
+import {
+  UIResourceRenderer,
+  isUIResource,
+  basicComponentLibrary,
+  remoteButtonDefinition,
+  remoteCardDefinition,
+  remoteImageDefinition,
+  remoteStackDefinition,
+  remoteTextDefinition,
+} from "@mcp-ui/client";
+
+function MCPUIResourcePart({ resource, onSendFollowUp }) {
+  const handleAction = async (action: UIActionResult) => {
+    switch (action.type) {
+      case "tool":
+        // Trigger tool call via chat message
+        onSendFollowUp(
+          `Call tool ${action.payload.toolName} with parameters ${JSON.stringify(action.payload.params)}`
+        );
+        break;
+      case "link":
+        // Open external link
+        if (action.payload?.url) {
+          window.open(action.payload.url, "_blank", "noopener,noreferrer");
+        }
+        break;
+      case "prompt":
+        // Send prompt as follow-up message
+        if (action.payload?.prompt) {
+          onSendFollowUp(`Prompt: ${action.payload.prompt}`);
+        }
+        break;
+      case "intent":
+        // Handle intent action
+        if (action.payload?.intent) {
+          onSendFollowUp(`Intent: ${action.payload.intent}`);
+        }
+        break;
+      case "notify":
+        // Display notification
+        if (action.payload?.message) {
+          onSendFollowUp(`Notification: ${action.payload.message}`);
+        }
+        break;
+    }
+    return { status: "handled" };
+  };
+
+  return (
+    <UIResourceRenderer
+      resource={resource}
+      htmlProps={{
+        style: { border: "2px", borderRadius: "4px", minHeight: "400px" },
+        iframeProps: {
+          title: "Custom MCP Resource",
+          className: "mcp-resource-frame",
+        },
+      }}
+      remoteDomProps={{
+        library: basicComponentLibrary,
+        remoteElements: [
+          remoteButtonDefinition,
+          remoteTextDefinition,
+          remoteStackDefinition,
+          remoteCardDefinition,
+          remoteImageDefinition,
+        ],
+      }}
+      onUIAction={handleAction}
+    />
+  );
+}
+```
+
+### Supported Action Types
+
+MCP-UI components can trigger the following actions:
+
+- **tool**: Request tool execution (converted to chat message)
+- **link**: Open external URLs in new tab
+- **prompt**: Send text prompt as follow-up message
+- **intent**: Send intent string as follow-up message
+- **notify**: Display notification (converted to chat message)
+
+### Component Library
+
+The implementation uses the basic component library from `@mcp-ui/client`:
+
+- **Button**: Interactive buttons with action handlers
+- **Text**: Text display with formatting
+- **Stack**: Layout container for vertical/horizontal stacking
+- **Card**: Container with border and padding
+- **Image**: Image display with alt text
+
+### MCP-UI vs OpenAI Apps SDK
+
+MCPJam Inspector supports both MCP-UI and OpenAI Apps SDK for custom UI rendering:
+
+| Feature           | MCP-UI                        | OpenAI Apps SDK                      |
+| ----------------- | ----------------------------- | ------------------------------------ |
+| Specification     | MCP-UI (open standard)        | OpenAI proprietary                   |
+| Rendering         | RemoteDOM components          | Sandboxed iframes                    |
+| Tool calls        | Via action handlers           | Via `window.openai.callTool()`       |
+| State persistence | Not supported                 | Via `window.openai.setWidgetState()` |
+| Security          | Component-level isolation     | Full iframe sandbox                  |
+| Use case          | Simple interactive components | Complex web applications             |
+
+See [OpenAI SDK Architecture](./openai-sdk-architecture) for details on OpenAI Apps SDK implementation.
+
 ## Related Documentation
 
 - [MCPClientManager](./mcp-client-manager) - MCP orchestration layer
 - [Elicitation Support](../inspector/elicitation) - Interactive prompts
 - [Debugging](../inspector/debugging) - JSON-RPC logging
 - [LLM Playground](../inspector/llm-playground) - User guide
+- [OpenAI SDK Architecture](./openai-sdk-architecture) - OpenAI Apps SDK implementation
 
 ## External Links
 
 - [MCP Specification](https://spec.modelcontextprotocol.io/)
+- [MCP-UI Specification](https://github.com/modelcontextprotocol/mcp-ui)
 - [Vercel AI SDK](https://sdk.vercel.ai/)
 - [MCPJamBackend Backend](https://convex.dev/)
 - [Server-Sent Events (MDN)](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events)

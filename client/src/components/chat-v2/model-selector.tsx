@@ -17,7 +17,7 @@ import {
 import { ProviderLogo } from "./provider-logo";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { useConvexAuth } from "convex/react";
-import { ConfirmModelChangeDialog } from "./confirm-model-change-dialog";
+import { ConfirmChatResetDialog } from "./confirm-chat-reset-dialog";
 
 interface ModelSelectorProps {
   currentModel: ModelDefinition;
@@ -300,12 +300,11 @@ export function ModelSelector({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <ConfirmModelChangeDialog
+      <ConfirmChatResetDialog
         open={showConfirmDialog}
         onConfirm={handleConfirmModelChange}
         onCancel={handleCancelModelChange}
-        currentModelName={currentModel.name}
-        newModelName={pendingModel?.name || ""}
+        message="Changing the model will cause the chat to reset. This action cannot be undone."
       />
     </>
   );

@@ -8,6 +8,17 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { ModelSelector } from "./model-selector";
 import { ModelDefinition } from "@/shared/types";
 import { SystemPromptSelector } from "./system-prompt-selector";
+import {
+  Context,
+  ContextTrigger,
+  ContextContent,
+  ContextContentHeader,
+  ContextContentBody,
+  ContextInputUsage,
+  ContextOutputUsage,
+  ContextMCPServerUsage,
+  ContextSystemPromptUsage,
+} from "./context";
 
 interface ChatInputProps {
   value: string;
@@ -28,6 +39,17 @@ interface ChatInputProps {
   onTemperatureChange: (temperature: number) => void;
   hasMessages?: boolean;
   onResetChat: () => void;
+  tokenUsage?: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+  };
+  selectedServers?: string[];
+  mcpToolsTokenCount?: Record<string, number> | null;
+  mcpToolsTokenCountLoading?: boolean;
+  connectedServerConfigs?: Record<string, { name: string }>;
+  systemPromptTokenCount?: number | null;
+  systemPromptTokenCountLoading?: boolean;
 }
 
 export function ChatInput({
@@ -49,6 +71,13 @@ export function ChatInput({
   onTemperatureChange,
   onResetChat,
   hasMessages = false,
+  tokenUsage,
+  selectedServers,
+  mcpToolsTokenCount,
+  mcpToolsTokenCountLoading = false,
+  connectedServerConfigs,
+  systemPromptTokenCount,
+  systemPromptTokenCountLoading = false,
 }: ChatInputProps) {
   const formRef = useRef<HTMLFormElement>(null);
 
@@ -116,7 +145,44 @@ export function ChatInput({
             />
           </div>
 
-          <div className="flex items-center">
+          <div className="flex items-center gap-2">
+            <Context
+              usedTokens={tokenUsage?.totalTokens ?? 0}
+              usage={
+                tokenUsage && tokenUsage.totalTokens > 0
+                  ? {
+                      inputTokens: tokenUsage.inputTokens,
+                      outputTokens: tokenUsage.outputTokens,
+                      totalTokens: tokenUsage.totalTokens,
+                    }
+                  : undefined
+              }
+              modelId={`${currentModel.id}`}
+              selectedServers={selectedServers}
+              mcpToolsTokenCount={mcpToolsTokenCount}
+              mcpToolsTokenCountLoading={mcpToolsTokenCountLoading}
+              connectedServerConfigs={connectedServerConfigs}
+              systemPromptTokenCount={systemPromptTokenCount}
+              systemPromptTokenCountLoading={systemPromptTokenCountLoading}
+              hasMessages={hasMessages}
+            >
+              <ContextTrigger />
+              <ContextContent>
+                {hasMessages && tokenUsage && tokenUsage.totalTokens > 0 && (
+                  <ContextContentHeader />
+                )}
+                <ContextContentBody>
+                  {hasMessages && tokenUsage && tokenUsage.totalTokens > 0 && (
+                    <>
+                      <ContextInputUsage />
+                      <ContextOutputUsage />
+                    </>
+                  )}
+                  <ContextSystemPromptUsage />
+                  <ContextMCPServerUsage />
+                </ContextContentBody>
+              </ContextContent>
+            </Context>
             {isLoading ? (
               <Tooltip>
                 <TooltipTrigger asChild>

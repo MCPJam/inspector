@@ -136,4 +136,4 @@ This document describes the interceptor architecture that enables MCP clients (C
 - SSE shim: same file, `Accept: text/event-stream` (GET/HEAD)
 - Store (logs, sessions, bulk destroy): `server/services/interceptor-store.ts`
 - Stdio adapter: `server/routes/mcp/adapter-http.ts`
-- UI: Interceptor tab `client/src/components/InterceptorTab.tsx`, Servers tab `client/src/components/ServersTab.tsx`
+- UI: Servers tab `client/src/components/ServersTab.tsx`
