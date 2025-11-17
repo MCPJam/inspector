@@ -51,7 +51,7 @@ listTools.post("/", async (c) => {
       {
         error: error instanceof Error ? error.message : "Unknown error",
       },
-      500
+      500,
     );
   }
 });

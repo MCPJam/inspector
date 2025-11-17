@@ -1,5 +1,13 @@
 import { useMemo, useState } from "react";
-import { Trash2, Loader2, X, Search, TrendingUp, TrendingDown, Minus } from "lucide-react";
+import {
+  Trash2,
+  Loader2,
+  X,
+  Search,
+  TrendingUp,
+  TrendingDown,
+  Minus,
+} from "lucide-react";
 import type { EvalSuite, EvalSuiteOverviewEntry } from "./types";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
@@ -76,7 +84,7 @@ export function SuitesOverview({
           const latestPassRate = latestRun?.summary
             ? Math.round(latestRun.summary.passRate * 100)
             : 0;
-          
+
           const lastRunPassed = latestRun?.summary?.passed ?? 0;
           const lastRunFailed = latestRun?.summary?.failed ?? 0;
           const lastRunTotal = latestRun?.summary?.total ?? 0;

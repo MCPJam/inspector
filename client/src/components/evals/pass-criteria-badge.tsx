@@ -38,9 +38,11 @@ export function PassCriteriaBadge({
         <TooltipTrigger asChild>
           <Badge
             variant="outline"
-            className={passed 
-              ? "gap-1 bg-emerald-500/50 text-white border-emerald-500/50 hover:bg-emerald-500/70" 
-              : "gap-1 bg-red-500/50 text-white border-red-500/50 hover:bg-red-500/70"}
+            className={
+              passed
+                ? "gap-1 bg-emerald-500/50 text-white border-emerald-500/50 hover:bg-emerald-500/70"
+                : "gap-1 bg-red-500/50 text-white border-red-500/50 hover:bg-red-500/70"
+            }
           >
             {passed ? (
               <CheckCircle2 className="h-3 w-3" />
@@ -91,9 +93,7 @@ export function PassCriteriaBadge({
 
         <div className="flex items-center gap-2">
           <span className="text-muted-foreground">Accuracy:</span>
-          <span className="font-mono">
-            {passRate.toFixed(1)}%
-          </span>
+          <span className="font-mono">{passRate.toFixed(1)}%</span>
           <span className="text-muted-foreground">
             (threshold: {minimumPassRate}%)
           </span>

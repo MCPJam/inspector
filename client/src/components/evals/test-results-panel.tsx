@@ -22,7 +22,8 @@ export function TestResultsPanel({
   const hasResult = iteration !== null;
   const isPassed = iteration?.result === "passed";
   const isFailed = iteration?.result === "failed";
-  const isPending = iteration?.status === "running" || iteration?.status === "pending";
+  const isPending =
+    iteration?.status === "running" || iteration?.status === "pending";
   const modelName = iteration?.testCaseSnapshot?.model || "Unknown";
   const provider = iteration?.testCaseSnapshot?.provider || "";
 
@@ -59,15 +60,9 @@ export function TestResultsPanel({
         </div>
         {hasResult && !loading && (
           <div className="flex items-center gap-4 text-xs text-muted-foreground">
-            <span className="font-mono font-medium">
-              {modelName}
-            </span>
-            <span>
-              Tools: {iteration.actualToolCalls?.length || 0}
-            </span>
-            <span>
-              Tokens: {iteration.tokensUsed?.toLocaleString() || 0}
-            </span>
+            <span className="font-mono font-medium">{modelName}</span>
+            <span>Tools: {iteration.actualToolCalls?.length || 0}</span>
+            <span>Tokens: {iteration.tokensUsed?.toLocaleString() || 0}</span>
             {iteration.duration && (
               <span>Duration: {formatDuration(iteration.duration)}</span>
             )}
@@ -120,4 +115,3 @@ export function TestResultsPanel({
     </div>
   );
 }
-

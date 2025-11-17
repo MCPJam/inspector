@@ -33,12 +33,16 @@ export const evaluateResults = (
 
   // Find missing tool calls (expected but not called)
   const missing = normalizedExpected.filter(
-    (expected) => !normalizedCalled.some(called => called.toolName === expected.toolName)
+    (expected) =>
+      !normalizedCalled.some((called) => called.toolName === expected.toolName),
   );
 
   // Find unexpected tool calls (called but not expected)
   const unexpected = normalizedCalled.filter(
-    (called) => !normalizedExpected.some(expected => expected.toolName === called.toolName)
+    (called) =>
+      !normalizedExpected.some(
+        (expected) => expected.toolName === called.toolName,
+      ),
   );
 
   // Check argument mismatches for tools that were called
@@ -49,7 +53,9 @@ export const evaluateResults = (
   }> = [];
 
   for (const expected of normalizedExpected) {
-    const actual = normalizedCalled.find(c => c.toolName === expected.toolName);
+    const actual = normalizedCalled.find(
+      (c) => c.toolName === expected.toolName,
+    );
     if (actual) {
       // Check if arguments match (only if expected has arguments specified)
       const expectedArgs = expected.arguments || {};
@@ -89,5 +95,3 @@ export const evaluateResults = (
     passed,
   };
 };
-
-
