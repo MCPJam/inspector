@@ -314,6 +314,7 @@ export function SuiteIterationsView({
               <TestTemplateEditor
                 suiteId={suite._id}
                 selectedTestCaseId={selectedTestId}
+                connectedServerNames={connectedServerNames}
               />
             </div>
           ) : viewMode === "test-detail" && selectedTestId ? (

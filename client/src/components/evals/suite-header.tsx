@@ -93,7 +93,7 @@ export function SuiteHeader({
   );
 
   // Calculate suite server status
-  const suiteServers = suite.config?.environment?.servers || [];
+  const suiteServers = suite.environment?.servers || [];
   const missingServers = suiteServers.filter(
     (server) => !connectedServerNames.has(server),
   );
@@ -172,18 +172,29 @@ export function SuiteHeader({
               <TooltipContent>Cancel the current evaluation run</TooltipContent>
             </Tooltip>
           ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onRerun(suite)}
-              disabled={isRerunning}
-              className="gap-2"
-            >
-              <RotateCw
-                className={`h-4 w-4 ${isRerunning ? "animate-spin" : ""}`}
-              />
-              {isRerunning ? "Running..." : "Rerun"}
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onRerun(suite)}
+                    disabled={!canRerun || isRerunning}
+                    className="gap-2"
+                  >
+                    <RotateCw
+                      className={`h-4 w-4 ${isRerunning ? "animate-spin" : ""}`}
+                    />
+                    {isRerunning ? "Running..." : "Rerun"}
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                {!canRerun
+                  ? `Connect the following servers: ${missingServers.join(", ")}`
+                  : "Rerun evaluation"}
+              </TooltipContent>
+            </Tooltip>
           )}
           <Button
             variant="outline"
