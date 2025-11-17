@@ -1,406 +1,369 @@
-import { useMemo, useState } from "react";
-import { Button } from "@/components/ui/button";
-import { ChevronDown, ChevronRight, Loader2, RotateCw } from "lucide-react";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { IterationDetails } from "./iteration-details";
-import { formatTime } from "./helpers";
-import { EvalCase, EvalIteration, EvalSuite, SuiteAggregate } from "./types";
+import { useMemo, useState, useEffect } from "react";
+import { useMutation } from "convex/react";
+import { toast } from "sonner";
+import { SuiteHeader } from "./suite-header";
+import { RunOverview } from "./run-overview";
+import { RunDetailView } from "./run-detail-view";
+import { SuiteTestsConfig } from "./suite-tests-config";
+import { TestTemplateEditor } from "./test-template-editor";
+import { PassCriteriaSelector } from "./pass-criteria-selector";
+import { TestCasesOverview } from "./test-cases-overview";
+import { TestCaseDetailView } from "./test-case-detail-view";
+import { useSuiteData, useRunDetailData } from "./use-suite-data";
+import type {
+  EvalCase,
+  EvalIteration,
+  EvalSuite,
+  EvalSuiteRun,
+  SuiteAggregate,
+} from "./types";
+import type { EvalsRoute } from "@/lib/evals-router";
+import { navigateToEvalsRoute } from "@/lib/evals-router";
 
 export function SuiteIterationsView({
   suite,
   cases,
   iterations,
+  allIterations,
+  runs,
+  runsLoading,
   aggregate,
-  onBack,
   onRerun,
+  onCancelRun,
+  onDelete,
+  onDeleteRun,
+  onDirectDeleteRun,
   connectedServerNames,
   rerunningSuiteId,
+  cancellingRunId,
+  deletingSuiteId,
+  deletingRunId,
+  availableModels,
+  route,
 }: {
   suite: EvalSuite;
   cases: EvalCase[];
   iterations: EvalIteration[];
+  allIterations: EvalIteration[];
+  runs: EvalSuiteRun[];
+  runsLoading: boolean;
   aggregate: SuiteAggregate | null;
-  onBack: () => void;
   onRerun: (suite: EvalSuite) => void;
+  onCancelRun: (runId: string) => void;
+  onDelete: (suite: EvalSuite) => void;
+  onDeleteRun: (runId: string) => void;
+  onDirectDeleteRun: (runId: string) => Promise<void>;
   connectedServerNames: Set<string>;
   rerunningSuiteId: string | null;
+  cancellingRunId: string | null;
+  deletingSuiteId: string | null;
+  deletingRunId: string | null;
+  availableModels: any[];
+  route: EvalsRoute;
 }) {
-  const [openIterationId, setOpenIterationId] = useState<string | null>(null);
-  const [expandedQueries, setExpandedQueries] = useState<Set<string>>(
-    new Set(),
+  // Derive view state from route
+  const isEditMode = route.type === "suite-edit";
+  const selectedTestId =
+    route.type === "test-detail" || route.type === "test-edit"
+      ? route.testId
+      : null;
+  const selectedRunId = route.type === "run-detail" ? route.runId : null;
+  const viewMode =
+    route.type === "run-detail"
+      ? "run-detail"
+      : route.type === "test-detail"
+        ? "test-detail"
+        : route.type === "test-edit"
+          ? "test-edit"
+          : "overview";
+  const runsViewMode =
+    route.type === "suite-overview" && route.view === "test-cases"
+      ? "test-cases"
+      : "runs";
+
+  // Local state that's not in the URL
+  const [showRunSummarySidebar, setShowRunSummarySidebar] = useState(false);
+  const [runDetailSortBy, setRunDetailSortBy] = useState<
+    "model" | "test" | "result"
+  >("model");
+  const [defaultMinimumPassRate, setDefaultMinimumPassRate] = useState(100);
+
+  const updateSuite = useMutation("testSuites:updateTestSuite" as any);
+  const updateTestCaseMutation = useMutation(
+    "testSuites:updateTestCase" as any,
   );
-  const caseGroups = useMemo(() => {
-    const groups = new Map<
-      string,
-      {
-        testCase: EvalCase | null;
-        iterations: EvalIteration[];
-        summary: {
-          runs: number;
-          passed: number;
-          failed: number;
-          cancelled: number;
-          pending: number;
-          tokens: number;
-          avgDuration: number | null;
-        };
-      }
-    >();
 
-    const computeSummary = (items: EvalIteration[]) => {
-      const summary = {
-        runs: items.length,
-        passed: 0,
-        failed: 0,
-        cancelled: 0,
-        pending: 0,
-        tokens: 0,
-        avgDuration: null as number | null,
-      };
+  // Use custom hooks for data calculations
+  const { runTrendData, modelStats, caseGroups, templateGroups } = useSuiteData(
+    suite,
+    cases,
+    iterations,
+    allIterations,
+    runs,
+    aggregate,
+  );
 
-      let totalDuration = 0;
-      let durationCount = 0;
+  const { caseGroupsForSelectedRun, selectedRunChartData } = useRunDetailData(
+    selectedRunId,
+    allIterations,
+    runDetailSortBy,
+  );
 
-      items.forEach((iteration) => {
-        if (iteration.result === "passed") summary.passed += 1;
-        else if (iteration.result === "failed") summary.failed += 1;
-        else if (iteration.result === "cancelled") summary.cancelled += 1;
-        else summary.pending += 1;
+  // Selected run details
+  const selectedRunDetails = useMemo(() => {
+    if (!selectedRunId) return null;
+    const run = runs.find((r) => r._id === selectedRunId);
+    return run ?? null;
+  }, [selectedRunId, runs]);
 
-        summary.tokens += iteration.tokensUsed || 0;
-
-        const startedAt = iteration.startedAt ?? iteration.createdAt;
-        const completedAt = iteration.updatedAt ?? iteration.createdAt;
-        if (startedAt && completedAt) {
-          const duration = Math.max(completedAt - startedAt, 0);
-          totalDuration += duration;
-          durationCount += 1;
+  // Load default pass criteria from suite
+  useEffect(() => {
+    if (suite.defaultPassCriteria?.minimumPassRate !== undefined) {
+      setDefaultMinimumPassRate(suite.defaultPassCriteria.minimumPassRate);
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.setItem(
+            `suite-${suite._id}-criteria-rate`,
+            String(suite.defaultPassCriteria.minimumPassRate),
+          );
+        } catch (error) {
+          console.warn(
+            "Failed to sync default pass criteria to localStorage",
+            error,
+          );
         }
-      });
-
-      if (durationCount > 0) {
-        summary.avgDuration = totalDuration / durationCount;
       }
-
-      return summary;
-    };
-
-    cases.forEach((testCase) => {
-      groups.set(testCase._id, {
-        testCase,
-        iterations: [],
-        summary: {
-          runs: 0,
-          passed: 0,
-          failed: 0,
-          cancelled: 0,
-          pending: 0,
-          tokens: 0,
-          avgDuration: null,
-        },
-      });
-    });
-
-    const unassigned: {
-      testCase: EvalCase | null;
-      iterations: EvalIteration[];
-      summary: {
-        runs: number;
-        passed: number;
-        failed: number;
-        cancelled: number;
-        pending: number;
-        tokens: number;
-        avgDuration: number | null;
-      };
-    } = {
-      testCase: null,
-      iterations: [],
-      summary: {
-        runs: 0,
-        passed: 0,
-        failed: 0,
-        cancelled: 0,
-        pending: 0,
-        tokens: 0,
-        avgDuration: null,
-      },
-    };
-
-    iterations.forEach((iteration) => {
-      const targetGroup = iteration.testCaseId
-        ? groups.get(iteration.testCaseId)
-        : undefined;
-
-      if (targetGroup) {
-        targetGroup.iterations.push(iteration);
-      } else {
-        unassigned.iterations.push(iteration);
+    } else if (typeof window !== "undefined") {
+      try {
+        const rate = localStorage.getItem(`suite-${suite._id}-criteria-rate`);
+        if (rate) setDefaultMinimumPassRate(Number(rate));
+      } catch (error) {
+        console.warn("Failed to load default pass criteria", error);
       }
-    });
-
-    const orderedGroups = cases.map((testCase) => {
-      const group = groups.get(testCase._id)!;
-      const sortedIterations = [...group.iterations].sort((a, b) => {
-        if (a.iterationNumber != null && b.iterationNumber != null) {
-          return a.iterationNumber - b.iterationNumber;
-        }
-        return (a.createdAt ?? 0) - (b.createdAt ?? 0);
-      });
-      return {
-        ...group,
-        iterations: sortedIterations,
-        summary: computeSummary(sortedIterations),
-      };
-    });
-
-    if (unassigned.iterations.length > 0) {
-      const sortedUnassigned = [...unassigned.iterations].sort((a, b) => {
-        if (a.iterationNumber != null && b.iterationNumber != null) {
-          return a.iterationNumber - b.iterationNumber;
-        }
-        return (a.createdAt ?? 0) - (b.createdAt ?? 0);
-      });
-      orderedGroups.push({
-        ...unassigned,
-        iterations: sortedUnassigned,
-        summary: computeSummary(sortedUnassigned),
-      });
     }
+  }, [suite._id, suite.defaultPassCriteria]);
 
-    return orderedGroups;
-  }, [cases, iterations]);
-
-  const getIterationBorderColor = (result: string) => {
-    if (result === "passed") return "bg-emerald-500/50";
-    if (result === "failed") return "bg-red-500/50";
-    if (result === "cancelled") return "bg-zinc-300/50";
-    return "bg-amber-500/50"; // pending
+  const handleUpdateTests = async (models: any[]) => {
+    try {
+      for (const testCase of cases) {
+        await updateTestCaseMutation({
+          testCaseId: testCase._id,
+          models: models.map((m) => ({
+            model: m.model,
+            provider: m.provider,
+          })),
+        });
+      }
+      toast.success("Models updated successfully");
+    } catch (error) {
+      toast.error("Failed to update models");
+      console.error("Failed to update models:", error);
+      throw error;
+    }
   };
 
-  // Check if all servers are connected
-  const suiteServers = suite.config?.environment?.servers || [];
-  const missingServers = suiteServers.filter(
-    (server) => !connectedServerNames.has(server),
-  );
-  const canRerun = missingServers.length === 0;
-  const isRerunning = rerunningSuiteId === suite._id;
+  const handleRunClick = (runId: string) => {
+    navigateToEvalsRoute({
+      type: "run-detail",
+      suiteId: suite._id,
+      runId,
+    });
+  };
+
+  const handleBackToOverview = () => {
+    setShowRunSummarySidebar(false);
+    navigateToEvalsRoute({
+      type: "suite-overview",
+      suiteId: suite._id,
+    });
+  };
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <Button variant="ghost" size="sm" onClick={onBack}>
-          ← Back to suites
-        </Button>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => onRerun(suite)}
-                disabled={!canRerun || isRerunning}
-                className="gap-2"
-              >
-                <RotateCw
-                  className={`h-4 w-4 ${isRerunning ? "animate-spin" : ""}`}
-                />
-                Rerun
-              </Button>
-            </span>
-          </TooltipTrigger>
-          <TooltipContent>
-            {!canRerun
-              ? `Connect the following servers: ${missingServers.join(", ")}`
-              : "Rerun evaluation"}
-          </TooltipContent>
-        </Tooltip>
+    <div className="flex flex-col h-full">
+      {/* Header */}
+      <div className="shrink-0">
+        <SuiteHeader
+          suite={suite}
+          viewMode={viewMode}
+          selectedRunDetails={selectedRunDetails}
+          isEditMode={isEditMode}
+          onRerun={onRerun}
+          onDelete={onDelete}
+          onCancelRun={onCancelRun}
+          onDeleteRun={onDeleteRun}
+          onViewModeChange={handleBackToOverview}
+          connectedServerNames={connectedServerNames}
+          rerunningSuiteId={rerunningSuiteId}
+          cancellingRunId={cancellingRunId}
+          deletingSuiteId={deletingSuiteId}
+          deletingRunId={deletingRunId}
+          showRunSummarySidebar={showRunSummarySidebar}
+          setShowRunSummarySidebar={setShowRunSummarySidebar}
+          runsViewMode={runsViewMode}
+        />
       </div>
-      <div className="space-y-4">
-        {caseGroups.map((group, index) => {
-          const { testCase, iterations: groupIterations } = group;
-          const hasIterations = groupIterations.length > 0;
-          const caseId = testCase?._id ?? `unassigned-${index}`;
-          const isQueryExpanded = expandedQueries.has(caseId);
-          const queryMaxLength = 100;
-          const shouldTruncate =
-            testCase?.query && testCase.query.length > queryMaxLength;
-          const displayQuery =
-            shouldTruncate && !isQueryExpanded
-              ? testCase.query.slice(0, queryMaxLength) + "..."
-              : testCase?.query;
 
-          const toggleQuery = () => {
-            setExpandedQueries((prev) => {
-              const newSet = new Set(prev);
-              if (newSet.has(caseId)) {
-                newSet.delete(caseId);
-              } else {
-                newSet.add(caseId);
-              }
-              return newSet;
-            });
-          };
+      {/* Content */}
+      {!isEditMode && (
+        <div className="flex-1 min-h-0">
+          {viewMode === "test-edit" && selectedTestId ? (
+            <div className="h-full">
+              <TestTemplateEditor
+                suiteId={suite._id}
+                selectedTestCaseId={selectedTestId}
+                connectedServerNames={connectedServerNames}
+              />
+            </div>
+          ) : viewMode === "test-detail" && selectedTestId ? (
+            (() => {
+              const selectedCase = cases.find((c) => c._id === selectedTestId);
+              if (!selectedCase) return null;
 
-          return (
-            <div key={caseId} className="overflow-hidden rounded-xl border">
-              <div className="border-b bg-muted/50 px-4 py-2.5">
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-sm font-semibold pr-2">
-                      {testCase ? testCase.title : "Unassigned iterations"}
-                    </h3>
-                    {testCase?.provider ? (
-                      <>
-                        <span className="text-xs text-muted-foreground">
-                          {testCase.provider}
-                        </span>
-                      </>
-                    ) : null}
-                    {testCase?.model ? (
-                      <>
-                        <span className="text-muted-foreground">•</span>
-                        <span className="text-xs text-muted-foreground">
-                          {testCase.model}
-                        </span>
-                      </>
-                    ) : null}
-                  </div>
-                  {testCase?.query ? (
-                    <div className="flex items-start gap-2">
-                      <p className="text-xs text-muted-foreground italic flex-1">
-                        "{displayQuery}"
-                      </p>
-                      {shouldTruncate ? (
-                        <button
-                          onClick={toggleQuery}
-                          className="text-xs text-primary hover:underline focus:outline-none whitespace-nowrap"
-                        >
-                          {isQueryExpanded ? "Show less" : "Show more"}
-                        </button>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </div>
-              </div>
+              const caseIterations = allIterations.filter(
+                (iter) => iter.testCaseId === selectedTestId,
+              );
 
-              {hasIterations ? (
-                <div className="divide-y">
-                  {groupIterations.map((iteration) => {
-                    const isOpen = openIterationId === iteration._id;
-                    const startedAt =
-                      iteration.startedAt ?? iteration.createdAt;
-                    const completedAt =
-                      iteration.updatedAt ?? iteration.createdAt;
-                    const durationMs =
-                      startedAt && completedAt
-                        ? Math.max(completedAt - startedAt, 0)
-                        : null;
-                    const isPending = iteration.result === "pending";
-
-                    return (
-                      <div
-                        key={iteration._id}
-                        className={`relative ${isPending ? "opacity-60" : ""}`}
-                      >
-                        <div
-                          className={`absolute left-0 top-0 h-full w-1 ${getIterationBorderColor(iteration.result)}`}
-                        />
-                        <button
-                          onClick={() => {
-                            if (!isPending) {
-                              setOpenIterationId((current) =>
-                                current === iteration._id
-                                  ? null
-                                  : iteration._id,
-                              );
-                            }
-                          }}
-                          disabled={isPending}
-                          className={`flex w-full items-center gap-4 px-4 py-3 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
-                            isPending
-                              ? "cursor-not-allowed"
-                              : "cursor-pointer hover:bg-muted/50"
-                          }`}
-                        >
-                          <div className="grid min-w-0 flex-1 grid-cols-[auto_1fr_auto_auto] items-center gap-4 pl-3">
-                            <div className="text-muted-foreground">
-                              {isPending ? (
-                                <ChevronRight className="h-4 w-4" />
-                              ) : isOpen ? (
-                                <ChevronDown className="h-4 w-4" />
-                              ) : (
-                                <ChevronRight className="h-4 w-4" />
-                              )}
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium">
-                                Iteration #{iteration.iterationNumber}
-                              </span>
-                              {isPending ? (
-                                <Loader2 className="h-4 w-4 animate-spin text-amber-600" />
-                              ) : null}
-                            </div>
-                            <div className="text-sm text-muted-foreground">
-                              {isPending
-                                ? "—"
-                                : `${Number(iteration.tokensUsed || 0).toLocaleString()} tokens`}
-                            </div>
-                            <div className="text-sm text-muted-foreground">
-                              {isPending
-                                ? "—"
-                                : durationMs !== null
-                                  ? formatDuration(durationMs)
-                                  : "—"}
-                            </div>
-                          </div>
-                        </button>
-                        {isOpen && !isPending ? (
-                          <div className="border-t bg-muted/20 px-4 pb-4 pt-3 pl-8">
-                            <IterationDetails
-                              iteration={iteration}
-                              testCase={testCase}
-                            />
-                          </div>
-                        ) : null}
-                      </div>
-                    );
-                  })}
-                </div>
+              return (
+                <TestCaseDetailView
+                  testCase={selectedCase}
+                  iterations={caseIterations}
+                  runs={runs}
+                  serverNames={(suite.environment?.servers || []).filter(
+                    (name) => connectedServerNames.has(name),
+                  )}
+                  onBack={() => {
+                    navigateToEvalsRoute({
+                      type: "suite-overview",
+                      suiteId: suite._id,
+                      view: "test-cases",
+                    });
+                  }}
+                  onViewRun={(runId) => {
+                    navigateToEvalsRoute({
+                      type: "run-detail",
+                      suiteId: suite._id,
+                      runId,
+                    });
+                  }}
+                />
+              );
+            })()
+          ) : viewMode === "overview" ? (
+            <div key={runsViewMode} className="space-y-4">
+              {runsViewMode === "runs" ? (
+                <RunOverview
+                  runs={runs}
+                  runsLoading={runsLoading}
+                  allIterations={allIterations}
+                  runTrendData={runTrendData}
+                  modelStats={modelStats}
+                  onRunClick={handleRunClick}
+                  onDirectDeleteRun={onDirectDeleteRun}
+                  runsViewMode={runsViewMode}
+                  onViewModeChange={(value) => {
+                    navigateToEvalsRoute({
+                      type: "suite-overview",
+                      suiteId: suite._id,
+                      view: value,
+                    });
+                  }}
+                />
               ) : (
-                <div className="px-4 py-6 text-center text-sm text-muted-foreground">
-                  No iterations recorded for this test case yet.
-                </div>
+                <TestCasesOverview
+                  cases={cases}
+                  allIterations={allIterations}
+                  runs={runs}
+                  runsViewMode={runsViewMode}
+                  onViewModeChange={(value) => {
+                    navigateToEvalsRoute({
+                      type: "suite-overview",
+                      suiteId: suite._id,
+                      view: value,
+                    });
+                  }}
+                  onTestCaseClick={(testCaseId) => {
+                    navigateToEvalsRoute({
+                      type: "test-detail",
+                      suiteId: suite._id,
+                      testId: testCaseId,
+                    });
+                  }}
+                  runTrendData={runTrendData}
+                  modelStats={modelStats}
+                  runsLoading={runsLoading}
+                  onRunClick={handleRunClick}
+                />
               )}
             </div>
-          );
-        })}
-      </div>
+          ) : viewMode === "run-detail" && selectedRunDetails ? (
+            <RunDetailView
+              selectedRunDetails={selectedRunDetails}
+              caseGroupsForSelectedRun={caseGroupsForSelectedRun}
+              selectedRunChartData={selectedRunChartData}
+              runDetailSortBy={runDetailSortBy}
+              onSortChange={setRunDetailSortBy}
+              showRunSummarySidebar={showRunSummarySidebar}
+              setShowRunSummarySidebar={setShowRunSummarySidebar}
+              serverNames={(suite.environment?.servers || []).filter((name) =>
+                connectedServerNames.has(name),
+              )}
+            />
+          ) : null}
+        </div>
+      )}
+
+      {isEditMode && (
+        <div className="flex-1 min-h-0 overflow-auto">
+          <div className="p-3 space-y-3">
+            {/* Default Pass/Fail Criteria for New Runs */}
+            <div className="space-y-2">
+              <div>
+                <h3 className="text-sm font-semibold">
+                  Default Pass/Fail Criteria
+                </h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Set the default criteria for <strong>new</strong> evaluation
+                  runs of this suite. These settings will be pre-selected when
+                  you click "Rerun". Existing runs keep their original criteria.
+                </p>
+              </div>
+              <PassCriteriaSelector
+                minimumPassRate={defaultMinimumPassRate}
+                onMinimumPassRateChange={async (rate) => {
+                  setDefaultMinimumPassRate(rate);
+                  localStorage.setItem(
+                    `suite-${suite._id}-criteria-rate`,
+                    String(rate),
+                  );
+                  try {
+                    await updateSuite({
+                      suiteId: suite._id,
+                      defaultPassCriteria: {
+                        minimumPassRate: rate,
+                      },
+                    });
+                    toast.success("Suite updated successfully");
+                  } catch (error) {
+                    toast.error("Failed to update suite");
+                    console.error("Failed to update suite:", error);
+                    setDefaultMinimumPassRate(
+                      suite.defaultPassCriteria?.minimumPassRate ?? 100,
+                    );
+                  }
+                }}
+              />
+            </div>
+
+            {/* Tests Config */}
+            <SuiteTestsConfig
+              suite={suite}
+              testCases={cases}
+              onUpdate={handleUpdateTests}
+              availableModels={availableModels}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
-}
-
-function formatDuration(durationMs: number) {
-  if (durationMs < 1000) {
-    return `${durationMs}ms`;
-  }
-
-  const totalSeconds = Math.round(durationMs / 1000);
-  if (totalSeconds < 60) {
-    return `${totalSeconds}s`;
-  }
-
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  if (minutes < 60) {
-    return seconds ? `${minutes}m ${seconds}s` : `${minutes}m`;
-  }
-
-  const hours = Math.floor(minutes / 60);
-  const remainingMinutes = minutes % 60;
-  return remainingMinutes ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
 }

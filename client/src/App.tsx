@@ -112,8 +112,12 @@ export default function App() {
   useEffect(() => {
     const applyHash = () => {
       const hash = (window.location.hash || "#servers").replace("#", "");
-      setActiveTab(hash);
-      if (hash === "chat" || hash === "chat-v2") {
+
+      // Extract the top-level tab from subroutes (e.g., "/evals/suite/123" -> "evals")
+      const topLevelTab = hash.startsWith("/") ? hash.split("/")[1] : hash;
+
+      setActiveTab(topLevelTab);
+      if (topLevelTab === "chat" || topLevelTab === "chat-v2") {
         setSelectedMultipleServersToAllServers();
       }
       if (hash !== "chat-v2") {
