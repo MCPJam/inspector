@@ -3,23 +3,17 @@ import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
 import { PromptsTab } from "./components/PromptsTab";
-import { ChatTab } from "./components/ChatTab";
 import { ChatTabV2 } from "./components/ChatTabV2";
 import { EvalsTab } from "./components/EvalsTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { TracingTab } from "./components/TracingTab";
-import { InterceptorTab } from "./components/InterceptorTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { RegistryTab } from "./components/RegistryTab";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import { MCPSidebar } from "./components/mcp-sidebar";
 import { ActiveServerSelector } from "./components/ActiveServerSelector";
-import {
-  SidebarInset,
-  SidebarProvider,
-  SidebarTrigger,
-} from "./components/ui/sidebar";
+import { SidebarInset, SidebarProvider } from "./components/ui/sidebar";
 import { useAppState } from "./hooks/use-app-state";
 import { PreferencesStoreProvider } from "./stores/preferences/preferences-provider";
 import { RegistryStoreProvider } from "./stores/registry/registry-provider";
@@ -31,16 +25,23 @@ import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
 
 // Import global styles
 import "./index.css";
-import { AuthUpperArea } from "./components/auth/auth-upper-area";
 import { detectEnvironment, detectPlatform } from "./logs/PosthogUtils";
+import {
+  getInitialThemeMode,
+  updateThemeMode,
+  getInitialThemePreset,
+  updateThemePreset,
+} from "./lib/theme-utils";
 import CompletingSignInLoading from "./components/CompletingSignInLoading";
 import LoadingScreen from "./components/LoadingScreen";
 import LoginPage from "./components/LoginPage";
 import { useLoginPage } from "./hooks/use-log-in-page";
 import { Header } from "./components/Header";
+import { ThemePreset } from "./types/preferences/theme";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
+  const [chatHasMessages, setChatHasMessages] = useState(false);
   const posthog = usePostHog();
   const { shouldShowLoginPage, isAuthenticated, isAuthLoading } =
     useLoginPage();
@@ -57,6 +58,14 @@ export default function App() {
       is_authenticated: isAuthenticated,
     });
   }, [isAuthLoading, isAuthenticated]);
+
+  // Set the initial theme mode and preset on page load
+  const initialThemeMode = getInitialThemeMode();
+  const initialThemePreset: ThemePreset = getInitialThemePreset();
+  useEffect(() => {
+    updateThemeMode(initialThemeMode);
+    updateThemePreset(initialThemePreset);
+  }, []);
 
   // Set up Electron OAuth callback handling
   useElectronOAuth();
@@ -97,6 +106,7 @@ export default function App() {
     handleCreateWorkspace,
     handleUpdateWorkspace,
     handleDeleteWorkspace,
+    saveServerConfigWithoutConnecting,
   } = useAppState();
   // Sync tab with hash on mount and when hash changes
   useEffect(() => {
@@ -110,6 +120,9 @@ export default function App() {
       if (topLevelTab === "chat" || topLevelTab === "chat-v2") {
         setSelectedMultipleServersToAllServers();
       }
+      if (hash !== "chat-v2") {
+        setChatHasMessages(false);
+      }
     };
     applyHash();
     window.addEventListener("hashchange", applyHash);
@@ -119,6 +132,9 @@ export default function App() {
   const handleNavigate = (section: string) => {
     if (section === "chat" || section === "chat-v2") {
       setSelectedMultipleServersToAllServers();
+    }
+    if (section !== "chat-v2") {
+      setChatHasMessages(false);
     }
     window.location.hash = section;
     setActiveTab(section);
@@ -160,17 +176,15 @@ export default function App() {
           onDeleteWorkspace={handleDeleteWorkspace}
         />
         <div className="flex flex-1 min-h-0 flex-col overflow-hidden h-full">
-          {/* Active Server Selector - Only show on Tools, Resources, Prompts, Auth, OAuth Flow, and Interceptor pages */}
+          {/* Active Server Selector - Only show on Tools, Resources, Prompts, OAuth Flow, Chat, and Chat v2 pages */}
           {(activeTab === "tools" ||
             activeTab === "resources" ||
             activeTab === "prompts" ||
-            activeTab === "auth" ||
             activeTab === "oauth-flow" ||
             activeTab === "chat" ||
-            activeTab === "chat-v2" ||
-            activeTab === "interceptor") && (
+            activeTab === "chat-v2") && (
             <ActiveServerSelector
-              connectedServerConfigs={connectedServerConfigs}
+              serverConfigs={appState.servers}
               selectedServer={appState.selectedServer}
               onServerChange={setSelectedServer}
               onConnect={handleConnect}
@@ -180,6 +194,7 @@ export default function App() {
               onMultiServerToggle={toggleServerSelection}
               selectedMultipleServers={appState.selectedMultipleServers}
               showOnlyOAuthServers={activeTab === "oauth-flow"}
+              hasMessages={activeTab === "chat-v2" ? chatHasMessages : false}
             />
           )}
 
@@ -239,36 +254,20 @@ export default function App() {
 
           {activeTab === "oauth-flow" && (
             <OAuthFlowTab
-              serverConfig={selectedMCPConfig}
-              serverEntry={appState.servers[appState.selectedServer]}
-              serverName={appState.selectedServer}
-              onUpdate={handleUpdate}
+              serverConfigs={connectedServerConfigs}
+              selectedServerName={appState.selectedServer}
+              onSelectServer={setSelectedServer}
+              onSaveServerConfig={saveServerConfigWithoutConnecting}
             />
           )}
-
-          {activeTab === "chat" && (
-            <ChatTab
-              serverConfigs={selectedMCPConfigsMap}
-              connectedServerConfigs={connectedServerConfigs}
-            />
-          )}
-
           {activeTab === "chat-v2" && (
             <ChatTabV2
               connectedServerConfigs={connectedServerConfigs}
               selectedServerNames={appState.selectedMultipleServers}
+              onHasMessagesChange={setChatHasMessages}
             />
           )}
-
-          {activeTab === "interceptor" && (
-            <InterceptorTab
-              connectedServerConfigs={connectedServerConfigs}
-              selectedServer={appState.selectedServer}
-            />
-          )}
-
           {activeTab === "tracing" && <TracingTab />}
-
           {activeTab === "settings" && <SettingsTab />}
         </div>
       </SidebarInset>
@@ -276,7 +275,10 @@ export default function App() {
   );
 
   return (
-    <PreferencesStoreProvider themeMode="light" themePreset="default">
+    <PreferencesStoreProvider
+      themeMode={initialThemeMode}
+      themePreset={initialThemePreset}
+    >
       <RegistryStoreProvider>
         <Toaster />
         {shouldShowLoginPage && !isOAuthCallbackComplete ? (

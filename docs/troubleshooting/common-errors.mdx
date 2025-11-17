@@ -1,0 +1,70 @@
+---
+title: "Common MCP Errors"
+description: "Solutions to common MCP server connection and configuration issues"
+icon: "circle-exclamation"
+---
+
+This guide covers common errors you might encounter when working with MCP servers and how to resolve them.
+
+## Connection Issues
+
+### Server fails to start or connect
+
+- **Use absolute paths**: Specify the full path to your server
+  - ✅ Good: `/Users/yourname/project/server.py`
+  - ❌ Bad: `./server.py` or `server.py`
+
+- **For `uv` projects**: Use the `--directory` flag with absolute path
+
+  ```bash
+  uv run --directory /Users/username/weather-mcp mcp.py
+  ```
+
+- **Test your command first**: Run the server command manually in a terminal to verify it works before adding it to Inspector
+
+- **For HTTP servers**: Verify the URL is accessible
+  - Test with `curl` or a browser first
+
+## Authentication Issues
+
+### Server fails to connect with authentication errors
+
+**If your server is failing to connect, first verify you've selected the correct authentication option:**
+
+- **No Authentication** - Use this for local or development servers that don't require authentication
+- **Bearer Token** - Use this if you already have an API token from the server
+- **OAuth 2.0** - Use this for servers that require OAuth authorization flow
+
+### Getting 401 Unauthorized errors
+
+If you're seeing **401 Unauthorized** errors when trying to connect to your server, this typically means the server requires authentication that hasn't been set up yet.
+
+**Solution:**
+
+1. Change your authentication type to **OAuth 2.0** in the server configuration
+2. Go through the OAuth authorization flow to obtain credentials
+3. Use the OAuth Debugger to troubleshoot any issues with the OAuth process
+
+<Info>
+  The OAuth Debugger helps you step through each part of the authorization
+  process and identify where things might be going wrong.
+</Info>
+
+### Common Configuration Mistakes
+
+- Missing required environment variables
+- Incorrect transport type selection
+- Typos in server URLs or commands
+- Missing file permissions or executable flags
+
+## Getting Help
+
+If you're still experiencing issues:
+
+1. **Check server documentation**
+   - Review the MCP server's specific documentation
+   - Look for known issues or troubleshooting guides
+
+2. **Community support**
+   - Join our [Discord](https://discord.gg/JEnDtz8X6z) for community help
+   - Check [GitHub Issues](https://github.com/MCPJam/inspector/issues) for similar problems
