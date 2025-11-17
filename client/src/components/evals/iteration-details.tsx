@@ -74,7 +74,6 @@ export function IterationDetails({
       } catch (error) {
         // Silently fail if servers aren't connected
         // This is expected in evals where servers may not be running
-        console.debug("Could not fetch tools metadata (servers may not be connected):", error);
         setToolsMetadata({});
         setToolServerMap({});
       }

@@ -57,7 +57,6 @@ function getMCPConfigFromEnv() {
   if (configData) {
     try {
       const config = JSON.parse(configData);
-      console.log("Parsed config data:", config);
       if (config.mcpServers && Object.keys(config.mcpServers).length > 0) {
         // Transform the config to match client expectations
         const servers = Object.entries(config.mcpServers).map(
@@ -70,14 +69,9 @@ function getMCPConfigFromEnv() {
             url: serverConfig.url, // For SSE/HTTP connections
           }),
         );
-        console.log("Transformed servers:", servers);
 
         // Check for auto-connect server filter
         const autoConnectServer = process.env.MCP_AUTO_CONNECT_SERVER;
-        console.log(
-          "Auto-connect server filter:",
-          autoConnectServer || "none (connect to all)",
-        );
 
         return {
           servers,
