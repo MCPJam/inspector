@@ -94,8 +94,8 @@ function SuiteSidebarItem({
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
 
-  // Load test cases only when expanded
-  const enableTestCasesQuery = isAuthenticated && !!user && isExpanded;
+  // Load test cases for all suites upfront (for smoother UX)
+  const enableTestCasesQuery = isAuthenticated && !!user;
   const testCases = useQuery(
     "testSuites:listTestCases" as any,
     enableTestCasesQuery ? ({ suiteId: suite._id } as any) : "skip",
