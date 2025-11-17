@@ -12,6 +12,7 @@ import {
   Trash2,
   X,
   Pencil,
+  Copy,
 } from "lucide-react";
 import {
   Tooltip,
@@ -66,12 +67,16 @@ function SuiteSidebarItem({
   onRerun,
   onCancelRun,
   onDelete,
+  onDuplicate,
   onCreateTestCase,
   onDeleteTestCase,
+  onDuplicateTestCase,
   isRerunning,
   isCancelling,
   isDeleting,
+  isDuplicating,
   deletingTestCaseId,
+  duplicatingTestCaseId,
   connectedServerNames,
 }: {
   suite: EvalSuite;
@@ -83,12 +88,16 @@ function SuiteSidebarItem({
   onRerun: (suite: EvalSuite) => void;
   onCancelRun: (runId: string) => void;
   onDelete: (suite: EvalSuite) => void;
+  onDuplicate: (suite: EvalSuite) => void;
   onCreateTestCase: (suiteId: string) => void;
   onDeleteTestCase: (testCaseId: string, testCaseTitle: string) => void;
+  onDuplicateTestCase: (testCaseId: string, suiteId: string) => void;
   isRerunning: boolean;
   isCancelling: boolean;
   isDeleting: boolean;
+  isDuplicating: boolean;
   deletingTestCaseId: string | null;
+  duplicatingTestCaseId: string | null;
   connectedServerNames: Set<string>;
 }) {
   const { isAuthenticated } = useConvexAuth();
@@ -266,6 +275,16 @@ function SuiteSidebarItem({
             <DropdownMenuItem
               onClick={(e) => {
                 e.stopPropagation();
+                onDuplicate(suite);
+              }}
+              disabled={isDuplicating}
+            >
+              <Copy className="h-4 w-4 mr-2 text-foreground" />
+              {isDuplicating ? "Duplicating..." : "Duplicate"}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={(e) => {
+                e.stopPropagation();
                 onDelete(suite);
               }}
               disabled={isDeleting}
@@ -293,6 +312,7 @@ function SuiteSidebarItem({
             testCases.map((testCase: any) => {
               const isTestSelected = selectedTestId === testCase._id;
               const isTestDeleting = deletingTestCaseId === testCase._id;
+              const isTestDuplicating = duplicatingTestCaseId === testCase._id;
 
               return (
                 <div
@@ -323,6 +343,16 @@ function SuiteSidebarItem({
                       </button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
+                      <DropdownMenuItem
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDuplicateTestCase(testCase._id, suite._id);
+                        }}
+                        disabled={isTestDuplicating}
+                      >
+                        <Copy className="h-4 w-4 mr-2 text-foreground" />
+                        {isTestDuplicating ? "Duplicating..." : "Duplicate"}
+                      </DropdownMenuItem>
                       <DropdownMenuItem
                         onClick={(e) => {
                           e.stopPropagation();
@@ -378,10 +408,14 @@ export function EvalsTab() {
   const [cancellingRunId, setCancellingRunId] = useState<string | null>(null);
   const [deletingSuiteId, setDeletingSuiteId] = useState<string | null>(null);
   const [suiteToDelete, setSuiteToDelete] = useState<EvalSuite | null>(null);
+  const [duplicatingSuiteId, setDuplicatingSuiteId] = useState<string | null>(null);
   const [deletingRunId, setDeletingRunId] = useState<string | null>(null);
   const [runToDelete, setRunToDelete] = useState<string | null>(null);
   const [isCreatingTestCase, setIsCreatingTestCase] = useState(false);
   const [deletingTestCaseId, setDeletingTestCaseId] = useState<string | null>(
+    null,
+  );
+  const [duplicatingTestCaseId, setDuplicatingTestCaseId] = useState<string | null>(
     null,
   );
   const [testCaseToDelete, setTestCaseToDelete] = useState<{
@@ -430,11 +464,15 @@ export function EvalsTab() {
   const deleteSuiteMutation = useMutation("testSuites:deleteTestSuite" as any);
   const deleteRunMutation = useMutation("testSuites:deleteTestSuiteRun" as any);
   const cancelRunMutation = useMutation("testSuites:cancelTestSuiteRun" as any);
+  const duplicateSuiteMutation = useMutation("testSuites:duplicateTestSuite" as any);
   const createTestCaseMutation = useMutation(
     "testSuites:createTestCase" as any,
   );
   const deleteTestCaseMutation = useMutation(
     "testSuites:deleteTestCase" as any,
+  );
+  const duplicateTestCaseMutation = useMutation(
+    "testSuites:duplicateTestCase" as any,
   );
 
   useEffect(() => {
@@ -716,6 +754,33 @@ export function EvalsTab() {
     }
   }, [suiteToDelete, deletingSuiteId, deleteSuiteMutation, selectedSuiteId]);
 
+  // Duplicate suite handler
+  const handleDuplicateSuite = useCallback(
+    async (suite: EvalSuite) => {
+      if (duplicatingSuiteId) return;
+
+      setDuplicatingSuiteId(suite._id);
+
+      try {
+        const newSuite = await duplicateSuiteMutation({ suiteId: suite._id });
+        toast.success("Test suite duplicated successfully");
+
+        // Navigate to the new duplicated suite
+        if (newSuite && newSuite._id) {
+          navigateToEvalsRoute({ type: "suite-overview", suiteId: newSuite._id });
+        }
+      } catch (error) {
+        console.error("Failed to duplicate suite:", error);
+        toast.error(
+          error instanceof Error ? error.message : "Failed to duplicate test suite",
+        );
+      } finally {
+        setDuplicatingSuiteId(null);
+      }
+    },
+    [duplicatingSuiteId, duplicateSuiteMutation],
+  );
+
   // Cancel handler
   const handleCancelRun = useCallback(
     async (runId: string) => {
@@ -905,6 +970,42 @@ export function EvalsTab() {
     ],
   );
 
+  // Duplicate test case handler
+  const handleDuplicateTestCase = useCallback(
+    async (testCaseId: string, suiteId: string) => {
+      if (duplicatingTestCaseId) return;
+
+      setDuplicatingTestCaseId(testCaseId);
+
+      try {
+        const newTestCase = await duplicateTestCaseMutation({ testCaseId });
+        toast.success("Test case duplicated successfully");
+
+        // Ensure the suite is expanded to show the new test case
+        setExpandedSuites((prev) => new Set(prev).add(suiteId));
+
+        // Navigate to the new duplicated test case
+        if (newTestCase && newTestCase._id) {
+          navigateToEvalsRoute({
+            type: "test-edit",
+            suiteId,
+            testId: newTestCase._id,
+          });
+        }
+      } catch (error) {
+        console.error("Failed to duplicate test case:", error);
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Failed to duplicate test case",
+        );
+      } finally {
+        setDuplicatingTestCaseId(null);
+      }
+    },
+    [duplicatingTestCaseId, duplicateTestCaseMutation],
+  );
+
   // Handle eval run success - navigate back to list view
   const handleEvalRunSuccess = useCallback(() => {
     navigateToEvalsRoute({ type: "list" });
@@ -1032,12 +1133,16 @@ export function EvalsTab() {
                         onRerun={handleRerun}
                         onCancelRun={handleCancelRun}
                         onDelete={handleDelete}
+                        onDuplicate={handleDuplicateSuite}
                         onCreateTestCase={handleCreateTestCase}
                         onDeleteTestCase={handleDeleteTestCase}
+                        onDuplicateTestCase={handleDuplicateTestCase}
                         isRerunning={rerunningSuiteId === suite._id}
                         isCancelling={cancellingRunId === latestRun?._id}
                         isDeleting={deletingSuiteId === suite._id}
+                        isDuplicating={duplicatingSuiteId === suite._id}
                         deletingTestCaseId={deletingTestCaseId}
+                        duplicatingTestCaseId={duplicatingTestCaseId}
                         connectedServerNames={connectedServerNames}
                       />
                     );
