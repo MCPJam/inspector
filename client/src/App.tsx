@@ -7,7 +7,6 @@ import { ChatTabV2 } from "./components/ChatTabV2";
 import { EvalsTab } from "./components/EvalsTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { TracingTab } from "./components/TracingTab";
-import { InterceptorTab } from "./components/InterceptorTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { RegistryTab } from "./components/RegistryTab";
@@ -26,7 +25,6 @@ import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
 
 // Import global styles
 import "./index.css";
-import { AuthUpperArea } from "./components/auth/auth-upper-area";
 import { detectEnvironment, detectPlatform } from "./logs/PosthogUtils";
 import {
   getInitialThemeMode,
@@ -174,14 +172,13 @@ export default function App() {
           onDeleteWorkspace={handleDeleteWorkspace}
         />
         <div className="flex flex-1 min-h-0 flex-col overflow-hidden h-full">
-          {/* Active Server Selector - Only show on Tools, Resources, Prompts, Auth, OAuth Flow, and Interceptor pages */}
+          {/* Active Server Selector - Only show on Tools, Resources, Prompts, OAuth Flow, Chat, and Chat v2 pages */}
           {(activeTab === "tools" ||
             activeTab === "resources" ||
             activeTab === "prompts" ||
             activeTab === "oauth-flow" ||
             activeTab === "chat" ||
-            activeTab === "chat-v2" ||
-            activeTab === "interceptor") && (
+            activeTab === "chat-v2") && (
             <ActiveServerSelector
               serverConfigs={appState.servers}
               selectedServer={appState.selectedServer}
@@ -259,7 +256,6 @@ export default function App() {
               onSaveServerConfig={saveServerConfigWithoutConnecting}
             />
           )}
-
           {activeTab === "chat-v2" && (
             <ChatTabV2
               connectedServerConfigs={connectedServerConfigs}
@@ -267,16 +263,7 @@ export default function App() {
               onHasMessagesChange={setChatHasMessages}
             />
           )}
-
-          {activeTab === "interceptor" && (
-            <InterceptorTab
-              connectedServerConfigs={connectedServerConfigs}
-              selectedServer={appState.selectedServer}
-            />
-          )}
-
           {activeTab === "tracing" && <TracingTab />}
-
           {activeTab === "settings" && <SettingsTab />}
         </div>
       </SidebarInset>
