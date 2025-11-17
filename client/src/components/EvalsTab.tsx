@@ -570,6 +570,7 @@ export function EvalsTab() {
             provider: modelConfig.provider,
             expectedToolCalls: testCase.expectedToolCalls || [],
             advancedConfig: testCase.advancedConfig,
+            testCaseId: testCase._id,
           });
         }
       }

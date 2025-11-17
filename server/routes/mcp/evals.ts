@@ -479,6 +479,7 @@ evals.post("/run-test-case", async (c) => {
       provider,
       expectedToolCalls: testCase.expectedToolCalls || [],
       advancedConfig: testCase.advancedConfig,
+      testCaseId: testCase._id,
     };
 
     const config = {
