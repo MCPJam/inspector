@@ -65,7 +65,11 @@ export class ErrorBoundary extends React.Component<
 /**
  * Error boundary specifically for evals tab
  */
-export function EvalsErrorBoundary({ children }: { children: React.ReactNode }) {
+export function EvalsErrorBoundary({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <ErrorBoundary
       fallback={

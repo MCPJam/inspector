@@ -30,7 +30,12 @@ interface SuiteTestsConfigProps {
   availableModels: ModelDefinition[];
 }
 
-export function SuiteTestsConfig({ suite, testCases, onUpdate, availableModels }: SuiteTestsConfigProps) {
+export function SuiteTestsConfig({
+  suite,
+  testCases,
+  onUpdate,
+  availableModels,
+}: SuiteTestsConfigProps) {
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
 
   // Extract models from test cases
@@ -41,7 +46,7 @@ export function SuiteTestsConfig({ suite, testCases, onUpdate, availableModels }
 
     // Extract unique models from all test cases
     const modelSet = new Map<string, ModelInfo>();
-    testCases.forEach(testCase => {
+    testCases.forEach((testCase) => {
       if (testCase.models && Array.isArray(testCase.models)) {
         testCase.models.forEach((modelConfig: any) => {
           const key = `${modelConfig.provider}:${modelConfig.model}`;
@@ -72,14 +77,14 @@ export function SuiteTestsConfig({ suite, testCases, onUpdate, availableModels }
   };
 
   const deleteModel = async (modelToDelete: string) => {
-    const updated = models.filter(m => m.model !== modelToDelete);
+    const updated = models.filter((m) => m.model !== modelToDelete);
     setModels(updated);
     await saveChanges(updated);
   };
 
   const handleAddModel = async (selectedModel: ModelDefinition) => {
     // Check if model already exists
-    if (models.some(m => m.model === selectedModel.id)) {
+    if (models.some((m) => m.model === selectedModel.id)) {
       setIsModelDropdownOpen(false);
       return;
     }
@@ -129,17 +134,27 @@ export function SuiteTestsConfig({ suite, testCases, onUpdate, availableModels }
           <div>
             <h3 className="text-lg font-semibold">Models</h3>
             <p className="text-sm text-muted-foreground">
-              Models used in this suite. Each test template runs against all models. Edit individual test templates by selecting them from the sidebar.
+              Models used in this suite. Each test template runs against all
+              models. Edit individual test templates by selecting them from the
+              sidebar.
             </p>
           </div>
-          <DropdownMenu open={isModelDropdownOpen} onOpenChange={setIsModelDropdownOpen}>
+          <DropdownMenu
+            open={isModelDropdownOpen}
+            onOpenChange={setIsModelDropdownOpen}
+          >
             <DropdownMenuTrigger asChild>
               <Button size="sm" variant="outline">
                 <Plus className="h-4 w-4 mr-2" />
                 Add model
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" side="bottom" sideOffset={4} className="w-[300px]">
+            <DropdownMenuContent
+              align="end"
+              side="bottom"
+              sideOffset={4}
+              className="w-[300px]"
+            >
               {mcpjamProviders.length > 0 && (
                 <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
                   MCPJam Free Models
@@ -147,16 +162,19 @@ export function SuiteTestsConfig({ suite, testCases, onUpdate, availableModels }
               )}
               {mcpjamProviders.map(([provider, providerModels]) => {
                 const mcpjamModels = providerModels.filter((m) =>
-                  isMCPJamProvidedModel(m.id)
+                  isMCPJamProvidedModel(m.id),
                 );
                 return (
                   <DropdownMenuSub key={provider}>
                     <DropdownMenuSubTrigger className="flex items-center gap-3 text-sm cursor-pointer">
                       <ProviderLogo provider={provider} />
                       <div className="flex flex-col flex-1">
-                        <span className="font-medium capitalize">{provider}</span>
+                        <span className="font-medium capitalize">
+                          {provider}
+                        </span>
                         <span className="text-xs text-muted-foreground">
-                          {mcpjamModels.length} model{mcpjamModels.length !== 1 ? "s" : ""}
+                          {mcpjamModels.length} model
+                          {mcpjamModels.length !== 1 ? "s" : ""}
                         </span>
                       </div>
                     </DropdownMenuSubTrigger>
@@ -198,16 +216,19 @@ export function SuiteTestsConfig({ suite, testCases, onUpdate, availableModels }
               )}
               {userProviders.map(([provider, providerModels]) => {
                 const userModels = providerModels.filter(
-                  (m) => !isMCPJamProvidedModel(m.id)
+                  (m) => !isMCPJamProvidedModel(m.id),
                 );
                 return (
                   <DropdownMenuSub key={provider}>
                     <DropdownMenuSubTrigger className="flex items-center gap-3 text-sm cursor-pointer">
                       <ProviderLogo provider={provider} />
                       <div className="flex flex-col flex-1">
-                        <span className="font-medium capitalize">{provider}</span>
+                        <span className="font-medium capitalize">
+                          {provider}
+                        </span>
                         <span className="text-xs text-muted-foreground">
-                          {userModels.length} model{userModels.length !== 1 ? "s" : ""}
+                          {userModels.length} model
+                          {userModels.length !== 1 ? "s" : ""}
                         </span>
                       </div>
                     </DropdownMenuSubTrigger>
@@ -243,15 +264,25 @@ export function SuiteTestsConfig({ suite, testCases, onUpdate, availableModels }
 
         {models.length === 0 ? (
           <Card className="p-6 text-center">
-            <p className="text-sm text-muted-foreground">No models configured</p>
-            <DropdownMenu open={isModelDropdownOpen} onOpenChange={setIsModelDropdownOpen}>
+            <p className="text-sm text-muted-foreground">
+              No models configured
+            </p>
+            <DropdownMenu
+              open={isModelDropdownOpen}
+              onOpenChange={setIsModelDropdownOpen}
+            >
               <DropdownMenuTrigger asChild>
                 <Button className="mt-4" variant="outline">
                   <Plus className="h-4 w-4 mr-2" />
                   Add your first model
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="center" side="bottom" sideOffset={4} className="w-[300px]">
+              <DropdownMenuContent
+                align="center"
+                side="bottom"
+                sideOffset={4}
+                className="w-[300px]"
+              >
                 {mcpjamProviders.length > 0 && (
                   <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
                     MCPJam Free Models
@@ -259,16 +290,19 @@ export function SuiteTestsConfig({ suite, testCases, onUpdate, availableModels }
                 )}
                 {mcpjamProviders.map(([provider, providerModels]) => {
                   const mcpjamModels = providerModels.filter((m) =>
-                    isMCPJamProvidedModel(m.id)
+                    isMCPJamProvidedModel(m.id),
                   );
                   return (
                     <DropdownMenuSub key={provider}>
                       <DropdownMenuSubTrigger className="flex items-center gap-3 text-sm cursor-pointer">
                         <ProviderLogo provider={provider} />
                         <div className="flex flex-col flex-1">
-                          <span className="font-medium capitalize">{provider}</span>
+                          <span className="font-medium capitalize">
+                            {provider}
+                          </span>
                           <span className="text-xs text-muted-foreground">
-                            {mcpjamModels.length} model{mcpjamModels.length !== 1 ? "s" : ""}
+                            {mcpjamModels.length} model
+                            {mcpjamModels.length !== 1 ? "s" : ""}
                           </span>
                         </div>
                       </DropdownMenuSubTrigger>
@@ -310,16 +344,19 @@ export function SuiteTestsConfig({ suite, testCases, onUpdate, availableModels }
                 )}
                 {userProviders.map(([provider, providerModels]) => {
                   const userModels = providerModels.filter(
-                    (m) => !isMCPJamProvidedModel(m.id)
+                    (m) => !isMCPJamProvidedModel(m.id),
                   );
                   return (
                     <DropdownMenuSub key={provider}>
                       <DropdownMenuSubTrigger className="flex items-center gap-3 text-sm cursor-pointer">
                         <ProviderLogo provider={provider} />
                         <div className="flex flex-col flex-1">
-                          <span className="font-medium capitalize">{provider}</span>
+                          <span className="font-medium capitalize">
+                            {provider}
+                          </span>
                           <span className="text-xs text-muted-foreground">
-                            {userModels.length} model{userModels.length !== 1 ? "s" : ""}
+                            {userModels.length} model
+                            {userModels.length !== 1 ? "s" : ""}
                           </span>
                         </div>
                       </DropdownMenuSubTrigger>
@@ -355,13 +392,21 @@ export function SuiteTestsConfig({ suite, testCases, onUpdate, availableModels }
         ) : (
           <div className="flex flex-wrap gap-2">
             {models.map((modelInfo) => (
-              <Badge key={modelInfo.model} variant="secondary" className="px-3 py-1.5">
+              <Badge
+                key={modelInfo.model}
+                variant="secondary"
+                className="px-3 py-1.5"
+              >
                 <span className="mr-2">{modelInfo.displayName}</span>
                 <button
                   onClick={() => deleteModel(modelInfo.model)}
                   className="text-muted-foreground hover:text-destructive"
                   disabled={models.length === 1}
-                  title={models.length === 1 ? "Cannot remove last model" : "Remove model"}
+                  title={
+                    models.length === 1
+                      ? "Cannot remove last model"
+                      : "Remove model"
+                  }
                 >
                   <X className="h-3 w-3" />
                 </button>
@@ -370,7 +415,6 @@ export function SuiteTestsConfig({ suite, testCases, onUpdate, availableModels }
           </div>
         )}
       </div>
-
     </div>
   );
 }

@@ -228,27 +228,32 @@ ${toolsContext}
 
     // Validate structure and normalize expectedToolCalls format
     const validatedTests: GeneratedTestCase[] = testCases.map((tc: any) => {
-      let normalizedToolCalls: Array<{ toolName: string; arguments: Record<string, any> }> = [];
+      let normalizedToolCalls: Array<{
+        toolName: string;
+        arguments: Record<string, any>;
+      }> = [];
 
       if (Array.isArray(tc.expectedToolCalls)) {
-        normalizedToolCalls = tc.expectedToolCalls.map((call: any) => {
-          // Handle new format: { toolName, arguments }
-          if (typeof call === "object" && call !== null && call.toolName) {
-            return {
-              toolName: call.toolName,
-              arguments: call.arguments || {},
-            };
-          }
-          // Handle old format: string (just tool name)
-          if (typeof call === "string") {
-            return {
-              toolName: call,
-              arguments: {},
-            };
-          }
-          // Invalid format, skip
-          return null;
-        }).filter((call: any) => call !== null);
+        normalizedToolCalls = tc.expectedToolCalls
+          .map((call: any) => {
+            // Handle new format: { toolName, arguments }
+            if (typeof call === "object" && call !== null && call.toolName) {
+              return {
+                toolName: call.toolName,
+                arguments: call.arguments || {},
+              };
+            }
+            // Handle old format: string (just tool name)
+            if (typeof call === "string") {
+              return {
+                toolName: call,
+                arguments: {},
+              };
+            }
+            // Invalid format, skip
+            return null;
+          })
+          .filter((call: any) => call !== null);
       }
 
       return {

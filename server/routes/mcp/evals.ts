@@ -15,7 +15,7 @@ function normalizeForSignature(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(normalizeForSignature);
   }
-  if (value && typeof value === 'object') {
+  if (value && typeof value === "object") {
     const entries = Object.entries(value as Record<string, unknown>)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([key, val]) => [key, normalizeForSignature(val)]);
@@ -107,7 +107,7 @@ const RunEvalsRequestSchema = z.object({
         z.object({
           toolName: z.string(),
           arguments: z.record(z.string(), z.any()),
-        })
+        }),
       ),
       judgeRequirement: z.string().optional(),
       advancedConfig: z
@@ -120,13 +120,17 @@ const RunEvalsRequestSchema = z.object({
         .optional(),
     }),
   ),
-  serverIds: z.array(z.string()).min(1, { message: "At least one server must be selected" }),
+  serverIds: z
+    .array(z.string())
+    .min(1, { message: "At least one server must be selected" }),
   modelApiKeys: z.record(z.string(), z.string()).optional(),
   convexAuthToken: z.string(),
   notes: z.string().optional(),
-  passCriteria: z.object({
-    minimumPassRate: z.number(),
-  }).optional(),
+  passCriteria: z
+    .object({
+      minimumPassRate: z.number(),
+    })
+    .optional(),
 });
 
 type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
@@ -155,8 +159,7 @@ evals.post("/run", async (c) => {
       convexAuthToken,
       notes,
       passCriteria,
-    } =
-      validationResult.data as RunEvalsRequest;
+    } = validationResult.data as RunEvalsRequest;
 
     if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
       return c.json(
@@ -186,15 +189,18 @@ evals.post("/run", async (c) => {
     let resolvedSuiteId = suiteId ?? null;
 
     // Group tests by title+query to create test cases with multiple models
-    const testCaseMap = new Map<string, {
-      title: string;
-      query: string;
-      runs: number;
-      models: Array<{ model: string; provider: string }>;
-      expectedToolCalls: any[];
-      judgeRequirement?: string;
-      advancedConfig?: any;
-    }>();
+    const testCaseMap = new Map<
+      string,
+      {
+        title: string;
+        query: string;
+        runs: number;
+        models: Array<{ model: string; provider: string }>;
+        expectedToolCalls: any[];
+        judgeRequirement?: string;
+        advancedConfig?: any;
+      }
+    >();
 
     for (const test of tests) {
       const key = `${test.title}-${test.query}`;
@@ -217,84 +223,103 @@ evals.post("/run", async (c) => {
 
     if (resolvedSuiteId) {
       // Update existing suite
-      await convexClient.mutation(
-        "testSuites:updateTestSuite" as any,
-        {
-          suiteId: resolvedSuiteId,
-          name: suiteName,
-          description: suiteDescription,
-          environment: { servers: resolvedServerIds },
-        },
-      );
+      await convexClient.mutation("testSuites:updateTestSuite" as any, {
+        suiteId: resolvedSuiteId,
+        name: suiteName,
+        description: suiteDescription,
+        environment: { servers: resolvedServerIds },
+      });
 
       // Get existing test cases
       const existingTestCases = await convexClient.query(
         "testSuites:listTestCases" as any,
-        { suiteId: resolvedSuiteId }
+        { suiteId: resolvedSuiteId },
       );
 
       // Update or create test cases
       for (const [key, testCaseData] of testCaseMap.entries()) {
         const existingTestCase = existingTestCases?.find(
-          (tc: any) => tc.title === testCaseData.title && tc.query === testCaseData.query
+          (tc: any) =>
+            tc.title === testCaseData.title && tc.query === testCaseData.query,
         );
 
         if (existingTestCase) {
           // Normalize values for comparison (handle undefined vs null, etc.)
-          const normalize = (val: any) => val === undefined || val === null ? null : val;
+          const normalize = (val: any) =>
+            val === undefined || val === null ? null : val;
 
           // Normalize object for comparison (sort keys recursively to handle key order differences)
           const normalizeForComparison = (obj: any): any => {
             if (obj === null || obj === undefined) return null;
-            if (typeof obj !== 'object') return obj;
+            if (typeof obj !== "object") return obj;
             if (Array.isArray(obj)) return obj.map(normalizeForComparison);
 
             // Sort object keys alphabetically
             const sorted: any = {};
-            Object.keys(obj).sort().forEach(key => {
-              sorted[key] = normalizeForComparison(obj[key]);
-            });
+            Object.keys(obj)
+              .sort()
+              .forEach((key) => {
+                sorted[key] = normalizeForComparison(obj[key]);
+              });
             return sorted;
           };
 
           // Check if anything actually changed to avoid marking runs as inactive unnecessarily
-          const modelsChanged = JSON.stringify(normalizeForComparison(existingTestCase.models || [])) !== JSON.stringify(normalizeForComparison(testCaseData.models || []));
-          const runsChanged = normalize(existingTestCase.runs) !== normalize(testCaseData.runs);
-          const expectedToolCallsChanged = JSON.stringify(normalizeForComparison(existingTestCase.expectedToolCalls || [])) !== JSON.stringify(normalizeForComparison(testCaseData.expectedToolCalls || []));
-          const judgeRequirementChanged = normalize(existingTestCase.judgeRequirement) !== normalize(testCaseData.judgeRequirement);
-          const advancedConfigChanged = JSON.stringify(normalizeForComparison(existingTestCase.advancedConfig)) !== JSON.stringify(normalizeForComparison(testCaseData.advancedConfig));
+          const modelsChanged =
+            JSON.stringify(
+              normalizeForComparison(existingTestCase.models || []),
+            ) !==
+            JSON.stringify(normalizeForComparison(testCaseData.models || []));
+          const runsChanged =
+            normalize(existingTestCase.runs) !== normalize(testCaseData.runs);
+          const expectedToolCallsChanged =
+            JSON.stringify(
+              normalizeForComparison(existingTestCase.expectedToolCalls || []),
+            ) !==
+            JSON.stringify(
+              normalizeForComparison(testCaseData.expectedToolCalls || []),
+            );
+          const judgeRequirementChanged =
+            normalize(existingTestCase.judgeRequirement) !==
+            normalize(testCaseData.judgeRequirement);
+          const advancedConfigChanged =
+            JSON.stringify(
+              normalizeForComparison(existingTestCase.advancedConfig),
+            ) !==
+            JSON.stringify(normalizeForComparison(testCaseData.advancedConfig));
 
-          const hasChanges = modelsChanged || runsChanged || expectedToolCallsChanged || judgeRequirementChanged || advancedConfigChanged;
+          const hasChanges =
+            modelsChanged ||
+            runsChanged ||
+            expectedToolCallsChanged ||
+            judgeRequirementChanged ||
+            advancedConfigChanged;
 
           // Only update if there are actual changes (this preserves run history when config is unchanged)
           if (hasChanges) {
-            console.log(`[evals] Test case "${testCaseData.title}" has changes - updating to preserve accuracy`);
-            await convexClient.mutation(
-              "testSuites:updateTestCase" as any,
-              {
-                testCaseId: existingTestCase._id,
-                models: testCaseData.models,
-                runs: testCaseData.runs,
-                expectedToolCalls: testCaseData.expectedToolCalls,
-                judgeRequirement: testCaseData.judgeRequirement,
-                advancedConfig: testCaseData.advancedConfig,
-              },
+            console.log(
+              `[evals] Test case "${testCaseData.title}" has changes - updating to preserve accuracy`,
             );
-          }
-        } else {
-          await convexClient.mutation(
-            "testSuites:createTestCase" as any,
-            {
-              suiteId: resolvedSuiteId,
-              title: testCaseData.title,
-              query: testCaseData.query,
+            await convexClient.mutation("testSuites:updateTestCase" as any, {
+              testCaseId: existingTestCase._id,
               models: testCaseData.models,
               runs: testCaseData.runs,
               expectedToolCalls: testCaseData.expectedToolCalls,
               judgeRequirement: testCaseData.judgeRequirement,
               advancedConfig: testCaseData.advancedConfig,
-            },
-          );
+            });
+          }
+        } else {
+          await convexClient.mutation("testSuites:createTestCase" as any, {
+            suiteId: resolvedSuiteId,
+            title: testCaseData.title,
+            query: testCaseData.query,
+            models: testCaseData.models,
+            runs: testCaseData.runs,
+            expectedToolCalls: testCaseData.expectedToolCalls,
+            judgeRequirement: testCaseData.judgeRequirement,
+            advancedConfig: testCaseData.advancedConfig,
+          });
         }
       }
     } else {
@@ -317,19 +342,16 @@ evals.post("/run", async (c) => {
 
       // Create test cases
       for (const [key, testCaseData] of testCaseMap.entries()) {
-        await convexClient.mutation(
-          "testSuites:createTestCase" as any,
-          {
-            suiteId: resolvedSuiteId,
-            title: testCaseData.title,
-            query: testCaseData.query,
-            models: testCaseData.models,
-            runs: testCaseData.runs,
-            expectedToolCalls: testCaseData.expectedToolCalls,
-            judgeRequirement: testCaseData.judgeRequirement,
-            advancedConfig: testCaseData.advancedConfig,
-          },
-        );
+        await convexClient.mutation("testSuites:createTestCase" as any, {
+          suiteId: resolvedSuiteId,
+          title: testCaseData.title,
+          query: testCaseData.query,
+          models: testCaseData.models,
+          runs: testCaseData.runs,
+          expectedToolCalls: testCaseData.expectedToolCalls,
+          judgeRequirement: testCaseData.judgeRequirement,
+          advancedConfig: testCaseData.advancedConfig,
+        });
       }
     }
 
@@ -362,7 +384,8 @@ evals.post("/run", async (c) => {
         success: true,
         suiteId: resolvedSuiteId,
         runId,
-        message: "Evals completed successfully. Check the Evals tab for results.",
+        message:
+          "Evals completed successfully. Check the Evals tab for results.",
       });
     } catch (evalError) {
       const errorMessage =
@@ -392,7 +415,9 @@ const RunTestCaseRequestSchema = z.object({
   testCaseId: z.string(),
   model: z.string(),
   provider: z.string(),
-  serverIds: z.array(z.string()).min(1, { message: "At least one server must be selected" }),
+  serverIds: z
+    .array(z.string())
+    .min(1, { message: "At least one server must be selected" }),
   modelApiKeys: z.record(z.string(), z.string()).optional(),
   convexAuthToken: z.string(),
 });
@@ -482,19 +507,16 @@ evals.post("/run-test-case", async (c) => {
     // Get the most recent quick run iteration that was just created
     const recentIterations = await convexClient.query(
       "testSuites:listTestIterations" as any,
-      { testCaseId }
+      { testCaseId },
     );
     const latestIteration = recentIterations?.[0] || null;
 
     // Save this iteration as the last message run
     if (latestIteration?._id) {
-      await convexClient.mutation(
-        "testSuites:updateTestCase" as any,
-        {
-          testCaseId,
-          lastMessageRun: latestIteration._id,
-        }
-      );
+      await convexClient.mutation("testSuites:updateTestCase" as any, {
+        testCaseId,
+        lastMessageRun: latestIteration._id,
+      });
     }
 
     return c.json({
@@ -555,7 +577,9 @@ evals.post("/cancel", async (c) => {
 });
 
 const GenerateTestsRequestSchema = z.object({
-  serverIds: z.array(z.string()).min(1, { message: "At least one server must be selected" }),
+  serverIds: z
+    .array(z.string())
+    .min(1, { message: "At least one server must be selected" }),
   convexAuthToken: z.string(),
 });
 
