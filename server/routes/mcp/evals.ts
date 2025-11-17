@@ -106,7 +106,7 @@ const RunEvalsRequestSchema = z.object({
       expectedToolCalls: z.array(
         z.object({
           toolName: z.string(),
-          arguments: z.record(z.any()),
+          arguments: z.record(z.string(), z.any()),
         })
       ),
       judgeRequirement: z.string().optional(),
@@ -120,8 +120,8 @@ const RunEvalsRequestSchema = z.object({
         .optional(),
     }),
   ),
-  serverIds: z.array(z.string()).min(1, "At least one server must be selected"),
-  modelApiKeys: z.record(z.string()).optional(),
+  serverIds: z.array(z.string()).min(1, { message: "At least one server must be selected" }),
+  modelApiKeys: z.record(z.string(), z.string()).optional(),
   convexAuthToken: z.string(),
   notes: z.string().optional(),
   passCriteria: z.object({
@@ -134,7 +134,6 @@ type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
 evals.post("/run", async (c) => {
   try {
     const body = await c.req.json();
-
     const validationResult = RunEvalsRequestSchema.safeParse(body);
     if (!validationResult.success) {
       return c.json(
@@ -393,8 +392,8 @@ const RunTestCaseRequestSchema = z.object({
   testCaseId: z.string(),
   model: z.string(),
   provider: z.string(),
-  serverIds: z.array(z.string()).min(1, "At least one server must be selected"),
-  modelApiKeys: z.record(z.string()).optional(),
+  serverIds: z.array(z.string()).min(1, { message: "At least one server must be selected" }),
+  modelApiKeys: z.record(z.string(), z.string()).optional(),
   convexAuthToken: z.string(),
 });
 
@@ -556,7 +555,7 @@ evals.post("/cancel", async (c) => {
 });
 
 const GenerateTestsRequestSchema = z.object({
-  serverIds: z.array(z.string()).min(1, "At least one server must be selected"),
+  serverIds: z.array(z.string()).min(1, { message: "At least one server must be selected" }),
   convexAuthToken: z.string(),
 });
 
