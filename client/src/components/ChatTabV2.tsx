@@ -69,6 +69,7 @@ const STARTER_PROMPTS: Array<{ label: string; text: string }> = [
 interface ChatTabProps {
   connectedServerConfigs: Record<string, ServerWithName>;
   selectedServerNames: string[];
+  onHasMessagesChange?: (hasMessages: boolean) => void;
 }
 
 function formatErrorMessage(error: unknown): string | null {
@@ -85,6 +86,7 @@ function formatErrorMessage(error: unknown): string | null {
 export function ChatTabV2({
   connectedServerConfigs,
   selectedServerNames,
+  onHasMessagesChange,
 }: ChatTabProps) {
   const { getAccessToken, signUp } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
@@ -230,6 +232,11 @@ export function ChatTabV2({
       ? undefined
       : lastAssistantMessageIsCompleteWithToolCalls,
   });
+
+  // Notify parent when messages change
+  useEffect(() => {
+    onHasMessagesChange?.(messages.length > 0);
+  }, [messages.length, onHasMessagesChange]);
 
   // Sum token usage from all assistant messages with metadata
   const tokenUsage = useMemo(() => {
