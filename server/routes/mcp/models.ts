@@ -52,7 +52,7 @@ models.get("/", async (c) => {
           ok: false,
           error: `Failed to fetch models: ${response.status}`,
         },
-        response.status,
+        response,
       );
     }
 
