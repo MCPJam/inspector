@@ -16,15 +16,14 @@ export type EvalSuiteConfigTest = {
 export type EvalSuite = {
   _id: string;
   createdBy: string;
-  name?: string;
-  description?: string;
-  config: {
-    tests: EvalSuiteConfigTest[];
-    environment: { servers: string[] };
+  name: string;
+  description: string;
+  configRevision: string;
+  environment: {
+    servers: string[];
   };
-  configRevision?: string;
-  createdAt?: number;
-  updatedAt?: number;
+  createdAt: number;
+  updatedAt: number;
   latestRunId?: string;
   defaultPassCriteria?: {
     minimumPassRate: number;
@@ -34,18 +33,22 @@ export type EvalSuite = {
 
 export type EvalCase = {
   _id: string;
-  evalTestSuiteId: string;
+  testSuiteId: string;
   createdBy: string;
   title: string;
   query: string;
-  provider: string;
-  model: string;
+  models: Array<{
+    model: string;
+    provider: string;
+  }>;
+  runs: number;
   expectedToolCalls: Array<{
     toolName: string;
     arguments: Record<string, any>;
   }>;
-  // Template grouping - UUID to link test cases that are variants of the same base test
-  testTemplateKey?: string; // UUID generated on frontend
+  judgeRequirement?: string;
+  advancedConfig?: Record<string, unknown>;
+  lastMessageRun?: string | null;
   _creationTime?: number; // Convex auto field
 };
 

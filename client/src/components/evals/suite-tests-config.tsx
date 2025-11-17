@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -17,7 +17,7 @@ import type { ModelDefinition } from "@/shared/types";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import { ProviderLogo } from "@/components/chat-v2/provider-logo";
 
-interface ModelInfo {
+export interface ModelInfo {
   model: string;
   provider: string;
   displayName: string;
@@ -25,75 +25,50 @@ interface ModelInfo {
 
 interface SuiteTestsConfigProps {
   suite: EvalSuite;
-  onUpdate: (tests: EvalSuiteConfigTest[]) => Promise<void>;
+  testCases: any[]; // Array of test cases from the new data model
+  onUpdate: (models: ModelInfo[]) => Promise<void>;
   availableModels: ModelDefinition[];
 }
 
-export function SuiteTestsConfig({ suite, onUpdate, availableModels }: SuiteTestsConfigProps) {
+export function SuiteTestsConfig({ suite, testCases, onUpdate, availableModels }: SuiteTestsConfigProps) {
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
 
-  // Extract models from expanded tests
+  // Extract models from test cases
   const initialModels = useMemo(() => {
-    const tests = suite.config?.tests || [];
-    if (tests.length === 0) {
+    if (!testCases || testCases.length === 0) {
       return [];
     }
 
-    // Extract unique models
+    // Extract unique models from all test cases
     const modelSet = new Map<string, ModelInfo>();
-    tests.forEach(test => {
-      if (!modelSet.has(test.model)) {
-        modelSet.set(test.model, {
-          model: test.model,
-          provider: test.provider,
-          displayName: test.model,
+    testCases.forEach(testCase => {
+      if (testCase.models && Array.isArray(testCase.models)) {
+        testCase.models.forEach((modelConfig: any) => {
+          const key = `${modelConfig.provider}:${modelConfig.model}`;
+          if (!modelSet.has(key)) {
+            modelSet.set(key, {
+              model: modelConfig.model,
+              provider: modelConfig.provider,
+              displayName: modelConfig.model,
+            });
+          }
         });
       }
     });
 
     return Array.from(modelSet.values());
-  }, [suite.config?.tests]);
+  }, [testCases]);
 
   const [models, setModels] = useState<ModelInfo[]>(initialModels);
 
-  // Re-expand matrix and save - now we need to preserve templates
+  // Update models state when testCases change
+  useEffect(() => {
+    setModels(initialModels);
+  }, [initialModels]);
+
+  // Save changes - update all test cases with new models
   const saveChanges = async (newModels: ModelInfo[]) => {
-    const tests = suite.config?.tests || [];
-
-    // Extract templates from existing tests
-    const templateMap = new Map<string, any>();
-    tests.forEach(test => {
-      const templateTitle = test.title.replace(/\s*\[.*?\]\s*$/, '').trim();
-      const key = `${templateTitle}-${test.query}`;
-
-      if (!templateMap.has(key)) {
-        templateMap.set(key, {
-          title: templateTitle,
-          query: test.query,
-          runs: test.runs,
-          expectedToolCalls: test.expectedToolCalls || [],
-          judgeRequirement: test.judgeRequirement,
-          advancedConfig: test.advancedConfig,
-        });
-      }
-    });
-
-    const templates = Array.from(templateMap.values());
-
-    // Re-expand with new models
-    const expandedTests: EvalSuiteConfigTest[] = templates.flatMap(template =>
-      newModels.map(modelInfo => ({
-        title: template.title,
-        query: template.query,
-        runs: template.runs,
-        model: modelInfo.model,
-        provider: modelInfo.provider,
-        expectedToolCalls: template.expectedToolCalls,
-        judgeRequirement: template.judgeRequirement,
-        advancedConfig: template.advancedConfig,
-      }))
-    );
-    await onUpdate(expandedTests);
+    await onUpdate(newModels);
   };
 
   const deleteModel = async (modelToDelete: string) => {

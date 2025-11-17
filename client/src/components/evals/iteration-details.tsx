@@ -12,7 +12,7 @@ export function IterationDetails({
   testCase: EvalCase | null;
 }) {
   const getBlob = useAction(
-    "evals:getEvalTestBlob" as any,
+    "testSuites:getTestIterationBlob" as any,
   ) as unknown as (args: { blobId: string }) => Promise<any>;
 
   const [blob, setBlob] = useState<any>(null);

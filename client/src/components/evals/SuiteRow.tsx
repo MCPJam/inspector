@@ -44,11 +44,11 @@ export function SuiteRow({
 }: SuiteRowProps) {
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
-  const servers = suite.config?.environment.servers;
+  const servers = suite.environment?.servers || [];
 
   const enableQuery = isAuthenticated && !!user;
   const suiteDetails = useQuery(
-    "evals:getAllTestCasesAndIterationsBySuite" as any,
+    "testSuites:getAllTestCasesAndIterationsBySuite" as any,
     enableQuery ? ({ suiteId: suite._id } as any) : "skip",
   ) as unknown as
     | { testCases: EvalCase[]; iterations: EvalIteration[] }

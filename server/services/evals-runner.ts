@@ -88,11 +88,17 @@ async function createIterationDirectly(
   }
 ): Promise<string | undefined> {
   try {
-    const response = await convexClient.mutation(
-      "evals:recordIterationStartWithoutRun" as any,
-      params
+    const result = await convexClient.mutation(
+      "testSuites:recordIterationStartWithoutRun" as any,
+      {
+        testCaseId: params.testCaseId,
+        testCaseSnapshot: params.testCaseSnapshot,
+        iterationNumber: params.iterationNumber,
+        startedAt: params.startedAt,
+      }
     );
-    return response?.iterationId as string | undefined;
+
+    return result?.iterationId as string | undefined;
   } catch (error) {
     console.error(
       "[evals] Failed to create iteration:",
@@ -122,15 +128,14 @@ async function finishIterationDirectly(
 
   try {
     await convexClient.action(
-      "evals:recordIterationEnd" as any,
+      "testSuites:updateTestIteration" as any,
       {
         iterationId: params.iterationId,
         result,
         status: iterationStatus,
         actualToolCalls: params.toolsCalled,
         tokensUsed: params.usage.totalTokens ?? 0,
-        updatedAt: Date.now(),
-        blobContent: params.messages, // Pass messages directly, action will handle blob storage
+        messages: params.messages,
       }
     );
   } catch (error) {
@@ -618,23 +623,8 @@ export const runEvalSuiteWithAiSdk = async ({
 
   const tools = (await mcpClientManager.getToolsForAiSdk(serverIds)) as ToolSet;
 
-  // Pre-create all iterations upfront only if we have a runId (suite run)
-  if (runId !== null) {
-    await convexClient.mutation("evals:precreateIterationsForRun" as any, {
-      runId,
-      tests: tests.map(test => ({
-        testCaseId: test.testCaseId || testCaseId,
-        title: test.title,
-        query: test.query,
-        provider: test.provider,
-        model: test.model,
-        runs: test.runs,
-        expectedToolCalls: test.expectedToolCalls,
-        judgeRequirement: test.judgeRequirement,
-        advancedConfig: test.advancedConfig,
-      })),
-    });
-  }
+  // Note: Iterations are now pre-created in startSuiteRunWithRecorder
+  // This code is no longer needed as precreateIterationsForRun is called there
 
   const summary = {
     total: 0,
@@ -646,7 +636,7 @@ export const runEvalSuiteWithAiSdk = async ({
     for (const test of tests) {
       // Check if run has been cancelled before processing next test (only for suite runs)
       if (runId !== null) {
-        const currentRun = await convexClient.query("evals:getSuiteRunStatus" as any, {
+        const currentRun = await convexClient.query("testSuites:getTestSuiteRun" as any, {
           runId,
         });
 
