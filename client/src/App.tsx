@@ -48,6 +48,7 @@ import { ThemePreset } from "./types/preferences/theme";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
+  const [chatHasMessages, setChatHasMessages] = useState(false);
   const posthog = usePostHog();
   const { shouldShowLoginPage, isAuthenticated, isAuthLoading } =
     useLoginPage();
@@ -122,6 +123,9 @@ export default function App() {
       if (hash === "chat" || hash === "chat-v2") {
         setSelectedMultipleServersToAllServers();
       }
+      if (hash !== "chat-v2") {
+        setChatHasMessages(false);
+      }
     };
     applyHash();
     window.addEventListener("hashchange", applyHash);
@@ -131,6 +135,9 @@ export default function App() {
   const handleNavigate = (section: string) => {
     if (section === "chat" || section === "chat-v2") {
       setSelectedMultipleServersToAllServers();
+    }
+    if (section !== "chat-v2") {
+      setChatHasMessages(false);
     }
     window.location.hash = section;
     setActiveTab(section);
@@ -191,6 +198,7 @@ export default function App() {
               onMultiServerToggle={toggleServerSelection}
               selectedMultipleServers={appState.selectedMultipleServers}
               showOnlyOAuthServers={activeTab === "oauth-flow"}
+              hasMessages={activeTab === "chat-v2" ? chatHasMessages : false}
             />
           )}
 
@@ -268,6 +276,7 @@ export default function App() {
             <ChatTabV2
               connectedServerConfigs={connectedServerConfigs}
               selectedServerNames={appState.selectedMultipleServers}
+              onHasMessagesChange={setChatHasMessages}
             />
           )}
 
