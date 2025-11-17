@@ -9,7 +9,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
-interface ConfirmModelChangeDialogProps {
+interface ConfirmChatResetDialogProps {
   open: boolean;
   onConfirm: () => void;
   onCancel: () => void;
@@ -21,7 +21,7 @@ export function ConfirmChatResetDialog({
   onConfirm,
   onCancel,
   message = "Resetting the chat will clear your current conversation thread. This action cannot be undone.",
-}: ConfirmModelChangeDialogProps) {
+}: ConfirmChatResetDialogProps) {
   return (
     <AlertDialog open={open} onOpenChange={(open) => !open && onCancel()}>
       <AlertDialogContent>
