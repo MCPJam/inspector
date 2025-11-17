@@ -112,6 +112,7 @@ export default function App() {
     handleCreateWorkspace,
     handleUpdateWorkspace,
     handleDeleteWorkspace,
+    saveServerConfigWithoutConnecting,
   } = useAppState();
   // Sync tab with hash on mount and when hash changes
   useEffect(() => {
@@ -175,12 +176,12 @@ export default function App() {
           {(activeTab === "tools" ||
             activeTab === "resources" ||
             activeTab === "prompts" ||
-            activeTab === "auth" ||
+            activeTab === "oauth-flow" ||
             activeTab === "chat" ||
             activeTab === "chat-v2" ||
             activeTab === "interceptor") && (
             <ActiveServerSelector
-              connectedServerConfigs={connectedServerConfigs}
+              serverConfigs={appState.servers}
               selectedServer={appState.selectedServer}
               onServerChange={setSelectedServer}
               onConnect={handleConnect}
@@ -189,7 +190,7 @@ export default function App() {
               }
               onMultiServerToggle={toggleServerSelection}
               selectedMultipleServers={appState.selectedMultipleServers}
-              showOnlyOAuthServers={false}
+              showOnlyOAuthServers={activeTab === "oauth-flow"}
             />
           )}
 
@@ -247,7 +248,14 @@ export default function App() {
             />
           )}
 
-          {activeTab === "oauth-flow" && <OAuthFlowTab />}
+          {activeTab === "oauth-flow" && (
+            <OAuthFlowTab
+              serverConfigs={connectedServerConfigs}
+              selectedServerName={appState.selectedServer}
+              onSelectServer={setSelectedServer}
+              onSaveServerConfig={saveServerConfigWithoutConnecting}
+            />
+          )}
 
           {activeTab === "chat" && (
             <ChatTab
