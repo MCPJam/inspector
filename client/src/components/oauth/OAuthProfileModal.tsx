@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -22,7 +22,13 @@ import {
   getSupportedRegistrationStrategies,
 } from "@/lib/oauth/state-machines/factory";
 import type { OAuthProtocolVersion } from "@/lib/oauth/state-machines/types";
-import type { OAuthRegistrationStrategy, OAuthTestProfile } from "./types";
+import type {
+  OAuthRegistrationStrategy,
+  OAuthTestProfile,
+} from "@/lib/oauth/profile";
+import type { ServerFormData } from "@/shared/types.js";
+import type { ServerWithName } from "@/hooks/use-app-state";
+import { deriveOAuthProfileFromServer } from "./utils";
 import {
   Accordion,
   AccordionContent,
@@ -33,8 +39,12 @@ import {
 interface OAuthProfileModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  profile: OAuthTestProfile;
-  onSave: (profile: OAuthTestProfile) => void;
+  server?: ServerWithName;
+  existingServerNames: string[];
+  onSave: (payload: {
+    formData: ServerFormData;
+    profile: OAuthTestProfile;
+  }) => void;
 }
 
 interface HeaderRow {
@@ -62,16 +72,30 @@ const describeRegistrationStrategy = (strategy: string): string => {
   return "Pre-registered";
 };
 
+const getHostFromUrl = (url: string): string => {
+  try {
+    return new URL(url).host || url;
+  } catch {
+    return url;
+  }
+};
+
 export function OAuthProfileModal({
   open,
   onOpenChange,
-  profile,
+  server,
+  existingServerNames,
   onSave,
 }: OAuthProfileModalProps) {
-  const [draft, setDraft] = useState(profile);
+  const derivedProfile = useMemo(
+    () => deriveOAuthProfileFromServer(server),
+    [server],
+  );
+  const [serverName, setServerName] = useState("");
+  const [draft, setDraft] = useState(derivedProfile);
   const [headerRows, setHeaderRows] = useState<HeaderRow[]>(() =>
-    profile.customHeaders.length
-      ? profile.customHeaders.map((header) => createHeaderRow(header))
+    derivedProfile.customHeaders.length
+      ? derivedProfile.customHeaders.map((header) => createHeaderRow(header))
       : [createHeaderRow()],
   );
   const [error, setError] = useState<string | null>(null);
@@ -80,17 +104,34 @@ export function OAuthProfileModal({
     [draft.protocolVersion],
   );
 
+  const generateDefaultName = useCallback(() => {
+    const baseName = server?.name
+      ? `${server.name}-debug`
+      : derivedProfile.serverUrl
+        ? getHostFromUrl(derivedProfile.serverUrl)
+        : "oauth-flow-target";
+    let candidate = baseName || "oauth-flow-target";
+    let counter = 1;
+    while (existingServerNames.includes(candidate)) {
+      candidate = `${baseName || "oauth-flow-target"}-${counter++}`;
+    }
+    return candidate;
+  }, [server?.name, derivedProfile.serverUrl, existingServerNames]);
+
   useEffect(() => {
     if (open) {
-      setDraft(profile);
+      setServerName(generateDefaultName());
+      setDraft(derivedProfile);
       setHeaderRows(
-        profile.customHeaders.length
-          ? profile.customHeaders.map((header) => createHeaderRow(header))
+        derivedProfile.customHeaders.length
+          ? derivedProfile.customHeaders.map((header) =>
+              createHeaderRow(header),
+            )
           : [createHeaderRow()],
       );
       setError(null);
     }
-  }, [open, profile]);
+  }, [open, derivedProfile, generateDefaultName]);
 
   const normalizedHeaders = useMemo(
     () =>
@@ -103,34 +144,80 @@ export function OAuthProfileModal({
     [headerRows],
   );
 
-  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const getValidatedProfileValues = () => {
     const trimmedUrl = draft.serverUrl.trim();
 
     if (!trimmedUrl) {
       setError("Server URL is required");
-      return;
+      return null;
     }
 
+    let parsedUrl: URL;
     try {
-      new URL(trimmedUrl);
+      parsedUrl = new URL(trimmedUrl);
     } catch (err) {
       console.error("Invalid OAuth target URL", err);
       setError("Enter a valid MCP base URL (e.g., https://example.com)");
-      return;
+      return null;
     }
 
     const trimmedClientId = draft.clientId.trim();
     const trimmedClientSecret = draft.clientSecret.trim();
+    setError(null);
+
+    return {
+      trimmedUrl,
+      trimmedClientId,
+      trimmedClientSecret,
+      parsedUrl,
+    };
+  };
+
+  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const validated = getValidatedProfileValues();
+    if (!validated) return;
+    const trimmedName = serverName.trim();
+    if (!trimmedName) {
+      setError("Server name is required");
+      return;
+    }
+
+    const headerMap = normalizedHeaders.reduce(
+      (acc, header) => {
+        acc[header.key] = header.value;
+        return acc;
+      },
+      {} as Record<string, string>,
+    );
+
+    const scopesArray = draft.scopes
+      .split(/\s+/)
+      .map((scope) => scope.trim())
+      .filter((scope) => scope.length > 0);
+
+    const formData: ServerFormData = {
+      name: trimmedName,
+      type: "http",
+      url: validated.trimmedUrl,
+      headers: Object.keys(headerMap).length ? headerMap : undefined,
+      useOAuth: true,
+      oauthScopes: scopesArray,
+      clientId: validated.trimmedClientId || undefined,
+      clientSecret: validated.trimmedClientSecret || undefined,
+    };
 
     onSave({
-      serverUrl: trimmedUrl,
-      clientId: trimmedClientId,
-      clientSecret: trimmedClientSecret,
-      scopes: draft.scopes.trim(),
-      customHeaders: normalizedHeaders,
-      protocolVersion: draft.protocolVersion,
-      registrationStrategy: draft.registrationStrategy,
+      formData,
+      profile: {
+        serverUrl: validated.trimmedUrl,
+        clientId: validated.trimmedClientId,
+        clientSecret: validated.trimmedClientSecret,
+        scopes: draft.scopes.trim(),
+        customHeaders: normalizedHeaders,
+        protocolVersion: draft.protocolVersion,
+        registrationStrategy: draft.registrationStrategy,
+      },
     });
     onOpenChange(false);
   };
@@ -186,6 +273,21 @@ export function OAuthProfileModal({
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-6">
+          <div className="space-y-2">
+            <Label
+              htmlFor="oauth-profile-name"
+              className="text-xs font-semibold text-muted-foreground"
+            >
+              Server Name
+            </Label>
+            <Input
+              id="oauth-profile-name"
+              value={serverName}
+              onChange={(event) => setServerName(event.target.value)}
+              placeholder="oauth-flow-target"
+              required
+            />
+          </div>
           <div className="space-y-6 max-h-[65vh] overflow-y-auto pr-1 pb-4">
             <div className="space-y-4">
               <div className="space-y-2">

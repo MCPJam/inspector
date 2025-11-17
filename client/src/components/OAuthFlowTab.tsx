@@ -1,16 +1,10 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
-import { Button } from "@/components/ui/button";
-import { CheckCircle2 } from "lucide-react";
 import { EMPTY_OAUTH_FLOW_STATE_V2 } from "@/lib/oauth/state-machines/debug-oauth-2025-06-18";
 import {
   OAuthFlowState,
   type OAuthFlowStep,
 } from "@/lib/oauth/state-machines/types";
-import {
-  createOAuthStateMachine,
-  getDefaultRegistrationStrategy,
-  getSupportedRegistrationStrategies,
-} from "@/lib/oauth/state-machines/factory";
+import { createOAuthStateMachine } from "@/lib/oauth/state-machines/factory";
 import { DebugMCPOAuthClientProvider } from "@/lib/debug-oauth-provider";
 import { OAuthSequenceDiagram } from "@/components/oauth/OAuthSequenceDiagram";
 import { OAuthAuthorizationModal } from "@/components/oauth/OAuthAuthorizationModal";
@@ -22,59 +16,11 @@ import {
 import posthog from "posthog-js";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import { OAuthProfileModal } from "./oauth/OAuthProfileModal";
-import {
-  EMPTY_OAUTH_TEST_PROFILE,
-  type OAuthTestProfile,
-  type OAuthRegistrationStrategy,
-} from "./oauth/types";
+import { type OAuthTestProfile } from "@/lib/oauth/profile";
 import { OAuthFlowLogger } from "./oauth/OAuthFlowLogger";
-
-const PROFILE_STORAGE_KEY = "mcp-oauth-flow-profile";
-const CLIENT_STORAGE_PREFIX = "mcp-client-";
-
-const loadStoredProfile = (): OAuthTestProfile => {
-  if (typeof window === "undefined") {
-    return EMPTY_OAUTH_TEST_PROFILE;
-  }
-
-  try {
-    const stored = localStorage.getItem(PROFILE_STORAGE_KEY);
-    if (!stored) {
-      return EMPTY_OAUTH_TEST_PROFILE;
-    }
-    const parsed = JSON.parse(stored);
-    const protocolVersion = ["2025-03-26", "2025-06-18", "2025-11-25"].includes(
-      parsed.protocolVersion,
-    )
-      ? parsed.protocolVersion
-      : "2025-11-25";
-
-    const supported = getSupportedRegistrationStrategies(protocolVersion);
-    const registrationStrategy: OAuthRegistrationStrategy = supported.includes(
-      parsed.registrationStrategy,
-    )
-      ? parsed.registrationStrategy
-      : (getDefaultRegistrationStrategy(
-          protocolVersion,
-        ) as OAuthRegistrationStrategy);
-
-    return {
-      ...EMPTY_OAUTH_TEST_PROFILE,
-      ...parsed,
-      customHeaders: Array.isArray(parsed.customHeaders)
-        ? parsed.customHeaders.map((header: any) => ({
-            key: header.key || "",
-            value: header.value || "",
-          }))
-        : [],
-      protocolVersion,
-      registrationStrategy,
-    };
-  } catch (error) {
-    console.error("Failed to load stored OAuth profile", error);
-    return EMPTY_OAUTH_TEST_PROFILE;
-  }
-};
+import type { ServerFormData } from "@/shared/types.js";
+import type { ServerWithName } from "@/hooks/use-app-state";
+import { deriveOAuthProfileFromServer } from "./oauth/utils";
 
 const deriveServerIdentifier = (profile: OAuthTestProfile): string => {
   const trimmedUrl = profile.serverUrl.trim();
@@ -113,78 +59,81 @@ const describeRegistrationStrategy = (strategy: string): string => {
   return "Pre-registered";
 };
 
-export const OAuthFlowTab = () => {
-  const initialProfile = useMemo(() => loadStoredProfile(), []);
-  const [profile, setProfile] = useState<OAuthTestProfile>(initialProfile);
-  const [isProfileModalOpen, setIsProfileModalOpen] = useState(true);
+const isHttpServer = (server?: ServerWithName) =>
+  Boolean(server && "url" in server.config);
+
+interface OAuthFlowTabProps {
+  serverConfigs: Record<string, ServerWithName>;
+  selectedServerName: string;
+  onSelectServer: (serverName: string) => void;
+  onSaveServerConfig?: (
+    formData: ServerFormData,
+    options?: { oauthProfile?: OAuthTestProfile },
+  ) => void;
+}
+
+export const OAuthFlowTab = ({
+  serverConfigs,
+  selectedServerName,
+  onSelectServer,
+  onSaveServerConfig,
+}: OAuthFlowTabProps) => {
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [pendingServerSelection, setPendingServerSelection] = useState<
+    string | null
+  >(null);
   const [oauthFlowState, setOAuthFlowState] = useState<OAuthFlowState>(
     EMPTY_OAUTH_FLOW_STATE_V2,
   );
   const [focusedStep, setFocusedStep] = useState<OAuthFlowStep | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
-  const hasProfile = Boolean(profile.serverUrl.trim());
-  const serverIdentifier = useMemo(
-    () => deriveServerIdentifier(profile),
-    [profile.serverUrl],
+  const httpServers = useMemo(
+    () => Object.values(serverConfigs).filter((server) => isHttpServer(server)),
+    [serverConfigs],
   );
 
+  const selectedServer =
+    selectedServerName !== "none"
+      ? serverConfigs[selectedServerName]
+      : undefined;
+  const activeServer = isHttpServer(selectedServer)
+    ? selectedServer
+    : undefined;
+
   useEffect(() => {
-    try {
-      localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile));
-    } catch (error) {
-      console.error("Failed to persist OAuth profile", error);
+    if (!isHttpServer(selectedServer) && httpServers.length > 0) {
+      onSelectServer(httpServers[0].name);
     }
-  }, [profile]);
+  }, [selectedServer, httpServers, onSelectServer]);
 
-  const credentialKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    if (!hasProfile) {
-      if (credentialKeyRef.current) {
-        localStorage.removeItem(
-          `${CLIENT_STORAGE_PREFIX}${credentialKeyRef.current}`,
-        );
-        credentialKeyRef.current = null;
-      }
-      return;
-    }
-
-    const storageKey = `${CLIENT_STORAGE_PREFIX}${serverIdentifier}`;
-
     if (
-      credentialKeyRef.current &&
-      credentialKeyRef.current !== serverIdentifier
+      pendingServerSelection &&
+      serverConfigs[pendingServerSelection] &&
+      isHttpServer(serverConfigs[pendingServerSelection])
     ) {
-      localStorage.removeItem(
-        `${CLIENT_STORAGE_PREFIX}${credentialKeyRef.current}`,
-      );
+      onSelectServer(pendingServerSelection);
+      setPendingServerSelection(null);
     }
+  }, [pendingServerSelection, serverConfigs, onSelectServer]);
 
-    credentialKeyRef.current = serverIdentifier;
-
-    const trimmedClientId = profile.clientId.trim();
-    if (!trimmedClientId) {
-      localStorage.removeItem(storageKey);
-      return;
+  useEffect(() => {
+    if (httpServers.length === 0) {
+      setIsProfileModalOpen(true);
     }
+  }, [httpServers.length]);
 
-    const payload: Record<string, string> = {
-      client_id: trimmedClientId,
-    };
+  const profile = useMemo(
+    () => deriveOAuthProfileFromServer(activeServer),
+    [activeServer],
+  );
 
-    const trimmedSecret = profile.clientSecret.trim();
-    if (trimmedSecret) {
-      payload.client_secret = trimmedSecret;
-    }
-
-    try {
-      localStorage.setItem(storageKey, JSON.stringify(payload));
-    } catch (error) {
-      console.error("Failed to persist OAuth client credentials", error);
-    }
-  }, [hasProfile, profile.clientId, profile.clientSecret, serverIdentifier]);
+  const hasProfile = Boolean(activeServer && profile.serverUrl.trim());
+  const serverIdentifier = useMemo(
+    () => (activeServer ? activeServer.name : deriveServerIdentifier(profile)),
+    [activeServer, profile.serverUrl],
+  );
 
   const protocolVersion = profile.protocolVersion;
   const registrationStrategy = profile.registrationStrategy;
@@ -464,10 +413,12 @@ export const OAuthFlowTab = () => {
       <OAuthProfileModal
         open={isProfileModalOpen}
         onOpenChange={setIsProfileModalOpen}
-        profile={profile}
-        onSave={(nextProfile) => {
-          setProfile(nextProfile);
-          resetOAuthFlow(nextProfile.serverUrl);
+        server={activeServer}
+        existingServerNames={Object.keys(serverConfigs)}
+        onSave={({ formData, profile: savedProfile }) => {
+          onSaveServerConfig?.(formData, { oauthProfile: savedProfile });
+          setPendingServerSelection(formData.name);
+          resetOAuthFlow(formData.url);
         }}
       />
     </div>
