@@ -8,7 +8,6 @@ import { SuiteTestsConfig } from "./suite-tests-config";
 import { TestTemplateEditor } from "./test-template-editor";
 import { PassCriteriaSelector } from "./pass-criteria-selector";
 import { useSuiteData, useRunDetailData } from "./use-suite-data";
-import { formatRunId, formatTime } from "./helpers";
 import type {
   EvalCase,
   EvalIteration,
@@ -105,22 +104,6 @@ export function SuiteIterationsView({
     return run ?? null;
   }, [selectedRunId, runs]);
 
-  // Iterations for selected test (across all runs)
-  const iterationsForSelectedTest = useMemo(() => {
-    if (!selectedTestId) return [];
-
-    const templateGroup = templateGroups.find((tg) =>
-      tg.testCaseIds.includes(selectedTestId),
-    );
-
-    if (templateGroup) {
-      return templateGroup.iterations;
-    }
-
-    const group = caseGroups.find((g) => g.testCase?._id === selectedTestId);
-    return group ? group.iterations : [];
-  }, [selectedTestId, caseGroups, templateGroups]);
-
   // Selected test details
   const selectedTestDetails = useMemo(() => {
     if (!selectedTestId) return null;
@@ -147,20 +130,10 @@ export function SuiteIterationsView({
       if (directTestCase) {
         return {
           testCase: directTestCase,
-          iterations: [],
-          summary: {
-            runs: 0,
-            passed: 0,
-            failed: 0,
-            cancelled: 0,
-            pending: 0,
-            tokens: 0,
-            avgDuration: null,
-          },
           templateInfo: {
             title: directTestCase.title,
             query: directTestCase.query,
-            modelCount: 1,
+            modelCount: directTestCase.models?.length || 1,
           },
         };
       }
@@ -168,7 +141,9 @@ export function SuiteIterationsView({
     }
 
     if (templateGroup.testCaseIds.length === 0) {
-      const configTest = suite.config?.tests?.find((test: any) => {
+      // Try to get config from the latest run
+      const latestRun = runs.length > 0 ? runs[0] : null;
+      const configTest = latestRun?.configSnapshot?.tests?.find((test: any) => {
         const templateTitle = test.title.replace(/\s*\[.*?\]\s*$/, "").trim();
         return (
           templateTitle === templateGroup.title &&
@@ -180,28 +155,23 @@ export function SuiteIterationsView({
         return {
           testCase: {
             _id: selectedTestId,
-            evalTestSuiteId: suite._id,
+            testSuiteId: suite._id,
             createdBy: suite.createdBy || "",
             title: templateGroup.title,
             query: templateGroup.query,
-            provider: configTest.provider || "",
-            model: configTest.model || "",
+            models: [
+              {
+                model: configTest.model || "",
+                provider: configTest.provider || "",
+              },
+            ],
+            runs: configTest.runs || 1,
             expectedToolCalls: configTest.expectedToolCalls || [],
-          },
-          iterations: [],
-          summary: {
-            runs: 0,
-            passed: 0,
-            failed: 0,
-            cancelled: 0,
-            pending: 0,
-            tokens: 0,
-            avgDuration: null,
           },
           templateInfo: {
             title: templateGroup.title,
             query: templateGroup.query,
-            modelCount: 0,
+            modelCount: 1,
           },
         };
       }
@@ -220,8 +190,6 @@ export function SuiteIterationsView({
 
       return {
         testCase: firstTestCase,
-        iterations: templateGroup.iterations,
-        summary: templateGroup.summary,
         templateInfo: {
           title: templateGroup.title,
           query: templateGroup.query,
@@ -231,13 +199,7 @@ export function SuiteIterationsView({
     }
 
     return {
-      testCase: {
-        ...group.testCase,
-        model: "",
-        provider: "",
-      },
-      iterations: templateGroup.iterations,
-      summary: templateGroup.summary,
+      testCase: group.testCase,
       templateInfo: {
         title: templateGroup.title,
         query: templateGroup.query,
@@ -245,129 +207,6 @@ export function SuiteIterationsView({
       },
     };
   }, [selectedTestId, caseGroups, templateGroups, cases, suite]);
-
-  // Trend data for selected test
-  const selectedTestTrendData = useMemo(() => {
-    if (!selectedTestId || iterationsForSelectedTest.length === 0) return [];
-
-    const iterationsByRun = new Map<string, EvalIteration[]>();
-    iterationsForSelectedTest.forEach((iteration) => {
-      if (iteration.suiteRunId) {
-        if (!iterationsByRun.has(iteration.suiteRunId)) {
-          iterationsByRun.set(iteration.suiteRunId, []);
-        }
-        iterationsByRun.get(iteration.suiteRunId)!.push(iteration);
-      }
-    });
-
-    const data: Array<{
-      runId: string;
-      runIdDisplay: string;
-      passRate: number;
-      label: string;
-    }> = [];
-    runs.forEach((run) => {
-      const runIters = iterationsByRun.get(run._id);
-      if (runIters && runIters.length > 0) {
-        const passed = runIters.filter(
-          (iter) => iter.result === "passed",
-        ).length;
-        const total = runIters.length;
-        const passRate = total > 0 ? Math.round((passed / total) * 100) : 0;
-
-        data.push({
-          runId: run._id,
-          runIdDisplay: formatRunId(run._id),
-          passRate,
-          label: formatTime(run.completedAt ?? run.createdAt),
-        });
-      }
-    });
-
-    return data.sort((a, b) => {
-      const runA = runs.find((r) => r._id === a.runId);
-      const runB = runs.find((r) => r._id === b.runId);
-      const timeA = runA?.createdAt ?? 0;
-      const timeB = runB?.createdAt ?? 0;
-      return timeA - timeB;
-    });
-  }, [selectedTestId, iterationsForSelectedTest, runs]);
-
-  // Per-model breakdown for selected test
-  const selectedTestModelBreakdown = useMemo(() => {
-    if (!selectedTestId || !selectedTestDetails?.templateInfo) return [];
-
-    const templateGroup = templateGroups.find((tg) =>
-      tg.testCaseIds.includes(selectedTestId),
-    );
-
-    if (!templateGroup) return [];
-
-    const modelMap = new Map<
-      string,
-      {
-        provider: string;
-        model: string;
-        passed: number;
-        failed: number;
-        cancelled: number;
-        pending: number;
-        total: number;
-        passRate: number;
-      }
-    >();
-
-    const testCaseMap = new Map<string, { provider: string; model: string }>();
-    caseGroups.forEach((group) => {
-      if (
-        group.testCase &&
-        templateGroup.testCaseIds.includes(group.testCase._id)
-      ) {
-        testCaseMap.set(group.testCase._id, {
-          provider: group.testCase.provider,
-          model: group.testCase.model,
-        });
-      }
-    });
-
-    templateGroup.iterations.forEach((iteration) => {
-      const testCaseInfo = iteration.testCaseId
-        ? testCaseMap.get(iteration.testCaseId)
-        : null;
-      if (!testCaseInfo) return;
-
-      const key = `${testCaseInfo.provider}/${testCaseInfo.model}`;
-
-      if (!modelMap.has(key)) {
-        modelMap.set(key, {
-          provider: testCaseInfo.provider,
-          model: testCaseInfo.model,
-          passed: 0,
-          failed: 0,
-          cancelled: 0,
-          pending: 0,
-          total: 0,
-          passRate: 0,
-        });
-      }
-
-      const stats = modelMap.get(key)!;
-      stats.total += 1;
-
-      if (iteration.result === "passed") stats.passed += 1;
-      else if (iteration.result === "failed") stats.failed += 1;
-      else if (iteration.result === "cancelled") stats.cancelled += 1;
-      else stats.pending += 1;
-    });
-
-    return Array.from(modelMap.values())
-      .map((stats) => ({
-        ...stats,
-        passRate:
-          stats.total > 0 ? Math.round((stats.passed / stats.total) * 100) : 0,
-      }))
-      .sort((a, b) => b.passRate - a.passRate);
-  }, [selectedTestId, selectedTestDetails, templateGroups, caseGroups]);
 
   // Reset viewMode when viewResetKey changes or when switching contexts
   useEffect(() => {
@@ -451,51 +290,39 @@ export function SuiteIterationsView({
   };
 
   return (
-    <div className="space-y-4">
+    <div className="flex flex-col h-full">
       {/* Header */}
-      <SuiteHeader
-        suite={suite}
-        viewMode={viewMode}
-        selectedRunDetails={selectedRunDetails}
-        isEditMode={activeTab === "edit"}
-        onRerun={onRerun}
-        onDelete={onDelete}
-        onCancelRun={onCancelRun}
-        onDeleteRun={onDeleteRun}
-        onViewModeChange={handleBackToOverview}
-        connectedServerNames={connectedServerNames}
-        rerunningSuiteId={rerunningSuiteId}
-        cancellingRunId={cancellingRunId}
-        deletingSuiteId={deletingSuiteId}
-        deletingRunId={deletingRunId}
-        showRunSummarySidebar={showRunSummarySidebar}
-        setShowRunSummarySidebar={setShowRunSummarySidebar}
-      />
+      <div className="shrink-0">
+        <SuiteHeader
+          suite={suite}
+          viewMode={viewMode}
+          selectedRunDetails={selectedRunDetails}
+          isEditMode={activeTab === "edit"}
+          onRerun={onRerun}
+          onDelete={onDelete}
+          onCancelRun={onCancelRun}
+          onDeleteRun={onDeleteRun}
+          onViewModeChange={handleBackToOverview}
+          connectedServerNames={connectedServerNames}
+          rerunningSuiteId={rerunningSuiteId}
+          cancellingRunId={cancellingRunId}
+          deletingSuiteId={deletingSuiteId}
+          deletingRunId={deletingRunId}
+          showRunSummarySidebar={showRunSummarySidebar}
+          setShowRunSummarySidebar={setShowRunSummarySidebar}
+        />
+      </div>
 
       {/* Content */}
       {activeTab === "runs" && (
-        <div className="space-y-4">
+        <div className="flex-1 min-h-0">
           {viewMode === "test-detail" &&
           selectedTestDetails &&
           selectedTestId ? (
-            <div className="h-[calc(100vh-200px)]">
+            <div className="h-full">
               <TestTemplateEditor
                 suiteId={suite._id}
                 selectedTestCaseId={selectedTestId}
-                selectedTestTrendData={selectedTestTrendData}
-                iterationsForSelectedTest={iterationsForSelectedTest}
-                selectedTestDetails={selectedTestDetails}
-                runs={runs}
-                caseGroups={caseGroups}
-                onViewRun={(runId: string) => {
-                  setSelectedRunId(runId);
-                  onTestIdChange(null);
-                  setViewMode("run-detail");
-                  if (onModeChange) onModeChange("runs");
-                }}
-                onTestIdChange={onTestIdChange}
-                onModeChange={onModeChange}
-                selectedTestModelBreakdown={selectedTestModelBreakdown}
               />
             </div>
           ) : viewMode === "overview" ? (
@@ -523,53 +350,55 @@ export function SuiteIterationsView({
       )}
 
       {activeTab === "edit" && (
-        <div className="space-y-4">
-          {/* Default Pass/Fail Criteria for New Runs */}
-          <div className="space-y-3">
-            <div>
-              <h3 className="text-base font-semibold">
-                Default Pass/Fail Criteria
-              </h3>
-              <p className="text-sm text-muted-foreground mt-1">
-                Set the default criteria for <strong>new</strong> evaluation
-                runs of this suite. These settings will be pre-selected when you
-                click "Rerun". Existing runs keep their original criteria.
-              </p>
-            </div>
-            <PassCriteriaSelector
-              minimumPassRate={defaultMinimumPassRate}
-              onMinimumPassRateChange={async (rate) => {
-                setDefaultMinimumPassRate(rate);
-                localStorage.setItem(
-                  `suite-${suite._id}-criteria-rate`,
-                  String(rate),
-                );
-                try {
-                  await updateSuite({
-                    suiteId: suite._id,
-                    defaultPassCriteria: {
-                      minimumPassRate: rate,
-                    },
-                  });
-                  toast.success("Suite updated successfully");
-                } catch (error) {
-                  toast.error("Failed to update suite");
-                  console.error("Failed to update suite:", error);
-                  setDefaultMinimumPassRate(
-                    suite.defaultPassCriteria?.minimumPassRate ?? 100,
+        <div className="flex-1 min-h-0 overflow-auto">
+          <div className="p-3 space-y-3">
+            {/* Default Pass/Fail Criteria for New Runs */}
+            <div className="space-y-2">
+              <div>
+                <h3 className="text-sm font-semibold">
+                  Default Pass/Fail Criteria
+                </h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Set the default criteria for <strong>new</strong> evaluation
+                  runs of this suite. These settings will be pre-selected when
+                  you click "Rerun". Existing runs keep their original criteria.
+                </p>
+              </div>
+              <PassCriteriaSelector
+                minimumPassRate={defaultMinimumPassRate}
+                onMinimumPassRateChange={async (rate) => {
+                  setDefaultMinimumPassRate(rate);
+                  localStorage.setItem(
+                    `suite-${suite._id}-criteria-rate`,
+                    String(rate),
                   );
-                }
-              }}
+                  try {
+                    await updateSuite({
+                      suiteId: suite._id,
+                      defaultPassCriteria: {
+                        minimumPassRate: rate,
+                      },
+                    });
+                    toast.success("Suite updated successfully");
+                  } catch (error) {
+                    toast.error("Failed to update suite");
+                    console.error("Failed to update suite:", error);
+                    setDefaultMinimumPassRate(
+                      suite.defaultPassCriteria?.minimumPassRate ?? 100,
+                    );
+                  }
+                }}
+              />
+            </div>
+
+            {/* Tests Config */}
+            <SuiteTestsConfig
+              suite={suite}
+              testCases={cases}
+              onUpdate={handleUpdateTests}
+              availableModels={availableModels}
             />
           </div>
-
-          {/* Tests Config */}
-          <SuiteTestsConfig
-            suite={suite}
-            testCases={cases}
-            onUpdate={handleUpdateTests}
-            availableModels={availableModels}
-          />
         </div>
       )}
     </div>
