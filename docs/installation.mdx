@@ -16,17 +16,45 @@ After installing the package, you should see a link to `localhost`. Open that li
 
 ## Docker
 
-Run MCPJam Inspector using Docker:
+Run MCPJam Inspector using Docker Compose:
 
 ```bash
-# Run the latest version from Docker Hub
-docker run -p 6274:6274 mcpjam/mcp-inspector:latest
+# Build and start the service
+docker compose up -d
 
-# Or run in the background
-docker run -d -p 6274:6274 --name mcp-inspector mcpjam/mcp-inspector:latest
+# View logs
+docker compose logs -f
+
+# Stop the service
+docker compose down
 ```
 
-The application will be available at `http://localhost:6274`.
+To build from source:
+
+```bash
+# Build the Docker image locally
+docker build -t mcpjam/mcp-inspector:latest .
+
+# Then run with docker compose
+docker compose up -d
+```
+
+The application will be available at **`http://127.0.0.1:6274`**.
+
+<Warning>
+**Important for macOS/Windows users:**
+
+- Access the app via `http://127.0.0.1:6274` (not `localhost`)
+- When connecting to MCP servers on your host machine, use `http://host.docker.internal:PORT` instead of `http://127.0.0.1:PORT`
+
+Example:
+
+```bash
+# Your MCP server runs on host at: http://127.0.0.1:8080/mcp
+# In Docker, configure it as: http://host.docker.internal:8080/mcp
+```
+
+</Warning>
 
 ## Start with STDIO server
 
