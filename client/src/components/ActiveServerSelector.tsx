@@ -8,7 +8,7 @@ import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import { hasOAuthConfig } from "@/lib/mcp-oauth";
 interface ActiveServerSelectorProps {
-  connectedServerConfigs: Record<string, ServerWithName>;
+  serverConfigs: Record<string, ServerWithName>;
   selectedServer: string;
   selectedMultipleServers: string[];
   isMultiSelectEnabled: boolean;
@@ -49,7 +49,7 @@ function getStatusText(status: string): string {
 }
 
 export function ActiveServerSelector({
-  connectedServerConfigs,
+  serverConfigs,
   selectedServer,
   selectedMultipleServers,
   isMultiSelectEnabled,
@@ -58,6 +58,7 @@ export function ActiveServerSelector({
   onConnect,
   showOnlyOAuthServers = false,
 }: ActiveServerSelectorProps) {
+  console.log("serverConfigs", serverConfigs);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const posthog = usePostHog();
 
@@ -74,16 +75,10 @@ export function ActiveServerSelector({
     );
   };
 
-  const servers = Object.entries(connectedServerConfigs).filter(
-    ([, server]) => {
-      if (server.enabled === false) return false;
-
-      // If we only want OAuth servers, filter for those
-      if (showOnlyOAuthServers && !isOAuthServer(server)) return false;
-
-      return true;
-    },
-  );
+  const servers = Object.entries(serverConfigs).filter(([, server]) => {
+    if (showOnlyOAuthServers && !isOAuthServer(server)) return false;
+    return true;
+  });
 
   return (
     <div>

@@ -27,6 +27,7 @@ import {
   clearOAuthData,
 } from "@/lib/mcp-oauth";
 import { MCPServerConfig } from "@/sdk";
+import type { OAuthTestProfile } from "@/lib/oauth/profile";
 export type { ServerWithName } from "@/state/app-types";
 
 export function useAppState() {
@@ -350,6 +351,106 @@ export function useAppState() {
       }
     },
     [appState.servers, logger, fetchAndStoreInitInfo],
+  );
+
+  const saveServerConfigWithoutConnecting = useCallback(
+    (
+      formData: ServerFormData,
+      options?: { oauthProfile?: OAuthTestProfile },
+    ) => {
+      const validationError = validateForm(formData);
+      if (validationError) {
+        toast.error(validationError);
+        return;
+      }
+
+      const serverName = formData.name.trim();
+      if (!serverName) {
+        toast.error("Server name is required");
+        return;
+      }
+
+      const existingServer = appState.servers[serverName];
+      const mcpConfig = toMCPConfig(formData);
+      const nextOAuthProfile = formData.useOAuth
+        ? (options?.oauthProfile ?? existingServer?.oauthFlowProfile)
+        : undefined;
+
+      const serverEntry: ServerWithName = {
+        ...(existingServer ?? {}),
+        name: serverName,
+        config: mcpConfig,
+        lastConnectionTime: existingServer?.lastConnectionTime ?? new Date(),
+        connectionStatus: "disconnected",
+        retryCount: existingServer?.retryCount ?? 0,
+        enabled: existingServer?.enabled ?? false,
+        oauthFlowProfile: nextOAuthProfile,
+      } as ServerWithName;
+
+      dispatch({
+        type: "UPSERT_SERVER",
+        name: serverName,
+        server: serverEntry,
+      });
+
+      if (formData.type === "http") {
+        if (formData.useOAuth && formData.url) {
+          localStorage.setItem(`mcp-serverUrl-${serverName}`, formData.url);
+
+          const oauthConfig: Record<string, any> = {};
+          if (formData.oauthScopes && formData.oauthScopes.length > 0) {
+            oauthConfig.scopes = formData.oauthScopes;
+          }
+          if (formData.headers && Object.keys(formData.headers).length > 0) {
+            oauthConfig.customHeaders = formData.headers;
+          }
+          if (Object.keys(oauthConfig).length > 0) {
+            localStorage.setItem(
+              `mcp-oauth-config-${serverName}`,
+              JSON.stringify(oauthConfig),
+            );
+          }
+
+          if (formData.clientId || formData.clientSecret) {
+            const clientInfo: Record<string, string> = {};
+            if (formData.clientId) {
+              clientInfo.client_id = formData.clientId;
+            }
+            if (formData.clientSecret) {
+              clientInfo.client_secret = formData.clientSecret;
+            }
+            localStorage.setItem(
+              `mcp-client-${serverName}`,
+              JSON.stringify(clientInfo),
+            );
+          }
+        } else {
+          localStorage.removeItem(`mcp-serverUrl-${serverName}`);
+          localStorage.removeItem(`mcp-oauth-config-${serverName}`);
+          localStorage.removeItem(`mcp-client-${serverName}`);
+        }
+      }
+
+      const activeWorkspace = appState.workspaces[appState.activeWorkspaceId];
+      if (activeWorkspace) {
+        dispatch({
+          type: "UPDATE_WORKSPACE",
+          workspaceId: appState.activeWorkspaceId,
+          updates: {
+            servers: {
+              ...activeWorkspace.servers,
+              [serverName]: serverEntry,
+            },
+          },
+        });
+      }
+
+      logger.info("Saved server configuration without connecting", {
+        serverName,
+      });
+      toast.success(`Saved configuration for ${serverName}`);
+    },
+    [appState.activeWorkspaceId, appState.servers, appState.workspaces, logger],
   );
 
   // CLI config processing guard
@@ -831,6 +932,7 @@ export function useAppState() {
     toggleServerSelection,
     getValidAccessToken,
     setSelectedMultipleServersToAllServers,
+    saveServerConfigWithoutConnecting,
 
     // Workspace actions
     handleSwitchWorkspace,

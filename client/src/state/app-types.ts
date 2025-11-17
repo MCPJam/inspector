@@ -1,5 +1,6 @@
 import { MCPServerConfig } from "@/sdk";
 import { OauthTokens } from "@/shared/types.js";
+import type { OAuthTestProfile } from "@/lib/oauth/profile";
 
 export type ConnectionStatus =
   | "connected"
@@ -31,6 +32,7 @@ export interface ServerWithName {
   name: string;
   config: MCPServerConfig;
   oauthTokens?: OauthTokens;
+  oauthFlowProfile?: OAuthTestProfile;
   initializationInfo?: InitializationInfo;
   lastConnectionTime: Date;
   connectionStatus: ConnectionStatus;
