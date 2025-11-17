@@ -28,10 +28,10 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { getProviderLogoFromModel } from "../chat/chat-helpers";
 import { OpenAIAppRenderer } from "./openai-app-renderer";
 import { callTool, getToolServerId, ToolServerMap } from "@/lib/mcp-tools-api";
 import { MemoizedMarkdown } from "./memomized-markdown";
+import { getProviderLogoFromModel } from "./chat-helpers";
 
 type AnyPart = UIMessagePart<UIDataTypes, UITools>;
 type ToolState =

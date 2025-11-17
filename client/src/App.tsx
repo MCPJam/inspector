@@ -3,7 +3,6 @@ import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
 import { PromptsTab } from "./components/PromptsTab";
-import { ChatTab } from "./components/ChatTab";
 import { ChatTabV2 } from "./components/ChatTabV2";
 import { EvalsTab } from "./components/EvalsTab";
 import { SettingsTab } from "./components/SettingsTab";
@@ -15,11 +14,7 @@ import { RegistryTab } from "./components/RegistryTab";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import { MCPSidebar } from "./components/mcp-sidebar";
 import { ActiveServerSelector } from "./components/ActiveServerSelector";
-import {
-  SidebarInset,
-  SidebarProvider,
-  SidebarTrigger,
-} from "./components/ui/sidebar";
+import { SidebarInset, SidebarProvider } from "./components/ui/sidebar";
 import { useAppState } from "./hooks/use-app-state";
 import { PreferencesStoreProvider } from "./stores/preferences/preferences-provider";
 import { RegistryStoreProvider } from "./stores/registry/registry-provider";
@@ -262,13 +257,6 @@ export default function App() {
               selectedServerName={appState.selectedServer}
               onSelectServer={setSelectedServer}
               onSaveServerConfig={saveServerConfigWithoutConnecting}
-            />
-          )}
-
-          {activeTab === "chat" && (
-            <ChatTab
-              serverConfigs={selectedMCPConfigsMap}
-              connectedServerConfigs={connectedServerConfigs}
             />
           )}
 
