@@ -28,6 +28,7 @@ interface SuiteHeaderProps {
   deletingRunId: string | null;
   showRunSummarySidebar: boolean;
   setShowRunSummarySidebar: (show: boolean) => void;
+  runsViewMode?: "runs" | "test-cases";
 }
 
 export function SuiteHeader({
@@ -47,6 +48,7 @@ export function SuiteHeader({
   deletingRunId,
   showRunSummarySidebar,
   setShowRunSummarySidebar,
+  runsViewMode = "runs",
 }: SuiteHeaderProps) {
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState(suite.name);
@@ -227,7 +229,7 @@ export function SuiteHeader({
   // Overview mode
   return (
     <div className="flex items-center justify-between gap-4 mb-4">
-      <h2 className="text-lg font-semibold">Runs</h2>
+      <h2 className="text-lg font-semibold">{runsViewMode === "test-cases" ? "Test Cases" : "Runs"}</h2>
       <div className="flex items-center gap-2 shrink-0">
         <Tooltip>
           <TooltipTrigger asChild>

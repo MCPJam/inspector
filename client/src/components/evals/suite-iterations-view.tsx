@@ -193,6 +193,7 @@ export function SuiteIterationsView({
           deletingRunId={deletingRunId}
           showRunSummarySidebar={showRunSummarySidebar}
           setShowRunSummarySidebar={setShowRunSummarySidebar}
+          runsViewMode={runsViewMode}
         />
       </div>
 
