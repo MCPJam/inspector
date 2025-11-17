@@ -17,6 +17,8 @@ import type {
   EvalSuiteRun,
   SuiteAggregate,
 } from "./types";
+import type { EvalsRoute } from "@/lib/evals-router";
+import { navigateToEvalsRoute } from "@/lib/evals-router";
 
 export function SuiteIterationsView({
   suite,
@@ -37,11 +39,7 @@ export function SuiteIterationsView({
   deletingSuiteId,
   deletingRunId,
   availableModels,
-  selectedTestId,
-  onTestIdChange,
-  mode,
-  onModeChange,
-  viewResetKey,
+  route,
 }: {
   suite: EvalSuite;
   cases: EvalCase[];
@@ -61,19 +59,31 @@ export function SuiteIterationsView({
   deletingSuiteId: string | null;
   deletingRunId: string | null;
   availableModels: any[];
-  selectedTestId: string | null;
-  onTestIdChange: (testId: string | null) => void;
-  mode?: "runs" | "edit";
-  onModeChange?: (mode: "runs" | "edit") => void;
-  viewResetKey?: number;
+  route: EvalsRoute;
 }) {
-  const activeTab = mode || "runs";
-  const [viewMode, setViewMode] = useState<
-    "overview" | "run-detail" | "test-detail"
-  >("overview");
-  const [runsViewMode, setRunsViewMode] = useState<"runs" | "test-cases">("runs");
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
-  const [selectedTestCaseIdForRuns, setSelectedTestCaseIdForRuns] = useState<string | null>(null);
+  // Derive view state from route
+  const isEditMode = route.type === "suite-edit";
+  const selectedTestId =
+    route.type === "test-detail" || route.type === "test-edit"
+      ? route.testId
+      : null;
+  const selectedRunId = route.type === "run-detail" ? route.runId : null;
+  const viewMode =
+    route.type === "run-detail"
+      ? "run-detail"
+      : route.type === "test-detail"
+        ? "test-detail"
+        : route.type === "test-edit"
+          ? "test-edit"
+          : "overview";
+  const runsViewMode =
+    route.type === "suite-overview" && route.view === "test-cases"
+      ? "test-cases"
+      : "runs";
+
+  // Local state that's not in the URL
+  const [selectedTestCaseIdForRuns, setSelectedTestCaseIdForRuns] =
+    useState<string | null>(null);
   const [showRunSummarySidebar, setShowRunSummarySidebar] = useState(false);
   const [runDetailSortBy, setRunDetailSortBy] = useState<
     "model" | "test" | "result"
@@ -212,16 +222,6 @@ export function SuiteIterationsView({
     };
   }, [selectedTestId, caseGroups, templateGroups, cases, suite]);
 
-  // Reset viewMode when viewResetKey changes or when switching contexts
-  useEffect(() => {
-    if (activeTab === "runs" && selectedTestId === null) {
-      if (selectedRunId === null) {
-        setViewMode("overview");
-        setShowRunSummarySidebar(false);
-      }
-    }
-  }, [activeTab, suite._id, selectedTestId, viewResetKey, selectedRunId]);
-
   // Load default pass criteria from suite
   useEffect(() => {
     if (suite.defaultPassCriteria?.minimumPassRate !== undefined) {
@@ -249,20 +249,6 @@ export function SuiteIterationsView({
     }
   }, [suite._id, suite.defaultPassCriteria]);
 
-  // Update view mode when selectedTestId changes
-  useEffect(() => {
-    if (selectedTestId) {
-      setViewMode("test-detail");
-      if (onModeChange && activeTab !== "runs") {
-        onModeChange("runs");
-      }
-    } else {
-      setViewMode((current) =>
-        current === "test-detail" ? "overview" : current,
-      );
-    }
-  }, [selectedTestId, activeTab, onModeChange]);
-
   const handleUpdateTests = async (models: any[]) => {
     try {
       for (const testCase of cases) {
@@ -283,14 +269,19 @@ export function SuiteIterationsView({
   };
 
   const handleRunClick = (runId: string) => {
-    setSelectedRunId(runId);
-    setViewMode("run-detail");
+    navigateToEvalsRoute({
+      type: "run-detail",
+      suiteId: suite._id,
+      runId,
+    });
   };
 
   const handleBackToOverview = () => {
-    setViewMode("overview");
-    setSelectedRunId(null);
     setShowRunSummarySidebar(false);
+    navigateToEvalsRoute({
+      type: "suite-overview",
+      suiteId: suite._id,
+    });
   };
 
   return (
@@ -301,7 +292,7 @@ export function SuiteIterationsView({
           suite={suite}
           viewMode={viewMode}
           selectedRunDetails={selectedRunDetails}
-          isEditMode={activeTab === "edit"}
+          isEditMode={isEditMode}
           onRerun={onRerun}
           onDelete={onDelete}
           onCancelRun={onCancelRun}
@@ -318,17 +309,46 @@ export function SuiteIterationsView({
       </div>
 
       {/* Content */}
-      {activeTab === "runs" && (
+      {!isEditMode && (
         <div className="flex-1 min-h-0">
-          {viewMode === "test-detail" &&
-          selectedTestDetails &&
-          selectedTestId ? (
+          {viewMode === "test-edit" && selectedTestId ? (
             <div className="h-full">
               <TestTemplateEditor
                 suiteId={suite._id}
                 selectedTestCaseId={selectedTestId}
               />
             </div>
+          ) : viewMode === "test-detail" && selectedTestId ? (
+            (() => {
+              const selectedCase = cases.find((c) => c._id === selectedTestId);
+              if (!selectedCase) return null;
+
+              const caseIterations = allIterations.filter(
+                (iter) => iter.testCaseId === selectedTestId,
+              );
+
+              return (
+                <TestCaseDetailView
+                  testCase={selectedCase}
+                  iterations={caseIterations}
+                  runs={runs}
+                  onBack={() => {
+                    navigateToEvalsRoute({
+                      type: "suite-overview",
+                      suiteId: suite._id,
+                      view: "test-cases",
+                    });
+                  }}
+                  onViewRun={(runId) => {
+                    navigateToEvalsRoute({
+                      type: "run-detail",
+                      suiteId: suite._id,
+                      runId,
+                    });
+                  }}
+                />
+              );
+            })()
           ) : viewMode === "overview" ? (
             <div key={runsViewMode} className="space-y-4">
               {runsViewMode === "runs" ? (
@@ -342,7 +362,11 @@ export function SuiteIterationsView({
                   onDirectDeleteRun={onDirectDeleteRun}
                   runsViewMode={runsViewMode}
                   onViewModeChange={(value) => {
-                    setRunsViewMode(value);
+                    navigateToEvalsRoute({
+                      type: "suite-overview",
+                      suiteId: suite._id,
+                      view: value,
+                    });
                     setSelectedTestCaseIdForRuns(null);
                   }}
                 />
@@ -364,10 +388,12 @@ export function SuiteIterationsView({
                       runs={runs}
                       onBack={() => setSelectedTestCaseIdForRuns(null)}
                       onViewRun={(runId) => {
-                        setSelectedRunId(runId);
+                        navigateToEvalsRoute({
+                          type: "run-detail",
+                          suiteId: suite._id,
+                          runId,
+                        });
                         setSelectedTestCaseIdForRuns(null);
-                        setRunsViewMode("runs");
-                        setViewMode("run-detail");
                       }}
                     />
                   );
@@ -378,11 +404,19 @@ export function SuiteIterationsView({
                   allIterations={allIterations}
                   runs={runs}
                   onTestCaseClick={(testCaseId) => {
-                    setSelectedTestCaseIdForRuns(testCaseId);
+                    navigateToEvalsRoute({
+                      type: "test-detail",
+                      suiteId: suite._id,
+                      testId: testCaseId,
+                    });
                   }}
                   runsViewMode={runsViewMode}
                   onViewModeChange={(value) => {
-                    setRunsViewMode(value);
+                    navigateToEvalsRoute({
+                      type: "suite-overview",
+                      suiteId: suite._id,
+                      view: value,
+                    });
                     setSelectedTestCaseIdForRuns(null);
                   }}
                   runTrendData={runTrendData}
@@ -406,7 +440,7 @@ export function SuiteIterationsView({
         </div>
       )}
 
-      {activeTab === "edit" && (
+      {isEditMode && (
         <div className="flex-1 min-h-0 overflow-auto">
           <div className="p-3 space-y-3">
             {/* Default Pass/Fail Criteria for New Runs */}

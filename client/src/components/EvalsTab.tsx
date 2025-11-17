@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery, useMutation, useConvex } from "convex/react";
 import {
@@ -54,6 +54,7 @@ import {
 import { isMCPJamProvidedModel } from "@/shared/types";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import posthog from "posthog-js";
+import { useEvalsRoute, navigateToEvalsRoute } from "@/lib/evals-router";
 // Component to render a single suite in the sidebar with its own data loading
 function SuiteSidebarItem({
   suite,
@@ -61,13 +62,10 @@ function SuiteSidebarItem({
   isSelected,
   isExpanded,
   selectedTestId,
-  onSelectSuite,
   onToggleExpanded,
-  onSelectTest,
   onRerun,
   onCancelRun,
   onDelete,
-  onEdit,
   onCreateTestCase,
   onDeleteTestCase,
   isRerunning,
@@ -81,13 +79,10 @@ function SuiteSidebarItem({
   isSelected: boolean;
   isExpanded: boolean;
   selectedTestId: string | null;
-  onSelectSuite: (suiteId: string) => void;
   onToggleExpanded: (suiteId: string) => void;
-  onSelectTest: (testId: string | null) => void;
   onRerun: (suite: EvalSuite) => void;
   onCancelRun: (runId: string) => void;
   onDelete: (suite: EvalSuite) => void;
-  onEdit: (suite: EvalSuite) => void;
   onCreateTestCase: (suiteId: string) => void;
   onDeleteTestCase: (testCaseId: string, testCaseTitle: string) => void;
   isRerunning: boolean;
@@ -162,7 +157,9 @@ function SuiteSidebarItem({
           )}
         </button>
         <button
-          onClick={() => onSelectSuite(suite._id)}
+          onClick={() =>
+            navigateToEvalsRoute({ type: "suite-overview", suiteId: suite._id })
+          }
           className={cn(
             "flex-1 min-w-0 text-left rounded px-2 py-1 transition-colors",
             isSelected && !selectedTestId && "font-medium",
@@ -254,7 +251,7 @@ function SuiteSidebarItem({
             <DropdownMenuItem
               onClick={(e) => {
                 e.stopPropagation();
-                onEdit(suite);
+                navigateToEvalsRoute({ type: "suite-edit", suiteId: suite._id });
               }}
             >
               <Pencil className="h-4 w-4 mr-2 text-foreground" />
@@ -301,12 +298,11 @@ function SuiteSidebarItem({
                 >
                   <button
                     onClick={() => {
-                      // First select the suite if needed
-                      if (!isSelected) {
-                        onSelectSuite(suite._id);
-                      }
-                      // Select the test case
-                      onSelectTest(testCase._id);
+                      navigateToEvalsRoute({
+                        type: "test-edit",
+                        suiteId: suite._id,
+                        testId: testCase._id,
+                      });
                     }}
                     className="flex-1 min-w-0 text-left"
                   >
@@ -346,26 +342,40 @@ function SuiteSidebarItem({
   );
 }
 
-type View = "results" | "run";
-
 export function EvalsTab() {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const { user, getAccessToken } = useAuth();
   const convex = useConvex();
 
-  const [view, setView] = useState<View>("results");
-  const [selectedSuiteId, setSelectedSuiteId] = useState<string | null>(null);
+  // Use route-based navigation instead of state
+  const route = useEvalsRoute();
+
+  // Derive state from route
+  const selectedSuiteId =
+    route.type === "suite-overview" ||
+    route.type === "run-detail" ||
+    route.type === "test-detail" ||
+    route.type === "test-edit" ||
+    route.type === "suite-edit"
+      ? route.suiteId
+      : null;
+
+  const selectedTestId =
+    route.type === "test-detail" || route.type === "test-edit"
+      ? route.testId
+      : null;
+
+  // Only highlight test in sidebar when editing (not when viewing history)
+  const selectedTestIdForSidebar =
+    route.type === "test-edit" ? route.testId : null;
+
+  // Modal and action states (not navigation)
   const [rerunningSuiteId, setRerunningSuiteId] = useState<string | null>(null);
   const [cancellingRunId, setCancellingRunId] = useState<string | null>(null);
-
   const [deletingSuiteId, setDeletingSuiteId] = useState<string | null>(null);
   const [suiteToDelete, setSuiteToDelete] = useState<EvalSuite | null>(null);
   const [deletingRunId, setDeletingRunId] = useState<string | null>(null);
   const [runToDelete, setRunToDelete] = useState<string | null>(null);
-  const [selectedTestId, setSelectedTestId] = useState<string | null>(null);
-  const [expandedSuites, setExpandedSuites] = useState<Set<string>>(new Set());
-  const [suiteMode, setSuiteMode] = useState<"runs" | "edit">("runs");
-  const [viewResetKey, setViewResetKey] = useState(0);
   const [isCreatingTestCase, setIsCreatingTestCase] = useState(false);
   const [deletingTestCaseId, setDeletingTestCaseId] = useState<string | null>(
     null,
@@ -375,17 +385,19 @@ export function EvalsTab() {
     title: string;
   } | null>(null);
 
-  // Reset selectedTestId only when suite changes without a test being explicitly selected
-  // We track this by checking if the test selection was intentional
-  const pendingTestSelection = useRef<string | null>(null);
+  // Track expanded suites based on current route
+  const [expandedSuites, setExpandedSuites] = useState<Set<string>>(() => {
+    const initial = new Set<string>();
+    if (selectedSuiteId) {
+      initial.add(selectedSuiteId);
+    }
+    return initial;
+  });
 
+  // Auto-expand the currently selected suite
   useEffect(() => {
-    // Only reset if there's no pending test selection
-    if (!pendingTestSelection.current) {
-      setSelectedTestId(null);
-    } else {
-      setSelectedTestId(pendingTestSelection.current);
-      pendingTestSelection.current = null;
+    if (selectedSuiteId) {
+      setExpandedSuites((prev) => new Set(prev).add(selectedSuiteId));
     }
   }, [selectedSuiteId]);
 
@@ -695,9 +707,9 @@ export function EvalsTab() {
       await deleteSuiteMutation({ suiteId: suiteToDelete._id });
       toast.success("Test suite deleted successfully");
 
-      // If we're viewing this suite, go back to the overview
+      // If we're viewing this suite, go back to the list
       if (selectedSuiteId === suiteToDelete._id) {
-        setSelectedSuiteId(null);
+        navigateToEvalsRoute({ type: "list" });
       }
 
       setSuiteToDelete(null);
@@ -828,16 +840,12 @@ export function EvalsTab() {
         // Ensure suite is expanded
         setExpandedSuites((prev) => new Set(prev).add(suiteId));
 
-        // Check if suite is already selected
-        if (selectedSuiteId === suiteId) {
-          // If suite is already selected, directly set the test case
-          setSelectedTestId(testCaseId);
-        } else {
-          // Set pending test selection before changing suite to prevent reset
-          pendingTestSelection.current = testCaseId;
-          // Auto-select the suite (which will trigger the effect to set selectedTestId)
-          setSelectedSuiteId(suiteId);
-        }
+        // Navigate to the new test case
+        navigateToEvalsRoute({
+          type: "test-detail",
+          suiteId,
+          testId: testCaseId,
+        });
       } catch (error) {
         console.error("Failed to create test case:", error);
         toast.error(
@@ -865,40 +873,48 @@ export function EvalsTab() {
   );
 
   // Confirm test case deletion
-  const confirmDeleteTestCase = useCallback(async () => {
-    if (!testCaseToDelete || deletingTestCaseId) return;
+  const confirmDeleteTestCase = useCallback(
+    async () => {
+      if (!testCaseToDelete || deletingTestCaseId) return;
 
-    setDeletingTestCaseId(testCaseToDelete.id);
+      setDeletingTestCaseId(testCaseToDelete.id);
 
-    try {
-      await deleteTestCaseMutation({ testCaseId: testCaseToDelete.id });
-      toast.success("Test case deleted successfully");
+      try {
+        await deleteTestCaseMutation({ testCaseId: testCaseToDelete.id });
+        toast.success("Test case deleted successfully");
 
-      // If we're viewing this test case, clear the selection
-      if (selectedTestId === testCaseToDelete.id) {
-        setSelectedTestId(null);
+        // If we're viewing this test case, navigate back to suite overview
+        if (selectedTestId === testCaseToDelete.id && selectedSuiteId) {
+          navigateToEvalsRoute({
+            type: "suite-overview",
+            suiteId: selectedSuiteId,
+          });
+        }
+
+        setTestCaseToDelete(null);
+      } catch (error) {
+        console.error("Failed to delete test case:", error);
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Failed to delete test case",
+        );
+      } finally {
+        setDeletingTestCaseId(null);
       }
+    },
+    [
+      testCaseToDelete,
+      deletingTestCaseId,
+      deleteTestCaseMutation,
+      selectedTestId,
+      selectedSuiteId,
+    ],
+  );
 
-      setTestCaseToDelete(null);
-    } catch (error) {
-      console.error("Failed to delete test case:", error);
-      toast.error(
-        error instanceof Error ? error.message : "Failed to delete test case",
-      );
-    } finally {
-      setDeletingTestCaseId(null);
-    }
-  }, [
-    testCaseToDelete,
-    deletingTestCaseId,
-    deleteTestCaseMutation,
-    selectedTestId,
-  ]);
-
-  // Handle eval run success - navigate back to results view
+  // Handle eval run success - navigate back to list view
   const handleEvalRunSuccess = useCallback(() => {
-    setView("results");
-    setSelectedSuiteId(null);
+    navigateToEvalsRoute({ type: "list" });
   }, []);
 
   // Sort suites for sidebar - MUST be before any early returns
@@ -947,7 +963,7 @@ export function EvalsTab() {
     );
   }
 
-  if (isOverviewLoading && enableOverviewQuery && view === "results") {
+  if (isOverviewLoading && enableOverviewQuery && route.type !== "create") {
     return (
       <div className="p-6">
         <div className="flex h-64 items-center justify-center">
@@ -964,7 +980,7 @@ export function EvalsTab() {
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      {view === "run" ? (
+      {route.type === "create" ? (
         <div className="flex-1 overflow-y-auto px-6 pb-6 pt-6">
           <EvalRunner
             availableModels={availableModels}
@@ -988,7 +1004,7 @@ export function EvalsTab() {
                     platform: detectPlatform(),
                     environment: detectEnvironment(),
                   });
-                  setView("run");
+                  navigateToEvalsRoute({ type: "create" });
                 }}
                 className="h-7 w-7 p-0"
                 title="Create new test suite"
@@ -1018,38 +1034,11 @@ export function EvalsTab() {
                         latestRun={latestRun}
                         isSelected={selectedSuiteId === suite._id}
                         isExpanded={expandedSuites.has(suite._id)}
-                        selectedTestId={selectedTestId}
-                        onSelectSuite={(suiteId) => {
-                          // Only clear pending test when explicitly clicking the suite (not via test selection)
-                          pendingTestSelection.current = null;
-                          // Clear test selection when clicking on suite name
-                          setSelectedTestId(null);
-                          setSelectedSuiteId(suiteId);
-                          // Reset to runs mode when clicking suite name
-                          setSuiteMode("runs");
-                          // Increment reset key to trigger view reset
-                          setViewResetKey((prev) => prev + 1);
-                          if (selectedSuiteId !== suiteId) {
-                            // Auto-expand when selecting a new suite
-                            setExpandedSuites((prev) =>
-                              new Set(prev).add(suiteId),
-                            );
-                          }
-                        }}
+                        selectedTestId={selectedTestIdForSidebar}
                         onToggleExpanded={toggleSuiteExpanded}
-                        onSelectTest={(testId) => {
-                          // Store the test ID to be selected after suite changes
-                          pendingTestSelection.current = testId;
-                          setSelectedTestId(testId);
-                        }}
                         onRerun={handleRerun}
                         onCancelRun={handleCancelRun}
                         onDelete={handleDelete}
-                        onEdit={(suite) => {
-                          setSelectedSuiteId(suite._id);
-                          setSuiteMode("edit");
-                          setSelectedTestId(null);
-                        }}
                         onCreateTestCase={handleCreateTestCase}
                         onDeleteTestCase={handleDeleteTestCase}
                         isRerunning={rerunningSuiteId === suite._id}
@@ -1088,7 +1077,7 @@ export function EvalsTab() {
                           platform: detectPlatform(),
                           environment: detectEnvironment(),
                         });
-                        setView("run");
+                        navigateToEvalsRoute({ type: "create" });
                       }}
                       className="gap-2"
                       size="sm"
@@ -1129,12 +1118,30 @@ export function EvalsTab() {
                   deletingSuiteId={deletingSuiteId}
                   deletingRunId={deletingRunId}
                   availableModels={availableModels}
-                  selectedTestId={selectedTestId}
-                  onTestIdChange={setSelectedTestId}
-                  mode={suiteMode}
-                  onModeChange={setSuiteMode}
-                  viewResetKey={viewResetKey}
+                  route={route}
                 />
+              </div>
+            ) : selectedSuiteId && !isSuiteDetailsLoading ? (
+              <div className="flex-1 flex items-center justify-center">
+                <div className="text-center max-w-md mx-auto p-8">
+                  <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center mx-auto mb-6">
+                    <AlertTriangle className="h-10 w-10 text-muted-foreground" />
+                  </div>
+                  <h2 className="text-2xl font-semibold text-foreground mb-2">
+                    Suite not found
+                  </h2>
+                  <p className="text-sm text-muted-foreground mb-6">
+                    The test suite you're looking for doesn't exist or may have
+                    been deleted.
+                  </p>
+                  <Button
+                    onClick={() => navigateToEvalsRoute({ type: "list" })}
+                    variant="outline"
+                    size="sm"
+                  >
+                    Back to test suites
+                  </Button>
+                </div>
               </div>
             ) : null}
           </div>
