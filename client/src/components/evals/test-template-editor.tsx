@@ -335,23 +335,16 @@ export function TestTemplateEditor({
     }
   };
 
-  if (!currentTestCase) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <p className="text-xs text-muted-foreground">Loading test case...</p>
-      </div>
-    );
-  }
-
   // Use models from the test case (which come from the suite configuration)
   const modelOptions = useMemo(() => {
+    if (!currentTestCase) return [];
     const models = currentTestCase.models || [];
     return models.map((m: any) => ({
       value: `${m.provider}/${m.model}`,
       label: m.model, // Show only model name, not provider
       provider: m.provider,
     }));
-  }, [currentTestCase.models]);
+  }, [currentTestCase]);
 
   // Auto-select first model if none selected
   useEffect(() => {
@@ -359,6 +352,14 @@ export function TestTemplateEditor({
       setSelectedModel(modelOptions[0].value);
     }
   }, [modelOptions, selectedModel]);
+
+  if (!currentTestCase) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <p className="text-xs text-muted-foreground">Loading test case...</p>
+      </div>
+    );
+  }
 
   return (
     <ResizablePanelGroup direction="vertical" className="h-full">
