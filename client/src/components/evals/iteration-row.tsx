@@ -30,13 +30,10 @@ export function CompactIterationRow({
   isOpen = false,
   onToggle,
 }: IterationRowProps) {
-
   const startedAt = iteration.startedAt ?? iteration.createdAt;
   const completedAt = iteration.updatedAt ?? iteration.createdAt;
   const durationMs =
-    startedAt && completedAt
-      ? Math.max(completedAt - startedAt, 0)
-      : null;
+    startedAt && completedAt ? Math.max(completedAt - startedAt, 0) : null;
   const isPending = iteration.result === "pending";
 
   const runTimestamp = iterationRun
@@ -46,16 +43,11 @@ export function CompactIterationRow({
   const actualToolCalls = iteration.actualToolCalls || [];
 
   return (
-    <div
-      className={cn(
-        "relative overflow-hidden",
-        isPending && "opacity-60"
-      )}
-    >
+    <div className={cn("relative overflow-hidden", isPending && "opacity-60")}>
       <div
         className={cn(
           "absolute left-0 top-0 h-full w-1",
-          getIterationBorderColor(iteration.result)
+          getIterationBorderColor(iteration.result),
         )}
       />
       <div className="flex items-center gap-6 w-full">
@@ -74,7 +66,9 @@ export function CompactIterationRow({
             {testCase?.title || "—"}
           </span>
           <span className="text-xs text-muted-foreground min-w-[140px] max-w-[140px] truncate">
-            {iteration.testCaseSnapshot?.model || iterationTestCase?.model || "—"}
+            {iteration.testCaseSnapshot?.model ||
+              iterationTestCase?.model ||
+              "—"}
           </span>
           <span className="text-xs font-mono text-muted-foreground min-w-[60px] max-w-[60px] text-right">
             {actualToolCalls.length}
@@ -110,4 +104,3 @@ export function CompactIterationRow({
     </div>
   );
 }
-
