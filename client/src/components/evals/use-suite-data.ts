@@ -210,8 +210,18 @@ export function useSuiteData(
     };
 
     // Group iterations
+    // Priority: testCaseId first, then fall back to snapshot grouping
     iterations.forEach((iteration) => {
-      if (iteration.testCaseSnapshot) {
+      if (iteration.testCaseId) {
+        // First, try to match by testCaseId (most reliable)
+        const group = groups.get(iteration.testCaseId);
+        if (group) {
+          group.iterations.push(iteration);
+        } else {
+          unassigned.iterations.push(iteration);
+        }
+      } else if (iteration.testCaseSnapshot) {
+        // Fall back to snapshot grouping for legacy iterations without testCaseId
         const snapshotKey = `snapshot-${iteration.testCaseSnapshot.title}-${iteration.testCaseSnapshot.query}`;
         if (!groups.has(snapshotKey)) {
           const virtualTestCase: EvalCase = {
@@ -239,13 +249,6 @@ export function useSuiteData(
           });
         }
         groups.get(snapshotKey)!.iterations.push(iteration);
-      } else if (iteration.testCaseId) {
-        const group = groups.get(iteration.testCaseId);
-        if (group) {
-          group.iterations.push(iteration);
-        } else {
-          unassigned.iterations.push(iteration);
-        }
       } else {
         unassigned.iterations.push(iteration);
       }
