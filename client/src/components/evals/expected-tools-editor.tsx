@@ -53,21 +53,11 @@ export function ExpectedToolsEditor({
 
   const updateToolName = (index: number, toolName: string) => {
     const updated = [...toolCalls];
-    const selectedTool = availableTools.find((t) => t.name === toolName);
-
-    // Auto-populate all available arguments from the tool's schema
-    let initialArguments: Record<string, any> = {};
-    if (selectedTool?.inputSchema?.properties) {
-      const properties = selectedTool.inputSchema.properties;
-      Object.keys(properties).forEach((key) => {
-        initialArguments[key] = "";
-      });
-    }
 
     updated[index] = {
       ...updated[index],
       toolName,
-      arguments: initialArguments,
+      arguments: {},
     };
     onChange(updated);
   };
@@ -330,7 +320,7 @@ export function ExpectedToolsEditor({
               })}
             </div>
 
-            {getAvailableArguments(toolIndex).length > 0 ? (
+            {toolCall.toolName && getAvailableArguments(toolIndex).length > 0 && (
               <Popover
                 open={openArgCombobox === `${toolIndex}`}
                 onOpenChange={(open) =>
@@ -343,62 +333,55 @@ export function ExpectedToolsEditor({
                     Add argument
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-full p-0" align="start">
+                <PopoverContent
+                  className="w-full max-w-[400px] p-0"
+                  align="start"
+                >
                   <Command>
                     <CommandInput
                       placeholder="Search arguments..."
-                      className="h-9"
+                      className="h-8 text-xs"
                     />
-                    <ScrollArea className="max-h-60">
-                      <CommandEmpty>No argument found.</CommandEmpty>
-                      <CommandGroup>
-                        {getAvailableArguments(toolIndex)
-                          .filter(
-                            (arg) =>
-                              !toolCall.arguments.hasOwnProperty(arg.key),
-                          )
-                          .map((arg) => (
-                            <CommandItem
-                              key={arg.key}
-                              value={arg.key}
-                              onSelect={() => {
-                                addArgument(toolIndex, arg.key);
-                                setOpenArgCombobox(null);
-                              }}
-                              className="cursor-pointer"
-                            >
-                              <div className="flex flex-col flex-1">
-                                <span className="font-mono text-sm">
-                                  {arg.key}
+                    <CommandEmpty className="py-6 text-center text-xs text-muted-foreground">
+                      No argument found.
+                    </CommandEmpty>
+                    <CommandGroup className="max-h-[200px] overflow-y-auto p-1">
+                      {getAvailableArguments(toolIndex)
+                        .filter(
+                          (arg) =>
+                            !toolCall.arguments.hasOwnProperty(arg.key),
+                        )
+                        .map((arg) => (
+                          <CommandItem
+                            key={arg.key}
+                            value={arg.key}
+                            onSelect={() => {
+                              addArgument(toolIndex, arg.key);
+                              setOpenArgCombobox(null);
+                            }}
+                            className="px-2 py-1.5 cursor-pointer"
+                          >
+                            <div className="flex flex-col flex-1">
+                              <span className="font-mono text-xs">
+                                {arg.key}
+                              </span>
+                              {arg.schema?.description && (
+                                <span className="text-[10px] text-muted-foreground leading-tight">
+                                  {arg.schema.description}
                                 </span>
-                                {arg.schema?.description && (
-                                  <span className="text-xs text-muted-foreground">
-                                    {arg.schema.description}
-                                  </span>
-                                )}
-                                {arg.schema?.type && (
-                                  <span className="text-xs text-muted-foreground">
-                                    Type: {arg.schema.type}
-                                  </span>
-                                )}
-                              </div>
-                            </CommandItem>
-                          ))}
-                      </CommandGroup>
-                    </ScrollArea>
+                              )}
+                              {arg.schema?.type && (
+                                <span className="text-[10px] text-muted-foreground leading-tight">
+                                  Type: {arg.schema.type}
+                                </span>
+                              )}
+                            </div>
+                          </CommandItem>
+                        ))}
+                    </CommandGroup>
                   </Command>
                 </PopoverContent>
               </Popover>
-            ) : (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => addArgument(toolIndex)}
-                className="h-7 text-xs"
-              >
-                <Plus className="h-3 w-3 mr-1" />
-                Add argument
-              </Button>
             )}
           </div>
         </div>
