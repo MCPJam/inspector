@@ -8,6 +8,7 @@ import { SuiteTestsConfig } from "./suite-tests-config";
 import { TestTemplateEditor } from "./test-template-editor";
 import { PassCriteriaSelector } from "./pass-criteria-selector";
 import { TestCasesOverview } from "./test-cases-overview";
+import { TestCaseDetailView } from "./test-case-detail-view";
 import { useSuiteData, useRunDetailData } from "./use-suite-data";
 import type {
   EvalCase,
@@ -62,14 +63,19 @@ export function SuiteIterationsView({
 }) {
   // Derive view state from route
   const isEditMode = route.type === "suite-edit";
-  const selectedTestId = route.type === "test-edit" ? route.testId : null;
+  const selectedTestId =
+    route.type === "test-detail" || route.type === "test-edit"
+      ? route.testId
+      : null;
   const selectedRunId = route.type === "run-detail" ? route.runId : null;
   const viewMode =
     route.type === "run-detail"
       ? "run-detail"
-      : route.type === "test-edit"
-        ? "test-edit"
-        : "overview";
+      : route.type === "test-detail"
+        ? "test-detail"
+        : route.type === "test-edit"
+          ? "test-edit"
+          : "overview";
   const runsViewMode =
     route.type === "suite-overview" && route.view === "test-cases"
       ? "test-cases"
@@ -208,6 +214,38 @@ export function SuiteIterationsView({
                 connectedServerNames={connectedServerNames}
               />
             </div>
+          ) : viewMode === "test-detail" && selectedTestId ? (
+            (() => {
+              const selectedCase = cases.find((c) => c._id === selectedTestId);
+              if (!selectedCase) return null;
+
+              const caseIterations = allIterations.filter(
+                (iter) => iter.testCaseId === selectedTestId,
+              );
+
+              return (
+                <TestCaseDetailView
+                  testCase={selectedCase}
+                  iterations={caseIterations}
+                  runs={runs}
+                  serverNames={(suite.environment?.servers || []).filter(name => connectedServerNames.has(name))}
+                  onBack={() => {
+                    navigateToEvalsRoute({
+                      type: "suite-overview",
+                      suiteId: suite._id,
+                      view: "test-cases",
+                    });
+                  }}
+                  onViewRun={(runId) => {
+                    navigateToEvalsRoute({
+                      type: "run-detail",
+                      suiteId: suite._id,
+                      runId,
+                    });
+                  }}
+                />
+              );
+            })()
           ) : viewMode === "overview" ? (
             <div key={runsViewMode} className="space-y-4">
               {runsViewMode === "runs" ? (
@@ -239,6 +277,13 @@ export function SuiteIterationsView({
                       type: "suite-overview",
                       suiteId: suite._id,
                       view: value,
+                    });
+                  }}
+                  onTestCaseClick={(testCaseId) => {
+                    navigateToEvalsRoute({
+                      type: "test-detail",
+                      suiteId: suite._id,
+                      testId: testCaseId,
                     });
                   }}
                   runTrendData={runTrendData}
