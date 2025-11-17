@@ -49,7 +49,7 @@ export function TestCasesOverview({
   const testCaseStats = useMemo(() => {
     // Create a set of inactive run IDs for fast lookup
     const inactiveRunIds = new Set(
-      runs.filter((run) => run.isActive === false).map((run) => run._id)
+      runs.filter((run) => run.isActive === false).map((run) => run._id),
     );
 
     return cases.map((testCase) => {
@@ -57,18 +57,18 @@ export function TestCasesOverview({
       const caseIterations = allIterations.filter(
         (iter) =>
           iter.testCaseId === testCase._id &&
-          (!iter.suiteRunId || !inactiveRunIds.has(iter.suiteRunId))
+          (!iter.suiteRunId || !inactiveRunIds.has(iter.suiteRunId)),
       );
 
       const passed = caseIterations.filter((iter) =>
-        computeIterationPassed(iter)
+        computeIterationPassed(iter),
       ).length;
       const total = caseIterations.length;
       const avgAccuracy = total > 0 ? Math.round((passed / total) * 100) : 0;
 
       // Calculate average duration
       const completedIterations = caseIterations.filter(
-        (iter) => iter.startedAt && iter.updatedAt && iter.result !== "pending"
+        (iter) => iter.startedAt && iter.updatedAt && iter.result !== "pending",
       );
       const totalDuration = completedIterations.reduce((sum, iter) => {
         const duration = (iter.updatedAt ?? 0) - (iter.startedAt ?? 0);
@@ -197,7 +197,9 @@ export function TestCasesOverview({
                             <div className="flex items-center gap-2">
                               <div
                                 className="h-2 w-2 rounded-full"
-                                style={{ backgroundColor: "var(--color-passRate)" }}
+                                style={{
+                                  backgroundColor: "var(--color-passRate)",
+                                }}
                               />
                               <span className="text-sm font-semibold">
                                 {data.passRate}%
@@ -237,7 +239,9 @@ export function TestCasesOverview({
           </div>
           <select
             value={runsViewMode}
-            onChange={(e) => onViewModeChange(e.target.value as "runs" | "test-cases")}
+            onChange={(e) =>
+              onViewModeChange(e.target.value as "runs" | "test-cases")
+            }
             className="text-xs border rounded px-2 py-1 bg-background"
           >
             <option value="runs">Runs</option>
@@ -245,44 +249,46 @@ export function TestCasesOverview({
           </select>
         </div>
 
-      {/* Column Headers */}
-      {testCaseStats.length > 0 && (
-        <div className="flex items-center gap-6 w-full px-4 py-1.5 bg-muted/30 border-b text-xs font-medium text-muted-foreground">
-          <div className="flex-1 min-w-[200px]">Test Case Name</div>
-          <div className="min-w-[100px] text-right">Iterations</div>
-          <div className="min-w-[100px] text-right">Avg Accuracy</div>
-          <div className="min-w-[100px] text-right">Avg Duration</div>
-        </div>
-      )}
-
-      <div className="divide-y overflow-y-auto">
-        {testCaseStats.length === 0 ? (
-          <div className="px-4 py-12 text-center text-sm text-muted-foreground">
-            No test cases found.
+        {/* Column Headers */}
+        {testCaseStats.length > 0 && (
+          <div className="flex items-center gap-6 w-full px-4 py-1.5 bg-muted/30 border-b text-xs font-medium text-muted-foreground">
+            <div className="flex-1 min-w-[200px]">Test Case Name</div>
+            <div className="min-w-[100px] text-right">Iterations</div>
+            <div className="min-w-[100px] text-right">Avg Accuracy</div>
+            <div className="min-w-[100px] text-right">Avg Duration</div>
           </div>
-        ) : (
-          testCaseStats.map(({ testCase, iterations, avgAccuracy, avgDuration }) => (
-            <button
-              key={testCase._id}
-              onClick={() => onTestCaseClick(testCase._id)}
-              className="flex items-center gap-6 w-full px-4 py-2.5 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
-            >
-              <span className="text-xs font-medium flex-1 min-w-[200px] truncate">
-                {testCase.title || "Untitled test case"}
-              </span>
-              <span className="min-w-[100px] text-right text-xs font-mono text-muted-foreground">
-                {iterations}
-              </span>
-              <span className="min-w-[100px] text-right text-xs font-mono text-muted-foreground">
-                {iterations > 0 ? `${avgAccuracy}%` : "—"}
-              </span>
-              <span className="min-w-[100px] text-right text-xs font-mono text-muted-foreground">
-                {iterations > 0 ? formatDuration(avgDuration) : "—"}
-              </span>
-            </button>
-          ))
         )}
-      </div>
+
+        <div className="divide-y overflow-y-auto">
+          {testCaseStats.length === 0 ? (
+            <div className="px-4 py-12 text-center text-sm text-muted-foreground">
+              No test cases found.
+            </div>
+          ) : (
+            testCaseStats.map(
+              ({ testCase, iterations, avgAccuracy, avgDuration }) => (
+                <button
+                  key={testCase._id}
+                  onClick={() => onTestCaseClick(testCase._id)}
+                  className="flex items-center gap-6 w-full px-4 py-2.5 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                >
+                  <span className="text-xs font-medium flex-1 min-w-[200px] truncate">
+                    {testCase.title || "Untitled test case"}
+                  </span>
+                  <span className="min-w-[100px] text-right text-xs font-mono text-muted-foreground">
+                    {iterations}
+                  </span>
+                  <span className="min-w-[100px] text-right text-xs font-mono text-muted-foreground">
+                    {iterations > 0 ? `${avgAccuracy}%` : "—"}
+                  </span>
+                  <span className="min-w-[100px] text-right text-xs font-mono text-muted-foreground">
+                    {iterations > 0 ? formatDuration(avgDuration) : "—"}
+                  </span>
+                </button>
+              ),
+            )
+          )}
+        </div>
       </div>
     </>
   );

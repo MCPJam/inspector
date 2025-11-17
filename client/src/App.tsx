@@ -104,9 +104,7 @@ export default function App() {
       const hash = (window.location.hash || "#servers").replace("#", "");
 
       // Extract the top-level tab from subroutes (e.g., "/evals/suite/123" -> "evals")
-      const topLevelTab = hash.startsWith("/")
-        ? hash.split("/")[1]
-        : hash;
+      const topLevelTab = hash.startsWith("/") ? hash.split("/")[1] : hash;
 
       setActiveTab(topLevelTab);
       if (topLevelTab === "chat" || topLevelTab === "chat-v2") {

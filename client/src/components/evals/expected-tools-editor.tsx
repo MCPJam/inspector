@@ -322,69 +322,70 @@ export function ExpectedToolsEditor({
               })}
             </div>
 
-            {toolCall.toolName && getAvailableArguments(toolIndex).length > 0 && (
-              <Popover
-                open={openArgCombobox === `${toolIndex}`}
-                onOpenChange={(open) =>
-                  setOpenArgCombobox(open ? `${toolIndex}` : null)
-                }
-              >
-                <PopoverTrigger asChild>
-                  <Button variant="ghost" size="sm" className="h-7 text-xs">
-                    <Plus className="h-3 w-3 mr-1" />
-                    Add argument
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent
-                  className="w-full max-w-[400px] p-0"
-                  align="start"
+            {toolCall.toolName &&
+              getAvailableArguments(toolIndex).length > 0 && (
+                <Popover
+                  open={openArgCombobox === `${toolIndex}`}
+                  onOpenChange={(open) =>
+                    setOpenArgCombobox(open ? `${toolIndex}` : null)
+                  }
                 >
-                  <Command>
-                    <CommandInput
-                      placeholder="Search arguments..."
-                      className="h-8 text-xs"
-                    />
-                    <CommandEmpty className="py-6 text-center text-xs text-muted-foreground">
-                      No argument found.
-                    </CommandEmpty>
-                    <CommandGroup className="max-h-[200px] overflow-y-auto p-1">
-                      {getAvailableArguments(toolIndex)
-                        .filter(
-                          (arg) =>
-                            !toolCall.arguments.hasOwnProperty(arg.key),
-                        )
-                        .map((arg) => (
-                          <CommandItem
-                            key={arg.key}
-                            value={arg.key}
-                            onSelect={() => {
-                              addArgument(toolIndex, arg.key);
-                              setOpenArgCombobox(null);
-                            }}
-                            className="px-2 py-1.5 cursor-pointer"
-                          >
-                            <div className="flex flex-col flex-1">
-                              <span className="font-mono text-xs">
-                                {arg.key}
-                              </span>
-                              {arg.schema?.description && (
-                                <span className="text-[10px] text-muted-foreground leading-tight">
-                                  {arg.schema.description}
+                  <PopoverTrigger asChild>
+                    <Button variant="ghost" size="sm" className="h-7 text-xs">
+                      <Plus className="h-3 w-3 mr-1" />
+                      Add argument
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    className="w-full max-w-[400px] p-0"
+                    align="start"
+                  >
+                    <Command>
+                      <CommandInput
+                        placeholder="Search arguments..."
+                        className="h-8 text-xs"
+                      />
+                      <CommandEmpty className="py-6 text-center text-xs text-muted-foreground">
+                        No argument found.
+                      </CommandEmpty>
+                      <CommandGroup className="max-h-[200px] overflow-y-auto p-1">
+                        {getAvailableArguments(toolIndex)
+                          .filter(
+                            (arg) =>
+                              !toolCall.arguments.hasOwnProperty(arg.key),
+                          )
+                          .map((arg) => (
+                            <CommandItem
+                              key={arg.key}
+                              value={arg.key}
+                              onSelect={() => {
+                                addArgument(toolIndex, arg.key);
+                                setOpenArgCombobox(null);
+                              }}
+                              className="px-2 py-1.5 cursor-pointer"
+                            >
+                              <div className="flex flex-col flex-1">
+                                <span className="font-mono text-xs">
+                                  {arg.key}
                                 </span>
-                              )}
-                              {arg.schema?.type && (
-                                <span className="text-[10px] text-muted-foreground leading-tight">
-                                  Type: {arg.schema.type}
-                                </span>
-                              )}
-                            </div>
-                          </CommandItem>
-                        ))}
-                    </CommandGroup>
-                  </Command>
-                </PopoverContent>
-              </Popover>
-            )}
+                                {arg.schema?.description && (
+                                  <span className="text-[10px] text-muted-foreground leading-tight">
+                                    {arg.schema.description}
+                                  </span>
+                                )}
+                                {arg.schema?.type && (
+                                  <span className="text-[10px] text-muted-foreground leading-tight">
+                                    Type: {arg.schema.type}
+                                  </span>
+                                )}
+                              </div>
+                            </CommandItem>
+                          ))}
+                      </CommandGroup>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
+              )}
           </div>
         </div>
       ))}

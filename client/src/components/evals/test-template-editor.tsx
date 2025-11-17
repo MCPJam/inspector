@@ -333,7 +333,8 @@ export function TestTemplateEditor({
         const iteration = data.iteration;
         const startedAt = iteration.startedAt ?? iteration.createdAt;
         const completedAt = iteration.updatedAt ?? iteration.createdAt;
-        const durationMs = startedAt && completedAt ? Math.max(completedAt - startedAt, 0) : 0;
+        const durationMs =
+          startedAt && completedAt ? Math.max(completedAt - startedAt, 0) : 0;
 
         // Track test case run completed
         posthog.capture("eval_test_case_run_completed", {
@@ -600,7 +601,9 @@ export function TestTemplateEditor({
           testCase={currentTestCase}
           loading={isRunning}
           onClear={handleClearResult}
-          serverNames={(suite?.environment?.servers || []).filter(name => connectedServerNames.has(name))}
+          serverNames={(suite?.environment?.servers || []).filter((name) =>
+            connectedServerNames.has(name),
+          )}
         />
       </ResizablePanel>
     </ResizablePanelGroup>
