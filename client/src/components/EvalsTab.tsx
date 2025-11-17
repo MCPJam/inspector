@@ -292,7 +292,7 @@ function SuiteSidebarItem({
                 <div
                   key={testCase._id}
                   className={cn(
-                    "group w-full flex items-center gap-1 px-6 py-2 text-left text-xs hover:bg-accent/50 transition-colors",
+                    "group w-full flex items-center gap-1 pl-6 pr-4 py-2 text-left text-xs hover:bg-accent/50 transition-colors",
                     isTestSelected && "bg-accent/70 font-medium",
                   )}
                 >
@@ -315,7 +315,7 @@ function SuiteSidebarItem({
                         className="shrink-0 p-1 hover:bg-accent/50 rounded transition-colors opacity-0 group-hover:opacity-100"
                         aria-label="Test case options"
                       >
-                        <MoreVertical className="h-3 w-3" />
+                        <MoreVertical className="h-4 w-4" />
                       </button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
@@ -327,7 +327,7 @@ function SuiteSidebarItem({
                         disabled={isTestDeleting}
                         variant="destructive"
                       >
-                        <Trash2 className="h-3 w-3 mr-2" />
+                        <Trash2 className="h-4 w-4 mr-2" />
                         {isTestDeleting ? "Deleting..." : "Delete"}
                       </DropdownMenuItem>
                     </DropdownMenuContent>
