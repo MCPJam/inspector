@@ -1,5 +1,12 @@
 import { Badge } from "@/components/ui/badge";
-import { ChevronDown, CheckCircle2, AlertTriangle, Code2, MessageSquare, MessageCircle } from "lucide-react";
+import {
+  ChevronDown,
+  CheckCircle2,
+  AlertTriangle,
+  Code2,
+  MessageSquare,
+  MessageCircle,
+} from "lucide-react";
 import { useState } from "react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { getProviderLogo } from "@/lib/provider-logos";
@@ -29,12 +36,17 @@ interface TraceViewerProps {
   modelProvider?: string;
 }
 
-export function TraceViewer({ trace, modelProvider = "openai" }: TraceViewerProps) {
+export function TraceViewer({
+  trace,
+  modelProvider = "openai",
+}: TraceViewerProps) {
   const [viewMode, setViewMode] = useState<"formatted" | "raw">("formatted");
 
   if (!trace) {
     return (
-      <div className="text-xs text-muted-foreground">No trace data available</div>
+      <div className="text-xs text-muted-foreground">
+        No trace data available
+      </div>
     );
   }
 
@@ -43,7 +55,11 @@ export function TraceViewer({ trace, modelProvider = "openai" }: TraceViewerProp
 
   if (Array.isArray(trace)) {
     messages = trace;
-  } else if (typeof trace === "object" && "messages" in trace && Array.isArray(trace.messages)) {
+  } else if (
+    typeof trace === "object" &&
+    "messages" in trace &&
+    Array.isArray(trace.messages)
+  ) {
     messages = trace.messages;
   } else if (typeof trace === "object" && "role" in trace) {
     messages = [trace as TraceMessage];
@@ -169,7 +185,7 @@ export function TraceViewer({ trace, modelProvider = "openai" }: TraceViewerProp
 
 function TraceMessage({
   message,
-  modelProvider
+  modelProvider,
 }: {
   message: TraceMessage;
   modelProvider: string;
@@ -180,14 +196,17 @@ function TraceMessage({
 
   if (isUser) {
     // User messages can have content as string or array
-    const userContent = typeof message.content === "string"
-      ? message.content
-      : message.content?.[0]?.text || "";
+    const userContent =
+      typeof message.content === "string"
+        ? message.content
+        : message.content?.[0]?.text || "";
 
     return (
       <div className="flex justify-end">
         <div className="max-w-3xl rounded-lg bg-primary px-4 py-3 text-sm text-primary-foreground shadow-sm">
-          <div className="whitespace-pre-wrap break-words leading-6">{userContent}</div>
+          <div className="whitespace-pre-wrap break-words leading-6">
+            {userContent}
+          </div>
         </div>
       </div>
     );
@@ -250,7 +269,7 @@ function TraceMessageGroup({
   // Match tool calls with their results
   const combined = toolCalls.map((toolCall) => {
     const result = toolResults.find(
-      (r) => r.toolCallId === toolCall.toolCallId
+      (r) => r.toolCallId === toolCall.toolCallId,
     );
     return { toolCall, toolResult: result };
   });
@@ -313,7 +332,9 @@ function TracePart({ part }: { part: ContentPart }) {
             Reasoning
           </span>
         </div>
-        <pre className="whitespace-pre-wrap break-words text-muted-foreground leading-relaxed">{part.text}</pre>
+        <pre className="whitespace-pre-wrap break-words text-muted-foreground leading-relaxed">
+          {part.text}
+        </pre>
       </div>
     );
   }
@@ -344,7 +365,8 @@ function CombinedToolPart({
     themeMode === "dark" ? "h-3 w-3 filter invert" : "h-3 w-3";
   const toolName = toolCall?.toolName || toolResult?.toolName || "Unknown tool";
   const hasInput = toolCall?.input !== undefined && toolCall?.input !== null;
-  const hasOutput = toolResult?.output !== undefined && toolResult?.output !== null;
+  const hasOutput =
+    toolResult?.output !== undefined && toolResult?.output !== null;
   const isError = toolResult?.isError === true;
 
   // Extract text from nested content structure if it exists
@@ -357,7 +379,7 @@ function CombinedToolPart({
     Array.isArray(toolResult.output.content)
   ) {
     const textContent = toolResult.output.content.find(
-      (c: any) => c.type === "text"
+      (c: any) => c.type === "text",
     );
     if (textContent?.text) {
       displayOutput = textContent.text;

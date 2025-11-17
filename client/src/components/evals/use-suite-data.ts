@@ -1,7 +1,18 @@
 import { useMemo } from "react";
-import { formatTime, formatRunId, computeIterationSummary, getTemplateKey } from "./helpers";
+import {
+  formatTime,
+  formatRunId,
+  computeIterationSummary,
+  getTemplateKey,
+} from "./helpers";
 import { computeIterationPassed } from "./pass-criteria";
-import { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun, SuiteAggregate } from "./types";
+import {
+  EvalCase,
+  EvalIteration,
+  EvalSuite,
+  EvalSuiteRun,
+  SuiteAggregate,
+} from "./types";
 
 export function useSuiteData(
   suite: EvalSuite,
@@ -9,15 +20,15 @@ export function useSuiteData(
   iterations: EvalIteration[],
   allIterations: EvalIteration[],
   runs: EvalSuiteRun[],
-  aggregate: SuiteAggregate | null
+  aggregate: SuiteAggregate | null,
 ) {
   // Calculate active run IDs once (memoized separately for better performance)
   const activeRunIds = useMemo(
     () =>
       new Set(
-        runs.filter((run) => run.isActive !== false).map((run) => run._id)
+        runs.filter((run) => run.isActive !== false).map((run) => run._id),
       ),
-    [runs]
+    [runs],
   );
 
   // General overview summary (all iterations)
@@ -36,8 +47,7 @@ export function useSuiteData(
 
     const total =
       totals.passed + totals.failed + totals.cancelled + totals.pending;
-    const passRate =
-      total > 0 ? Math.round((totals.passed / total) * 100) : 0;
+    const passRate = total > 0 ? Math.round((totals.passed / total) * 100) : 0;
 
     return {
       passRate,
@@ -58,10 +68,10 @@ export function useSuiteData(
       .reverse()
       .map((run) => {
         const runIterations = allIterations.filter(
-          (iter) => iter.suiteRunId === run._id
+          (iter) => iter.suiteRunId === run._id,
         );
         const realTimePassed = runIterations.filter((i) =>
-          computeIterationPassed(i)
+          computeIterationPassed(i),
         ).length;
         const realTimeTotal = runIterations.length;
 
@@ -82,8 +92,14 @@ export function useSuiteData(
         };
       })
       .filter(
-        (item): item is { runId: string; runIdDisplay: string; passRate: number; label: string } =>
-          item !== null
+        (
+          item,
+        ): item is {
+          runId: string;
+          runIdDisplay: string;
+          passRate: number;
+          label: string;
+        } => item !== null,
       );
     return data;
   }, [runs, allIterations]);
@@ -92,7 +108,7 @@ export function useSuiteData(
   const modelStats = useMemo(() => {
     const activeIterations = allIterations.filter(
       (iteration) =>
-        !iteration.suiteRunId || activeRunIds.has(iteration.suiteRunId)
+        !iteration.suiteRunId || activeRunIds.has(iteration.suiteRunId),
     );
 
     const modelMap = new Map<
@@ -326,7 +342,9 @@ export function useSuiteData(
       if (!group.testCase) return;
 
       const templateKey = getTemplateKey(group.testCase);
-      const templateTitle = group.testCase.title.replace(/\s*\[.*?\]\s*$/, "").trim();
+      const templateTitle = group.testCase.title
+        .replace(/\s*\[.*?\]\s*$/, "")
+        .trim();
       const configTemplateKey = `template:${templateTitle}-${group.testCase.query}`;
 
       const keyToUse = groups.has(configTemplateKey)
@@ -377,13 +395,13 @@ export function useSuiteData(
 export function useRunDetailData(
   selectedRunId: string | null,
   allIterations: EvalIteration[],
-  runDetailSortBy: "model" | "test" | "result"
+  runDetailSortBy: "model" | "test" | "result",
 ) {
   // Iterations for selected run
   const iterationsForSelectedRun = useMemo(() => {
     if (!selectedRunId) return [];
     return allIterations.filter(
-      (iteration) => iteration.suiteRunId === selectedRunId
+      (iteration) => iteration.suiteRunId === selectedRunId,
     );
   }, [selectedRunId, allIterations]);
 
@@ -531,7 +549,8 @@ export function useRunDetailData(
     const durationData = Array.from(testMap.values()).map((test) => {
       const avgDuration =
         test.durations.length > 0
-          ? test.durations.reduce((sum, d) => sum + d, 0) / test.durations.length
+          ? test.durations.reduce((sum, d) => sum + d, 0) /
+            test.durations.length
           : 0;
 
       return {

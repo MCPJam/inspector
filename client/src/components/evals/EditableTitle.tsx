@@ -88,7 +88,7 @@ export function EditableTitle({
           "bg-background",
           variantStyles[variant],
           isSaving && "opacity-50 cursor-wait",
-          inputClassName
+          inputClassName,
         )}
       />
     );
@@ -101,7 +101,7 @@ export function EditableTitle({
       className={cn(
         "px-3 py-2 h-auto hover:bg-accent",
         variantStyles[variant],
-        className
+        className,
       )}
     >
       {value || <span className="text-muted-foreground">{placeholder}</span>}

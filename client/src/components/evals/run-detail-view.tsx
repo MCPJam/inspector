@@ -1,12 +1,21 @@
 import { useState } from "react";
-import {  X, Loader2, ChevronDown, ChevronRight } from "lucide-react";
+import { X, Loader2, ChevronDown, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   ChartContainer,
   ChartTooltip,
   ChartTooltipContent,
 } from "@/components/ui/chart";
-import {  BarChart, Bar, CartesianGrid, PieChart, Pie, XAxis, YAxis, Label } from "recharts";
+import {
+  BarChart,
+  Bar,
+  CartesianGrid,
+  PieChart,
+  Pie,
+  XAxis,
+  YAxis,
+  Label,
+} from "recharts";
 import { PassCriteriaBadge } from "./pass-criteria-badge";
 import { IterationDetails } from "./iteration-details";
 import { getIterationBorderColor } from "./helpers";
@@ -17,7 +26,11 @@ interface RunDetailViewProps {
   caseGroupsForSelectedRun: EvalIteration[];
   selectedRunChartData: {
     donutData: Array<{ name: string; value: number; fill: string }>;
-    durationData: Array<{ name: string; duration: number; durationSeconds: number }>;
+    durationData: Array<{
+      name: string;
+      duration: number;
+      durationSeconds: number;
+    }>;
     modelData: Array<{
       model: string;
       passRate: number;
@@ -81,7 +94,8 @@ export function RunDetailView({
               <div className="text-sm font-semibold">
                 {selectedRunDetails.completedAt && selectedRunDetails.createdAt
                   ? formatDuration(
-                      selectedRunDetails.completedAt - selectedRunDetails.createdAt
+                      selectedRunDetails.completedAt -
+                        selectedRunDetails.createdAt,
                     )
                   : "—"}
               </div>
@@ -96,7 +110,10 @@ export function RunDetailView({
                   passed: { label: "Passed", color: "hsl(142.1 76.2% 36.3%)" },
                   failed: { label: "Failed", color: "hsl(0 84.2% 60.2%)" },
                   pending: { label: "Pending", color: "hsl(45.4 93.4% 47.5%)" },
-                  cancelled: { label: "Cancelled", color: "hsl(240 3.7% 15.9%)" },
+                  cancelled: {
+                    label: "Cancelled",
+                    color: "hsl(240 3.7% 15.9%)",
+                  },
                 }}
                 className="h-12 w-12"
               >
@@ -115,7 +132,7 @@ export function RunDetailView({
                         if (viewBox && "cx" in viewBox && "cy" in viewBox) {
                           const total = selectedRunChartData.donutData.reduce(
                             (sum, item) => sum + item.value,
-                            0
+                            0,
                           );
                           return (
                             <text
@@ -207,7 +224,7 @@ export function RunDetailView({
                 isOpen={openIterationId === iteration._id}
                 onToggle={() =>
                   setOpenIterationId(
-                    openIterationId === iteration._id ? null : iteration._id
+                    openIterationId === iteration._id ? null : iteration._id,
                   )
                 }
                 showModelInfo={true}
@@ -380,14 +397,16 @@ export function RunDetailView({
                                         {data.model}
                                       </span>
                                       <span className="text-xs text-muted-foreground mt-0.5">
-                                        {data.passed} passed · {data.failed} failed
+                                        {data.passed} passed · {data.failed}{" "}
+                                        failed
                                       </span>
                                     </div>
                                     <div className="flex items-center gap-2">
                                       <div
                                         className="h-2 w-2 rounded-full"
                                         style={{
-                                          backgroundColor: "var(--color-passRate)",
+                                          backgroundColor:
+                                            "var(--color-passRate)",
                                         }}
                                       />
                                       <span className="text-sm font-semibold">
@@ -446,7 +465,7 @@ function IterationRow({
     <div className={`relative ${isPending ? "opacity-60" : ""}`}>
       <div
         className={`absolute left-0 top-0 h-full w-1 ${getIterationBorderColor(
-          iteration.result
+          iteration.result,
         )}`}
       />
       <button
@@ -489,8 +508,8 @@ function IterationRow({
             {isPending
               ? "—"
               : durationMs !== null
-              ? formatDuration(durationMs)
-              : "—"}
+                ? formatDuration(durationMs)
+                : "—"}
           </div>
           {isPending && (
             <div className="w-3.5 flex items-center justify-center">

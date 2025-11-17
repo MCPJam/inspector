@@ -67,27 +67,35 @@ export function SuiteIterationsView({
   viewResetKey?: number;
 }) {
   const activeTab = mode || "runs";
-  const [viewMode, setViewMode] = useState<"overview" | "run-detail" | "test-detail">("overview");
+  const [viewMode, setViewMode] = useState<
+    "overview" | "run-detail" | "test-detail"
+  >("overview");
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [showRunSummarySidebar, setShowRunSummarySidebar] = useState(false);
-  const [runDetailSortBy, setRunDetailSortBy] = useState<"model" | "test" | "result">("model");
+  const [runDetailSortBy, setRunDetailSortBy] = useState<
+    "model" | "test" | "result"
+  >("model");
   const [defaultMinimumPassRate, setDefaultMinimumPassRate] = useState(100);
 
   const updateSuite = useMutation("testSuites:updateTestSuite" as any);
-  const updateTestCaseMutation = useMutation("testSuites:updateTestCase" as any);
+  const updateTestCaseMutation = useMutation(
+    "testSuites:updateTestCase" as any,
+  );
 
   // Use custom hooks for data calculations
-  const {
-    runTrendData,
-    modelStats,
-    caseGroups,
-    templateGroups,
-  } = useSuiteData(suite, cases, iterations, allIterations, runs, aggregate);
+  const { runTrendData, modelStats, caseGroups, templateGroups } = useSuiteData(
+    suite,
+    cases,
+    iterations,
+    allIterations,
+    runs,
+    aggregate,
+  );
 
   const { caseGroupsForSelectedRun, selectedRunChartData } = useRunDetailData(
     selectedRunId,
     allIterations,
-    runDetailSortBy
+    runDetailSortBy,
   );
 
   // Selected run details
@@ -102,7 +110,7 @@ export function SuiteIterationsView({
     if (!selectedTestId) return [];
 
     const templateGroup = templateGroups.find((tg) =>
-      tg.testCaseIds.includes(selectedTestId)
+      tg.testCaseIds.includes(selectedTestId),
     );
 
     if (templateGroup) {
@@ -124,11 +132,13 @@ export function SuiteIterationsView({
       const keyParts = selectedTestId.replace("template:", "").split("-");
       templateGroup = templateGroups.find((tg) => {
         const tgKey = `${tg.title}-${tg.query}`;
-        return tgKey === keyParts.join("-") || selectedTestId === `template:${tgKey}`;
+        return (
+          tgKey === keyParts.join("-") || selectedTestId === `template:${tgKey}`
+        );
       });
     } else {
       templateGroup = templateGroups.find((tg) =>
-        tg.testCaseIds.includes(selectedTestId)
+        tg.testCaseIds.includes(selectedTestId),
       );
     }
 
@@ -161,7 +171,8 @@ export function SuiteIterationsView({
       const configTest = suite.config?.tests?.find((test: any) => {
         const templateTitle = test.title.replace(/\s*\[.*?\]\s*$/, "").trim();
         return (
-          templateTitle === templateGroup.title && test.query === templateGroup.query
+          templateTitle === templateGroup.title &&
+          test.query === templateGroup.query
         );
       });
 
@@ -197,13 +208,13 @@ export function SuiteIterationsView({
       return null;
     }
 
-    const group = caseGroups.find((g) =>
-      g.testCase && templateGroup.testCaseIds.includes(g.testCase._id)
+    const group = caseGroups.find(
+      (g) => g.testCase && templateGroup.testCaseIds.includes(g.testCase._id),
     );
 
     if (!group || !group.testCase) {
       const firstTestCase = cases.find((c) =>
-        templateGroup.testCaseIds.includes(c._id)
+        templateGroup.testCaseIds.includes(c._id),
       );
       if (!firstTestCase) return null;
 
@@ -258,7 +269,9 @@ export function SuiteIterationsView({
     runs.forEach((run) => {
       const runIters = iterationsByRun.get(run._id);
       if (runIters && runIters.length > 0) {
-        const passed = runIters.filter((iter) => iter.result === "passed").length;
+        const passed = runIters.filter(
+          (iter) => iter.result === "passed",
+        ).length;
         const total = runIters.length;
         const passRate = total > 0 ? Math.round((passed / total) * 100) : 0;
 
@@ -285,7 +298,7 @@ export function SuiteIterationsView({
     if (!selectedTestId || !selectedTestDetails?.templateInfo) return [];
 
     const templateGroup = templateGroups.find((tg) =>
-      tg.testCaseIds.includes(selectedTestId)
+      tg.testCaseIds.includes(selectedTestId),
     );
 
     if (!templateGroup) return [];
@@ -306,7 +319,10 @@ export function SuiteIterationsView({
 
     const testCaseMap = new Map<string, { provider: string; model: string }>();
     caseGroups.forEach((group) => {
-      if (group.testCase && templateGroup.testCaseIds.includes(group.testCase._id)) {
+      if (
+        group.testCase &&
+        templateGroup.testCaseIds.includes(group.testCase._id)
+      ) {
         testCaseMap.set(group.testCase._id, {
           provider: group.testCase.provider,
           model: group.testCase.model,
@@ -371,10 +387,13 @@ export function SuiteIterationsView({
         try {
           localStorage.setItem(
             `suite-${suite._id}-criteria-rate`,
-            String(suite.defaultPassCriteria.minimumPassRate)
+            String(suite.defaultPassCriteria.minimumPassRate),
           );
         } catch (error) {
-          console.warn("Failed to sync default pass criteria to localStorage", error);
+          console.warn(
+            "Failed to sync default pass criteria to localStorage",
+            error,
+          );
         }
       }
     } else if (typeof window !== "undefined") {
@@ -396,7 +415,7 @@ export function SuiteIterationsView({
       }
     } else {
       setViewMode((current) =>
-        current === "test-detail" ? "overview" : current
+        current === "test-detail" ? "overview" : current,
       );
     }
   }, [selectedTestId, activeTab, onModeChange]);
@@ -456,7 +475,9 @@ export function SuiteIterationsView({
       {/* Content */}
       {activeTab === "runs" && (
         <div className="space-y-4">
-          {viewMode === "test-detail" && selectedTestDetails && selectedTestId ? (
+          {viewMode === "test-detail" &&
+          selectedTestDetails &&
+          selectedTestId ? (
             <div className="h-[calc(100vh-200px)]">
               <TestTemplateEditor
                 suiteId={suite._id}
@@ -510,16 +531,19 @@ export function SuiteIterationsView({
                 Default Pass/Fail Criteria
               </h3>
               <p className="text-sm text-muted-foreground mt-1">
-                Set the default criteria for <strong>new</strong> evaluation runs
-                of this suite. These settings will be pre-selected when you click
-                "Rerun". Existing runs keep their original criteria.
+                Set the default criteria for <strong>new</strong> evaluation
+                runs of this suite. These settings will be pre-selected when you
+                click "Rerun". Existing runs keep their original criteria.
               </p>
             </div>
             <PassCriteriaSelector
               minimumPassRate={defaultMinimumPassRate}
               onMinimumPassRateChange={async (rate) => {
                 setDefaultMinimumPassRate(rate);
-                localStorage.setItem(`suite-${suite._id}-criteria-rate`, String(rate));
+                localStorage.setItem(
+                  `suite-${suite._id}-criteria-rate`,
+                  String(rate),
+                );
                 try {
                   await updateSuite({
                     suiteId: suite._id,
@@ -532,7 +556,7 @@ export function SuiteIterationsView({
                   toast.error("Failed to update suite");
                   console.error("Failed to update suite:", error);
                   setDefaultMinimumPassRate(
-                    suite.defaultPassCriteria?.minimumPassRate ?? 100
+                    suite.defaultPassCriteria?.minimumPassRate ?? 100,
                   );
                 }
               }}

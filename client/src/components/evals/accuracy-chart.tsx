@@ -36,9 +36,7 @@ export function AccuracyChart({
 
   if (data.length === 0) {
     return (
-      <p className="text-xs text-muted-foreground">
-        No completed runs yet.
-      </p>
+      <p className="text-xs text-muted-foreground">No completed runs yet.</p>
     );
   }
 
@@ -79,7 +77,12 @@ export function AccuracyChart({
           tick={{ fontSize: showLabel ? 11 : 12 }}
           label={
             showLabel
-              ? { value: "Run", position: "insideBottom", offset: -5, fontSize: 11 }
+              ? {
+                  value: "Run",
+                  position: "insideBottom",
+                  offset: -5,
+                  fontSize: 11,
+                }
               : undefined
           }
         />
@@ -100,11 +103,12 @@ export function AccuracyChart({
           fillOpacity={0.15}
           strokeWidth={2}
           isAnimationActive={false}
-          dot={data.length > 1 ? (onClick ? { cursor: "pointer" } : true) : false}
+          dot={
+            data.length > 1 ? (onClick ? { cursor: "pointer" } : true) : false
+          }
           activeDot={onClick ? { cursor: "pointer", r: 6 } : undefined}
         />
       </AreaChart>
     </ChartContainer>
   );
 }
-
