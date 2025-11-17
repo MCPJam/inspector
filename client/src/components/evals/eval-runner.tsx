@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, X } from "lucide-react";
 import { toast } from "sonner";
 import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
@@ -655,6 +655,14 @@ export function EvalRunner({
 
   const nextVariant = nextDisabled ? "secondary" : "default";
 
+  const handleClose = () => {
+    if (inline) {
+      onSuccess?.();
+    } else {
+      setOpen(false);
+    }
+  };
+
   const wizardLayout = (
     <div
       className={cn(
@@ -708,6 +716,18 @@ export function EvalRunner({
           {currentStep === WIZARD_STEPS.length - 1 ? "Start" : "Next"}
           <ChevronRight className="h-4 w-4" />
         </Button>
+        {inline && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={handleClose}
+            aria-label="Close"
+            className="h-8 w-8"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        )}
       </div>
       <div className="space-y-6">{renderStepContent()}</div>
     </div>
