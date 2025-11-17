@@ -7,6 +7,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card } from "@/components/ui/card";
 import { Play, Loader2 } from "lucide-react";
+import posthog from "posthog-js";
+import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import {
   Tooltip,
   TooltipContent,
@@ -265,6 +267,16 @@ export function TestTemplateEditor({
     setCurrentQuickRunResult(null);
     setIsRunning(true);
 
+    // Track test case run started
+    posthog.capture("eval_test_case_run_started", {
+      location: "test_template_editor",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+      suite_id: suiteId,
+      test_case_id: currentTestCase._id,
+      model: selectedModel,
+    });
+
     try {
       const accessToken = await getAccessToken();
       const serverIds = suite.environment?.servers || [];
@@ -303,6 +315,24 @@ export function TestTemplateEditor({
       // Store the iteration result
       if (data.iteration) {
         setCurrentQuickRunResult(data.iteration);
+
+        // Calculate duration
+        const iteration = data.iteration;
+        const startedAt = iteration.startedAt ?? iteration.createdAt;
+        const completedAt = iteration.updatedAt ?? iteration.createdAt;
+        const durationMs = startedAt && completedAt ? Math.max(completedAt - startedAt, 0) : 0;
+
+        // Track test case run completed
+        posthog.capture("eval_test_case_run_completed", {
+          location: "test_template_editor",
+          platform: detectPlatform(),
+          environment: detectEnvironment(),
+          suite_id: suiteId,
+          test_case_id: currentTestCase._id,
+          model: selectedModel,
+          result: iteration.result || "unknown",
+          duration_ms: durationMs,
+        });
       }
 
       toast.success("Test completed successfully!");

@@ -508,6 +508,18 @@ export function EvalRunner({
 
       const result = await response.json();
       toast.success(result.message || "Evals started successfully!");
+
+      // Track suite created
+      posthog.capture("eval_suite_created", {
+        location: "eval_runner",
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+        suite_id: result.suiteId,
+        num_test_cases: validTestTemplates.length,
+        num_models: selectedModels.length,
+        num_servers: selectedServers.length,
+      });
+
       setTestTemplates([buildBlankTestTemplate()]);
       setSuiteName("");
       setSuiteDescription("");
