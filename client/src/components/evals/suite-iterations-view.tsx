@@ -82,8 +82,6 @@ export function SuiteIterationsView({
       : "runs";
 
   // Local state that's not in the URL
-  const [selectedTestCaseIdForRuns, setSelectedTestCaseIdForRuns] =
-    useState<string | null>(null);
   const [showRunSummarySidebar, setShowRunSummarySidebar] = useState(false);
   const [runDetailSortBy, setRunDetailSortBy] = useState<
     "model" | "test" | "result"
@@ -367,37 +365,8 @@ export function SuiteIterationsView({
                       suiteId: suite._id,
                       view: value,
                     });
-                    setSelectedTestCaseIdForRuns(null);
                   }}
                 />
-              ) : selectedTestCaseIdForRuns ? (
-                (() => {
-                  const selectedCase = cases.find(
-                    (c) => c._id === selectedTestCaseIdForRuns
-                  );
-                  if (!selectedCase) return null;
-
-                  const caseIterations = allIterations.filter(
-                    (iter) => iter.testCaseId === selectedTestCaseIdForRuns
-                  );
-
-                  return (
-                    <TestCaseDetailView
-                      testCase={selectedCase}
-                      iterations={caseIterations}
-                      runs={runs}
-                      onBack={() => setSelectedTestCaseIdForRuns(null)}
-                      onViewRun={(runId) => {
-                        navigateToEvalsRoute({
-                          type: "run-detail",
-                          suiteId: suite._id,
-                          runId,
-                        });
-                        setSelectedTestCaseIdForRuns(null);
-                      }}
-                    />
-                  );
-                })()
               ) : (
                 <TestCasesOverview
                   cases={cases}
@@ -417,7 +386,6 @@ export function SuiteIterationsView({
                       suiteId: suite._id,
                       view: value,
                     });
-                    setSelectedTestCaseIdForRuns(null);
                   }}
                   runTrendData={runTrendData}
                   modelStats={modelStats}
