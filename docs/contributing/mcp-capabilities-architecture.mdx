@@ -593,25 +593,43 @@ prompts.post("/list", async (c) => {
 #### 2. Getting Prompts
 
 ```typescript
-// Client → Backend → MCPClientManager
+// Client → API Client → Backend → MCPClientManager
 
 // 1. Frontend builds arguments and retrieves prompt
 const getPrompt = async () => {
   const params = buildParameters(); // String-only values
-  const response = await fetch("/api/mcp/prompts/get", {
-    method: "POST",
-    body: JSON.stringify({
-      serverId: serverName,
-      name: selectedPrompt,
-      args: params,
-    }),
-  });
-  const data = await response.json();
+  const data = await getPromptApi(serverName, selectedPrompt, params);
   setPromptContent(data.content);
 };
 
-// 2. Backend converts args to strings
-// server/routes/mcp/prompts.ts:31-77
+// 2. API client calls backend
+// client/src/lib/mcp-prompts-api.ts:31-54
+export async function getPrompt(
+  serverId: string,
+  name: string,
+  args?: Record<string, string>,
+): Promise<PromptContentResponse> {
+  const res = await fetch("/api/mcp/prompts/get", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ serverId, name, args }),
+  });
+
+  let body: any = null;
+  try {
+    body = await res.json();
+  } catch {}
+
+  if (!res.ok) {
+    const message = body?.error || `Get prompt failed (${res.status})`;
+    throw new Error(message);
+  }
+
+  return body as PromptContentResponse;
+}
+
+// 3. Backend converts args to strings
+// server/routes/mcp/prompts.ts:80-126
 prompts.post("/get", async (c) => {
   const { serverId, name, args } = await c.req.json();
 
