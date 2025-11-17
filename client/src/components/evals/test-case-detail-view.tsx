@@ -36,10 +36,10 @@ export function TestCaseDetailView({
   // Filter out iterations from inactive runs
   const activeIterations = useMemo(() => {
     const inactiveRunIds = new Set(
-      runs.filter((run) => run.isActive === false).map((run) => run._id)
+      runs.filter((run) => run.isActive === false).map((run) => run._id),
     );
     return iterations.filter(
-      (iter) => !iter.suiteRunId || !inactiveRunIds.has(iter.suiteRunId)
+      (iter) => !iter.suiteRunId || !inactiveRunIds.has(iter.suiteRunId),
     );
   }, [iterations, runs]);
 
@@ -69,7 +69,7 @@ export function TestCaseDetailView({
       const runIters = iterationsByRun.get(run._id);
       if (runIters && runIters.length > 0) {
         const passed = runIters.filter((iter) =>
-          computeIterationPassed(iter)
+          computeIterationPassed(iter),
         ).length;
         const total = runIters.length;
         const passRate = total > 0 ? Math.round((passed / total) * 100) : 0;
@@ -154,9 +154,13 @@ export function TestCaseDetailView({
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold">{testCase.title || "Untitled test case"}</h2>
+          <h2 className="text-lg font-semibold">
+            {testCase.title || "Untitled test case"}
+          </h2>
           {testCase.query && (
-            <p className="text-sm text-muted-foreground mt-0.5">{testCase.query}</p>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              {testCase.query}
+            </p>
           )}
         </div>
         <Button variant="ghost" size="icon" onClick={onBack}>
@@ -198,75 +202,82 @@ export function TestCaseDetailView({
                 config={modelChartConfig}
                 className="aspect-auto h-32 w-full"
               >
-            <BarChart data={modelBreakdown} width={undefined} height={undefined}>
-              <CartesianGrid
-                strokeDasharray="3 3"
-                vertical={false}
-                stroke="hsl(var(--muted-foreground) / 0.2)"
-              />
-              <XAxis
-                dataKey="model"
-                tickLine={false}
-                axisLine={false}
-                tickMargin={8}
-                tick={{ fontSize: 11 }}
-                interval={0}
-                height={40}
-                tickFormatter={(value) => {
-                  const parts = value.split("/");
-                  if (parts.length === 2 && parts[1].length > 15) {
-                    return `${parts[0]}/${parts[1].substring(0, 12)}...`;
-                  }
-                  return value;
-                }}
-              />
-              <YAxis
-                domain={[0, 100]}
-                tickLine={false}
-                axisLine={false}
-                tickMargin={8}
-                tick={{ fontSize: 12 }}
-                tickFormatter={(value) => `${value}%`}
-              />
-              <ChartTooltip
-                cursor={false}
-                content={({ active, payload }) => {
-                  if (!active || !payload || payload.length === 0) return null;
-                  const data = payload[0].payload;
-                  return (
-                    <div className="rounded-lg border bg-background p-2 shadow-sm">
-                      <div className="grid gap-2">
-                        <div className="flex flex-col">
-                          <span className="text-xs font-semibold">
-                            {data.model}
-                          </span>
-                          <span className="text-xs text-muted-foreground mt-0.5">
-                            {data.passed} passed · {data.failed} failed
-                          </span>
+                <BarChart
+                  data={modelBreakdown}
+                  width={undefined}
+                  height={undefined}
+                >
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    vertical={false}
+                    stroke="hsl(var(--muted-foreground) / 0.2)"
+                  />
+                  <XAxis
+                    dataKey="model"
+                    tickLine={false}
+                    axisLine={false}
+                    tickMargin={8}
+                    tick={{ fontSize: 11 }}
+                    interval={0}
+                    height={40}
+                    tickFormatter={(value) => {
+                      const parts = value.split("/");
+                      if (parts.length === 2 && parts[1].length > 15) {
+                        return `${parts[0]}/${parts[1].substring(0, 12)}...`;
+                      }
+                      return value;
+                    }}
+                  />
+                  <YAxis
+                    domain={[0, 100]}
+                    tickLine={false}
+                    axisLine={false}
+                    tickMargin={8}
+                    tick={{ fontSize: 12 }}
+                    tickFormatter={(value) => `${value}%`}
+                  />
+                  <ChartTooltip
+                    cursor={false}
+                    content={({ active, payload }) => {
+                      if (!active || !payload || payload.length === 0)
+                        return null;
+                      const data = payload[0].payload;
+                      return (
+                        <div className="rounded-lg border bg-background p-2 shadow-sm">
+                          <div className="grid gap-2">
+                            <div className="flex flex-col">
+                              <span className="text-xs font-semibold">
+                                {data.model}
+                              </span>
+                              <span className="text-xs text-muted-foreground mt-0.5">
+                                {data.passed} passed · {data.failed} failed
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <div
+                                className="h-2 w-2 rounded-full"
+                                style={{
+                                  backgroundColor: "var(--color-passRate)",
+                                }}
+                              />
+                              <span className="text-sm font-semibold">
+                                {data.passRate}%
+                              </span>
+                            </div>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <div
-                            className="h-2 w-2 rounded-full"
-                            style={{ backgroundColor: "var(--color-passRate)" }}
-                          />
-                          <span className="text-sm font-semibold">
-                            {data.passRate}%
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                }}
-              />
-              <Bar
-                dataKey="passRate"
-                fill="var(--color-passRate)"
-                radius={[4, 4, 0, 0]}
-                isAnimationActive={false}
-                minPointSize={8}
-              />
-            </BarChart>
-          </ChartContainer>
+                      );
+                    }}
+                  />
+                  <Bar
+                    dataKey="passRate"
+                    fill="var(--color-passRate)"
+                    radius={[4, 4, 0, 0]}
+                    isAnimationActive={false}
+                    minPointSize={8}
+                  />
+                </BarChart>
+              </ChartContainer>
             </div>
           </div>
         )}
@@ -287,7 +298,10 @@ export function TestCaseDetailView({
               const snapshot = iteration.testCaseSnapshot;
               const startedAt = iteration.startedAt ?? iteration.createdAt;
               const completedAt = iteration.updatedAt ?? iteration.createdAt;
-              const durationMs = startedAt && completedAt ? Math.max(completedAt - startedAt, 0) : null;
+              const durationMs =
+                startedAt && completedAt
+                  ? Math.max(completedAt - startedAt, 0)
+                  : null;
               const actualToolCalls = iteration.actualToolCalls || [];
               const isPending = iteration.result === "pending";
               const isOpen = openIterationId === iteration._id;
@@ -302,12 +316,17 @@ export function TestCaseDetailView({
               };
 
               return (
-                <div key={iteration._id} className={`relative ${isPending ? "opacity-60" : ""}`}>
+                <div
+                  key={iteration._id}
+                  className={`relative ${isPending ? "opacity-60" : ""}`}
+                >
                   <div
                     className={`absolute left-0 top-0 h-full w-1 ${getIterationBorderColor(iteration.result)}`}
                   />
                   <button
-                    onClick={() => setOpenIterationId(isOpen ? null : iteration._id)}
+                    onClick={() =>
+                      setOpenIterationId(isOpen ? null : iteration._id)
+                    }
                     className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 cursor-pointer hover:bg-muted/50"
                   >
                     <div className="flex min-w-0 flex-1 items-center gap-3 pl-2">
@@ -327,7 +346,9 @@ export function TestCaseDetailView({
                     <div className="flex items-center gap-4 text-xs text-muted-foreground shrink-0">
                       <div className="min-w-[120px] text-left truncate">
                         <span className="font-mono text-xs">
-                          {snapshot ? `${snapshot.provider}/${snapshot.model}` : "—"}
+                          {snapshot
+                            ? `${snapshot.provider}/${snapshot.model}`
+                            : "—"}
                         </span>
                       </div>
                       <div className="min-w-[50px] text-center">
@@ -337,11 +358,19 @@ export function TestCaseDetailView({
                       </div>
                       <div className="min-w-[60px] text-center">
                         <span className="font-mono">
-                          {isPending ? "—" : Number(iteration.tokensUsed || 0).toLocaleString()}
+                          {isPending
+                            ? "—"
+                            : Number(
+                                iteration.tokensUsed || 0,
+                              ).toLocaleString()}
                         </span>
                       </div>
                       <div className="font-mono min-w-[40px] text-right">
-                        {isPending ? "—" : durationMs !== null ? formatDuration(durationMs) : "—"}
+                        {isPending
+                          ? "—"
+                          : durationMs !== null
+                            ? formatDuration(durationMs)
+                            : "—"}
                       </div>
                       {iteration.suiteRunId && onViewRun && !isPending && (
                         <div className="min-w-[100px]">
@@ -367,7 +396,11 @@ export function TestCaseDetailView({
                   </button>
                   {isOpen && (
                     <div className="border-t bg-muted/20 px-4 pb-4 pt-3 pl-8">
-                      <IterationDetails iteration={iteration} testCase={testCase} serverNames={serverNames} />
+                      <IterationDetails
+                        iteration={iteration}
+                        testCase={testCase}
+                        serverNames={serverNames}
+                      />
                     </div>
                   )}
                 </div>

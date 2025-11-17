@@ -390,7 +390,9 @@ function CombinedToolPart({
   // Check if this tool has OpenAI App metadata
   const toolMetadata = toolName ? toolsMetadata[toolName] : undefined;
   const hasOpenAIApp = !!toolMetadata?.["openai/outputTemplate"];
-  const serverId = toolName ? getToolServerId(toolName, toolServerMap) : undefined;
+  const serverId = toolName
+    ? getToolServerId(toolName, toolServerMap)
+    : undefined;
 
   // Unwrap the output if it has the { type: "json", value: {...} } structure
   const unwrappedOutput =
@@ -499,21 +501,25 @@ function CombinedToolPart({
       )}
 
       {/* Render OpenAI App widget if available */}
-      {hasOpenAIApp && serverId && hasOutput && !isError && (() => {
-        return (
-          <OpenAIAppRenderer
-            serverId={serverId}
-            toolCallId={toolCall?.toolCallId}
-            toolName={toolName}
-            toolState="output-available"
-            toolInput={toolCall?.input ?? null}
-            toolOutput={unwrappedOutput ?? null}
-            toolMetadata={toolMetadata}
-            onSendFollowUp={undefined}
-            onCallTool={undefined}
-          />
-        );
-      })()}
+      {hasOpenAIApp &&
+        serverId &&
+        hasOutput &&
+        !isError &&
+        (() => {
+          return (
+            <OpenAIAppRenderer
+              serverId={serverId}
+              toolCallId={toolCall?.toolCallId}
+              toolName={toolName}
+              toolState="output-available"
+              toolInput={toolCall?.input ?? null}
+              toolOutput={unwrappedOutput ?? null}
+              toolMetadata={toolMetadata}
+              onSendFollowUp={undefined}
+              onCallTool={undefined}
+            />
+          );
+        })()}
     </div>
   );
 }

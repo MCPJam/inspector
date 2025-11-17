@@ -276,7 +276,9 @@ export function RunOverview({
             </div>
             <select
               value={runsViewMode}
-              onChange={(e) => onViewModeChange(e.target.value as "runs" | "test-cases")}
+              onChange={(e) =>
+                onViewModeChange(e.target.value as "runs" | "test-cases")
+              }
               className="text-xs border rounded px-2 py-1 bg-background"
             >
               <option value="runs">Runs</option>

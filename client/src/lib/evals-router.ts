@@ -162,7 +162,7 @@ export function navigateToEvalsRoute(route: EvalsRoute) {
  */
 export function useEvalsRoute(): EvalsRoute {
   const [route, setRoute] = React.useState<EvalsRoute>(
-    () => parseEvalsRoute() || { type: "list" }
+    () => parseEvalsRoute() || { type: "list" },
   );
 
   React.useEffect(() => {

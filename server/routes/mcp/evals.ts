@@ -485,7 +485,9 @@ evals.post("/run-test-case", async (c) => {
       model,
       provider,
       expectedToolCalls:
-        testCaseOverrides?.expectedToolCalls ?? testCase.expectedToolCalls ?? [],
+        testCaseOverrides?.expectedToolCalls ??
+        testCase.expectedToolCalls ??
+        [],
       advancedConfig: testCase.advancedConfig,
       testCaseId: testCase._id,
     };

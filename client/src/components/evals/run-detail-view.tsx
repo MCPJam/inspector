@@ -525,7 +525,11 @@ function IterationRow({
       </button>
       {isOpen ? (
         <div className="border-t bg-muted/20 px-4 pb-4 pt-3 pl-8">
-          <IterationDetails iteration={iteration} testCase={null} serverNames={serverNames} />
+          <IterationDetails
+            iteration={iteration}
+            testCase={null}
+            serverNames={serverNames}
+          />
         </div>
       ) : null}
     </div>

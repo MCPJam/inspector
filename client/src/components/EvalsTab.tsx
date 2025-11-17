@@ -266,7 +266,10 @@ function SuiteSidebarItem({
             <DropdownMenuItem
               onClick={(e) => {
                 e.stopPropagation();
-                navigateToEvalsRoute({ type: "suite-edit", suiteId: suite._id });
+                navigateToEvalsRoute({
+                  type: "suite-edit",
+                  suiteId: suite._id,
+                });
               }}
             >
               <Pencil className="h-4 w-4 mr-2 text-foreground" />
@@ -408,16 +411,18 @@ export function EvalsTab() {
   const [cancellingRunId, setCancellingRunId] = useState<string | null>(null);
   const [deletingSuiteId, setDeletingSuiteId] = useState<string | null>(null);
   const [suiteToDelete, setSuiteToDelete] = useState<EvalSuite | null>(null);
-  const [duplicatingSuiteId, setDuplicatingSuiteId] = useState<string | null>(null);
+  const [duplicatingSuiteId, setDuplicatingSuiteId] = useState<string | null>(
+    null,
+  );
   const [deletingRunId, setDeletingRunId] = useState<string | null>(null);
   const [runToDelete, setRunToDelete] = useState<string | null>(null);
   const [isCreatingTestCase, setIsCreatingTestCase] = useState(false);
   const [deletingTestCaseId, setDeletingTestCaseId] = useState<string | null>(
     null,
   );
-  const [duplicatingTestCaseId, setDuplicatingTestCaseId] = useState<string | null>(
-    null,
-  );
+  const [duplicatingTestCaseId, setDuplicatingTestCaseId] = useState<
+    string | null
+  >(null);
   const [testCaseToDelete, setTestCaseToDelete] = useState<{
     id: string;
     title: string;
@@ -464,7 +469,9 @@ export function EvalsTab() {
   const deleteSuiteMutation = useMutation("testSuites:deleteTestSuite" as any);
   const deleteRunMutation = useMutation("testSuites:deleteTestSuiteRun" as any);
   const cancelRunMutation = useMutation("testSuites:cancelTestSuiteRun" as any);
-  const duplicateSuiteMutation = useMutation("testSuites:duplicateTestSuite" as any);
+  const duplicateSuiteMutation = useMutation(
+    "testSuites:duplicateTestSuite" as any,
+  );
   const createTestCaseMutation = useMutation(
     "testSuites:createTestCase" as any,
   );
@@ -790,12 +797,17 @@ export function EvalsTab() {
 
         // Navigate to the new duplicated suite
         if (newSuite && newSuite._id) {
-          navigateToEvalsRoute({ type: "suite-overview", suiteId: newSuite._id });
+          navigateToEvalsRoute({
+            type: "suite-overview",
+            suiteId: newSuite._id,
+          });
         }
       } catch (error) {
         console.error("Failed to duplicate suite:", error);
         toast.error(
-          error instanceof Error ? error.message : "Failed to duplicate test suite",
+          error instanceof Error
+            ? error.message
+            : "Failed to duplicate test suite",
         );
       } finally {
         setDuplicatingSuiteId(null);
@@ -964,44 +976,39 @@ export function EvalsTab() {
   );
 
   // Confirm test case deletion
-  const confirmDeleteTestCase = useCallback(
-    async () => {
-      if (!testCaseToDelete || deletingTestCaseId) return;
+  const confirmDeleteTestCase = useCallback(async () => {
+    if (!testCaseToDelete || deletingTestCaseId) return;
 
-      setDeletingTestCaseId(testCaseToDelete.id);
+    setDeletingTestCaseId(testCaseToDelete.id);
 
-      try {
-        await deleteTestCaseMutation({ testCaseId: testCaseToDelete.id });
-        toast.success("Test case deleted successfully");
+    try {
+      await deleteTestCaseMutation({ testCaseId: testCaseToDelete.id });
+      toast.success("Test case deleted successfully");
 
-        // If we're viewing this test case, navigate back to suite overview
-        if (selectedTestId === testCaseToDelete.id && selectedSuiteId) {
-          navigateToEvalsRoute({
-            type: "suite-overview",
-            suiteId: selectedSuiteId,
-          });
-        }
-
-        setTestCaseToDelete(null);
-      } catch (error) {
-        console.error("Failed to delete test case:", error);
-        toast.error(
-          error instanceof Error
-            ? error.message
-            : "Failed to delete test case",
-        );
-      } finally {
-        setDeletingTestCaseId(null);
+      // If we're viewing this test case, navigate back to suite overview
+      if (selectedTestId === testCaseToDelete.id && selectedSuiteId) {
+        navigateToEvalsRoute({
+          type: "suite-overview",
+          suiteId: selectedSuiteId,
+        });
       }
-    },
-    [
-      testCaseToDelete,
-      deletingTestCaseId,
-      deleteTestCaseMutation,
-      selectedTestId,
-      selectedSuiteId,
-    ],
-  );
+
+      setTestCaseToDelete(null);
+    } catch (error) {
+      console.error("Failed to delete test case:", error);
+      toast.error(
+        error instanceof Error ? error.message : "Failed to delete test case",
+      );
+    } finally {
+      setDeletingTestCaseId(null);
+    }
+  }, [
+    testCaseToDelete,
+    deletingTestCaseId,
+    deleteTestCaseMutation,
+    selectedTestId,
+    selectedSuiteId,
+  ]);
 
   // Duplicate test case handler
   const handleDuplicateTestCase = useCallback(

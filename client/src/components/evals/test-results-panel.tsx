@@ -80,7 +80,11 @@ export function TestResultsPanel({
         ) : (
           <ScrollArea className="h-full">
             <div className="p-3">
-              <IterationDetails iteration={iteration} testCase={testCase} serverNames={serverNames} />
+              <IterationDetails
+                iteration={iteration}
+                testCase={testCase}
+                serverNames={serverNames}
+              />
             </div>
           </ScrollArea>
         )}
