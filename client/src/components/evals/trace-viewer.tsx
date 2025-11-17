@@ -500,14 +500,6 @@ function CombinedToolPart({
 
       {/* Render OpenAI App widget if available */}
       {hasOpenAIApp && serverId && hasOutput && !isError && (() => {
-        // Debug: Log the data we're passing to the widget
-        console.log('[Trace Widget Debug] toolName:', toolName);
-        console.log('[Trace Widget Debug] serverId:', serverId);
-        console.log('[Trace Widget Debug] toolCallId:', toolCall?.toolCallId);
-        console.log('[Trace Widget Debug] toolInput:', JSON.stringify(toolCall?.input, null, 2));
-        console.log('[Trace Widget Debug] unwrappedOutput:', JSON.stringify(unwrappedOutput, null, 2));
-        console.log('[Trace Widget Debug] toolMetadata:', JSON.stringify(toolMetadata, null, 2));
-
         return (
           <OpenAIAppRenderer
             serverId={serverId}

@@ -307,13 +307,6 @@ const runIterationWithAiSdk = async ({
       }
     }
 
-    console.log(
-      "[evals-runner] Extracted",
-      toolsCalled.length,
-      "tool calls:",
-      toolsCalled.map((tc) => tc.toolName),
-    );
-
     const evaluation = evaluateResults(expectedToolCalls, toolsCalled);
 
     const usage: UsageTotals = {

@@ -295,9 +295,6 @@ evals.post("/run", async (c) => {
 
           // Only update if there are actual changes (this preserves run history when config is unchanged)
           if (hasChanges) {
-            console.log(
-              `[evals] Test case "${testCaseData.title}" has changes - updating to preserve accuracy`,
-            );
             await convexClient.mutation("testSuites:updateTestCase" as any, {
               testCaseId: existingTestCase._id,
               models: testCaseData.models,
