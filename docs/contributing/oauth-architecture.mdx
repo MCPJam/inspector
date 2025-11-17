@@ -172,13 +172,15 @@ graph TD
     A --> E[mcp-serverUrl-serverName]
     A --> F[mcp-oauth-config-serverName]
     A --> G[mcp-oauth-pending]
+    A --> H[mcp-oauth-flow-preferences]
 
     B --> B1[access_token<br/>refresh_token<br/>expires_in]
     C --> C1[client_id<br/>client_secret]
     D --> D1[PKCE code_verifier]
     E --> E1[MCP server URL]
-    F --> F1[scopes array]
+    F --> F1[scopes array<br/>customHeaders object]
     G --> G1[Pending server name<br/>for callback recovery]
+    H --> H1[protocolVersion<br/>registrationStrategy]
 
     style B fill:#e1f5e1
     style C fill:#e1f5e1
@@ -186,7 +188,14 @@ graph TD
     style E fill:#e1f5e1
     style F fill:#e1f5e1
     style G fill:#ffe1e1
+    style H fill:#e1f4ff
 ```
+
+OAuth test profiles are also stored in the app state with the following structure:
+
+- `oauthFlowProfile`: Contains server URL, client credentials, scopes, custom headers, protocol version, and registration strategy
+- Profiles are attached to server configurations and persist across sessions
+- Used to pre-populate the OAuth Profile Modal when editing configurations
 
 ## CORS Proxy Architecture
 
