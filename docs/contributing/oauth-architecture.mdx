@@ -271,7 +271,19 @@ Modal dialog for configuring OAuth test profiles:
 
 The modal derives initial values from existing server configurations and supports both creating new profiles and editing existing ones.
 
-### 2. MCPOAuthProvider
+### 3. OAuth Utility Functions
+
+**Location:** `client/src/components/oauth/utils.ts`
+
+Helper functions for OAuth profile management:
+
+- `deriveOAuthProfileFromServer()`: Extracts OAuth configuration from server definitions
+- `toUrlString()`: Safely converts URL objects to strings
+- Profile derivation with fallback to empty profile
+- Header extraction from HTTP server configurations
+- Scope and credential extraction from server configs
+
+### 4. MCPOAuthProvider
 
 **Location:** `client/src/lib/mcp-oauth.ts:72`
 
