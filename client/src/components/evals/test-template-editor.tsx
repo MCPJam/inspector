@@ -1,0 +1,611 @@
+import { useState, useEffect, useMemo } from "react";
+import { useQuery, useMutation } from "convex/react";
+import { useAuth } from "@workos-inc/authkit-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Card } from "@/components/ui/card";
+import { Play, Loader2, Save } from "lucide-react";
+import posthog from "posthog-js";
+import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { ExpectedToolsEditor } from "./expected-tools-editor";
+import { TestResultsPanel } from "./test-results-panel";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
+import { toast } from "sonner";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  useAiProviderKeys,
+  type ProviderTokens,
+} from "@/hooks/use-ai-provider-keys";
+import { isMCPJamProvidedModel } from "@/shared/types";
+
+interface TestTemplate {
+  title: string;
+  query: string;
+  runs: number;
+  expectedToolCalls: Array<{
+    toolName: string;
+    arguments: Record<string, any>;
+  }>;
+  advancedConfig?: Record<string, unknown>;
+}
+
+interface TestTemplateEditorProps {
+  suiteId: string;
+  selectedTestCaseId: string;
+  connectedServerNames: Set<string>;
+}
+
+export function TestTemplateEditor({
+  suiteId,
+  selectedTestCaseId,
+  connectedServerNames,
+}: TestTemplateEditorProps) {
+  const { getAccessToken } = useAuth();
+  const { getToken, hasToken } = useAiProviderKeys();
+  const [editForm, setEditForm] = useState<TestTemplate | null>(null);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [editedTitle, setEditedTitle] = useState("");
+  const [availableTools, setAvailableTools] = useState<
+    Array<{ name: string; description?: string; inputSchema?: any }>
+  >([]);
+  const [selectedModel, setSelectedModel] = useState<string>("");
+  const [isRunning, setIsRunning] = useState(false);
+  const [currentQuickRunResult, setCurrentQuickRunResult] = useState<
+    any | null
+  >(null);
+
+  // Get all test cases for this suite
+  const testCases = useQuery("testSuites:listTestCases" as any, {
+    suiteId,
+  }) as any[] | undefined;
+
+  const updateTestCaseMutation = useMutation(
+    "testSuites:updateTestCase" as any,
+  );
+
+  // Find the test case
+  const currentTestCase = useMemo(() => {
+    if (!testCases) return null;
+    return testCases.find((tc: any) => tc._id === selectedTestCaseId) || null;
+  }, [testCases, selectedTestCaseId]);
+
+  // Fetch the lastMessageRun iteration if it exists
+  const lastMessageRunId = currentTestCase?.lastMessageRun;
+  const lastMessageRunIteration = useQuery(
+    "testSuites:getTestIteration" as any,
+    lastMessageRunId ? { iterationId: lastMessageRunId } : "skip",
+  ) as any | undefined;
+
+  // Clear and reload currentQuickRunResult when test case changes
+  useEffect(() => {
+    // Clear the result when switching test cases
+    setCurrentQuickRunResult(null);
+  }, [selectedTestCaseId]);
+
+  // Load lastMessageRun into currentQuickRunResult when it's available
+  useEffect(() => {
+    if (lastMessageRunIteration) {
+      setCurrentQuickRunResult(lastMessageRunIteration);
+    }
+  }, [lastMessageRunIteration]);
+
+  // Sync editedTitle when currentTestCase changes
+  useEffect(() => {
+    if (currentTestCase) {
+      setEditedTitle(currentTestCase.title);
+    }
+  }, [currentTestCase?.title]);
+
+  // Initialize/reset editForm only when switching test cases (not on DB updates)
+  // This preserves local edits after running tests
+  useEffect(() => {
+    if (currentTestCase) {
+      setEditForm({
+        title: currentTestCase.title,
+        query: currentTestCase.query,
+        runs: currentTestCase.runs,
+        expectedToolCalls: currentTestCase.expectedToolCalls || [],
+        advancedConfig: currentTestCase.advancedConfig,
+      });
+    }
+  }, [selectedTestCaseId, currentTestCase?._id]); // Reset when switching test cases or when test case first loads
+
+  // Get suite config for servers (to fetch available tools)
+  const suiteConfig = useQuery(
+    "testSuites:getTestSuitesOverview" as any,
+    {},
+  ) as any;
+  const suite = useMemo(() => {
+    if (!suiteConfig) return null;
+    return suiteConfig.find((entry: any) => entry.suite._id === suiteId)?.suite;
+  }, [suiteConfig, suiteId]);
+
+  // Calculate missing servers
+  const missingServers = useMemo(() => {
+    if (!suite) return [];
+    const suiteServers = suite.environment?.servers || [];
+    return suiteServers.filter((server) => !connectedServerNames.has(server));
+  }, [suite, connectedServerNames]);
+
+  const canRun = missingServers.length === 0;
+
+  // Fetch available tools from selected servers
+  useEffect(() => {
+    async function fetchTools() {
+      if (!suite) return;
+
+      const serverIds = suite.environment?.servers || [];
+      if (serverIds.length === 0) {
+        setAvailableTools([]);
+        return;
+      }
+
+      try {
+        const response = await fetch("/api/mcp/list-tools", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ serverIds }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          setAvailableTools(data.tools || []);
+        }
+      } catch (error) {
+        console.error("Failed to fetch tools:", error);
+      }
+    }
+
+    fetchTools();
+  }, [suite]);
+
+  const handleTitleClick = () => {
+    setIsEditingTitle(true);
+    setEditedTitle(currentTestCase?.title || "");
+  };
+
+  const handleTitleBlur = async () => {
+    setIsEditingTitle(false);
+    if (editedTitle.trim() && editedTitle !== currentTestCase?.title) {
+      try {
+        await updateTestCaseMutation({
+          testCaseId: currentTestCase!._id,
+          title: editedTitle.trim(),
+        });
+        toast.success("Title updated");
+      } catch (error) {
+        console.error("Failed to update title:", error);
+        toast.error("Failed to update title");
+        setEditedTitle(currentTestCase?.title || "");
+      }
+    } else {
+      setEditedTitle(currentTestCase?.title || "");
+    }
+  };
+
+  const handleTitleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      handleTitleBlur();
+    } else if (e.key === "Escape") {
+      setIsEditingTitle(false);
+      setEditedTitle(currentTestCase?.title || "");
+    }
+  };
+
+  // Check if there are unsaved changes
+  const hasUnsavedChanges = useMemo(() => {
+    if (!editForm || !currentTestCase) return false;
+    return (
+      editForm.title !== currentTestCase.title ||
+      editForm.query !== currentTestCase.query ||
+      editForm.runs !== currentTestCase.runs ||
+      JSON.stringify(editForm.expectedToolCalls || []) !==
+        JSON.stringify(currentTestCase.expectedToolCalls || []) ||
+      JSON.stringify(editForm.advancedConfig || {}) !==
+        JSON.stringify(currentTestCase.advancedConfig || {})
+    );
+  }, [editForm, currentTestCase]);
+
+  // Separate save handler
+  const handleSave = async () => {
+    if (!editForm || !currentTestCase) return;
+
+    try {
+      await updateTestCaseMutation({
+        testCaseId: currentTestCase._id,
+        title: editForm.title,
+        query: editForm.query,
+        runs: editForm.runs,
+        expectedToolCalls: editForm.expectedToolCalls,
+        advancedConfig: editForm.advancedConfig,
+      });
+      toast.success("Changes saved");
+    } catch (error) {
+      console.error("Failed to save:", error);
+      toast.error("Failed to save changes");
+      throw error;
+    }
+  };
+
+  // Standalone run handler (no auto-save)
+  const handleRun = async () => {
+    if (!selectedModel || !currentTestCase || !suite) return;
+
+    // Parse the selected model (format: "provider/model")
+    const [provider, ...modelParts] = selectedModel.split("/");
+    const model = modelParts.join("/");
+
+    if (!provider || !model) {
+      toast.error("Invalid model selection");
+      return;
+    }
+
+    // Check for API key if needed
+    if (!isMCPJamProvidedModel(model)) {
+      const tokenKey = provider.toLowerCase() as keyof ProviderTokens;
+      if (!hasToken(tokenKey)) {
+        toast.error(
+          `Please add your ${provider} API key in Settings before running this test`,
+        );
+        return;
+      }
+    }
+
+    // Clear previous result
+    setCurrentQuickRunResult(null);
+    setIsRunning(true);
+
+    // Track test case run started
+    posthog.capture("eval_test_case_run_started", {
+      location: "test_template_editor",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+      suite_id: suiteId,
+      test_case_id: currentTestCase._id,
+      model: selectedModel,
+    });
+
+    try {
+      const accessToken = await getAccessToken();
+      const serverIds = suite.environment?.servers || [];
+
+      // Collect API key if needed
+      const modelApiKeys: Record<string, string> = {};
+      if (!isMCPJamProvidedModel(model)) {
+        const tokenKey = provider.toLowerCase() as keyof ProviderTokens;
+        const key = getToken(tokenKey);
+        if (key) {
+          modelApiKeys[provider] = key;
+        }
+      }
+
+      const response = await fetch("/api/mcp/evals/run-test-case", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          testCaseId: currentTestCase._id,
+          model,
+          provider,
+          serverIds,
+          modelApiKeys:
+            Object.keys(modelApiKeys).length > 0 ? modelApiKeys : undefined,
+          convexAuthToken: accessToken,
+          // Send current form state to run with unsaved changes
+          testCaseOverrides: editForm
+            ? {
+                query: editForm.query,
+                expectedToolCalls: editForm.expectedToolCalls,
+                runs: editForm.runs,
+              }
+            : undefined,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || "Failed to run test case");
+      }
+
+      const data = await response.json();
+
+      // Store the iteration result
+      if (data.iteration) {
+        setCurrentQuickRunResult(data.iteration);
+
+        // Calculate duration
+        const iteration = data.iteration;
+        const startedAt = iteration.startedAt ?? iteration.createdAt;
+        const completedAt = iteration.updatedAt ?? iteration.createdAt;
+        const durationMs =
+          startedAt && completedAt ? Math.max(completedAt - startedAt, 0) : 0;
+
+        // Track test case run completed
+        posthog.capture("eval_test_case_run_completed", {
+          location: "test_template_editor",
+          platform: detectPlatform(),
+          environment: detectEnvironment(),
+          suite_id: suiteId,
+          test_case_id: currentTestCase._id,
+          model: selectedModel,
+          result: iteration.result || "unknown",
+          duration_ms: durationMs,
+        });
+      }
+
+      toast.success("Test completed successfully!");
+    } catch (error) {
+      console.error("Failed to run test case:", error);
+      toast.error(
+        error instanceof Error ? error.message : "Failed to run test case",
+      );
+    } finally {
+      setIsRunning(false);
+    }
+  };
+
+  // Combined save and run handler
+  const handleSaveAndRun = async () => {
+    if (hasUnsavedChanges) {
+      try {
+        await handleSave();
+      } catch (error) {
+        // If save fails, don't proceed with run
+        return;
+      }
+    }
+    await handleRun();
+  };
+
+  const handleClearResult = async () => {
+    if (!currentTestCase) return;
+
+    try {
+      // Clear the lastMessageRun field in the database
+      await updateTestCaseMutation({
+        testCaseId: currentTestCase._id,
+        lastMessageRun: null,
+      });
+
+      // Clear the local state
+      setCurrentQuickRunResult(null);
+      toast.success("Result cleared");
+    } catch (error) {
+      console.error("Failed to clear result:", error);
+      toast.error("Failed to clear result");
+    }
+  };
+
+  // Use models from the test case (which come from the suite configuration)
+  const modelOptions = useMemo(() => {
+    if (!currentTestCase) return [];
+    const models = currentTestCase.models || [];
+    return models.map((m: any) => ({
+      value: `${m.provider}/${m.model}`,
+      label: m.model, // Show only model name, not provider
+      provider: m.provider,
+    }));
+  }, [currentTestCase]);
+
+  // Auto-select first model if none selected
+  useEffect(() => {
+    if (modelOptions.length > 0 && !selectedModel) {
+      setSelectedModel(modelOptions[0].value);
+    }
+  }, [modelOptions, selectedModel]);
+
+  if (!currentTestCase) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <p className="text-xs text-muted-foreground">Loading test case...</p>
+      </div>
+    );
+  }
+
+  return (
+    <ResizablePanelGroup direction="vertical" className="h-full">
+      <ResizablePanel defaultSize={40} minSize={20}>
+        <div className="h-full overflow-auto">
+          <div className="p-2 space-y-2">
+            {/* Header with title and controls */}
+            <div className="flex items-center justify-between gap-4 px-1 pb-3 border-b">
+              <div className="flex-1 min-w-0">
+                {isEditingTitle ? (
+                  <input
+                    type="text"
+                    value={editedTitle}
+                    onChange={(e) => setEditedTitle(e.target.value)}
+                    onBlur={handleTitleBlur}
+                    onKeyDown={handleTitleKeyDown}
+                    autoFocus
+                    className="px-0 py-0 text-lg font-semibold border-none focus:outline-none focus:ring-0 bg-transparent w-full"
+                  />
+                ) : (
+                  <h2
+                    className="text-lg font-semibold cursor-pointer hover:opacity-60 transition-opacity"
+                    onClick={handleTitleClick}
+                  >
+                    {currentTestCase.title}
+                  </h2>
+                )}
+              </div>
+              <div className="flex items-center gap-3 shrink-0">
+                <div className="flex items-center gap-2">
+                  <Label className="text-xs text-muted-foreground">Runs:</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={editForm?.runs || 1}
+                    onChange={(e) =>
+                      editForm &&
+                      setEditForm({
+                        ...editForm,
+                        runs: parseInt(e.target.value) || 1,
+                      })
+                    }
+                    className="h-7 w-16 text-xs border-0 bg-muted/50"
+                  />
+                </div>
+                <Select
+                  value={selectedModel}
+                  onValueChange={setSelectedModel}
+                  disabled={isRunning || modelOptions.length === 0}
+                >
+                  <SelectTrigger className="h-9 text-xs border-0 bg-muted/50 hover:bg-muted transition-colors w-[180px]">
+                    <SelectValue placeholder="Select model" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {modelOptions.length === 0 ? (
+                      <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                        No models available
+                      </div>
+                    ) : (
+                      modelOptions.map(
+                        (option: {
+                          value: string;
+                          label: string;
+                          provider: string;
+                        }) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ),
+                      )
+                    )}
+                  </SelectContent>
+                </Select>
+
+                {/* Save button - only show if there are unsaved changes */}
+                {hasUnsavedChanges && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span>
+                        <Button
+                          onClick={handleSave}
+                          disabled={isRunning}
+                          variant="outline"
+                          size="sm"
+                          className="h-9 px-4 text-xs font-medium"
+                        >
+                          <Save className="h-3.5 w-3.5 mr-2" />
+                          Save
+                        </Button>
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      Save changes to this test case
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+
+                {/* Run button */}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span>
+                      <Button
+                        onClick={handleRun}
+                        disabled={
+                          !selectedModel ||
+                          isRunning ||
+                          !editForm?.query?.trim() ||
+                          !canRun
+                        }
+                        size="sm"
+                        className="h-9 px-5 text-xs font-medium shadow-sm"
+                      >
+                        {isRunning ? (
+                          <>
+                            <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />
+                            Running...
+                          </>
+                        ) : (
+                          <>
+                            <Play className="h-3.5 w-3.5 mr-2 fill-current" />
+                            Run
+                          </>
+                        )}
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {!canRun
+                      ? `Connect the following servers: ${missingServers.join(", ")}`
+                      : !selectedModel
+                        ? "Select a model to run"
+                        : !editForm?.query?.trim()
+                          ? "Enter a query to run"
+                          : "Run this test"}
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+            </div>
+
+            {/* Edit Content */}
+            {editForm ? (
+              <>
+                <div className="px-1 pt-2">
+                  <Textarea
+                    value={editForm.query}
+                    onChange={(e) =>
+                      setEditForm({ ...editForm, query: e.target.value })
+                    }
+                    rows={10}
+                    placeholder="Enter your test prompt here..."
+                    className="font-mono text-sm resize-none border-0 bg-muted/30 focus-visible:bg-muted/50 transition-colors px-3 py-2.5"
+                  />
+                </div>
+
+                <div className="px-1 pt-1">
+                  <ExpectedToolsEditor
+                    toolCalls={editForm.expectedToolCalls || []}
+                    onChange={(toolCalls) =>
+                      setEditForm({
+                        ...editForm,
+                        expectedToolCalls: toolCalls,
+                      })
+                    }
+                    availableTools={availableTools}
+                  />
+                </div>
+              </>
+            ) : (
+              <div className="py-8 text-center text-xs text-muted-foreground">
+                Loading...
+              </div>
+            )}
+          </div>
+        </div>
+      </ResizablePanel>
+
+      {/* Results Panel */}
+      <ResizableHandle withHandle />
+      <ResizablePanel defaultSize={60} minSize={20} maxSize={80}>
+        <TestResultsPanel
+          iteration={currentQuickRunResult}
+          testCase={currentTestCase}
+          loading={isRunning}
+          onClear={handleClearResult}
+          serverNames={(suite?.environment?.servers || []).filter((name) =>
+            connectedServerNames.has(name),
+          )}
+        />
+      </ResizablePanel>
+    </ResizablePanelGroup>
+  );
+}

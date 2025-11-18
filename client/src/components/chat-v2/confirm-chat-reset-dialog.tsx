@@ -9,37 +9,29 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
-interface ConfirmModelChangeDialogProps {
+interface ConfirmChatResetDialogProps {
   open: boolean;
   onConfirm: () => void;
   onCancel: () => void;
-  currentModelName: string;
-  newModelName: string;
+  message?: string;
 }
 
-export function ConfirmModelChangeDialog({
+export function ConfirmChatResetDialog({
   open,
   onConfirm,
   onCancel,
-  currentModelName,
-  newModelName,
-}: ConfirmModelChangeDialogProps) {
+  message = "Resetting the chat will clear your current conversation thread. This action cannot be undone.",
+}: ConfirmChatResetDialogProps) {
   return (
     <AlertDialog open={open} onOpenChange={(open) => !open && onCancel()}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Change model?</AlertDialogTitle>
-          <AlertDialogDescription>
-            Changing from <strong>{currentModelName}</strong> to{" "}
-            <strong>{newModelName}</strong> will clear your current conversation
-            thread. This action cannot be undone.
-          </AlertDialogDescription>
+          <AlertDialogTitle>Reset chat?</AlertDialogTitle>
+          <AlertDialogDescription>{message}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel onClick={onCancel}>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={onConfirm}>
-            Change model
-          </AlertDialogAction>
+          <AlertDialogAction onClick={onConfirm}>Reset chat</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

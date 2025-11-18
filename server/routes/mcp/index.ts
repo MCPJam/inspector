@@ -4,7 +4,6 @@ import servers from "./servers";
 import tools from "./tools";
 import resources from "./resources";
 import prompts from "./prompts";
-import chat from "./chat";
 import chatV2 from "./chat-v2";
 import oauth from "./oauth";
 import exporter from "./export";
@@ -15,6 +14,7 @@ import elicitation from "./elicitation";
 import openai from "./openai";
 import registry from "./registry";
 import models from "./models";
+import listTools from "./list-tools";
 import tokenizer from "./tokenizer";
 
 const mcp = new Hono();
@@ -27,9 +27,6 @@ mcp.get("/health", (c) => {
     timestamp: new Date().toISOString(),
   });
 });
-
-// Chat endpoint - REAL IMPLEMENTATION
-mcp.route("/chat", chat);
 
 // Chat v2 endpoint
 mcp.route("/chat-v2", chatV2);
@@ -45,6 +42,9 @@ mcp.route("/servers", servers);
 
 // Tools endpoint - REAL IMPLEMENTATION
 mcp.route("/tools", tools);
+
+// List tools endpoint - list all tools from selected servers
+mcp.route("/list-tools", listTools);
 
 // Evals endpoint - run evaluations
 mcp.route("/evals", evals);

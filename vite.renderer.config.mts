@@ -3,9 +3,14 @@ import react from "@vitejs/plugin-react";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import tailwindcss from "@tailwindcss/vite";
-
+import { readFileSync } from "fs";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+
+const packageJson = JSON.parse(
+  readFileSync(resolve(__dirname, "package.json"), "utf-8"),
+);
+const appVersion = packageJson.version || "1.0.0";
 
 // https://vitejs.dev/config
 export default defineConfig(({ mode }) => {
@@ -30,6 +35,9 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
         },
       },
+    },
+    define: {
+      __APP_VERSION__: JSON.stringify(appVersion),
     },
   };
 });

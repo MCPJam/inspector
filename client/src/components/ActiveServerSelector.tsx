@@ -7,8 +7,9 @@ import { Check } from "lucide-react";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import { hasOAuthConfig } from "@/lib/mcp-oauth";
+import { ConfirmChatResetDialog } from "./chat-v2/confirm-chat-reset-dialog";
 interface ActiveServerSelectorProps {
-  connectedServerConfigs: Record<string, ServerWithName>;
+  serverConfigs: Record<string, ServerWithName>;
   selectedServer: string;
   selectedMultipleServers: string[];
   isMultiSelectEnabled: boolean;
@@ -16,6 +17,7 @@ interface ActiveServerSelectorProps {
   onMultiServerToggle: (server: string) => void;
   onConnect: (formData: ServerFormData) => void;
   showOnlyOAuthServers?: boolean; // Only show servers that use OAuth
+  hasMessages?: boolean;
 }
 
 function getStatusColor(status: string): string {
@@ -49,7 +51,7 @@ function getStatusText(status: string): string {
 }
 
 export function ActiveServerSelector({
-  connectedServerConfigs,
+  serverConfigs,
   selectedServer,
   selectedMultipleServers,
   isMultiSelectEnabled,
@@ -57,8 +59,12 @@ export function ActiveServerSelector({
   onMultiServerToggle,
   onConnect,
   showOnlyOAuthServers = false,
+  hasMessages = false,
 }: ActiveServerSelectorProps) {
+  console.log("serverConfigs", serverConfigs);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  const [pendingServer, setPendingServer] = useState<string | null>(null);
   const posthog = usePostHog();
 
   // Helper function to check if a server uses OAuth
@@ -74,16 +80,46 @@ export function ActiveServerSelector({
     );
   };
 
-  const servers = Object.entries(connectedServerConfigs).filter(
-    ([, server]) => {
-      if (server.enabled === false) return false;
+  const servers = Object.entries(serverConfigs).filter(([, server]) => {
+    if (showOnlyOAuthServers && !isOAuthServer(server)) return false;
+    return true;
+  });
 
-      // If we only want OAuth servers, filter for those
-      if (showOnlyOAuthServers && !isOAuthServer(server)) return false;
+  const handleServerClick = (name: string) => {
+    if (isMultiSelectEnabled) {
+      if (hasMessages) {
+        setPendingServer(name);
+        setShowConfirmDialog(true);
+        return;
+      }
+      onMultiServerToggle(name);
+    } else {
+      const isDifferentServer = selectedServer !== name;
+      if (isDifferentServer && hasMessages) {
+        setPendingServer(name);
+        setShowConfirmDialog(true);
+        return;
+      }
+      onServerChange(name);
+    }
+  };
 
-      return true;
-    },
-  );
+  const handleConfirmChange = () => {
+    if (pendingServer) {
+      if (isMultiSelectEnabled) {
+        onMultiServerToggle(pendingServer);
+      } else {
+        onServerChange(pendingServer);
+      }
+      setPendingServer(null);
+    }
+    setShowConfirmDialog(false);
+  };
+
+  const handleCancelChange = () => {
+    setPendingServer(null);
+    setShowConfirmDialog(false);
+  };
 
   return (
     <div>
@@ -96,11 +132,7 @@ export function ActiveServerSelector({
           return (
             <button
               key={name}
-              onClick={() =>
-                isMultiSelectEnabled
-                  ? onMultiServerToggle(name)
-                  : onServerChange(name)
-              }
+              onClick={() => handleServerClick(name)}
               className={cn(
                 "group relative flex items-center gap-3 px-4 py-3 border-r border-b border-border transition-all duration-200 cursor-pointer",
                 "hover:bg-accent hover:text-accent-foreground",
@@ -168,6 +200,13 @@ export function ActiveServerSelector({
           });
           onConnect(formData);
         }}
+      />
+
+      <ConfirmChatResetDialog
+        open={showConfirmDialog}
+        onConfirm={handleConfirmChange}
+        onCancel={handleCancelChange}
+        message="Changing server selection will cause the chat to reset. This action cannot be undone."
       />
     </div>
   );

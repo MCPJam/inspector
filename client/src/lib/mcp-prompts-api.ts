@@ -1,68 +1,38 @@
-import type { MCPPrompt } from "@/shared/types";
-
-export interface ListPromptsResponse {
-  prompts: MCPPrompt[];
-}
-
-export interface PromptMessage {
-  role: "user" | "assistant";
-  content: {
-    type: "text";
-    text: string;
-  };
-}
+import type { MCPPrompt } from "@/sdk";
 
 export interface PromptContentResponse {
-  description?: string;
-  messages: PromptMessage[];
+  content: any;
 }
 
-interface PromptContentResponseBody {
-  content: PromptContentResponse;
+export interface BatchPromptsResponse {
+  prompts: Record<string, MCPPrompt[]>;
+  errors?: Record<string, string>;
 }
 
-export interface PromptsServerMap {
-  [serverId: string]: MCPPrompt[];
-}
-
-const parseOrThrow = async (res: Response) => {
-  try {
-    return await res.json();
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`Failed to parse response: ${message}`);
-  }
-};
-
-export async function listPrompts(
-  serverId: string,
-): Promise<ListPromptsResponse> {
+export async function listPrompts(serverId: string): Promise<MCPPrompt[]> {
   const res = await fetch("/api/mcp/prompts/list", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ serverId }),
   });
 
-  let body = await parseOrThrow(res);
+  let body: any = null;
+  try {
+    body = await res.json();
+  } catch {}
 
   if (!res.ok) {
-    const error = (body as { error?: string }).error;
-    const message = error || `List prompts failed (${res.status})`;
+    const message = body?.error || `List prompts failed (${res.status})`;
     throw new Error(message);
   }
 
-  // Minimal runtime check
-  if (!body || typeof body !== "object" || !Array.isArray(body.prompts)) {
-    throw new Error("Invalid list prompts response shape");
-  }
-
-  return body as ListPromptsResponse;
+  return Array.isArray(body?.prompts) ? (body.prompts as MCPPrompt[]) : [];
 }
 
-export async function getPromptContent(
+export async function getPrompt(
   serverId: string,
   name: string,
-  args: Record<string, unknown>,
+  args?: Record<string, string>,
 ): Promise<PromptContentResponse> {
   const res = await fetch("/api/mcp/prompts/get", {
     method: "POST",
@@ -70,37 +40,40 @@ export async function getPromptContent(
     body: JSON.stringify({ serverId, name, args }),
   });
 
-  let body = await parseOrThrow(res);
+  let body: any = null;
+  try {
+    body = await res.json();
+  } catch {}
 
   if (!res.ok) {
-    const error = (body as { error?: string }).error;
-    const message = error || `Get prompt failed (${res.status})`;
+    const message = body?.error || `Get prompt failed (${res.status})`;
     throw new Error(message);
   }
 
-  // Minimal runtime check
-  if (
-    !body ||
-    typeof body !== "object" ||
-    !Array.isArray((body as any).content.messages)
-  ) {
-    console.error("Invalid get prompt response shape", body);
-    throw new Error("Invalid get prompt response shape");
-  }
-
-  const result = (body as PromptContentResponseBody).content;
-  return result;
+  return body as PromptContentResponse;
 }
 
-export const getPromptsByServerIds = async (
+export async function listPromptsForServers(
   serverIds: string[],
-): Promise<PromptsServerMap> => {
-  const promptsByServerId: Record<string, MCPPrompt[]> = {};
-  await Promise.all(
-    serverIds.map(async (serverId) => {
-      const prompts = await listPrompts(serverId);
-      promptsByServerId[serverId] = prompts.prompts;
-    }),
-  );
-  return promptsByServerId;
-};
+): Promise<BatchPromptsResponse> {
+  const res = await fetch("/api/mcp/prompts/list-multi", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ serverIds }),
+  });
+
+  let body: any = null;
+  try {
+    body = await res.json();
+  } catch {}
+
+  if (!res.ok) {
+    const message = body?.error || `Batch list prompts failed (${res.status})`;
+    throw new Error(message);
+  }
+
+  return {
+    prompts: (body?.prompts ?? {}) as Record<string, MCPPrompt[]>,
+    errors: body?.errors as Record<string, string> | undefined,
+  };
+}

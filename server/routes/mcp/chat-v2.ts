@@ -239,11 +239,11 @@ chatV2.post("/", async (c) => {
 
     return result.toUIMessageStreamResponse({
       messageMetadata: ({ part }) => {
-        if (part.type === "finish") {
+        if (part.type === "finish-step") {
           return {
-            inputTokens: part.totalUsage.inputTokens,
-            outputTokens: part.totalUsage.outputTokens,
-            totalTokens: part.totalUsage.totalTokens,
+            inputTokens: part.usage.inputTokens,
+            outputTokens: part.usage.outputTokens,
+            totalTokens: part.usage.totalTokens,
           };
         }
       },

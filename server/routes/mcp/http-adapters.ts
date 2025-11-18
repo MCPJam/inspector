@@ -80,7 +80,6 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
       let timer: any;
       const stream = new ReadableStream({
         start(controller) {
-          console.log(`[${routePrefix}] SSE open`, { serverId, sessionId });
           const send = (event: string, data: string) => {
             controller.enqueue(encoder.encode(`event: ${event}\n`));
             controller.enqueue(encoder.encode(`data: ${data}\n\n`));
@@ -94,19 +93,11 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
           // Register session
           sessions.set(`${serverId}:${sessionId}`, { send, close });
           latestSessionByServer.set(serverId, sessionId);
-          console.log(`[${routePrefix}] session registered`, {
-            key: `${serverId}:${sessionId}`,
-          });
 
           // Ping and endpoint per SSE transport handshake
           send("ping", "");
           const sep = endpointBase.includes("?") ? "&" : "?";
           const url = `${endpointBase}${sep}sessionId=${sessionId}`;
-          console.log(`[${routePrefix}] endpoint`, {
-            serverId,
-            sessionId,
-            url,
-          });
           // Emit endpoint as JSON (spec-friendly) then as a plain string (compat).
           try {
             send("endpoint", JSON.stringify({ url, headers: {} }));
@@ -128,7 +119,6 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
           try {
             clearInterval(timer);
           } catch {}
-          console.log(`[${routePrefix}] SSE close`, { serverId, sessionId });
           sessions.delete(`${serverId}:${sessionId}`);
           // If this session was the latest for this server, clear pointer
           if (latestSessionByServer.get(serverId) === sessionId) {
@@ -188,11 +178,6 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
         sess = sessions.get(`${serverId}:${fallbackId}`);
       }
     }
-    console.log(`[${routePrefix}] POST messages`, {
-      key,
-      resolved: !!sess,
-      contentType: c.req.header("content-type"),
-    });
     if (!sess) {
       return c.json({ error: "Invalid session" }, 400);
     }
@@ -222,11 +207,6 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
       // If there is a JSON-RPC response, emit it over SSE to the client
       if (responseMessage) {
         try {
-          console.log(`[${routePrefix}] emit message`, {
-            key,
-            id: responseMessage.id,
-            method,
-          });
           sess.send("message", JSON.stringify(responseMessage));
         } catch {}
       }
