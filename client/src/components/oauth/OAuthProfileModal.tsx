@@ -105,18 +105,9 @@ export function OAuthProfileModal({
   );
 
   const generateDefaultName = useCallback(() => {
-    const baseName = server?.name
-      ? `${server.name}-debug`
-      : derivedProfile.serverUrl
-        ? getHostFromUrl(derivedProfile.serverUrl)
-        : "oauth-flow-target";
-    let candidate = baseName || "oauth-flow-target";
-    let counter = 1;
-    while (existingServerNames.includes(candidate)) {
-      candidate = `${baseName || "oauth-flow-target"}-${counter++}`;
-    }
-    return candidate;
-  }, [server?.name, derivedProfile.serverUrl, existingServerNames]);
+    const baseName = server?.name || "oauth-flow-target";
+    return baseName;
+  }, [server?.name, existingServerNames]);
 
   useEffect(() => {
     if (open) {
