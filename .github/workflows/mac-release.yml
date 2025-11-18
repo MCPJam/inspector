@@ -75,14 +75,34 @@ jobs:
       - name: Build and sign application
         run: |
           set -x  # Enable debug output
+
+          # Show initial resources
+          echo "=== Initial system resources ==="
+          df -h
+          vm_stat | head -10
+
           npm run build
 
           # Clean up any mounted volumes before making
           sudo diskutil unmountDisk force /Volumes/"MCPJam Inspector" 2>/dev/null || true
           hdiutil detach /Volumes/"MCPJam Inspector" -force 2>/dev/null || true
 
+          # Clean up before packaging to free space
+          echo "=== Cleaning up to free space ==="
+          rm -rf node_modules/.vite client/node_modules/.cache
+          df -h
+
           echo "=== Starting electron:make ==="
-          npm run electron:make
+          # Run with timeout to prevent hanging
+          timeout 600 npm run electron:make || {
+            EXIT_CODE=$?
+            echo "electron:make failed or timed out with code: $EXIT_CODE"
+            echo "=== System resources at failure ==="
+            df -h
+            vm_stat | head -10
+            exit $EXIT_CODE
+          }
+
           MAKE_EXIT_CODE=$?
           echo "=== electron:make finished with exit code: $MAKE_EXIT_CODE ==="
 
