@@ -1,9 +1,13 @@
+<<<<<<< HEAD
 Copyright (c) 2025-present MCPJam Inc
 
 Portions of this software are licensed as follows: 
 
 * All content residing under the "/server/services" directory of this repository and "/server/routes/mcp/evals.ts", if that directory or file exists, is licensed under the license defined in "server/evals/LICENSE". 
 * Content outside of the above mentioned directories or restrictions above is available under the "Apache License" license as defined below.
+=======
+Copyright 2025 MCPJam
+>>>>>>> 90a9bc4a1aa576dfef56d29ddf0ee3a8af8adaea
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
