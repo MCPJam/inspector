@@ -4,16 +4,21 @@ import { Button } from "./ui/button";
 import { Plus, Database, FileText, Layers } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { ServerConnectionCard } from "./connection/ServerConnectionCard";
+import { ServerConnectionDetails } from "./connection/ServerConnectionDetails";
 import { AddServerModal } from "./connection/AddServerModal";
 import { EditServerModal } from "./connection/EditServerModal";
 import { JsonImportModal } from "./connection/JsonImportModal";
-import { WorkspaceSelector } from "./connection/WorkspaceSelector";
 import { ServerFormData } from "@/shared/types.js";
 import { MCPIcon } from "./ui/mcp-icon";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
 import { Workspace } from "@/state/app-types";
+import {
+  ResizablePanelGroup,
+  ResizablePanel,
+  ResizableHandle,
+} from "./ui/resizable";
 
 interface ServersTabProps {
   connectedServerConfigs: Record<string, ServerWithName>;
@@ -130,98 +135,217 @@ export function ServersTab({
   };
 
   return (
-    <div className="space-y-6 p-8 h-full overflow-auto">
-      {/* Header Section */}
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold tracking-tight">MCP Servers</h2>
-        <div className="flex items-center gap-2">
-          <HoverCard
-            open={isActionMenuOpen}
-            onOpenChange={setIsActionMenuOpen}
-            openDelay={150}
-            closeDelay={100}
-          >
-            <HoverCardTrigger asChild>
-              <Button onClick={handleAddServerClick} className="cursor-pointer">
-                <Plus className="h-4 w-4 mr-2" />
-                Add Server
-              </Button>
-            </HoverCardTrigger>
-            <HoverCardContent align="end" sideOffset={8} className="w-56 p-3">
-              <div className="flex flex-col gap-2">
-                <Button
-                  variant="ghost"
-                  className="justify-start"
-                  onClick={handleAddServerClick}
-                >
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add manually
-                </Button>
-                <Button
-                  variant="ghost"
-                  className="justify-start"
-                  onClick={handleImportJsonClick}
-                >
-                  <FileText className="h-4 w-4 mr-2" />
-                  Import JSON
-                </Button>
-                <Button
-                  variant="ghost"
-                  className="justify-start"
-                  onClick={handleAddFromRegistryClick}
-                >
-                  <Layers className="h-4 w-4 mr-2" />
-                  Add from Registry
-                </Button>
-              </div>
-            </HoverCardContent>
-          </HoverCard>
-        </div>
-      </div>
-
-      {/* Server Cards Grid */}
+    <div className="h-full flex flex-col">
       {connectedCount > 0 ? (
-        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-          {filteredServers.map(([name, server]) => (
-            <ServerConnectionCard
-              key={name}
-              server={server}
-              onDisconnect={onDisconnect}
-              onReconnect={onReconnect}
-              onEdit={handleEditServer}
-              onRemove={onRemove}
-            />
-          ))}
-        </div>
-      ) : (
-        <Card className="p-12 text-center">
-          <div className="mx-auto max-w-sm">
-            <MCPIcon className="mx-auto h-12 w-12 text-muted-foreground" />
-            <h3 className="mt-4 text-lg font-semibold">No servers connected</h3>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Get started by connecting to your first MCP server
-            </p>
-            <Button
-              onClick={() => setIsAddingServer(true)}
-              className="mt-4 cursor-pointer"
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              Add Your First Server
-            </Button>
-          </div>
-        </Card>
-      )}
+        <ResizablePanelGroup direction="horizontal" className="flex-1">
+          {/* Main Server List Panel */}
+          <ResizablePanel defaultSize={65} minSize={70}>
+            <div className="space-y-6 p-8 h-full overflow-auto">
+              {/* Header Section */}
+              <div className="flex items-center justify-between">
+                <h2 className="text-2xl font-bold tracking-tight">
+                  MCP Servers
+                </h2>
+                <div className="flex items-center gap-2">
+                  <HoverCard
+                    open={isActionMenuOpen}
+                    onOpenChange={setIsActionMenuOpen}
+                    openDelay={150}
+                    closeDelay={100}
+                  >
+                    <HoverCardTrigger asChild>
+                      <Button
+                        onClick={handleAddServerClick}
+                        className="cursor-pointer"
+                      >
+                        <Plus className="h-4 w-4 mr-2" />
+                        Add Server
+                      </Button>
+                    </HoverCardTrigger>
+                    <HoverCardContent
+                      align="end"
+                      sideOffset={8}
+                      className="w-56 p-3"
+                    >
+                      <div className="flex flex-col gap-2">
+                        <Button
+                          variant="ghost"
+                          className="justify-start"
+                          onClick={handleAddServerClick}
+                        >
+                          <Plus className="h-4 w-4 mr-2" />
+                          Add manually
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          className="justify-start"
+                          onClick={handleImportJsonClick}
+                        >
+                          <FileText className="h-4 w-4 mr-2" />
+                          Import JSON
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          className="justify-start"
+                          onClick={handleAddFromRegistryClick}
+                        >
+                          <Layers className="h-4 w-4 mr-2" />
+                          Add from Registry
+                        </Button>
+                      </div>
+                    </HoverCardContent>
+                  </HoverCard>
+                </div>
+              </div>
 
-      {filteredServers.length === 0 && connectedCount > 0 && (
-        <Card className="p-8 text-center">
-          <div className="mx-auto max-w-sm">
-            <Database className="mx-auto h-8 w-8 text-muted-foreground" />
-            <h3 className="mt-4 text-lg font-semibold">No servers found</h3>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Try adjusting your search or filter criteria
-            </p>
+              {/* Server Cards Grid */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+                {filteredServers.map(([name, server]) => (
+                  <ServerConnectionCard
+                    key={name}
+                    server={server}
+                    onDisconnect={onDisconnect}
+                    onReconnect={onReconnect}
+                    onEdit={handleEditServer}
+                    onRemove={onRemove}
+                  />
+                ))}
+              </div>
+
+              {filteredServers.length === 0 && (
+                <Card className="p-8 text-center">
+                  <div className="mx-auto max-w-sm">
+                    <Database className="mx-auto h-8 w-8 text-muted-foreground" />
+                    <h3 className="mt-4 text-lg font-semibold">
+                      No servers found
+                    </h3>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      Try adjusting your search or filter criteria
+                    </p>
+                  </div>
+                </Card>
+              )}
+
+              {/* Add Server Modal */}
+              <AddServerModal
+                isOpen={isAddingServer}
+                onClose={() => {
+                  setIsAddingServer(false);
+                }}
+                onSubmit={(formData) => {
+                  posthog.capture("connecting_server", {
+                    location: "servers_tab",
+                    platform: detectPlatform(),
+                    environment: detectEnvironment(),
+                  });
+                  onConnect(formData);
+                }}
+              />
+
+              {/* Edit Server Modal */}
+              {serverToEdit && (
+                <EditServerModal
+                  isOpen={isEditingServer}
+                  onClose={handleCloseEditModal}
+                  onSubmit={(formData, originalName) =>
+                    onUpdate(originalName, formData)
+                  }
+                  server={serverToEdit}
+                />
+              )}
+
+              {/* JSON Import Modal */}
+              <JsonImportModal
+                isOpen={isImportingJson}
+                onClose={() => setIsImportingJson(false)}
+                onImport={handleJsonImport}
+              />
+            </div>
+          </ResizablePanel>
+
+          {/* JSON-RPC Traces Panel - Always visible on the right */}
+          <ResizableHandle withHandle />
+          <ResizablePanel defaultSize={35} minSize={20} maxSize={30}>
+            <ServerConnectionDetails serverCount={connectedCount} />
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      ) : (
+        <div className="space-y-6 p-8 h-full overflow-auto">
+          {/* Header Section */}
+          <div className="flex items-center justify-between">
+            <h2 className="text-2xl font-bold tracking-tight">MCP Servers</h2>
+            <div className="flex items-center gap-2">
+              <HoverCard
+                open={isActionMenuOpen}
+                onOpenChange={setIsActionMenuOpen}
+                openDelay={150}
+                closeDelay={100}
+              >
+                <HoverCardTrigger asChild>
+                  <Button
+                    onClick={handleAddServerClick}
+                    className="cursor-pointer"
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Add Server
+                  </Button>
+                </HoverCardTrigger>
+                <HoverCardContent
+                  align="end"
+                  sideOffset={8}
+                  className="w-56 p-3"
+                >
+                  <div className="flex flex-col gap-2">
+                    <Button
+                      variant="ghost"
+                      className="justify-start"
+                      onClick={handleAddServerClick}
+                    >
+                      <Plus className="h-4 w-4 mr-2" />
+                      Add manually
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      className="justify-start"
+                      onClick={handleImportJsonClick}
+                    >
+                      <FileText className="h-4 w-4 mr-2" />
+                      Import JSON
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      className="justify-start"
+                      onClick={handleAddFromRegistryClick}
+                    >
+                      <Layers className="h-4 w-4 mr-2" />
+                      Add from Registry
+                    </Button>
+                  </div>
+                </HoverCardContent>
+              </HoverCard>
+            </div>
           </div>
-        </Card>
+
+          {/* Empty State */}
+          <Card className="p-12 text-center">
+            <div className="mx-auto max-w-sm">
+              <MCPIcon className="mx-auto h-12 w-12 text-muted-foreground" />
+              <h3 className="mt-4 text-lg font-semibold">
+                No servers connected
+              </h3>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Get started by connecting to your first MCP server
+              </p>
+              <Button
+                onClick={() => setIsAddingServer(true)}
+                className="mt-4 cursor-pointer"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Add Your First Server
+              </Button>
+            </div>
+          </Card>
+        </div>
       )}
 
       {/* Add Server Modal */}
