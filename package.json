@@ -113,7 +113,6 @@
     "framer-motion": "^12.23.6",
     "fuse.js": "^7.1.0",
     "hono": "^4.6.11",
-    "input-otp": "^1.4.2",
     "lucide-react": "^0.525.0",
     "marked": "^16.4.1",
     "next-themes": "^0.4.6",
