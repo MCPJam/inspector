@@ -22,6 +22,9 @@ export default defineConfig({
         "electron",
         // Bundle everything else including electron-log, update-electron-app, etc.
       ],
+      output: {
+        inlineDynamicImports: true,
+      },
     },
   },
 });
