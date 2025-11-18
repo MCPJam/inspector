@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { EvalIteration, EvalCase } from "./types";
 import { TraceViewer } from "./trace-viewer";
 import { MessageSquare, Code2 } from "lucide-react";
-import { getToolsMetadata, ToolServerMap } from "@/lib/mcp-tools-api";
+import { getToolsMetadata, ToolServerMap, listTools } from "@/lib/mcp-tools-api";
 
 export function IterationDetails({
   iteration,
@@ -28,6 +28,9 @@ export function IterationDetails({
     Record<string, Record<string, any>>
   >({});
   const [toolServerMap, setToolServerMap] = useState<ToolServerMap>({});
+  const [toolsWithSchema, setToolsWithSchema] = useState<
+    Record<string, { name: string; inputSchema?: any }>
+  >({});
 
   useEffect(() => {
     let cancelled = false;
@@ -63,6 +66,7 @@ export function IterationDetails({
       if (serverNames.length === 0) {
         setToolsMetadata({});
         setToolServerMap({});
+        setToolsWithSchema({});
         return;
       }
       try {
@@ -71,11 +75,33 @@ export function IterationDetails({
         const { metadata, toolServerMap } = await getToolsMetadata(serverNames);
         setToolsMetadata(metadata);
         setToolServerMap(toolServerMap);
+
+        // Also fetch tools with their inputSchema for type display
+        const toolsMap: Record<string, { name: string; inputSchema?: any }> = {};
+        await Promise.all(
+          serverNames.map(async (serverId) => {
+            try {
+              const result = await listTools(serverId);
+              if (result.tools) {
+                for (const tool of result.tools) {
+                  toolsMap[tool.name] = {
+                    name: tool.name,
+                    inputSchema: tool.inputSchema,
+                  };
+                }
+              }
+            } catch (error) {
+              // Silently fail for disconnected servers
+            }
+          }),
+        );
+        setToolsWithSchema(toolsMap);
       } catch (error) {
         // Silently fail if servers aren't connected
         // This is expected in evals where servers may not be running
         setToolsMetadata({});
         setToolServerMap({});
+        setToolsWithSchema({});
       }
     };
     fetchToolsMetadata();
@@ -88,24 +114,55 @@ export function IterationDetails({
     [];
   const actualToolCalls = iteration.actualToolCalls || [];
 
+  // Helper to format type information
+  const formatType = (type: any): string => {
+    if (Array.isArray(type)) {
+      return type.join(" | ");
+    }
+    if (typeof type === "string") {
+      return type;
+    }
+    return String(type);
+  };
+
+  // Helper to get argument schema for a tool
+  const getArgumentSchema = (toolName: string, argKey: string) => {
+    const tool = toolsWithSchema[toolName];
+    if (!tool?.inputSchema?.properties) return null;
+    return tool.inputSchema.properties[argKey];
+  };
+
   // Helper to render arguments in a readable format
-  const renderArguments = (args: Record<string, any>) => {
+  const renderArguments = (
+    args: Record<string, any>,
+    toolName?: string,
+  ) => {
     const entries = Object.entries(args);
     if (entries.length === 0) {
       return <span className="text-muted-foreground italic">No arguments</span>;
     }
     return (
       <div className="space-y-1">
-        {entries.map(([key, value]) => (
-          <div key={key} className="flex items-start gap-2">
-            <span className="font-medium text-foreground">{key}:</span>
-            <span className="font-mono text-muted-foreground">
-              {typeof value === "object"
-                ? JSON.stringify(value)
-                : String(value)}
-            </span>
-          </div>
-        ))}
+        {entries.map(([key, value]) => {
+          const argSchema = toolName ? getArgumentSchema(toolName, key) : null;
+          return (
+            <div key={key} className="flex items-start gap-2">
+              <div className="flex items-center gap-1.5">
+                <span className="font-medium text-foreground">{key}:</span>
+                {argSchema?.type && (
+                  <span className="text-[10px] font-normal text-muted-foreground bg-background/50 px-1.5 py-0.5 rounded border border-border/40">
+                    {formatType(argSchema.type)}
+                  </span>
+                )}
+              </div>
+              <span className="font-mono text-muted-foreground">
+                {typeof value === "object"
+                  ? JSON.stringify(value)
+                  : String(value)}
+              </span>
+            </div>
+          );
+        })}
       </div>
     );
   };
@@ -204,7 +261,7 @@ export function IterationDetails({
                         </div>
                         {Object.keys(tool.arguments || {}).length > 0 && (
                           <div className="text-xs bg-muted/30 rounded p-1.5">
-                            {renderArguments(tool.arguments || {})}
+                            {renderArguments(tool.arguments || {}, tool.toolName)}
                           </div>
                         )}
                       </div>
@@ -234,7 +291,7 @@ export function IterationDetails({
                         </div>
                         {Object.keys(tool.arguments || {}).length > 0 && (
                           <div className="text-xs bg-muted/30 rounded p-1.5">
-                            {renderArguments(tool.arguments || {})}
+                            {renderArguments(tool.arguments || {}, tool.toolName)}
                           </div>
                         )}
                       </div>
