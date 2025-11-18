@@ -28,6 +28,7 @@ import { EvalIteration, EvalSuiteRun } from "./types";
 import { toast } from "sonner";
 
 interface RunOverviewProps {
+  suite: { _id: string; name: string };
   runs: EvalSuiteRun[];
   runsLoading: boolean;
   allIterations: EvalIteration[];
@@ -51,6 +52,7 @@ interface RunOverviewProps {
 }
 
 export function RunOverview({
+  suite,
   runs,
   runsLoading,
   allIterations,
