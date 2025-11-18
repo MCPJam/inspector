@@ -115,6 +115,28 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
     }
   };
 
+  // Handle Enter key to read resource globally
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Enter" && !e.shiftKey && selectedResource && !loading) {
+        // Don't trigger if user is typing in an input, textarea, or contenteditable
+        const target = e.target as HTMLElement;
+        const tagName = target.tagName;
+        const isEditable = target.isContentEditable;
+
+        if (tagName === "INPUT" || tagName === "TEXTAREA" || isEditable) {
+          return;
+        }
+
+        e.preventDefault();
+        readResource(selectedResource);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedResource, loading]);
+
   if (!serverConfig || !serverName) {
     return (
       <EmptyState

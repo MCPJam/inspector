@@ -31,6 +31,23 @@ export function ParametersPanel({
   onFieldChange,
 }: ParametersPanelProps) {
   const posthog = usePostHog();
+
+  // Handle Enter key in input fields
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && !loading) {
+      e.preventDefault();
+      onExecute();
+    }
+  };
+
+  // Handle Enter key in select fields
+  const handleSelectKeyDown = (e: React.KeyboardEvent<HTMLSelectElement>) => {
+    if (e.key === "Enter" && !loading) {
+      e.preventDefault();
+      onExecute();
+    }
+  };
+
   return (
     <ResizablePanel defaultSize={70} minSize={50}>
       <div className="h-full flex flex-col bg-background">
@@ -149,6 +166,7 @@ export function ParametersPanel({
                             onChange={(e) =>
                               onFieldChange(field.name, e.target.value)
                             }
+                            onKeyDown={handleSelectKeyDown}
                             className="w-full h-9 bg-background border border-border rounded px-2 text-xs"
                           >
                             {field.enum?.map((v) => (
@@ -197,6 +215,7 @@ export function ParametersPanel({
                             onChange={(e) =>
                               onFieldChange(field.name, e.target.value)
                             }
+                            onKeyDown={handleInputKeyDown}
                             placeholder={`Enter ${field.name}`}
                             className="bg-background border-border hover:border-border/80 focus:border-ring focus:ring-0 font-medium text-xs"
                           />

@@ -175,6 +175,36 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
 
   const promptNames = prompts.map((prompt) => prompt.name);
 
+  // Handle Enter key in input fields
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && !loading) {
+      e.preventDefault();
+      getPrompt();
+    }
+  };
+
+  // Handle Enter key to get prompt globally
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Enter" && !e.shiftKey && selectedPrompt && !loading) {
+        // Don't trigger if user is typing in an input, textarea, or contenteditable
+        const target = e.target as HTMLElement;
+        const tagName = target.tagName;
+        const isEditable = target.isContentEditable;
+
+        if (tagName === "INPUT" || tagName === "TEXTAREA" || isEditable) {
+          return;
+        }
+
+        e.preventDefault();
+        getPrompt();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedPrompt, loading]);
+
   if (!serverConfig || !serverName) {
     return (
       <EmptyState
@@ -462,6 +492,7 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
                                             e.target.value,
                                           )
                                         }
+                                        onKeyDown={handleInputKeyDown}
                                         placeholder={`Enter ${field.name}`}
                                         className="bg-background border-border hover:border-border/80 focus:border-ring focus:ring-0 font-medium text-xs"
                                       />
