@@ -182,6 +182,7 @@ export enum Model {
   DEEPSEEK_CHAT = "deepseek-chat",
   DEEPSEEK_REASONER = "deepseek-reasoner",
   // Google Gemini models
+  GEMINI_3_PRO = "gemini-3-pro-preview",
   GEMINI_2_5_PRO = "gemini-2.5-pro",
   GEMINI_2_5_FLASH = "gemini-2.5-flash",
   GEMINI_2_5_FLASH_LITE = "gemini-2.5-flash-lite",
@@ -356,6 +357,12 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     contextLength: 128000,
   },
   // Google Gemini models (latest first)
+  {
+    id: Model.GEMINI_3_PRO,
+    name: "Gemini 3 Pro (Preview)",
+    provider: "google",
+    contextLength: 1000000,
+  },
   {
     id: Model.GEMINI_2_5_PRO,
     name: "Gemini 2.5 Pro",
