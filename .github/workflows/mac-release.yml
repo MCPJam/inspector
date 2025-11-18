@@ -90,6 +90,30 @@ jobs:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
 
+      - name: Create DMG
+        run: |
+          APP_PATH=$(find out -name "*.app" -type d | head -n1)
+
+          if [ ! -d "$APP_PATH" ]; then
+            echo "Error: App bundle not found"
+            exit 1
+          fi
+
+          mkdir -p out/make
+          DMG_PATH="out/make/MCPJam Inspector.dmg"
+          rm -f "$DMG_PATH"
+
+          TMP_DMG_DIR=$(mktemp -d)
+          cp -R "$APP_PATH" "$TMP_DMG_DIR/"
+
+          hdiutil create -volname "MCPJam Inspector" \
+            -srcfolder "$TMP_DMG_DIR" \
+            -ov -format UDZO \
+            "$DMG_PATH"
+
+          rm -rf "$TMP_DMG_DIR"
+          echo "✓ DMG created successfully"
+
       - name: Notarize and staple DMG
         run: |
           # Find the DMG file
