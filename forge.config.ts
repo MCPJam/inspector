@@ -72,7 +72,9 @@ const config: ForgeConfig = {
       resolve(__dirname, "sdk", "dist"),
     ],
     osxSign: osxSignOptions,
-    osxNotarize: osxNotarizeOptions,
+    // Auto-notarization disabled - handled manually in GitHub Actions workflow
+    // to avoid silent hangs. The workflow notarizes after build with better error handling.
+    // osxNotarize: osxNotarizeOptions,
   },
   rebuildConfig: {},
   makers: [
