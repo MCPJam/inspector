@@ -2,7 +2,7 @@ Copyright (c) 2025-present MCPJam Inc
 
 Portions of this software are licensed as follows: 
 
-* All content residing under the "evals-cli/" directory of this repository, if that directory exists, is licensed under the license defined in evals-cli/LICENSE. 
+* All content residing under the "/server/services" directory of this repository and "/server/routes/mcp/evals.ts", if that directory or file exists, is licensed under the license defined in "server/evals/LICENSE". 
 * Content outside of the above mentioned directories or restrictions above is available under the "Apache License" license as defined below.
 
 Licensed under the Apache License, Version 2.0 (the "License");
