@@ -61,7 +61,6 @@ export function TestTemplateEditor({
   const { getToken, hasToken } = useAiProviderKeys();
   const [editForm, setEditForm] = useState<TestTemplate | null>(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
-  const [editedTitle, setEditedTitle] = useState("");
   const [availableTools, setAvailableTools] = useState<
     Array<{ name: string; description?: string; inputSchema?: any }>
   >([]);
@@ -105,13 +104,6 @@ export function TestTemplateEditor({
       setCurrentQuickRunResult(lastMessageRunIteration);
     }
   }, [lastMessageRunIteration]);
-
-  // Sync editedTitle when currentTestCase changes
-  useEffect(() => {
-    if (currentTestCase) {
-      setEditedTitle(currentTestCase.title);
-    }
-  }, [currentTestCase?.title]);
 
   // Initialize/reset editForm only when switching test cases (not on DB updates)
   // This preserves local edits after running tests
@@ -178,34 +170,22 @@ export function TestTemplateEditor({
 
   const handleTitleClick = () => {
     setIsEditingTitle(true);
-    setEditedTitle(currentTestCase?.title || "");
   };
 
-  const handleTitleBlur = async () => {
+  const handleTitleBlur = () => {
     setIsEditingTitle(false);
-    if (editedTitle.trim() && editedTitle !== currentTestCase?.title) {
-      try {
-        await updateTestCaseMutation({
-          testCaseId: currentTestCase!._id,
-          title: editedTitle.trim(),
-        });
-        toast.success("Title updated");
-      } catch (error) {
-        console.error("Failed to update title:", error);
-        toast.error("Failed to update title");
-        setEditedTitle(currentTestCase?.title || "");
-      }
-    } else {
-      setEditedTitle(currentTestCase?.title || "");
-    }
   };
 
   const handleTitleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") {
+      e.preventDefault();
       handleTitleBlur();
     } else if (e.key === "Escape") {
+      // Revert title to current test case value
+      if (editForm && currentTestCase) {
+        setEditForm({ ...editForm, title: currentTestCase.title });
+      }
       setIsEditingTitle(false);
-      setEditedTitle(currentTestCase?.title || "");
     }
   };
 
@@ -429,8 +409,11 @@ export function TestTemplateEditor({
                 {isEditingTitle ? (
                   <input
                     type="text"
-                    value={editedTitle}
-                    onChange={(e) => setEditedTitle(e.target.value)}
+                    value={editForm?.title || ""}
+                    onChange={(e) =>
+                      editForm &&
+                      setEditForm({ ...editForm, title: e.target.value })
+                    }
                     onBlur={handleTitleBlur}
                     onKeyDown={handleTitleKeyDown}
                     autoFocus
@@ -441,7 +424,7 @@ export function TestTemplateEditor({
                     className="text-lg font-semibold cursor-pointer hover:opacity-60 transition-opacity"
                     onClick={handleTitleClick}
                   >
-                    {currentTestCase.title}
+                    {editForm?.title || currentTestCase.title}
                   </h2>
                 )}
               </div>
