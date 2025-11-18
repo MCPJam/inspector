@@ -93,15 +93,7 @@ jobs:
           df -h
 
           echo "=== Starting electron:make ==="
-          # Run with timeout to prevent hanging
-          timeout 600 npm run electron:make || {
-            EXIT_CODE=$?
-            echo "electron:make failed or timed out with code: $EXIT_CODE"
-            echo "=== System resources at failure ==="
-            df -h
-            vm_stat | head -10
-            exit $EXIT_CODE
-          }
+          npm run electron:make
 
           MAKE_EXIT_CODE=$?
           echo "=== electron:make finished with exit code: $MAKE_EXIT_CODE ==="

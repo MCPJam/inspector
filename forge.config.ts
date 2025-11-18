@@ -61,7 +61,8 @@ const osxNotarizeOptions =
 
 const config: ForgeConfig = {
   packagerConfig: {
-    asar: true,
+    // Disable asar in CI to reduce memory pressure during packaging
+    asar: process.env.CI !== "true",
     appBundleId: "com.mcpjam.inspector",
     appCategoryType: "public.app-category.developer-tools",
     executableName: "mcpjam-inspector",
