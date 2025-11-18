@@ -240,10 +240,11 @@ export function ChatTabV2({
 
   // Sum token usage from all assistant messages with metadata
   const tokenUsage = useMemo(() => {
-    let totalInputTokens = 0;
+    let lastInputTokens = 0;
     let totalOutputTokens = 0;
-    let totalTokens = 0;
 
+    // Find the last assistant message with metadata for inputTokens
+    // Sum outputTokens across all assistant messages
     for (const message of messages) {
       if (message.role === "assistant" && message.metadata) {
         const metadata = message.metadata as
@@ -255,21 +256,20 @@ export function ChatTabV2({
           | undefined;
 
         if (metadata) {
-          totalInputTokens += metadata.inputTokens ?? 0;
+          // Update lastInputTokens with the most recent value
+          lastInputTokens = metadata.inputTokens ?? 0;
+          // Sum outputTokens across all messages
           totalOutputTokens += metadata.outputTokens ?? 0;
-          const messageTotal =
-            metadata.totalTokens ??
-            (metadata.inputTokens ?? 0) + (metadata.outputTokens ?? 0);
-          totalTokens += messageTotal;
         }
       }
     }
 
+    const totalTokens = lastInputTokens + totalOutputTokens;
+
     return {
-      inputTokens: totalInputTokens,
+      inputTokens: lastInputTokens,
       outputTokens: totalOutputTokens,
-      totalTokens:
-        totalTokens > 0 ? totalTokens : totalInputTokens + totalOutputTokens,
+      totalTokens,
     };
   }, [messages]);
   const resetChat = useCallback(() => {
