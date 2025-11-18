@@ -40,6 +40,8 @@ jobs:
           npm install --legacy-peer-deps
           npm run install:deps
           cd sdk && npm install --legacy-peer-deps
+          # Install appdmg explicitly (native dependency for DMG creation)
+          npm install --no-save appdmg
 
       - name: Setup Apple certificates and API key
         run: |
