@@ -131,6 +131,10 @@ export function SuiteHeader({
 
   if (viewMode === "run-detail" && selectedRunDetails) {
     const isCancelling = cancellingRunId === selectedRunDetails._id;
+    const isRunInProgress =
+      selectedRunDetails.status === "running" ||
+      selectedRunDetails.status === "pending";
+    const showAsRunning = isRerunning || isRunInProgress;
 
     return (
       <div className="flex items-center justify-between gap-4 mb-4">
@@ -147,8 +151,7 @@ export function SuiteHeader({
             <BarChart3 className="h-4 w-4" />
             View run summary
           </Button>
-          {selectedRunDetails.status === "running" ||
-          selectedRunDetails.status === "pending" ? (
+          {isRunInProgress ? (
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -181,13 +184,13 @@ export function SuiteHeader({
                     variant="outline"
                     size="sm"
                     onClick={() => onRerun(suite)}
-                    disabled={!canRerun || isRerunning}
+                    disabled={!canRerun || showAsRunning}
                     className="gap-2"
                   >
                     <RotateCw
-                      className={`h-4 w-4 ${isRerunning ? "animate-spin" : ""}`}
+                      className={`h-4 w-4 ${showAsRunning ? "animate-spin" : ""}`}
                     />
-                    {isRerunning ? "Running..." : "Rerun"}
+                    {showAsRunning ? "Running..." : "Rerun"}
                   </Button>
                 </span>
               </TooltipTrigger>

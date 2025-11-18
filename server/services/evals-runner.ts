@@ -121,6 +121,23 @@ async function finishIterationDirectly(
 ): Promise<void> {
   if (!params.iterationId) return;
 
+  // Check if iteration was cancelled before trying to update
+  try {
+    const iteration = await convexClient.query(
+      "testSuites:getTestIteration" as any,
+      { iterationId: params.iterationId },
+    );
+    if (iteration?.status === "cancelled") {
+      console.log(
+        "[evals] Skipping update for cancelled iteration:",
+        params.iterationId,
+      );
+      return;
+    }
+  } catch (error) {
+    // If we can't check status, continue anyway
+  }
+
   const iterationStatus =
     params.status ?? (params.passed ? "completed" : "failed");
   const result = params.passed ? "passed" : "failed";
@@ -135,10 +152,18 @@ async function finishIterationDirectly(
       messages: params.messages,
     });
   } catch (error) {
-    console.error(
-      "[evals] Failed to finish iteration:",
-      error instanceof Error ? error.message : error,
-    );
+    const errorMessage = error instanceof Error ? error.message : String(error);
+
+    // Silently skip if iteration was deleted or cancelled
+    if (
+      errorMessage.includes("not found") ||
+      errorMessage.includes("unauthorized") ||
+      errorMessage.includes("cancelled")
+    ) {
+      return;
+    }
+
+    console.error("[evals] Failed to finish iteration:", errorMessage);
   }
 }
 
@@ -150,6 +175,8 @@ type RunIterationBaseParams = {
   testCaseId?: string;
   modelApiKeys?: Record<string, string>;
   convexClient: ConvexHttpClient;
+  runId: string | null; // For cancellation checks
+  abortSignal?: AbortSignal; // For aborting in-flight requests
 };
 
 type RunIterationAiSdkParams = RunIterationBaseParams & {
@@ -180,7 +207,33 @@ const runIterationWithAiSdk = async ({
   modelDefinition,
   modelApiKeys,
   convexClient,
+  runId,
+  abortSignal,
 }: RunIterationAiSdkParams) => {
+  // Check if run was cancelled before starting iteration
+  if (runId !== null) {
+    try {
+      const currentRun = await convexClient.query(
+        "testSuites:getTestSuiteRun" as any,
+        { runId },
+      );
+      if (currentRun?.status === "cancelled") {
+        // Return empty result for cancelled iteration
+        return evaluateResults(test.expectedToolCalls, []);
+      }
+    } catch (error) {
+      // If run not found, it was likely deleted - skip iteration
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      if (
+        errorMessage.includes("not found") ||
+        errorMessage.includes("unauthorized")
+      ) {
+        return evaluateResults(test.expectedToolCalls, []);
+      }
+    }
+  }
+
   const { advancedConfig, query, expectedToolCalls } = test;
   const { system, temperature, toolChoice } = advancedConfig ?? {};
 
@@ -234,6 +287,7 @@ const runIterationWithAiSdk = async ({
       ...(toolChoice
         ? { toolChoice: toolChoice as ToolChoice<Record<string, AiTool>> }
         : {}),
+      ...(abortSignal ? { abortSignal } : {}),
     });
 
     const finalMessages =
@@ -333,6 +387,13 @@ const runIterationWithAiSdk = async ({
 
     return evaluation;
   } catch (error) {
+    // Check if request was aborted
+    if (error instanceof Error && error.name === "AbortError") {
+      console.log("[evals] iteration aborted due to cancellation");
+      // Don't record anything for aborted iterations
+      return evaluateResults(expectedToolCalls, []);
+    }
+
     console.error("[evals] iteration failed", error);
     const failParams = {
       iterationId,
@@ -366,7 +427,33 @@ const runIterationViaBackend = async ({
   convexHttpUrl,
   convexAuthToken,
   convexClient,
+  runId,
+  abortSignal,
 }: RunIterationBackendParams) => {
+  // Check if run was cancelled before starting iteration
+  if (runId !== null) {
+    try {
+      const currentRun = await convexClient.query(
+        "testSuites:getTestSuiteRun" as any,
+        { runId },
+      );
+      if (currentRun?.status === "cancelled") {
+        // Return empty result for cancelled iteration
+        return evaluateResults(test.expectedToolCalls, []);
+      }
+    } catch (error) {
+      // If run not found, it was likely deleted - skip iteration
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      if (
+        errorMessage.includes("not found") ||
+        errorMessage.includes("unauthorized")
+      ) {
+        return evaluateResults(test.expectedToolCalls, []);
+      }
+    }
+  }
+
   const { query, expectedToolCalls, advancedConfig } = test;
   const { system: systemPrompt, temperature } = advancedConfig ?? {};
 
@@ -465,6 +552,7 @@ const runIterationViaBackend = async ({
           ...(temperature == null ? {} : { temperature }),
           tools: toolDefs,
         }),
+        ...(abortSignal ? { signal: abortSignal } : {}),
       });
 
       if (!res.ok) {
@@ -525,6 +613,12 @@ const runIterationViaBackend = async ({
         break;
       }
     } catch (error) {
+      // Check if request was aborted
+      if (error instanceof Error && error.name === "AbortError") {
+        console.log("[evals] backend iteration aborted due to cancellation");
+        // Return empty result for aborted iterations
+        return evaluateResults(expectedToolCalls, []);
+      }
       console.error("[evals] backend fetch failed", error);
       break;
     }
@@ -560,6 +654,8 @@ const runTestCase = async (params: {
   convexAuthToken: string;
   convexClient: ConvexHttpClient;
   testCaseId?: string;
+  runId: string | null;
+  abortSignal?: AbortSignal;
 }) => {
   const {
     test,
@@ -570,6 +666,8 @@ const runTestCase = async (params: {
     convexAuthToken,
     convexClient,
     testCaseId: parentTestCaseId,
+    runId,
+    abortSignal,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const modelDefinition = buildModelDefinition(test);
@@ -589,6 +687,8 @@ const runTestCase = async (params: {
         convexAuthToken,
         convexClient,
         modelApiKeys,
+        runId,
+        abortSignal,
       });
       evaluations.push(evaluation);
       continue;
@@ -603,6 +703,8 @@ const runTestCase = async (params: {
       modelDefinition,
       modelApiKeys,
       convexClient,
+      runId,
+      abortSignal,
     });
     evaluations.push(evaluation);
   }
@@ -652,39 +754,32 @@ export const runEvalSuiteWithAiSdk = async ({
   };
 
   try {
-    for (const test of tests) {
-      // Check if run has been cancelled before processing next test (only for suite runs)
-      if (runId !== null) {
-        const currentRun = await convexClient.query(
-          "testSuites:getTestSuiteRun" as any,
-          {
-            runId,
-          },
-        );
+    // Check if run has been cancelled before starting (only for suite runs)
+    if (runId !== null) {
+      const currentRun = await convexClient.query(
+        "testSuites:getTestSuiteRun" as any,
+        {
+          runId,
+        },
+      );
 
-        if (currentRun?.status === "cancelled") {
-          const passRate =
-            summary.total > 0 ? summary.passed / summary.total : 0;
-          if (recorder) {
-            await recorder.finalize({
-              status: "cancelled",
-              summary:
-                summary.total > 0
-                  ? {
-                      total: summary.total,
-                      passed: summary.passed,
-                      failed: summary.failed,
-                      passRate,
-                    }
-                  : undefined,
-              notes: "Run cancelled by user",
-            });
-          }
-          return;
+      if (currentRun?.status === "cancelled") {
+        if (recorder) {
+          await recorder.finalize({
+            status: "cancelled",
+            notes: "Run cancelled by user",
+          });
         }
+        return;
       }
+    }
 
-      const evaluations = await runTestCase({
+    // Create AbortController to cancel in-flight requests
+    const abortController = new AbortController();
+
+    // Run all tests in parallel
+    const testPromises = tests.map((test) =>
+      runTestCase({
         test,
         tools,
         recorder,
@@ -693,15 +788,93 @@ export const runEvalSuiteWithAiSdk = async ({
         convexAuthToken,
         convexClient,
         testCaseId,
-      });
+        runId,
+        abortSignal: abortController.signal,
+      }),
+    );
 
-      for (const evaluation of evaluations) {
-        summary.total += 1;
-        if (evaluation.passed) {
-          summary.passed += 1;
-        } else {
-          summary.failed += 1;
+    // Create a cancellation checker that polls every 500ms
+    const createCancellationChecker = async () => {
+      if (runId === null) return; // Quick runs can't be cancelled
+
+      while (true) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        try {
+          const currentRun = await convexClient.query(
+            "testSuites:getTestSuiteRun" as any,
+            { runId },
+          );
+          if (currentRun?.status === "cancelled") {
+            // Abort all in-flight LLM requests
+            abortController.abort();
+            throw new Error("RUN_CANCELLED");
+          }
+        } catch (error) {
+          if (error instanceof Error && error.message === "RUN_CANCELLED") {
+            throw error;
+          }
+          // If run not found, it was deleted - treat as cancelled
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
+          if (
+            errorMessage.includes("not found") ||
+            errorMessage.includes("unauthorized")
+          ) {
+            // Abort all in-flight LLM requests
+            abortController.abort();
+            throw new Error("RUN_CANCELLED");
+          }
         }
+      }
+    };
+
+    let results: PromiseSettledResult<EvaluationResult[]>[];
+
+    try {
+      // Race between all tests completing and cancellation check
+      results = await Promise.race([
+        Promise.allSettled(testPromises),
+        createCancellationChecker().then(() => {
+          // This will never resolve, only reject if cancelled
+          return new Promise<never>(() => {});
+        }),
+      ]);
+    } catch (error) {
+      if (error instanceof Error && error.message === "RUN_CANCELLED") {
+        console.log(
+          "[evals] Run was cancelled, all in-flight requests aborted",
+        );
+
+        // Finalize the run as cancelled
+        if (recorder) {
+          await recorder.finalize({
+            status: "cancelled",
+            notes: "Run cancelled by user",
+          });
+        }
+        return;
+      }
+      throw error;
+    }
+
+    // Aggregate results from all tests
+    for (const result of results) {
+      if (result.status === "fulfilled") {
+        const evaluations = result.value;
+        for (const evaluation of evaluations) {
+          summary.total += 1;
+          if (evaluation.passed) {
+            summary.passed += 1;
+          } else {
+            summary.failed += 1;
+          }
+        }
+      } else {
+        // Test failed entirely - log error but continue
+        console.error("[evals] Test case failed:", result.reason);
+        // Count as one failed test
+        summary.total += 1;
+        summary.failed += 1;
       }
     }
 

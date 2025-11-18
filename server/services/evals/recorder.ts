@@ -56,6 +56,8 @@ export const createSuiteRunRecorder = ({
   suiteId: string;
   runId: string;
 }): SuiteRunRecorder => {
+  let runDeleted = false; // Track if run was deleted
+
   return {
     runId,
     suiteId,
@@ -65,6 +67,11 @@ export const createSuiteRunRecorder = ({
       iterationNumber,
       startedAt,
     }) {
+      if (runDeleted) {
+        // Silently skip if run was deleted
+        return undefined;
+      }
+
       try {
         // In the new data model, iterations are pre-created by precreateIterationsForRun
         // We need to find the correct iteration and mark it as running
@@ -113,9 +120,22 @@ export const createSuiteRunRecorder = ({
 
         return matchingIteration._id as string;
       } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+
+        // Check if run was deleted/not found
+        if (
+          errorMessage.includes("not found") ||
+          errorMessage.includes("unauthorized")
+        ) {
+          runDeleted = true;
+          // Silently skip - run was likely cancelled/deleted
+          return undefined;
+        }
+
         console.error(
           "[evals] Failed to record iteration start:",
-          error instanceof Error ? error.message : error,
+          errorMessage,
         );
         return undefined;
       }
@@ -129,8 +149,25 @@ export const createSuiteRunRecorder = ({
       status,
       startedAt,
     }) {
-      if (!iterationId) {
+      if (!iterationId || runDeleted) {
         return;
+      }
+
+      // Check if iteration was cancelled before trying to update
+      try {
+        const iteration = await convexClient.query(
+          "testSuites:getTestIteration" as any,
+          { iterationId },
+        );
+        if (iteration?.status === "cancelled") {
+          console.log(
+            "[evals] Skipping update for cancelled iteration:",
+            iterationId,
+          );
+          return;
+        }
+      } catch (error) {
+        // If we can't check status, continue anyway
       }
 
       const iterationStatus =
@@ -148,13 +185,32 @@ export const createSuiteRunRecorder = ({
           messages,
         });
       } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+
+        // Check if run was deleted/not found or iteration was cancelled
+        if (
+          errorMessage.includes("not found") ||
+          errorMessage.includes("unauthorized") ||
+          errorMessage.includes("cancelled")
+        ) {
+          runDeleted = true;
+          // Silently skip - run was likely cancelled/deleted
+          return;
+        }
+
         console.error(
           "[evals] Failed to record iteration result:",
-          error instanceof Error ? error.message : error,
+          errorMessage,
         );
       }
     },
     async finalize({ status, summary, notes }) {
+      if (runDeleted) {
+        // Silently skip if run was deleted
+        return;
+      }
+
       try {
         await convexClient.mutation("testSuites:updateTestSuiteRun" as any, {
           runId,
@@ -163,10 +219,20 @@ export const createSuiteRunRecorder = ({
           notes,
         });
       } catch (error) {
-        console.error(
-          "[evals] Failed to finalize suite run:",
-          error instanceof Error ? error.message : error,
-        );
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+
+        // Check if run was deleted/not found
+        if (
+          errorMessage.includes("not found") ||
+          errorMessage.includes("unauthorized")
+        ) {
+          runDeleted = true;
+          // Silently skip - run was likely cancelled/deleted
+          return;
+        }
+
+        console.error("[evals] Failed to finalize suite run:", errorMessage);
       }
     },
   };

@@ -99,6 +99,9 @@ export function SuitesOverview({
 
           const isCancelling = cancellingRunId === latestRun?._id;
 
+          // Show running state if either local state OR actual run status indicates running
+          const showAsRunning = isRerunning || isRunInProgress;
+
           const lastRunTimestamp =
             latestRun?.completedAt ??
             latestRun?.createdAt ??
@@ -127,7 +130,7 @@ export function SuitesOverview({
                       </h2>
                     </div>
                     <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                      {isRunInProgress ? (
+                      {showAsRunning ? (
                         <>
                           <span className="flex items-center gap-1.5 text-primary font-medium">
                             <Loader2 className="h-3 w-3 animate-spin" />
@@ -205,13 +208,13 @@ export function SuitesOverview({
                   ) : (
                     <button
                       onClick={() => onRerun(suite)}
-                      disabled={!canRerun || isRerunning}
+                      disabled={!canRerun || showAsRunning}
                       className={cn(
                         "text-xs font-medium text-primary hover:underline disabled:opacity-60",
                         !canRerun && "cursor-not-allowed",
                       )}
                     >
-                      {isRerunning
+                      {showAsRunning
                         ? "Running..."
                         : canRerun
                           ? "Rerun suite"
