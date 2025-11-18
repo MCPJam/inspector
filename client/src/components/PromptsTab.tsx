@@ -21,6 +21,10 @@ import { EmptyState } from "./ui/empty-state";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import { MCPServerConfig, type MCPPrompt } from "@/sdk";
+import {
+  getPrompt as getPromptApi,
+  listPrompts as listPromptsApi,
+} from "@/lib/mcp-prompts-api";
 import { JsonRpcLoggerView } from "./logging/json-rpc-logger-view";
 
 interface PromptsTabProps {
@@ -75,34 +79,22 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
     setError("");
 
     try {
-      const response = await fetch("/api/mcp/prompts/list", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ serverId: serverName }),
-      });
+      const serverPrompts = await listPromptsApi(serverName);
+      setPrompts(serverPrompts);
 
-      const data = await response.json();
-
-      if (response.ok) {
-        const serverPrompts: MCPPrompt[] = Array.isArray(data.prompts)
-          ? data.prompts
-          : [];
-        setPrompts(serverPrompts);
-
-        if (serverPrompts.length === 0) {
-          setSelectedPrompt("");
-          setPromptContent(null);
-        } else if (
-          !serverPrompts.some((prompt) => prompt.name === selectedPrompt)
-        ) {
-          setSelectedPrompt(serverPrompts[0].name);
-          setPromptContent(null);
-        }
-      } else {
-        setError(data.error || "Could not fetch prompts");
+      if (serverPrompts.length === 0) {
+        setSelectedPrompt("");
+        setPromptContent(null);
+      } else if (
+        !serverPrompts.some((prompt) => prompt.name === selectedPrompt)
+      ) {
+        setSelectedPrompt(serverPrompts[0].name);
+        setPromptContent(null);
       }
     } catch (err) {
-      setError(`Could not fetch prompts: ${err}`);
+      const message =
+        err instanceof Error ? err.message : `Could not fetch prompts: ${err}`;
+      setError(message);
     } finally {
       setFetchingPrompts(false);
     }
@@ -170,25 +162,12 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
 
     try {
       const params = buildParameters();
-      const response = await fetch("/api/mcp/prompts/get", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          serverId: serverName,
-          name: selectedPrompt,
-          args: params,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (response.ok) {
-        setPromptContent(data.content);
-      } else {
-        setError(data.error || "Failed to get prompt");
-      }
+      const data = await getPromptApi(serverName, selectedPrompt, params);
+      setPromptContent(data.content);
     } catch (err) {
-      setError(`Error getting prompt: ${err}`);
+      const message =
+        err instanceof Error ? err.message : `Error getting prompt: ${err}`;
+      setError(message);
     } finally {
       setLoading(false);
     }

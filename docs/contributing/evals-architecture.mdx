@@ -181,7 +181,6 @@ HTTP API endpoints for eval execution and test generation.
     model: string
     provider: string
     expectedToolCalls: string[]
-    judgeRequirement?: string
     advancedConfig?: {
       system?: string
       temperature?: number
@@ -485,7 +484,6 @@ erDiagram
         string provider
         string model
         array expectedToolCalls
-        string judgeRequirement
         object advancedConfig
     }
 
@@ -530,7 +528,6 @@ type EvalCase = {
   provider: string;
   model: string;
   expectedToolCalls: string[];
-  judgeRequirement?: string;
   advancedConfig?: {
     system?: string;
     temperature?: number;

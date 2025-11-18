@@ -17,8 +17,10 @@ export interface GeneratedTestCase {
   title: string;
   query: string;
   runs: number;
-  expectedToolCalls: string[];
-  judgeRequirement?: string;
+  expectedToolCalls: Array<{
+    toolName: string;
+    arguments: Record<string, any>;
+  }>;
 }
 
 const AGENT_SYSTEM_PROMPT = `You are an AI agent specialized in creating realistic test cases for MCP (Model Context Protocol) servers.
@@ -39,11 +41,18 @@ Generate 6 test cases with varying complexity levels that mimic how real users w
 2. **Natural Workflows**: Chain tools together in logical sequences that solve real problems
 3. **Cross-Server Tests**: If multiple servers are available, create tests that use tools from different servers together
 4. **Specific Details**: Include concrete examples (dates, names, values) to make tests actionable
-5. **Judge Requirements**: Clearly define what success looks like for each test
-6. **Test Titles**: Write clear, descriptive titles WITHOUT difficulty prefixes (e.g., "Read project configuration" not "EASY: Read project configuration")
+5. **Test Titles**: Write clear, descriptive titles WITHOUT difficulty prefixes (e.g., "Read project configuration" not "EASY: Read project configuration")
 
 **Output Format (CRITICAL):**
 Respond with ONLY a valid JSON array. No explanations, no markdown code blocks, just the raw JSON array.
+
+Each test case must include:
+- title: Clear, descriptive title (no difficulty prefix)
+- query: Natural language user query
+- runs: Number of times to run (usually 1)
+- expectedToolCalls: Array of tool calls with toolName and arguments
+  - toolName: Name of the tool to call
+  - arguments: Object with expected arguments (can be empty {} if you don't want to validate specific values)
 
 Example:
 [
@@ -51,22 +60,46 @@ Example:
     "title": "Read project configuration",
     "query": "Show me the contents of config.json in the current project",
     "runs": 1,
-    "expectedToolCalls": ["read_file"],
-    "judgeRequirement": "Successfully reads and returns the file contents"
+    "expectedToolCalls": [
+      {
+        "toolName": "read_file",
+        "arguments": {}
+      }
+    ]
   },
   {
     "title": "Find and analyze recent tasks",
     "query": "Find all tasks created this week and summarize their status",
     "runs": 1,
-    "expectedToolCalls": ["list_tasks", "get_task_details"],
-    "judgeRequirement": "First lists tasks filtered by date, then retrieves details for each task found"
+    "expectedToolCalls": [
+      {
+        "toolName": "list_tasks",
+        "arguments": {}
+      },
+      {
+        "toolName": "get_task_details",
+        "arguments": {}
+      }
+    ]
   },
   {
     "title": "Cross-server project setup",
     "query": "Create a new project folder, initialize a git repository, and create a task to track the project setup",
     "runs": 1,
-    "expectedToolCalls": ["create_directory", "git_init", "create_task"],
-    "judgeRequirement": "Successfully creates directory, initializes git, and creates a tracking task with appropriate details"
+    "expectedToolCalls": [
+      {
+        "toolName": "create_directory",
+        "arguments": {}
+      },
+      {
+        "toolName": "git_init",
+        "arguments": {}
+      },
+      {
+        "toolName": "create_task",
+        "arguments": {}
+      }
+    ]
   }
 ]`;
 
@@ -141,7 +174,7 @@ ${toolsContext}
       Authorization: `Bearer ${convexAuthToken}`,
     },
     body: JSON.stringify({
-      model: "meta-llama/llama-3.3-70b-instruct",
+      model: "anthropic/claude-haiku-4.5",
       tools: [],
       messages: JSON.stringify(messageHistory),
     }),
@@ -187,16 +220,43 @@ ${toolsContext}
       throw new Error("Response is not an array");
     }
 
-    // Validate structure
-    const validatedTests: GeneratedTestCase[] = testCases.map((tc: any) => ({
-      title: tc.title || "Untitled Test",
-      query: tc.query || "",
-      runs: typeof tc.runs === "number" ? tc.runs : 1,
-      expectedToolCalls: Array.isArray(tc.expectedToolCalls)
-        ? tc.expectedToolCalls
-        : [],
-      judgeRequirement: tc.judgeRequirement,
-    }));
+    // Validate structure and normalize expectedToolCalls format
+    const validatedTests: GeneratedTestCase[] = testCases.map((tc: any) => {
+      let normalizedToolCalls: Array<{
+        toolName: string;
+        arguments: Record<string, any>;
+      }> = [];
+
+      if (Array.isArray(tc.expectedToolCalls)) {
+        normalizedToolCalls = tc.expectedToolCalls
+          .map((call: any) => {
+            // Handle new format: { toolName, arguments }
+            if (typeof call === "object" && call !== null && call.toolName) {
+              return {
+                toolName: call.toolName,
+                arguments: call.arguments || {},
+              };
+            }
+            // Handle old format: string (just tool name)
+            if (typeof call === "string") {
+              return {
+                toolName: call,
+                arguments: {},
+              };
+            }
+            // Invalid format, skip
+            return null;
+          })
+          .filter((call: any) => call !== null);
+      }
+
+      return {
+        title: tc.title || "Untitled Test",
+        query: tc.query || "",
+        runs: typeof tc.runs === "number" ? tc.runs : 1,
+        expectedToolCalls: normalizedToolCalls,
+      };
+    });
 
     return validatedTests;
   } catch (parseError) {

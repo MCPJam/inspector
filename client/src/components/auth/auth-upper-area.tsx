@@ -14,6 +14,7 @@ import { getInitials } from "@/lib/utils";
 import { CircleUser, LogOut, RefreshCw, Settings } from "lucide-react";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
+
 export function AuthUpperArea() {
   const { isLoading } = useConvexAuth();
   const { user, signIn, signOut, signUp } = useAuth();
