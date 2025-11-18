@@ -103,8 +103,8 @@ function SuiteSidebarItem({
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
 
-  // Load test cases for all suites upfront (for smoother UX)
-  const enableTestCasesQuery = isAuthenticated && !!user;
+  // Load test cases for all suites upfront (for smoother UX), but skip if deleting
+  const enableTestCasesQuery = isAuthenticated && !!user && !isDeleting;
   const testCases = useQuery(
     "testSuites:listTestCases" as any,
     enableTestCasesQuery ? ({ suiteId: suite._id } as any) : "skip",
@@ -508,7 +508,10 @@ export function EvalsTab() {
   ) as EvalSuiteOverviewEntry[] | undefined;
 
   const enableSuiteDetailsQuery =
-    isAuthenticated && !!user && !!selectedSuiteId;
+    isAuthenticated &&
+    !!user &&
+    !!selectedSuiteId &&
+    deletingSuiteId !== selectedSuiteId;
   const suiteDetails = useQuery(
     "testSuites:getAllTestCasesAndIterationsBySuite" as any,
     enableSuiteDetailsQuery ? ({ suiteId: selectedSuiteId } as any) : "skip",
