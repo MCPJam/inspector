@@ -168,13 +168,9 @@ export function TestsStep({
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between">
+      <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-lg pb-2">Define your test cases</h3>
-          <p className="text-sm text-muted-foreground">
-            Create testing scenarios that simulate how real users would use your
-            server.
-          </p>
+          <h3 className="text-lg">Define your test cases</h3>
         </div>
         {canGenerateTests && (
           <Button
