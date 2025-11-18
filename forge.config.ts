@@ -61,8 +61,7 @@ const osxNotarizeOptions =
 
 const config: ForgeConfig = {
   packagerConfig: {
-    // Disable asar in CI to reduce memory pressure during packaging
-    asar: process.env.CI !== "true",
+    asar: true,
     appBundleId: "com.mcpjam.inspector",
     appCategoryType: "public.app-category.developer-tools",
     executableName: "mcpjam-inspector",
@@ -73,9 +72,7 @@ const config: ForgeConfig = {
       resolve(__dirname, "sdk", "dist"),
     ],
     osxSign: osxSignOptions,
-    // Auto-notarization disabled - handled manually in GitHub Actions workflow
-    // to avoid silent hangs. The workflow notarizes after build with better error handling.
-    // osxNotarize: osxNotarizeOptions,
+    osxNotarize: osxNotarizeOptions,
   },
   rebuildConfig: {},
   makers: [
@@ -96,20 +93,19 @@ const config: ForgeConfig = {
       })(),
     }),
     new MakerZIP({}, ["darwin", "linux"]),
-    // DMG maker disabled - created manually in CI workflow to avoid appdmg dependency issues
-    // new MakerDMG({
-    //   format: "ULFO",
-    //   name: "MCPJam Inspector",
-    //   overwrite: true,
-    //   additionalDMGOptions: {
-    //     window: {
-    //       size: {
-    //         width: 540,
-    //         height: 380,
-    //       },
-    //     },
-    //   },
-    // }),
+    new MakerDMG({
+      format: "ULFO",
+      name: "MCPJam Inspector",
+      overwrite: true,
+      additionalDMGOptions: {
+        window: {
+          size: {
+            width: 540,
+            height: 380,
+          },
+        },
+      },
+    }),
     new MakerDeb({
       options: {
         maintainer: "MCPJam",
