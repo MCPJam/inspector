@@ -1310,15 +1310,9 @@ export function EvalsTab() {
               Delete Test Suite
             </DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete the test suite{" "}
-              <span className="font-semibold">
-                "{suiteToDelete?.name || "Untitled suite"}"
-              </span>
-              ?
+              Are you sure you want to delete the test suite?
               <br />
               <br />
-              This will permanently delete all test cases, runs, and iterations
-              associated with this suite. This action cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -1390,15 +1384,9 @@ export function EvalsTab() {
               Delete Test Case
             </DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete the test case{" "}
-              <span className="font-semibold">
-                "{testCaseToDelete?.title || "Untitled test case"}"
-              </span>
-              ?
+              Are you sure you want to delete the test case?
               <br />
               <br />
-              This will permanently delete all iterations and results associated
-              with this test case. This action cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
