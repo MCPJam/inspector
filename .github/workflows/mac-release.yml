@@ -74,17 +74,29 @@ jobs:
 
       - name: Build and sign application
         run: |
+          set -x  # Enable debug output
           npm run build
 
           # Clean up any mounted volumes before making
           sudo diskutil unmountDisk force /Volumes/"MCPJam Inspector" 2>/dev/null || true
           hdiutil detach /Volumes/"MCPJam Inspector" -force 2>/dev/null || true
 
+          echo "=== Starting electron:make ==="
           npm run electron:make
+          MAKE_EXIT_CODE=$?
+          echo "=== electron:make finished with exit code: $MAKE_EXIT_CODE ==="
 
           # Clean up any mounted volumes after making
           sudo diskutil unmountDisk force /Volumes/"MCPJam Inspector" 2>/dev/null || true
           hdiutil detach /Volumes/"MCPJam Inspector" -force 2>/dev/null || true
+
+          # Debug: Check what was created
+          echo "=== Directory structure after build ==="
+          ls -la out/ 2>/dev/null || echo "out/ directory not found"
+          ls -la out/make/ 2>/dev/null || echo "out/make/ directory not found"
+          find out -type f -name "*.dmg" -o -name "*.zip" 2>/dev/null || echo "No DMG/ZIP files found"
+
+          exit $MAKE_EXIT_CODE
         env:
           NODE_OPTIONS: --max-old-space-size=8192
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
