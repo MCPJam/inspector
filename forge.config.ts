@@ -96,19 +96,20 @@ const config: ForgeConfig = {
       })(),
     }),
     new MakerZIP({}, ["darwin", "linux"]),
-    new MakerDMG({
-      format: "ULFO",
-      name: "MCPJam Inspector",
-      overwrite: true,
-      additionalDMGOptions: {
-        window: {
-          size: {
-            width: 540,
-            height: 380,
-          },
-        },
-      },
-    }),
+    // DMG maker disabled - created manually in CI workflow to avoid appdmg dependency issues
+    // new MakerDMG({
+    //   format: "ULFO",
+    //   name: "MCPJam Inspector",
+    //   overwrite: true,
+    //   additionalDMGOptions: {
+    //     window: {
+    //       size: {
+    //         width: 540,
+    //         height: 380,
+    //       },
+    //     },
+    //   },
+    // }),
     new MakerDeb({
       options: {
         maintainer: "MCPJam",
