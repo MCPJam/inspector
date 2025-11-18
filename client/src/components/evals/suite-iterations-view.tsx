@@ -252,6 +252,7 @@ export function SuiteIterationsView({
             <div key={runsViewMode} className="space-y-4">
               {runsViewMode === "runs" ? (
                 <RunOverview
+                  suite={suite}
                   runs={runs}
                   runsLoading={runsLoading}
                   allIterations={allIterations}
@@ -270,6 +271,7 @@ export function SuiteIterationsView({
                 />
               ) : (
                 <TestCasesOverview
+                  suite={suite}
                   cases={cases}
                   allIterations={allIterations}
                   runs={runs}
