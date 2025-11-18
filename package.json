@@ -160,7 +160,7 @@
     "png-to-ico": "^2.1.8",
     "sharp": "^0.33.4",
     "tailwindcss": "^4.1.11",
-    "tsup": "^8.1.0",
+    "tsup": "^8.3.5",
     "tsx": "^4.19.2",
     "tw-animate-css": "^1.3.5",
     "typescript": "^5",
@@ -170,7 +170,6 @@
   "overrides": {
     "tmp": "0.2.5",
     "jsondiffpatch": "0.7.2",
-    "zod": "^4.1.12",
-    "glob": "^11.0.4"
+    "zod": "^4.1.12"
   }
 }
