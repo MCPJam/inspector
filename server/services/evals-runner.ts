@@ -83,7 +83,7 @@ async function createIterationDirectly(
     };
     iterationNumber: number;
     startedAt: number;
-  },
+  }
 ): Promise<string | undefined> {
   try {
     const result = await convexClient.mutation(
@@ -93,14 +93,14 @@ async function createIterationDirectly(
         testCaseSnapshot: params.testCaseSnapshot,
         iterationNumber: params.iterationNumber,
         startedAt: params.startedAt,
-      },
+      }
     );
 
     return result?.iterationId as string | undefined;
   } catch (error) {
     console.error(
       "[evals] Failed to create iteration:",
-      error instanceof Error ? error.message : error,
+      error instanceof Error ? error.message : error
     );
     return undefined;
   }
@@ -117,7 +117,9 @@ async function finishIterationDirectly(
     messages: ModelMessage[];
     status?: "completed" | "failed" | "cancelled";
     startedAt?: number;
-  },
+    error?: string;
+    errorDetails?: string;
+  }
 ): Promise<void> {
   if (!params.iterationId) return;
 
@@ -125,12 +127,12 @@ async function finishIterationDirectly(
   try {
     const iteration = await convexClient.query(
       "testSuites:getTestIteration" as any,
-      { iterationId: params.iterationId },
+      { iterationId: params.iterationId }
     );
     if (iteration?.status === "cancelled") {
       console.log(
         "[evals] Skipping update for cancelled iteration:",
-        params.iterationId,
+        params.iterationId
       );
       return;
     }
@@ -150,6 +152,8 @@ async function finishIterationDirectly(
       actualToolCalls: params.toolsCalled,
       tokensUsed: params.usage.totalTokens ?? 0,
       messages: params.messages,
+      error: params.error,
+      errorDetails: params.errorDetails,
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -215,7 +219,7 @@ const runIterationWithAiSdk = async ({
     try {
       const currentRun = await convexClient.query(
         "testSuites:getTestSuiteRun" as any,
-        { runId },
+        { runId }
       );
       if (currentRun?.status === "cancelled") {
         // Return empty result for cancelled iteration
@@ -245,7 +249,7 @@ const runIterationWithAiSdk = async ({
     "";
   if (!apiKey) {
     throw new Error(
-      `Missing API key for provider ${test.provider} (test: ${test.title})`,
+      `Missing API key for provider ${test.provider} (test: ${test.title})`
     );
   }
 
@@ -327,8 +331,8 @@ const runIterationWithAiSdk = async ({
                   tc.toolName === name &&
                   JSON.stringify(tc.arguments) ===
                     JSON.stringify(
-                      item.input ?? item.parameters ?? item.args ?? {},
-                    ),
+                      item.input ?? item.parameters ?? item.args ?? {}
+                    )
               );
               if (!alreadyAdded) {
                 toolsCalled.push({
@@ -348,7 +352,7 @@ const runIterationWithAiSdk = async ({
               (tc) =>
                 tc.toolName === (call.toolName ?? call.name) &&
                 JSON.stringify(tc.arguments) ===
-                  JSON.stringify(call.args ?? call.input ?? {}),
+                  JSON.stringify(call.args ?? call.input ?? {})
             );
             if (!alreadyAdded) {
               toolsCalled.push({
@@ -395,6 +399,23 @@ const runIterationWithAiSdk = async ({
     }
 
     console.error("[evals] iteration failed", error);
+
+    let errorMessage: string | undefined = undefined;
+    let errorDetails: string | undefined = undefined;
+
+    if (error instanceof Error) {
+      errorMessage = error.message || error.toString();
+
+      const responseBody = (error as any).responseBody;
+      if (responseBody && typeof responseBody === "string") {
+        errorDetails = responseBody;
+      }
+    } else if (typeof error === "string") {
+      errorMessage = error;
+    } else {
+      errorMessage = String(error);
+    }
+
     const failParams = {
       iterationId,
       passed: false,
@@ -407,6 +428,8 @@ const runIterationWithAiSdk = async ({
       messages: baseMessages,
       status: "failed" as const,
       startedAt: runStartedAt,
+      error: errorMessage,
+      errorDetails,
     };
 
     if (recorder) {
@@ -435,7 +458,7 @@ const runIterationViaBackend = async ({
     try {
       const currentRun = await convexClient.query(
         "testSuites:getTestSuiteRun" as any,
-        { runId },
+        { runId }
       );
       if (currentRun?.status === "cancelled") {
         // Return empty result for cancelled iteration
@@ -535,6 +558,8 @@ const runIterationViaBackend = async ({
     totalTokens: 0,
   };
 
+  let iterationError: string | undefined = undefined;
+  let iterationErrorDetails: string | undefined = undefined;
   let steps = 0;
   while (steps < MAX_STEPS) {
     try {
@@ -556,12 +581,18 @@ const runIterationViaBackend = async ({
       });
 
       if (!res.ok) {
+        const errorText = await res.text().catch(() => res.statusText);
+        iterationError = `Backend stream error: ${res.status} ${errorText}`;
+        // Store the full error response as details
+        iterationErrorDetails = errorText;
         console.error("[evals] backend stream error", res.statusText);
         break;
       }
 
       const json: any = await res.json();
       if (!json?.ok || !Array.isArray(json.messages)) {
+        iterationError = "Invalid backend response payload";
+        iterationErrorDetails = JSON.stringify(json, null, 2);
         console.error("[evals] invalid backend response payload");
         break;
       }
@@ -619,6 +650,26 @@ const runIterationViaBackend = async ({
         // Return empty result for aborted iterations
         return evaluateResults(expectedToolCalls, []);
       }
+
+      // Extract error message
+      if (error instanceof Error) {
+        iterationError = error.message || error.toString();
+
+        const responseBody = (error as any).responseBody;
+        if (responseBody && typeof responseBody === "string") {
+          iterationErrorDetails = responseBody;
+        }
+      } else if (typeof error === "string") {
+        iterationError = error;
+      } else {
+        iterationError = String(error);
+      }
+
+      // Limit error message length
+      if (iterationError && iterationError.length > 500) {
+        iterationError = iterationError.substring(0, 497) + "...";
+      }
+
       console.error("[evals] backend fetch failed", error);
       break;
     }
@@ -634,6 +685,8 @@ const runIterationViaBackend = async ({
     messages: messageHistory,
     status: "completed" as const,
     startedAt: runStartedAt,
+    error: iterationError,
+    errorDetails: iterationErrorDetails,
   };
 
   if (recorder) {
@@ -760,7 +813,7 @@ export const runEvalSuiteWithAiSdk = async ({
         "testSuites:getTestSuiteRun" as any,
         {
           runId,
-        },
+        }
       );
 
       if (currentRun?.status === "cancelled") {
@@ -790,7 +843,7 @@ export const runEvalSuiteWithAiSdk = async ({
         testCaseId,
         runId,
         abortSignal: abortController.signal,
-      }),
+      })
     );
 
     // Create a cancellation checker that polls every 500ms
@@ -802,7 +855,7 @@ export const runEvalSuiteWithAiSdk = async ({
         try {
           const currentRun = await convexClient.query(
             "testSuites:getTestSuiteRun" as any,
-            { runId },
+            { runId }
           );
           if (currentRun?.status === "cancelled") {
             // Abort all in-flight LLM requests
@@ -842,7 +895,7 @@ export const runEvalSuiteWithAiSdk = async ({
     } catch (error) {
       if (error instanceof Error && error.message === "RUN_CANCELLED") {
         console.log(
-          "[evals] Run was cancelled, all in-flight requests aborted",
+          "[evals] Run was cancelled, all in-flight requests aborted"
         );
 
         // Finalize the run as cancelled
