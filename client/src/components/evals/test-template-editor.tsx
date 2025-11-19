@@ -52,6 +52,63 @@ interface TestTemplateEditorProps {
   connectedServerNames: Set<string>;
 }
 
+const validateExpectedToolCalls = (
+  toolCalls: Array<{
+    toolName: string;
+    arguments: Record<string, any>;
+  }>,
+): boolean => {
+  // Must have at least one tool call
+  if (toolCalls.length === 0) {
+    return false;
+  }
+
+  // Check each tool call
+  for (const toolCall of toolCalls) {
+    // Tool name must not be empty
+    if (!toolCall.toolName || toolCall.toolName.trim() === "") {
+      return false;
+    }
+
+    // Check all argument values are not empty strings
+    if (toolCall.arguments) {
+      for (const value of Object.values(toolCall.arguments)) {
+        // Only fail on empty strings, not other falsy values
+        if (value === "") {
+          return false;
+        }
+      }
+    }
+  }
+
+  return true;
+};
+
+// JSON deep comparision
+const normalizeForComparison = (value: any): any => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeForComparison(item));
+  }
+
+  if (typeof value === "object") {
+    return Object.keys(value)
+      .sort()
+      .reduce(
+        (acc, key) => {
+          acc[key] = normalizeForComparison(value[key]);
+          return acc;
+        },
+        {} as Record<string, any>,
+      );
+  }
+
+  return value;
+};
+
 export function TestTemplateEditor({
   suiteId,
   selectedTestCaseId,
@@ -192,20 +249,46 @@ export function TestTemplateEditor({
   // Check if there are unsaved changes
   const hasUnsavedChanges = useMemo(() => {
     if (!editForm || !currentTestCase) return false;
+
+    const normalizedExpectedToolCalls = JSON.stringify(
+      normalizeForComparison(editForm.expectedToolCalls || []),
+    );
+    const normalizedCurrentExpectedToolCalls = JSON.stringify(
+      normalizeForComparison(currentTestCase.expectedToolCalls || []),
+    );
+    const normalizedAdvancedConfig = JSON.stringify(
+      normalizeForComparison(editForm.advancedConfig || {}),
+    );
+    const normalizedCurrentAdvancedConfig = JSON.stringify(
+      normalizeForComparison(currentTestCase.advancedConfig || {}),
+    );
+
     return (
       editForm.title !== currentTestCase.title ||
       editForm.query !== currentTestCase.query ||
       editForm.runs !== currentTestCase.runs ||
-      JSON.stringify(editForm.expectedToolCalls || []) !==
-        JSON.stringify(currentTestCase.expectedToolCalls || []) ||
-      JSON.stringify(editForm.advancedConfig || {}) !==
-        JSON.stringify(currentTestCase.advancedConfig || {})
+      normalizedExpectedToolCalls !== normalizedCurrentExpectedToolCalls ||
+      normalizedAdvancedConfig !== normalizedCurrentAdvancedConfig
     );
   }, [editForm, currentTestCase]);
+
+  // Check if expected tool calls are valid
+  const areExpectedToolCallsValid = useMemo(() => {
+    if (!editForm) return true; // Allow saving if form is not loaded yet
+    return validateExpectedToolCalls(editForm.expectedToolCalls || []);
+  }, [editForm]);
 
   // Separate save handler
   const handleSave = async () => {
     if (!editForm || !currentTestCase) return;
+
+    // Validate expected tool calls before saving
+    if (!validateExpectedToolCalls(editForm.expectedToolCalls || [])) {
+      toast.error(
+        "Cannot save: All tool names must be specified and argument values cannot be empty.",
+      );
+      return;
+    }
 
     try {
       await updateTestCaseMutation({
@@ -481,7 +564,7 @@ export function TestTemplateEditor({
                       <span>
                         <Button
                           onClick={handleSave}
-                          disabled={isRunning}
+                          disabled={isRunning || !areExpectedToolCallsValid}
                           variant="outline"
                           size="sm"
                           className="h-9 px-4 text-xs font-medium"
@@ -492,7 +575,9 @@ export function TestTemplateEditor({
                       </span>
                     </TooltipTrigger>
                     <TooltipContent>
-                      Save changes to this test case
+                      {!areExpectedToolCallsValid
+                        ? "All tool names must be specified and argument values cannot be empty"
+                        : "Save changes to this test case"}
                     </TooltipContent>
                   </Tooltip>
                 )}
