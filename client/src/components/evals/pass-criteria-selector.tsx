@@ -36,21 +36,22 @@ export function PassCriteriaSelector({
   };
 
   return (
-    <div className="flex items-center justify-between gap-4 rounded-lg border bg-muted/30 p-4">
-      <Label className="text-sm font-medium">Pass/Fail Criteria</Label>
-      <div className="flex items-center gap-2">
-        <Input
-          type="number"
-          min={0}
-          max={100}
-          value={editedValue}
-          onChange={(e) => setEditedValue(e.target.value)}
-          onBlur={handleBlur}
-          onKeyDown={handleKeyDown}
-          className="w-20 text-center"
-        />
-        <span className="text-sm text-muted-foreground">% Accuracy</span>
-      </div>
+    <div className="flex items-center gap-2">
+      <Label htmlFor="pass-criteria" className="text-sm text-muted-foreground">
+        Minimum accuracy:
+      </Label>
+      <Input
+        id="pass-criteria"
+        type="number"
+        min={0}
+        max={100}
+        value={editedValue}
+        onChange={(e) => setEditedValue(e.target.value)}
+        onBlur={handleBlur}
+        onKeyDown={handleKeyDown}
+        className="w-16 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+      />
+      <span className="text-sm text-muted-foreground">%</span>
     </div>
   );
 }
