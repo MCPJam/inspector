@@ -67,7 +67,9 @@ export function JsonRpcLoggerView({ serverIds }: JsonRpcLoggerViewProps = {}) {
     let es: EventSource | null = null;
     try {
       const params = new URLSearchParams();
-      params.set("replay", "0");
+      params.set("replay", "3");
+      // Add timestamp to ensure fresh connection
+      params.set("_t", Date.now().toString());
       es = new EventSource(`/api/mcp/servers/rpc/stream?${params.toString()}`);
       es.onmessage = (evt) => {
         try {
@@ -112,7 +114,7 @@ export function JsonRpcLoggerView({ serverIds }: JsonRpcLoggerViewProps = {}) {
         es?.close();
       } catch {}
     };
-  }, []);
+  }, []); // Only run once on mount
 
   const filteredItems = useMemo(() => {
     let result = items;
