@@ -271,7 +271,6 @@ export function RunOverview({
         ) : (
           <div className="border-b px-4 py-2 shrink-0 flex items-center justify-between">
             <div>
-              <div className="text-xs font-semibold">Runs</div>
               <p className="text-xs text-muted-foreground">
                 Click on a run to view its test breakdown and results.
               </p>
