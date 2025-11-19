@@ -11,28 +11,34 @@ export function useTextareaCaretPosition(
   const mirrorRef = useRef<HTMLDivElement | null>(null);
   const [coords, setCoords] = useState<Coords>({ x: 0, y: 0 });
 
+  // Create/destroy mirror once on mount/unmount
+  useLayoutEffect(() => {
+    const div = document.createElement("div");
+    div.style.position = "absolute";
+    div.style.top = "0";
+    div.style.left = "0";
+    div.style.visibility = "hidden";
+    div.style.pointerEvents = "none";
+    div.style.whiteSpace = "pre-wrap";
+    div.style.overflowWrap = "break-word";
+    mirrorRef.current = div;
+    document.body.appendChild(div);
+
+    return () => {
+      if (mirrorRef.current) {
+        document.body.removeChild(mirrorRef.current);
+        mirrorRef.current = null;
+      }
+    };
+  }, []);
+
   useLayoutEffect(() => {
     const textarea = textareaRef.current;
     const container = containerRef.current;
-    if (!textarea || !container) return;
+    const mirror = mirrorRef.current;
+    if (!textarea || !container || !mirror) return;
 
     const safeIndex = Math.max(0, Math.min(value.length, caretIndex));
-
-    // Create mirror once
-    if (!mirrorRef.current) {
-      const div = document.createElement("div");
-      div.style.position = "absolute";
-      div.style.top = "0";
-      div.style.left = "0";
-      div.style.visibility = "hidden";
-      div.style.pointerEvents = "none";
-      div.style.whiteSpace = "pre-wrap";
-      div.style.overflowWrap = "break-word";
-      mirrorRef.current = div;
-      document.body.appendChild(div);
-    }
-
-    const mirror = mirrorRef.current;
 
     // Copy relevant text layout styles
     const cs = window.getComputedStyle(textarea);
