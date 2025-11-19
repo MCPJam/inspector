@@ -56,6 +56,12 @@ import { isMCPJamProvidedModel } from "@/shared/types";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import posthog from "posthog-js";
 import { useEvalsRoute, navigateToEvalsRoute } from "@/lib/evals-router";
+import {
+  ResizablePanelGroup,
+  ResizablePanel,
+  ResizableHandle,
+} from "@/components/ui/resizable";
+
 // Component to render a single suite in the sidebar with its own data loading
 function SuiteSidebarItem({
   suite,
@@ -1138,9 +1144,17 @@ export function EvalsTab() {
           />
         </div>
       ) : (
-        <div className="flex flex-1 overflow-hidden">
+        <ResizablePanelGroup
+          direction="horizontal"
+          className="flex-1 overflow-hidden"
+        >
           {/* Left Sidebar */}
-          <div className="w-64 shrink-0 border-r bg-muted/30 flex flex-col">
+          <ResizablePanel
+            defaultSize={20}
+            minSize={15}
+            maxSize={40}
+            className="border-r bg-muted/30 flex flex-col"
+          >
             {/* Header */}
             <div className="p-4 border-b flex items-center justify-between">
               <h2 className="text-sm font-semibold">Testsuites</h2>
@@ -1205,10 +1219,12 @@ export function EvalsTab() {
                 </div>
               )}
             </div>
-          </div>
+          </ResizablePanel>
+
+          <ResizableHandle withHandle />
 
           {/* Main Content Area */}
-          <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+          <ResizablePanel defaultSize={80} className="flex flex-col overflow-hidden">
             {!selectedSuiteId ? (
               <div className="flex-1 flex items-center justify-center">
                 <div className="text-center max-w-md mx-auto p-8">
@@ -1297,8 +1313,8 @@ export function EvalsTab() {
                 </div>
               </div>
             ) : null}
-          </div>
-        </div>
+          </ResizablePanel>
+        </ResizablePanelGroup>
       )}
 
       {/* Delete Suite Confirmation Modal */}
