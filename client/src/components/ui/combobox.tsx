@@ -12,7 +12,6 @@ import {
   CommandInput,
   CommandItem,
 } from "@/components/ui/command";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Popover,
   PopoverContent,
@@ -31,8 +30,10 @@ interface ComboboxProps {
   searchPlaceholder?: string;
   emptyMessage?: string;
   className?: string;
-  value?: string[];
-  onValueChange?: (value: string[]) => void;
+  value?: string | string[];
+  onValueChange?: (value: any) => void;
+  multiSelect?: boolean;
+  label?: string;
 }
 
 export function Combobox({
@@ -43,12 +44,41 @@ export function Combobox({
   className,
   value,
   onValueChange,
+  multiSelect = true,
+  label = "Model",
 }: ComboboxProps) {
   const [open, setOpen] = React.useState(false);
-  const [internalValue, setInternalValue] = React.useState<string[]>([]);
+  const [internalValue, setInternalValue] = React.useState<string | string[]>(
+    multiSelect ? [] : "",
+  );
 
   const currentValue = value !== undefined ? value : internalValue;
-  const setValue = onValueChange || setInternalValue;
+  const setValue = (newValue: string | string[]) => {
+    if (onValueChange) {
+      onValueChange(newValue);
+    } else {
+      setInternalValue(newValue);
+    }
+  };
+
+  const getDisplayValue = () => {
+    if (multiSelect) {
+      const val = currentValue as string[];
+      if (val && val.length > 0) {
+        return val.length === 1
+          ? `1 ${label} Selected`
+          : `${val.length} ${label}s Selected`;
+      }
+      return placeholder;
+    } else {
+      const val = currentValue as string;
+      if (val) {
+        const item = items.find((i) => i.value === val);
+        return item ? item.label : val;
+      }
+      return placeholder;
+    }
+  };
 
   return (
     <Popover open={open} onOpenChange={setOpen} modal={true}>
@@ -59,29 +89,35 @@ export function Combobox({
           aria-expanded={open}
           className={cn("w-[200px] justify-between", className)}
         >
-          {currentValue && currentValue.length > 0
-            ? currentValue.length === 1
-              ? "1 Model Selected"
-              : `${currentValue.length} models selected`
-            : placeholder}
-          <ChevronsUpDown className="opacity-50" />
+          <span className="truncate">{getDisplayValue()}</span>
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-full p-0">
+      <PopoverContent className="w-96 p-0" align="start">
         <Command>
           <CommandInput placeholder={searchPlaceholder} className="h-9" />
-          <ScrollArea className="h-96">
-            <CommandEmpty>{emptyMessage}</CommandEmpty>
-            <CommandGroup>
-              {items.map((item) => (
+          <CommandEmpty>{emptyMessage}</CommandEmpty>
+          <CommandGroup className="max-h-48 overflow-auto">
+            {items.map((item) => {
+              const isSelected = multiSelect
+                ? (currentValue as string[]).includes(item.value)
+                : currentValue === item.value;
+
+              return (
                 <CommandItem
                   key={item.value}
                   value={item.value}
-                  onSelect={(selectedValue) => {
-                    const newSelection = currentValue.includes(selectedValue)
-                      ? currentValue.filter((v) => v !== selectedValue)
-                      : [...currentValue, selectedValue];
-                    setValue(newSelection);
+                  onSelect={(_) => {
+                    if (multiSelect) {
+                      const currentArray = (currentValue as string[]) || [];
+                      const newSelection = currentArray.includes(item.value)
+                        ? currentArray.filter((v) => v !== item.value)
+                        : [...currentArray, item.value];
+                      setValue(newSelection);
+                    } else {
+                      setValue(item.value);
+                      setOpen(false);
+                    }
                   }}
                 >
                   <div className="flex flex-col">
@@ -95,15 +131,13 @@ export function Combobox({
                   <Check
                     className={cn(
                       "ml-auto h-4 w-4",
-                      currentValue.includes(item.value)
-                        ? "opacity-100"
-                        : "opacity-0",
+                      isSelected ? "opacity-100" : "opacity-0",
                     )}
                   />
                 </CommandItem>
-              ))}
-            </CommandGroup>
-          </ScrollArea>
+              );
+            })}
+          </CommandGroup>
         </Command>
       </PopoverContent>
     </Popover>
