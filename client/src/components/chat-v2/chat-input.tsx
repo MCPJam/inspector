@@ -1,17 +1,15 @@
-import { useRef, useState } from "react";
-import type { FormEvent, KeyboardEvent, ChangeEvent } from "react";
+import { useRef, useState, useCallback } from "react";
+import type { FormEvent, KeyboardEvent } from "react";
 import { cn } from "@/lib/chat-utils";
 import { Button } from "../ui/button";
 import { TextareaAutosize } from "../ui/textarea-autosize";
+import { PromptsPopover } from "./mcp-prompts-popover";
 import { ArrowUp, Square, X } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { ModelSelector } from "./model-selector";
 import { ModelDefinition } from "@/shared/types";
 import { SystemPromptSelector } from "./system-prompt-selector";
 import { useTextareaCaretPosition } from "@/hooks/use-textarea-caret-position";
-import { PromptsPopover } from "./prompts-popover";
-import type { NamespacedPrompt } from "@/components/ChatTabV2";
-import type { PromptContentResponse } from "@/lib/mcp-prompts-api";
 import {
   Context,
   ContextTrigger,
@@ -23,6 +21,7 @@ import {
   ContextMCPServerUsage,
   ContextSystemPromptUsage,
 } from "./context";
+import { MCPPromptResult, isMCPPromptsRequested } from "./mcp-prompts-popover";
 
 interface ChatInputProps {
   value: string;
@@ -43,10 +42,6 @@ interface ChatInputProps {
   onTemperatureChange: (temperature: number) => void;
   hasMessages?: boolean;
   onResetChat: () => void;
-  prompts: NamespacedPrompt[];
-  onSelectMCPPrompt: (promptNamespacedName: string) => Promise<void>;
-  promptResults: Record<string, PromptContentResponse>;
-  onRemovePromptResult: (promptNamespacedName: string) => void;
   tokenUsage?: {
     inputTokens: number;
     outputTokens: number;
@@ -79,10 +74,6 @@ export function ChatInput({
   onTemperatureChange,
   onResetChat,
   hasMessages = false,
-  prompts,
-  promptResults,
-  onSelectMCPPrompt,
-  onRemovePromptResult,
   tokenUsage,
   selectedServers,
   mcpToolsTokenCount,
@@ -94,12 +85,13 @@ export function ChatInput({
   const formRef = useRef<HTMLFormElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  // Prompts popover state
-  const [isPromptsOpen, setIsPromptsOpen] = useState(false);
   const [caretIndex, setCaretIndex] = useState(0);
-  const [highlightedPromptIndex, setHighlightedPromptIndex] = useState(-1);
-  const [isHoveringPrompt, setIsHoveringPrompt] = useState(false);
+  const [mcpPromptPopoverKeyTrigger, setMcpPromptPopoverKeyTrigger] = useState<
+    string | null
+  >(null);
+  const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
+    [],
+  );
 
   const caret = useTextareaCaretPosition(
     textareaRef,
@@ -108,43 +100,10 @@ export function ChatInput({
     caretIndex,
   );
 
-  const isPromptsRequested = (
-    currentValue: string,
-    currentCaretIndex: number,
-  ) => {
-    // Check text up to caret position for " /" or "/" at start of line or textarea
-    const textUpToCaret = currentValue.slice(0, currentCaretIndex);
-    const matches = /(?:^\/$|\s+\/$)/.test(textUpToCaret);
-    return matches;
-  };
-
-  const handlePromptsRequest = (
-    currentValue: string,
-    currentCaretIndex: number = 0,
-  ) => {
-    const isRequestingPrompts = isPromptsRequested(
-      currentValue,
-      currentCaretIndex,
-    );
-    setCaretIndex(currentCaretIndex);
-    setIsPromptsOpen(isRequestingPrompts);
-  };
-
-  const handlePromptArrowKeyNavigation = (
-    direction: "ArrowUp" | "ArrowDown",
-  ) => {
-    if (direction === "ArrowDown") {
-      setHighlightedPromptIndex((prev) => (prev + 1) % prompts.length);
-    } else {
-      setHighlightedPromptIndex(
-        (prev) => (prev - 1 + prompts.length) % prompts.length,
-      );
-    }
-  };
-
-  const handleSelectPrompt = async (promptNamespacedName: string) => {
-    try {
-      await onSelectMCPPrompt(promptNamespacedName);
+  const onMCPPromptSelected = useCallback(
+    (mcpPromptResult: MCPPromptResult) => {
+      // Add the prompt result to the mcpPromptResults state
+      setMcpPromptResults((prev) => [...prev, mcpPromptResult]);
 
       // Remove the "/" that triggered the popover
       const textBeforeCaret = value.slice(0, caretIndex);
@@ -152,29 +111,29 @@ export function ChatInput({
       const cleanedBefore = textBeforeCaret.replace(/\/\s*$/, "");
       const newValue = cleanedBefore + textAfterCaret;
       onChange(newValue);
+    },
+    [value, caretIndex, onChange],
+  );
 
-      // Clear popover state
-      setIsPromptsOpen(false);
-      setHighlightedPromptIndex(-1);
-    } catch (error) {
-      // Keep popover open on error so user can try again
-      console.error("[ChatInput] Failed to select prompt:", error);
-    }
+  const removeMCPPromptResult = (index: number) => {
+    setMcpPromptResults((prev) => prev.filter((_, i) => i !== index));
   };
 
-  function handleChange(event: ChangeEvent<HTMLTextAreaElement>) {
-    const newValue = event.target.value;
-    handlePromptsRequest(newValue, event.target.selectionStart);
-    onChange(newValue);
-  }
+  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    const currentCaretIndex = event.currentTarget.selectionStart;
+    if (
+      isMCPPromptsRequested(value, currentCaretIndex) &&
+      ["ArrowDown", "ArrowUp", "Enter", "Escape"].includes(event.key)
+    ) {
+      event.preventDefault();
+      setMcpPromptPopoverKeyTrigger(event.key);
+      return;
+    }
 
-  const handleKeyDown = async (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    handlePromptsRequest(value, event.currentTarget.selectionStart);
     if (
       event.key === "Enter" &&
       !event.shiftKey &&
-      !event.nativeEvent.isComposing &&
-      !isPromptsOpen
+      !event.nativeEvent.isComposing
     ) {
       const trimmed = value.trim();
       event.preventDefault();
@@ -183,108 +142,106 @@ export function ChatInput({
       }
       formRef.current?.requestSubmit();
     }
-
-    // Prompt events
-    if (event.key === "Escape" && isPromptsOpen) {
-      event.preventDefault();
-      setIsPromptsOpen(false);
-    }
-
-    if (event.key === "Enter" && isPromptsOpen) {
-      event.preventDefault();
-      if (highlightedPromptIndex === -1) {
-        return;
-      }
-      const highlightedPromptNamespacedName =
-        prompts[highlightedPromptIndex].namespacedName;
-      await handleSelectPrompt(highlightedPromptNamespacedName);
-    }
-
-    if (
-      (event.key === "ArrowDown" || event.key === "ArrowUp") &&
-      isPromptsOpen
-    ) {
-      event.preventDefault();
-      setIsHoveringPrompt(false);
-      handlePromptArrowKeyNavigation(event.key);
-    }
   };
 
   return (
-    <div className="relative">
-      <form
-        ref={formRef}
-        className={cn("w-full", className)}
-        onSubmit={onSubmit}
+    <form ref={formRef} className={cn("w-full", className)} onSubmit={onSubmit}>
+      <div
+        ref={containerRef}
+        className={cn(
+          "relative flex w-full flex-col rounded-3xl border border-border/40",
+          "bg-muted/70 px-2 pt-2 pb-2",
+        )}
       >
-        <div
-          ref={containerRef}
-          className={cn(
-            "relative flex w-full flex-col rounded-3xl border border-border/40",
-            "bg-muted/70 px-2 pt-2 pb-2",
-          )}
-        >
-          <PromptsPopover
-            anchor={caret}
-            open={isPromptsOpen}
-            setOpen={setIsPromptsOpen}
-            highlightedIndex={highlightedPromptIndex}
-            setHighlightedIndex={setHighlightedPromptIndex}
-            isHovering={isHoveringPrompt}
-            setIsHovering={setIsHoveringPrompt}
-            prompts={prompts}
-            onPromptClick={handleSelectPrompt}
-          />
+        <PromptsPopover
+          anchor={caret}
+          selectedServers={selectedServers}
+          onPromptSelected={onMCPPromptSelected}
+          actionTrigger={mcpPromptPopoverKeyTrigger}
+          setActionTrigger={setMcpPromptPopoverKeyTrigger}
+          value={value}
+          caretIndex={caretIndex}
+        />
 
-          {/* Prompt Response Cards */}
-          {Object.keys(promptResults).length > 0 && (
-            <div className="px-4 pt-1 pb-0.5">
-              <div className="flex flex-wrap gap-1.5">
-                {Object.entries(promptResults).map(
-                  ([namespacedName, result]) => (
-                    <div
-                      key={namespacedName}
-                      className="group inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/50 px-2 py-0.5 text-xs"
+        {/* Prompt Response Cards */}
+        {mcpPromptResults.length > 0 && (
+          <div className="px-4 pt-1 pb-0.5">
+            <div className="flex flex-wrap gap-1.5">
+              {mcpPromptResults.map((response, index) => (
+                <div
+                  key={index}
+                  className="group inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/50 px-2 py-0.5 text-xs"
+                >
+                  <span className="font-medium text-foreground truncate max-w-[180px]">
+                    {response.namespacedName}
+                  </span>
+                  {response.result.content.messages.length > 0 && (
+                    <span className="text-[10px] text-muted-foreground">
+                      ({response.result.content.messages.length})
+                    </span>
+                  )}
+                  {removeMCPPromptResult && (
+                    <button
+                      type="button"
+                      onClick={() => removeMCPPromptResult(index)}
+                      className="flex-shrink-0 rounded-sm opacity-60 hover:opacity-100 transition-opacity hover:bg-accent p-0.5"
+                      aria-label={`Remove ${response.namespacedName}`}
                     >
-                      <span className="font-medium text-foreground truncate max-w-[180px]">
-                        {namespacedName}
-                      </span>
-                      {result.messages.length > 0 && (
-                        <span className="text-[10px] text-muted-foreground">
-                          ({result.messages.length})
-                        </span>
-                      )}
-                      {onRemovePromptResult && (
-                        <button
-                          type="button"
-                          onClick={() => onRemovePromptResult(namespacedName)}
-                          className="flex-shrink-0 rounded-sm opacity-60 hover:opacity-100 transition-opacity hover:bg-accent p-0.5"
-                          aria-label={`Remove ${namespacedName}`}
-                        >
-                          <X size={12} className="text-muted-foreground" />
-                        </button>
-                      )}
-                    </div>
-                  ),
-                )}
-              </div>
+                      <X size={12} className="text-muted-foreground" />
+                    </button>
+                  )}
+                </div>
+              ))}
             </div>
-          )}
+          </div>
+        )}
 
-          <TextareaAutosize
-            ref={textareaRef}
-            value={value}
-            onChange={(e) => handleChange(e)}
-            onKeyDown={handleKeyDown}
-            placeholder={placeholder}
-            disabled={disabled}
-            readOnly={disabled}
-            minRows={2}
-            className={cn(
-              "max-h-32 min-h-[64px] w-full resize-none border-none bg-transparent px-4",
-              "pt-2 pb-3 text-base text-foreground placeholder:text-muted-foreground/70",
-              "outline-none focus-visible:outline-none focus-visible:ring-0 shadow-none focus-visible:shadow-none",
-              disabled ? "cursor-not-allowed text-muted-foreground" : "",
+        <TextareaAutosize
+          ref={textareaRef}
+          value={value}
+          onChange={(e) => {
+            onChange(e.target.value);
+            setCaretIndex(e.target.selectionStart);
+          }}
+          onKeyDown={handleKeyDown}
+          onKeyUp={(e) => setCaretIndex(e.currentTarget.selectionStart)}
+          placeholder={placeholder}
+          disabled={disabled}
+          readOnly={disabled}
+          minRows={2}
+          className={cn(
+            "max-h-32 min-h-[64px] w-full resize-none border-none bg-transparent px-4",
+            "pt-2 pb-3 text-base text-foreground placeholder:text-muted-foreground/70",
+            "outline-none focus-visible:outline-none focus-visible:ring-0 shadow-none focus-visible:shadow-none",
+            disabled ? "cursor-not-allowed text-muted-foreground" : "",
+          )}
+          autoFocus={!disabled}
+        />
+
+        <div className="flex items-center justify-between gap-2 px-2">
+          <div className="flex items-center gap-1">
+            <ModelSelector
+              currentModel={currentModel}
+              availableModels={availableModels}
+              onModelChange={onModelChange}
+              isLoading={isLoading}
+              hasMessages={hasMessages}
+            />
+            <SystemPromptSelector
+              systemPrompt={
+                systemPrompt ||
+                "You are a helpful assistant with access to MCP tools."
+              }
+              onSystemPromptChange={onSystemPromptChange}
+              temperature={temperature}
+              onTemperatureChange={onTemperatureChange}
+              isLoading={isLoading}
+              hasMessages={hasMessages}
+              onResetChat={onResetChat}
+              currentModel={currentModel}
+            />
+          </div>
+
           <div className="flex items-center gap-2">
             <Context
               usedTokens={tokenUsage?.totalTokens ?? 0}
@@ -358,73 +315,9 @@ export function ChatInput({
                 <TooltipContent>Send message</TooltipContent>
               </Tooltip>
             )}
-            autoFocus={!disabled}
-          />
-
-          <div className="flex items-center justify-between gap-2 px-2">
-            <div className="flex items-center gap-1">
-              <ModelSelector
-                currentModel={currentModel}
-                availableModels={availableModels}
-                onModelChange={onModelChange}
-                isLoading={isLoading}
-                hasMessages={hasMessages}
-              />
-              <SystemPromptSelector
-                systemPrompt={
-                  systemPrompt ||
-                  "You are a helpful assistant with access to MCP tools."
-                }
-                onSystemPromptChange={onSystemPromptChange}
-                temperature={temperature}
-                onTemperatureChange={onTemperatureChange}
-                isLoading={isLoading}
-                hasMessages={hasMessages}
-                onResetChat={onResetChat}
-                currentModel={currentModel}
-              />
-            </div>
-
-            <div className="flex items-center">
-              {isLoading ? (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="destructive"
-                      className="size-[34px] rounded-full transition-colors bg-red-500 hover:bg-red-600"
-                      onClick={() => stop()}
-                    >
-                      <Square size={16} />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Stop generating</TooltipContent>
-                </Tooltip>
-              ) : (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="submit"
-                      size="icon"
-                      className={cn(
-                        "size-[34px] rounded-full transition-colors",
-                        value.trim() && !disabled && !submitDisabled
-                          ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                          : "bg-muted text-muted-foreground cursor-not-allowed",
-                      )}
-                      disabled={!value.trim() || disabled || submitDisabled}
-                    >
-                      <ArrowUp size={16} />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Send message</TooltipContent>
-                </Tooltip>
-              )}
-            </div>
           </div>
         </div>
-      </form>
-    </div>
+      </div>
+    </form>
   );
 }
