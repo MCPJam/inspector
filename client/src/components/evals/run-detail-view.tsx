@@ -31,6 +31,10 @@ interface RunDetailViewProps {
       duration: number;
       durationSeconds: number;
     }>;
+    tokensData: Array<{
+      name: string;
+      tokens: number;
+    }>;
     modelData: Array<{
       model: string;
       passRate: number;
@@ -260,6 +264,7 @@ export function RunDetailView({
             <div className="p-4 space-y-4">
               {/* Charts */}
               {(selectedRunChartData.durationData.length > 0 ||
+                selectedRunChartData.tokensData.length > 0 ||
                 selectedRunChartData.modelData.length > 0) && (
                 <div className="space-y-4">
                   {/* Duration per Test Bar Chart */}
@@ -272,7 +277,7 @@ export function RunDetailView({
                         config={{
                           duration: {
                             label: "Duration",
-                            color: "hsl(var(--chart-1))",
+                            color: "var(--chart-1)",
                           },
                         }}
                         className="aspect-auto h-48 w-full"
@@ -338,6 +343,82 @@ export function RunDetailView({
                     </div>
                   )}
 
+                  {/* Tokens per Test Bar Chart */}
+                  {selectedRunChartData.tokensData.length > 0 && (
+                    <div className="rounded-lg border bg-background/50 p-4">
+                      <div className="text-xs font-medium text-muted-foreground mb-3">
+                        Tokens per Test
+                      </div>
+                      <ChartContainer
+                        config={{
+                          tokens: {
+                            label: "Tokens",
+                            color: "var(--chart-2)",
+                          },
+                        }}
+                        className="aspect-auto h-48 w-full"
+                      >
+                        <BarChart
+                          data={selectedRunChartData.tokensData}
+                          width={undefined}
+                          height={undefined}
+                        >
+                          <CartesianGrid
+                            strokeDasharray="3 3"
+                            vertical={false}
+                            stroke="hsl(var(--muted-foreground) / 0.2)"
+                          />
+                          <XAxis
+                            dataKey="name"
+                            tickLine={false}
+                            axisLine={false}
+                            tickMargin={8}
+                            tick={{ fontSize: 11 }}
+                            interval={0}
+                            height={40}
+                            tickFormatter={(value) => {
+                              if (value.length > 15) {
+                                return value.substring(0, 12) + "...";
+                              }
+                              return value;
+                            }}
+                          />
+                          <YAxis
+                            tickLine={false}
+                            axisLine={false}
+                            tickMargin={8}
+                            tick={{ fontSize: 12 }}
+                            tickFormatter={(value) => value.toLocaleString()}
+                          />
+                          <ChartTooltip
+                            cursor={false}
+                            content={({ active, payload }) => {
+                              if (!active || !payload || payload.length === 0)
+                                return null;
+                              const data = payload[0].payload;
+                              return (
+                                <div className="rounded-lg border bg-background p-2 shadow-sm">
+                                  <div className="text-xs font-semibold">
+                                    {data.name}
+                                  </div>
+                                  <div className="text-sm font-medium mt-1">
+                                    {Math.round(data.tokens).toLocaleString()} tokens
+                                  </div>
+                                </div>
+                              );
+                            }}
+                          />
+                          <Bar
+                            dataKey="tokens"
+                            fill="var(--color-tokens)"
+                            radius={[4, 4, 0, 0]}
+                            isAnimationActive={false}
+                          />
+                        </BarChart>
+                      </ChartContainer>
+                    </div>
+                  )}
+
                   {/* Per-Model Performance for this run */}
                   {selectedRunChartData.modelData.length > 0 && (
                     <div className="rounded-lg border bg-background/50 p-4">
@@ -348,7 +429,7 @@ export function RunDetailView({
                         config={{
                           passRate: {
                             label: "Pass Rate",
-                            color: "var(--chart-1)",
+                            color: "oklch(0.25 0 0)",
                           },
                         }}
                         className="aspect-auto h-48 w-full"
