@@ -378,7 +378,7 @@ const openaiAPI = {
   },
   widgetState: null,
 
-  // Persist widget state
+  // Persist widget state (localStorage + propagate to model)
   async setWidgetState(state) {
     this.widgetState = state;
     try {
@@ -386,6 +386,7 @@ const openaiAPI = {
     } catch (err) {
       console.error('[OpenAI Widget] Failed to save widget state:', err);
     }
+    // Propagate state to parent for model context
     window.parent.postMessage({
       type: 'openai:setWidgetState',
       toolId: toolId,
