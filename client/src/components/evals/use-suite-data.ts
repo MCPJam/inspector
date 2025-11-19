@@ -460,7 +460,7 @@ export function useRunDetailData(
   // Data for run detail charts
   const selectedRunChartData = useMemo(() => {
     if (!selectedRunId || caseGroupsForSelectedRun.length === 0) {
-      return { donutData: [], durationData: [], modelData: [] };
+      return { donutData: [], durationData: [], tokensData: [], modelData: [] };
     }
 
     let totalPassed = 0;
@@ -509,6 +509,7 @@ export function useRunDetailData(
       {
         title: string;
         durations: number[];
+        tokens: number[];
         passed: number;
         failed: number;
         pending: number;
@@ -523,6 +524,7 @@ export function useRunDetailData(
         testMap.set(testKey, {
           title: testKey,
           durations: [],
+          tokens: [],
           passed: 0,
           failed: 0,
           pending: 0,
@@ -541,6 +543,11 @@ export function useRunDetailData(
       const completedAt = iteration.updatedAt ?? iteration.createdAt;
       if (startedAt && completedAt && iteration.result !== "pending") {
         test.durations.push(Math.max(completedAt - startedAt, 0));
+      }
+
+      // Track tokens used
+      if (iteration.result !== "pending" && iteration.tokensUsed) {
+        test.tokens.push(iteration.tokensUsed);
       }
     });
 
@@ -562,6 +569,18 @@ export function useRunDetailData(
         name: test.title,
         duration: avgDuration,
         durationSeconds: avgDuration / 1000,
+      };
+    });
+
+    const tokensData = Array.from(testMap.values()).map((test) => {
+      const avgTokens =
+        test.tokens.length > 0
+          ? test.tokens.reduce((sum, t) => sum + t, 0) / test.tokens.length
+          : 0;
+
+      return {
+        name: test.title,
+        tokens: avgTokens,
       };
     });
 
@@ -595,7 +614,7 @@ export function useRunDetailData(
       });
     }
 
-    return { donutData, durationData, modelData };
+    return { donutData, durationData, tokensData, modelData };
   }, [selectedRunId, caseGroupsForSelectedRun, iterationsForSelectedRun]);
 
   return {
