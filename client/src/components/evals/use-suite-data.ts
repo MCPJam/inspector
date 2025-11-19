@@ -144,7 +144,8 @@ export function useSuiteData(
       total: stats.total,
     }));
 
-    return data.sort((a, b) => b.passRate - a.passRate);
+    // Sort alphabetically by model name for consistent, fixed ordering
+    return data.sort((a, b) => a.model.localeCompare(b.model));
   }, [allIterations, activeRunIds]);
 
   // Case groups
@@ -491,6 +492,7 @@ export function useRunDetailData(
       }
     });
 
+    // Sort alphabetically by model name for consistent, fixed ordering
     const modelData = Array.from(modelMap.entries())
       .map(([model, stats]) => ({
         model: stats.modelName,
@@ -500,7 +502,7 @@ export function useRunDetailData(
         failed: stats.failed,
         total: stats.total,
       }))
-      .sort((a, b) => b.passRate - a.passRate);
+      .sort((a, b) => a.model.localeCompare(b.model));
 
     const testMap = new Map<
       string,
