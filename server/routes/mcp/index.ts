@@ -7,7 +7,6 @@ import prompts from "./prompts";
 import chatV2 from "./chat-v2";
 import oauth from "./oauth";
 import exporter from "./export";
-import interceptor from "./interceptor";
 import evals from "./evals";
 import { adapterHttp, managerHttp } from "./http-adapters";
 import elicitation from "./elicitation";
@@ -63,9 +62,6 @@ mcp.route("/oauth", oauth);
 
 // Export endpoints - REAL IMPLEMENTATION
 mcp.route("/export", exporter);
-
-// Interceptor endpoints - create proxy and stream logs
-mcp.route("/interceptor", interceptor);
 
 // Unified HTTP bridges (SSE + POST) for connected servers
 mcp.route("/adapter-http", adapterHttp);

@@ -105,7 +105,7 @@ export function SuiteHeader({
 
   if (isEditMode) {
     return (
-      <div className="flex items-center justify-between gap-4 mb-4">
+      <div className="flex items-center justify-between gap-4 mb-2 px-6 pt-6 max-w-5xl mx-auto w-full">
         {isEditingName ? (
           <input
             type="text"
@@ -114,13 +114,13 @@ export function SuiteHeader({
             onBlur={handleNameBlur}
             onKeyDown={handleNameKeyDown}
             autoFocus
-            className="px-3 py-2 text-lg font-semibold border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
+            className="px-4 py-2 text-xl font-bold border border-input rounded-lg focus:outline-none focus:ring-2 focus:ring-ring bg-background"
           />
         ) : (
           <Button
             variant="ghost"
             onClick={handleNameClick}
-            className="px-3 py-2 h-auto text-lg font-semibold hover:bg-accent"
+            className="px-4 py-2 h-auto text-xl font-bold hover:bg-accent/50 -ml-4 rounded-lg"
           >
             {suite.name}
           </Button>
