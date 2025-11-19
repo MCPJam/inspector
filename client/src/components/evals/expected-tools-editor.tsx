@@ -78,7 +78,7 @@ export function ExpectedToolsEditor({
   const updateArgumentKey = (
     toolIndex: number,
     oldKey: string,
-    newKey: string,
+    newKey: string
   ) => {
     if (!newKey || oldKey === newKey) {
       return;
@@ -89,7 +89,7 @@ export function ExpectedToolsEditor({
     const entries = Object.entries(currentArgs);
 
     const reorderedEntries = entries.map(([key, value]) =>
-      key === oldKey ? [newKey, value] : [key, value],
+      key === oldKey ? [newKey, value] : [key, value]
     );
 
     updated[toolIndex] = {
@@ -103,7 +103,7 @@ export function ExpectedToolsEditor({
   const updateArgumentValue = (
     toolIndex: number,
     argKey: string,
-    value: string,
+    value: string
   ) => {
     const updated = [...toolCalls];
     const args = { ...(updated[toolIndex].arguments || {}) };
@@ -188,11 +188,10 @@ export function ExpectedToolsEditor({
                   }
                   placeholder="Select tool..."
                   searchPlaceholder="Search tools..."
-                  multiSelect={false}
                   className={cn(
                     "w-full justify-between font-mono text-sm h-9",
                     isToolNameInvalid(toolCall.toolName) &&
-                      "border-destructive focus-visible:ring-destructive",
+                      "border-destructive focus-visible:ring-destructive"
                   )}
                 />
               ) : (
@@ -203,7 +202,7 @@ export function ExpectedToolsEditor({
                   className={cn(
                     "font-mono text-sm",
                     isToolNameInvalid(toolCall.toolName) &&
-                      "border-destructive focus-visible:ring-destructive",
+                      "border-destructive focus-visible:ring-destructive"
                   )}
                 />
               )}
@@ -229,13 +228,13 @@ export function ExpectedToolsEditor({
                 const availableArgs = getAvailableArguments(toolIndex).filter(
                   (arg) =>
                     !toolCall.arguments.hasOwnProperty(arg.key) ||
-                    arg.key === key,
+                    arg.key === key
                 );
 
                 const isPlaceholderKey =
                   /^arg\d*$/.test(key) &&
                   !getAvailableArguments(toolIndex).some(
-                    (arg) => arg.key === key,
+                    (arg) => arg.key === key
                   );
 
                 const comboboxItems = availableArgs.map((arg) => {
@@ -263,7 +262,6 @@ export function ExpectedToolsEditor({
                         }
                         placeholder="Select argument..."
                         searchPlaceholder="Search arguments..."
-                        multiSelect={false}
                         className="w-full justify-between font-mono text-sm h-9"
                       />
                       {argSchema?.description && (
@@ -288,7 +286,7 @@ export function ExpectedToolsEditor({
                         className={cn(
                           "font-mono text-sm resize-none min-h-[36px]",
                           isArgumentValueInvalid(value) &&
-                            "border-destructive focus-visible:ring-destructive",
+                            "border-destructive focus-visible:ring-destructive"
                         )}
                         rows={1}
                       />
