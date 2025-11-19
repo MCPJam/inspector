@@ -329,6 +329,29 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     }
   };
 
+  // Handle Enter key to execute tool globally
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Check if Enter is pressed (not Shift+Enter)
+      if (e.key === "Enter" && !e.shiftKey && selectedTool && !loading) {
+        // Don't trigger if user is typing in an input, textarea, or contenteditable
+        const target = e.target as HTMLElement;
+        const tagName = target.tagName;
+        const isEditable = target.isContentEditable;
+
+        if (tagName === "INPUT" || tagName === "TEXTAREA" || isEditable) {
+          return;
+        }
+
+        e.preventDefault();
+        executeTool();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedTool, loading]);
+
   const handleElicitationResponse = async (
     action: "accept" | "decline" | "cancel",
     parameters?: Record<string, unknown>,
