@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Badge } from "../ui/badge";
-import { Combobox } from "../ui/combobox";
+import { ComboboxMultiSelect } from "../ui/combobox-multi-select";
 import {
   Dialog,
   DialogContent,
@@ -100,7 +100,7 @@ export function OpenRouterConfigDialog({
               </div>
             ) : (
               <>
-                <Combobox
+                <ComboboxMultiSelect
                   items={models}
                   placeholder="Select models..."
                   searchPlaceholder="Search models..."

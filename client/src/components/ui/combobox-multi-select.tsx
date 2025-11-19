@@ -17,24 +17,20 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { ComboboxItem } from "./combobox";
 
-export interface ComboboxItem {
-  value: string;
-  label: string;
-  description?: string;
-}
-
-interface ComboboxProps {
+interface ComboboxMultiSelectProps {
   items: ComboboxItem[];
   placeholder?: string;
   searchPlaceholder?: string;
   emptyMessage?: string;
   className?: string;
-  value?: string;
-  onValueChange?: (value: string) => void;
+  value?: string[];
+  onValueChange?: (value: string[]) => void;
+  label?: string;
 }
 
-export function Combobox({
+export function ComboboxMultiSelect({
   items,
   placeholder = "Select item...",
   searchPlaceholder = "Search...",
@@ -42,12 +38,13 @@ export function Combobox({
   className,
   value,
   onValueChange,
-}: ComboboxProps) {
+  label = "Model",
+}: ComboboxMultiSelectProps) {
   const [open, setOpen] = React.useState(false);
-  const [internalValue, setInternalValue] = React.useState<string>("");
+  const [internalValue, setInternalValue] = React.useState<string[]>([]);
 
   const currentValue = value !== undefined ? value : internalValue;
-  const setValue = (newValue: string) => {
+  const setValue = (newValue: string[]) => {
     if (onValueChange) {
       onValueChange(newValue);
     } else {
@@ -56,9 +53,11 @@ export function Combobox({
   };
 
   const getDisplayValue = () => {
-    if (currentValue) {
-      const item = items.find((i) => i.value === currentValue);
-      return item ? item.label : currentValue;
+    const val = currentValue;
+    if (val && val.length > 0) {
+      return val.length === 1
+        ? `1 ${label} Selected`
+        : `${val.length} ${label}s Selected`;
     }
     return placeholder;
   };
@@ -82,15 +81,18 @@ export function Combobox({
           <CommandEmpty>{emptyMessage}</CommandEmpty>
           <CommandGroup className="max-h-48 overflow-auto">
             {items.map((item) => {
-              const isSelected = currentValue === item.value;
+              const isSelected = currentValue.includes(item.value);
 
               return (
                 <CommandItem
                   key={item.value}
                   value={item.value}
                   onSelect={(_) => {
-                    setValue(item.value);
-                    setOpen(false);
+                    const currentArray = currentValue || [];
+                    const newSelection = currentArray.includes(item.value)
+                      ? currentArray.filter((v) => v !== item.value)
+                      : [...currentArray, item.value];
+                    setValue(newSelection);
                   }}
                 >
                   <div className="flex flex-col">
