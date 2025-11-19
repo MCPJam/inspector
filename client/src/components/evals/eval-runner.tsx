@@ -711,7 +711,7 @@ export function EvalRunner({
         (template) => !validateExpectedToolCalls(template.expectedToolCalls),
       );
       if (hasInvalidToolCalls) {
-        return "Fix invalid tool calls: ensure at least one tool call exists, all tool names are filled, and no argument values are empty";
+        return "All tool names must be specified and argument values cannot be empty";
       }
     }
 

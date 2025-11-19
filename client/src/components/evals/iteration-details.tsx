@@ -3,7 +3,11 @@ import { useEffect, useState } from "react";
 import { EvalIteration, EvalCase } from "./types";
 import { TraceViewer } from "./trace-viewer";
 import { MessageSquare, Code2 } from "lucide-react";
-import { getToolsMetadata, ToolServerMap, listTools } from "@/lib/mcp-tools-api";
+import {
+  getToolsMetadata,
+  ToolServerMap,
+  listTools,
+} from "@/lib/mcp-tools-api";
 
 export function IterationDetails({
   iteration,
@@ -77,7 +81,8 @@ export function IterationDetails({
         setToolServerMap(toolServerMap);
 
         // Also fetch tools with their inputSchema for type display
-        const toolsMap: Record<string, { name: string; inputSchema?: any }> = {};
+        const toolsMap: Record<string, { name: string; inputSchema?: any }> =
+          {};
         await Promise.all(
           serverNames.map(async (serverId) => {
             try {
@@ -133,10 +138,7 @@ export function IterationDetails({
   };
 
   // Helper to render arguments in a readable format
-  const renderArguments = (
-    args: Record<string, any>,
-    toolName?: string,
-  ) => {
+  const renderArguments = (args: Record<string, any>, toolName?: string) => {
     const entries = Object.entries(args);
     if (entries.length === 0) {
       return <span className="text-muted-foreground italic">No arguments</span>;
@@ -261,7 +263,10 @@ export function IterationDetails({
                         </div>
                         {Object.keys(tool.arguments || {}).length > 0 && (
                           <div className="text-xs bg-muted/30 rounded p-1.5">
-                            {renderArguments(tool.arguments || {}, tool.toolName)}
+                            {renderArguments(
+                              tool.arguments || {},
+                              tool.toolName,
+                            )}
                           </div>
                         )}
                       </div>
@@ -291,7 +296,10 @@ export function IterationDetails({
                         </div>
                         {Object.keys(tool.arguments || {}).length > 0 && (
                           <div className="text-xs bg-muted/30 rounded p-1.5">
-                            {renderArguments(tool.arguments || {}, tool.toolName)}
+                            {renderArguments(
+                              tool.arguments || {},
+                              tool.toolName,
+                            )}
                           </div>
                         )}
                       </div>
