@@ -80,14 +80,23 @@ export function ExpectedToolsEditor({
     oldKey: string,
     newKey: string,
   ) => {
-    const updated = [...toolCalls];
-    const args = { ...(updated[toolIndex].arguments || {}) };
-    if (oldKey !== newKey) {
-      const value = args[oldKey];
-      delete args[oldKey];
-      args[newKey] = value;
+    if (!newKey || oldKey === newKey) {
+      return;
     }
-    updated[toolIndex] = { ...updated[toolIndex], arguments: args };
+
+    const updated = [...toolCalls];
+    const currentArgs = updated[toolIndex].arguments || {};
+    const entries = Object.entries(currentArgs);
+
+    const reorderedEntries = entries.map(([key, value]) =>
+      key === oldKey ? [newKey, value] : [key, value],
+    );
+
+    updated[toolIndex] = {
+      ...updated[toolIndex],
+      arguments: Object.fromEntries(reorderedEntries),
+    };
+
     onChange(updated);
   };
 
