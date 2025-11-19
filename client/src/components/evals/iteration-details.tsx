@@ -72,7 +72,8 @@ export function IterationDetails({
       try {
         // Fetch tools with their inputSchema for type display
         // This makes only ONE call per server instead of two
-        const toolsMap: Record<string, { name: string; inputSchema?: any }> = {};
+        const toolsMap: Record<string, { name: string; inputSchema?: any }> =
+          {};
         const metadata: Record<string, Record<string, any>> = {};
         const toolServerMap: ToolServerMap = {};
 
@@ -99,7 +100,10 @@ export function IterationDetails({
               }
             } catch (error) {
               // Silently fail for disconnected servers
-              console.warn(`Failed to fetch tools for server ${serverId}:`, error);
+              console.warn(
+                `Failed to fetch tools for server ${serverId}:`,
+                error,
+              );
             }
           }),
         );
@@ -144,10 +148,7 @@ export function IterationDetails({
   };
 
   // Helper to render arguments in a readable format
-  const renderArguments = (
-    args: Record<string, any>,
-    toolName?: string,
-  ) => {
+  const renderArguments = (args: Record<string, any>, toolName?: string) => {
     const entries = Object.entries(args);
     if (entries.length === 0) {
       return <span className="text-muted-foreground italic">No arguments</span>;
@@ -272,7 +273,10 @@ export function IterationDetails({
                         </div>
                         {Object.keys(tool.arguments || {}).length > 0 && (
                           <div className="text-xs bg-muted/30 rounded p-1.5">
-                            {renderArguments(tool.arguments || {}, tool.toolName)}
+                            {renderArguments(
+                              tool.arguments || {},
+                              tool.toolName,
+                            )}
                           </div>
                         )}
                       </div>
@@ -302,7 +306,10 @@ export function IterationDetails({
                         </div>
                         {Object.keys(tool.arguments || {}).length > 0 && (
                           <div className="text-xs bg-muted/30 rounded p-1.5">
-                            {renderArguments(tool.arguments || {}, tool.toolName)}
+                            {renderArguments(
+                              tool.arguments || {},
+                              tool.toolName,
+                            )}
                           </div>
                         )}
                       </div>

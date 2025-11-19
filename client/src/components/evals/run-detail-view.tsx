@@ -402,7 +402,8 @@ export function RunDetailView({
                                     {data.name}
                                   </div>
                                   <div className="text-sm font-medium mt-1">
-                                    {Math.round(data.tokens).toLocaleString()} tokens
+                                    {Math.round(data.tokens).toLocaleString()}{" "}
+                                    tokens
                                   </div>
                                 </div>
                               );

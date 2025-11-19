@@ -407,7 +407,8 @@ export function SuiteIterationsView({
                 </h2>
                 <p className="text-xs text-muted-foreground mt-1">
                   Set the default criteria for <strong>new</strong> evaluation
-                  runs of this suite. Existing runs keep their original criteria.
+                  runs of this suite. Existing runs keep their original
+                  criteria.
                 </p>
               </div>
               <PassCriteriaSelector
