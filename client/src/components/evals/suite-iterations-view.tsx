@@ -359,9 +359,17 @@ export function SuiteIterationsView({
 
       {isEditMode && (
         <div className="flex-1 min-h-0 overflow-auto">
-          <div className="p-3 space-y-6">
-            {/* Suite Description */}
-            <div>
+          <div className="p-6 max-w-5xl mx-auto space-y-8">
+            {/* Suite Description Section */}
+            <div className="space-y-3">
+              <div>
+                <h2 className="text-base font-semibold text-foreground">
+                  Description
+                </h2>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Provide context about what this evaluation suite tests
+                </p>
+              </div>
               {isEditingDescription ? (
                 <textarea
                   value={editedDescription}
@@ -370,16 +378,20 @@ export function SuiteIterationsView({
                   onKeyDown={handleDescriptionKeyDown}
                   placeholder="Enter a description for this suite..."
                   autoFocus
-                  className="w-full px-3 py-2 text-sm border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring resize-none min-h-[80px]"
-                  rows={3}
+                  className="w-full px-4 py-3 text-sm border border-input rounded-lg focus:outline-none focus:ring-2 focus:ring-ring resize-none min-h-[100px] bg-background"
+                  rows={4}
                 />
               ) : (
                 <button
                   onClick={handleDescriptionClick}
-                  className="w-full px-3 py-1 text-sm text-left rounded-md hover:bg-accent whitespace-pre-wrap transition-colors"
+                  className="w-full px-4 py-3 text-sm text-left rounded-lg border border-border hover:border-input hover:bg-accent/50 whitespace-pre-wrap transition-all"
                 >
-                  {suite.description || (
-                    <span className="text-muted-foreground italic text-xs">
+                  {suite.description ? (
+                    <span className="text-foreground leading-relaxed">
+                      {suite.description}
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground italic">
                       Click to add a description...
                     </span>
                   )}
@@ -387,16 +399,15 @@ export function SuiteIterationsView({
               )}
             </div>
 
-            {/* Default Pass/Fail Criteria for New Runs */}
-            <div className="space-y-2">
+            {/* Default Pass/Fail Criteria Section */}
+            <div className="space-y-3">
               <div>
-                <h3 className="text-sm font-semibold">
+                <h2 className="text-base font-semibold text-foreground">
                   Default Pass/Fail Criteria
-                </h3>
-                <p className="text-xs text-muted-foreground mt-0.5">
+                </h2>
+                <p className="text-xs text-muted-foreground mt-1">
                   Set the default criteria for <strong>new</strong> evaluation
-                  runs of this suite. These settings will be pre-selected when
-                  you click "Rerun". Existing runs keep their original criteria.
+                  runs of this suite. Existing runs keep their original criteria.
                 </p>
               </div>
               <PassCriteriaSelector
@@ -426,7 +437,7 @@ export function SuiteIterationsView({
               />
             </div>
 
-            {/* Tests Config */}
+            {/* Models Section */}
             <SuiteTestsConfig
               suite={suite}
               testCases={cases}

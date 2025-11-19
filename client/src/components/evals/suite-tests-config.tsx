@@ -127,16 +127,14 @@ export function SuiteTestsConfig({
   }, [groupedAvailableModels]);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       {/* Models Section */}
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-lg font-semibold">Models</h3>
-            <p className="text-sm text-muted-foreground">
-              Models used in this suite. Each test template runs against all
-              models. Edit individual test templates by selecting them from the
-              sidebar.
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex-1">
+            <h2 className="text-base font-semibold text-foreground">Models</h2>
+            <p className="text-xs text-muted-foreground mt-1">
+              Select at least one model to run the evaluation.
             </p>
           </div>
           <DropdownMenu
@@ -144,7 +142,7 @@ export function SuiteTestsConfig({
             onOpenChange={setIsModelDropdownOpen}
           >
             <DropdownMenuTrigger asChild>
-              <Button size="sm" variant="outline">
+              <Button size="sm" variant="outline" className="shrink-0">
                 <Plus className="h-4 w-4 mr-2" />
                 Add model
               </Button>
