@@ -83,7 +83,7 @@ async function createIterationDirectly(
     };
     iterationNumber: number;
     startedAt: number;
-  }
+  },
 ): Promise<string | undefined> {
   try {
     const result = await convexClient.mutation(
@@ -93,14 +93,14 @@ async function createIterationDirectly(
         testCaseSnapshot: params.testCaseSnapshot,
         iterationNumber: params.iterationNumber,
         startedAt: params.startedAt,
-      }
+      },
     );
 
     return result?.iterationId as string | undefined;
   } catch (error) {
     console.error(
       "[evals] Failed to create iteration:",
-      error instanceof Error ? error.message : error
+      error instanceof Error ? error.message : error,
     );
     return undefined;
   }
@@ -119,7 +119,7 @@ async function finishIterationDirectly(
     startedAt?: number;
     error?: string;
     errorDetails?: string;
-  }
+  },
 ): Promise<void> {
   if (!params.iterationId) return;
 
@@ -127,12 +127,12 @@ async function finishIterationDirectly(
   try {
     const iteration = await convexClient.query(
       "testSuites:getTestIteration" as any,
-      { iterationId: params.iterationId }
+      { iterationId: params.iterationId },
     );
     if (iteration?.status === "cancelled") {
       console.log(
         "[evals] Skipping update for cancelled iteration:",
-        params.iterationId
+        params.iterationId,
       );
       return;
     }
@@ -219,7 +219,7 @@ const runIterationWithAiSdk = async ({
     try {
       const currentRun = await convexClient.query(
         "testSuites:getTestSuiteRun" as any,
-        { runId }
+        { runId },
       );
       if (currentRun?.status === "cancelled") {
         // Return empty result for cancelled iteration
@@ -249,7 +249,7 @@ const runIterationWithAiSdk = async ({
     "";
   if (!apiKey) {
     throw new Error(
-      `Missing API key for provider ${test.provider} (test: ${test.title})`
+      `Missing API key for provider ${test.provider} (test: ${test.title})`,
     );
   }
 
@@ -331,8 +331,8 @@ const runIterationWithAiSdk = async ({
                   tc.toolName === name &&
                   JSON.stringify(tc.arguments) ===
                     JSON.stringify(
-                      item.input ?? item.parameters ?? item.args ?? {}
-                    )
+                      item.input ?? item.parameters ?? item.args ?? {},
+                    ),
               );
               if (!alreadyAdded) {
                 toolsCalled.push({
@@ -352,7 +352,7 @@ const runIterationWithAiSdk = async ({
               (tc) =>
                 tc.toolName === (call.toolName ?? call.name) &&
                 JSON.stringify(tc.arguments) ===
-                  JSON.stringify(call.args ?? call.input ?? {})
+                  JSON.stringify(call.args ?? call.input ?? {}),
             );
             if (!alreadyAdded) {
               toolsCalled.push({
@@ -458,7 +458,7 @@ const runIterationViaBackend = async ({
     try {
       const currentRun = await convexClient.query(
         "testSuites:getTestSuiteRun" as any,
-        { runId }
+        { runId },
       );
       if (currentRun?.status === "cancelled") {
         // Return empty result for cancelled iteration
@@ -813,7 +813,7 @@ export const runEvalSuiteWithAiSdk = async ({
         "testSuites:getTestSuiteRun" as any,
         {
           runId,
-        }
+        },
       );
 
       if (currentRun?.status === "cancelled") {
@@ -843,7 +843,7 @@ export const runEvalSuiteWithAiSdk = async ({
         testCaseId,
         runId,
         abortSignal: abortController.signal,
-      })
+      }),
     );
 
     // Create a cancellation checker that polls every 500ms
@@ -855,7 +855,7 @@ export const runEvalSuiteWithAiSdk = async ({
         try {
           const currentRun = await convexClient.query(
             "testSuites:getTestSuiteRun" as any,
-            { runId }
+            { runId },
           );
           if (currentRun?.status === "cancelled") {
             // Abort all in-flight LLM requests
@@ -895,7 +895,7 @@ export const runEvalSuiteWithAiSdk = async ({
     } catch (error) {
       if (error instanceof Error && error.message === "RUN_CANCELLED") {
         console.log(
-          "[evals] Run was cancelled, all in-flight requests aborted"
+          "[evals] Run was cancelled, all in-flight requests aborted",
         );
 
         // Finalize the run as cancelled
