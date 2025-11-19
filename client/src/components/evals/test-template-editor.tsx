@@ -56,7 +56,7 @@ const validateExpectedToolCalls = (
   toolCalls: Array<{
     toolName: string;
     arguments: Record<string, any>;
-  }>
+  }>,
 ): boolean => {
   // Must have at least one tool call
   if (toolCalls.length === 0) {
@@ -102,7 +102,7 @@ const normalizeForComparison = (value: any): any => {
           acc[key] = normalizeForComparison(value[key]);
           return acc;
         },
-        {} as Record<string, any>
+        {} as Record<string, any>,
       );
   }
 
@@ -133,7 +133,7 @@ export function TestTemplateEditor({
   }) as any[] | undefined;
 
   const updateTestCaseMutation = useMutation(
-    "testSuites:updateTestCase" as any
+    "testSuites:updateTestCase" as any,
   );
 
   // Find the test case
@@ -146,7 +146,7 @@ export function TestTemplateEditor({
   const lastMessageRunId = currentTestCase?.lastMessageRun;
   const lastMessageRunIteration = useQuery(
     "testSuites:getTestIteration" as any,
-    lastMessageRunId ? { iterationId: lastMessageRunId } : "skip"
+    lastMessageRunId ? { iterationId: lastMessageRunId } : "skip",
   ) as any | undefined;
 
   // Clear and reload currentQuickRunResult when test case changes
@@ -179,7 +179,7 @@ export function TestTemplateEditor({
   // Get suite config for servers (to fetch available tools)
   const suiteConfig = useQuery(
     "testSuites:getTestSuitesOverview" as any,
-    {}
+    {},
   ) as any;
   const suite = useMemo(() => {
     if (!suiteConfig) return null;
@@ -251,16 +251,16 @@ export function TestTemplateEditor({
     if (!editForm || !currentTestCase) return false;
 
     const normalizedExpectedToolCalls = JSON.stringify(
-      normalizeForComparison(editForm.expectedToolCalls || [])
+      normalizeForComparison(editForm.expectedToolCalls || []),
     );
     const normalizedCurrentExpectedToolCalls = JSON.stringify(
-      normalizeForComparison(currentTestCase.expectedToolCalls || [])
+      normalizeForComparison(currentTestCase.expectedToolCalls || []),
     );
     const normalizedAdvancedConfig = JSON.stringify(
-      normalizeForComparison(editForm.advancedConfig || {})
+      normalizeForComparison(editForm.advancedConfig || {}),
     );
     const normalizedCurrentAdvancedConfig = JSON.stringify(
-      normalizeForComparison(currentTestCase.advancedConfig || {})
+      normalizeForComparison(currentTestCase.advancedConfig || {}),
     );
 
     return (
@@ -285,7 +285,7 @@ export function TestTemplateEditor({
     // Validate expected tool calls before saving
     if (!validateExpectedToolCalls(editForm.expectedToolCalls || [])) {
       toast.error(
-        "Cannot save: All tool names must be specified and argument values cannot be empty."
+        "Cannot save: All tool names must be specified and argument values cannot be empty.",
       );
       return;
     }
@@ -325,7 +325,7 @@ export function TestTemplateEditor({
       const tokenKey = provider.toLowerCase() as keyof ProviderTokens;
       if (!hasToken(tokenKey)) {
         toast.error(
-          `Please add your ${provider} API key in Settings before running this test`
+          `Please add your ${provider} API key in Settings before running this test`,
         );
         return;
       }
@@ -416,7 +416,7 @@ export function TestTemplateEditor({
     } catch (error) {
       console.error("Failed to run test case:", error);
       toast.error(
-        error instanceof Error ? error.message : "Failed to run test case"
+        error instanceof Error ? error.message : "Failed to run test case",
       );
     } finally {
       setIsRunning(false);
@@ -551,7 +551,7 @@ export function TestTemplateEditor({
                           <SelectItem key={option.value} value={option.value}>
                             {option.label}
                           </SelectItem>
-                        )
+                        ),
                       )
                     )}
                   </SelectContent>
@@ -670,7 +670,7 @@ export function TestTemplateEditor({
           loading={isRunning}
           onClear={handleClearResult}
           serverNames={(suite?.environment?.servers || []).filter((name) =>
-            connectedServerNames.has(name)
+            connectedServerNames.has(name),
           )}
         />
       </ResizablePanel>
