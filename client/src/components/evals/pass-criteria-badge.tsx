@@ -54,14 +54,11 @@ export function PassCriteriaBadge({
         </TooltipTrigger>
         <TooltipContent className="max-w-xs">
           <div className="space-y-1 text-xs">
-            <div className="font-medium">
+            <div className="font-medium text-white">
               {passed ? "✓ Suite Passed" : "✗ Suite Failed"}
             </div>
-            <div className="text-muted-foreground">
+            <div className="text-white">
               Required: {minimumPassRate}% Accuracy
-            </div>
-            <div className="text-muted-foreground">
-              Actual: {passRate.toFixed(1)}%
             </div>
           </div>
         </TooltipContent>
