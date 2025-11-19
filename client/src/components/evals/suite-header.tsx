@@ -232,7 +232,25 @@ export function SuiteHeader({
   // Overview mode
   return (
     <div className="flex items-center justify-between gap-4 mb-4">
-      <h2 className="text-lg font-semibold">{suite.name}</h2>
+      {isEditingName ? (
+        <input
+          type="text"
+          value={editedName}
+          onChange={(e) => setEditedName(e.target.value)}
+          onBlur={handleNameBlur}
+          onKeyDown={handleNameKeyDown}
+          autoFocus
+          className="px-3 py-2 text-lg font-semibold border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
+        />
+      ) : (
+        <Button
+          variant="ghost"
+          onClick={handleNameClick}
+          className="px-3 py-2 h-auto text-lg font-semibold hover:bg-accent"
+        >
+          {suite.name}
+        </Button>
+      )}
       <div className="flex items-center gap-2 shrink-0">
         <Tooltip>
           <TooltipTrigger asChild>
