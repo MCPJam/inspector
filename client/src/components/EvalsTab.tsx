@@ -269,7 +269,10 @@ export function EvalsTab() {
           <ResizableHandle withHandle />
 
           {/* Main Content Area */}
-          <ResizablePanel defaultSize={80} className="flex flex-col overflow-hidden">
+          <ResizablePanel
+            defaultSize={80}
+            className="flex flex-col overflow-hidden"
+          >
             {!selectedSuiteId ? (
               <div className="flex-1 flex items-center justify-center">
                 <div className="text-center max-w-md mx-auto p-8">

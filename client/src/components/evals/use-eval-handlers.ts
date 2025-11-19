@@ -4,7 +4,10 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { toast } from "sonner";
 import posthog from "posthog-js";
 import { detectPlatform, detectEnvironment } from "@/logs/PosthogUtils";
-import { useAiProviderKeys, type ProviderTokens } from "@/hooks/use-ai-provider-keys";
+import {
+  useAiProviderKeys,
+  type ProviderTokens,
+} from "@/hooks/use-ai-provider-keys";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import { navigateToEvalsRoute } from "@/lib/evals-router";
 import type { EvalSuite, EvalSuiteOverviewEntry } from "./types";
@@ -35,12 +38,18 @@ export function useEvalHandlers({
   const [cancellingRunId, setCancellingRunId] = useState<string | null>(null);
   const [deletingSuiteId, setDeletingSuiteId] = useState<string | null>(null);
   const [suiteToDelete, setSuiteToDelete] = useState<EvalSuite | null>(null);
-  const [duplicatingSuiteId, setDuplicatingSuiteId] = useState<string | null>(null);
+  const [duplicatingSuiteId, setDuplicatingSuiteId] = useState<string | null>(
+    null,
+  );
   const [deletingRunId, setDeletingRunId] = useState<string | null>(null);
   const [runToDelete, setRunToDelete] = useState<string | null>(null);
   const [isCreatingTestCase, setIsCreatingTestCase] = useState(false);
-  const [deletingTestCaseId, setDeletingTestCaseId] = useState<string | null>(null);
-  const [duplicatingTestCaseId, setDuplicatingTestCaseId] = useState<string | null>(null);
+  const [deletingTestCaseId, setDeletingTestCaseId] = useState<string | null>(
+    null,
+  );
+  const [duplicatingTestCaseId, setDuplicatingTestCaseId] = useState<
+    string | null
+  >(null);
   const [testCaseToDelete, setTestCaseToDelete] = useState<{
     id: string;
     title: string;
@@ -246,7 +255,12 @@ export function useEvalHandlers({
     } finally {
       setDeletingSuiteId(null);
     }
-  }, [suiteToDelete, deletingSuiteId, mutations.deleteSuiteMutation, selectedSuiteId]);
+  }, [
+    suiteToDelete,
+    deletingSuiteId,
+    mutations.deleteSuiteMutation,
+    selectedSuiteId,
+  ]);
 
   // Duplicate suite handler
   const handleDuplicateSuite = useCallback(
@@ -256,7 +270,9 @@ export function useEvalHandlers({
       setDuplicatingSuiteId(suite._id);
 
       try {
-        const newSuite = await mutations.duplicateSuiteMutation({ suiteId: suite._id });
+        const newSuite = await mutations.duplicateSuiteMutation({
+          suiteId: suite._id,
+        });
         toast.success("Test suite duplicated successfully");
 
         // Track suite duplicated
@@ -452,7 +468,9 @@ export function useEvalHandlers({
     setDeletingTestCaseId(testCaseToDelete.id);
 
     try {
-      await mutations.deleteTestCaseMutation({ testCaseId: testCaseToDelete.id });
+      await mutations.deleteTestCaseMutation({
+        testCaseId: testCaseToDelete.id,
+      });
       toast.success("Test case deleted successfully");
 
       // If we're viewing this test case, navigate back to suite overview
@@ -488,7 +506,9 @@ export function useEvalHandlers({
       setDuplicatingTestCaseId(testCaseId);
 
       try {
-        const newTestCase = await mutations.duplicateTestCaseMutation({ testCaseId });
+        const newTestCase = await mutations.duplicateTestCaseMutation({
+          testCaseId,
+        });
         toast.success("Test case duplicated successfully");
 
         // Track test case duplicated
