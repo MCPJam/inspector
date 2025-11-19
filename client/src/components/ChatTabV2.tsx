@@ -278,6 +278,54 @@ export function ChatTabV2({
     setInput("");
   }, [setMessages]);
 
+  const handleWidgetStateChange = useCallback(
+    (toolCallId: string, state: any) => {
+      setMessages((prevMessages) => {
+        const messageId = `widget-state-${toolCallId}`;
+
+        // If state is null, remove the widget state message
+        if (state === null) {
+          return prevMessages.filter((msg) => msg.id !== messageId);
+        }
+
+        const stateText = `The state of widget ${toolCallId} is: ${JSON.stringify(state)}`;
+
+        const existingIndex = prevMessages.findIndex(
+          (msg) => msg.id === messageId,
+        );
+
+        if (existingIndex !== -1) {
+          const existingMessage = prevMessages[existingIndex];
+          const existingText =
+            existingMessage.parts?.[0]?.type === "text"
+              ? (existingMessage.parts[0] as any).text
+              : null;
+          if (existingText === stateText) {
+            return prevMessages;
+          }
+
+          const newMessages = [...prevMessages];
+          newMessages[existingIndex] = {
+            id: messageId,
+            role: "assistant",
+            parts: [{ type: "text", text: stateText }],
+          };
+          return newMessages;
+        }
+
+        return [
+          ...prevMessages,
+          {
+            id: messageId,
+            role: "assistant",
+            parts: [{ type: "text", text: stateText }],
+          },
+        ];
+      });
+    },
+    [setMessages],
+  );
+
   useEffect(() => {
     resetChat();
   }, [resetChat]);
@@ -627,6 +675,7 @@ export function ChatTabV2({
                       isLoading={status === "submitted"}
                       toolsMetadata={toolsMetadata}
                       toolServerMap={toolServerMap}
+                      onWidgetStateChange={handleWidgetStateChange}
                     />
                   </div>
                   {errorMessage && (
