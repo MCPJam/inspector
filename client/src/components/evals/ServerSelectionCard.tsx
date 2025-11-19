@@ -1,7 +1,6 @@
 import { useState } from "react";
 import type { KeyboardEvent, MouseEvent } from "react";
 import { Card } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Check, ChevronDown, ChevronUp, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ServerWithName } from "@/hooks/use-app-state";
@@ -105,13 +104,6 @@ export function ServerSelectionCard({
               </p>
             </div>
           </div>
-
-          {selected && (
-            <Badge variant="secondary" className="h-5 px-1 text-[11px]">
-              <Check className="mr-1 h-3 w-3" />
-              Selected
-            </Badge>
-          )}
         </div>
 
         {/* Command Display */}
