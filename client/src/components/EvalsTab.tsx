@@ -56,6 +56,12 @@ import { isMCPJamProvidedModel } from "@/shared/types";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import posthog from "posthog-js";
 import { useEvalsRoute, navigateToEvalsRoute } from "@/lib/evals-router";
+import {
+  ResizablePanelGroup,
+  ResizablePanel,
+  ResizableHandle,
+} from "@/components/ui/resizable";
+
 // Component to render a single suite in the sidebar with its own data loading
 function SuiteSidebarItem({
   suite,
@@ -103,8 +109,8 @@ function SuiteSidebarItem({
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
 
-  // Load test cases for all suites upfront (for smoother UX)
-  const enableTestCasesQuery = isAuthenticated && !!user;
+  // Load test cases for all suites upfront (for smoother UX), but skip if deleting
+  const enableTestCasesQuery = isAuthenticated && !!user && !isDeleting;
   const testCases = useQuery(
     "testSuites:listTestCases" as any,
     enableTestCasesQuery ? ({ suiteId: suite._id } as any) : "skip",
@@ -508,7 +514,10 @@ export function EvalsTab() {
   ) as EvalSuiteOverviewEntry[] | undefined;
 
   const enableSuiteDetailsQuery =
-    isAuthenticated && !!user && !!selectedSuiteId;
+    isAuthenticated &&
+    !!user &&
+    !!selectedSuiteId &&
+    deletingSuiteId !== selectedSuiteId;
   const suiteDetails = useQuery(
     "testSuites:getAllTestCasesAndIterationsBySuite" as any,
     enableSuiteDetailsQuery ? ({ suiteId: selectedSuiteId } as any) : "skip",
@@ -1135,9 +1144,17 @@ export function EvalsTab() {
           />
         </div>
       ) : (
-        <div className="flex flex-1 overflow-hidden">
+        <ResizablePanelGroup
+          direction="horizontal"
+          className="flex-1 overflow-hidden"
+        >
           {/* Left Sidebar */}
-          <div className="w-64 shrink-0 border-r bg-muted/30 flex flex-col">
+          <ResizablePanel
+            defaultSize={20}
+            minSize={15}
+            maxSize={40}
+            className="border-r bg-muted/30 flex flex-col"
+          >
             {/* Header */}
             <div className="p-4 border-b flex items-center justify-between">
               <h2 className="text-sm font-semibold">Testsuites</h2>
@@ -1202,10 +1219,12 @@ export function EvalsTab() {
                 </div>
               )}
             </div>
-          </div>
+          </ResizablePanel>
+
+          <ResizableHandle withHandle />
 
           {/* Main Content Area */}
-          <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+          <ResizablePanel defaultSize={80} className="flex flex-col overflow-hidden">
             {!selectedSuiteId ? (
               <div className="flex-1 flex items-center justify-center">
                 <div className="text-center max-w-md mx-auto p-8">
@@ -1294,8 +1313,8 @@ export function EvalsTab() {
                 </div>
               </div>
             ) : null}
-          </div>
-        </div>
+          </ResizablePanel>
+        </ResizablePanelGroup>
       )}
 
       {/* Delete Suite Confirmation Modal */}
@@ -1310,15 +1329,9 @@ export function EvalsTab() {
               Delete Test Suite
             </DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete the test suite{" "}
-              <span className="font-semibold">
-                "{suiteToDelete?.name || "Untitled suite"}"
-              </span>
-              ?
+              Are you sure you want to delete the test suite?
               <br />
               <br />
-              This will permanently delete all test cases, runs, and iterations
-              associated with this suite. This action cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -1390,15 +1403,9 @@ export function EvalsTab() {
               Delete Test Case
             </DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete the test case{" "}
-              <span className="font-semibold">
-                "{testCaseToDelete?.title || "Untitled test case"}"
-              </span>
-              ?
+              Are you sure you want to delete the test case?
               <br />
               <br />
-              This will permanently delete all iterations and results associated
-              with this test case. This action cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

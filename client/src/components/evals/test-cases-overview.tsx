@@ -10,6 +10,7 @@ import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { AccuracyChart } from "./accuracy-chart";
 
 interface TestCasesOverviewProps {
+  suite: { _id: string; name: string };
   cases: EvalCase[];
   allIterations: EvalIteration[];
   runs: EvalSuiteRun[];
@@ -34,6 +35,7 @@ interface TestCasesOverviewProps {
 }
 
 export function TestCasesOverview({
+  suite,
   cases,
   allIterations,
   runs,
@@ -232,7 +234,6 @@ export function TestCasesOverview({
       <div className="rounded-xl border bg-card text-card-foreground flex flex-col max-h-[600px]">
         <div className="border-b px-4 py-2 shrink-0 flex items-center justify-between">
           <div>
-            <div className="text-xs font-semibold">Test Cases</div>
             <p className="text-xs text-muted-foreground">
               Click on a test case to view its run history and performance.
             </p>
