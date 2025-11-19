@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { EvalIteration, EvalCase } from "./types";
 import { TraceViewer } from "./trace-viewer";
 import { MessageSquare, Code2 } from "lucide-react";
-import { getToolsMetadata, ToolServerMap, listTools } from "@/lib/mcp-tools-api";
+import { ToolServerMap, listTools } from "@/lib/mcp-tools-api";
 
 export function IterationDetails({
   iteration,
@@ -70,32 +70,43 @@ export function IterationDetails({
         return;
       }
       try {
-        // Filter to only connected servers to avoid 404 errors
-        // In evals, serverNames might contain servers that aren't currently connected
-        const { metadata, toolServerMap } = await getToolsMetadata(serverNames);
-        setToolsMetadata(metadata);
-        setToolServerMap(toolServerMap);
-
-        // Also fetch tools with their inputSchema for type display
+        // Fetch tools with their inputSchema for type display
+        // This makes only ONE call per server instead of two
         const toolsMap: Record<string, { name: string; inputSchema?: any }> = {};
+        const metadata: Record<string, Record<string, any>> = {};
+        const toolServerMap: ToolServerMap = {};
+
         await Promise.all(
           serverNames.map(async (serverId) => {
             try {
               const result = await listTools(serverId);
+
+              // Extract tools with schemas
               if (result.tools) {
                 for (const tool of result.tools) {
                   toolsMap[tool.name] = {
                     name: tool.name,
                     inputSchema: tool.inputSchema,
                   };
+                  toolServerMap[tool.name] = serverId;
                 }
+              }
+
+              // Extract metadata
+              const toolsMetadata = result.toolsMetadata ?? {};
+              for (const [toolName, meta] of Object.entries(toolsMetadata)) {
+                metadata[toolName] = meta as Record<string, unknown>;
               }
             } catch (error) {
               // Silently fail for disconnected servers
+              console.warn(`Failed to fetch tools for server ${serverId}:`, error);
             }
           }),
         );
+
         setToolsWithSchema(toolsMap);
+        setToolsMetadata(metadata);
+        setToolServerMap(toolServerMap);
       } catch (error) {
         // Silently fail if servers aren't connected
         // This is expected in evals where servers may not be running
