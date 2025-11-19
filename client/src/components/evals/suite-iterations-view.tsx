@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useCallback } from "react";
 import { useMutation } from "convex/react";
 import { toast } from "sonner";
 import { SuiteHeader } from "./suite-header";
@@ -87,6 +87,10 @@ export function SuiteIterationsView({
     "model" | "test" | "result"
   >("model");
   const [defaultMinimumPassRate, setDefaultMinimumPassRate] = useState(100);
+  const [editedDescription, setEditedDescription] = useState(
+    suite.description || "",
+  );
+  const [isEditingDescription, setIsEditingDescription] = useState(false);
 
   const updateSuite = useMutation("testSuites:updateTestSuite" as any);
   const updateTestCaseMutation = useMutation(
@@ -116,6 +120,11 @@ export function SuiteIterationsView({
     return run ?? null;
   }, [selectedRunId, runs]);
 
+  // Update local description state when suite changes
+  useEffect(() => {
+    setEditedDescription(suite.description || "");
+  }, [suite.description]);
+
   // Load default pass criteria from suite
   useEffect(() => {
     if (suite.defaultPassCriteria?.minimumPassRate !== undefined) {
@@ -142,6 +151,40 @@ export function SuiteIterationsView({
       }
     }
   }, [suite._id, suite.defaultPassCriteria]);
+
+  const handleDescriptionClick = useCallback(() => {
+    setIsEditingDescription(true);
+    setEditedDescription(suite.description || "");
+  }, [suite.description]);
+
+  const handleDescriptionBlur = useCallback(async () => {
+    setIsEditingDescription(false);
+    if (editedDescription !== suite.description) {
+      try {
+        await updateSuite({
+          suiteId: suite._id,
+          description: editedDescription,
+        });
+        toast.success("Suite description updated");
+      } catch (error) {
+        toast.error("Failed to update suite description");
+        console.error("Failed to update suite description:", error);
+        setEditedDescription(suite.description || "");
+      }
+    } else {
+      setEditedDescription(suite.description || "");
+    }
+  }, [editedDescription, suite.description, suite._id, updateSuite]);
+
+  const handleDescriptionKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setIsEditingDescription(false);
+        setEditedDescription(suite.description || "");
+      }
+    },
+    [suite.description],
+  );
 
   const handleUpdateTests = async (models: any[]) => {
     try {
@@ -316,7 +359,34 @@ export function SuiteIterationsView({
 
       {isEditMode && (
         <div className="flex-1 min-h-0 overflow-auto">
-          <div className="p-3 space-y-3">
+          <div className="p-3 space-y-6">
+            {/* Suite Description */}
+            <div>
+              {isEditingDescription ? (
+                <textarea
+                  value={editedDescription}
+                  onChange={(e) => setEditedDescription(e.target.value)}
+                  onBlur={handleDescriptionBlur}
+                  onKeyDown={handleDescriptionKeyDown}
+                  placeholder="Enter a description for this suite..."
+                  autoFocus
+                  className="w-full px-3 py-2 text-sm border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring resize-none min-h-[80px]"
+                  rows={3}
+                />
+              ) : (
+                <button
+                  onClick={handleDescriptionClick}
+                  className="w-full px-3 py-1 text-sm text-left rounded-md hover:bg-accent whitespace-pre-wrap transition-colors"
+                >
+                  {suite.description || (
+                    <span className="text-muted-foreground italic text-xs">
+                      Click to add a description...
+                    </span>
+                  )}
+                </button>
+              )}
+            </div>
+
             {/* Default Pass/Fail Criteria for New Runs */}
             <div className="space-y-2">
               <div>
