@@ -207,13 +207,6 @@ export default function App() {
               onReconnect={handleReconnect}
               onUpdate={handleUpdate}
               onRemove={handleRemoveServer}
-              workspaces={workspaces}
-              activeWorkspaceId={activeWorkspaceId}
-              activeWorkspace={activeWorkspace}
-              onSwitchWorkspace={handleSwitchWorkspace}
-              onCreateWorkspace={handleCreateWorkspace}
-              onUpdateWorkspace={handleUpdateWorkspace}
-              onDeleteWorkspace={handleDeleteWorkspace}
             />
           )}
 
