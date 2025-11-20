@@ -142,7 +142,7 @@ export function ServerInfoModal({
               {serverCapabilities && (
                 <div>
                   <div className="text-sm font-medium text-muted-foreground mb-2">
-                    Server Capabilities (Raw)
+                    Server Capabilities
                   </div>
                   <div className="relative">
                     <pre className="text-sm font-mono bg-muted/30 p-3 rounded border border-border/20 overflow-x-auto max-h-96 overflow-y-auto">
@@ -171,7 +171,7 @@ export function ServerInfoModal({
               {clientCapabilities && (
                 <div>
                   <div className="text-sm font-medium text-muted-foreground mb-2">
-                    Client Capabilities (Raw)
+                    Client Capabilities
                   </div>
                   <div className="relative">
                     <pre className="text-sm font-mono bg-muted/30 p-3 rounded border border-border/20 overflow-x-auto max-h-96 overflow-y-auto">
@@ -345,7 +345,7 @@ export function ServerInfoModal({
             {serverCapabilities && (
               <div>
                 <div className="text-sm font-medium text-muted-foreground mb-2">
-                  Server Capabilities (Raw)
+                  Server Capabilities
                 </div>
                 <div className="relative">
                   <pre className="text-sm font-mono bg-muted/30 p-3 rounded border border-border/20 overflow-x-auto max-h-96 overflow-y-auto">
@@ -374,7 +374,7 @@ export function ServerInfoModal({
             {clientCapabilities && (
               <div>
                 <div className="text-sm font-medium text-muted-foreground mb-2">
-                  Client Capabilities (Raw)
+                  Client Capabilities
                 </div>
                 <div className="relative">
                   <pre className="text-sm font-mono bg-muted/30 p-3 rounded border border-border/20 overflow-x-auto max-h-96 overflow-y-auto">
