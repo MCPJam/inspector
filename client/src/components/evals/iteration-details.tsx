@@ -12,6 +12,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { isMCPJamProvidedModel } from "@/shared/types";
 
 export function IterationDetails({
   iteration,
@@ -200,6 +201,11 @@ export function IterationDetails({
   const errorDetailsJson = parseErrorDetails(iteration.errorDetails);
   const [isErrorDetailsOpen, setIsErrorDetailsOpen] = useState(false);
 
+  // Determine if the iteration used an MCPJam provided model
+  const modelId =
+    iteration.testCaseSnapshot?.model || testCase?.models[0]?.model;
+  const isMCPJamModel = modelId ? isMCPJamProvidedModel(modelId) : false;
+
   return (
     <div className="space-y-4 py-2">
       {/* Error Display */}
@@ -209,9 +215,11 @@ export function IterationDetails({
             Error
           </div>
           <div className="text-xs text-red-700 whitespace-pre-wrap font-mono">
-            {iteration.error}
+            {isMCPJamModel
+              ? "An error has occurred while using an MCPJam provided model"
+              : iteration.error}
           </div>
-          {iteration.errorDetails && (
+          {iteration.errorDetails && !isMCPJamModel && (
             <Collapsible
               open={isErrorDetailsOpen}
               onOpenChange={setIsErrorDetailsOpen}
