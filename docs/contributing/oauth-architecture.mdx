@@ -450,30 +450,31 @@ The `saveServerConfigWithoutConnecting` function allows saving OAuth test profil
 // Save server configuration for OAuth testing
 saveServerConfigWithoutConnecting(
   {
-    name: 'oauth-test-server',
-    type: 'http',
-    url: 'https://example.com',
+    name: "oauth-test-server",
+    type: "http",
+    url: "https://example.com",
     useOAuth: true,
-    oauthScopes: ['openid', 'profile'],
-    headers: { 'X-API-Key': 'secret' },
-    clientId: 'optional-client-id',
-    clientSecret: 'optional-client-secret'
+    oauthScopes: ["openid", "profile"],
+    headers: { "X-API-Key": "secret" },
+    clientId: "optional-client-id",
+    clientSecret: "optional-client-secret",
   },
   {
     oauthProfile: {
-      serverUrl: 'https://example.com',
-      clientId: 'optional-client-id',
-      clientSecret: 'optional-client-secret',
-      scopes: 'openid profile',
-      customHeaders: [{ key: 'X-API-Key', value: 'secret' }],
-      protocolVersion: '2025-11-25',
-      registrationStrategy: 'cimd'
-    }
-  }
+      serverUrl: "https://example.com",
+      clientId: "optional-client-id",
+      clientSecret: "optional-client-secret",
+      scopes: "openid profile",
+      customHeaders: [{ key: "X-API-Key", value: "secret" }],
+      protocolVersion: "2025-11-25",
+      registrationStrategy: "cimd",
+    },
+  },
 );
 ```
 
 This function:
+
 - Validates the form data
 - Creates or updates the server entry without connecting
 - Stores OAuth configuration in localStorage
