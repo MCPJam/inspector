@@ -61,7 +61,7 @@ export function SuiteListSidebar({
           size="sm"
           onClick={() => {
             posthog.capture("create_new_run_button_clicked", {
-              location: "evals_tab",
+              location: "suite_list_sidebar",
               platform: detectPlatform(),
               environment: detectEnvironment(),
             });
