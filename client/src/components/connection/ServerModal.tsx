@@ -1789,7 +1789,7 @@ export function ServerModal({
                 (() => {
                   // Filter tools that have metadata
                   const toolsWithMetadata = tools.tools.filter(
-                    (tool) => tools.toolsMetadata?.[tool.name],
+                    (tool: any) => tools.toolsMetadata?.[tool.name],
                   );
 
                   if (toolsWithMetadata.length === 0) {
@@ -1804,7 +1804,7 @@ export function ServerModal({
 
                   return (
                     <div className="space-y-3">
-                      {toolsWithMetadata.map((tool) => {
+                      {toolsWithMetadata.map((tool: any) => {
                         const metadata = tools.toolsMetadata?.[tool.name];
 
                         return (
