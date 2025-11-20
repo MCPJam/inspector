@@ -6,7 +6,7 @@ const serverDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(serverDir, "..");
 
 export default defineConfig({
-  entry: [join(serverDir, "index.ts")],
+  entry: ["server/index.ts"],
   format: ["esm"],
   target: "node18",
   outDir: join(rootDir, "dist/server"),
