@@ -243,6 +243,9 @@ export function SuiteIterationsView({
           showRunSummarySidebar={showRunSummarySidebar}
           setShowRunSummarySidebar={setShowRunSummarySidebar}
           runsViewMode={runsViewMode}
+          runs={runs}
+          allIterations={allIterations}
+          aggregate={aggregate}
         />
       </div>
 

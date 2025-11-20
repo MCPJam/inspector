@@ -1,15 +1,22 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+} from "@/components/ui/chart";
+import { PieChart, Pie, Label } from "recharts";
 import { BarChart3, Loader2, RotateCw, Trash2, X } from "lucide-react";
 import { formatRunId } from "./helpers";
-import { EvalSuite, EvalSuiteRun } from "./types";
+import { EvalSuite, EvalSuiteRun, EvalIteration, SuiteAggregate } from "./types";
 import { useMutation } from "convex/react";
 import { toast } from "sonner";
+import { computeIterationPassed } from "./pass-criteria";
 
 interface SuiteHeaderProps {
   suite: EvalSuite;
@@ -29,6 +36,9 @@ interface SuiteHeaderProps {
   showRunSummarySidebar: boolean;
   setShowRunSummarySidebar: (show: boolean) => void;
   runsViewMode?: "runs" | "test-cases";
+  runs?: EvalSuiteRun[];
+  allIterations?: EvalIteration[];
+  aggregate?: SuiteAggregate | null;
 }
 
 export function SuiteHeader({
@@ -49,10 +59,92 @@ export function SuiteHeader({
   showRunSummarySidebar,
   setShowRunSummarySidebar,
   runsViewMode = "runs",
+  runs = [],
+  allIterations = [],
+  aggregate = null,
 }: SuiteHeaderProps) {
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState(suite.name);
   const updateSuite = useMutation("testSuites:updateTestSuite" as any);
+
+  // Calculate accuracy chart data from active runs
+  const accuracyChartData = useMemo(() => {
+    if (!runs || !allIterations || runs.length === 0) {
+      return null;
+    }
+
+    // Filter to active runs only
+    const activeRuns = runs.filter((run) => run.isActive !== false);
+    if (activeRuns.length === 0) {
+      return null;
+    }
+
+    // Get all iterations from active runs
+    const activeRunIds = new Set(activeRuns.map((run) => run._id));
+    const activeIterations = allIterations.filter(
+      (iter) => iter.suiteRunId && activeRunIds.has(iter.suiteRunId),
+    );
+
+    if (activeIterations.length === 0) {
+      return null;
+    }
+
+    // Calculate passed/failed counts
+    const passed = activeIterations.filter((iter) =>
+      computeIterationPassed(iter),
+    ).length;
+    const failed = activeIterations.filter(
+      (iter) => iter.result === "failed",
+    ).length;
+    const cancelled = activeIterations.filter(
+      (iter) => iter.result === "cancelled",
+    ).length;
+    const pending = activeIterations.filter(
+      (iter) => iter.result === "pending",
+    ).length;
+    const total = passed + failed + cancelled + pending;
+
+    if (total === 0) {
+      return null;
+    }
+
+    // Build donut chart data
+    const donutData = [];
+    if (passed > 0) {
+      donutData.push({
+        name: "passed",
+        value: passed,
+        fill: "hsl(142.1 76.2% 36.3%)",
+      });
+    }
+    if (failed > 0) {
+      donutData.push({
+        name: "failed",
+        value: failed,
+        fill: "hsl(0 84.2% 60.2%)",
+      });
+    }
+    if (pending > 0) {
+      donutData.push({
+        name: "pending",
+        value: pending,
+        fill: "hsl(45.4 93.4% 47.5%)",
+      });
+    }
+    if (cancelled > 0) {
+      donutData.push({
+        name: "cancelled",
+        value: cancelled,
+        fill: "hsl(240 3.7% 15.9%)",
+      });
+    }
+
+    return {
+      donutData,
+      total,
+      accuracy: Math.round((passed / total) * 100),
+    };
+  }, [runs, allIterations]);
 
   useEffect(() => {
     setEditedName(suite.name);
@@ -232,25 +324,80 @@ export function SuiteHeader({
   // Overview mode
   return (
     <div className="flex items-center justify-between gap-4 mb-4">
-      {isEditingName ? (
-        <input
-          type="text"
-          value={editedName}
-          onChange={(e) => setEditedName(e.target.value)}
-          onBlur={handleNameBlur}
-          onKeyDown={handleNameKeyDown}
-          autoFocus
-          className="px-3 py-2 text-lg font-semibold border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
-        />
-      ) : (
-        <Button
-          variant="ghost"
-          onClick={handleNameClick}
-          className="px-3 py-2 h-auto text-lg font-semibold hover:bg-accent"
-        >
-          {suite.name}
-        </Button>
-      )}
+      <div className="flex items-center gap-4 flex-1">
+        {isEditingName ? (
+          <input
+            type="text"
+            value={editedName}
+            onChange={(e) => setEditedName(e.target.value)}
+            onBlur={handleNameBlur}
+            onKeyDown={handleNameKeyDown}
+            autoFocus
+            className="px-3 py-2 text-lg font-semibold border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+        ) : (
+          <Button
+            variant="ghost"
+            onClick={handleNameClick}
+            className="px-3 py-2 h-auto text-lg font-semibold hover:bg-accent"
+          >
+            {suite.name}
+          </Button>
+        )}
+        {/* Accuracy Chart */}
+        {accuracyChartData && accuracyChartData.donutData.length > 0 && (
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-foreground">Accuracy:</span>
+            <ChartContainer
+              config={{
+                passed: { label: "Passed", color: "hsl(142.1 76.2% 36.3%)" },
+                failed: { label: "Failed", color: "hsl(0 84.2% 60.2%)" },
+                pending: { label: "Pending", color: "hsl(45.4 93.4% 47.5%)" },
+                cancelled: {
+                  label: "Cancelled",
+                  color: "hsl(240 3.7% 15.9%)",
+                },
+              }}
+              className="h-12 w-12"
+            >
+              <PieChart>
+                <ChartTooltip content={<ChartTooltipContent hideLabel />} />
+                <Pie
+                  data={accuracyChartData.donutData}
+                  dataKey="value"
+                  nameKey="name"
+                  innerRadius={15}
+                  outerRadius={22}
+                  strokeWidth={1}
+                >
+                  <Label
+                    content={({ viewBox }) => {
+                      if (viewBox && "cx" in viewBox && "cy" in viewBox) {
+                        return (
+                          <text
+                            x={viewBox.cx}
+                            y={viewBox.cy}
+                            textAnchor="middle"
+                            dominantBaseline="middle"
+                          >
+                            <tspan
+                              x={viewBox.cx}
+                              y={viewBox.cy}
+                              className="fill-foreground text-xs font-bold"
+                            >
+                              {accuracyChartData.accuracy}%
+                            </tspan>
+                          </text>
+                        );
+                      }
+                    }}
+                  />
+                </Pie>
+              </PieChart>
+            </ChartContainer>
+          </div>
+        )}
+      </div>
       <div className="flex items-center gap-2 shrink-0">
         <Tooltip>
           <TooltipTrigger asChild>
