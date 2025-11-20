@@ -48,6 +48,9 @@ interface ThreadProps {
   toolsMetadata: Record<string, Record<string, any>>;
   toolServerMap: ToolServerMap;
   onWidgetStateChange?: (toolCallId: string, state: any) => void;
+  pipPortalContainer?: HTMLElement | null;
+  activePipToolCallId?: string | null;
+  onPipModeRequest?: (toolCallId: string | null) => void;
 }
 
 export function Thread({
@@ -58,6 +61,9 @@ export function Thread({
   toolsMetadata,
   toolServerMap,
   onWidgetStateChange,
+  pipPortalContainer,
+  activePipToolCallId,
+  onPipModeRequest,
 }: ThreadProps) {
   return (
     <div className="flex-1 overflow-y-auto pb-4">
@@ -71,6 +77,9 @@ export function Thread({
             toolsMetadata={toolsMetadata}
             toolServerMap={toolServerMap}
             onWidgetStateChange={onWidgetStateChange}
+            pipPortalContainer={pipPortalContainer}
+            activePipToolCallId={activePipToolCallId}
+            onPipModeRequest={onPipModeRequest}
           />
         ))}
         {isLoading && <ThinkingIndicator model={model} />}
@@ -86,6 +95,9 @@ function MessageView({
   toolsMetadata,
   toolServerMap,
   onWidgetStateChange,
+  pipPortalContainer,
+  activePipToolCallId,
+  onPipModeRequest,
 }: {
   message: UIMessage;
   model: ModelDefinition;
@@ -93,6 +105,9 @@ function MessageView({
   toolsMetadata: Record<string, Record<string, any>>;
   toolServerMap: ToolServerMap;
   onWidgetStateChange?: (toolCallId: string, state: any) => void;
+  pipPortalContainer?: HTMLElement | null;
+  activePipToolCallId?: string | null;
+  onPipModeRequest?: (toolCallId: string | null) => void;
 }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const logoSrc = getProviderLogoFromModel(model, themeMode);
@@ -114,6 +129,9 @@ function MessageView({
               toolsMetadata={toolsMetadata}
               toolServerMap={toolServerMap}
               onWidgetStateChange={onWidgetStateChange}
+              pipPortalContainer={pipPortalContainer}
+              activePipToolCallId={activePipToolCallId}
+              onPipModeRequest={onPipModeRequest}
             />
           ))}
         </div>
@@ -148,6 +166,9 @@ function MessageView({
                 toolsMetadata={toolsMetadata}
                 toolServerMap={toolServerMap}
                 onWidgetStateChange={onWidgetStateChange}
+                pipPortalContainer={pipPortalContainer}
+                activePipToolCallId={activePipToolCallId}
+                onPipModeRequest={onPipModeRequest}
               />
             ))}
           </div>
@@ -181,6 +202,9 @@ function PartSwitch({
   toolsMetadata,
   toolServerMap,
   onWidgetStateChange,
+  pipPortalContainer,
+  activePipToolCallId,
+  onPipModeRequest,
 }: {
   part: AnyPart;
   role: UIMessage["role"];
@@ -188,6 +212,9 @@ function PartSwitch({
   toolsMetadata: Record<string, Record<string, any>>;
   toolServerMap: ToolServerMap;
   onWidgetStateChange?: (toolCallId: string, state: any) => void;
+  pipPortalContainer?: HTMLElement | null;
+  activePipToolCallId?: string | null;
+  onPipModeRequest?: (toolCallId: string | null) => void;
 }) {
   if (isToolPart(part) || isDynamicTool(part)) {
     let maybeUiResource: any;
@@ -271,6 +298,9 @@ function PartSwitch({
               callTool(serverId, toolName, params)
             }
             onWidgetStateChange={onWidgetStateChange}
+            pipPortalContainer={pipPortalContainer}
+            activePipToolCallId={activePipToolCallId}
+            onPipModeRequest={onPipModeRequest}
           />
         </>
       );

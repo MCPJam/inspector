@@ -75,7 +75,6 @@ interface ChatTabProps {
 function formatErrorMessage(
   error: unknown,
 ): { message: string; details?: string } | null {
-  console.log(error);
   if (!error) return null;
 
   let errorString: string;
@@ -628,6 +627,20 @@ export function ChatTabV2({
   const showStarterPrompts =
     !showDisabledCallout && messages.length === 0 && !isAuthLoading;
 
+  const pipPortalRef = useRef<HTMLDivElement>(null);
+  const [pipPortalEl, setPipPortalEl] = useState<HTMLDivElement | null>(null);
+  const [activePipToolCallId, setActivePipToolCallId] = useState<string | null>(
+    null,
+  );
+
+  useEffect(() => {
+    setPipPortalEl(pipPortalRef.current);
+  }, [messages.length]);
+
+  const handlePipModeRequest = useCallback((toolCallId: string | null) => {
+    setActivePipToolCallId(toolCallId);
+  }, []);
+
   return (
     <div className="flex flex-1 h-full min-h-0 flex-col overflow-hidden">
       <ResizablePanelGroup
@@ -690,6 +703,10 @@ export function ChatTabV2({
               <>
                 <div className="flex flex-1 flex-col min-h-0 animate-in fade-in duration-300">
                   <div className="flex-1 overflow-y-auto">
+                    <div
+                      ref={pipPortalRef}
+                      className="sticky top-0 z-30 w-full space-y-4 bg-background/90 backdrop-blur supports-[backdrop-filter]:bg-background/80"
+                    />
                     <Thread
                       messages={messages}
                       sendFollowUpMessage={(text: string) =>
@@ -700,6 +717,9 @@ export function ChatTabV2({
                       toolsMetadata={toolsMetadata}
                       toolServerMap={toolServerMap}
                       onWidgetStateChange={handleWidgetStateChange}
+                      pipPortalContainer={pipPortalEl}
+                      activePipToolCallId={activePipToolCallId}
+                      onPipModeRequest={handlePipModeRequest}
                     />
                   </div>
                   {errorMessage && (
