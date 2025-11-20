@@ -2,8 +2,17 @@ import { useAction } from "convex/react";
 import { useEffect, useState } from "react";
 import { EvalIteration, EvalCase } from "./types";
 import { TraceViewer } from "./trace-viewer";
-import { MessageSquare, Code2 } from "lucide-react";
+import { MessageSquare, Code2, ChevronDown, ChevronRight } from "lucide-react";
 import { ToolServerMap, listTools } from "@/lib/mcp-tools-api";
+import JsonView from "react18-json-view";
+import "react18-json-view/src/style.css";
+import "react18-json-view/src/dark.css";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { isMCPJamProvidedModel } from "@/shared/types";
 
 export function IterationDetails({
   iteration,
@@ -179,8 +188,72 @@ export function IterationDetails({
     );
   };
 
+  const parseErrorDetails = (details: string | undefined) => {
+    if (!details) return null;
+    try {
+      const parsed = JSON.parse(details);
+      return parsed;
+    } catch {
+      return null;
+    }
+  };
+
+  const errorDetailsJson = parseErrorDetails(iteration.errorDetails);
+  const [isErrorDetailsOpen, setIsErrorDetailsOpen] = useState(false);
+
+  // Determine if the iteration used an MCPJam provided model
+  const modelId =
+    iteration.testCaseSnapshot?.model || testCase?.models[0]?.model;
+  const isMCPJamModel = modelId ? isMCPJamProvidedModel(modelId) : false;
+
   return (
     <div className="space-y-4 py-2">
+      {/* Error Display */}
+      {iteration.error && (
+        <div className="rounded-md border border-red-500/50 bg-red-500/10 p-3 space-y-2">
+          <div className="text-xs font-semibold text-red-600 uppercase tracking-wide">
+            Error
+          </div>
+          <div className="text-xs text-red-700 whitespace-pre-wrap font-mono">
+            {isMCPJamModel
+              ? "An error has occurred while using an MCPJam provided model"
+              : iteration.error}
+          </div>
+          {iteration.errorDetails && !isMCPJamModel && (
+            <Collapsible
+              open={isErrorDetailsOpen}
+              onOpenChange={setIsErrorDetailsOpen}
+            >
+              <CollapsibleTrigger className="flex items-center gap-1.5 text-xs text-red-600 hover:text-red-700 transition-colors">
+                <span>More details</span>
+                {isErrorDetailsOpen ? (
+                  <ChevronDown className="h-3 w-3" />
+                ) : (
+                  <ChevronRight className="h-3 w-3" />
+                )}
+              </CollapsibleTrigger>
+              <CollapsibleContent className="mt-2">
+                <div className="rounded border border-red-500/30 bg-background/50 p-2">
+                  {errorDetailsJson ? (
+                    <JsonView
+                      src={errorDetailsJson}
+                      style={{
+                        backgroundColor: "transparent",
+                        fontSize: "11px",
+                      }}
+                    />
+                  ) : (
+                    <pre className="text-xs font-mono text-red-700 whitespace-pre-wrap overflow-x-auto">
+                      {iteration.errorDetails}
+                    </pre>
+                  )}
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
+          )}
+        </div>
+      )}
+
       {/* Tool Calls Comparison & Status */}
       {(expectedToolCalls.length > 0 || actualToolCalls.length > 0) && (
         <div className="space-y-2">

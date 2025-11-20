@@ -1,7 +1,7 @@
 import { formatTime } from "./helpers";
 import { IterationDetails } from "./iteration-details";
 import { EvalCase, EvalIteration } from "./types";
-import { CheckCircle, XCircle, Clock } from "lucide-react";
+import { CheckCircle, XCircle, Clock, AlertCircle } from "lucide-react";
 
 export function IterationCard({
   iteration,
@@ -35,6 +35,12 @@ export function IterationCard({
               <XCircle className="h-4 w-4 text-red-600" />
             ) : (
               <CheckCircle className="h-4 w-4 text-green-600" />
+            )}
+            {iteration.error && (
+              <AlertCircle
+                className="h-3.5 w-3.5 text-red-600"
+                title="Error occurred"
+              />
             )}
           </div>
           <div className="space-y-1 flex-1">
