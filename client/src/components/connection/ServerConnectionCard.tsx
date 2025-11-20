@@ -5,7 +5,6 @@ import { Button } from "../ui/button";
 import { Separator } from "../ui/separator";
 import { TooltipProvider } from "../ui/tooltip";
 import { Switch } from "../ui/switch";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,9 +20,8 @@ import {
   Download,
   Check,
   Edit,
+  Expand,
   ExternalLink,
-  ChevronDown,
-  ChevronUp,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { exportServerApi } from "@/lib/mcp-export-api";
@@ -38,6 +36,7 @@ import {
   listTools,
   type ListToolsResultWithMetadata,
 } from "@/lib/mcp-tools-api";
+import { ServerInfoModal } from "./ServerInfoModal";
 
 interface ServerConnectionCardProps {
   server: ServerWithName;
@@ -58,11 +57,10 @@ export function ServerConnectionCard({
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isErrorExpanded, setIsErrorExpanded] = useState(false);
-  const [isCapabilitiesExpanded, setIsCapabilitiesExpanded] = useState(false);
+  const [isInfoModalOpen, setIsInfoModalOpen] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [toolsData, setToolsData] =
     useState<ListToolsResultWithMetadata | null>(null);
-  const [isLoadingTools, setIsLoadingTools] = useState(false);
 
   const { label: connectionStatusLabel, indicatorColor } =
     getConnectionStatusMeta(server.connectionStatus);
@@ -106,8 +104,6 @@ export function ServerConnectionCard({
         setToolsData(null);
         return;
       }
-
-      setIsLoadingTools(true);
       try {
         const result = await listTools(server.name);
         setToolsData(result);
@@ -115,8 +111,6 @@ export function ServerConnectionCard({
         // Silently fail - tools metadata is optional
         console.error("Failed to load tools metadata:", err);
         setToolsData(null);
-      } finally {
-        setIsLoadingTools(false);
       }
     };
 
@@ -185,9 +179,9 @@ export function ServerConnectionCard({
       <Card className="border border-border/50 bg-card/50 backdrop-blur-sm hover:border-primary/50 hover:shadow-md hover:bg-card/70 transition-all duration-200 px-2 py-2">
         <div className="p-3 space-y-2">
           {/* Header Row - Split Left/Right */}
-          <div className="flex items-center justify-between gap-4">
+          <div className="flex items-start justify-between gap-4">
             {/* Left Side: Icon + Name/Transport/Version */}
-            <div className="flex items-center gap-2 flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-1 min-w-0 pb-2">
               {/* Server Icon */}
               {serverIcon?.src && (
                 <img
@@ -368,332 +362,30 @@ export function ServerConnectionCard({
             </button>
           </div>
 
-          {/* Collapsible Capabilities Section */}
+          {/* Server Info Button */}
           {hasInitInfo && (
-            <div onClick={(e) => e.stopPropagation()}>
-              <button
-                onClick={() =>
-                  setIsCapabilitiesExpanded(!isCapabilitiesExpanded)
-                }
-                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors w-full cursor-pointer"
-              >
-                {isCapabilitiesExpanded ? (
-                  <ChevronUp className="h-3 w-3" />
-                ) : (
-                  <ChevronDown className="h-3 w-3" />
-                )}
-                <span>
-                  {isCapabilitiesExpanded
-                    ? "Hide details"
-                    : isOpenAIApp
-                      ? "Server info / OpenAI Metadata"
-                      : "Server info"}
-                </span>
-                {isOpenAIApp && (
-                  <img
-                    src="/openai_logo.png"
-                    alt="OpenAI App"
-                    className="h-5 w-5 flex-shrink-0 ml-1"
-                    title="OpenAI App"
-                  />
-                )}
-              </button>
-
-              {isCapabilitiesExpanded && (
-                <div className="mt-2">
-                  {isOpenAIApp ? (
-                    <Tabs defaultValue="metadata" className="w-full">
-                      <TabsList className="grid w-full grid-cols-2 h-7 p-0.5 mb-2">
-                        <TabsTrigger
-                          value="info"
-                          className="text-[10px] h-6 px-2 data-[state=active]:bg-background"
-                        >
-                          Info
-                        </TabsTrigger>
-                        <TabsTrigger
-                          value="metadata"
-                          className="text-[10px] h-6 px-2 data-[state=active]:bg-background"
-                        >
-                          OpenAI Tool Metadata
-                        </TabsTrigger>
-                      </TabsList>
-
-                      <TabsContent value="info" className="mt-0">
-                        <div className="p-3 bg-muted/20 rounded border border-border/30 space-y-3">
-                          {serverTitle && (
-                            <div className="text-xs">
-                              <span className="text-muted-foreground/70">
-                                Server Name:
-                              </span>{" "}
-                              <span className="text-foreground">
-                                {serverTitle}
-                              </span>
-                            </div>
-                          )}
-
-                          {protocolVersion && (
-                            <div className="text-xs">
-                              <span className="text-muted-foreground/70">
-                                MCP Protocol:
-                              </span>{" "}
-                              <span className="text-foreground">
-                                {protocolVersion}
-                              </span>
-                            </div>
-                          )}
-
-                          {capabilities.length > 0 && (
-                            <div className="text-xs">
-                              <span className="text-muted-foreground/70">
-                                Capabilities:
-                              </span>{" "}
-                              <span className="text-foreground">
-                                {capabilities.join(", ")}
-                              </span>
-                            </div>
-                          )}
-
-                          {instructions && (
-                            <div className="text-xs space-y-1">
-                              <div className="text-muted-foreground/70 font-medium">
-                                Instructions:
-                              </div>
-                              <div className="text-foreground whitespace-pre-wrap bg-muted/30 p-2 rounded border border-border/20">
-                                {instructions}
-                              </div>
-                            </div>
-                          )}
-
-                          {serverCapabilities && (
-                            <div className="text-xs space-y-1">
-                              <div className="text-muted-foreground/70 font-medium">
-                                Server Capabilities (Raw):
-                              </div>
-                              <div className="relative group/capabilities">
-                                <pre className="text-foreground font-mono text-[10px] bg-muted/30 p-2 rounded border border-border/20 overflow-x-auto max-h-48 overflow-y-auto">
-                                  {JSON.stringify(serverCapabilities, null, 2)}
-                                </pre>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    copyToClipboard(
-                                      JSON.stringify(
-                                        serverCapabilities,
-                                        null,
-                                        2,
-                                      ),
-                                      "capabilities",
-                                    );
-                                  }}
-                                  className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer bg-muted/50 rounded"
-                                >
-                                  {copiedField === "capabilities" ? (
-                                    <Check className="h-3 w-3 text-green-500" />
-                                  ) : (
-                                    <Copy className="h-3 w-3" />
-                                  )}
-                                </button>
-                              </div>
-                            </div>
-                          )}
-
-                          {websiteUrl && (
-                            <a
-                              href={websiteUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-xs text-primary hover:underline inline-flex items-center gap-1 cursor-pointer"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              Visit documentation
-                              <ExternalLink className="h-3 w-3" />
-                            </a>
-                          )}
-                        </div>
-                      </TabsContent>
-
-                      <TabsContent value="metadata" className="mt-0">
-                        <div className="p-3 bg-muted/20 rounded border border-border/30">
-                          {toolsData?.tools && toolsData.toolsMetadata ? (
-                            <div className="space-y-3">
-                              {toolsData.tools
-                                .filter(
-                                  (tool: any) =>
-                                    toolsData.toolsMetadata?.[tool.name],
-                                )
-                                .map((tool: any) => {
-                                  const metadata =
-                                    toolsData.toolsMetadata?.[tool.name];
-
-                                  return (
-                                    <div
-                                      key={tool.name}
-                                      className="bg-muted/30 rounded p-3 space-y-2"
-                                    >
-                                      <div className="flex items-start justify-between">
-                                        <div className="flex-1">
-                                          <div className="flex items-center gap-2">
-                                            <h4 className="font-medium text-xs">
-                                              {tool.name}
-                                            </h4>
-                                            {metadata.write !== undefined && (
-                                              <span className="text-[10px] px-1.5 py-0.5 bg-primary/10 text-primary rounded uppercase">
-                                                {metadata.write
-                                                  ? "WRITE"
-                                                  : "READ"}
-                                              </span>
-                                            )}
-                                          </div>
-                                          <p className="text-xs text-muted-foreground mt-1">
-                                            {tool.description ||
-                                              "No description available"}
-                                          </p>
-                                        </div>
-                                      </div>
-
-                                      {/* Metadata Section */}
-                                      <div className="mt-2 pt-2 border-t border-border/50">
-                                        <div className="text-[10px] text-muted-foreground font-medium mb-2">
-                                          METADATA
-                                        </div>
-
-                                        {Object.entries(metadata).map(
-                                          ([key, value]) => {
-                                            if (key === "write") return null;
-
-                                            return (
-                                              <div
-                                                key={key}
-                                                className="space-y-1 mt-2"
-                                              >
-                                                <div className="text-[10px] text-muted-foreground">
-                                                  {key
-                                                    .replace(/([A-Z])/g, " $1")
-                                                    .trim()}
-                                                </div>
-                                                <div
-                                                  className={`text-[10px] rounded px-2 py-1 ${
-                                                    typeof value === "string" &&
-                                                    value.includes("://")
-                                                      ? "font-mono bg-muted/50"
-                                                      : "bg-muted/50"
-                                                  }`}
-                                                >
-                                                  {typeof value === "object"
-                                                    ? JSON.stringify(
-                                                        value,
-                                                        null,
-                                                        2,
-                                                      )
-                                                    : String(value)}
-                                                </div>
-                                              </div>
-                                            );
-                                          },
-                                        )}
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                            </div>
-                          ) : (
-                            <div className="text-xs text-muted-foreground text-center py-4">
-                              No widget metadata available
-                            </div>
-                          )}
-                        </div>
-                      </TabsContent>
-                    </Tabs>
-                  ) : (
-                    <div className="p-3 bg-muted/20 rounded border border-border/30 space-y-3">
-                      {serverTitle && (
-                        <div className="text-xs">
-                          <span className="text-muted-foreground/70">
-                            Server Name:
-                          </span>{" "}
-                          <span className="text-foreground">{serverTitle}</span>
-                        </div>
-                      )}
-
-                      {protocolVersion && (
-                        <div className="text-xs">
-                          <span className="text-muted-foreground/70">
-                            MCP Protocol:
-                          </span>{" "}
-                          <span className="text-foreground">
-                            {protocolVersion}
-                          </span>
-                        </div>
-                      )}
-
-                      {capabilities.length > 0 && (
-                        <div className="text-xs">
-                          <span className="text-muted-foreground/70">
-                            Capabilities:
-                          </span>{" "}
-                          <span className="text-foreground">
-                            {capabilities.join(", ")}
-                          </span>
-                        </div>
-                      )}
-
-                      {instructions && (
-                        <div className="text-xs space-y-1">
-                          <div className="text-muted-foreground/70 font-medium">
-                            Instructions:
-                          </div>
-                          <div className="text-foreground whitespace-pre-wrap bg-muted/30 p-2 rounded border border-border/20">
-                            {instructions}
-                          </div>
-                        </div>
-                      )}
-
-                      {serverCapabilities && (
-                        <div className="text-xs space-y-1">
-                          <div className="text-muted-foreground/70 font-medium">
-                            Server Capabilities (Raw):
-                          </div>
-                          <div className="relative group/capabilities">
-                            <pre className="text-foreground font-mono text-[10px] bg-muted/30 p-2 rounded border border-border/20 overflow-x-auto max-h-48 overflow-y-auto">
-                              {JSON.stringify(serverCapabilities, null, 2)}
-                            </pre>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                copyToClipboard(
-                                  JSON.stringify(serverCapabilities, null, 2),
-                                  "capabilities",
-                                );
-                              }}
-                              className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer bg-muted/50 rounded"
-                            >
-                              {copiedField === "capabilities" ? (
-                                <Check className="h-3 w-3 text-green-500" />
-                              ) : (
-                                <Copy className="h-3 w-3" />
-                              )}
-                            </button>
-                          </div>
-                        </div>
-                      )}
-
-                      {websiteUrl && (
-                        <a
-                          href={websiteUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs text-primary hover:underline inline-flex items-center gap-1 cursor-pointer"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          Visit documentation
-                          <ExternalLink className="h-3 w-3" />
-                        </a>
-                      )}
-                    </div>
-                  )}
-                </div>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsInfoModalOpen(true);
+              }}
+              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+            >
+              <Expand className="h-3 w-3" />
+              <span>
+                {isOpenAIApp
+                  ? "View server info / OpenAI Apps SDK"
+                  : "View server info"}
+              </span>
+              {isOpenAIApp && (
+                <img
+                  src="/openai_logo.png"
+                  alt="OpenAI App"
+                  className="h-4 w-4 flex-shrink-0"
+                  title="OpenAI App"
+                />
               )}
-            </div>
+            </button>
           )}
 
           {/* Error Alert for Failed Connections */}
@@ -743,6 +435,12 @@ export function ServerConnectionCard({
           )}
         </div>
       </Card>
+      <ServerInfoModal
+        isOpen={isInfoModalOpen}
+        onClose={() => setIsInfoModalOpen(false)}
+        server={server}
+        toolsData={toolsData}
+      />
     </TooltipProvider>
   );
 }

@@ -184,7 +184,6 @@ export function ServersTab({
                   ),
                 )}
               </div>
-
             </div>
           </ResizablePanel>
 
