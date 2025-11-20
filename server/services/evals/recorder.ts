@@ -32,6 +32,8 @@ export type SuiteRunRecorder = {
     messages: ModelMessage[];
     status?: IterationStatus;
     startedAt?: number;
+    error?: string;
+    errorDetails?: string;
   }): Promise<void>;
   finalize(args: {
     status: "completed" | "failed" | "cancelled";
@@ -148,6 +150,8 @@ export const createSuiteRunRecorder = ({
       messages,
       status,
       startedAt,
+      error,
+      errorDetails,
     }) {
       if (!iterationId || runDeleted) {
         return;
@@ -183,6 +187,8 @@ export const createSuiteRunRecorder = ({
           actualToolCalls: toolsCalled,
           tokensUsed: usage.totalTokens ?? 0,
           messages,
+          error,
+          errorDetails,
         });
       } catch (error) {
         const errorMessage =

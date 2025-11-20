@@ -117,6 +117,8 @@ async function finishIterationDirectly(
     messages: ModelMessage[];
     status?: "completed" | "failed" | "cancelled";
     startedAt?: number;
+    error?: string;
+    errorDetails?: string;
   },
 ): Promise<void> {
   if (!params.iterationId) return;
@@ -150,6 +152,8 @@ async function finishIterationDirectly(
       actualToolCalls: params.toolsCalled,
       tokensUsed: params.usage.totalTokens ?? 0,
       messages: params.messages,
+      error: params.error,
+      errorDetails: params.errorDetails,
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -395,6 +399,23 @@ const runIterationWithAiSdk = async ({
     }
 
     console.error("[evals] iteration failed", error);
+
+    let errorMessage: string | undefined = undefined;
+    let errorDetails: string | undefined = undefined;
+
+    if (error instanceof Error) {
+      errorMessage = error.message || error.toString();
+
+      const responseBody = (error as any).responseBody;
+      if (responseBody && typeof responseBody === "string") {
+        errorDetails = responseBody;
+      }
+    } else if (typeof error === "string") {
+      errorMessage = error;
+    } else {
+      errorMessage = String(error);
+    }
+
     const failParams = {
       iterationId,
       passed: false,
@@ -407,6 +428,8 @@ const runIterationWithAiSdk = async ({
       messages: baseMessages,
       status: "failed" as const,
       startedAt: runStartedAt,
+      error: errorMessage,
+      errorDetails,
     };
 
     if (recorder) {
@@ -535,6 +558,8 @@ const runIterationViaBackend = async ({
     totalTokens: 0,
   };
 
+  let iterationError: string | undefined = undefined;
+  let iterationErrorDetails: string | undefined = undefined;
   let steps = 0;
   while (steps < MAX_STEPS) {
     try {
@@ -556,12 +581,18 @@ const runIterationViaBackend = async ({
       });
 
       if (!res.ok) {
+        const errorText = await res.text().catch(() => res.statusText);
+        iterationError = `Backend stream error: ${res.status} ${errorText}`;
+        // Store the full error response as details
+        iterationErrorDetails = errorText;
         console.error("[evals] backend stream error", res.statusText);
         break;
       }
 
       const json: any = await res.json();
       if (!json?.ok || !Array.isArray(json.messages)) {
+        iterationError = "Invalid backend response payload";
+        iterationErrorDetails = JSON.stringify(json, null, 2);
         console.error("[evals] invalid backend response payload");
         break;
       }
@@ -619,6 +650,26 @@ const runIterationViaBackend = async ({
         // Return empty result for aborted iterations
         return evaluateResults(expectedToolCalls, []);
       }
+
+      // Extract error message
+      if (error instanceof Error) {
+        iterationError = error.message || error.toString();
+
+        const responseBody = (error as any).responseBody;
+        if (responseBody && typeof responseBody === "string") {
+          iterationErrorDetails = responseBody;
+        }
+      } else if (typeof error === "string") {
+        iterationError = error;
+      } else {
+        iterationError = String(error);
+      }
+
+      // Limit error message length
+      if (iterationError && iterationError.length > 500) {
+        iterationError = iterationError.substring(0, 497) + "...";
+      }
+
       console.error("[evals] backend fetch failed", error);
       break;
     }
@@ -634,6 +685,8 @@ const runIterationViaBackend = async ({
     messages: messageHistory,
     status: "completed" as const,
     startedAt: runStartedAt,
+    error: iterationError,
+    errorDetails: iterationErrorDetails,
   };
 
   if (recorder) {

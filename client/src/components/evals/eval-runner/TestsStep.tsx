@@ -118,10 +118,6 @@ export function TestsStep({
               }
               availableTools={availableTools}
             />
-            <p className="text-xs text-muted-foreground">
-              Specify tool names and their expected arguments. Leave arguments
-              empty to skip argument checking.
-            </p>
           </div>
         </div>
       ))}
@@ -148,8 +144,8 @@ export function TestsStep({
           <div>
             <h3 className="text-lg pb-2">Define your test cases</h3>
             <p className="text-sm text-muted-foreground">
-              Create testing scenarios that simulate how real users would use
-              your server.
+              Specify tool names and their expected arguments. Leave arguments
+              empty to skip argument checking.
             </p>
           </div>
         </div>
@@ -171,6 +167,10 @@ export function TestsStep({
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-lg">Define your test cases</h3>
+          <p className="text-sm text-muted-foreground mt-1">
+            Specify tool names and their expected arguments. Leave arguments
+            empty to skip argument checking.
+          </p>
         </div>
         {canGenerateTests && (
           <Button
