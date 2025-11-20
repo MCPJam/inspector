@@ -102,3 +102,13 @@ mcpjam evals run -t weather-tests.json -e local-dev.json
 - `--environment, -e <file>`: Path to the environment configuration file (required)
 - `--help, -h`: Show help information
 - `--version, -V`: Display version number
+
+## Viewing results
+
+Test results display pass/fail status for each iteration. When errors occur during test execution, they are surfaced in the iteration details with:
+
+- Error message indicating what went wrong
+- Expandable error details for debugging (when available)
+- Visual indicators (alert icons) on failed iterations
+
+This helps you quickly identify and troubleshoot issues with your MCP server or test configuration.
