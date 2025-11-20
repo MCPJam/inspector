@@ -93,9 +93,7 @@ export function SuiteIterationsView({
   const [isEditingDescription, setIsEditingDescription] = useState(false);
 
   const updateSuite = useMutation("testSuites:updateTestSuite" as any);
-  const updateTestCaseMutation = useMutation(
-    "testSuites:updateTestCase" as any,
-  );
+  const updateSuiteModels = useMutation("testSuites:updateSuiteModels" as any);
 
   // Use custom hooks for data calculations
   const { runTrendData, modelStats, caseGroups, templateGroups } = useSuiteData(
@@ -188,15 +186,13 @@ export function SuiteIterationsView({
 
   const handleUpdateTests = async (models: any[]) => {
     try {
-      for (const testCase of cases) {
-        await updateTestCaseMutation({
-          testCaseId: testCase._id,
-          models: models.map((m) => ({
-            model: m.model,
-            provider: m.provider,
-          })),
-        });
-      }
+      await updateSuiteModels({
+        suiteId: suite._id,
+        models: models.map((m) => ({
+          model: m.model,
+          provider: m.provider,
+        })),
+      });
       toast.success("Models updated successfully");
     } catch (error) {
       toast.error("Failed to update models");

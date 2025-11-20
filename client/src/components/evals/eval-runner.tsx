@@ -22,6 +22,11 @@ import { ModelDefinition, isMCPJamProvidedModel } from "@/shared/types";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import posthog from "posthog-js";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   WIZARD_STEPS,
   STORAGE_KEYS,
   DEFAULTS,
@@ -31,7 +36,11 @@ import { ServersStep } from "./eval-runner/ServersStep";
 import { ModelStep } from "./eval-runner/ModelStep";
 import { TestsStep } from "./eval-runner/TestsStep";
 import { ReviewStep } from "./eval-runner/ReviewStep";
-import type { AvailableTool, TestTemplate } from "./eval-runner/types";
+import type {
+  AvailableTool,
+  TestTemplate,
+  ExpectedToolCall,
+} from "./eval-runner/types";
 
 interface EvalRunnerProps {
   availableModels: ModelDefinition[];
@@ -47,6 +56,33 @@ const buildBlankTestTemplate = (): TestTemplate => ({
   runs: DEFAULTS.RUNS_PER_TEST,
   expectedToolCalls: [],
 });
+
+const validateExpectedToolCalls = (toolCalls: ExpectedToolCall[]): boolean => {
+  // Must have at least one tool call
+  if (toolCalls.length === 0) {
+    return false;
+  }
+
+  // Check each tool call
+  for (const toolCall of toolCalls) {
+    // Tool name must not be empty
+    if (!toolCall.toolName || toolCall.toolName.trim() === "") {
+      return false;
+    }
+
+    // Check all argument values are not empty strings
+    if (toolCall.arguments) {
+      for (const value of Object.values(toolCall.arguments)) {
+        // Only fail on empty strings, not other falsy values
+        if (value === "") {
+          return false;
+        }
+      }
+    }
+  }
+
+  return true;
+};
 
 export function EvalRunner({
   availableModels,
@@ -223,10 +259,15 @@ export function EvalRunner({
       return isJam || hasToken(model.provider as keyof ProviderTokens);
     });
 
+    // Check if all valid test templates have valid expected tool calls
+    const allTestsHaveValidToolCalls = validTestTemplates.every((template) =>
+      validateExpectedToolCalls(template.expectedToolCalls),
+    );
+
     return {
       servers: selectedServers.length > 0,
       model: selectedModels.length > 0 && allModelsHaveCredentials,
-      tests: validTestTemplates.length > 0,
+      tests: validTestTemplates.length > 0 && allTestsHaveValidToolCalls,
     };
   }, [selectedServers, selectedModels, validTestTemplates, hasToken]);
 
@@ -655,6 +696,42 @@ export function EvalRunner({
 
   const nextVariant = nextDisabled ? "secondary" : "default";
 
+  // Determine tooltip message for Next button
+  const getNextButtonTooltip = (): string => {
+    if (!nextDisabled) {
+      return currentStep === WIZARD_STEPS.length - 1
+        ? "Start the eval run"
+        : "Continue to next step";
+    }
+
+    // Check if we're on the tests step and tool calls are invalid
+    if (currentStep === 2) {
+      // Step 2 is the tests step
+      const hasInvalidToolCalls = validTestTemplates.some(
+        (template) => !validateExpectedToolCalls(template.expectedToolCalls),
+      );
+      if (hasInvalidToolCalls) {
+        return "All tool names must be specified and argument values cannot be empty";
+      }
+    }
+
+    // Generic messages for other disabled states
+    if (currentStep === 0) {
+      return "Select at least one server to continue";
+    }
+    if (currentStep === 1) {
+      return "Select at least one model and ensure all models have API keys configured";
+    }
+    if (currentStep === 2) {
+      return "Add at least one test case with a query to continue";
+    }
+    if (currentStep === 3) {
+      return "Complete all required fields to start the eval run";
+    }
+
+    return "Complete the current step to continue";
+  };
+
   const handleClose = () => {
     if (inline) {
       onSuccess?.();
@@ -671,6 +748,18 @@ export function EvalRunner({
       )}
     >
       <div className="flex flex-wrap items-center gap-4">
+        {inline && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={handleClose}
+            aria-label="Close"
+            className="h-8 w-8"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        )}
         <Button
           type="button"
           variant="outline"
@@ -685,47 +774,82 @@ export function EvalRunner({
         <div className="flex flex-1 justify-center">
           <div className="max-w-xl">{stepper}</div>
         </div>
-        <Button
-          type="button"
-          variant={nextVariant}
-          onClick={() => {
-            if (currentStep < WIZARD_STEPS.length - 1) {
-              posthog.capture("eval_setup_next_step_button_clicked", {
-                location: "eval_runner",
-                platform: detectPlatform(),
-                environment: detectEnvironment(),
-                step: currentStep,
-              });
-              handleNext();
-            } else {
-              posthog.capture("eval_setup_start_eval_run_button_clicked", {
-                location: "eval_runner",
-                platform: detectPlatform(),
-                environment: detectEnvironment(),
-                step: currentStep,
-              });
-              void handleSubmit();
-            }
-          }}
-          disabled={nextDisabled}
-          aria-label={
-            currentStep === WIZARD_STEPS.length - 1 ? "Start" : "Next"
-          }
-          className={cn("justify-center gap-2", !nextDisabled && "shadow-sm")}
-        >
-          {currentStep === WIZARD_STEPS.length - 1 ? "Start" : "Next"}
-          <ChevronRight className="h-4 w-4" />
-        </Button>
-        {inline && (
+        {nextDisabled ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span>
+                <Button
+                  type="button"
+                  variant={nextVariant}
+                  onClick={() => {
+                    if (currentStep < WIZARD_STEPS.length - 1) {
+                      posthog.capture("eval_setup_next_step_button_clicked", {
+                        location: "eval_runner",
+                        platform: detectPlatform(),
+                        environment: detectEnvironment(),
+                        step: currentStep,
+                      });
+                      handleNext();
+                    } else {
+                      posthog.capture(
+                        "eval_setup_start_eval_run_button_clicked",
+                        {
+                          location: "eval_runner",
+                          platform: detectPlatform(),
+                          environment: detectEnvironment(),
+                          step: currentStep,
+                        },
+                      );
+                      void handleSubmit();
+                    }
+                  }}
+                  disabled={nextDisabled}
+                  aria-label={
+                    currentStep === WIZARD_STEPS.length - 1 ? "Start" : "Next"
+                  }
+                  className={cn(
+                    "justify-center gap-2",
+                    !nextDisabled && "shadow-sm",
+                  )}
+                >
+                  {currentStep === WIZARD_STEPS.length - 1 ? "Start" : "Next"}
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>{getNextButtonTooltip()}</TooltipContent>
+          </Tooltip>
+        ) : (
           <Button
             type="button"
-            variant="ghost"
-            size="icon"
-            onClick={handleClose}
-            aria-label="Close"
-            className="h-8 w-8"
+            variant={nextVariant}
+            onClick={() => {
+              if (currentStep < WIZARD_STEPS.length - 1) {
+                posthog.capture("eval_setup_next_step_button_clicked", {
+                  location: "eval_runner",
+                  platform: detectPlatform(),
+                  environment: detectEnvironment(),
+                  step: currentStep,
+                });
+                handleNext();
+              } else {
+                posthog.capture("eval_setup_start_eval_run_button_clicked", {
+                  location: "eval_runner",
+                  platform: detectPlatform(),
+                  environment: detectEnvironment(),
+                  step: currentStep,
+                });
+                void handleSubmit();
+              }
+            }}
+            disabled={nextDisabled}
+            aria-label={
+              currentStep === WIZARD_STEPS.length - 1 ? "Start" : "Next"
+            }
+            className={cn("justify-center gap-2", !nextDisabled && "shadow-sm")}
           >
-            <X className="h-4 w-4" />
+            {currentStep === WIZARD_STEPS.length - 1 ? "Start" : "Next"}
+            <ChevronRight className="h-4 w-4" />
           </Button>
         )}
       </div>
