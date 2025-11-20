@@ -19,14 +19,7 @@ import {
 } from "../ui/card";
 import { Badge } from "../ui/badge";
 import { Separator } from "../ui/separator";
-import {
-  ChevronDown,
-  ChevronRight,
-  Settings,
-  Copy,
-  Check,
-  Loader2,
-} from "lucide-react";
+import { ChevronDown, ChevronRight, Copy, Check } from "lucide-react";
 import { ServerFormData } from "@/shared/types.js";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { getStoredTokens, hasOAuthConfig } from "@/lib/mcp-oauth";
@@ -36,10 +29,6 @@ import { decodeJWT } from "@/lib/jwt-decoder";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import "react18-json-view/src/dark.css";
-import {
-  listTools,
-  type ListToolsResultWithMetadata,
-} from "@/lib/mcp-tools-api";
 
 interface ServerModalProps {
   isOpen: boolean;
@@ -94,12 +83,7 @@ export function ServerModal({
   const [showTokenInsights, setShowTokenInsights] = useState<boolean>(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [expandedTokens, setExpandedTokens] = useState<Set<string>>(new Set());
-  const [activeTab, setActiveTab] = useState<"config" | "auth" | "tools">(
-    "config",
-  );
-  const [tools, setTools] = useState<ListToolsResultWithMetadata | null>(null);
-  const [isLoadingTools, setIsLoadingTools] = useState(false);
-  const [toolsError, setToolsError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"config" | "auth">("config");
 
   // Convert ServerWithName to ServerFormData format
   const convertServerConfig = (server: ServerWithName): ServerFormData => {
@@ -327,38 +311,6 @@ export function ServerModal({
     });
   };
 
-  // Load tools for the server (edit mode only)
-  const loadTools = async () => {
-    if (!server) return;
-
-    setIsLoadingTools(true);
-    setToolsError(null);
-    try {
-      const result = await listTools(server.name);
-      setTools(result);
-    } catch (err) {
-      const errorMessage =
-        err instanceof Error ? err.message : "Failed to load tools";
-      setToolsError(errorMessage);
-      toast.error(`Failed to load tools: ${errorMessage}`);
-    } finally {
-      setIsLoadingTools(false);
-    }
-  };
-
-  // Load tools when switching to tools tab in edit mode
-  useEffect(() => {
-    if (
-      isOpen &&
-      mode === "edit" &&
-      activeTab === "tools" &&
-      server &&
-      !tools
-    ) {
-      loadTools();
-    }
-  }, [isOpen, mode, activeTab, server]);
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -506,9 +458,6 @@ export function ServerModal({
     setCopiedField(null);
     setExpandedTokens(new Set());
     setActiveTab("config");
-    setTools(null);
-    setIsLoadingTools(false);
-    setToolsError(null);
   };
 
   const addEnvVar = () => {
@@ -583,17 +532,6 @@ export function ServerModal({
                 }`}
               >
                 Authentication
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab("tools")}
-                className={`px-4 py-2 text-sm font-medium transition-colors ${
-                  activeTab === "tools"
-                    ? "border-b-2 border-primary text-foreground"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                Widget Metadata
               </button>
             </div>
           )}
@@ -1764,135 +1702,6 @@ export function ServerModal({
                 className="px-4"
               >
                 Update Server
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {/* Show tools section when in edit mode and tools tab is active */}
-        {mode === "edit" && activeTab === "tools" && (
-          <div className="space-y-6">
-            <div>
-              <div className="mb-3">
-                <h3 className="text-lg font-semibold">Actions</h3>
-              </div>
-
-              {isLoadingTools && !tools ? (
-                <div className="flex items-center justify-center py-8">
-                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                </div>
-              ) : toolsError ? (
-                <div className="bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800/30 rounded-lg p-4 text-sm text-red-600 dark:text-red-400">
-                  {toolsError}
-                </div>
-              ) : tools && tools.tools.length > 0 ? (
-                (() => {
-                  // Filter tools that have metadata
-                  const toolsWithMetadata = tools.tools.filter(
-                    (tool: any) => tools.toolsMetadata?.[tool.name],
-                  );
-
-                  if (toolsWithMetadata.length === 0) {
-                    return (
-                      <div className="bg-muted/30 rounded-lg p-8 text-center">
-                        <p className="text-sm text-muted-foreground">
-                          No widget metadata
-                        </p>
-                      </div>
-                    );
-                  }
-
-                  return (
-                    <div className="space-y-3">
-                      {toolsWithMetadata.map((tool: any) => {
-                        const metadata = tools.toolsMetadata?.[tool.name];
-
-                        return (
-                          <div
-                            key={tool.name}
-                            className="bg-muted/30 rounded-lg p-4 space-y-2 hover:bg-muted/50 transition-colors"
-                          >
-                            <div className="flex items-start justify-between">
-                              <div className="flex-1">
-                                <div className="flex items-center gap-2">
-                                  <h4 className="font-medium text-sm">
-                                    {tool.name}
-                                  </h4>
-                                  {metadata.write !== undefined && (
-                                    <span className="text-xs px-2 py-0.5 bg-primary/10 text-primary rounded-md uppercase">
-                                      {metadata.write ? "WRITE" : "READ"}
-                                    </span>
-                                  )}
-                                </div>
-                                <p className="text-sm text-muted-foreground mt-1">
-                                  {tool.description ||
-                                    "No description available"}
-                                </p>
-                              </div>
-                            </div>
-
-                            {/* Metadata Section - Show all metadata fields */}
-                            <div className="mt-3 pt-3 border-t border-border/50">
-                              <div className="text-xs text-muted-foreground font-medium mb-2">
-                                METADATA
-                              </div>
-
-                              {Object.entries(metadata).map(([key, value]) => {
-                                // Skip the 'write' field as it's already shown as a badge
-                                if (key === "write") return null;
-
-                                return (
-                                  <div key={key} className="space-y-1 mt-2">
-                                    <div className="text-xs text-muted-foreground">
-                                      {key.replace(/([A-Z])/g, " $1").trim()}
-                                    </div>
-                                    <div
-                                      className={`text-xs rounded px-2 py-1 ${
-                                        typeof value === "string" &&
-                                        value.includes("://")
-                                          ? "font-mono bg-muted/50"
-                                          : "bg-muted/50"
-                                      }`}
-                                    >
-                                      {typeof value === "object"
-                                        ? JSON.stringify(value, null, 2)
-                                        : String(value)}
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  );
-                })()
-              ) : (
-                <div className="bg-muted/30 rounded-lg p-8 text-center">
-                  <p className="text-sm text-muted-foreground">
-                    No actions available for this server
-                  </p>
-                </div>
-              )}
-            </div>
-
-            {/* Close button for tools view */}
-            <div className="flex justify-end space-x-2 pt-4">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  posthog.capture("cancel_button_clicked", {
-                    location: "server_modal",
-                    platform: detectPlatform(),
-                    environment: detectEnvironment(),
-                  });
-                  handleClose();
-                }}
-                className="px-4"
-              >
-                Close
               </Button>
             </div>
           </div>
