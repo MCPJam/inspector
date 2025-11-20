@@ -80,6 +80,8 @@ export type EvalIteration = {
     arguments: Record<string, any>;
   }>;
   tokensUsed: number;
+  error?: string;
+  errorDetails?: string;
   _creationTime?: number; // Convex auto field
 };
 
