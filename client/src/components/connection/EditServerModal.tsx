@@ -16,7 +16,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
-import { Badge } from "../ui/badge";
 import { ChevronDown, ChevronRight, Copy, Check } from "lucide-react";
 import { ServerFormData } from "@/shared/types.js";
 import { ServerWithName } from "@/hooks/use-app-state";
@@ -56,7 +55,6 @@ export function EditServerModal({
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [expandedTokens, setExpandedTokens] = useState<Set<string>>(new Set());
   const [showTokenInsights, setShowTokenInsights] = useState<boolean>(false);
-  const [showServerInfo, setShowServerInfo] = useState<boolean>(false);
 
   // Use the shared form hook
   const {
@@ -159,7 +157,6 @@ export function EditServerModal({
     setCopiedField(null);
     setExpandedTokens(new Set());
     setShowTokenInsights(false);
-    setShowServerInfo(false);
     onClose();
   };
 
@@ -367,204 +364,6 @@ export function EditServerModal({
                 </div>
               )}
             </div>
-
-            {/* Server Info section */}
-            {server && server.initializationInfo && (
-              <div className="border border-border rounded-lg overflow-hidden">
-                <button
-                  type="button"
-                  onClick={() => setShowServerInfo(!showServerInfo)}
-                  className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors cursor-pointer"
-                >
-                  <div className="flex items-center gap-2">
-                    {showServerInfo ? (
-                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                    ) : (
-                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                    )}
-                    <span className="text-sm font-medium text-foreground">
-                      Server Info
-                    </span>
-                  </div>
-                </button>
-
-                {showServerInfo && (
-                  <div className="p-4 space-y-4 border-t border-border bg-muted/30">
-                    {/* Connection Details */}
-                    <div className="space-y-3">
-                      <h4 className="text-xs font-semibold text-foreground uppercase tracking-wide">
-                        Connection Details
-                      </h4>
-                      {server.initializationInfo.protocolVersion && (
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm text-muted-foreground">
-                            Protocol Version
-                          </span>
-                          <Badge
-                            variant="secondary"
-                            className="font-mono text-xs"
-                          >
-                            {server.initializationInfo.protocolVersion}
-                          </Badge>
-                        </div>
-                      )}
-                      {server.initializationInfo.transport && (
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm text-muted-foreground">
-                            Transport
-                          </span>
-                          <Badge
-                            variant="secondary"
-                            className="font-mono uppercase text-xs"
-                          >
-                            {server.initializationInfo.transport}
-                          </Badge>
-                        </div>
-                      )}
-                      {server.initializationInfo.serverVersion && (
-                        <>
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm text-muted-foreground">
-                              Server Name
-                            </span>
-                            <span className="text-sm font-mono">
-                              {server.initializationInfo.serverVersion.name}
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm text-muted-foreground">
-                              Server Title
-                            </span>
-                            <span className="text-sm font-mono">
-                              {server.initializationInfo.serverVersion.title ||
-                                "None"}
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm text-muted-foreground">
-                              Homepage URL
-                            </span>
-                            <span className="text-sm font-mono">
-                              {server.initializationInfo.serverVersion
-                                .websiteUrl || "None"}
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm text-muted-foreground">
-                              Server Version
-                            </span>
-                            <Badge
-                              variant="outline"
-                              className="font-mono text-xs"
-                            >
-                              {server.initializationInfo.serverVersion.version}
-                            </Badge>
-                          </div>
-                        </>
-                      )}
-                    </div>
-
-                    {/* Server Icons */}
-                    {server.initializationInfo.serverVersion &&
-                      server.initializationInfo.serverVersion.icons && (
-                        <div className="space-y-3 pt-2 border-t border-border/50">
-                          <h4 className="text-xs font-semibold text-foreground uppercase tracking-wide">
-                            Server Icons
-                          </h4>
-
-                          <ul className="space-y-3">
-                            {server.initializationInfo.serverVersion.icons.map(
-                              (icon, index) => (
-                                <li
-                                  key={index}
-                                  className="flex items-center justify-between p-3 rounded-lg border border-border bg-muted/30 hover:bg-muted/50 transition-colors"
-                                >
-                                  <span className="font-mono text-xs break-all mr-4 flex-1">
-                                    {icon.src}
-                                  </span>
-
-                                  <div className="w-12 h-12 rounded-md overflow-hidden bg-background border border-border/50 flex items-center justify-center">
-                                    <img
-                                      src={icon.src}
-                                      alt=""
-                                      className="w-full h-full object-contain"
-                                      loading="lazy"
-                                    />
-                                  </div>
-                                </li>
-                              ),
-                            )}
-                          </ul>
-                        </div>
-                      )}
-
-                    {/* Server Instructions */}
-                    {server.initializationInfo.instructions && (
-                      <div className="space-y-3 pt-2 border-t border-border/50">
-                        <h4 className="text-xs font-semibold text-foreground uppercase tracking-wide">
-                          Server Instructions
-                        </h4>
-                        <p className="text-sm text-muted-foreground leading-relaxed">
-                          {server.initializationInfo.instructions}
-                        </p>
-                      </div>
-                    )}
-
-                    {/* Server Capabilities */}
-                    {server.initializationInfo.serverCapabilities && (
-                      <div className="space-y-3 pt-2 border-t border-border/50">
-                        <h4 className="text-xs font-semibold text-foreground uppercase tracking-wide">
-                          Server Capabilities
-                        </h4>
-                        <JsonView
-                          src={server.initializationInfo.serverCapabilities}
-                          theme="atom"
-                          dark={true}
-                          enableClipboard={true}
-                          displaySize={false}
-                          collapseStringsAfterLength={100}
-                          style={{
-                            fontSize: "11px",
-                            fontFamily:
-                              "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                            backgroundColor: "hsl(var(--background))",
-                            padding: "8px",
-                            borderRadius: "6px",
-                            border: "1px solid hsl(var(--border))",
-                          }}
-                        />
-                      </div>
-                    )}
-
-                    {/* Client Capabilities */}
-                    {server.initializationInfo.clientCapabilities && (
-                      <div className="space-y-3 pt-2 border-t border-border/50">
-                        <h4 className="text-xs font-semibold text-foreground uppercase tracking-wide">
-                          Client Capabilities
-                        </h4>
-                        <JsonView
-                          src={server.initializationInfo.clientCapabilities}
-                          theme="atom"
-                          dark={true}
-                          enableClipboard={true}
-                          displaySize={false}
-                          collapseStringsAfterLength={100}
-                          style={{
-                            fontSize: "11px",
-                            fontFamily:
-                              "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                            backgroundColor: "hsl(var(--background))",
-                            padding: "8px",
-                            borderRadius: "6px",
-                            border: "1px solid hsl(var(--border))",
-                          }}
-                        />
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
 
             <div className="flex justify-end space-x-2 pt-4">
               <Button
