@@ -15,6 +15,37 @@ Guided OAuth lets you test your OAuth implementation step-by-step. The feature w
   />
 </Frame>
 
+## Getting Started
+
+To begin testing OAuth flows:
+
+1. Navigate to the **OAuth Flow** tab
+2. If no HTTP servers are configured, you'll be prompted to configure a target server
+3. Click **Configure Target** to open the OAuth Profile Modal
+4. Enter your server's base URL and configure optional settings
+5. Click **Save configuration** to create the test profile
+
+Once configured, you can select any HTTP server from the dropdown to test its OAuth implementation.
+
+## OAuth Profile Configuration
+
+The OAuth Profile Modal lets you configure test targets with the following options:
+
+### Required Settings
+
+- **Server Name**: A unique identifier for this test configuration
+- **Server URL**: The base URL of your MCP server (e.g., `https://example.com`)
+- **Protocol**: Choose from 2025-03-26, 2025-06-18 (Latest), or 2025-11-25 (Draft)
+- **Registration**: Select CIMD (URL-based), Dynamic (DCR), or Pre-registered
+
+### Advanced Settings (Optional)
+
+- **Scopes**: Space-separated OAuth scopes (e.g., `openid profile email`)
+- **Client Credentials**: Pre-configured client ID and secret for pre-registered flows
+- **Custom Headers**: Additional headers for discovery and token requests (useful for API keys)
+
+The configuration is saved as a server entry that can be reused across debugging sessions.
+
 ## Interactive Flow Guide
 
 The OAuth debugger provides an interactive guide that walks you through each step of the OAuth flow:
@@ -47,14 +78,26 @@ Select your protocol version in the OAuth debugger to test against the appropria
 
 ## Features
 
+### Integrated Controls
+
+The OAuth debugger includes streamlined controls in the logger panel:
+
+- **Configure** (gear icon): Open the OAuth Profile Modal to modify server settings
+- **Reset** (refresh icon): Reset the current flow to start over
+- **Continue**: Advance to the next step in the OAuth flow
+
+These controls are context-aware and update based on the current flow state.
+
 ### Edit Configuration
 
-You can edit your server configuration during OAuth testing without reconnecting. Click the **Edit Config** button to modify settings like:
+You can edit your server configuration during OAuth testing. Click the **Configure** button (gear icon) to modify settings like:
 
 - Server URL
+- Protocol version
+- Registration strategy
 - OAuth scopes
 - Custom headers
-- Environment variables
+- Client credentials
 
 Changes update the OAuth flow immediately, regenerating the authorization URL with your new configuration.
 

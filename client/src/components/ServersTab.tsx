@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
-import { Plus, Database, FileText, Layers } from "lucide-react";
+import { Plus, FileText, Layers } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { ServerConnectionCard } from "./connection/ServerConnectionCard";
 import { ServerConnectionDetails } from "./connection/ServerConnectionDetails";
@@ -31,13 +31,6 @@ interface ServersTabProps {
     skipAutoConnect?: boolean,
   ) => void;
   onRemove: (serverName: string) => void;
-  workspaces: Record<string, Workspace>;
-  activeWorkspaceId: string;
-  activeWorkspace: Workspace;
-  onSwitchWorkspace: (workspaceId: string) => void;
-  onCreateWorkspace: (name: string, switchTo?: boolean) => string;
-  onUpdateWorkspace: (workspaceId: string, updates: Partial<Workspace>) => void;
-  onDeleteWorkspace: (workspaceId: string) => void;
 }
 
 export function ServersTab({
@@ -47,35 +40,13 @@ export function ServersTab({
   onReconnect,
   onUpdate,
   onRemove,
-  workspaces,
-  activeWorkspaceId,
-  activeWorkspace,
-  onSwitchWorkspace,
-  onCreateWorkspace,
-  onUpdateWorkspace,
-  onDeleteWorkspace,
 }: ServersTabProps) {
   const posthog = usePostHog();
   const [isAddingServer, setIsAddingServer] = useState(false);
   const [isImportingJson, setIsImportingJson] = useState(false);
   const [isEditingServer, setIsEditingServer] = useState(false);
   const [serverToEdit, setServerToEdit] = useState<ServerWithName | null>(null);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [filterType, setFilterType] = useState<"all" | "stdio" | "http">("all");
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
-
-  const filteredServers = Object.entries(connectedServerConfigs).filter(
-    ([name, server]) => {
-      const matchesSearch = name
-        .toLowerCase()
-        .includes(searchTerm.toLowerCase());
-      const matchesFilter =
-        filterType === "all" ||
-        (filterType === "stdio" && "command" in server.config) ||
-        (filterType === "http" && "url" in server.config);
-      return matchesSearch && matchesFilter;
-    },
-  );
 
   useEffect(() => {
     posthog.capture("servers_tab_viewed", {
@@ -199,32 +170,20 @@ export function ServersTab({
               </div>
 
               {/* Server Cards Grid */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-                {filteredServers.map(([name, server]) => (
-                  <ServerConnectionCard
-                    key={name}
-                    server={server}
-                    onDisconnect={onDisconnect}
-                    onReconnect={onReconnect}
-                    onEdit={handleEditServer}
-                    onRemove={onRemove}
-                  />
-                ))}
+              <div className="grid grid-cols-1 lg:grid-cols-1 xl:grid-cols-2 gap-6">
+                {Object.entries(connectedServerConfigs).map(
+                  ([name, server]) => (
+                    <ServerConnectionCard
+                      key={name}
+                      server={server}
+                      onDisconnect={onDisconnect}
+                      onReconnect={onReconnect}
+                      onEdit={handleEditServer}
+                      onRemove={onRemove}
+                    />
+                  ),
+                )}
               </div>
-
-              {filteredServers.length === 0 && (
-                <Card className="p-8 text-center">
-                  <div className="mx-auto max-w-sm">
-                    <Database className="mx-auto h-8 w-8 text-muted-foreground" />
-                    <h3 className="mt-4 text-lg font-semibold">
-                      No servers found
-                    </h3>
-                    <p className="mt-2 text-sm text-muted-foreground">
-                      Try adjusting your search or filter criteria
-                    </p>
-                  </div>
-                </Card>
-              )}
 
             </div>
           </ResizablePanel>

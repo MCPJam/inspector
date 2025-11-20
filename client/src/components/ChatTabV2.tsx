@@ -72,15 +72,39 @@ interface ChatTabProps {
   onHasMessagesChange?: (hasMessages: boolean) => void;
 }
 
-function formatErrorMessage(error: unknown): string | null {
+function formatErrorMessage(
+  error: unknown,
+): { message: string; details?: string } | null {
+  console.log(error);
   if (!error) return null;
-  if (typeof error === "string") return error;
-  if (error instanceof Error) return error.message;
-  try {
-    return JSON.stringify(error);
-  } catch {
-    return String(error);
+
+  let errorString: string;
+  if (typeof error === "string") {
+    errorString = error;
+  } else if (error instanceof Error) {
+    errorString = error.message;
+  } else {
+    try {
+      errorString = JSON.stringify(error);
+    } catch {
+      errorString = String(error);
+    }
   }
+
+  // Try to parse as JSON to extract message and details
+  try {
+    const parsed = JSON.parse(errorString);
+    if (parsed && typeof parsed === "object" && parsed.message) {
+      return {
+        message: parsed.message,
+        details: parsed.details,
+      };
+    }
+  } catch {
+    // Return as-is
+  }
+
+  return { message: errorString };
 }
 
 export function ChatTabV2({
@@ -681,7 +705,8 @@ export function ChatTabV2({
                   {errorMessage && (
                     <div className="px-4 pb-4 pt-4">
                       <ErrorBox
-                        message={errorMessage}
+                        message={errorMessage.message}
+                        errorDetails={errorMessage.details}
                         onResetChat={resetChat}
                       />
                     </div>
