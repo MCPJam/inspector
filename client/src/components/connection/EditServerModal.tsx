@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -17,7 +17,7 @@ import {
   SelectValue,
 } from "../ui/select";
 import { Badge } from "../ui/badge";
-import { ChevronDown, ChevronRight, Copy, Check, Loader2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Copy, Check } from "lucide-react";
 import { ServerFormData } from "@/shared/types.js";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { getStoredTokens } from "@/lib/mcp-oauth";
@@ -27,10 +27,6 @@ import { decodeJWT } from "@/lib/jwt-decoder";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import "react18-json-view/src/dark.css";
-import {
-  listTools,
-  type ListToolsResultWithMetadata,
-} from "@/lib/mcp-tools-api";
 import { useServerForm } from "./hooks/use-server-form";
 import { AuthenticationSection } from "./shared/AuthenticationSection";
 import { CustomHeadersSection } from "./shared/CustomHeadersSection";
@@ -56,16 +52,11 @@ export function EditServerModal({
   skipAutoConnect = false,
 }: EditServerModalProps) {
   const posthog = usePostHog();
-  const [activeTab, setActiveTab] = useState<"config" | "auth" | "tools">(
-    "config",
-  );
+  const [activeTab, setActiveTab] = useState<"config" | "auth">("config");
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [expandedTokens, setExpandedTokens] = useState<Set<string>>(new Set());
   const [showTokenInsights, setShowTokenInsights] = useState<boolean>(false);
   const [showServerInfo, setShowServerInfo] = useState<boolean>(false);
-  const [tools, setTools] = useState<ListToolsResultWithMetadata | null>(null);
-  const [isLoadingTools, setIsLoadingTools] = useState(false);
-  const [toolsError, setToolsError] = useState<string | null>(null);
 
   // Use the shared form hook
   const {
@@ -137,39 +128,6 @@ export function EditServerModal({
     });
   };
 
-  // Load tools for the server
-  const loadTools = async () => {
-    if (!server) return;
-
-    // Check if server is connected
-    if (server.connectionStatus !== "connected") {
-      setToolsError("not-connected");
-      setIsLoadingTools(false);
-      return;
-    }
-
-    setIsLoadingTools(true);
-    setToolsError(null);
-    try {
-      const result = await listTools(server.name);
-      setTools(result);
-    } catch (err) {
-      const errorMessage =
-        err instanceof Error ? err.message : "Failed to load tools";
-      setToolsError(errorMessage);
-      toast.error(`Failed to load tools: ${errorMessage}`);
-    } finally {
-      setIsLoadingTools(false);
-    }
-  };
-
-  // Load tools when switching to tools tab
-  useEffect(() => {
-    if (isOpen && activeTab === "tools" && server && !tools) {
-      loadTools();
-    }
-  }, [isOpen, activeTab, server]);
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -202,9 +160,6 @@ export function EditServerModal({
     setExpandedTokens(new Set());
     setShowTokenInsights(false);
     setShowServerInfo(false);
-    setTools(null);
-    setIsLoadingTools(false);
-    setToolsError(null);
     onClose();
   };
 
@@ -216,8 +171,7 @@ export function EditServerModal({
             <img src="/mcp.svg" alt="MCP" className="mr-2" /> Edit MCP Server
           </DialogTitle>
           <DialogDescription className="sr-only">
-            Edit your MCP server configuration, authentication settings, and
-            view widget metadata
+            Edit your MCP server configuration and authentication settings
           </DialogDescription>
 
           {/* Tab switcher */}
@@ -243,17 +197,6 @@ export function EditServerModal({
               }`}
             >
               Authentication
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab("tools")}
-              className={`px-4 py-2 text-sm font-medium transition-colors ${
-                activeTab === "tools"
-                  ? "border-b-2 border-primary text-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              Widget Metadata
             </button>
           </div>
         </DialogHeader>
@@ -1060,163 +1003,6 @@ export function EditServerModal({
                 className="px-4"
               >
                 Update Server
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {/* Tools Tab */}
-        {activeTab === "tools" && (
-          <div className="space-y-6">
-            <div>
-              <div className="mb-3">
-                <h3 className="text-lg font-semibold">Actions</h3>
-              </div>
-
-              {isLoadingTools && !tools ? (
-                <div className="flex items-center justify-center py-8">
-                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                </div>
-              ) : toolsError ? (
-                toolsError === "not-connected" ? (
-                  <div className="bg-muted/30 rounded-lg p-8 text-center">
-                    <p className="text-sm text-muted-foreground">
-                      Connect to see widget metadata
-                    </p>
-                  </div>
-                ) : (
-                  <div className="bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800/30 rounded-lg p-4 text-sm text-red-600 dark:text-red-400">
-                    {toolsError}
-                  </div>
-                )
-              ) : tools && tools.tools.length > 0 ? (
-                (() => {
-                  // Filter tools that have metadata
-                  const toolsWithMetadata = tools.tools.filter(
-                    (tool) => tools.toolsMetadata?.[tool.name],
-                  );
-
-                  if (toolsWithMetadata.length === 0) {
-                    return (
-                      <div className="bg-muted/30 rounded-lg p-8 text-center">
-                        <p className="text-sm text-muted-foreground">
-                          No widget metadata
-                        </p>
-                      </div>
-                    );
-                  }
-
-                  return (
-                    <div className="space-y-3">
-                      {toolsWithMetadata.map((tool) => {
-                        const metadata = tools.toolsMetadata?.[tool.name];
-
-                        return (
-                          <div
-                            key={tool.name}
-                            className="bg-muted/30 rounded-lg p-4 space-y-2 hover:bg-muted/50 transition-colors"
-                          >
-                            <div className="flex items-start justify-between">
-                              <div className="flex-1">
-                                <div className="flex items-center gap-2">
-                                  <h4 className="font-medium text-sm">
-                                    {tool.name}
-                                  </h4>
-                                  {metadata.write !== undefined && (
-                                    <span className="text-xs px-2 py-0.5 bg-primary/10 text-primary rounded-md uppercase">
-                                      {metadata.write ? "WRITE" : "READ"}
-                                    </span>
-                                  )}
-                                </div>
-                                <p className="text-sm text-muted-foreground mt-1">
-                                  {tool.description ||
-                                    "No description available"}
-                                </p>
-                              </div>
-                            </div>
-
-                            {/* Metadata Section - Show all metadata fields */}
-                            <div className="mt-3 pt-3 border-t border-border/50">
-                              <div className="text-xs text-muted-foreground font-medium mb-2">
-                                METADATA
-                              </div>
-
-                              {Object.entries(metadata).map(([key, value]) => {
-                                // Skip the 'write' field as it's already shown as a badge
-                                if (key === "write") return null;
-
-                                return (
-                                  <div key={key} className="space-y-1 mt-2">
-                                    <div className="text-xs text-muted-foreground">
-                                      {key.replace(/([A-Z])/g, " $1").trim()}
-                                    </div>
-                                    <div
-                                      className={`text-xs rounded px-2 py-1 ${
-                                        typeof value === "string" &&
-                                        value.includes("://")
-                                          ? "font-mono bg-muted/50"
-                                          : "bg-muted/50"
-                                      }`}
-                                    >
-                                      {(() => {
-                                        if (
-                                          value === null ||
-                                          value === undefined
-                                        )
-                                          return "null";
-                                        if (typeof value === "object") {
-                                          // Handle URL objects specifically
-                                          if (value instanceof URL)
-                                            return value.toString();
-                                          // Handle other objects with JSON
-                                          try {
-                                            return JSON.stringify(
-                                              value,
-                                              null,
-                                              2,
-                                            );
-                                          } catch {
-                                            return String(value);
-                                          }
-                                        }
-                                        return String(value);
-                                      })()}
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  );
-                })()
-              ) : (
-                <div className="bg-muted/30 rounded-lg p-8 text-center">
-                  <p className="text-sm text-muted-foreground">
-                    No actions available for this server
-                  </p>
-                </div>
-              )}
-            </div>
-
-            {/* Close button for tools view */}
-            <div className="flex justify-end space-x-2 pt-4">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  posthog.capture("cancel_button_clicked", {
-                    location: "edit_server_modal_tools",
-                    platform: detectPlatform(),
-                    environment: detectEnvironment(),
-                  });
-                  handleClose();
-                }}
-                className="px-4"
-              >
-                Close
               </Button>
             </div>
           </div>
