@@ -1,4 +1,6 @@
 import { useRef, useState, useEffect, useCallback, useMemo } from "react";
+import { createPortal } from "react-dom";
+import { X } from "lucide-react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
 type DisplayMode = "inline" | "pip" | "fullscreen";
@@ -21,6 +23,9 @@ interface OpenAIAppRendererProps {
   onSendFollowUp?: (text: string) => void;
   onCallTool?: (toolName: string, params: Record<string, any>) => Promise<any>;
   onWidgetStateChange?: (toolCallId: string, state: any) => void;
+  pipPortalContainer?: HTMLElement | null;
+  activePipToolCallId?: string | null;
+  onPipModeRequest?: (toolCallId: string | null) => void;
 }
 
 export function OpenAIAppRenderer({
@@ -34,6 +39,9 @@ export function OpenAIAppRenderer({
   onSendFollowUp,
   onCallTool,
   onWidgetStateChange,
+  pipPortalContainer,
+  activePipToolCallId,
+  onPipModeRequest,
 }: OpenAIAppRendererProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
@@ -100,6 +108,27 @@ export function OpenAIAppRenderer({
     () => structuredContent ?? toolOutputProp ?? null,
     [structuredContent, toolOutputProp],
   );
+
+  // Enforce single PIP constraint: if another widget is active, switch back to inline
+  useEffect(() => {
+    if (
+      displayMode === "pip" &&
+      activePipToolCallId !== null &&
+      activePipToolCallId !== resolvedToolCallId
+    ) {
+      setDisplayMode("inline");
+    }
+  }, [activePipToolCallId, displayMode, resolvedToolCallId]);
+
+  const isPip = displayMode === "pip";
+
+  // Handler to close PIP mode
+  const handleClosePip = useCallback(() => {
+    setDisplayMode("inline");
+    if (onPipModeRequest && activePipToolCallId === resolvedToolCallId) {
+      onPipModeRequest(null);
+    }
+  }, [onPipModeRequest, activePipToolCallId, resolvedToolCallId]);
 
   // Store widget data and get URL - ONLY once when tool state is output-available
   useEffect(() => {
@@ -313,6 +342,15 @@ export function OpenAIAppRenderer({
         case "openai:requestDisplayMode": {
           if (event.data.mode) {
             setDisplayMode(event.data.mode);
+            // Notify parent when entering PIP mode to clear other PIP widgets
+            if (event.data.mode === "pip" && onPipModeRequest) {
+              onPipModeRequest(resolvedToolCallId);
+            } else if (event.data.mode !== "pip" && onPipModeRequest) {
+              // If this widget was in PIP and is exiting, clear the active PIP
+              if (activePipToolCallId === resolvedToolCallId) {
+                onPipModeRequest(null);
+              }
+            }
           }
           if (typeof event.data.maxHeight === "number") {
             setMaxHeight(event.data.maxHeight);
@@ -328,7 +366,14 @@ export function OpenAIAppRenderer({
         }
       }
     },
-    [onCallTool, onSendFollowUp, onWidgetStateChange, resolvedToolCallId],
+    [
+      onCallTool,
+      onSendFollowUp,
+      onWidgetStateChange,
+      resolvedToolCallId,
+      onPipModeRequest,
+      activePipToolCallId,
+    ],
   );
 
   useEffect(() => {
@@ -404,9 +449,22 @@ export function OpenAIAppRenderer({
     );
   }
 
-  // Render iframe
-  return (
-    <div className="mt-3 space-y-2">
+  const pipClasses = isPip
+    ? `${pipPortalContainer ? "" : "sticky top-0 z-20 "}bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 shadow-lg border border-border/50 rounded-xl p-3`
+    : "";
+
+  const content = (
+    <div className={`mt-3 space-y-2 ${pipClasses} ${isPip ? "relative" : ""}`}>
+      {isPip && (
+        <button
+          onClick={handleClosePip}
+          className="absolute left-2 top-2 z-10 flex h-6 w-6 items-center justify-center rounded-md bg-background/80 hover:bg-background border border-border/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+          aria-label="Close PiP mode"
+          title="Close PiP mode"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      )}
       {loadError && (
         <div className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2">
           Failed to load widget: {loadError}
@@ -440,4 +498,17 @@ export function OpenAIAppRenderer({
       )}
     </div>
   );
+
+  if (isPip && pipPortalContainer) {
+    return (
+      <>
+        {createPortal(content, pipPortalContainer)}
+        <div className="mt-3 text-[11px] text-muted-foreground">
+          OpenAI App pinned to the top in PiP mode.
+        </div>
+      </>
+    );
+  }
+
+  return content;
 }
