@@ -166,7 +166,9 @@ export function PromptsPopover({
 
   useEffect(() => {
     // Open popover if prompts are requested
-    setOpen(isMCPPromptsRequested(value, caretIndex));
+    setOpen(
+      isMCPPromptsRequested(value, caretIndex) && promptListItems.length > 0,
+    );
   }, [value, caretIndex]);
 
   const onCancelPromptArgsDialog = () => {
