@@ -13,7 +13,12 @@ import {
 import { PieChart, Pie, Label } from "recharts";
 import { BarChart3, Loader2, RotateCw, Trash2, X } from "lucide-react";
 import { formatRunId } from "./helpers";
-import { EvalSuite, EvalSuiteRun, EvalIteration, SuiteAggregate } from "./types";
+import {
+  EvalSuite,
+  EvalSuiteRun,
+  EvalIteration,
+  SuiteAggregate,
+} from "./types";
 import { useMutation } from "convex/react";
 import { toast } from "sonner";
 import { computeIterationPassed } from "./pass-criteria";
@@ -347,7 +352,9 @@ export function SuiteHeader({
         {/* Accuracy Chart */}
         {accuracyChartData && accuracyChartData.donutData.length > 0 && (
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-foreground">Accuracy:</span>
+            <span className="text-sm font-medium text-foreground">
+              Accuracy:
+            </span>
             <ChartContainer
               config={{
                 passed: { label: "Passed", color: "hsl(142.1 76.2% 36.3%)" },
