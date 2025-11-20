@@ -688,6 +688,84 @@ const metadata = mcpClientManager.getAllToolsMetadata("server1");
 // Returns: { tool1: { _meta: {...} }, tool2: { _meta: {...} } }
 ```
 
+### Widget State Propagation to Model
+
+As of PR #891, widget state changes from OpenAI Apps are automatically propagated to the LLM model as hidden assistant messages. This enables the AI to understand and reason about widget interactions.
+
+**Flow**:
+
+1. Widget calls `window.openai.setWidgetState(state)` in iframe
+2. `openai-app-renderer.tsx` receives `openai:setWidgetState` postMessage
+3. State is deduped by comparing serialized JSON
+4. `onWidgetStateChange` callback is invoked with `(toolCallId, state)`
+5. `ChatTabV2.tsx` adds/updates hidden assistant message with ID `widget-state-${toolCallId}`
+6. Message contains text: `"The state of widget ${toolCallId} is: ${JSON.stringify(state)}"`
+7. `thread.tsx` hides messages starting with `widget-state-` from UI
+8. Model receives state updates in conversation context
+
+**Implementation** (`client/src/components/ChatTabV2.tsx:281-326`):
+
+```typescript
+const handleWidgetStateChange = useCallback(
+  (toolCallId: string, state: any) => {
+    setMessages((prevMessages) => {
+      const messageId = `widget-state-${toolCallId}`;
+
+      // If state is null, remove the widget state message
+      if (state === null) {
+        return prevMessages.filter((msg) => msg.id !== messageId);
+      }
+
+      const stateText = `The state of widget ${toolCallId} is: ${JSON.stringify(state)}`;
+
+      const existingIndex = prevMessages.findIndex(
+        (msg) => msg.id === messageId,
+      );
+
+      if (existingIndex !== -1) {
+        // Update existing state message if changed
+        const existingMessage = prevMessages[existingIndex];
+        const existingText =
+          existingMessage.parts?.[0]?.type === "text"
+            ? (existingMessage.parts[0] as any).text
+            : null;
+        if (existingText === stateText) {
+          return prevMessages; // No change
+        }
+
+        const newMessages = [...prevMessages];
+        newMessages[existingIndex] = {
+          id: messageId,
+          role: "assistant",
+          parts: [{ type: "text", text: stateText }],
+        };
+        return newMessages;
+      }
+
+      // Add new state message
+      return [
+        ...prevMessages,
+        {
+          id: messageId,
+          role: "assistant",
+          parts: [{ type: "text", text: stateText }],
+        },
+      ];
+    });
+  },
+  [setMessages],
+);
+```
+
+**Use Cases**:
+
+- LLM understanding user interactions with charts/dashboards
+- Contextual follow-up questions based on widget selections
+- Multi-turn conversations referencing widget state
+- Debugging widget behavior through model awareness
+
+See [OpenAI SDK Architecture - Widget State Propagation](./openai-sdk-architecture#widget-state-propagation-to-model) for detailed implementation.
+
 ---
 
 ## Technical Details

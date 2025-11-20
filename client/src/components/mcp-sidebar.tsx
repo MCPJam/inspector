@@ -30,7 +30,7 @@ const navigationSections = [
     id: "connection",
     items: [
       {
-        title: "Workspaces",
+        title: "Servers",
         url: "#servers",
         icon: MCPIcon,
       },

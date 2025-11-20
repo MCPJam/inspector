@@ -251,6 +251,13 @@ chatV2.post("/", async (c) => {
         console.error("[mcp/chat-v2] stream error:", error);
         // Return detailed error message to be sent to the client
         if (error instanceof Error) {
+          const responseBody = (error as any).responseBody;
+          if (responseBody && typeof responseBody === "string") {
+            return JSON.stringify({
+              message: error.message,
+              details: responseBody,
+            });
+          }
           return error.message;
         }
         return String(error);

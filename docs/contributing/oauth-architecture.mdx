@@ -172,13 +172,15 @@ graph TD
     A --> E[mcp-serverUrl-serverName]
     A --> F[mcp-oauth-config-serverName]
     A --> G[mcp-oauth-pending]
+    A --> H[mcp-oauth-flow-preferences]
 
     B --> B1[access_token<br/>refresh_token<br/>expires_in]
     C --> C1[client_id<br/>client_secret]
     D --> D1[PKCE code_verifier]
     E --> E1[MCP server URL]
-    F --> F1[scopes array]
+    F --> F1[scopes array<br/>customHeaders object]
     G --> G1[Pending server name<br/>for callback recovery]
+    H --> H1[protocolVersion<br/>registrationStrategy]
 
     style B fill:#e1f5e1
     style C fill:#e1f5e1
@@ -186,7 +188,14 @@ graph TD
     style E fill:#e1f5e1
     style F fill:#e1f5e1
     style G fill:#ffe1e1
+    style H fill:#e1f4ff
 ```
+
+OAuth test profiles are also stored in the app state with the following structure:
+
+- `oauthFlowProfile`: Contains server URL, client credentials, scopes, custom headers, protocol version, and registration strategy
+- Profiles are attached to server configurations and persist across sessions
+- Used to pre-populate the OAuth Profile Modal when editing configurations
 
 ## CORS Proxy Architecture
 
@@ -244,6 +253,8 @@ Provides an interactive guide for the OAuth flow with educational content:
 - Shows teachable moments and tips for each step
 - Supports focusing on specific steps in the sequence diagram
 - Auto-scrolls to latest activity
+- Integrated action controls (Configure, Reset, Continue)
+- Summary header showing target server, protocol, and registration strategy
 
 Step metadata is defined in `client/src/lib/oauth/state-machines/shared/step-metadata.ts` with:
 
@@ -252,7 +263,36 @@ Step metadata is defined in `client/src/lib/oauth/state-machines/shared/step-met
 - Teachable moments highlighting key concepts
 - Tips for common issues
 
-### 2. MCPOAuthProvider
+### 2. OAuthProfileModal
+
+**Location:** `client/src/components/oauth/OAuthProfileModal.tsx`
+
+Modal dialog for configuring OAuth test profiles:
+
+- Server name and URL configuration
+- Protocol version selection (2025-03-26, 2025-06-18, 2025-11-25)
+- Registration strategy selection (CIMD, DCR, Pre-registered)
+- Advanced settings accordion for optional configuration
+- Custom headers management with add/remove functionality
+- Client credentials input for pre-registered flows
+- Validation and error handling
+- Generates unique server names to avoid conflicts
+
+The modal derives initial values from existing server configurations and supports both creating new profiles and editing existing ones.
+
+### 3. OAuth Utility Functions
+
+**Location:** `client/src/components/oauth/utils.ts`
+
+Helper functions for OAuth profile management:
+
+- `deriveOAuthProfileFromServer()`: Extracts OAuth configuration from server definitions
+- `toUrlString()`: Safely converts URL objects to strings
+- Profile derivation with fallback to empty profile
+- Header extraction from HTTP server configurations
+- Scope and credential extraction from server configs
+
+### 4. MCPOAuthProvider
 
 **Location:** `client/src/lib/mcp-oauth.ts:72`
 
@@ -284,7 +324,7 @@ saveCodeVerifier(verifier)
 ````
 </CodeGroup>
 
-### 3. OAuth State Machine
+### 5. OAuth State Machine
 
 **Location:** `client/src/lib/oauth-state-machine.ts:353`
 
@@ -296,7 +336,7 @@ Manages the step-by-step OAuth flow:
 - Validates preconditions before transitions
 - Tracks current step for UI synchronization
 
-### 3. Debug Proxy
+### 6. Debug Proxy
 
 **Location:** `server/routes/mcp/oauth.ts:10`
 
@@ -310,7 +350,7 @@ Proxies OAuth and MCP requests to bypass CORS:
 - Detects legacy HTTP+SSE transport (2024-11-05)
 - Parses SSE streams and extracts endpoint events
 
-### 5. Fetch Interceptor
+### 7. Fetch Interceptor
 
 **Location:** `client/src/lib/mcp-oauth.ts:17`
 
@@ -402,6 +442,45 @@ Each state handles errors gracefully:
   </Step>
 </Steps>
 
+## Server Configuration Without Connection
+
+The `saveServerConfigWithoutConnecting` function allows saving OAuth test profiles without establishing a connection:
+
+```typescript
+// Save server configuration for OAuth testing
+saveServerConfigWithoutConnecting(
+  {
+    name: "oauth-test-server",
+    type: "http",
+    url: "https://example.com",
+    useOAuth: true,
+    oauthScopes: ["openid", "profile"],
+    headers: { "X-API-Key": "secret" },
+    clientId: "optional-client-id",
+    clientSecret: "optional-client-secret",
+  },
+  {
+    oauthProfile: {
+      serverUrl: "https://example.com",
+      clientId: "optional-client-id",
+      clientSecret: "optional-client-secret",
+      scopes: "openid profile",
+      customHeaders: [{ key: "X-API-Key", value: "secret" }],
+      protocolVersion: "2025-11-25",
+      registrationStrategy: "cimd",
+    },
+  },
+);
+```
+
+This function:
+
+- Validates the form data
+- Creates or updates the server entry without connecting
+- Stores OAuth configuration in localStorage
+- Preserves the OAuth test profile for future debugging sessions
+- Updates the active workspace with the new server configuration
+
 ## Usage Example
 
 <CodeGroup>
@@ -450,6 +529,7 @@ clearOAuthData(serverName);
 | Component                | Location                                                        |
 | ------------------------ | --------------------------------------------------------------- |
 | OAuth Flow Types         | `client/src/lib/oauth/state-machines/types.ts`                  |
+| OAuth Profile Types      | `client/src/lib/oauth/profile.ts`                               |
 | State Machine Factory    | `client/src/lib/oauth/state-machines/factory.ts`                |
 | 2025-03-26 State Machine | `client/src/lib/oauth/state-machines/debug-oauth-2025-03-26.ts` |
 | 2025-06-18 State Machine | `client/src/lib/oauth/state-machines/debug-oauth-2025-06-18.ts` |
@@ -457,6 +537,10 @@ clearOAuthData(serverName);
 | OAuth Provider           | `client/src/lib/mcp-oauth.ts`                                   |
 | Debug Proxy              | `server/routes/mcp/oauth.ts`                                    |
 | OAuth Flow UI            | `client/src/components/OAuthFlowTab.tsx`                        |
+| OAuth Profile Modal      | `client/src/components/oauth/OAuthProfileModal.tsx`             |
+| OAuth Flow Logger        | `client/src/components/oauth/OAuthFlowLogger.tsx`               |
+| OAuth Utilities          | `client/src/components/oauth/utils.ts`                          |
+| Status Message Component | `client/src/components/oauth/StatusMessageComponent.tsx`        |
 | OAuth Sequence Diagram   | `client/src/components/OAuthSequenceDiagram.tsx`                |
 
 <Note>

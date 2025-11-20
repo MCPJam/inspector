@@ -378,7 +378,7 @@ const openaiAPI = {
   },
   widgetState: null,
 
-  // Persist widget state
+  // Persist widget state (localStorage + propagate to model)
   async setWidgetState(state) {
     this.widgetState = state;
     try {
@@ -386,6 +386,7 @@ const openaiAPI = {
     } catch (err) {
       console.error('[OpenAI Widget] Failed to save widget state:', err);
     }
+    // Propagate state to parent for model context
     window.parent.postMessage({
       type: 'openai:setWidgetState',
       toolId: toolId,
@@ -563,6 +564,107 @@ window.addEventListener("message", (event) => {
   }
 });
 ```
+
+#### Widget State Propagation to Model
+
+As of PR #891, widget state changes are now propagated to the LLM model as hidden assistant messages. This allows the AI to understand and reason about widget interactions.
+
+**Implementation** (`client/src/components/chat-v2/openai-app-renderer.tsx:232-244`):
+
+```typescript
+case "openai:setWidgetState": {
+  // Widget state is already persisted by the iframe script
+  console.log("[OpenAI App] Widget state updated:", event.data.state);
+
+  if (onWidgetStateChange && event.data.toolId === resolvedToolCallId) {
+    const newState = event.data.state;
+    const newStateStr = newState === null ? null : JSON.stringify(newState);
+
+    // Dedupe: only propagate if state actually changed
+    if (newStateStr !== previousWidgetStateRef.current) {
+      previousWidgetStateRef.current = newStateStr;
+      onWidgetStateChange(resolvedToolCallId, newState);
+    }
+  }
+  break;
+}
+```
+
+**Chat Integration** (`client/src/components/ChatTabV2.tsx:281-326`):
+
+```typescript
+const handleWidgetStateChange = useCallback(
+  (toolCallId: string, state: any) => {
+    setMessages((prevMessages) => {
+      const messageId = `widget-state-${toolCallId}`;
+
+      // If state is null, remove the widget state message
+      if (state === null) {
+        return prevMessages.filter((msg) => msg.id !== messageId);
+      }
+
+      const stateText = `The state of widget ${toolCallId} is: ${JSON.stringify(state)}`;
+
+      const existingIndex = prevMessages.findIndex(
+        (msg) => msg.id === messageId,
+      );
+
+      if (existingIndex !== -1) {
+        // Update existing state message if changed
+        const existingMessage = prevMessages[existingIndex];
+        const existingText =
+          existingMessage.parts?.[0]?.type === "text"
+            ? (existingMessage.parts[0] as any).text
+            : null;
+        if (existingText === stateText) {
+          return prevMessages; // No change
+        }
+
+        const newMessages = [...prevMessages];
+        newMessages[existingIndex] = {
+          id: messageId,
+          role: "assistant",
+          parts: [{ type: "text", text: stateText }],
+        };
+        return newMessages;
+      }
+
+      // Add new state message
+      return [
+        ...prevMessages,
+        {
+          id: messageId,
+          role: "assistant",
+          parts: [{ type: "text", text: stateText }],
+        },
+      ];
+    });
+  },
+  [setMessages],
+);
+```
+
+**UI Hiding** (`client/src/components/chat-v2/thread.tsx:99`):
+
+```typescript
+// Hide widget-state messages from UI (they're sent to model but not displayed)
+if (message.id?.startsWith("widget-state-")) return null;
+```
+
+**Key Features:**
+
+- **Hidden Messages**: Widget state messages are prefixed with `widget-state-` and hidden from the UI
+- **Deduplication**: State changes are only propagated if the serialized state actually changed
+- **Model Context**: The LLM receives state updates as assistant messages, enabling it to reason about widget interactions
+- **Null Handling**: Setting state to `null` removes the state message entirely
+- **Example**: When a chart widget updates its selected date range, the model receives: `"The state of widget tool_123 is: {\"startDate\":\"2024-01-01\",\"endDate\":\"2024-01-31\"}"`
+
+This enables powerful use cases like:
+
+- LLM understanding user interactions with widgets
+- Contextual follow-up questions based on widget state
+- Multi-turn conversations that reference widget selections
+- Debugging widget behavior through model awareness
 
 #### Tool Execution Bridge
 
