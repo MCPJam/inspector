@@ -226,40 +226,6 @@ export function ServersTab({
                 </Card>
               )}
 
-              {/* Add Server Modal */}
-              <AddServerModal
-                isOpen={isAddingServer}
-                onClose={() => {
-                  setIsAddingServer(false);
-                }}
-                onSubmit={(formData) => {
-                  posthog.capture("connecting_server", {
-                    location: "servers_tab",
-                    platform: detectPlatform(),
-                    environment: detectEnvironment(),
-                  });
-                  onConnect(formData);
-                }}
-              />
-
-              {/* Edit Server Modal */}
-              {serverToEdit && (
-                <EditServerModal
-                  isOpen={isEditingServer}
-                  onClose={handleCloseEditModal}
-                  onSubmit={(formData, originalName) =>
-                    onUpdate(originalName, formData)
-                  }
-                  server={serverToEdit}
-                />
-              )}
-
-              {/* JSON Import Modal */}
-              <JsonImportModal
-                isOpen={isImportingJson}
-                onClose={() => setIsImportingJson(false)}
-                onImport={handleJsonImport}
-              />
             </div>
           </ResizablePanel>
 
