@@ -748,6 +748,18 @@ export function EvalRunner({
       )}
     >
       <div className="flex flex-wrap items-center gap-4">
+        {inline && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={handleClose}
+            aria-label="Close"
+            className="h-8 w-8"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        )}
         <Button
           type="button"
           variant="outline"
@@ -838,18 +850,6 @@ export function EvalRunner({
           >
             {currentStep === WIZARD_STEPS.length - 1 ? "Start" : "Next"}
             <ChevronRight className="h-4 w-4" />
-          </Button>
-        )}
-        {inline && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            onClick={handleClose}
-            aria-label="Close"
-            className="h-8 w-8"
-          >
-            <X className="h-4 w-4" />
           </Button>
         )}
       </div>
