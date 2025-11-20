@@ -51,10 +51,14 @@ export function SuiteTestsConfig({
         testCase.models.forEach((modelConfig: any) => {
           const key = `${modelConfig.provider}:${modelConfig.model}`;
           if (!modelSet.has(key)) {
+            // Lookup the display name from availableModels
+            const modelDef = availableModels.find(
+              (m) => m.id === modelConfig.model,
+            );
             modelSet.set(key, {
               model: modelConfig.model,
               provider: modelConfig.provider,
-              displayName: modelConfig.model,
+              displayName: modelDef?.name || modelConfig.model,
             });
           }
         });
@@ -62,7 +66,7 @@ export function SuiteTestsConfig({
     });
 
     return Array.from(modelSet.values());
-  }, [testCases]);
+  }, [testCases, availableModels]);
 
   const [models, setModels] = useState<ModelInfo[]>(initialModels);
 
