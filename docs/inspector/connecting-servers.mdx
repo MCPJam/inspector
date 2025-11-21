@@ -32,6 +32,28 @@ You can connect to multiple MCP servers simultaneously. To manage connections, g
 - Toggle MCP servers to enable or temporarily deactivate a server.
 - Hit the 3 dots. You can reconnect, edit, or disconnect to a server.
 
+### Server information
+
+Each connected server card displays:
+
+- **Server icon and version**: If provided by the server, the icon and version number appear in the card header
+- **Connection status**: Real-time indicator showing connected, connecting, or failed status with retry count
+- **Transport type**: Shows whether the server uses STDIO, SSE, or Streamable HTTP
+
+Click "Show details" to expand additional server information:
+
+- **Server capabilities**: Lists available features (Tools, Prompts, Resources)
+- **MCP protocol version**: The protocol version the server implements
+- **Instructions**: Server-provided instructions for AI assistants
+- **Documentation link**: Direct link to the server's documentation if available
+
+### OpenAI app metadata
+
+Servers that provide OpenAI-compatible tool metadata display an OpenAI logo indicator. Expanding these servers shows two tabs:
+
+- **Info tab**: Standard server information and capabilities
+- **OpenAI Tool Metadata tab**: Detailed metadata for each tool including read/write permissions and widget configuration
+
 ## STDIO servers
 
 Connect to STDIO with commands. Commands vary based on what language your MCP server is built with. For example, connecting to an MCP server built with Node might look like:
