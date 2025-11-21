@@ -38,7 +38,6 @@ export function useServerForm(server?: ServerWithName) {
   const [requestTimeout, setRequestTimeout] = useState<string>("10000");
   const [showConfiguration, setShowConfiguration] = useState<boolean>(false);
   const [showEnvVars, setShowEnvVars] = useState<boolean>(false);
-  const [showCustomHeaders, setShowCustomHeaders] = useState<boolean>(false);
   const [showAuthSettings, setShowAuthSettings] = useState<boolean>(false);
 
   // Initialize form with server data (for edit mode)
@@ -234,7 +233,6 @@ export function useServerForm(server?: ServerWithName) {
 
   const addCustomHeader = () => {
     setCustomHeaders([...customHeaders, { key: "", value: "" }]);
-    setShowCustomHeaders(true);
   };
 
   const removeCustomHeader = (index: number) => {
@@ -367,7 +365,6 @@ export function useServerForm(server?: ServerWithName) {
     setRequestTimeout("10000");
     setShowConfiguration(false);
     setShowEnvVars(false);
-    setShowCustomHeaders(false);
     setShowAuthSettings(false);
   };
 
@@ -411,8 +408,6 @@ export function useServerForm(server?: ServerWithName) {
     setShowConfiguration,
     showEnvVars,
     setShowEnvVars,
-    showCustomHeaders,
-    setShowCustomHeaders,
     showAuthSettings,
     setShowAuthSettings,
 

@@ -301,10 +301,6 @@ export function AddServerModal({
           {formState.serverFormData.type === "http" && (
             <CustomHeadersSection
               customHeaders={formState.customHeaders}
-              showCustomHeaders={formState.showCustomHeaders}
-              onToggle={() =>
-                formState.setShowCustomHeaders(!formState.showCustomHeaders)
-              }
               onAdd={formState.addCustomHeader}
               onRemove={formState.removeCustomHeader}
               onUpdate={formState.updateCustomHeader}
