@@ -1,5 +1,6 @@
 import { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { X } from "lucide-react";
 
 type DisplayMode = "inline" | "pip" | "fullscreen";
 
@@ -404,9 +405,42 @@ export function OpenAIAppRenderer({
     );
   }
 
+  const isPip = displayMode === "pip";
+
+  const containerClassName = isPip
+    ? [
+        "fixed", // now fixed INSIDE the chat panel
+        "top-4", // pinned a bit below the panel header
+        "inset-x-0", // span the panel’s width
+        "z-40",
+        "w-full",
+        "max-w-4xl",
+        "mx-auto",
+        "space-y-2",
+        "bg-background/95",
+        "backdrop-blur",
+        "supports-[backdrop-filter]:bg-background/80",
+        "shadow-xl",
+        "border",
+        "border-border/60",
+        "rounded-xl",
+        "p-3",
+      ].join(" ")
+    : "mt-3 space-y-2";
+
   // Render iframe
   return (
-    <div className="mt-3 space-y-2">
+    <div className={containerClassName}>
+      {isPip && (
+        <button
+          onClick={() => setDisplayMode("inline")}
+          className="absolute left-2 top-2 z-10 flex h-6 w-6 items-center justify-center rounded-md bg-background/80 hover:bg-background border border-border/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+          aria-label="Close PiP mode"
+          title="Close PiP mode"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      )}
       {loadError && (
         <div className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2">
           Failed to load widget: {loadError}
