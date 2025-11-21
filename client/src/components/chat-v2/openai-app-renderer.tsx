@@ -491,10 +491,7 @@ export function OpenAIAppRenderer({
         style={{
           minHeight: "320px",
           height: iframeHeight,
-          maxHeight:
-            displayMode === "fullscreen" && pipWidgetId === resolvedToolCallId
-              ? "90vh"
-              : undefined,
+          maxHeight: displayMode === "fullscreen" ? "90vh" : undefined,
         }}
         onLoad={() => {
           setIsReady(true);
