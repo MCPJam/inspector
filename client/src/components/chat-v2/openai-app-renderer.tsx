@@ -22,6 +22,9 @@ interface OpenAIAppRendererProps {
   onSendFollowUp?: (text: string) => void;
   onCallTool?: (toolName: string, params: Record<string, any>) => Promise<any>;
   onWidgetStateChange?: (toolCallId: string, state: any) => void;
+  pipWidgetId?: string | null;
+  onRequestPip?: (toolCallId: string) => void;
+  onExitPip?: (toolCallId: string) => void;
 }
 
 export function OpenAIAppRenderer({
@@ -35,6 +38,9 @@ export function OpenAIAppRenderer({
   onSendFollowUp,
   onCallTool,
   onWidgetStateChange,
+  pipWidgetId,
+  onRequestPip,
+  onExitPip,
 }: OpenAIAppRendererProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
@@ -49,13 +55,13 @@ export function OpenAIAppRenderer({
   const previousWidgetStateRef = useRef<string | null>(null);
   const resolvedToolCallId = useMemo(
     () => toolCallId ?? `${toolName || "openai-app"}-${Date.now()}`,
-    [toolCallId, toolName]
+    [toolCallId, toolName],
   );
 
   // Extract outputTemplate from tool metadata
   const outputTemplate = useMemo(
     () => toolMetadata?.["openai/outputTemplate"],
-    [toolMetadata]
+    [toolMetadata],
   );
 
   // Extract structuredContent from tool output
@@ -94,12 +100,12 @@ export function OpenAIAppRenderer({
 
   const resolvedToolInput = useMemo(
     () => (toolInputProp as Record<string, any>) ?? {},
-    [toolInputProp]
+    [toolInputProp],
   );
 
   const resolvedToolOutput = useMemo(
     () => structuredContent ?? toolOutputProp ?? null,
-    [structuredContent, toolOutputProp]
+    [structuredContent, toolOutputProp],
   );
 
   // Store widget data and get URL - ONLY once when tool state is output-available
@@ -154,7 +160,7 @@ export function OpenAIAppRenderer({
 
         if (!response.ok) {
           throw new Error(
-            `Failed to store widget data: ${response.statusText}`
+            `Failed to store widget data: ${response.statusText}`,
           );
         }
 
@@ -167,7 +173,7 @@ export function OpenAIAppRenderer({
         if (isCancelled) return;
         console.error("Error storing widget data:", err);
         setStoreError(
-          err instanceof Error ? err.message : "Failed to prepare widget"
+          err instanceof Error ? err.message : "Failed to prepare widget",
         );
       } finally {
         if (!isCancelled) {
@@ -198,14 +204,18 @@ export function OpenAIAppRenderer({
 
   const appliedHeight = useMemo(
     () => Math.min(Math.max(contentHeight, 320), maxHeight),
-    [contentHeight, maxHeight]
+    [contentHeight, maxHeight],
   );
 
   const iframeHeight = useMemo(() => {
     if (displayMode === "fullscreen") return "80vh";
-    if (displayMode === "pip") return "400px";
+    if (displayMode === "pip") {
+      return pipWidgetId === resolvedToolCallId
+        ? "400px"
+        : `${appliedHeight}px`;
+    }
     return `${appliedHeight}px`;
-  }, [appliedHeight, displayMode]);
+  }, [appliedHeight, displayMode, pipWidgetId, resolvedToolCallId]);
 
   // Handle messages from iframe
   const handleMessage = useCallback(
@@ -224,7 +234,7 @@ export function OpenAIAppRenderer({
           if (Number.isFinite(rawHeight) && rawHeight > 0) {
             const nextHeight = Math.round(rawHeight);
             setContentHeight((prev) =>
-              Math.abs(prev - nextHeight) > 1 ? nextHeight : prev
+              Math.abs(prev - nextHeight) > 1 ? nextHeight : prev,
             );
           }
           break;
@@ -250,7 +260,7 @@ export function OpenAIAppRenderer({
         case "openai:callTool": {
           if (!onCallTool) {
             console.warn(
-              "[OpenAI App] callTool received but handler not available"
+              "[OpenAI App] callTool received but handler not available",
             );
             iframeRef.current?.contentWindow?.postMessage(
               {
@@ -258,7 +268,7 @@ export function OpenAIAppRenderer({
                 requestId: event.data.requestId,
                 error: "callTool is not supported in this context",
               },
-              "*"
+              "*",
             );
             break;
           }
@@ -266,7 +276,7 @@ export function OpenAIAppRenderer({
           try {
             const result = await onCallTool(
               event.data.toolName,
-              event.data.params || {}
+              event.data.params || {},
             );
             iframeRef.current?.contentWindow?.postMessage(
               {
@@ -274,7 +284,7 @@ export function OpenAIAppRenderer({
                 requestId: event.data.requestId,
                 result,
               },
-              "*"
+              "*",
             );
           } catch (err) {
             iframeRef.current?.contentWindow?.postMessage(
@@ -283,7 +293,7 @@ export function OpenAIAppRenderer({
                 requestId: event.data.requestId,
                 error: err instanceof Error ? err.message : "Unknown error",
               },
-              "*"
+              "*",
             );
           }
           break;
@@ -305,7 +315,7 @@ export function OpenAIAppRenderer({
               {
                 hasHandler: !!onSendFollowUp,
                 message: event.data.message,
-              }
+              },
             );
           }
           break;
@@ -313,7 +323,15 @@ export function OpenAIAppRenderer({
 
         case "openai:requestDisplayMode": {
           if (event.data.mode) {
-            setDisplayMode(event.data.mode);
+            const mode = event.data.mode;
+            setDisplayMode(mode);
+            if (mode === "pip") {
+              onRequestPip?.(resolvedToolCallId);
+            } else if (mode === "inline" || mode === "fullscreen") {
+              if (pipWidgetId === resolvedToolCallId) {
+                onExitPip?.(resolvedToolCallId);
+              }
+            }
           }
           if (typeof event.data.maxHeight === "number") {
             setMaxHeight(event.data.maxHeight);
@@ -329,7 +347,15 @@ export function OpenAIAppRenderer({
         }
       }
     },
-    [onCallTool, onSendFollowUp, onWidgetStateChange, resolvedToolCallId]
+    [
+      onCallTool,
+      onSendFollowUp,
+      onWidgetStateChange,
+      resolvedToolCallId,
+      pipWidgetId,
+      onRequestPip,
+      onExitPip,
+    ],
   );
 
   useEffect(() => {
@@ -338,6 +364,12 @@ export function OpenAIAppRenderer({
       window.removeEventListener("message", handleMessage);
     };
   }, [handleMessage]);
+
+  useEffect(() => {
+    if (displayMode === "pip" && pipWidgetId !== resolvedToolCallId) {
+      setDisplayMode("inline");
+    }
+  }, [displayMode, pipWidgetId, resolvedToolCallId]);
 
   // Send theme updates to iframe when theme changes
   useEffect(() => {
@@ -351,7 +383,7 @@ export function OpenAIAppRenderer({
           theme: themeMode,
         },
       },
-      "*"
+      "*",
     );
   }, [themeMode, isReady]);
 
@@ -405,7 +437,7 @@ export function OpenAIAppRenderer({
     );
   }
 
-  const isPip = displayMode === "pip";
+  const isPip = displayMode === "pip" && pipWidgetId === resolvedToolCallId;
 
   const containerClassName = isPip
     ? [
@@ -433,7 +465,10 @@ export function OpenAIAppRenderer({
     <div className={containerClassName}>
       {isPip && (
         <button
-          onClick={() => setDisplayMode("inline")}
+          onClick={() => {
+            setDisplayMode("inline");
+            onExitPip?.(resolvedToolCallId);
+          }}
           className="absolute left-2 top-2 z-10 flex h-6 w-6 items-center justify-center rounded-md bg-background/80 hover:bg-background border border-border/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
           aria-label="Close PiP mode"
           title="Close PiP mode"
@@ -456,7 +491,10 @@ export function OpenAIAppRenderer({
         style={{
           minHeight: "320px",
           height: iframeHeight,
-          maxHeight: displayMode === "fullscreen" ? "90vh" : undefined,
+          maxHeight:
+            displayMode === "fullscreen" && pipWidgetId === resolvedToolCallId
+              ? "90vh"
+              : undefined,
         }}
         onLoad={() => {
           setIsReady(true);
